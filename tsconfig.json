@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["shared/src/*"]
+    },
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "shared/src/**/*"
+  ],
+  "references": [
+    { "path": "./backend/tsconfig.json" },
+    { "path": "./frontend/tsconfig.json" }
+  ]
+}

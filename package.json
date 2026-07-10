@@ -1,0 +1,32 @@
+{
+  "name": "brian-agent",
+  "version": "1.0.0",
+  "description": "Brian-Agent - An intelligent personal assistant with memory and learning capabilities",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev:backend & npm run dev:frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "test": "npm run test --workspace=backend && npm run test --workspace=frontend",
+    "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
+  },
+  "keywords": [
+    "agent",
+    "memory",
+    "AI",
+    "personal-assistant"
+  ],
+  "author": "Brian-Agent Team",
+  "license": "MIT",
+  "devDependencies": {
+    "vue-eslint-parser": "^10.4.1"
+  }
+}
