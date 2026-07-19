@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, History, X, PanelLeftClose, PanelLeft } from '@lucide/vue'
+import { Plus, History, X, PanelRight } from '@lucide/vue'
 import NeuralBackground from '../components/NeuralBackground.vue'
 import Header from '../components/Header.vue'
 import ChatArea from '../components/ChatArea.vue'
@@ -46,16 +46,16 @@ function formatChatTime(timestamp: number): string {
     <Header />
 
     <button
-      class="fixed left-4 top-20 z-30 p-2 rounded-lg bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors shadow-sm"
-      :title="showSidebar ? '收起侧边栏' : '展开侧边栏'"
+      v-if="!showSidebar"
+      class="fixed right-4 top-20 z-30 p-2 rounded-lg bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors shadow-sm"
+      title="展开历史对话"
       @click="toggleSidebar"
     >
-      <PanelLeftClose v-if="showSidebar" :size="18" />
-      <PanelLeft v-else :size="18" />
+      <PanelRight :size="18" />
     </button>
 
     <Transition name="sidebar">
-      <div v-if="showSidebar" class="fixed left-0 top-16 bottom-0 w-72 z-20 bg-white/95 dark:bg-apple-gray-950/95 backdrop-blur-md border-r border-apple-gray-200 dark:border-apple-gray-800 flex flex-col">
+      <div v-if="showSidebar" class="fixed right-0 top-16 bottom-0 w-72 z-20 bg-white/95 dark:bg-apple-gray-950/95 backdrop-blur-md border-l border-apple-gray-200 dark:border-apple-gray-800 flex flex-col">
         <div class="flex items-center justify-between p-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-center gap-2">
             <History :size="18" class="text-brian-blue" />
@@ -117,11 +117,11 @@ function formatChatTime(timestamp: number): string {
   transition: all 0.2s ease-in;
 }
 .sidebar-enter-from {
-  transform: translateX(-100%);
+  transform: translateX(100%);
   opacity: 0;
 }
 .sidebar-leave-to {
-  transform: translateX(-100%);
+  transform: translateX(100%);
   opacity: 0;
 }
 </style>

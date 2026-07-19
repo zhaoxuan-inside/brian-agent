@@ -461,9 +461,10 @@ export class ChatService {
     const startIndex = total - safePage * pageSize;
     const endIndex = total - (safePage - 1) * pageSize;
 
+    // Keep chronological (ascending) order: page 1 = the last `pageSize` messages,
+    // page 2 = the previous `pageSize` older messages, etc. (standard chat pagination)
     const paginatedMessages = allMessages
-      .slice(Math.max(0, startIndex), Math.max(0, endIndex))
-      .reverse();
+      .slice(Math.max(0, startIndex), Math.max(0, endIndex));
 
     logger.info('ChatService', `[getChatHistory] total=${total} totalPages=${totalPages} safePage=${safePage} returned=${paginatedMessages.length}`);
 
