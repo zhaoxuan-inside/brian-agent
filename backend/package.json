@@ -1,38 +1,45 @@
 {
   "name": "@brian-agent/backend",
-  "version": "1.0.0",
-  "description": "Backend service for Brian-Agent",
-  "main": "dist/index.js",
+  "version": "2.0.0",
+  "description": "Brian-Agent Backend Service",
+  "main": "dist/src/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc",
-    "start": "node dist/main.js",
-    "test": "vitest",
-    "lint": "eslint src --ext .ts"
+    "start": "node dist/src/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@brian-agent/shared": "^1.0.0",
+    "@xenova/transformers": "^2.17.2",
+    "axios": "^1.18.1",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.0.0",
+    "congraphdb": "^0.2.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
-    "json-rules-engine": "^6.5.0",
-    "socket.io": "^4.7.5",
+    "level": "^8.0.0",
+    "level-transcoder": "^1.0.1",
+    "levelgraph": "^4.0.0",
+    "lru-cache": "^10.2.0",
+    "tiny-graph-db": "^1.0.4",
     "uuid": "^9.0.1",
+    "ws": "^8.16.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",
     "@types/uuid": "^9.0.8",
-    "@typescript-eslint/eslint-plugin": "^7.7.0",
-    "@typescript-eslint/parser": "^7.7.0",
-    "eslint": "^8.57.0",
+    "@types/ws": "^8.5.10",
+    "supertest": "^7.2.2",
     "tsx": "^4.7.2",
-    "typescript": "^5.4.5",
-    "vitest": "^1.5.0"
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
   }
 }

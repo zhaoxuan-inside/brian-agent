@@ -1,352 +1,182 @@
 import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import os from 'os';
-import fs from 'fs';
-import path from 'path';
-import { config } from './config';
-import { ModelConfigService } from './services/modelConfig';
-import { vectorStore, graphStore } from './storage/database';
-import { createConfigRoutes } from './routes/config';
-import { createChatRoutes } from './routes/chat';
-import { createLibraryRoutes } from './routes/library';
-import { createMemoryRoutes } from './routes/memory';
-import { createMCPRoutes } from './routes/mcp';
-import { logger } from './services/logger';
+import { createServer } from './infrastructure/server';
+import { logger } from './infrastructure/logger';
+import { getConfig } from './infrastructure/config';
+import { getDatabase } from './infrastructure/database';
 
-export const modelConfigService = new ModelConfigService();
+import { SQLiteWrapper as SQLiteDB } from './base/DBWrapper';
+import type { DBWrapper } from './base/DBWrapper';
+import { SQLiteVectorDB } from './base/db/SQLiteVectorDB';
+import { SQLiteGraphDB } from './base/db/SQLiteGraphDB';
+import { SQLiteMQ } from './base/MQWrapper';
 
-// Call history for sliding-window stats
-interface CallRecord { tokens: number; latency: number; timestamp: number; }
-const STATS_FILE = path.join(config.dataDir || './data', 'call-history.json');
-const DAILY_STATS_FILE = path.join(config.dataDir || './data', 'daily-stats.json');
-const YEARLY_STATS_DIR = path.join(config.dataDir || './data', 'yearly-stats');
-const callHistory: CallRecord[] = [];
-let totalTokens = 0;
-let totalCalls = 0;
-let avgLatency = 0;
+import { LLMService } from './core/llm/LLMService';
+import { LLMService as CoreLLMService } from './core/llm';
+import { ModelConfigService as CoreModelConfigService } from './core/llm/modelConfig';
+import { MCPManager } from './core/mcp/MCPManager';
+import { SkillManager } from './core/skill/SkillManager';
+import { SoulManager } from './core/soul/SoulManager';
+import { WorkManager } from './core/work/WorkManager';
+import { InformationService } from './core/information/InformationService';
+import { InformationService as CoreInformationService } from './core/information';
+import { LibraryService } from './core/library/LibraryService';
+import { ModelConfigService } from './core/modelConfig/ModelConfigService';
+import { StorageService } from './core/storage';
+import { LearningService } from './core/learning';
 
-// --- Persist call history across restarts ---
-function loadCallHistory() {
-  try {
-    if (fs.existsSync(STATS_FILE)) {
-      const raw = fs.readFileSync(STATS_FILE, 'utf-8');
-      const data = JSON.parse(raw);
-      totalTokens = data.totalTokens || 0;
-      totalCalls = data.totalCalls || 0;
-      avgLatency = data.avgLatency || 0;
-      const loaded = (data.callHistory || []) as CallRecord[];
-      // Only keep last 32 days
-      const cutoff = Date.now() - 32 * 24 * 3600 * 1000;
-      for (const r of loaded) {
-        if (r.timestamp >= cutoff) callHistory.push(r);
-      }
-      logger.info('Stats', `Loaded: ${totalTokens} tokens / ${totalCalls} calls / ${callHistory.length} records`);
-    }
-  } catch { /* ignore corrupt file */ }
-}
+import { AgentOrchestrator } from './strategy/AgentOrchestrator';
 
-// --- Daily stats for year-spanning matrix ---
-interface DailyStat { tokens: number; calls: number; latencySum: number; latencyCount: number; }
-function loadDailyStats(): Record<string, DailyStat> {
-  try {
-    if (fs.existsSync(DAILY_STATS_FILE)) {
-      return JSON.parse(fs.readFileSync(DAILY_STATS_FILE, 'utf-8'));
-    }
-  } catch { /* ignore */ }
-  return {};
-}
+import { ToolService } from './core/tools';
+import { AgentBuilder } from './agent/agentBuilder';
+import { MetaAgent } from './agent/metaAgent';
+import { GraphExecutor } from './agent/executor';
+import { AgentLibrary } from './agent/agentLibrary';
 
-function saveDailyStats(daily: Record<string, DailyStat>) {
-  try {
-    const dir = path.dirname(DAILY_STATS_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(DAILY_STATS_FILE, JSON.stringify(daily, null, 2), 'utf-8');
-    const currentYear = new Date().getFullYear();
-    const yearlyFile = path.join(YEARLY_STATS_DIR, `${currentYear}.json`);
-    if (fs.existsSync(yearlyFile)) {
-      fs.unlinkSync(yearlyFile);
-    }
-  } catch { /* ignore */ }
-}
+import { ChatService } from './application/ChatService';
+import { UserProfileService } from './application/UserProfileService';
+import { SelfLearningService } from './application/SelfLearningService';
+import { DocumentService } from './application/DocumentService';
 
-interface YearlyStat { date: string; tokens: number; calls: number; avgLatency: number; }
-function loadYearlyStats(year: number): YearlyStat[] {
-  try {
-    const yearlyFile = path.join(YEARLY_STATS_DIR, `${year}.json`);
-    if (fs.existsSync(yearlyFile)) {
-      return JSON.parse(fs.readFileSync(yearlyFile, 'utf-8'));
-    }
-  } catch { /* ignore */ }
-  return [];
-}
-
-function saveYearlyStats(year: number, stats: YearlyStat[]) {
-  try {
-    if (!fs.existsSync(YEARLY_STATS_DIR)) fs.mkdirSync(YEARLY_STATS_DIR, { recursive: true });
-    const yearlyFile = path.join(YEARLY_STATS_DIR, `${year}.json`);
-    fs.writeFileSync(yearlyFile, JSON.stringify(stats, null, 2), 'utf-8');
-  } catch { /* ignore */ }
-}
-
-function buildYearlyStats(year: number): YearlyStat[] {
-  const yearlyFile = path.join(YEARLY_STATS_DIR, `${year}.json`);
-  if (fs.existsSync(yearlyFile)) {
-    return loadYearlyStats(year);
-  }
-  const daily = loadDailyStats();
-  const entries: YearlyStat[] = [];
-  for (let m = 0; m < 12; m++) {
-    const daysInMonth = new Date(year, m + 1, 0).getDate();
-    for (let d = 1; d <= daysInMonth; d++) {
-      const key = `${year}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const stat = daily[key] || { tokens: 0, calls: 0, latencySum: 0, latencyCount: 0 };
-      entries.push({
-        date: key,
-        tokens: stat.tokens,
-        calls: stat.calls,
-        avgLatency: stat.latencyCount > 0 ? Math.round(stat.latencySum / stat.latencyCount) : 0,
-      });
-    }
-  }
-  saveYearlyStats(year, entries);
-  return entries;
-}
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-function saveCallHistory() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      const dir = path.dirname(STATS_FILE);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(STATS_FILE, JSON.stringify({ totalTokens, totalCalls, avgLatency, callHistory }, null, 2), 'utf-8');
-    } catch { /* ignore */ }
-  }, 2000); // debounce 2s — batch rapid calls
-}
-
-export function recordModelCall(tokens: number, latency: number) {
-  totalTokens += tokens;
-  totalCalls += 1;
-  avgLatency = Math.round(((avgLatency * (totalCalls - 1)) + latency) / totalCalls);
-  callHistory.push({ tokens, latency, timestamp: Date.now() });
-  // Prune: keep only last 32 days
-  const cutoff = Date.now() - 32 * 24 * 3600 * 1000;
-  while (callHistory.length > 0 && callHistory[0].timestamp < cutoff) {
-    callHistory.shift();
-  }
-  // Update daily aggregate (local date)
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const daily = loadDailyStats();
-  if (!daily[today]) daily[today] = { tokens: 0, calls: 0, latencySum: 0, latencyCount: 0 };
-  daily[today].tokens += tokens;
-  daily[today].calls += 1;
-  daily[today].latencySum += latency;
-  daily[today].latencyCount += 1;
-  saveDailyStats(daily);
-  saveCallHistory();
-}
-
-function aggregateWindow(windowMs: number) {
-  const cutoff = Date.now() - windowMs;
-  const records = callHistory.filter(r => r.timestamp >= cutoff);
-
-  const totalWindowTokens = records.reduce((s, r) => s + r.tokens, 0);
-  const totalWindowCalls = records.length;
-  const avgWindowLatency = totalWindowCalls > 0
-    ? Math.round(records.reduce((s, r) => s + r.latency, 0) / totalWindowCalls)
-    : 0;
-
-  // Hourly granularity for 24h (today) window
-  if (windowMs <= 24 * 3600 * 1000) {
-    const hourlyBuckets: Record<string, { tokens: number; calls: number }> = {};
-    for (let h = 0; h < 24; h++) {
-      const key = `${String(h).padStart(2, '0')}:00`;
-      hourlyBuckets[key] = { tokens: 0, calls: 0 };
-    }
-    for (const r of records) {
-      const h = new Date(r.timestamp).getHours();
-      const key = `${String(h).padStart(2, '0')}:00`;
-      if (hourlyBuckets[key]) {
-        hourlyBuckets[key].tokens += r.tokens;
-        hourlyBuckets[key].calls += 1;
-      }
-    }
-    const hourly = Object.entries(hourlyBuckets).map(([h, d]) => ({ hour: h, tokens: d.tokens, calls: d.calls }));
-    return { totalTokens: totalWindowTokens, totalCalls: totalWindowCalls, avgLatency: avgWindowLatency, hourly, granularity: 'hourly' };
-  }
-
-  // Daily granularity for 7d / 31d
-  const days = Math.ceil(windowMs / (24 * 3600 * 1000));
-  const dailyBuckets: Record<string, { tokens: number; calls: number; latencySum: number; latencyCount: number }> = {};
-  for (let i = 0; i < days; i++) {
-    const d = new Date(Date.now() - i * 24 * 3600 * 1000);
-    const key = `${d.getMonth() + 1}/${d.getDate()}`;
-    dailyBuckets[key] = { tokens: 0, calls: 0, latencySum: 0, latencyCount: 0 };
-  }
-
-  for (const r of records) {
-    const d = new Date(r.timestamp);
-    const key = `${d.getMonth() + 1}/${d.getDate()}`;
-    if (dailyBuckets[key]) {
-      dailyBuckets[key].tokens += r.tokens;
-      dailyBuckets[key].calls += 1;
-      dailyBuckets[key].latencySum += r.latency;
-      dailyBuckets[key].latencyCount += 1;
-    }
-  }
-
-  const daily = Object.entries(dailyBuckets)
-    .reverse()
-    .map(([date, data]) => ({
-      date,
-      tokens: data.tokens,
-      calls: data.calls,
-      avgLatency: data.latencyCount > 0 ? Math.round(data.latencySum / data.latencyCount) : 0,
-    }));
-
-  return { totalTokens: totalWindowTokens, totalCalls: totalWindowCalls, avgLatency: avgWindowLatency, daily, granularity: 'daily' };
-}
-
-function buildTokenMatrix(year?: number): { entries: YearlyStat[]; year: number } {
-  const y = year || new Date().getFullYear();
-  const entries = buildYearlyStats(y);
-  return { entries, year: y };
-}
-
-function getAvailableYears(): number[] {
-  const daily = loadDailyStats();
-  const years = new Set<number>();
-  for (const date of Object.keys(daily)) {
-    years.add(parseInt(date.slice(0, 4)));
-  }
-  years.add(new Date().getFullYear());
-  return Array.from(years).sort((a, b) => b - a);
-}
-
-function getSystemStats() {
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
-  return {
-    cpu: Math.round(os.loadavg()[0] * 100) / 100,
-    memory: {
-      total: Math.round(totalMem / (1024 * 1024)),
-      used: Math.round(usedMem / (1024 * 1024)),
-      percentage: Math.round((usedMem / totalMem) * 100),
-    },
-    uptime: Math.floor(process.uptime()),
-    processCount: 1,
-  };
-}
+import {
+  createChatRoutes,
+  createGatewayRoutes,
+  createConfigRoutes,
+  createAnalyticsRoutes,
+  createVisualRoutes,
+  createFeedbackRoutes,
+  createMemoryRoutes,
+  createLearningRoutes,
+  createProfileRoutes,
+  createMCPRoutes,
+  createSkillRoutes,
+  createAgentRoutes,
+  createSystemRoutes,
+  createLibraryRoutes,
+} from './access';
 
 export function createApp(): express.Application {
-  // Restore persisted call history from disk
-  loadCallHistory();
+  logger.info('SYSTEM', 'Initializing Brian-Agent application v3.0...');
 
-  const app = express();
+  const app = createServer();
+  const config = getConfig();
 
-  app.use(helmet());
-  app.use(cors({
-    origin: config.corsOrigin,
-    credentials: true,
-  }));
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  // ============================================================
+  // Base Layer: DB & MQ — 使用 initDatabase() 已创建的共享连接
+  // ============================================================
+  const rawDb = getDatabase();
+  // 适配器：将 better-sqlite3 的 Database 包装为 DBWrapper 接口
+  const sqliteDB: DBWrapper = {
+    query: async <T>(sql: string, params?: any[]): Promise<T[]> => {
+      const stmt = rawDb.prepare(sql);
+      return (params ? stmt.all(...params) : stmt.all()) as T[];
+    },
+    run: async (sql: string, params?: any[]): Promise<{ changes: number; lastInsertId: number }> => {
+      const stmt = rawDb.prepare(sql);
+      const result = params ? stmt.run(...params) : stmt.run();
+      return { changes: result.changes, lastInsertId: (result.lastInsertRowid as number) || 0 };
+    },
+    get: async <T>(sql: string, params?: any[]): Promise<T | undefined> => {
+      const stmt = rawDb.prepare(sql);
+      return (params ? stmt.get(...params) : stmt.get()) as T | undefined;
+    },
+    close: () => { /* 共享连接，不在此关闭 */ },
+    transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
+      return rawDb.transaction(() => {
+        const tx = {
+          query: async (sql: string, params?: any[]) => rawDb.prepare(sql).all(...(params || [])),
+          run: async (sql: string, params?: any[]) => rawDb.prepare(sql).run(...(params || [])),
+          get: async (sql: string, params?: any[]) => rawDb.prepare(sql).get(...(params || [])),
+        };
+        return fn(tx);
+      })();
+    },
+  };
+  const vectorDB = new SQLiteVectorDB(sqliteDB);
+  const graphDB = new SQLiteGraphDB(sqliteDB);
+  const mq = new SQLiteMQ(sqliteDB);
 
-  // Request logging middleware
-  app.use((req, _res, next) => {
-    logger.request('HTTP', req.method, req.url, req.body && Object.keys(req.body).length ? { size: JSON.stringify(req.body).length } : undefined);
-    const start = Date.now();
-    const origEnd = _res.end.bind(_res);
-    _res.end = function (...args: unknown[]) {
-      logger.response('HTTP', req.method, req.url, _res.statusCode, Date.now() - start);
-      return origEnd(...args as Parameters<typeof _res.end>);
-    };
-    next();
-  });
+  logger.info('SYSTEM', 'Base layer initialized');
 
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: Date.now() });
-  });
+  // ============================================================
+  // Core Layer
+  // ============================================================
+  const modelConfigService = new ModelConfigService(sqliteDB);
+  const llmService = new LLMService(modelConfigService, sqliteDB);
+  const mcpManager = new MCPManager(sqliteDB);
+  const skillManager = new SkillManager(sqliteDB);
+  const soulManager = new SoulManager(sqliteDB);
+  const workManager = new WorkManager(sqliteDB);
+  const informationService = new InformationService(sqliteDB, llmService);
+  const libraryService = new LibraryService(sqliteDB);
+  const storageService = new StorageService();
+  const coreModelConfigService = new CoreModelConfigService();
+  // Initialize LLM service with fallback to global model config
+  llmService.setFallbackConfigProvider(coreModelConfigService);
+  const coreLlmService = new CoreLLMService(coreModelConfigService);
+  const coreInformationService = new CoreInformationService(storageService, coreLlmService);
+  const learningServiceCore = new LearningService(coreInformationService, coreLlmService, storageService);
 
-  // Model config API
-  app.use('/api/config', createConfigRoutes(modelConfigService));
+  logger.info('SYSTEM', 'Core layer initialized');
 
-  // Chat API
-  app.use('/api/chat', createChatRoutes());
+  // ============================================================
+  // Strategy Layer
+  // ============================================================
+  const orchestrator = new AgentOrchestrator(llmService);
 
-  // Library API
-  app.use('/api/library', createLibraryRoutes());
+  logger.info('SYSTEM', 'Strategy layer initialized');
 
-  // Memory API
-  app.use('/api/memory', createMemoryRoutes());
+  // ============================================================
+  // Application Layer
+  // ============================================================
+  const userProfileService = new UserProfileService(sqliteDB);
+  const learningService = new SelfLearningService(informationService, llmService);
+  const documentService = new DocumentService(informationService);
 
-  // MCP API
-  app.use('/api/mcp', createMCPRoutes());
+  // Additional services for agent/mcp/skill/agent routes
+  const toolService = new ToolService();
+  const agentLibrary = new AgentLibrary(storageService);
+  const agentBuilder = new AgentBuilder(storageService, coreLlmService);
+  const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
+  const graphExecutor = new GraphExecutor(coreLlmService, toolService);
 
-  // Stats endpoint — supports ?window=today|7d|31d & ?tokenYear=YYYY & ?latencyYear=YYYY
-  app.get('/api/stats', (req, res) => {
-    const windowParam = req.query.window as string;
-    const tokenYearParam = req.query.tokenYear ? parseInt(req.query.tokenYear as string) : undefined;
-    const latencyYearParam = req.query.latencyYear ? parseInt(req.query.latencyYear as string) : undefined;
-    let windowMs = 24 * 3600 * 1000; // default: today
-    if (windowParam === '7d') windowMs = 7 * 24 * 3600 * 1000;
-    else if (windowParam === '31d') windowMs = 31 * 24 * 3600 * 1000;
+  const chatService = new ChatService(informationService, llmService, orchestrator, userProfileService, metaAgent, graphExecutor, modelConfigService);
 
-    // Pre-compute all three windows for donut charts
-    const todayWindow = aggregateWindow(24 * 3600 * 1000);
-    const weekWindow = aggregateWindow(7 * 24 * 3600 * 1000);
-    const monthWindow = aggregateWindow(31 * 24 * 3600 * 1000);
+  logger.info('SYSTEM', 'Application layer initialized');
 
-    // Compute rate limit usage
-    const cfg = modelConfigService.getConfig();
-    const limits = cfg.rateLimits || { daily: 100000, weekly: 500000, monthly: 2000000 };
-    const usedDaily = todayWindow.totalTokens;
-    const usedWeekly = weekWindow.totalTokens;
-    const usedMonthly = monthWindow.totalTokens;
+  // ============================================================
+  // Access Layer: Routes
+  // ============================================================
+  app.use('/api/chat', createChatRoutes(chatService));
+  app.use('/api/gateway', createGatewayRoutes(chatService, informationService));
+  app.use('/api/config', createConfigRoutes(
+    llmService, mcpManager, soulManager, workManager, modelConfigService
+  ));
+  app.use('/api/analytics', createAnalyticsRoutes(llmService, informationService, sqliteDB));
+  app.use('/api/visual', createVisualRoutes(informationService, orchestrator));
+  app.use('/api/feedback', createFeedbackRoutes(sqliteDB));
+  app.use('/api/memory', createMemoryRoutes(informationService));
+  app.use('/api/learning', createLearningRoutes(learningService, documentService, learningServiceCore));
+  app.use('/api/profile', createProfileRoutes(userProfileService));
+  app.use('/api/mcp', createMCPRoutes(toolService, mcpManager));
+  app.use('/api/skill', createSkillRoutes(skillManager));
+  app.use('/api/agent', createAgentRoutes(agentBuilder, metaAgent));
+  app.use('/api/system', createSystemRoutes(coreLlmService));
+  app.use('/api/library', createLibraryRoutes(sqliteDB));
 
-    const requestedWindow = windowParam === '7d' ? weekWindow : windowParam === '31d' ? monthWindow : todayWindow;
+  logger.info('SYSTEM', 'Access layer initialized');
 
-    const tokenMatrixData = buildTokenMatrix(tokenYearParam);
-    const latencyMatrixData = buildTokenMatrix(latencyYearParam);
-
+  // ============================================================
+  // Health check
+  // ============================================================
+  app.get('/api/health', (_req, res) => {
     res.json({
-      system: getSystemStats(),
-      models: {
-        totalTokens,
-        totalCalls,
-        avgLatency,
-        activeSessions: 1,
-        cacheHitRate: 0,
-      },
-      window: requestedWindow,
-      tokenMatrix: tokenMatrixData.entries,
-      tokenMatrixYear: tokenMatrixData.year,
-      latencyMatrix: latencyMatrixData.entries,
-      latencyMatrixYear: latencyMatrixData.year,
-      availableYears: getAvailableYears(),
-      windows: {
-        today: { totalTokens: todayWindow.totalTokens, totalCalls: todayWindow.totalCalls, avgLatency: todayWindow.avgLatency },
-        '7d': { totalTokens: weekWindow.totalTokens, totalCalls: weekWindow.totalCalls, avgLatency: weekWindow.avgLatency },
-        '31d': { totalTokens: monthWindow.totalTokens, totalCalls: monthWindow.totalCalls, avgLatency: monthWindow.avgLatency },
-      },
-      rateLimits: {
-        daily: limits.daily,
-        weekly: limits.weekly,
-        monthly: limits.monthly,
-        usedDaily,
-        usedWeekly,
-        usedMonthly,
-      },
-      storage: {
-        sqlite: true,
-        vectorDb: vectorStore.isActive,
-        graphDb: graphStore.isActive,
-      },
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      version: '3.0.0',
+      uptime: process.uptime(),
     });
   });
 
+  logger.info('SYSTEM', 'Application initialized successfully');
   return app;
 }

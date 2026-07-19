@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type PanelType = 'memory' | 'library' | 'settings' | 'monitor' | 'soul' | 'work' | 'skill' | 'mcp'
+export type PanelType = 'memory' | 'library' | 'settings' | 'monitor' | 'soul' | 'work' | 'skill' | 'mcp' | 'learning' | 'profile' | 'visual' | 'history'
 
 export const usePanelStore = defineStore('panel', () => {
   const activePanel = ref<PanelType | null>(null)

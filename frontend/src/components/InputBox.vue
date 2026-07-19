@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { Send, Loader2 } from '@lucide/vue'
 import { useSessionStore } from '../stores/session'
 
@@ -7,18 +7,25 @@ const sessionStore = useSessionStore()
 const inputText = ref('')
 const isFocused = ref(false)
 
-const inputClass = computed(() => {
-  if (sessionStore.inputPosition === 'center') {
-    return 'fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[50%] max-w-2xl animate-slide-down'
-  }
-  return 'fixed bottom-8 left-1/2 transform -translate-x-1/2 w-[60%] max-w-3xl'
-})
+function generateUUID(): string {
+  const ts = Date.now().toString(16).padStart(12, '0')
+  const rand = Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+  return `${ts.slice(0, 8)}-${ts.slice(8)}-7${rand.slice(0, 3)}-${rand.slice(3, 7)}-${rand.slice(7, 19)}`
+}
 
 async function handleSend() {
   if (!inputText.value.trim() || sessionStore.isProcessing) return
 
   const content = inputText.value.trim()
   inputText.value = ''
+  const exchangeId = generateUUID()
+
+  // Reuse the current session so multi-turn chat stays in one conversation
+  let sessionId = sessionStore.currentSessionId
+  if (!sessionId) {
+    sessionId = generateUUID()
+    sessionStore.setSessionId(sessionId)
+  }
 
   sessionStore.addMessage({
     userId: 'default-user',
@@ -30,13 +37,11 @@ async function handleSend() {
   sessionStore.agentChain = []
   sessionStore.currentAgentChainId = null
 
-  // Collect conversation history
   const chatMessages = sessionStore.messages.map(m => ({
     role: m.role,
     content: m.content,
   }))
 
-  // Add placeholder assistant message
   const assistantMsg = sessionStore.addMessage({
     userId: 'assistant',
     content: '',
@@ -46,12 +51,16 @@ async function handleSend() {
   sessionStore.currentAgentChainId = assistantMsg.id
 
   try {
-    const resp = await fetch('http://127.0.0.1:8000/api/chat/stream', {
+    const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        userId: 'default-user',
+        message: content,
         messages: chatMessages,
         messageId: assistantMsg.id,
+        sessionId,
+        exchangeId,
       }),
     })
 
@@ -95,6 +104,7 @@ async function handleSend() {
             status?: string
             error?: string
             endTime?: number
+            agentStatus?: { agentId: string; status: string; error?: string; endTime?: number }
           }
 
           switch (event.type) {
@@ -117,6 +127,8 @@ async function handleSend() {
                 sessionStore.updateAgentStatus(event.agentId, event.status as 'idle' | 'running' | 'completed' | 'failed', event.error)
               }
               break
+            case 'error':
+              throw new Error(event.error || 'Stream error')
             case 'text':
               if (event.text) {
                 fullText += event.text
@@ -128,6 +140,16 @@ async function handleSend() {
               sessionStore.updateMessage(assistantMsg.id, { content: fullText })
               if (event.agentChain) {
                 sessionStore.storeAgentChain(assistantMsg.id, event.agentChain)
+                sessionStore.storeAgentChainByExchangeId(exchangeId, event.agentChain)
+              }
+              // Refresh ChatMap DAG with the newly persisted exchange
+              sessionStore.loadExchanges(sessionId, 'default-user')
+              if (event.agentStatus) {
+                sessionStore.updateAgentStatus(
+                  event.agentStatus.agentId,
+                  event.agentStatus.status as 'idle' | 'running' | 'completed' | 'failed',
+                  event.agentStatus.error
+                )
               }
               break
           }
@@ -153,38 +175,36 @@ function handleKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div :class="inputClass">
-    <div
-      :class="[
-        'glass-input rounded-xl flex items-center px-4 py-3',
-        isFocused ? 'shadow-focus' : 'shadow-glass',
-        sessionStore.isProcessing ? 'opacity-70 cursor-not-allowed' : ''
-      ]"
-    >
-      <input
-        v-model="inputText"
-        type="text"
-        placeholder="与Brian对话..."
-        class="flex-1 bg-transparent outline-none text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400"
-        :disabled="sessionStore.isProcessing"
-        @focus="isFocused = true"
-        @blur="isFocused = false"
-        @keydown="handleKeydown"
-      />
+  <div
+    :class="[
+      'glass-input rounded-xl flex items-center px-4 py-3',
+      isFocused ? 'shadow-focus' : 'shadow-glass',
+      sessionStore.isProcessing ? 'opacity-70 cursor-not-allowed' : ''
+    ]"
+  >
+    <input
+      v-model="inputText"
+      type="text"
+      placeholder="与Brian对话..."
+      class="flex-1 bg-transparent outline-none text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400"
+      :disabled="sessionStore.isProcessing"
+      @focus="isFocused = true"
+      @blur="isFocused = false"
+      @keydown="handleKeydown"
+    />
 
-      <button
-        :disabled="!inputText.trim() || sessionStore.isProcessing"
-        :class="[
-          'ml-3 p-2 rounded-full transition-all duration-150',
-          inputText.trim() && !sessionStore.isProcessing
-            ? 'bg-brian-blue text-white hover:bg-brian-blue/90 active:scale-95'
-            : 'bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-400 cursor-not-allowed'
-        ]"
-        @click="handleSend"
-      >
-        <Loader2 v-if="sessionStore.isProcessing" :size="18" class="animate-spin" />
-        <Send v-else :size="18" />
-      </button>
-    </div>
+    <button
+      :disabled="!inputText.trim() || sessionStore.isProcessing"
+      :class="[
+        'ml-3 p-2 rounded-full transition-all duration-150',
+        inputText.trim() && !sessionStore.isProcessing
+          ? 'bg-brian-blue text-white hover:bg-brian-blue/90 active:scale-95'
+          : 'bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-400 cursor-not-allowed'
+      ]"
+      @click="handleSend"
+    >
+      <Loader2 v-if="sessionStore.isProcessing" :size="18" class="animate-spin" />
+      <Send v-else :size="18" />
+    </button>
   </div>
 </template>

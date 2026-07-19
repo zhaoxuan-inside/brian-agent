@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Wand2, Plus, Trash2, Edit3, Save, Globe, Terminal, FileText, Search, Code2, Monitor } from '@lucide/vue'
+import { skillApi, type ConfigItem } from '../../api'
 
 interface SkillItem {
   id: string
@@ -27,7 +28,7 @@ const availableTools = [
   { id: 'codeInterpreter', label: 'Code Interpreter' },
 ]
 
-const availableModels = ['auto', 'gpt-4o', 'gpt-4-turbo', 'claude-3-opus', 'deepseek-v3']
+const availableModels = ref<string[]>(['auto'])
 
 const newForm = ref({
   name: '',
@@ -50,6 +51,46 @@ const editForm = ref({
 })
 
 const newKeywordInput = ref('')
+
+function mapSkill(item: ConfigItem): SkillItem {
+  const createdAtRaw = item.createdAt as unknown
+  let createdAt = Date.now()
+  if (typeof createdAtRaw === 'number') {
+    createdAt = createdAtRaw
+  } else if (typeof createdAtRaw === 'string') {
+    const parsed = Date.parse(createdAtRaw)
+    if (!Number.isNaN(parsed)) createdAt = parsed
+  }
+  const enabled = item.enabled !== undefined
+    ? Boolean(item.enabled)
+    : item.active !== undefined
+      ? Boolean(item.active)
+      : true
+  return {
+    id: String(item.id ?? item.name ?? ''),
+    name: String(item.name ?? ''),
+    description: String(item.description ?? ''),
+    triggerKeywords: Array.isArray(item.triggerKeywords) ? (item.triggerKeywords as unknown[]).map(String) : [],
+    systemPrompt: String(item.systemPrompt ?? ''),
+    boundTools: Array.isArray(item.boundTools) ? (item.boundTools as unknown[]).map(String) : [],
+    preferredModel: String(item.preferredModel ?? 'auto'),
+    enabled,
+    createdAt,
+  }
+}
+
+async function loadSkills() {
+  try {
+    const result = await skillApi.list()
+    skills.value = Array.isArray(result.skills) ? result.skills.map(mapSkill) : []
+  } catch {
+    skills.value = []
+  }
+}
+
+onMounted(() => {
+  loadSkills()
+})
 
 function addKeyword(to: typeof newForm.value) {
   const kw = newKeywordInput.value.trim()
@@ -82,20 +123,43 @@ function startEdit(s: SkillItem) {
   }
 }
 
-function saveEdit() {
-  const idx = skills.value.findIndex(s => s.id === editingId.value)
-  if (idx !== -1) {
-    skills.value[idx] = { ...skills.value[idx], ...editForm.value }
-  }
+async function saveEdit() {
+  if (!editingId.value) return
+  try {
+    const updated = await skillApi.update(editingId.value, {
+      name: editForm.value.name,
+      description: editForm.value.description,
+      triggerKeywords: editForm.value.triggerKeywords,
+      systemPrompt: editForm.value.systemPrompt,
+      boundTools: editForm.value.boundTools,
+      preferredModel: editForm.value.preferredModel,
+      enabled: editForm.value.enabled,
+    })
+    const idx = skills.value.findIndex(s => s.id === editingId.value)
+    if (idx !== -1 && updated) skills.value[idx] = mapSkill(updated as ConfigItem)
+  } catch { /* ignore */ }
   editingId.value = null
 }
 
-function addNew() {
-  skills.value.push({
-    id: `skill-${Date.now()}`,
-    ...newForm.value,
-    createdAt: Date.now(),
-  })
+async function addNew() {
+  try {
+    const created = await skillApi.create({
+      name: newForm.value.name,
+      description: newForm.value.description,
+      triggerKeywords: newForm.value.triggerKeywords,
+      systemPrompt: newForm.value.systemPrompt,
+      boundTools: newForm.value.boundTools,
+      preferredModel: newForm.value.preferredModel,
+      enabled: newForm.value.enabled,
+    })
+    if (created) {
+      skills.value.push(mapSkill(created as ConfigItem))
+    } else {
+      await loadSkills()
+    }
+  } catch {
+    /* ignore — keep local form so user can retry */
+  }
   newForm.value = {
     name: '',
     description: '',
@@ -108,10 +172,27 @@ function addNew() {
   showNew.value = false
 }
 
-function remove(id: string) { skills.value = skills.value.filter(s => s.id !== id) }
-function toggle(id: string) {
+async function remove(id: string) {
+  const prev = skills.value
+  skills.value = skills.value.filter(s => s.id !== id)
+  try {
+    await skillApi.delete(id)
+  } catch {
+    // restore on failure
+    skills.value = prev
+  }
+}
+async function toggle(id: string) {
   const s = skills.value.find(s => s.id === id)
-  if (s) s.enabled = !s.enabled
+  if (!s) return
+  const oldEnabled = s.enabled
+  s.enabled = !s.enabled
+  try {
+    await skillApi.toggle(id)
+  } catch (err) {
+    console.error('[SkillPanel] toggle failed:', err)
+    s.enabled = oldEnabled
+  }
 }
 
 function getToolIcon(toolId: string) {
@@ -143,8 +224,8 @@ function getToolIcon(toolId: string) {
     </div>
 
     <div v-if="showNew" class="p-4 border-b space-y-3 bg-apple-gray-50 dark:bg-apple-gray-800/50">
-      <input v-model="newForm.name" placeholder="技能名称" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-      <input v-model="newForm.description" placeholder="描述" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
+      <input v-model="newForm.name" placeholder="技能名称" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+      <input v-model="newForm.description" placeholder="描述" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
 
       <!-- Trigger keywords tag input -->
       <div>
@@ -157,7 +238,7 @@ function getToolIcon(toolId: string) {
           </span>
         </div>
         <div class="flex gap-1">
-          <input v-model="newKeywordInput" placeholder="输入关键词后回车" class="flex-1 px-3 py-1.5 rounded-lg text-xs bg-white dark:bg-apple-gray-800 outline-none"
+          <input v-model="newKeywordInput" placeholder="输入关键词后回车" class="flex-1 px-3 py-1.5 rounded-lg text-xs bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all"
             @keyup.enter="addKeyword(newForm)" />
           <button class="px-3 py-1.5 text-xs bg-apple-gray-200 dark:bg-apple-gray-700 rounded-lg" @click="addKeyword(newForm)">添加</button>
         </div>
@@ -167,7 +248,7 @@ function getToolIcon(toolId: string) {
       <div>
         <label class="text-xs text-apple-gray-400 mb-1 block">System Prompt 模板</label>
         <textarea v-model="newForm.systemPrompt" placeholder="定义 Agent 行为..." rows="4"
-          class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
+          class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
       </div>
 
       <!-- Bound tools -->
@@ -187,17 +268,9 @@ function getToolIcon(toolId: string) {
       <!-- Preferred model -->
       <div>
         <label class="text-xs text-apple-gray-400 mb-1 block">首选模型</label>
-        <select v-model="newForm.preferredModel" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none">
+        <select v-model="newForm.preferredModel" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all">
           <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
         </select>
-      </div>
-
-      <div class="flex items-center gap-3">
-        <label class="text-xs text-apple-gray-400">启用</label>
-        <button :class="['w-9 h-5 rounded-full transition-colors relative', newForm.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300']"
-          @click="newForm.enabled = !newForm.enabled">
-          <div :class="['w-3.5 h-3.5 rounded-full bg-white absolute top-0.5 transition-transform', newForm.enabled ? 'translate-x-[18px]' : 'translate-x-0.5']" />
-        </button>
       </div>
 
       <div class="flex gap-2">
@@ -207,13 +280,13 @@ function getToolIcon(toolId: string) {
     </div>
 
     <div class="flex-1 overflow-y-auto p-4 space-y-3">
-      <div v-for="s in skills" :key="s.id" class="glass-panel rounded-xl p-4">
-        <div class="flex items-start justify-between mb-2">
+      <div v-for="s in skills" :key="s.id" class="glass-panel rounded-xl p-4 relative">
+        <!-- Status badge: top-right -->
+        <span :class="['absolute top-3 right-3 text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none', s.enabled ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-200 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-400']">
+          {{ s.enabled ? '已启用' : '已禁用' }}
+        </span>
+        <div class="flex items-start justify-between mb-2 pr-16">
           <div class="flex items-center gap-2">
-            <button :class="['w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0', s.enabled ? 'bg-success-green border-success-green' : 'border-apple-gray-300 dark:border-apple-gray-600']"
-              @click="toggle(s.id)">
-              <div v-if="s.enabled" class="w-2 h-2 rounded-full bg-white" />
-            </button>
             <div>
               <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ s.name }}</h3>
               <p class="text-xs text-apple-gray-400">{{ s.description }}</p>
@@ -241,23 +314,18 @@ function getToolIcon(toolId: string) {
         <pre class="text-[11px] text-apple-gray-600 dark:text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800/50 rounded-lg p-3 whitespace-pre-wrap line-clamp-3">{{ s.systemPrompt }}</pre>
         <div class="flex items-center gap-3 mt-2 text-[10px] text-apple-gray-400">
           <span>模型: {{ s.preferredModel }}</span>
-          <span :class="s.enabled ? 'text-success-green' : 'text-apple-gray-400'">{{ s.enabled ? '已启用' : '已禁用' }}</span>
+          <button type="button" :class="['w-10 h-6 rounded-full transition-colors duration-200 relative cursor-pointer', s.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600']" @click.stop="toggle(s.id)" :title="s.enabled ? '禁用' : '启用'">
+            <span :class="['w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 left-0.5 transition-transform duration-200 pointer-events-none', s.enabled ? 'translate-x-[20px]' : 'translate-x-0']" />
+          </button>
         </div>
 
         <!-- Edit form -->
         <div v-if="editingId === s.id" class="mt-3 pt-3 border-t border-apple-gray-200 dark:border-apple-gray-700 space-y-2">
-          <input v-model="editForm.name" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-          <textarea v-model="editForm.systemPrompt" rows="3" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-          <select v-model="editForm.preferredModel" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none">
+          <input v-model="editForm.name" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+          <textarea v-model="editForm.systemPrompt" rows="3" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+          <select v-model="editForm.preferredModel" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all">
             <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
           </select>
-          <div class="flex items-center gap-3">
-            <label class="text-xs text-apple-gray-400">启用</label>
-            <button :class="['w-9 h-5 rounded-full transition-colors relative', editForm.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300']"
-              @click="editForm.enabled = !editForm.enabled">
-              <div :class="['w-3.5 h-3.5 rounded-full bg-white absolute top-0.5 transition-transform', editForm.enabled ? 'translate-x-[18px]' : 'translate-x-0.5']" />
-            </button>
-          </div>
           <button class="px-3 py-1 text-xs font-medium bg-brian-blue text-white rounded" @click="saveEdit"><Save :size="12" class="inline mr-1" />保存</button>
         </div>
       </div>

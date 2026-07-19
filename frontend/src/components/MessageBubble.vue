@@ -7,17 +7,34 @@ import { useSessionStore } from '../stores/session'
 
 const props = defineProps<{
   message: Message
+  hasNext?: boolean
+  nextRole?: string | null
+}>()
+
+const emit = defineEmits<{
+  'openAgentChain': [exchangeId: string]
 }>()
 
 const sessionStore = useSessionStore()
 const showRating = ref(false)
 
 const hasAgentChain = computed(() => {
-  return props.message.role === 'assistant' && props.message.id in sessionStore.agentChainHistory
+  const byExchange = props.message.exchangeId && sessionStore.agentChainByExchangeId[props.message.exchangeId]
+  const byMsgId = props.message.id && sessionStore.agentChainHistory[props.message.id]
+  return !!(byExchange || byMsgId)
 })
 
 function viewAgentChain() {
-  sessionStore.loadAgentChainForMessage(props.message.id)
+  // Try exchangeId first, fallback to messageId
+  if (props.message.exchangeId) {
+    sessionStore.loadAgentChainByExchangeId(props.message.exchangeId)
+    emit('openAgentChain', props.message.exchangeId)
+    return
+  }
+  if (props.message.id) {
+    sessionStore.loadAgentChainForMessage(props.message.id)
+    emit('openAgentChain', props.message.id)
+  }
 }
 
 setTimeout(() => {
@@ -31,8 +48,11 @@ function formatTime(timestamp: number): string {
 </script>
 
 <template>
-  <div class="message-row" :class="message.role">
-    <!-- Assistant: avatar + content -->
+  <div
+    class="message-row"
+    :class="message.role"
+    :data-exchange-id="message.exchangeId"
+  >
     <template v-if="message.role === 'assistant'">
       <div class="message-avatar assistant-avatar">
         <Sparkles :size="16" />
@@ -54,8 +74,8 @@ function formatTime(timestamp: number): string {
           <p class="message-text">{{ message.content }}</p>
         </div>
         <Transition name="fade">
-          <RatingButtons 
-            v-if="showRating" 
+          <RatingButtons
+            v-if="showRating"
             :message-id="message.id"
             :rating="message.rating"
             class="mt-2"
@@ -64,10 +84,17 @@ function formatTime(timestamp: number): string {
       </div>
     </template>
 
-    <!-- User: right-aligned, no avatar -->
     <template v-else>
       <div class="message-body user-body">
         <div class="message-header user-header">
+          <button
+            v-if="hasAgentChain"
+            class="mr-1.5 p-0.5 rounded hover:bg-white/20 transition-colors text-white/60 hover:text-white inline-flex"
+            title="查看 Agent 调度链"
+            @click="viewAgentChain"
+          >
+            <GitBranch :size="12" />
+          </button>
           <span class="message-time">{{ formatTime(message.timestamp) }}</span>
           <span class="message-sender">You</span>
         </div>

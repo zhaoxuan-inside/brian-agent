@@ -1,26 +1,32 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { History, Clock, MessageCircle, Trash2, GitBranch } from '@lucide/vue'
 import { useSessionStore } from '../../stores/session'
 
 const sessionStore = useSessionStore()
 const searchQuery = ref('')
+const chatList = ref<{ sessionId: string; lastMessage: string; lastTime: number }[]>([])
+const loading = ref(false)
+
+onMounted(async () => {
+  loading.value = true
+  try {
+    await sessionStore.loadChatList('default-user')
+    chatList.value = sessionStore.chatList
+  } catch { /* ignore */ }
+  loading.value = false
+})
 
 const sessions = computed(() => {
-  const msgs = sessionStore.messages
-  if (msgs.length === 0) return []
-  
-  // Group messages into conversation "sessions" — typically one session = user+assistant pair
-  const userMessages = msgs.filter(m => m.role === 'user')
-  return userMessages.map((msg) => {
-    const hasChain = msg.id in sessionStore.agentChainHistory || 
-      (msg.id === sessionStore.currentAgentChainId && sessionStore.agentChain.length > 0)
+  if (chatList.value.length === 0) return []
+  return chatList.value.map((chat) => {
+    const hasChain = chat.sessionId in sessionStore.agentChainHistory
     return {
-      id: msg.id,
-      title: msg.content.length > 30 ? msg.content.slice(0, 30) + '...' : msg.content,
-      messages: 2, // user + assistant
-      lastMessage: msgs[msgs.findIndex(m => m.id === msg.id) + 1]?.content?.slice(0, 50) || '(等待回复)',
-      timestamp: msg.timestamp,
+      id: chat.sessionId,
+      title: chat.lastMessage && chat.lastMessage.length > 30 ? chat.lastMessage.slice(0, 30) + '...' : chat.lastMessage || '(空对话)',
+      messages: 2,
+      lastMessage: chat.lastMessage?.slice(0, 50) || '(等待回复)',
+      timestamp: chat.lastTime,
       tags: hasChain ? ['Agent 调度'] : [],
     }
   })
@@ -53,20 +59,12 @@ function filteredSessions() {
 }
 
 function handleDeleteMessage(id: string) {
-  const idx = sessionStore.messages.findIndex(m => m.id === id)
-  if (idx !== -1) {
-    sessionStore.messages.splice(idx, 1)
-    // Also remove the next assistant message
-    if (idx < sessionStore.messages.length && sessionStore.messages[idx].role === 'assistant') {
-      sessionStore.messages.splice(idx, 1)
-    }
-    // Remove agent chain
-    delete sessionStore.agentChainHistory[id]
-  }
+  chatList.value = chatList.value.filter(c => c.sessionId !== id)
+  delete sessionStore.agentChainHistory[id]
 }
 
 function viewAgentChain(msgId: string) {
-  sessionStore.loadAgentChainForMessage(msgId)
+  sessionStore.loadAgentChainByExchangeId(msgId)
 }
 </script>
 
@@ -97,7 +95,10 @@ function viewAgentChain(msgId: string) {
     </div>
     
     <div class="flex-1 overflow-y-auto p-4">
-      <div class="space-y-2">
+      <div v-if="loading" class="text-center py-12">
+        <p class="text-sm text-apple-gray-400">加载中...</p>
+      </div>
+      <div v-else class="space-y-2">
         <div 
           v-for="session in filteredSessions()" 
           :key="session.id"
@@ -142,7 +143,7 @@ function viewAgentChain(msgId: string) {
         </div>
       </div>
       
-      <div v-if="filteredSessions().length === 0" class="text-center py-12">
+      <div v-if="!loading && filteredSessions().length === 0" class="text-center py-12">
         <History :size="48" class="mx-auto text-apple-gray-300 dark:text-apple-gray-600 mb-3" />
         <p class="text-sm text-apple-gray-500 dark:text-apple-gray-400">没有找到匹配的会话</p>
       </div>

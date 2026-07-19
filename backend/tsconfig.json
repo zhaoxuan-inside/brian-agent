@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -11,13 +11,9 @@
     "isolatedModules": true,
     "outDir": "./dist",
     "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["../shared/src/*"]
-    },
-    "lib": ["ES2022"]
+    "lib": ["ES2022"],
+    "composite": true,
+    "declaration": true
   },
-  "include": [
-    "src/**/*",
-    "../shared/src/**/*"
-  ]
+  "include": ["src/**/*"]
 }

@@ -2,7 +2,7 @@ export type NodeType = 'memory' | 'tag' | 'concept' | 'entity';
 
 export type AgentType = 'root' | 'work' | 'sub' | 'coordinator' | 'searcher' | 'caller' | 'skiller' | 'generator';
 
-export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed';
+export type AgentStatus = 'idle' | 'pending' | 'running' | 'completed' | 'failed';
 
 export type MessageType = 'agent_created' | 'agent_status_change' | 'agent_output' | 'agent_complete' | 'message_received' | 'message_response' | 'feedback_submitted' | 'error';
 
@@ -91,10 +91,15 @@ export interface Message {
   id: string;
   userId: string;
   content: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   timestamp: number;
   rating?: 'good' | 'neutral' | 'bad';
   agentId?: string;
+  sessionId?: string;
+  exchangeId?: string;
+  msgId?: string;
+  summary?: string;
+  referenceCount?: number;
 }
 
 export interface AgentNode {
@@ -105,7 +110,7 @@ export interface AgentNode {
   description: string;
   status: AgentStatus;
   parentId?: string;
-  children: string[];
+  children: string[] | AgentNode[];
   startTime?: number;
   endTime?: number;
   output: AgentOutputItem[];

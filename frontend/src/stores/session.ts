@@ -1,8 +1,72 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { Message, AgentNode, AgentStatus } from '@shared/types'
+import { chatApi } from '../api'
 
 export type AgentChainStore = Record<string, AgentNode[]>
+
+export interface ExchangeGroup {
+  exchangeId: string
+  userMessage: {
+    msgId: string
+    content: string
+    summary: string
+    referenceCount: number
+    createdAt: number
+  } | null
+  assistantMessage: {
+    msgId: string
+    content: string
+    summary: string
+    referenceCount: number
+    createdAt: number
+  } | null
+  messageCount: number
+  firstMessageAt: number
+  lastMessageAt: number
+  referencedExchangeIds: string[]
+}
+
+export interface ChatListItem {
+  sessionId: string
+  lastMessage: string
+  lastTime: number
+}
+
+function loadSplitRatio(): number {
+  try {
+    const saved = localStorage.getItem('chat-split-ratio')
+    if (saved) {
+      const ratio = parseFloat(saved)
+      if (ratio >= 30 && ratio <= 70) return ratio
+    }
+  } catch { /* ignore */ }
+  return 65 // default 65% for ChatMap
+}
+
+function saveSplitRatio(ratio: number): void {
+  try {
+    localStorage.setItem('chat-split-ratio', String(ratio))
+  } catch { /* ignore */ }
+}
+
+function loadSessionId(): string | null {
+  try {
+    return localStorage.getItem('chat-current-session-id')
+  } catch {
+    return null
+  }
+}
+
+function saveSessionId(sessionId: string | null): void {
+  try {
+    if (sessionId) {
+      localStorage.setItem('chat-current-session-id', sessionId)
+    } else {
+      localStorage.removeItem('chat-current-session-id')
+    }
+  } catch { /* ignore */ }
+}
 
 export const useSessionStore = defineStore('session', () => {
   const messages = ref<Message[]>([])
@@ -11,6 +75,46 @@ export const useSessionStore = defineStore('session', () => {
   const inputPosition = ref<'center' | 'bottom'>('center')
   const currentAgentChainId = ref<string | null>(null)
   const agentChainHistory = ref<AgentChainStore>({})
+  const agentChainByExchangeId = ref<Record<string, AgentNode[]>>({})
+
+  // New state for dual-column layout
+  const exchanges = ref<ExchangeGroup[]>([])
+  const chatList = ref<ChatListItem[]>([])
+  const splitRatio = ref<number>(loadSplitRatio())
+  const currentSessionId = ref<string | null>(loadSessionId())
+  const isLoadingExchanges = ref(false)
+  const isLoadingHistory = ref(false)
+
+  // Computed: messages grouped by date
+  const groupedMessages = computed(() => {
+    const groups: { date: string; label: string; messages: Message[] }[] = []
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const yesterday = today - 86400000
+
+    for (const msg of messages.value) {
+      const msgDate = new Date(msg.timestamp)
+      const msgDay = new Date(msgDate.getFullYear(), msgDate.getMonth(), msgDate.getDate()).getTime()
+
+      let label: string
+      if (msgDay === today) {
+        label = '今天'
+      } else if (msgDay === yesterday) {
+        label = '昨天'
+      } else {
+        label = msgDate.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+      }
+
+      const dateKey = `${msgDay}`
+      let group = groups.find(g => g.date === dateKey)
+      if (!group) {
+        group = { date: dateKey, label, messages: [] }
+        groups.push(group)
+      }
+      group.messages.push(msg)
+    }
+    return groups
+  })
 
   function addMessage(message: Omit<Message, 'id' | 'timestamp'>) {
     const newMessage: Message = {
@@ -19,7 +123,7 @@ export const useSessionStore = defineStore('session', () => {
       timestamp: Date.now()
     }
     messages.value.push(newMessage)
-    
+
     if (inputPosition.value === 'center' && message.role === 'user') {
       inputPosition.value = 'bottom'
     }
@@ -78,7 +182,11 @@ export const useSessionStore = defineStore('session', () => {
 
   function storeAgentChain(messageId: string, chain: AgentNode[]) {
     agentChainHistory.value[messageId] = chain
-    // Also set as current display
+    agentChain.value = chain
+  }
+
+  function storeAgentChainByExchangeId(exchangeId: string, chain: AgentNode[]) {
+    agentChainByExchangeId.value = { ...agentChainByExchangeId.value, [exchangeId]: chain }
     agentChain.value = chain
   }
 
@@ -92,11 +200,47 @@ export const useSessionStore = defineStore('session', () => {
     return false
   }
 
+  function loadAgentChainByExchangeId(exchangeId: string): boolean {
+    const chain = agentChainByExchangeId.value[exchangeId]
+    if (chain) {
+      agentChain.value = chain
+      currentAgentChainId.value = exchangeId
+      return true
+    }
+    // Not in memory, fetch from API
+    fetchAgentChainByExchangeId(exchangeId)
+    return false
+  }
+
+  async function fetchAgentChainByExchangeId(exchangeId: string): Promise<boolean> {
+    try {
+      const resp = await chatApi.agentChain(exchangeId)
+      const chain = resp.agentChain as AgentNode[]
+      if (chain && chain.length > 0) {
+        agentChainByExchangeId.value = { ...agentChainByExchangeId.value, [exchangeId]: chain }
+        agentChain.value = chain
+        currentAgentChainId.value = exchangeId
+        return true
+      }
+    } catch {
+      // chain not found
+    }
+    return false
+  }
+
+  function setSessionId(sessionId: string | null) {
+    currentSessionId.value = sessionId
+    saveSessionId(sessionId)
+  }
+
   function clearMessages() {
     messages.value = []
     agentChain.value = []
+    exchanges.value = []
     agentChainHistory.value = {}
+    agentChainByExchangeId.value = {}
     currentAgentChainId.value = null
+    setSessionId(null)
     inputPosition.value = 'center'
   }
 
@@ -108,13 +252,74 @@ export const useSessionStore = defineStore('session', () => {
     isProcessing.value = false
   }
 
+  // New methods for dual-column layout
+
+  async function loadChatList(userId: string) {
+    try {
+      chatList.value = await chatApi.list(userId)
+    } catch (e) {
+      console.error('[sessionStore] loadChatList failed:', e)
+    }
+  }
+
+  async function loadExchanges(sessionId: string, userId: string) {
+    isLoadingExchanges.value = true
+    try {
+      const result = await chatApi.exchanges(sessionId, userId)
+      exchanges.value = result.exchanges
+    } catch (e) {
+      console.error('[sessionStore] loadExchanges failed:', e)
+    } finally {
+      isLoadingExchanges.value = false
+    }
+  }
+
+  async function loadChatHistory(sessionId: string, userId: string, page: number = 1, pageSize: number = 100) {
+    isLoadingHistory.value = true
+    try {
+      const result = await chatApi.history(sessionId, userId, page, pageSize)
+      // Map API response to Message format
+      messages.value = result.messages.map(msg => ({
+        id: msg.id,
+        userId,
+        content: msg.content,
+        role: msg.role as Message['role'],
+        timestamp: msg.createdAt,
+        sessionId: msg.sessionId,
+        exchangeId: msg.exchangeId,
+        msgId: msg.msgId,
+        summary: msg.summary,
+        referenceCount: msg.referenceCount,
+      }))
+      setSessionId(sessionId)
+      inputPosition.value = 'bottom'
+    } catch (e) {
+      console.error('[sessionStore] loadChatHistory failed:', e)
+    } finally {
+      isLoadingHistory.value = false
+    }
+  }
+
+  function setSplitRatio(ratio: number) {
+    splitRatio.value = ratio
+    saveSplitRatio(ratio)
+  }
+
   return {
     messages,
     agentChain,
     agentChainHistory,
+    agentChainByExchangeId,
     currentAgentChainId,
     isProcessing,
     inputPosition,
+    exchanges,
+    chatList,
+    splitRatio,
+    currentSessionId,
+    isLoadingExchanges,
+    isLoadingHistory,
+    groupedMessages,
     addMessage,
     updateMessage,
     addAgentFromServer,
@@ -122,8 +327,16 @@ export const useSessionStore = defineStore('session', () => {
     updateAgentStatus,
     storeAgentChain,
     loadAgentChainForMessage,
+    storeAgentChainByExchangeId,
+    loadAgentChainByExchangeId,
+    fetchAgentChainByExchangeId,
     clearMessages,
     startProcessing,
-    stopProcessing
+    stopProcessing,
+    loadChatList,
+    loadExchanges,
+    loadChatHistory,
+    setSessionId,
+    setSplitRatio,
   }
 })

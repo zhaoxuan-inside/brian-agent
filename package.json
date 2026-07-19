@@ -27,6 +27,7 @@
   "author": "Brian-Agent Team",
   "license": "MIT",
   "devDependencies": {
+    "@types/supertest": "^7.2.0",
     "vue-eslint-parser": "^10.4.1"
   }
 }

@@ -1,24 +1,35 @@
 <script setup lang="ts">
-import { Brain, Library, Settings, Sun, Moon, User, Activity, Layers, Puzzle, Wand2, Server } from '@lucide/vue'
+import { Brain, Library, Settings, Sun, Moon, User, Layers, Puzzle, Wand2, Server, MessageCircle, Cpu, GitBranch, BookOpen, BarChart3, History, Bot } from '@lucide/vue'
 import { useThemeStore } from '../stores/theme'
-import { usePanelStore, type PanelType } from '../stores/panel'
+import { useRouter, useRoute } from 'vue-router'
 
 const themeStore = useThemeStore()
-const panelStore = usePanelStore()
+const router = useRouter()
+const route = useRoute()
 
 const menuItems = [
-  { icon: Brain, panel: 'memory' as PanelType, label: '记忆' },
-  { icon: Library, panel: 'library' as PanelType, label: '资料库' },
-  { icon: Activity, panel: 'monitor' as PanelType, label: '监控' },
-  { icon: Layers, panel: 'soul' as PanelType, label: 'Soul' },
-  { icon: Puzzle, panel: 'work' as PanelType, label: 'Work' },
-  { icon: Wand2, panel: 'skill' as PanelType, label: 'Skill' },
-  { icon: Server, panel: 'mcp' as PanelType, label: 'MCP' },
-  { icon: Settings, panel: 'settings' as PanelType, label: '设置' },
+  { icon: MessageCircle, route: '/', label: '对话' },
+  { icon: History, route: '/history', label: '历史' },
+  { icon: Brain, route: '/memory', label: '记忆' },
+  { icon: BarChart3, route: '/monitor', label: '监控' },
+  { icon: GitBranch, route: '/visual', label: '可视化' },
+  { icon: BookOpen, route: '/learning', label: '学习' },
+  { icon: Library, route: '/library', label: '资料库' },
+  { icon: Layers, route: '/soul', label: 'Soul' },
+  { icon: Puzzle, route: '/work', label: 'Work' },
+  { icon: Wand2, route: '/skill', label: 'Skill' },
+  { icon: Cpu, route: '/models', label: '模型' },
+  { icon: Bot, route: '/agent', label: 'Agent' },
 ]
 
-function handleMenuClick(panel: PanelType) {
-  panelStore.togglePanel(panel)
+function isActive(menuRoute: string): boolean {
+  return route.path === menuRoute
+}
+
+function handleThemeToggle() {
+  console.log('[Theme] before toggle - isDark:', themeStore.isDark)
+  themeStore.toggleTheme()
+  console.log('[Theme] after toggle - isDark:', themeStore.isDark)
 }
 </script>
 
@@ -33,10 +44,15 @@ function handleMenuClick(panel: PanelType) {
     <div class="flex items-center gap-2">
       <button 
         v-for="item in menuItems" 
-        :key="item.panel"
-        class="icon-btn text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors"
+        :key="item.route"
+        :class="[
+          'icon-btn transition-colors',
+          isActive(item.route) 
+            ? 'text-brian-blue' 
+            : 'text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue'
+        ]"
         :title="item.label"
-        @click="handleMenuClick(item.panel)"
+        @click="router.push(item.route)"
       >
         <component :is="item.icon" :size="22" />
       </button>
@@ -44,15 +60,23 @@ function handleMenuClick(panel: PanelType) {
       <button 
         class="icon-btn text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors"
         :title="themeStore.isDark ? '切换到浅色模式' : '切换到深色模式'"
-        @click="themeStore.toggleTheme"
+        @click="handleThemeToggle"
       >
         <Sun v-if="themeStore.isDark" :size="22" />
         <Moon v-else :size="22" />
       </button>
       
+      <button 
+        class="icon-btn text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors"
+        title="设置"
+        @click="router.push('/settings')"
+      >
+        <Settings :size="22" />
+      </button>
+      
       <div class="w-px h-6 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
       
-      <button class="icon-btn">
+      <button class="icon-btn" title="用户画像" @click="router.push('/profile')">
         <User :size="22" class="text-apple-gray-600 dark:text-apple-gray-400" />
       </button>
     </div>

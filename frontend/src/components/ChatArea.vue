@@ -1,82 +1,109 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useSessionStore } from '../stores/session'
-import MessageBubble from './MessageBubble.vue'
-import AgentChainSidebar from './AgentChainSidebar.vue'
+import ChatMap from './ChatMap.vue'
+import ResizableDivider from './ResizableDivider.vue'
+import ConversationPanel from './ConversationPanel.vue'
+import AgentChainModal from './AgentChainModal.vue'
 
 const sessionStore = useSessionStore()
-const scrollContainer = ref<HTMLElement | null>(null)
+const conversationPanel = ref<InstanceType<typeof ConversationPanel> | null>(null)
+const selectedExchangeId = ref<string | null>(null)
+const showAgentChain = ref(false)
 
-const hasAgents = computed(() => sessionStore.agentChain.length > 0)
+// Restore the previous conversation after a page refresh
+onMounted(async () => {
+  const sessionId = sessionStore.currentSessionId
+  if (!sessionId) return
+  await Promise.all([
+    sessionStore.loadChatHistory(sessionId, 'default-user'),
+    sessionStore.loadExchanges(sessionId, 'default-user'),
+  ])
+})
 
-// Watch for new messages AND content changes (streaming)
-watch(
-  () => ({
-    len: sessionStore.messages.length,
-    lastContent: sessionStore.messages[sessionStore.messages.length - 1]?.content,
-    agents: sessionStore.agentChain.length,
-  }),
-  async () => {
-    await nextTick()
-    scrollToBottom()
-  },
-  { deep: false }
-)
-
-function scrollToBottom() {
-  if (scrollContainer.value) {
-    scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
+function selectExchange(exchangeId: string) {
+  if (selectedExchangeId.value === exchangeId) {
+    selectedExchangeId.value = null
+    return
   }
+  selectedExchangeId.value = exchangeId
+  // Load the agent chain DAG for this exchange
+  sessionStore.loadAgentChainByExchangeId(exchangeId)
 }
+
+function scrollToExchange(exchangeId: string) {
+  selectedExchangeId.value = exchangeId
+  conversationPanel.value?.scrollToExchange(exchangeId)
+}
+
+function openAgentChain(exchangeId: string) {
+  sessionStore.loadAgentChainByExchangeId(exchangeId)
+  showAgentChain.value = true
+}
+
+function closeAgentChain() {
+  showAgentChain.value = false
+}
+
+defineExpose({ openAgentChain, closeAgentChain })
 </script>
 
 <template>
-  <!-- Chat messages: shifts left when agent chain sidebar is open -->
-  <div
-    :class="[
-      'fixed flex transition-all duration-300',
-      hasAgents ? 'inset-0 pt-16 pb-24 pr-[360px]' : 'inset-0 pt-16 pb-24'
-    ]"
-  >
-    <div
-      ref="scrollContainer"
-      class="flex-1 overflow-y-auto px-8 py-4"
-    >
-      <TransitionGroup
-        v-if="sessionStore.messages.length > 0"
-        name="message"
-        tag="div"
-        :class="hasAgents ? 'max-w-2xl mx-auto space-y-4' : 'max-w-4xl mx-auto space-y-4'"
-      >
-        <MessageBubble
-          v-for="message in sessionStore.messages"
-          :key="message.id"
-          :message="message"
+  <div class="chat-area-wrapper">
+    <div class="chat-area-container">
+      <!-- Left: ChatMap DAG -->
+      <div class="chatmap-panel" :style="{ width: sessionStore.splitRatio + '%' }">
+        <ChatMap
+          :exchanges="sessionStore.exchanges"
+          :selected-exchange-id="selectedExchangeId"
+          @select="selectExchange"
+          @scroll-to="scrollToExchange"
+          @open-agent-chain="openAgentChain"
         />
-      </TransitionGroup>
-    </div>
-  </div>
+      </div>
 
-  <!-- Agent chain right sidebar — always visible when agents exist -->
-  <AgentChainSidebar v-if="hasAgents" />
+      <ResizableDivider />
+
+      <!-- Right: Conversation -->
+      <div class="conversation-panel-wrap" :style="{ width: (100 - sessionStore.splitRatio) + '%' }">
+        <ConversationPanel ref="conversationPanel" @open-agent-chain="openAgentChain" />
+      </div>
+    </div>
+
+    <AgentChainModal :visible="showAgentChain" @close="closeAgentChain" />
+  </div>
 </template>
 
 <style scoped>
-.message-enter-active {
-  transition: all 0.3s ease-out;
+.chat-area-wrapper {
+  position: fixed;
+  top: 64px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
 }
 
-.message-enter-from {
-  opacity: 0;
-  transform: translateY(20px);
+.chat-area-container {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
 }
 
-.message-leave-active {
-  transition: all 0.2s ease-in;
+.chatmap-panel {
+  height: 100%;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 
-.message-leave-to {
-  opacity: 0;
-  transform: scale(0.9);
+.conversation-panel-wrap {
+  height: 100%;
+  overflow: hidden;
+  flex: 1;
+  background: #FFFFFF;
+}
+
+:root.dark .conversation-panel-wrap {
+  background: #1C1C1E;
 }
 </style>

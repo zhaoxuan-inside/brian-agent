@@ -20,7 +20,6 @@
     "shared/src/**/*"
   ],
   "references": [
-    { "path": "./backend/tsconfig.json" },
-    { "path": "./frontend/tsconfig.json" }
+    { "path": "./backend/tsconfig.json" }
   ]
 }

@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {
+      "id": "1783923890426-0",
+      "name": "test",
+      "metadata": {
+        "type": "memory"
+      }
+    }
+  ],
+  "relations": []
+}

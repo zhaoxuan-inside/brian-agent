@@ -1,50 +1,27 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Brain, Sparkles, Folder, ChevronDown, ChevronUp, User, Bot, Hash } from '@lucide/vue'
+import { memoryApi, type MemoryItem } from '../../api'
 
-const API_BASE = 'http://127.0.0.1:8000/api/memory'
+const DEFAULT_USER = 'default-user'
 
 const activeTab = ref<'recent' | 'tags' | 'groups'>('recent')
-
-interface MemoryItem {
-  id: string
-  content: string
-  summary: string
-  type: string
-  tags: string[]
-  role: 'user' | 'assistant' | 'system'
-  strength: number
-  createdAt: number
-}
-
-interface GroupItem {
-  name: string
-  count: number
-  degree: number
-}
-
-interface TagGraphNode {
-  id: string
-  name: string
-  weight: number
-  degree: number
-}
 
 interface TagGraphEdge {
   source: string
   target: string
   weight: number
-  label: string
+  label?: string
 }
 
 interface TagGraphData {
-  nodes: TagGraphNode[]
+  nodes: Array<{ id: string; name: string; weight: number; degree: number }>
   edges: TagGraphEdge[]
 }
 
 const recentMemories = ref<MemoryItem[]>([])
 const tags = ref<string[]>([])
-const groups = ref<GroupItem[]>([])
+const groups = ref<{ name: string; count: number; degree: number }[]>([])
 const tagGraph = ref<TagGraphData>({ nodes: [], edges: [] })
 const loading = ref(false)
 const expandedMemoryId = ref<string | null>(null)
@@ -65,42 +42,35 @@ const dragStart = ref({ x: 0, y: 0 })
 async function fetchMemories() {
   loading.value = true
   try {
-    const resp = await fetch(API_BASE)
-    const json = await resp.json()
-    if (json.ok) {
-      recentMemories.value = (json.data || []).sort((a: MemoryItem, b: MemoryItem) => b.createdAt - a.createdAt)
-    }
+    const result = await memoryApi.list()
+    recentMemories.value = (result.memories || []).sort((a: MemoryItem, b: MemoryItem) => b.createdAt - a.createdAt)
   } catch (e) {
     console.error('Failed to fetch memories:', e)
   }
 
   try {
-    const resp = await fetch(`${API_BASE}/tags`)
-    const json = await resp.json()
-    if (json.ok) {
-      tags.value = json.data || []
-    }
+    const result = await memoryApi.tags()
+    tags.value = result.tags || []
   } catch (e) {
     console.error('Failed to fetch tags:', e)
   }
 
   try {
-    const resp = await fetch(`${API_BASE}/groups`)
-    const json = await resp.json()
-    if (json.ok) {
-      groups.value = json.data || []
-    }
+    const result = await memoryApi.groups()
+    const groupsData = result.groups || {}
+    groups.value = Object.entries(groupsData).map(([name, items]: [string, unknown]) => ({
+      name,
+      count: (items as unknown[]).length,
+      degree: (items as unknown[]).length,
+    }))
   } catch (e) {
     console.error('Failed to fetch groups:', e)
   }
 
   try {
-    const resp = await fetch(`${API_BASE}/tag-graph`)
-    const json = await resp.json()
-    if (json.ok) {
-      tagGraph.value = json.data || { nodes: [], edges: [] }
-      initGraphSimulation()
-    }
+    const result = await memoryApi.tagGraph()
+    tagGraph.value = result.nodes ? result as TagGraphData : { nodes: [], edges: [] }
+    if (tagGraph.value.nodes.length > 0) initGraphSimulation()
   } catch (e) {
     console.error('Failed to fetch tag graph:', e)
   }
@@ -110,11 +80,8 @@ async function fetchMemories() {
 async function fetchTagMemories(tag: string) {
   selectedTag.value = tag
   try {
-    const resp = await fetch(`${API_BASE}/by-tag/${encodeURIComponent(tag)}`)
-    const json = await resp.json()
-    if (json.ok) {
-      tagMemories.value = (json.data || []).sort((a: MemoryItem, b: MemoryItem) => b.createdAt - a.createdAt)
-    }
+    const result = await memoryApi.byTag(DEFAULT_USER, tag)
+    tagMemories.value = (result || []).sort((a: MemoryItem, b: MemoryItem) => b.createdAt - a.createdAt)
   } catch (e) {
     console.error('Failed to fetch tag memories:', e)
   }

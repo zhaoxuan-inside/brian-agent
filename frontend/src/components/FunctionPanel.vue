@@ -8,6 +8,10 @@ import SoulPanel from './panels/SoulPanel.vue'
 import WorkPanel from './panels/WorkPanel.vue'
 import SkillPanel from './panels/SkillPanel.vue'
 import MCPPanel from './panels/MCPPanel.vue'
+import LearningPanel from './panels/LearningPanel.vue'
+import ProfilePanel from './panels/ProfilePanel.vue'
+import VisualPanel from './panels/VisualPanel.vue'
+import HistoryPanel from './panels/HistoryPanel.vue'
 
 const panelStore = usePanelStore()
 </script>
@@ -26,6 +30,10 @@ const panelStore = usePanelStore()
             <WorkPanel v-if="panelStore.activePanel === 'work'" />
             <SkillPanel v-if="panelStore.activePanel === 'skill'" />
             <MCPPanel v-if="panelStore.activePanel === 'mcp'" />
+            <LearningPanel v-if="panelStore.activePanel === 'learning'" />
+            <ProfilePanel v-if="panelStore.activePanel === 'profile'" />
+            <VisualPanel v-if="panelStore.activePanel === 'visual'" />
+            <HistoryPanel v-if="panelStore.activePanel === 'history'" />
           </div>
         </div>
       </div>

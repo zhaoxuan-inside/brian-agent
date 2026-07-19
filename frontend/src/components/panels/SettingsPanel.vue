@@ -5,13 +5,19 @@ import {
   Shield, Settings, Info, Monitor, Database,
   Loader2, AlertCircle, Wifi, RefreshCw,
   Sliders, Server, TrendingUp,
-  Hash, Brain, Edit3, Plus, Trash2, Copy
+  Hash, Brain, Edit3, Plus, Trash2, Copy, Sun, Moon
 } from '@lucide/vue'
-import { useThemeStore } from '../../stores/theme'
 import { useConfigStore } from '../../stores/config'
+import { useThemeStore } from '../../stores/theme'
 
 const themeStore = useThemeStore()
 const configStore = useConfigStore()
+
+function handleThemeToggle() {
+  console.log('[Theme] before toggle - isDark:', themeStore.isDark)
+  themeStore.toggleTheme()
+  console.log('[Theme] after toggle - isDark:', themeStore.isDark)
+}
 
 const activeTab = ref<'models' | 'general' | 'security' | 'about'>('models')
 const modelSubTab = ref<'current' | 'providers'>('current')
@@ -32,7 +38,7 @@ onMounted(() => {
 })
 
 const tabs = [
-  { id: 'models' as const, label: '模型配置', icon: Cpu },
+  { id: 'models' as const, label: '模型管理', icon: Cpu },
   { id: 'general' as const, label: '通用设置', icon: Settings },
   { id: 'security' as const, label: '安全与授权', icon: Shield },
   { id: 'about' as const, label: '关于', icon: Info },
@@ -79,13 +85,6 @@ function startEditDataDir() {
 }
 
 async function handleMigrate() {
-  try {
-    await fetch('http://127.0.0.1:8000/api/config/migrate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ oldPath: './data', newPath: dataDirInput.value, type: 'dataDir' }),
-    })
-  } catch { /* ignore */ }
   editingDataDir.value = false
 }
 
@@ -134,23 +133,19 @@ async function handleAiParseLimits(providerId: string) {
   if (!raw.trim()) return
   parsingLimits.value[providerId] = true
   try {
-    const resp = await fetch('http://127.0.0.1:8000/api/chat', {
+    const systemPrompt = '你是一个 API 限制解析器。用户会粘贴模型厂商的速率限制说明文字。请提取其中的限制信息并以 JSON 格式返回。JSON 格式为: { "maxTokensPerDay": number, "maxTokensPerWeek": number, "maxTokensPerMonth": number, "maxCallsPerDay": number, "maxCallsPerWeek": number, "maxCallsPerMonth": number }。如果某项未提及则填 0。只返回 JSON，不要其他文字。'
+    const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [{
-          role: 'system',
-          content: '你是一个 API 限制解析器。用户会粘贴模型厂商的速率限制说明文字。请提取其中的限制信息并以 JSON 格式返回。JSON 格式为: { "maxTokensPerDay": number, "maxTokensPerWeek": number, "maxTokensPerMonth": number, "maxCallsPerDay": number, "maxCallsPerWeek": number, "maxCallsPerMonth": number }。如果某项未提及则填 0。只返回 JSON，不要其他文字。'
-        }, {
-          role: 'user',
-          content: raw
-        }]
+        message: `${systemPrompt}\n\n${raw}`,
       }),
     })
     const data = await resp.json()
-    if (data.ok && data.data?.message) {
+    const content = data.message?.content || ''
+    if (content) {
       try {
-        const jsonMatch = data.data.message.match(/\{[\s\S]*\}/)
+        const jsonMatch = content.match(/\{[\s\S]*\}/)
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0])
           const limits = getRateLimit(providerId)
@@ -321,16 +316,10 @@ function confirmProviderChanges() {
           </div>
 
           <div v-for="provider in configStore.providers" :key="provider.id"
-            class="glass-panel rounded-xl overflow-hidden">
-            <div class="flex items-center justify-between p-4 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+            class="glass-panel rounded-xl overflow-hidden relative">
+            <div class="flex items-center justify-between p-4 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors pr-24"
               @click="expandedProviderId = expandedProviderId === provider.id ? null : provider.id; if (!savedProviderState[provider.id]) captureProviderState(provider.id)">
               <div class="flex items-center gap-3">
-                <button 
-                  :class="['w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0',
-                    provider.enabled ? 'bg-brian-blue border-brian-blue' : 'border-apple-gray-300 dark:border-apple-gray-600']"
-                  @click.stop="configStore.updateProvider(provider.id, { enabled: !provider.enabled })">
-                  <Check v-if="provider.enabled" :size="12" class="text-white" />
-                </button>
                 <div>
                   <p class="text-sm font-medium">{{ provider.name }}</p>
                   <p class="text-xs text-apple-gray-400">{{ provider.baseUrl || '未配置端点' }}</p>
@@ -341,6 +330,14 @@ function confirmProviderChanges() {
                 <div v-else-if="provider.enabled" class="w-2 h-2 rounded-full bg-warning-orange" />
               </div>
             </div>
+            <!-- Status badge + capsule toggle -->
+            <span :class="['absolute top-3 right-14 text-[10px] px-1.5 py-0.5 rounded-full', provider.enabled ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-200 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-400']">
+              {{ provider.enabled ? '已启用' : '已禁用' }}
+            </span>
+            <button type="button" :class="['absolute top-3 right-3 w-10 h-6 rounded-full transition-colors duration-200 cursor-pointer', provider.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600']"
+              @click.stop="configStore.updateProvider(provider.id, { enabled: !provider.enabled })" :title="provider.enabled ? '禁用' : '启用'">
+              <span :class="['w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 left-0.5 transition-transform duration-200 pointer-events-none', provider.enabled ? 'translate-x-[20px]' : 'translate-x-0']" />
+            </button>
 
             <div v-if="expandedProviderId === provider.id" class="p-4 border-t border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-800/30 space-y-4">
               <div>
@@ -501,9 +498,12 @@ function confirmProviderChanges() {
         <div class="glass-panel rounded-xl overflow-hidden">
           <label class="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50">
             <span class="text-sm">深色模式</span>
-            <button :class="['w-10 h-6 rounded-full transition-colors relative', themeStore.isDark ? 'bg-brian-blue' : 'bg-apple-gray-300']"
-              @click="themeStore.toggleTheme">
-              <div :class="['w-4 h-4 rounded-full bg-white absolute top-1 transition-transform', themeStore.isDark ? 'translate-x-5' : 'translate-x-1']" />
+            <button 
+              class="p-2 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+              @click="handleThemeToggle"
+            >
+              <Sun v-if="themeStore.isDark" :size="20" class="text-brian-blue" />
+              <Moon v-else :size="20" class="text-apple-gray-500" />
             </button>
           </label>
         </div>

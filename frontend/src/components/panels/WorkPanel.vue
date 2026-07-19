@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Puzzle, Plus, Trash2, Edit3, Save } from '@lucide/vue'
 import { soulStore } from '../../stores/soul'
+import { configApi, type ConfigItem } from '../../api'
 
 interface WorkItem {
   id: string
@@ -21,6 +22,43 @@ const editForm = ref({ name: '', description: '', soulId: '', prompt: '', tools:
 
 const availableTools = ['shell', 'api', 'browser', 'file', 'database']
 
+function mapWork(item: ConfigItem): WorkItem {
+  const createdAtRaw = item.createdAt as unknown
+  let createdAt = Date.now()
+  if (typeof createdAtRaw === 'number') {
+    createdAt = createdAtRaw
+  } else if (typeof createdAtRaw === 'string') {
+    const parsed = Date.parse(createdAtRaw)
+    if (!Number.isNaN(parsed)) createdAt = parsed
+  }
+  return {
+    id: String(item.id ?? item.name ?? ''),
+    name: String(item.name ?? ''),
+    description: String(item.description ?? ''),
+    soulId: String(item.soulId ?? item.soul_id ?? item.category ?? ''),
+    prompt: String(item.prompt ?? item.systemPrompt ?? ''),
+    tools: Array.isArray(item.tools)
+      ? (item.tools as unknown[]).map(String)
+      : Array.isArray(item.boundTools)
+        ? (item.boundTools as unknown[]).map(String)
+        : [],
+    createdAt,
+  }
+}
+
+async function loadWorks() {
+  try {
+    const list = await configApi.work.list()
+    works.value = Array.isArray(list) ? list.map(mapWork) : []
+  } catch {
+    works.value = []
+  }
+}
+
+onMounted(() => {
+  loadWorks()
+})
+
 function toggleTool(form: typeof newForm.value | typeof editForm.value, tool: string) {
   const idx = form.tools.indexOf(tool)
   if (idx >= 0) form.tools.splice(idx, 1)
@@ -32,19 +70,61 @@ function startEdit(w: WorkItem) {
   editForm.value = { name: w.name, description: w.description, soulId: w.soulId, prompt: w.prompt, tools: [...w.tools] }
 }
 
-function saveEdit() {
-  const idx = works.value.findIndex(w => w.id === editingId.value)
-  if (idx !== -1) works.value[idx] = { ...works.value[idx], ...editForm.value }
+async function saveEdit() {
+  if (!editingId.value) return
+  try {
+    const updated = await configApi.work.update(editingId.value, {
+      name: editForm.value.name,
+      description: editForm.value.description,
+      soulId: editForm.value.soulId,
+      prompt: editForm.value.prompt,
+      tools: editForm.value.tools,
+    })
+    const idx = works.value.findIndex(w => w.id === editingId.value)
+    if (idx !== -1 && updated) works.value[idx] = mapWork(updated)
+  } catch {
+    /* ignore */
+  }
   editingId.value = null
 }
 
-function addNew() {
-  works.value.push({ id: `work-${Date.now()}`, ...newForm.value, createdAt: Date.now() })
+async function addNew() {
+  try {
+    const created = await configApi.work.create({
+      name: newForm.value.name,
+      description: newForm.value.description,
+      soulId: newForm.value.soulId,
+      prompt: newForm.value.prompt,
+      tools: newForm.value.tools,
+      // backend WorkConfig requires these (NOT NULL columns in `works` table)
+      userId: 'default-user',
+      category: newForm.value.soulId || '',
+      workflow: [],
+      inputs: [],
+      outputs: [],
+    })
+    if (created) {
+      works.value.push(mapWork(created))
+    } else {
+      await loadWorks()
+    }
+  } catch {
+    /* ignore — keep local form so user can retry */
+  }
   newForm.value = { name: '', description: '', soulId: '', prompt: '', tools: [] }
   showNew.value = false
 }
 
-function remove(id: string) { works.value = works.value.filter(w => w.id !== id) }
+async function remove(id: string) {
+  const prev = works.value
+  works.value = works.value.filter(w => w.id !== id)
+  try {
+    await configApi.work.delete(id)
+  } catch {
+    // restore on failure
+    works.value = prev
+  }
+}
 </script>
 
 <template>

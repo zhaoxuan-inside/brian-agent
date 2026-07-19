@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Layers, Plus, Trash2, Edit3, Save } from '@lucide/vue'
 import { soulStore, SoulItem } from '../../stores/soul'
+
+onMounted(() => { soulStore.loadFromServer() })
 
 const editingId = ref<string | null>(null)
 const showNew = ref(false)
@@ -53,12 +55,12 @@ function remove(id: string) {
     </div>
 
     <div v-if="showNew" class="p-4 border-b border-apple-gray-200 dark:border-apple-gray-700 space-y-3 bg-apple-gray-50 dark:bg-apple-gray-800/50">
-      <input v-model="newForm.name" placeholder="名称" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-      <input v-model="newForm.description" placeholder="描述" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-      <select v-model="newForm.category" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none">
+      <input v-model="newForm.name" placeholder="名称" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+      <input v-model="newForm.description" placeholder="描述" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+      <select v-model="newForm.category" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all">
         <option value="code">代码</option><option value="writing">写作</option><option value="data">数据</option><option value="general">通用</option>
       </select>
-      <textarea v-model="newForm.prompt" placeholder="System Prompt" rows="3" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
+      <textarea v-model="newForm.prompt" placeholder="System Prompt" rows="3" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
       <div class="flex items-center gap-2">
         <label class="text-xs text-apple-gray-400 whitespace-nowrap">Temperature</label>
         <input v-model.number="newForm.temperature" type="number" min="0" max="2" step="0.1" class="w-20 px-2 py-1.5 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none" />
@@ -88,8 +90,8 @@ function remove(id: string) {
         </div>
         <pre class="text-[11px] text-apple-gray-600 dark:text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800/50 rounded-lg p-3 whitespace-pre-wrap">{{ s.prompt }}</pre>
         <div v-if="editingId === s.id" class="mt-3 pt-3 border-t border-apple-gray-200 dark:border-apple-gray-700 space-y-2">
-          <input v-model="editForm.name" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none" />
-          <textarea v-model="editForm.prompt" rows="2" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none" />
+          <input v-model="editForm.name" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
+          <textarea v-model="editForm.prompt" rows="2" class="w-full px-3 py-1.5 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue focus:ring-1 focus:ring-brian-blue/30 transition-all" />
           <div class="flex items-center gap-2">
             <label class="text-xs text-apple-gray-400">Temperature</label>
             <input v-model.number="editForm.temperature" type="number" min="0" max="2" step="0.1" class="w-20 px-2 py-1 rounded text-sm bg-white dark:bg-apple-gray-800 outline-none" />

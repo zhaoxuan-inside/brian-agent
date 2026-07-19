@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSessionStore } from '../stores/session'
+import { feedbackApi } from '../api'
 
 const props = defineProps<{
   messageId: string
@@ -10,15 +11,34 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const selectedRating = ref(props.rating)
 const showFeedback = ref(false)
+const submitting = ref(false)
 
-function handleRating(rate: 'good' | 'neutral' | 'bad') {
+const ratingMap = {
+  good: 'positive' as const,
+  neutral: 'neutral' as const,
+  bad: 'negative' as const,
+}
+
+async function handleRating(rate: 'good' | 'neutral' | 'bad') {
   selectedRating.value = rate
   sessionStore.updateMessage(props.messageId, { rating: rate })
-  
-  showFeedback.value = true
-  setTimeout(() => {
-    showFeedback.value = false
-  }, 2000)
+
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    await feedbackApi.create({
+      userId: 'default',
+      messageId: props.messageId,
+      rating: ratingMap[rate],
+    })
+    showFeedback.value = true
+    setTimeout(() => {
+      showFeedback.value = false
+    }, 2000)
+  } catch (e) {
+    console.error('Failed to submit feedback:', e)
+  }
+  submitting.value = false
 }
 </script>
 
@@ -30,6 +50,7 @@ function handleRating(rate: 'good' | 'neutral' | 'bad') {
         selectedRating === 'good' ? 'active-good' : ''
       ]"
       @click="handleRating('good')"
+      :disabled="submitting"
     >
       👍
     </button>
@@ -40,6 +61,7 @@ function handleRating(rate: 'good' | 'neutral' | 'bad') {
         selectedRating === 'neutral' ? 'active-neutral' : ''
       ]"
       @click="handleRating('neutral')"
+      :disabled="submitting"
     >
       😐
     </button>
@@ -50,6 +72,7 @@ function handleRating(rate: 'good' | 'neutral' | 'bad') {
         selectedRating === 'bad' ? 'active-bad' : ''
       ]"
       @click="handleRating('bad')"
+      :disabled="submitting"
     >
       👎
     </button>
