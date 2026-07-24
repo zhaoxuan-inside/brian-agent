@@ -5,7 +5,7 @@ export class GoogleWrapper extends BaseLLMWrapper {
     super('google', baseUrl, apiKey);
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(request: ChatCompletionRequest, signal?: AbortSignal): Promise<ChatCompletionResponse> {
     const body = {
       model: request.model,
       contents: request.messages.map(m => ({
@@ -25,7 +25,9 @@ export class GoogleWrapper extends BaseLLMWrapper {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-      }
+      },
+      3,
+      signal,
     );
 
     const candidate = response.candidates?.[0];

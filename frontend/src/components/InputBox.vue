@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Send, Loader2 } from '@lucide/vue'
+import { ref, watch } from 'vue'
+import { Send, OctagonX } from '@lucide/vue'
 import { useSessionStore } from '../stores/session'
 
 const sessionStore = useSessionStore()
 const inputText = ref('')
 const isFocused = ref(false)
+const citationSourceMsgId = ref<string | null>(null)
+
+watch(() => sessionStore.citationBuffer, (buf) => {
+  if (buf) {
+    inputText.value = `关于以下内容：\n> ${buf.text.split('\n').join('\n> ')}\n\n`
+    citationSourceMsgId.value = buf.sourceMsgId
+    sessionStore.clearCitation()
+  }
+}, { immediate: true })
 
 function generateUUID(): string {
   const ts = Date.now().toString(16).padStart(12, '0')
@@ -19,6 +28,7 @@ async function handleSend() {
   const content = inputText.value.trim()
   inputText.value = ''
   const exchangeId = generateUUID()
+  sessionStore.setCurrentExchangeId(exchangeId)
 
   // Reuse the current session so multi-turn chat stays in one conversation
   let sessionId = sessionStore.currentSessionId
@@ -35,12 +45,23 @@ async function handleSend() {
 
   sessionStore.startProcessing()
   sessionStore.agentChain = []
+  sessionStore.clearThinkingRecords()
   sessionStore.currentAgentChainId = null
 
   const chatMessages = sessionStore.messages.map(m => ({
     role: m.role,
     content: m.content,
   }))
+
+  // 用户在 ChatMap 勾选的消息 + 引用提问的源消息 -> 自主控制上下文
+  const selectedMessageIds = [...sessionStore.selectedMsgIds]
+  if (citationSourceMsgId.value && !selectedMessageIds.includes(citationSourceMsgId.value)) {
+    selectedMessageIds.push(citationSourceMsgId.value)
+  }
+  if (selectedMessageIds.length > 0) {
+    sessionStore.clearMsgSelection()
+  }
+  citationSourceMsgId.value = null
 
   const assistantMsg = sessionStore.addMessage({
     userId: 'assistant',
@@ -61,6 +82,7 @@ async function handleSend() {
         messageId: assistantMsg.id,
         sessionId,
         exchangeId,
+        ...(selectedMessageIds.length > 0 ? { selectedMessageIds } : {}),
       }),
     })
 
@@ -104,10 +126,27 @@ async function handleSend() {
             status?: string
             error?: string
             endTime?: number
+            taskId?: string
+            systemPrompt?: string
+            instruction?: string
             agentStatus?: { agentId: string; status: string; error?: string; endTime?: number }
           }
 
           switch (event.type) {
+            case 'loading':
+              sessionStore.updateMessage(assistantMsg.id, { content: '__LOADING__' })
+              break
+            case 'agent_thinking':
+              if (event.agentId) {
+                sessionStore.addThinkingRecord({
+                  agentId: event.agentId,
+                  taskId: event.taskId || event.agentId,
+                  systemPrompt: event.systemPrompt || '',
+                  instruction: event.instruction || '',
+                  output: event.output || '',
+                })
+              }
+              break
             case 'agent_created':
               if (event.agent) {
                 sessionStore.addAgentFromServer(event.agent)
@@ -131,6 +170,7 @@ async function handleSend() {
               throw new Error(event.error || 'Stream error')
             case 'text':
               if (event.text) {
+                if (fullText === '__LOADING__') fullText = ''
                 fullText += event.text
                 sessionStore.updateMessage(assistantMsg.id, { content: fullText })
               }
@@ -142,8 +182,11 @@ async function handleSend() {
                 sessionStore.storeAgentChain(assistantMsg.id, event.agentChain)
                 sessionStore.storeAgentChainByExchangeId(exchangeId, event.agentChain)
               }
-              // Refresh ChatMap DAG with the newly persisted exchange
+              // Refresh ChatMap DAG + exchanges with the newly persisted messages,
+              // and reload history so bubbles carry real backend msgIds (for DAG 联动)
               sessionStore.loadExchanges(sessionId, 'default-user')
+              sessionStore.loadDag(sessionId, 'default-user')
+              sessionStore.loadChatHistory(sessionId, 'default-user')
               if (event.agentStatus) {
                 sessionStore.updateAgentStatus(
                   event.agentStatus.agentId,
@@ -194,17 +237,25 @@ function handleKeydown(e: KeyboardEvent) {
     />
 
     <button
-      :disabled="!inputText.trim() || sessionStore.isProcessing"
+      v-if="sessionStore.isProcessing"
+      class="ml-3 p-2 rounded-full bg-error-red text-white hover:bg-error-red/90 active:scale-95 transition-all duration-150 shadow-sm"
+      @click="sessionStore.cancelCurrentTask()"
+      title="取消任务"
+    >
+      <OctagonX :size="18" />
+    </button>
+    <button
+      v-else
+      :disabled="!inputText.trim()"
       :class="[
         'ml-3 p-2 rounded-full transition-all duration-150',
-        inputText.trim() && !sessionStore.isProcessing
+        inputText.trim()
           ? 'bg-brian-blue text-white hover:bg-brian-blue/90 active:scale-95'
           : 'bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-400 cursor-not-allowed'
       ]"
       @click="handleSend"
     >
-      <Loader2 v-if="sessionStore.isProcessing" :size="18" class="animate-spin" />
-      <Send v-else :size="18" />
+      <Send :size="18" />
     </button>
   </div>
 </template>

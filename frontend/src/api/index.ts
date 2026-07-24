@@ -250,6 +250,35 @@ export const chatApi = {
         referencedExchangeIds: string[];
       }[];
     }>(`/chat/exchanges/${sessionId}?userId=${userId}`),
+
+  dag: (sessionId: string, userId: string) =>
+    fetchApi<{
+      nodes: {
+        msgId: string;
+        exchangeId: string;
+        role: 'user' | 'assistant' | 'system';
+        summary: string;
+        createdAt: number;
+        messageIndex: number;
+        referencesOut: number;
+        referencesIn: number;
+        isBranch: boolean;
+      }[];
+      edges: { from: string; to: string; type: 'sequence' | 'reference' }[];
+    }>(`/chat/dag/${sessionId}?userId=${userId}`),
+
+  message: (msgId: string) =>
+    fetchApi<{
+      msgId: string;
+      exchangeId: string;
+      sessionId: string;
+      role: string;
+      content: string;
+      summary: string;
+      createdAt: number;
+      referencesOut: { msgId: string; role: string; summary: string; createdAt: number }[];
+      referencesIn: { msgId: string; role: string; summary: string; createdAt: number }[];
+    }>(`/chat/message/${msgId}`),
   agentChain: (exchangeId: string) =>
     fetchApi<{ agentChain: any[] }>(`/chat/agent-chain/${exchangeId}`),
 

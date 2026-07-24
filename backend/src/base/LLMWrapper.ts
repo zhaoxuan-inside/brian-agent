@@ -93,7 +93,7 @@ export interface LLMWrapper {
   baseUrl: string;
   apiKey: string;
 
-  chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
+  chatCompletion(request: ChatCompletionRequest, signal?: AbortSignal): Promise<ChatCompletionResponse>;
   streamChatCompletion(request: ChatCompletionRequest): AsyncIterable<string>;
   generateEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse>;
   validateConfig(): Promise<{ success: boolean; message: string }>;
@@ -106,7 +106,7 @@ export abstract class BaseLLMWrapper implements LLMWrapper {
     public apiKey: string
   ) {}
 
-  abstract chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
+  abstract chatCompletion(request: ChatCompletionRequest, signal?: AbortSignal): Promise<ChatCompletionResponse>;
   abstract streamChatCompletion(request: ChatCompletionRequest): AsyncIterable<string>;
   abstract generateEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse>;
   abstract validateConfig(): Promise<{ success: boolean; message: string }>;
@@ -121,12 +121,16 @@ export abstract class BaseLLMWrapper implements LLMWrapper {
   protected async fetchWithRetry<T>(
     url: string,
     options: RequestInit,
-    maxRetries: number = 3
+    maxRetries: number = 3,
+    signal?: AbortSignal
   ): Promise<T> {
     let lastError: Error | undefined;
     for (let i = 0; i < maxRetries; i++) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       try {
-        const response = await fetch(url, options);
+        const fetchOptions: RequestInit = { ...options };
+        if (signal) fetchOptions.signal = signal;
+        const response = await fetch(url, fetchOptions);
         if (!response.ok) {
           if (response.status === 429 && i < maxRetries - 1) {
             await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
@@ -138,6 +142,7 @@ export abstract class BaseLLMWrapper implements LLMWrapper {
         return (await response.json()) as T;
       } catch (error) {
         lastError = error as Error;
+        if (signal?.aborted) throw error;
         if (i < maxRetries - 1) {
           await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
         }

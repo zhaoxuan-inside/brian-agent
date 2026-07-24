@@ -4,12 +4,11 @@ import { useSessionStore } from '../stores/session'
 import ChatMap from './ChatMap.vue'
 import ResizableDivider from './ResizableDivider.vue'
 import ConversationPanel from './ConversationPanel.vue'
-import AgentChainModal from './AgentChainModal.vue'
+import AgentDagModal from './AgentDagModal.vue'
 
 const sessionStore = useSessionStore()
 const conversationPanel = ref<InstanceType<typeof ConversationPanel> | null>(null)
-const selectedExchangeId = ref<string | null>(null)
-const showAgentChain = ref(false)
+const showAgentDag = ref(false)
 
 // Restore the previous conversation after a page refresh
 onMounted(async () => {
@@ -18,34 +17,29 @@ onMounted(async () => {
   await Promise.all([
     sessionStore.loadChatHistory(sessionId, 'default-user'),
     sessionStore.loadExchanges(sessionId, 'default-user'),
+    sessionStore.loadDag(sessionId, 'default-user'),
   ])
 })
 
-function selectExchange(exchangeId: string) {
-  if (selectedExchangeId.value === exchangeId) {
-    selectedExchangeId.value = null
-    return
-  }
-  selectedExchangeId.value = exchangeId
-  // Load the agent chain DAG for this exchange
-  sessionStore.loadAgentChainByExchangeId(exchangeId)
+// ChatMap 节点点击 / 引用弹窗跳转 -> 对话区滚动定位到该消息
+function locateMessage(msgId: string) {
+  conversationPanel.value?.scrollToMessage(msgId)
 }
 
-function scrollToExchange(exchangeId: string) {
-  selectedExchangeId.value = exchangeId
-  conversationPanel.value?.scrollToExchange(exchangeId)
+// 对话区消息点击 -> ChatMap 对应节点平移居中
+function focusDagNode(msgId: string) {
+  sessionStore.focusMessage(msgId)
 }
 
-function openAgentChain(exchangeId: string) {
-  sessionStore.loadAgentChainByExchangeId(exchangeId)
-  showAgentChain.value = true
+function openAgentDag() {
+  showAgentDag.value = true
 }
 
-function closeAgentChain() {
-  showAgentChain.value = false
+function closeAgentDag() {
+  showAgentDag.value = false
 }
 
-defineExpose({ openAgentChain, closeAgentChain })
+defineExpose({ openAgentDag, closeAgentDag })
 </script>
 
 <template>
@@ -54,11 +48,7 @@ defineExpose({ openAgentChain, closeAgentChain })
       <!-- Left: ChatMap DAG -->
       <div class="chatmap-panel" :style="{ width: sessionStore.splitRatio + '%' }">
         <ChatMap
-          :exchanges="sessionStore.exchanges"
-          :selected-exchange-id="selectedExchangeId"
-          @select="selectExchange"
-          @scroll-to="scrollToExchange"
-          @open-agent-chain="openAgentChain"
+          @locate="locateMessage"
         />
       </div>
 
@@ -66,11 +56,11 @@ defineExpose({ openAgentChain, closeAgentChain })
 
       <!-- Right: Conversation -->
       <div class="conversation-panel-wrap" :style="{ width: (100 - sessionStore.splitRatio) + '%' }">
-        <ConversationPanel ref="conversationPanel" @open-agent-chain="openAgentChain" />
+        <ConversationPanel ref="conversationPanel" @locate="focusDagNode" @open-agent-dag="openAgentDag" />
       </div>
     </div>
 
-    <AgentChainModal :visible="showAgentChain" @close="closeAgentChain" />
+    <AgentDagModal v-if="showAgentDag" @close="closeAgentDag" />
   </div>
 </template>
 

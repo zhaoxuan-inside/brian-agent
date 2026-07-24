@@ -28,7 +28,7 @@ export interface AppConfig {
   providers: ModelProvider[]
 }
 
-const API_BASE = 'http://127.0.0.1:8000/api/config'
+const API_BASE = '/api/config'
 
 export const useConfigStore = defineStore('config', () => {
   const providers = ref<ModelProvider[]>([])

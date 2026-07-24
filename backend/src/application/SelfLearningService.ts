@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { InformationService, MemoryNode } from '../core/information/InformationService';
 import { LLMService } from '../core/llm/LLMService';
+import { ModelConfigService } from '../core/modelConfig/ModelConfigService';
 import { logger } from '../infrastructure/logger';
 
 export const LearningResultSchema = z.object({
@@ -20,25 +21,35 @@ export type LearningResult = z.infer<typeof LearningResultSchema>;
 export class SelfLearningService {
   constructor(
     private informationService: InformationService,
-    private llmService: LLMService
+    private llmService: LLMService,
+    private modelConfigService: ModelConfigService,
   ) {}
+
+  private async resolveModel(): Promise<string> {
+    try {
+      const models = await this.modelConfigService.listConfigs();
+      const active = models.filter(m => m.status === 'active');
+      const dm = active.find(m => m.isDefault) || active[0];
+      return dm?.modelId || 'gpt-4o';
+    } catch {
+      return 'gpt-4o';
+    }
+  }
 
   async learnFromChat(userId: string, chatId: string): Promise<LearningResult> {
     logger.info('SelfLearningService', `[learnFromChat] userId=${userId} chatId=${chatId}`);
-    const messages = await this.informationService.getMessagesByChat(chatId, userId);
+    const allMessages = await this.informationService.getMessagesByChat(chatId, userId);
     
-    if (messages.length === 0) {
+    if (allMessages.length === 0) {
       logger.warn('SelfLearningService', `[learnFromChat] no messages found for chatId=${chatId}`);
-      return {
-        success: false,
-        message: 'No messages found for learning',
-        learnedCount: 0,
-        newMemories: [],
-      };
+      return { success: false, message: 'No messages found for learning', learnedCount: 0, newMemories: [] };
     }
 
-    logger.info('SelfLearningService', `[learnFromChat] analyzing ${messages.length} messages`);
-    const chatContent = messages.map(m => `${m.role}: ${m.content}`).join('\n');
+    // Only analyze the last 10 exchanges (20 messages) to avoid O(n²)
+    const recentMessages = allMessages.slice(-20);
+    logger.info('SelfLearningService', `[learnFromChat] analyzing ${recentMessages.length} of ${allMessages.length} total messages`);
+    const chatContent = recentMessages.map(m => `${m.role}: ${m.content}`).join('\n');
+    const modelId = await this.resolveModel();
     
     const learningPrompt = `
 Analyze the following conversation and extract meaningful knowledge that should be stored as long-term memory.
@@ -55,9 +66,9 @@ Output the knowledge as JSON array with items containing:
 ${chatContent}
 `;
 
-    logger.info('SelfLearningService', `[learnFromChat] calling LLM for extraction, promptLen=${learningPrompt.length}`);
+    logger.info('SelfLearningService', `[learnFromChat] calling LLM for extraction, model=${modelId}, promptLen=${learningPrompt.length}`);
     const response = await this.llmService.chatCompletion({
-      model: 'gpt-4o',
+      model: modelId,
       messages: [{ role: 'user', content: learningPrompt }],
       temperature: 0.3,
       maxTokens: 2000,
@@ -133,6 +144,7 @@ ${chatContent}
     }
 
     logger.info('SelfLearningService', `[learnFromDocument] analyzing document, contentLen=${document.content.length}`);
+    const modelId = await this.resolveModel();
 
     const learningPrompt = `
 Analyze the following document and extract meaningful knowledge that should be stored as long-term memory.
@@ -149,9 +161,9 @@ Output the knowledge as JSON array with items containing:
 ${document.content}
 `;
 
-    logger.info('SelfLearningService', `[learnFromDocument] calling LLM for extraction, promptLen=${learningPrompt.length}`);
+    logger.info('SelfLearningService', `[learnFromDocument] calling LLM for extraction, model=${modelId}, promptLen=${learningPrompt.length}`);
     const response = await this.llmService.chatCompletion({
-      model: 'gpt-4o',
+      model: modelId,
       messages: [{ role: 'user', content: learningPrompt }],
       temperature: 0.3,
       maxTokens: 2000,

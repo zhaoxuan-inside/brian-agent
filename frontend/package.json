@@ -11,8 +11,11 @@
   },
   "dependencies": {
     "@brian-agent/shared": "^1.0.0",
-    "@vueuse/core": "^10.9.0",
+    "@dagrejs/dagre": "^3.0.0",
     "@lucide/vue": "^1.24.0",
+    "@vue-flow/core": "^1.48.2",
+    "@vueuse/core": "^10.9.0",
+    "marked": "^18.0.6",
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"

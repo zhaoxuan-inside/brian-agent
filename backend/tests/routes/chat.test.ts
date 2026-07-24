@@ -249,4 +249,74 @@ describe('Chat API Routes', () => {
       .get('/api/chat/list');
     expect(res.status).toBe(400);
   });
+
+  // ============================================================
+  // GET /api/chat/dag/:sessionId & /api/chat/message/:msgId
+  // ============================================================
+
+  it('DAG: 消息级节点 + 顺序边，选中引用后产生引用边与双向计数', async () => {
+    const sessionId = 'dag-test-session';
+
+    // 第一轮问答（orchestrator 无注册 agent，离线返回 'No result'）
+    const res1 = await request(app)
+      .post('/api/chat/send')
+      .send({ userId: 'test-user', message: '第一条消息', sessionId });
+    expect(res1.status).toBe(200);
+
+    // 初始 DAG：2 个消息级节点 + 1 条顺序边
+    let dag = (await request(app)
+      .get(`/api/chat/dag/${sessionId}`)
+      .query({ userId: 'test-user' })).body;
+    expect(dag.nodes.length).toBe(2);
+    expect(dag.nodes.map((n: any) => n.role)).toEqual(['user', 'assistant']);
+    expect(dag.edges.filter((e: any) => e.type === 'sequence').length).toBe(1);
+    expect(dag.edges.filter((e: any) => e.type === 'reference').length).toBe(0);
+
+    const userMsgId = dag.nodes.find((n: any) => n.role === 'user').msgId;
+
+    // 第二轮问答：选中第一条用户消息作为上下文（复选框）
+    const res2 = await request(app)
+      .post('/api/chat/send')
+      .send({ userId: 'test-user', message: '第二条消息', sessionId, selectedMessageIds: [userMsgId] });
+    expect(res2.status).toBe(200);
+
+    // DAG：4 节点；第二轮 exchange 有 outgoing 引用 → 整体为分支，排除出主链
+    // 顺序边 = 2 条：主链 first-user→first-assistant（1 条）+ 分支内部 second-user→second-assistant（1 条）
+    // 引用边 = 1 条（被引用者 → 引用者）
+    dag = (await request(app)
+      .get(`/api/chat/dag/${sessionId}`)
+      .query({ userId: 'test-user' })).body;
+    expect(dag.nodes.length).toBe(4);
+    expect(dag.edges.filter((e: any) => e.type === 'sequence').length).toBe(2);
+    const refEdges = dag.edges.filter((e: any) => e.type === 'reference');
+    expect(refEdges.length).toBe(1);
+
+    const user2 = dag.nodes.filter((n: any) => n.role === 'user')[1];
+    expect(refEdges[0]).toMatchObject({ from: userMsgId, to: user2.msgId });
+    expect(dag.nodes.find((n: any) => n.msgId === user2.msgId).referencesOut).toBe(1);
+    expect(dag.nodes.find((n: any) => n.msgId === userMsgId).referencesIn).toBe(1);
+
+    // 消息详情：双向引用列表
+    const detail1 = (await request(app).get(`/api/chat/message/${userMsgId}`)).body;
+    expect(detail1.content).toBe('第一条消息');
+    expect(detail1.referencesIn.length).toBe(1);
+    expect(detail1.referencesIn[0].msgId).toBe(user2.msgId);
+    expect(detail1.referencesOut.length).toBe(0);
+
+    const detail2 = (await request(app).get(`/api/chat/message/${user2.msgId}`)).body;
+    expect(detail2.referencesOut.length).toBe(1);
+    expect(detail2.referencesOut[0].msgId).toBe(userMsgId);
+  });
+
+  it('GET /api/chat/dag/:sessionId requires userId', async () => {
+    const res = await request(app)
+      .get('/api/chat/dag/some-session');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /api/chat/message/:msgId returns 404 for unknown msgId', async () => {
+    const res = await request(app)
+      .get('/api/chat/message/non-existent-msg-id');
+    expect(res.status).toBe(404);
+  });
 });

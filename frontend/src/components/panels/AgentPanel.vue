@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { Bot, Plus, Trash2, Edit3, Loader2, Sparkles, Search, Copy, X, Zap } from '@lucide/vue'
+import { Bot, Plus, Trash2, Edit3, Loader2, Sparkles, Search, Copy, X, Zap, Eye } from '@lucide/vue'
 import { agentApi, skillApi, configApi, mcpMarketApi, type ConfigItem } from '../../api'
 
 interface AgentItem {
@@ -17,6 +17,7 @@ interface AgentItem {
   workIds: string[]
   sources: { knowledgeBase: string[]; webSearch: boolean }
   enabled: boolean
+  isSystem?: boolean
   createdAt: number
 }
 
@@ -43,6 +44,7 @@ const suggestingMcps = ref(false)
 
 const showModal = ref(false)
 const isEditing = ref(false)
+const isSystemViewing = ref(false)
 const modalTitle = ref('')
 const editingAgentId = ref<string | null>(null)
 
@@ -82,6 +84,7 @@ function mapAgent(raw: Record<string, unknown>): AgentItem {
     workIds: Array.isArray(raw.workIds) ? (raw.workIds as string[]) : (raw.workId ? [String(raw.workId)] : []),
     sources: (raw.sources as AgentItem['sources']) || { knowledgeBase: [], webSearch: false },
     enabled: raw.active !== false && raw.enabled !== false,
+    isSystem: !!(raw.isSystem),
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
   }
 }
@@ -256,8 +259,9 @@ function openNewModal() {
 
 function openEditModal(agent: AgentItem) {
   isEditing.value = true
+  isSystemViewing.value = !!agent.isSystem
   editingAgentId.value = agent.id
-  modalTitle.value = '编辑 Agent'
+  modalTitle.value = agent.isSystem ? '查看 Agent（系统内置，不可编辑）' : '编辑 Agent'
   form.value = {
     name: agent.name,
     role: agent.role,
@@ -340,6 +344,7 @@ async function loadAssociatedWorks(agentId: string) {
 
 function closeModal() {
   showModal.value = false
+  isSystemViewing.value = false
 }
 
 async function saveModal() {
@@ -515,7 +520,7 @@ async function handleSuggestWorks() {
         <div v-for="agent in agents" :key="agent.id" class="glass-panel rounded-xl p-4 hover:shadow-lg transition-shadow relative">
           <!-- Status badge: top-right -->
           <span :class="['absolute top-3 right-3 text-[10px] px-1.5 py-0.5 rounded-full', agent.enabled ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-200 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-400']">
-            {{ agent.enabled ? '已启用' : '已禁用' }}
+            {{ agent.isSystem ? '系统' : agent.enabled ? '已启用' : '已禁用' }}
           </span>
           <div class="flex items-start gap-2 mb-3 pr-16">
             <div :class="['w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0', agent.enabled ? 'bg-success-green/10' : 'bg-apple-gray-100 dark:bg-apple-gray-800']">
@@ -545,16 +550,17 @@ async function handleSuggestWorks() {
           <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-800">
             <span class="text-[10px] text-apple-gray-400">{{ formatDate(agent.createdAt) }}</span>
             <div class="flex items-center gap-2">
-              <button type="button" :class="['w-10 h-6 rounded-full transition-colors duration-200 relative cursor-pointer', agent.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600']" @click.stop="toggle(agent.id)" :title="agent.enabled ? '禁用' : '启用'">
+              <button type="button" :class="['w-10 h-6 rounded-full transition-colors duration-200 relative', agent.isSystem ? 'cursor-not-allowed opacity-50 bg-brian-blue' : 'cursor-pointer', agent.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600']" :disabled="agent.isSystem" @click.stop="agent.isSystem ? null : toggle(agent.id)" :title="agent.isSystem ? '系统 Agent 不可操作' : agent.enabled ? '禁用' : '启用'">
                 <span :class="['w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 left-0.5 transition-transform duration-200 pointer-events-none', agent.enabled ? 'translate-x-[20px]' : 'translate-x-0']" />
               </button>
-              <button class="p-1.5 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="openEditModal(agent)" title="编辑">
-                <Edit3 :size="14" class="text-apple-gray-400" />
+              <button class="p-1.5 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="openEditModal(agent)" :title="agent.isSystem ? '查看（系统Agent不可编辑）' : '编辑'">
+                <Eye v-if="agent.isSystem" :size="14" class="text-apple-gray-400" />
+                <Edit3 v-else :size="14" class="text-apple-gray-400" />
               </button>
               <button class="p-1.5 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="cloneAgent(agent.id)" title="复制">
                 <Copy :size="14" class="text-apple-gray-400" />
               </button>
-              <button class="p-1.5 rounded-lg hover:bg-error-red/10" @click="remove(agent.id)" title="删除">
+              <button v-if="!agent.isSystem" class="p-1.5 rounded-lg hover:bg-error-red/10" @click="remove(agent.id)" title="删除">
                 <Trash2 :size="14" class="text-error-red" />
               </button>
             </div>
@@ -588,8 +594,19 @@ async function handleSuggestWorks() {
                 <input v-model="form.name" placeholder="输入 Agent 名称" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all" />
               </div>
               <div>
-                <label class="text-xs text-apple-gray-400 mb-1 block">角色/用途 *</label>
-                <input v-model="form.role" placeholder="例如：代码助手" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all" />
+                <label class="text-xs text-apple-gray-400 mb-1 block">角色 *</label>
+                <select v-model="form.role" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all">
+                  <option value="" disabled>请选择角色</option>
+                  <option value="planner">任务规划者</option>
+                  <option value="worker">工作Agent</option>
+                  <option value="evaluator">评估Agent</option>
+                </select>
+                <p class="text-[10px] text-apple-gray-400 mt-1 leading-relaxed">
+                  <span v-if="form.role === 'planner'">从编排框架获取上下文，逐步分解用户问题为子任务 DAG，为每个子任务选择/构建工作Agent。</span>
+                  <span v-else-if="form.role === 'worker'">接收执行上下文，使用 Soul+Skill+Work+MCP 通过 LLM 完成指定工作。</span>
+                  <span v-else-if="form.role === 'evaluator'">接收上下文与工作Agent回复，多维评估并回写可靠性与强度到 AgentLibrary。</span>
+                  <span v-else>选择 Agent 的角色类型。</span>
+                </p>
               </div>
             </div>
 
@@ -598,7 +615,7 @@ async function handleSuggestWorks() {
               <input v-model="form.description" placeholder="描述 Agent 的功能" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all" />
             </div>
 
-            <div class="grid grid-cols-3 gap-3">
+            <div v-if="form.role" class="grid grid-cols-3 gap-3">
               <div>
                 <label class="text-xs text-apple-gray-400 mb-1 block">策略类型</label>
                 <select v-model="form.strategyType" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all">
@@ -633,12 +650,12 @@ async function handleSuggestWorks() {
               <textarea v-model="form.systemPrompt" placeholder="系统提示词..." rows="3" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all" />
             </div>
 
-            <div>
+            <div v-if="form.role === 'worker'">
               <label class="text-xs text-apple-gray-400 mb-1 block">指令</label>
               <textarea v-model="form.instruction" placeholder="具体指令..." rows="2" class="w-full px-3 py-2 rounded-lg text-sm bg-white dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700 focus:border-brian-blue transition-all" />
             </div>
 
-            <div>
+            <div v-if="form.role === 'worker'">
               <div class="flex items-center justify-between mb-2">
                 <label class="text-xs text-apple-gray-400">关联 Skills</label>
                 <button class="flex items-center gap-1 text-xs text-brian-blue hover:underline" :disabled="!form.role || suggestingSkills" @click="handleSuggestSkills">
@@ -707,7 +724,7 @@ async function handleSuggestWorks() {
 
             
 
-            <div>
+            <div v-if="form.role === 'worker'">
               <div class="flex items-center justify-between mb-2">
                 <label class="text-xs text-apple-gray-400">关联 Soul</label>
                 <button class="flex items-center gap-1 text-xs text-brian-blue hover:underline" :disabled="!form.role || suggestingSouls" @click="handleSuggestSouls">
@@ -770,7 +787,7 @@ async function handleSuggestWorks() {
               </div>
             </div>
 
-            <div>
+            <div v-if="form.role === 'worker'">
               <div class="flex items-center justify-between mb-2">
                 <label class="text-xs text-apple-gray-400">关联 Work</label>
                 <button class="flex items-center gap-1 text-xs text-brian-blue hover:underline" :disabled="!form.role || suggestingWorks" @click="handleSuggestWorks">
@@ -837,12 +854,52 @@ async function handleSuggestWorks() {
               </div>
             </div>
 
-            
+            <!-- MCP -->
+            <div v-if="form.role === 'worker'">
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs text-apple-gray-400">关联 MCP（预留）</label>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg overflow-hidden">
+                  <div class="flex items-center gap-1.5 px-3 py-2 bg-apple-gray-50 dark:bg-apple-gray-800/50 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                    <span class="w-2 h-2 rounded-full bg-success-green" />
+                    <span class="text-[10px] font-medium text-apple-gray-700 dark:text-apple-gray-300">已关联</span>
+                    <span class="text-[10px] text-apple-gray-400">({{ associatedMcps.length }})</span>
+                  </div>
+                  <div class="max-h-40 overflow-y-auto">
+                    <div v-if="associatedMcps.length === 0" class="text-center py-6 text-[10px] text-apple-gray-400">暂无关联</div>
+                    <div v-for="mcp in associatedMcps" :key="mcp.id" class="flex items-center justify-between px-3 py-2 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 border-b border-apple-gray-100 dark:border-apple-gray-800 last:border-b-0 transition-colors">
+                      <div class="min-w-0 flex-1">
+                        <div class="text-xs text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ mcp.name }}</div>
+                      </div>
+                      <button class="ml-2 p-1 rounded hover:bg-error-red/10 text-apple-gray-400 hover:text-error-red transition-colors flex-shrink-0" @click="removeMcpFromForm(mcp.id)" title="取消关联"><X :size="14" /></button>
+                    </div>
+                  </div>
+                </div>
+                <div class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg overflow-hidden">
+                  <div class="flex items-center gap-1.5 px-3 py-2 bg-apple-gray-50 dark:bg-apple-gray-800/50 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                    <span class="w-2 h-2 rounded-full bg-brian-blue" />
+                    <span class="text-[10px] font-medium text-apple-gray-700 dark:text-apple-gray-300">可绑定</span>
+                    <span class="text-[10px] text-apple-gray-400">({{ availableMcps.filter(m => !form.mcpIds.includes(m.id)).length }})</span>
+                  </div>
+                  <div class="max-h-40 overflow-y-auto">
+                    <div v-if="availableMcps.filter(m => !form.mcpIds.includes(m.id)).length === 0" class="text-center py-6 text-[10px] text-apple-gray-400">暂无可绑定 MCP</div>
+                    <div v-for="mcp in availableMcps.filter(m => !form.mcpIds.includes(m.id))" :key="mcp.id" class="flex items-center justify-between px-3 py-2 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 border-b border-apple-gray-100 dark:border-apple-gray-800 last:border-b-0 transition-colors">
+                      <div class="min-w-0 flex-1">
+                        <div class="text-xs text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ mcp.name }}</div>
+                      </div>
+                      <button class="ml-2 p-1 rounded hover:bg-brian-blue/10 text-apple-gray-400 hover:text-brian-blue transition-colors flex-shrink-0" @click="addMcpToForm(mcp.id)" title="添加关联"><Plus :size="14" /></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <div class="flex items-center justify-end gap-2 p-4 border-t border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-800">
             <button class="px-4 py-1.5 text-xs font-medium bg-apple-gray-200 dark:bg-apple-gray-700 rounded-lg" @click="closeModal">取消</button>
-            <button class="px-4 py-1.5 text-xs font-medium bg-brian-blue text-white rounded-lg" @click="saveModal">保存</button>
+            <button v-if="!isSystemViewing" class="px-4 py-1.5 text-xs font-medium bg-brian-blue text-white rounded-lg" @click="saveModal">保存</button>
           </div>
         </div>
       </div>

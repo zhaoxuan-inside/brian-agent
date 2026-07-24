@@ -60,6 +60,14 @@ export class AgentBuilder {
     }
   }
 
+  /**
+   * 查找指定 role 的系统内置 Agent（按 isSystem 标记 + role 匹配）。
+   */
+  async getSystemAgent(role: string): Promise<CustomAgent | undefined> {
+    const all = await this.list();
+    return all.find(a => a.isSystem && a.role === role);
+  }
+
   async create(input: {
     name: string;
     role: string;
@@ -72,7 +80,7 @@ export class AgentBuilder {
     soulId: string;
     workIds: string[];
     sources: any;
-  }): Promise<CustomAgent> {
+  }, isSystem: boolean = false): Promise<CustomAgent> {
     const now = new Date().toISOString();
 
     const agentBase: Omit<CustomAgent, 'id'> = {
@@ -105,6 +113,7 @@ export class AgentBuilder {
         searchEngine: input.sources?.searchEngine,
       },
       active: true,
+      isSystem,
       createdAt: now,
       updatedAt: now,
     };
@@ -116,6 +125,7 @@ export class AgentBuilder {
         agentType: 'custom',
         agentName: agentBase.name,
         role: agentBase.role,
+        isSystem: isSystem ? 'true' : undefined,
       },
       salienceScore: 0.7,
       retrievalCount: 0,

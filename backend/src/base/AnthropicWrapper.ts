@@ -5,7 +5,7 @@ export class AnthropicWrapper extends BaseLLMWrapper {
     super('anthropic', baseUrl, apiKey);
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(request: ChatCompletionRequest, signal?: AbortSignal): Promise<ChatCompletionResponse> {
     const systemMessage = request.messages.find(m => m.role === 'system');
     const userMessages = request.messages.filter(m => m.role !== 'system');
 
@@ -29,7 +29,9 @@ export class AnthropicWrapper extends BaseLLMWrapper {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify(body),
-      }
+      },
+      3,
+      signal,
     );
 
     return {

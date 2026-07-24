@@ -33,6 +33,24 @@ export interface ChatListItem {
   lastTime: number
 }
 
+export interface DagNode {
+  msgId: string
+  exchangeId: string
+  role: 'user' | 'assistant' | 'system'
+  summary: string
+  createdAt: number
+  messageIndex: number
+  referencesOut: number
+  referencesIn: number
+  isBranch: boolean
+}
+
+export interface DagEdge {
+  from: string
+  to: string
+  type: 'sequence' | 'reference'
+}
+
 function loadSplitRatio(): number {
   try {
     const saved = localStorage.getItem('chat-split-ratio')
@@ -76,6 +94,7 @@ export const useSessionStore = defineStore('session', () => {
   const currentAgentChainId = ref<string | null>(null)
   const agentChainHistory = ref<AgentChainStore>({})
   const agentChainByExchangeId = ref<Record<string, AgentNode[]>>({})
+  const currentThinkingRecords = ref<Array<{ agentId: string; taskId: string; systemPrompt: string; instruction: string; output: string }>>([])
 
   // New state for dual-column layout
   const exchanges = ref<ExchangeGroup[]>([])
@@ -84,6 +103,17 @@ export const useSessionStore = defineStore('session', () => {
   const currentSessionId = ref<string | null>(loadSessionId())
   const isLoadingExchanges = ref(false)
   const isLoadingHistory = ref(false)
+
+  // ChatMap DAG state (message-level)
+  const dagNodes = ref<DagNode[]>([])
+  const dagEdges = ref<DagEdge[]>([])
+  const isLoadingDag = ref(false)
+  // 用户勾选的消息（自主控制上下文）
+  const selectedMsgIds = ref<Set<string>>(new Set())
+  // 居中信号：对话区点击消息时设置，ChatMap watch 后平移居中
+  const focusedMsgId = ref<string | null>(null)
+  // 引用提问缓冲区
+  const citationBuffer = ref<{ text: string; sourceMsgId: string } | null>(null)
 
   // Computed: messages grouped by date
   const groupedMessages = computed(() => {
@@ -183,17 +213,47 @@ export const useSessionStore = defineStore('session', () => {
   function storeAgentChain(messageId: string, chain: AgentNode[]) {
     agentChainHistory.value[messageId] = chain
     agentChain.value = chain
+    extractThinkingFromChain(chain)
   }
 
   function storeAgentChainByExchangeId(exchangeId: string, chain: AgentNode[]) {
     agentChainByExchangeId.value = { ...agentChainByExchangeId.value, [exchangeId]: chain }
     agentChain.value = chain
+    extractThinkingFromChain(chain)
+  }
+
+  function extractThinkingFromChain(chain: AgentNode[]) {
+    const records: Array<{ agentId: string; taskId: string; systemPrompt: string; instruction: string; output: string }> = []
+    for (const agent of chain) {
+      const thinking = (agent as any).thinking
+      if (thinking) {
+        records.push({
+          agentId: agent.id,
+          taskId: agent.type === 'coordinator' ? 'planner' : agent.id,
+          systemPrompt: thinking.systemPrompt || '',
+          instruction: thinking.instruction || '',
+          output: thinking.fullOutput || '',
+        })
+      }
+    }
+    if (records.length > 0) {
+      currentThinkingRecords.value = records
+    }
+  }
+
+  function addThinkingRecord(record: { agentId: string; taskId: string; systemPrompt: string; instruction: string; output: string }) {
+    currentThinkingRecords.value = [...currentThinkingRecords.value, record]
+  }
+
+  function clearThinkingRecords() {
+    currentThinkingRecords.value = []
   }
 
   function loadAgentChainForMessage(messageId: string): boolean {
     const chain = agentChainHistory.value[messageId]
     if (chain) {
       agentChain.value = chain
+      extractThinkingFromChain(chain)
       currentAgentChainId.value = messageId
       return true
     }
@@ -204,10 +264,10 @@ export const useSessionStore = defineStore('session', () => {
     const chain = agentChainByExchangeId.value[exchangeId]
     if (chain) {
       agentChain.value = chain
+      extractThinkingFromChain(chain)
       currentAgentChainId.value = exchangeId
       return true
     }
-    // Not in memory, fetch from API
     fetchAgentChainByExchangeId(exchangeId)
     return false
   }
@@ -219,6 +279,7 @@ export const useSessionStore = defineStore('session', () => {
       if (chain && chain.length > 0) {
         agentChainByExchangeId.value = { ...agentChainByExchangeId.value, [exchangeId]: chain }
         agentChain.value = chain
+        extractThinkingFromChain(chain)
         currentAgentChainId.value = exchangeId
         return true
       }
@@ -240,6 +301,10 @@ export const useSessionStore = defineStore('session', () => {
     agentChainHistory.value = {}
     agentChainByExchangeId.value = {}
     currentAgentChainId.value = null
+    dagNodes.value = []
+    dagEdges.value = []
+    selectedMsgIds.value = new Set()
+    focusedMsgId.value = null
     setSessionId(null)
     inputPosition.value = 'center'
   }
@@ -274,6 +339,53 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  async function loadDag(sessionId: string, userId: string) {
+    isLoadingDag.value = true
+    try {
+      const result = await chatApi.dag(sessionId, userId)
+      dagNodes.value = result.nodes
+      dagEdges.value = result.edges
+      // 清理已不存在消息的勾选状态
+      const alive = new Set(result.nodes.map(n => n.msgId))
+      const next = new Set([...selectedMsgIds.value].filter(id => alive.has(id)))
+      if (next.size !== selectedMsgIds.value.size) selectedMsgIds.value = next
+    } catch (e) {
+      console.error('[sessionStore] loadDag failed:', e)
+    } finally {
+      isLoadingDag.value = false
+    }
+  }
+
+  function setCitation(text: string, sourceMsgId: string) {
+    citationBuffer.value = { text, sourceMsgId }
+  }
+
+  function clearCitation() {
+    citationBuffer.value = null
+  }
+
+  function toggleMsgSelection(msgId: string) {
+    const next = new Set(selectedMsgIds.value)
+    if (next.has(msgId)) {
+      next.delete(msgId)
+    } else {
+      next.add(msgId)
+    }
+    selectedMsgIds.value = next
+  }
+
+  function clearMsgSelection() {
+    selectedMsgIds.value = new Set()
+  }
+
+  function focusMessage(msgId: string) {
+    focusedMsgId.value = msgId
+  }
+
+  function setFocusedMsgId(msgId: string) {
+    focusedMsgId.value = msgId
+  }
+
   async function loadChatHistory(sessionId: string, userId: string, page: number = 1, pageSize: number = 100) {
     isLoadingHistory.value = true
     try {
@@ -293,6 +405,19 @@ export const useSessionStore = defineStore('session', () => {
       }))
       setSessionId(sessionId)
       inputPosition.value = 'bottom'
+
+      // Restore thinking records from the last assistant message's agent chain
+      const lastAssistant = [...messages.value].reverse().find(m => m.role === 'assistant')
+      if (lastAssistant?.exchangeId) {
+        fetch(`/api/chat/agent-chain/${lastAssistant.exchangeId}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.agentChain?.length) {
+              storeAgentChainByExchangeId(lastAssistant.exchangeId, data.agentChain)
+            }
+          })
+          .catch(() => {})
+      }
     } catch (e) {
       console.error('[sessionStore] loadChatHistory failed:', e)
     } finally {
@@ -303,6 +428,19 @@ export const useSessionStore = defineStore('session', () => {
   function setSplitRatio(ratio: number) {
     splitRatio.value = ratio
     saveSplitRatio(ratio)
+  }
+
+  let currentExchangeId: string | null = null
+
+  function setCurrentExchangeId(id: string) {
+    currentExchangeId = id
+  }
+
+  async function cancelCurrentTask() {
+    if (!currentExchangeId) return
+    try {
+      await fetch(`/api/chat/cancel/${currentExchangeId}`, { method: 'POST' })
+    } catch { /* ignore */ }
   }
 
   return {
@@ -319,6 +457,11 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId,
     isLoadingExchanges,
     isLoadingHistory,
+    dagNodes,
+    dagEdges,
+    isLoadingDag,
+    selectedMsgIds,
+    focusedMsgId,
     groupedMessages,
     addMessage,
     updateMessage,
@@ -330,13 +473,26 @@ export const useSessionStore = defineStore('session', () => {
     storeAgentChainByExchangeId,
     loadAgentChainByExchangeId,
     fetchAgentChainByExchangeId,
+    currentThinkingRecords,
+    addThinkingRecord,
+    clearThinkingRecords,
     clearMessages,
     startProcessing,
     stopProcessing,
     loadChatList,
     loadExchanges,
+    loadDag,
+    toggleMsgSelection,
+    setFocusedMsgId,
+    setCitation,
+    clearCitation,
+    citationBuffer,
+    clearMsgSelection,
+    focusMessage,
     loadChatHistory,
     setSessionId,
     setSplitRatio,
+    cancelCurrentTask,
+    setCurrentExchangeId,
   }
 })

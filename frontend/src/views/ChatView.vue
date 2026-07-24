@@ -20,6 +20,7 @@ async function handleSelectChat(sessionId: string) {
   await Promise.all([
     sessionStore.loadChatHistory(sessionId, 'default-user'),
     sessionStore.loadExchanges(sessionId, 'default-user'),
+    sessionStore.loadDag(sessionId, 'default-user'),
   ])
   showSidebar.value = false
 }

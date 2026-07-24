@@ -5,6 +5,15 @@ import { logger } from '../infrastructure/logger';
 export function createMemoryRoutes(informationService: InformationService): express.Router {
   const router = express.Router();
 
+  // Map backend MemoryNode to frontend-compatible format
+  function toMemoryItem(m: any) {
+    return {
+      ...m,
+      role: m.role || m.source || 'system',
+      summary: m.summary || (m.content ? m.content.slice(0, 100) : ''),
+    };
+  }
+
   // ============================================================
   // 记忆查询接口（只读，记忆由系统自动生成）
   // ============================================================
@@ -17,7 +26,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
         logger.warn('MemoryRoutes', `[GET /single/:id] memory not found: ${id}`);
         return res.status(404).json({ error: 'Memory not found' });
       }
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /single/:id] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -44,7 +53,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       logger.info('MemoryRoutes', `[GET /working] userId=${userId} chatId=${chatId} limit=${limit}`);
       const memory = await informationService.getWorkingMemory(userId, chatId, limit);
       logger.info('MemoryRoutes', `[GET /working] returned ${memory.length} items`);
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /working] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -58,7 +67,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       const limit = parseInt(req.query.limit as string) || 10;
       logger.info('MemoryRoutes', `[GET /semantic] userId=${userId} query=${query || 'none'} limit=${limit}`);
       const memory = await informationService.getSemanticMemory(userId, query, limit);
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /semantic] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -71,7 +80,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       const limit = parseInt(req.query.limit as string) || 10;
       logger.info('MemoryRoutes', `[GET /episodic] userId=${userId} limit=${limit}`);
       const memory = await informationService.getEpisodicMemory(userId, limit);
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /episodic] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -84,7 +93,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       const limit = parseInt(req.query.limit as string) || 10;
       logger.info('MemoryRoutes', `[GET /procedural] userId=${userId} limit=${limit}`);
       const memory = await informationService.getProceduralMemory(userId, limit);
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /procedural] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -96,7 +105,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       const { userId, tag } = req.params;
       logger.info('MemoryRoutes', `[GET /tag] userId=${userId} tag=${tag}`);
       const memory = await informationService.getMemoryByTag(userId, tag);
-      res.json(memory);
+      res.json(toMemoryItem(memory));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /tag] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -154,7 +163,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       logger.info('MemoryRoutes', '[GET /] fetching all memory');
       const memories = await informationService.getAllMemory('default-user');
       logger.info('MemoryRoutes', `[GET /] returned ${memories.length} memories`);
-      res.json({ memories });
+      res.json({ memories: memories.map(toMemoryItem) });
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
@@ -242,7 +251,7 @@ export function createMemoryRoutes(informationService: InformationService): expr
       logger.info('MemoryRoutes', `[GET /:userId] userId=${userId}`);
       const allMemory = await informationService.getAllMemory(userId);
       logger.info('MemoryRoutes', `[GET /:userId] returned ${allMemory.length} memories`);
-      res.json(allMemory);
+      res.json(allMemory.map(toMemoryItem));
     } catch (error) {
       logger.error('MemoryRoutes', `[GET /:userId] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });

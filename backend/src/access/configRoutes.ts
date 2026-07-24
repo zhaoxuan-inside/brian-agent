@@ -89,6 +89,27 @@ export function createConfigRoutes(
   });
 
   /**
+   * PUT /api/config — 保存模型配置
+   */
+  router.put('/', (req, res) => {
+    try {
+      const data = req.body as Record<string, any>;
+      const config = llmConfigService.getConfig();
+      if (data.providers) {
+        config.providers = data.providers;
+      }
+      if (data.selectedProviderId) config.selectedProviderId = data.selectedProviderId;
+      if (data.selectedModelId) config.selectedModelId = data.selectedModelId;
+      if (data.temperature !== undefined) config.temperature = data.temperature;
+      if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
+      llmConfigService.saveConfig(config);
+      res.json({ ok: true, data: config });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message, code: 'SAVE_ERROR' });
+    }
+  });
+
+  /**
    * POST /api/config/provider — 添加模型提供商
    */
   router.post('/provider', (req, res) => {
@@ -191,6 +212,67 @@ export function createConfigRoutes(
       }
     } catch (err: any) {
       res.json({ success: false, message: err.message, latency: 0 });
+    }
+  });
+
+  /**
+   * POST /api/config/verify/:providerId?model=xxx — 验证单个模型连接
+   */
+  router.post('/verify/:providerId', async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const modelId = req.query.model as string;
+      if (!modelId) {
+        res.status(400).json({ ok: false, message: '缺少 model 参数' });
+        return;
+      }
+      const config = llmConfigService.getConfig();
+      const provider = config.providers.find(p => p.id === providerId);
+      if (!provider) {
+        res.status(404).json({ ok: false, message: 'Provider not found' });
+        return;
+      }
+      if (!provider.apiKey) {
+        res.json({ ok: false, message: 'API Key 未配置' });
+        return;
+      }
+      const start = Date.now();
+      const url = provider.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 10,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const latency = Date.now() - start;
+      if (response.ok) {
+        res.json({ ok: true, message: '验证成功', latency });
+      } else {
+        const errText = await response.text().catch(() => '');
+        let message = `HTTP ${response.status}`;
+        try {
+          const errJson = JSON.parse(errText);
+          if (errJson.error?.message) {
+            message = errJson.error.message;
+          } else if (errJson.message) {
+            message = errJson.message;
+          } else {
+            message += ': ' + errText.slice(0, 500);
+          }
+        } catch {
+          message += ': ' + errText.slice(0, 500);
+        }
+        res.json({ ok: false, message, latency });
+      }
+    } catch (err: any) {
+      res.json({ ok: false, message: err.message, latency: 0 });
     }
   });
 

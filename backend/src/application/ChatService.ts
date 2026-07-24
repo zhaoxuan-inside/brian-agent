@@ -1,14 +1,14 @@
 import { z } from 'zod';
-import { ChatMessage, ChatCompletionRequest } from '../base/LLMWrapper';
+import { ChatMessage } from '../base/LLMWrapper';
 import { InformationService, UserMessage } from '../core/information/InformationService';
 import { LLMService } from '../core/llm/LLMService';
 import { AgentOrchestrator } from '../strategy/AgentOrchestrator';
 import { UserProfileService } from './UserProfileService';
-import { MetaAgent } from '../agent/metaAgent';
-import { GraphExecutor } from '../agent/executor';
-import type { WorkAgent, AgentStatus } from '../shared/types';
+import { ChatDagService, SessionDag, MessageDetail } from './ChatDagService';
+import { AgentOrchestrationService } from './AgentOrchestrationService';
+import { SelfLearningService } from './SelfLearningService';
 import { ModelConfigService } from '../core/modelConfig/ModelConfigService';
-import type { ModelConfig } from '../core/modelConfig/ModelConfigService';
+import { getCancelRegistry } from './cancelRegistry';
 import { logger } from '../infrastructure/logger';
 
 function generateUUIDv7(): string {
@@ -60,16 +60,17 @@ export class ChatService {
     private llmService: LLMService,
     private orchestrator: AgentOrchestrator,
     private userProfileService: UserProfileService,
-    private metaAgent: MetaAgent,
-    private graphExecutor: GraphExecutor,
-    private modelConfigService: ModelConfigService
+    private modelConfigService: ModelConfigService,
+    private chatDagService: ChatDagService,
+    private agentOrchestration: AgentOrchestrationService,
+    private selfLearningService: SelfLearningService
   ) {}
 
   /**
    * Verify at least one model is configured in "当前模型" (user_model_config).
    * Throws with a user-friendly message if none are available.
    */
-  private async ensureModelsConfigured(): Promise<ModelConfig[]> {
+  private async ensureModelsConfigured(): Promise<void> {
     const models = await this.modelConfigService.listConfigs();
     const active = models.filter(m => m.status === 'active');
     logger.info('ChatService', `[ensureModelsConfigured] Total model configs: ${models.length}, active: ${active.length}`);
@@ -77,32 +78,6 @@ export class ChatService {
       logger.warn('ChatService', '[ensureModelsConfigured] No active models — rejecting request');
       throw new Error('未配置可用模型，请先在"模型管理"页面添加模型');
     }
-    return active;
-  }
-
-  /**
-   * Select the effective model for this message.
-   * If the agent already has a modelId that exists in "当前模型", reuse it.
-   * Otherwise fall back to the default model (is_default=true), or the first active model.
-   */
-  private async resolveChatModel(
-    activeModels: ModelConfig[],
-    agentLlm?: { providerId?: string; modelId?: string } | null
-  ): Promise<ModelConfig> {
-    if (agentLlm?.modelId) {
-      const own = activeModels.find(m =>
-        m.modelId === agentLlm.modelId &&
-        (!agentLlm.providerId || m.providerId === agentLlm.providerId)
-      );
-      if (own) {
-        logger.info('ChatService', `[resolveChatModel] Reusing agent model: provider=${own.providerId} model=${own.modelId}`);
-        return own;
-      }
-      logger.info('ChatService', `[resolveChatModel] Agent model "${agentLlm.modelId}" not in active models, falling back to default`);
-    }
-    const defaultModel = activeModels.find(m => m.isDefault) || activeModels[0];
-    logger.info('ChatService', `[resolveChatModel] Using model: provider=${defaultModel.providerId} model=${defaultModel.modelId} id=${defaultModel.id}`);
-    return defaultModel;
   }
 
   async sendMessage(request: ChatMessageRequest): Promise<ChatMessageResponse> {
@@ -144,8 +119,14 @@ export class ChatService {
       await this.informationService.saveMessage(userMessage);
       logger.info('ChatService', `[sendMessage] User message saved successfully: msgId=${userMsgId}`);
 
+      // Record message references (user-controlled context) + schedule semantic summary
+      if (request.selectedMessageIds?.length) {
+        await this.chatDagService.recordReferences(sessionId, userMsgId, request.selectedMessageIds);
+      }
+      this.chatDagService.scheduleSummary(userMsgId, request.message);
+
       logger.info('ChatService', `[sendMessage] Building context...`);
-      const context = await this.buildContext(request.userId, sessionId, request.selectedMessageIds);
+      const context = await this.buildContext(request.userId, sessionId, request.selectedMessageIds, userMsgId);
       logger.info('ChatService', `[sendMessage] Context built: ${context.length} messages (selected=${request.selectedMessageIds?.length || 0}, working=${context.length - (request.selectedMessageIds?.length || 0)})`);
 
       const agentMessages: ChatMessage[] = [
@@ -187,6 +168,10 @@ export class ChatService {
       logger.info('ChatService', `[sendMessage] Saving assistant message to database...`);
       await this.informationService.saveMessage(assistantMessage);
       logger.info('ChatService', `[sendMessage] Assistant message saved successfully: msgId=${assistantMsgId}`);
+      this.chatDagService.scheduleSummary(assistantMsgId, result.finalResult);
+      this.scheduleEvaluation(result.finalResult, request.message);
+      this.scheduleLearning(request.userId, sessionId);
+
 
       logger.info('ChatService', `[sendMessage] Triggering profile analysis...`);
       await this.userProfileService.analyzeFromMessage(request.userId, request.message, result.finalResult);
@@ -229,8 +214,8 @@ export class ChatService {
     try {
       // ---- 0. Ensure at least one model is configured in user_model_config ----
       logger.info('ChatService', `[streamMessage] Checking model availability...`);
-      const activeModels = await this.ensureModelsConfigured();
-      logger.info('ChatService', `[streamMessage] Model check passed: ${activeModels.length} active model(s)`);
+      await this.ensureModelsConfigured();
+      logger.info('ChatService', `[streamMessage] Model check passed`);
 
       logger.info('ChatService', `[streamMessage] Building user message...`);
       const userMessage: Omit<UserMessage, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -254,181 +239,260 @@ export class ChatService {
       await this.informationService.saveMessage(userMessage);
       logger.info('ChatService', `[streamMessage] User message saved successfully: msgId=${userMsgId}`);
 
-      // ---- 2. MetaAgent: analyze & build work agent ----
-      let workAgent: WorkAgent;
-      let agentChainForFrontend: Array<any> = [];
-      try {
-        const analysis = this.metaAgent.analyze({ type: 'user', content: request.message });
-        logger.info('ChatService', `[streamMessage] MetaAgent analysis: intent=${analysis.intent} complexity=${analysis.complexity} domain=${analysis.domain}`);
-
-        const reused = await this.metaAgent.reuseAgent(analysis);
-        if (reused) {
-          workAgent = reused;
-          logger.info('ChatService', `[streamMessage] Reused agent: id=${workAgent.id} name=${workAgent.name} strategy=${workAgent.strategy}`);
-        } else {
-          workAgent = await this.metaAgent.buildAgent(analysis);
-          logger.info('ChatService', `[streamMessage] Built new agent: id=${workAgent.id} name=${workAgent.name} strategy=${workAgent.strategy}`);
-        }
-        await this.metaAgent.saveAgent(workAgent);
-        agentChainForFrontend = this.buildAgentChainEvents(workAgent);
-      } catch (e: any) {
-        logger.info('ChatService', `[streamMessage] MetaAgent failed, falling back to direct LLM: ${e.message || e}`);
-        // Fallback: synthetic agent for frontend compatibility
-        workAgent = {
-          id: `fallback-${Date.now()}`,
-          name: 'direct-llm',
-          taskFeatures: {},
-          strategy: 'react' as any,
-          llm: { providerId: 'default', modelId: 'gpt-4o', temperature: 0.7, maxTokens: 4096 },
-          prompt: { system: this.buildSystemPrompt(request.userId), instruction: request.message },
-          skillIds: [],
-          mcpIds: [],
-          soulId: '',
-          strength: 1.0,
-          useCount: 0,
-          lastUsedAt: Date.now(),
-          feedbackHistory: [],
-          reliability: 0.5,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        agentChainForFrontend = this.buildAgentChainEvents(workAgent);
+      // Record message references (user-controlled context) + schedule semantic summary
+      if (request.selectedMessageIds?.length) {
+        await this.chatDagService.recordReferences(sessionId, userMsgId, request.selectedMessageIds);
       }
+      this.chatDagService.scheduleSummary(userMsgId, request.message);
 
-      // ---- 2.5 Resolve the effective model from "当前模型" ----
-      const selectedModel = await this.resolveChatModel(activeModels, workAgent.llm);
-      workAgent.llm = {
-        providerId: selectedModel.providerId || 'unknown',
-        modelId: selectedModel.modelId || selectedModel.name || 'unknown',
-        temperature: workAgent.llm?.temperature ?? selectedModel.defaultParameters?.temperature ?? 0.7,
-        maxTokens: workAgent.llm?.maxTokens ?? selectedModel.defaultParameters?.maxTokens ?? 4096,
-      };
-      logger.info('ChatService', `[streamMessage] Selected model: id=${selectedModel.id} provider=${selectedModel.providerId} model=${selectedModel.modelId}`);
+      // ---- 2. 加载系统 Planner Agent 作为 Coordinator ----
+      const plannerAgent = await this.agentOrchestration.getPlannerAgent();
+      const coordinatorAgent = plannerAgent
+        ? {
+            id: plannerAgent.id,
+            type: 'coordinator',
+            name: plannerAgent.name,
+            role: 'Planner',
+            description: plannerAgent.description,
+            status: 'idle',
+            strategy: plannerAgent.strategy?.type || 'plan-execute',
+            children: [] as string[],
+            output: [] as { type: string; content: string }[],
+            startTime: Date.now(),
+            endTime: undefined as number | undefined,
+          }
+        : {
+            id: `coordinator-${Date.now()}`,
+            type: 'coordinator',
+            name: '系统任务规划者',
+            role: 'Planner',
+            description: '任务分解与编排',
+            status: 'idle',
+            strategy: 'plan-execute',
+            children: [] as string[],
+            output: [] as { type: string; content: string }[],
+            startTime: Date.now(),
+            endTime: undefined as number | undefined,
+          };
 
       logger.info('ChatService', `[streamMessage] Building context...`);
-      const context = await this.buildContext(request.userId, sessionId, request.selectedMessageIds);
+      const context = await this.buildContext(request.userId, sessionId, request.selectedMessageIds, userMsgId);
       logger.info('ChatService', `[streamMessage] Context built: ${context.length} messages`);
 
-      const messages: ChatMessage[] = [
-        { role: 'system', content: `${this.buildSystemPrompt(request.userId)}\n\n${workAgent.prompt.system}` },
+      // ── 系统编排: Planner 分解 → Worker 执行 → Synthesizer 合并（惰性执行）──
+      const orchMessages: ChatMessage[] = [
         ...context,
-        { role: 'user', content: workAgent.prompt.instruction || request.message },
+        { role: 'user', content: request.message },
       ];
-      logger.info('ChatService', `[streamMessage] Total messages: ${messages.length}, starting stream...`);
 
-      const setupDuration = Date.now() - startTime;
-      logger.info('ChatService', `[streamMessage] Setup completed in ${setupDuration}ms, starting LLM stream`);
-
-      const rawStream = this.llmService.streamChatCompletion({
-        model: workAgent.llm?.modelId || 'gpt-4o',
-        messages,
-        temperature: workAgent.llm?.temperature ?? 0.7,
-        maxTokens: workAgent.llm?.maxTokens ?? 4096,
-      }, selectedModel.id);
-
-      // ---- 3. Wrap LLM stream as SSE event JSON strings ----
       const self = this;
       const selfExchangeId = exchangeId;
+
       return {
         [Symbol.asyncIterator]() {
-          const iterator = rawStream[Symbol.asyncIterator]();
           let fullText = '';
           let saved = false;
-          let preEventsSent = false;
+          let phase: 'loading' | 'progress' | 'agentEvents' | 'text' | 'done' = 'loading';
+          let orchResult: Awaited<ReturnType<typeof self.agentOrchestration.orchestrate>> | null = null;
+          let allOrchAgents: any[] = [];
+          let subAgents: any[] = [];
+          let agentEventLines: string[] = [];
+          let evtIdx = 0;
+          let textIdx = 0;
+          const chunkSize = 30;
+          let textContent = '';
+          // Real-time event queue: onProgress pushes thinking JSON lines here
+          const progressQueue: string[] = [];
+          let queueResolve: (() => void) | null = null;
+
+          function pushProgress(line: string) {
+            progressQueue.push(line);
+            if (queueResolve) { queueResolve(); queueResolve = null; }
+          }
+
+          function buildFinalData(result: Awaited<ReturnType<typeof self.agentOrchestration.orchestrate>>) {
+            const cos = coordinatorAgent;
+            cos.children = [];
+            // Add coordinator thinking (Planner decomposition plan)
+            const plannerThink = result.thinkingRecords.find(r => r.taskId === 'planner');
+            if (plannerThink) {
+              (cos as any).thinking = { systemPrompt: plannerThink.systemPrompt, instruction: plannerThink.instruction, fullOutput: plannerThink.output };
+            }
+            subAgents = result.subtaskResults.map((sr, i) => {
+              const think = result.thinkingRecords.find(r => r.agentId === sr.agentId);
+              return {
+                id: sr.agentId,
+                type: 'sub' as const,
+                name: `Worker-${i + 1}: ${(think?.instruction || sr.taskId).slice(0, 40)}`,
+                role: 'Worker',
+                description: think?.instruction || `执行子任务: ${sr.taskId}`,
+                status: 'completed' as const,
+                startTime: think?.startTime || Date.now(),
+                endTime: think?.endTime || Date.now(),
+                strategy: sr.strategy || cos.strategy,
+                llm: sr.llm || { providerId: 'default', modelId: 'default', temperature: 0.7, maxTokens: 4096 },
+                skillIds: sr.skillIds || [],
+                mcpIds: sr.mcpIds || [],
+                soulId: sr.soulId || '',
+                children: [] as string[],
+                output: [{ type: 'stdout' as const, content: sr.output.slice(0, 500) }],
+                thinking: think ? { systemPrompt: think.systemPrompt, instruction: think.instruction, fullOutput: sr.output } : undefined,
+              };
+            });
+            cos.children = subAgents.map(a => a.id);
+            cos.endTime = Date.now();
+            allOrchAgents = [cos, ...subAgents];
+
+            agentEventLines = [];
+            for (const record of result.thinkingRecords) {
+              agentEventLines.push(JSON.stringify({ type: 'agent_thinking', agentId: record.agentId, taskId: record.taskId, systemPrompt: record.systemPrompt, instruction: record.instruction, output: record.output.slice(0, 500) }));
+            }
+            for (const agent of allOrchAgents) {
+              agentEventLines.push(JSON.stringify({ type: 'agent_created', agent }));
+              agentEventLines.push(JSON.stringify({ type: 'agent_status', agentId: agent.id, status: 'running' }));
+            }
+            for (const sr of result.subtaskResults) {
+              agentEventLines.push(JSON.stringify({ type: 'agent_output', agentId: sr.agentId, output: sr.output.slice(0, 500), outputType: 'stdout' }));
+              agentEventLines.push(JSON.stringify({ type: 'agent_status', agentId: sr.agentId, status: 'completed', endTime: Date.now() }));
+            }
+            textContent = result.finalResult;
+          }
 
           return {
             async next() {
-              // Emit agent_created + agent_status(running) before first text chunk
-              if (!preEventsSent) {
-                preEventsSent = true;
-                const agentCreatedEvt = JSON.stringify({
-                  type: 'agent_created',
-                  agent: agentChainForFrontend[0],
-                });
-                const agentStatusEvt = JSON.stringify({
-                  type: 'agent_status',
-                  agentId: workAgent.id,
-                  status: 'running',
-                });
-                return { done: false, value: agentCreatedEvt + '\n' + agentStatusEvt + '\n' };
+              // Phase 1: loading — launch orchestration, return loading indicator
+              if (phase === 'loading') {
+                phase = 'progress';
+                const abortCtrl = new AbortController();
+                getCancelRegistry().set(selfExchangeId, abortCtrl);
+                self.agentOrchestration.orchestrate(orchMessages, { userId: request.userId, sessionId }, {
+                  onProgress: (record) => {
+                    pushProgress(JSON.stringify({
+                      type: 'agent_thinking',
+                      agentId: record.agentId,
+                      taskId: record.taskId,
+                      systemPrompt: record.systemPrompt,
+                      instruction: record.instruction,
+                      output: record.output.slice(0, 500),
+                      startTime: record.startTime,
+                      endTime: record.endTime,
+                    }));
+                  }
+                }, abortCtrl.signal).then(r => {
+                    orchResult = r;
+                    getCancelRegistry().delete(selfExchangeId);
+                    logger.info('ChatService', `[streamMessage] Orchestration OK: ${r.subtaskResults.length} subtasks, duration=${Date.now() - startTime}ms`);
+                    buildFinalData(r);
+                    if (queueResolve) { queueResolve(); queueResolve = null; }
+                  }).catch(e => {
+                    if (e?.name === 'AbortError' || (e as Error)?.message?.includes('abort')) {
+                      logger.info('ChatService', `[streamMessage] Orchestration cancelled, exchangeId=${selfExchangeId}`);
+                      orchResult = { finalResult: '', subtaskResults: [], thinkingRecords: [], duration: 0 };
+                    } else {
+                      logger.error('ChatService', `[streamMessage] Orchestration error: ${(e as Error).message}`);
+                      orchResult = { finalResult: '', subtaskResults: [], thinkingRecords: [], duration: 0 };
+                    }
+                    getCancelRegistry().delete(selfExchangeId);
+                    buildFinalData(orchResult);
+                    if (queueResolve) { queueResolve(); queueResolve = null; }
+                  });
+                return { done: false, value: JSON.stringify({ type: 'loading' }) + '\n' };
               }
 
-              const result = await iterator.next();
-              if (result.done) {
-                if (saved) {
-                  // Already emitted done event, signal real end
-                  return { done: true, value: undefined as any };
+              // Phase 2: progress — yield thinking events in real-time as workers complete
+              if (phase === 'progress') {
+                if (progressQueue.length > 0) {
+                  return { done: false, value: progressQueue.shift()! + '\n' };
                 }
+                if (orchResult) {
+                  phase = 'agentEvents';
+                  // Fall through to agentEvents
+                } else {
+                  // Wait for next progress event or orchestration completion
+                  await new Promise<void>(resolve => { queueResolve = resolve; });
+                  if (progressQueue.length > 0) {
+                    return { done: false, value: progressQueue.shift()! + '\n' };
+                  }
+                  if (orchResult) phase = 'agentEvents';
+                  else return { done: false, value: '' }; // should not happen
+                }
+              }
+
+              // Phase 3: agentEvents — emit agent_created / agent_status / final agent_thinking
+              if (phase === 'agentEvents') {
+                if (evtIdx < agentEventLines.length) {
+                  return { done: false, value: agentEventLines[evtIdx++] + '\n' };
+                }
+                phase = 'text';
+              }
+
+              // Phase 4: text streaming
+              if (phase === 'text') {
+                if (textIdx < textContent.length) {
+                  const chunk = textContent.slice(textIdx, textIdx + chunkSize);
+                  textIdx += chunkSize;
+                  fullText += chunk;
+                  const textEvt = JSON.stringify({ type: 'text', text: chunk });
+                  const outputEvt = JSON.stringify({ type: 'agent_output', agentId: coordinatorAgent.id, output: chunk, outputType: 'stdout' });
+                  return { done: false, value: textEvt + '\n' + outputEvt + '\n' };
+                }
+                phase = 'done';
+              }
+
+              // Phase 5: done
+              if (phase === 'done') {
+                if (saved) return { done: true, value: undefined as any };
                 saved = true;
                 try {
                   await self.informationService.saveMessage({
-                      userId: request.userId,
-                      sessionId,
-                      exchangeId: selfExchangeId,
-                      msgId: assistantMsgId,
-                      role: 'assistant',
-                      content: fullText,
-                      summary: fullText.slice(0, 100),
-                      tokens: self.countTokens(fullText),
-                      metadata: request.metadata || {},
-                      tags: self.extractKeywords(fullText),
-                      isLearningMemory: false,
-                      messageIndex: await self.getMessageIndex(sessionId, request.userId),
-                      referenceCount: 0,
-                    });
-                  } catch (e: any) {
-                    logger.info('ChatService', `[streamMessage] Save assistant failed: ${e.message || e}`);
-                  }
-                  // Persist agent chain for future retrieval
-                  try {
-                    await self.informationService.saveAgentChain(sessionId, selfExchangeId, agentChainForFrontend);
-                  } catch (e: any) {
-                    logger.info('ChatService', `[streamMessage] Save agent chain failed: ${e.message || e}`);
-                  }
-                // done event with agentChain + fullText
+                    userId: request.userId, sessionId, exchangeId: selfExchangeId,
+                    msgId: assistantMsgId, role: 'assistant', content: fullText,
+                    summary: fullText.slice(0, 100), tokens: self.countTokens(fullText),
+                    metadata: request.metadata || {},
+                    tags: self.extractKeywords(fullText),
+                    isLearningMemory: false,
+                    messageIndex: await self.getMessageIndex(sessionId, request.userId),
+                    referenceCount: 0,
+                  });
+                  self.chatDagService.scheduleSummary(assistantMsgId, fullText);
+                  self.scheduleEvaluation(fullText, request.message);
+                  self.scheduleLearning(request.userId, sessionId);
+                } catch (e: any) {
+                  logger.info('ChatService', `[streamMessage] Save assistant failed: ${e.message || e}`);
+                }
+                try {
+                  await self.informationService.saveAgentChain(sessionId, selfExchangeId, allOrchAgents);
+                } catch (e: any) {
+                  logger.info('ChatService', `[streamMessage] Save agent chain failed: ${e.message || e}`);
+                }
                 const doneEvt = JSON.stringify({
-                  type: 'done',
-                  fullText,
-                  agentChain: agentChainForFrontend,
-                  agentStatus: { agentId: workAgent.id, status: 'completed', endTime: Date.now() },
+                  type: 'done', fullText, agentChain: allOrchAgents,
+                  agentStatus: { agentId: coordinatorAgent.id, status: 'completed', endTime: Date.now() },
                 });
                 logger.info('ChatService', `[streamMessage] ====== END ====== duration=${Date.now() - startTime}ms`);
                 return { done: false, value: doneEvt + '\n' };
               }
-              fullText += result.value;
-              // text event + agent_output event
-              const textEvt = JSON.stringify({ type: 'text', text: result.value });
-              const outputEvt = JSON.stringify({ type: 'agent_output', agentId: workAgent.id, output: result.value, outputType: 'stdout' });
-              return { done: false, value: textEvt + '\n' + outputEvt + '\n' };
+
+              return { done: true, value: undefined as any };
             },
             async return(value?: string) {
-              if (!saved) {
+              if (!saved && fullText) {
                 saved = true;
                 try {
-                  if (fullText) {
-                    await self.informationService.saveMessage({
-                      userId: request.userId,
-                      sessionId,
-                      exchangeId: selfExchangeId,
-                      msgId: assistantMsgId,
-                      role: 'assistant',
-                      content: fullText,
-                      summary: fullText.slice(0, 100),
-                      tokens: self.countTokens(fullText),
-                      metadata: request.metadata || {},
-                      tags: self.extractKeywords(fullText),
-                      isLearningMemory: false,
-                      messageIndex: await self.getMessageIndex(sessionId, request.userId),
-                      referenceCount: 0,
-                    });
-                  }
+                  await self.informationService.saveMessage({
+                    userId: request.userId, sessionId, exchangeId: selfExchangeId,
+                    msgId: assistantMsgId, role: 'assistant', content: fullText,
+                    summary: fullText.slice(0, 100), tokens: self.countTokens(fullText),
+                    metadata: request.metadata || {},
+                    tags: self.extractKeywords(fullText), isLearningMemory: false,
+                    messageIndex: await self.getMessageIndex(sessionId, request.userId),
+                    referenceCount: 0,
+                  });
+                  self.chatDagService.scheduleSummary(assistantMsgId, fullText);
+                  self.scheduleEvaluation(fullText, request.message);
+                  self.scheduleLearning(request.userId, sessionId);
                 } catch { /* ignore */ }
-                try {
-                  await self.informationService.saveAgentChain(sessionId, selfExchangeId, agentChainForFrontend);
-                } catch { /* ignore */ }
-              }
-              if (iterator.return) {
-                return iterator.return(value);
+                try { await self.informationService.saveAgentChain(sessionId, selfExchangeId, allOrchAgents); } catch { /* ignore */ }
               }
               return { done: true as const, value };
             },
@@ -477,6 +541,20 @@ export class ChatService {
         totalPages,
       },
     };
+  }
+
+  /**
+   * 会话 DAG（消息级节点 + 顺序/引用边 + 引用计数），供 ChatMap 画布展示。
+   */
+  async getSessionDag(userId: string, sessionId: string): Promise<SessionDag> {
+    return this.chatDagService.buildSessionDag(userId, sessionId);
+  }
+
+  /**
+   * 消息详情（完整内容 + 双向引用摘要列表），供「查看详情」与引用徽标弹窗。
+   */
+  async getMessageDetail(msgId: string): Promise<MessageDetail | null> {
+    return this.chatDagService.getMessageDetail(msgId);
   }
 
   async listChats(userId: string): Promise<{ sessionId: string; lastMessage: string; lastTime: number }[]> {
@@ -591,55 +669,52 @@ export class ChatService {
     return this.informationService.getAgentChain(exchangeId);
   }
 
-  private buildAgentChainEvents(workAgent: WorkAgent): Array<{
-    id: string; type: string; name: string;
-    role: string; description: string;
-    status: string; strategy?: string;
-    skillIds?: string[]; mcpIds?: string[];
-    startTime?: number; endTime?: number;
-    outputs?: { type: string; content: string }[];
-    children?: string[];
-  }> {
-    return [{
-      id: workAgent.id,
-      type: 'coordinator',
-      name: workAgent.name || `Agent-${workAgent.id.slice(0, 8)}`,
-      role: 'Coordinator',
-      description: workAgent.prompt?.instruction || 'Coordinates task execution',
-      status: 'idle',
-      strategy: workAgent.strategy || 'react',
-      skillIds: workAgent.skillIds || [],
-      mcpIds: workAgent.mcpIds || [],
-      startTime: Date.now(),
-      endTime: undefined,
-      outputs: [],
-      children: [],
-    }];
-  }
-
-  private async buildContext(userId: string, chatId: string, selectedMessageIds?: string[]): Promise<ChatMessage[]> {
-    const context: ChatMessage[] = [];
-
+  /**
+   * Build LLM context.
+   * - With selectedMessageIds (user-controlled context via ChatMap checkboxes):
+   *   ancestor closure of the selected messages (sequence + reference edges), chronological.
+   *   Working memory is NOT mixed in, so the user's selection fully controls the context.
+   * - Without selection: the latest 20 messages of working memory in chronological order.
+   * The just-saved current user message (excludeMsgId) is excluded from working memory
+   * because callers append it explicitly afterwards.
+   */
+  private async buildContext(userId: string, chatId: string, selectedMessageIds?: string[], excludeMsgId?: string): Promise<ChatMessage[]> {
     if (selectedMessageIds && selectedMessageIds.length > 0) {
-      logger.info('ChatService', `[buildContext] fetching ${selectedMessageIds.length} selected messages`);
-      const selectedMessages = await this.informationService.getSelectedMessages(userId, selectedMessageIds);
-      for (const msg of selectedMessages) {
-        context.push({ role: msg.role, content: msg.content });
-      }
-      logger.info('ChatService', `[buildContext] selected messages retrieved: ${selectedMessages.length}`);
+      const context = await this.chatDagService.resolveAncestorContext(userId, chatId, selectedMessageIds);
+      logger.info('ChatService', `[buildContext] ancestor closure: selected=${selectedMessageIds.length} -> context=${context.length} messages`);
+      return context;
     }
 
     const workingMemory = await this.informationService.getWorkingMemory(userId, chatId, 20);
-    for (const msg of workingMemory) {
-      context.push({ role: msg.role, content: msg.content });
-    }
-    logger.info('ChatService', `[buildContext] workingMemory: ${workingMemory.length} messages, total context: ${context.length}`);
-
+    const context: ChatMessage[] = workingMemory
+      .filter(msg => msg.msgId !== excludeMsgId)
+      .reverse() // getWorkingMemory returns newest-first; LLM context must be chronological
+      .map(msg => ({ role: msg.role, content: msg.content }));
+    logger.info('ChatService', `[buildContext] workingMemory: ${context.length} messages`);
     return context;
   }
 
   private buildSystemPrompt(userId: string): string {
     return `You are Brian, an AI assistant. Use the provided context to answer the user's question.`;
+  }
+
+  /**
+   * 系统 Evaluator：评估 assistant 回复质量，回写 AgentLibrary（fire-and-forget）。
+   * 影响对应 workAgent 的 reliability / strength，驱动自优化老化/强化。
+   */
+  private scheduleEvaluation(assistantContent: string, userMessage: string): void {
+    if (!assistantContent) return;
+    this.agentOrchestration.evaluateAndRecordFeedback(assistantContent, userMessage)
+      .catch(e => logger.warn('ChatService', `[scheduleEvaluation] failed: ${(e as Error).message}`));
+  }
+
+  /**
+   * 自学习：从对话中提取知识，写入 memory_nodes（fire-and-forget）。
+   */
+  private scheduleLearning(userId: string, sessionId: string): void {
+    this.selfLearningService.learnFromChat(userId, sessionId)
+      .then(count => logger.info('ChatService', `[scheduleLearning] extracted ${count} memories from chat ${sessionId}`))
+      .catch(e => logger.warn('ChatService', `[scheduleLearning] failed: ${(e as Error).message}`));
   }
 
   private async getMessageIndex(chatId: string, userId: string): Promise<number> {

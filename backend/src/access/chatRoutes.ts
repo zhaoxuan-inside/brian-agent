@@ -1,9 +1,24 @@
 import express from 'express';
 import { ChatService, ChatMessageRequestSchema } from '../application/ChatService';
+import { getCancelRegistry } from '../application/cancelRegistry';
 import { logger } from '../infrastructure/logger';
 
 export function createChatRoutes(chatService: ChatService): express.Router {
   const router = express.Router();
+
+  // Cancel endpoint
+  router.post('/cancel/:exchangeId', (req, res) => {
+    const { exchangeId } = req.params;
+    const ctrl = getCancelRegistry().get(exchangeId);
+    if (ctrl) {
+      ctrl.abort();
+      getCancelRegistry().delete(exchangeId);
+      logger.info('ChatRoutes', `[POST /cancel] aborted exchangeId=${exchangeId}`);
+      res.json({ success: true, message: '任务已取消' });
+    } else {
+      res.status(404).json({ success: false, message: '未找到运行中的任务' });
+    }
+  });
 
   router.post('/send', async (req, res) => {
     try {
@@ -116,6 +131,43 @@ export function createChatRoutes(chatService: ChatService): express.Router {
       res.json(chats);
     } catch (error) {
       logger.error('ChatRoutes', `[GET /list] error: ${(error as Error).message}`);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  router.get('/dag/:sessionId', async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const { userId } = req.query as { userId: string };
+
+      if (!userId) {
+        logger.warn('ChatRoutes', `[GET /dag] missing userId`);
+        res.status(400).json({ error: 'userId query parameter is required' });
+        return;
+      }
+
+      logger.info('ChatRoutes', `[GET /dag] sessionId=${sessionId} userId=${userId}`);
+      const dag = await chatService.getSessionDag(userId, sessionId);
+      logger.info('ChatRoutes', `[GET /dag] returned ${dag.nodes.length} nodes, ${dag.edges.length} edges`);
+      res.json(dag);
+    } catch (error) {
+      logger.error('ChatRoutes', `[GET /dag] error: ${(error as Error).message}`);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  router.get('/message/:msgId', async (req, res) => {
+    try {
+      const { msgId } = req.params;
+      logger.info('ChatRoutes', `[GET /message] msgId=${msgId}`);
+      const detail = await chatService.getMessageDetail(msgId);
+      if (!detail) {
+        res.status(404).json({ error: 'Message not found' });
+        return;
+      }
+      res.json(detail);
+    } catch (error) {
+      logger.error('ChatRoutes', `[GET /message] error: ${(error as Error).message}`);
       res.status(500).json({ error: (error as Error).message });
     }
   });

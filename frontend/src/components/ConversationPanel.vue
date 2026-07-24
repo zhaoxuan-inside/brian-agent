@@ -5,7 +5,9 @@ import MessageBubble from './MessageBubble.vue'
 import InputBox from './InputBox.vue'
 
 const emit = defineEmits<{
-  'openAgentChain': [exchangeId: string]
+  'locate': [msgId: string]
+  'askCitation': [text: string, msgId: string]
+  'openAgentDag': []
 }>()
 
 const sessionStore = useSessionStore()
@@ -29,14 +31,16 @@ function scrollToBottom() {
   }
 }
 
-function scrollToExchange(exchangeId: string) {
-  const el = document.querySelector(`[data-exchange-id="${exchangeId}"]`)
+function scrollToMessage(msgId: string) {
+  const el = scrollContainer.value?.querySelector(`[data-msg-id="${msgId}"]`)
   if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('locate-flash')
+    setTimeout(() => el.classList.remove('locate-flash'), 1200)
   }
 }
 
-defineExpose({ scrollToExchange })
+defineExpose({ scrollToMessage })
 </script>
 
 <template>
@@ -68,8 +72,10 @@ defineExpose({ scrollToExchange })
             :is-last="index === group.messages.length - 1"
             :has-next="index < group.messages.length - 1"
             :next-role="index < group.messages.length - 1 ? group.messages[index + 1].role : null"
-            @open-agent-chain="emit('openAgentChain', $event)"
-          />
+             @locate="emit('locate', $event)"
+             @ask-citation="(text, msgId) => { sessionStore.setCitation(text, msgId); emit('askCitation', text, msgId); }"
+             @open-agent-dag="emit('openAgentDag')"
+           />
         </div>
       </template>
     </div>
@@ -132,6 +138,19 @@ defineExpose({ scrollToExchange })
 
 .message-group {
   position: relative;
+}
+
+:deep(.locate-flash .message-content) {
+  animation: locate-flash 1.2s ease-out;
+}
+
+@keyframes locate-flash {
+  0%, 40% {
+    box-shadow: 0 0 0 2px #007AFF;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 .input-area {

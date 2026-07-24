@@ -39,13 +39,12 @@ function getStatusLabel(status: string): string {
 
 // Build DAG layers by topological sort (approximate by type)
 const layers = computed(() => {
-  const roots = sessionStore.agentChain.filter(a => a.type === 'root')
-  const subs = sessionStore.agentChain.filter(a => a.type === 'sub')
-  const workers = sessionStore.agentChain.filter(a => a.type === 'work')
+  const roots = sessionStore.agentChain.filter(a => a.type === 'coordinator' || a.type === 'root')
+  const subs = sessionStore.agentChain.filter(a => a.type === 'searcher' || a.type === 'caller' || a.type === 'skiller' || a.type === 'generator' || a.type === 'sub' || a.type === 'work')
   
   return {
     roots,
-    subs: subs.length > 0 ? subs : workers,
+    subs,
   }
 })
 </script>

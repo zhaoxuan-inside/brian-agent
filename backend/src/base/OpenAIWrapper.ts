@@ -15,7 +15,7 @@ export class OpenAIWrapper extends BaseLLMWrapper {
     }
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(request: ChatCompletionRequest, signal?: AbortSignal): Promise<ChatCompletionResponse> {
     const body = {
       model: request.model,
       messages: request.messages,
@@ -34,7 +34,9 @@ export class OpenAIWrapper extends BaseLLMWrapper {
         method: 'POST',
         headers: this.buildHeaders(),
         body: JSON.stringify(body),
-      }
+      },
+      3,
+      signal,
     );
 
     return response;

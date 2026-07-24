@@ -260,6 +260,56 @@ export class InformationService {
     return map;
   }
 
+  // ── message_references 数据访问（薄方法，业务逻辑在 application 层）──
+
+  async saveReferences(sessionId: string, msgId: string, referencedMsgIds: string[]): Promise<void> {
+    const now = Date.now();
+    for (const referencedMsgId of referencedMsgIds) {
+      await this.db.run(
+        'INSERT OR IGNORE INTO message_references (id, session_id, msg_id, referenced_msg_id, created_at) VALUES (?, ?, ?, ?, ?)',
+        [require('uuid').v4(), sessionId, msgId, referencedMsgId, now]
+      );
+    }
+  }
+
+  async getReferencesBySession(sessionId: string): Promise<{ msgId: string; referencedMsgId: string }[]> {
+    const rows = await this.db.query<{ msg_id: string; referenced_msg_id: string }>(
+      'SELECT msg_id, referenced_msg_id FROM message_references WHERE session_id = ?',
+      [sessionId]
+    );
+    return rows.map(r => ({ msgId: r.msg_id, referencedMsgId: r.referenced_msg_id }));
+  }
+
+  async getMessageByMsgId(msgId: string): Promise<UserMessage | undefined> {
+    const row = await this.db.get<any>('SELECT * FROM user_messages WHERE msg_id = ?', [msgId]);
+    return row ? this.mapRowToUserMessage(row) : undefined;
+  }
+
+  async getMessagesByMsgIds(msgIds: string[]): Promise<UserMessage[]> {
+    if (msgIds.length === 0) return [];
+    const placeholders = msgIds.map(() => '?').join(',');
+    const rows = await this.db.query<any>(
+      `SELECT * FROM user_messages WHERE msg_id IN (${placeholders}) AND is_learning_memory = 0`,
+      msgIds
+    );
+    return rows.map(row => this.mapRowToUserMessage(row));
+  }
+
+  async updateMessageSummary(msgId: string, summary: string): Promise<void> {
+    await this.db.run(
+      'UPDATE user_messages SET summary = ?, updated_at = ? WHERE msg_id = ?',
+      [summary, Date.now(), msgId]
+    );
+  }
+
+  async getMessagesNeedingSummary(limit: number = 200): Promise<UserMessage[]> {
+    const rows = await this.db.query<any>(
+      `SELECT * FROM user_messages WHERE is_learning_memory = 0 AND (summary = '' OR length(summary) > 20) ORDER BY created_at ASC LIMIT ?`,
+      [limit]
+    );
+    return rows.map(row => this.mapRowToUserMessage(row));
+  }
+
   async saveAgentChain(sessionId: string, exchangeId: string, chain: any[]): Promise<void> {
     await this.db.run(
       `INSERT OR REPLACE INTO exchange_agent_chains (exchange_id, session_id, chain_json, created_at) VALUES (?, ?, ?, ?)`,

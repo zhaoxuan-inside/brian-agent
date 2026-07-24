@@ -608,6 +608,7 @@ async function confirmAddProvider() {
     })
     addingProvider.value = false
     showToast('提供商添加成功', 'success')
+    await configStore.loadFromServer()
     closeAddProviderModal()
   } catch (e: unknown) {
     addingProvider.value = false
@@ -721,6 +722,11 @@ async function openModelModal(providerId: string) {
   modelSearchQuery.value = ''
   // Load models from DB
   await loadProviderModels(providerId)
+  // Restore selected model IDs from existing user_model_config
+  const configuredModelIds = userModelRows.value
+    .filter(r => r.providerId === providerId || r.providerName === p?.name)
+    .map(r => r.modelId)
+  selectedOnlineModelIds.value = new Set(configuredModelIds)
 }
 
 function closeModelModal() {
@@ -838,65 +844,24 @@ function hasModelsConfigured(providerId: string): boolean {
               <table class="w-full text-sm">
                 <thead class="bg-apple-gray-50 dark:bg-apple-gray-800 sticky top-0 z-10">
                   <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">
-                      <div class="flex items-center gap-1">
-                        <span>模型 ID</span>
-                        <div class="flex items-center">
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'modelId' && currentModelSort.dir === 'asc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'modelId', dir: 'asc' }">↑</button>
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'modelId' && currentModelSort.dir === 'desc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'modelId', dir: 'desc' }">↓</button>
-                        </div>
-                        <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700" @click.stop="toggleColumnSearch('modelId')">
-                          <Search :size="11" class="text-apple-gray-400" />
-                        </button>
-                      </div>
-                      <div v-if="activeColumnSearch === 'modelId'" class="mt-1" @click.stop>
-                        <input v-model="columnSearch['modelId']" placeholder="搜索..."
-                          class="w-full px-1.5 py-0.5 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700" />
-                      </div>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top cursor-pointer hover:text-apple-gray-700 select-none"
+                      @click="currentModelSort = { key: 'modelId', dir: currentModelSort.key === 'modelId' && currentModelSort.dir === 'asc' ? 'desc' : 'asc' }">
+                      模型 ID {{ currentModelSort.key === 'modelId' ? (currentModelSort.dir === 'asc' ? '↑' : '↓') : '' }}
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top cursor-pointer hover:text-apple-gray-700 select-none"
+                      @click="currentModelSort = { key: 'provider', dir: currentModelSort.key === 'provider' && currentModelSort.dir === 'asc' ? 'desc' : 'asc' }">
+                      提供商 {{ currentModelSort.key === 'provider' ? (currentModelSort.dir === 'asc' ? '↑' : '↓') : '' }}
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top cursor-pointer hover:text-apple-gray-700 select-none"
+                      @click="currentModelSort = { key: 'modelName', dir: currentModelSort.key === 'modelName' && currentModelSort.dir === 'asc' ? 'desc' : 'asc' }">
+                      模型名称 {{ currentModelSort.key === 'modelName' ? (currentModelSort.dir === 'asc' ? '↑' : '↓') : '' }}
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top cursor-pointer hover:text-apple-gray-700 select-none"
+                      @click="currentModelSort = { key: 'maxTokens', dir: currentModelSort.key === 'maxTokens' && currentModelSort.dir === 'asc' ? 'desc' : 'asc' }">
+                      Max Tokens {{ currentModelSort.key === 'maxTokens' ? (currentModelSort.dir === 'asc' ? '↑' : '↓') : '' }}
                     </th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">
-                      <div class="flex items-center gap-1">
-                        <span>提供商</span>
-                        <div class="flex items-center">
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'provider' && currentModelSort.dir === 'asc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'provider', dir: 'asc' }">↑</button>
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'provider' && currentModelSort.dir === 'desc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'provider', dir: 'desc' }">↓</button>
-                        </div>
-                        <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700" @click.stop="toggleColumnSearch('provider')">
-                          <Search :size="11" class="text-apple-gray-400" />
-                        </button>
-                      </div>
-                      <div v-if="activeColumnSearch === 'provider'" class="mt-1" @click.stop>
-                        <input v-model="columnSearch['provider']" placeholder="搜索..."
-                          class="w-full px-1.5 py-0.5 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700" />
-                      </div>
-                    </th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">
-                      <div class="flex items-center gap-1">
-                        <span>模型名称</span>
-                        <div class="flex items-center">
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'modelName' && currentModelSort.dir === 'asc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'modelName', dir: 'asc' }">↑</button>
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'modelName' && currentModelSort.dir === 'desc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'modelName', dir: 'desc' }">↓</button>
-                        </div>
-                        <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700" @click.stop="toggleColumnSearch('modelName')">
-                          <Search :size="11" class="text-apple-gray-400" />
-                        </button>
-                      </div>
-                      <div v-if="activeColumnSearch === 'modelName'" class="mt-1" @click.stop>
-                        <input v-model="columnSearch['modelName']" placeholder="搜索..."
-                          class="w-full px-1.5 py-0.5 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-800 outline-none border border-apple-gray-200 dark:border-apple-gray-700" />
-                      </div>
-                    </th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">
-                      <div class="flex items-center gap-1">
-                        <span>参数</span>
-                        <div class="flex items-center">
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'maxTokens' && currentModelSort.dir === 'asc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'maxTokens', dir: 'asc' }">↑</button>
-                          <button class="p-0.5 rounded hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 text-xs leading-none" :class="currentModelSort.key === 'maxTokens' && currentModelSort.dir === 'desc' ? 'text-brian-blue' : 'text-apple-gray-400'" @click="currentModelSort = { key: 'maxTokens', dir: 'desc' }">↓</button>
-                        </div>
-                      </div>
-                    </th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">
-                      限制配额
+                      日配额
                     </th>
                     <th class="px-4 py-3 text-right text-xs font-medium text-apple-gray-500 whitespace-nowrap align-top">操作</th>
                   </tr>
@@ -904,10 +869,12 @@ function hasModelsConfigured(providerId: string): boolean {
                 <tbody class="divide-y divide-apple-gray-100 dark:divide-apple-gray-800">
                   <tr v-for="row in sortedModelRows" :key="row.modelId"
                     class="hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/30 transition-colors"
-                    :class="configStore.selectedProviderId === row.providerId && configStore.selectedModelId === row.modelId ? 'bg-brian-blue/5' : ''">
+                    :class="row.isDefault ? 'bg-brian-blue/[0.03]' : ''">
                     <td class="px-4 py-3">
-                      <code class="text-xs font-mono bg-apple-gray-100 dark:bg-apple-gray-800 px-1.5 py-0.5 rounded">{{ row.modelId }}</code>
-                      <span v-if="row.isDefault" class="ml-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-brian-blue/10 text-brian-blue">默认</span>
+                      <div class="flex items-center gap-2">
+                        <code class="text-xs font-mono bg-apple-gray-100 dark:bg-apple-gray-800 px-1.5 py-0.5 rounded">{{ row.modelId }}</code>
+                        <span v-if="row.isDefault" class="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-brian-blue/10 text-brian-blue">默认</span>
+                      </div>
                     </td>
                     <td class="px-4 py-3 text-apple-gray-700 dark:text-apple-gray-300">{{ row.providerName }}</td>
                     <td class="px-4 py-3">
@@ -916,29 +883,27 @@ function hasModelsConfigured(providerId: string): boolean {
                     </td>
                     <td class="px-4 py-3 text-xs text-apple-gray-500">{{ row.maxTokens?.toLocaleString() }} tokens</td>
                     <td class="px-4 py-3 text-xs text-apple-gray-500">
-                      <div class="space-y-0.5">
-                        <div>每日 {{ (row.quotaTokensPerDay || 0).toLocaleString() }} tokens / {{ (row.quotaCallsPerDay || 0).toLocaleString() }} 次</div>
-                        <div>每周 {{ (row.quotaTokensPerWeek || 0).toLocaleString() }} tokens / {{ (row.quotaCallsPerWeek || 0).toLocaleString() }} 次</div>
-                        <div>每月 {{ (row.quotaTokensPerMonth || 0).toLocaleString() }} tokens / {{ (row.quotaCallsPerMonth || 0).toLocaleString() }} 次</div>
-                      </div>
+                      <div class="text-[11px] text-apple-gray-400">日: {{ (row.quotaTokensPerDay || 0).toLocaleString() }}T / {{ (row.quotaCallsPerDay || 0).toLocaleString() }}次</div>
                     </td>
                     <td class="px-4 py-3 text-right">
-                      <div class="flex items-center justify-end gap-1">
+                      <div class="flex items-center justify-end gap-2">
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                          <span class="text-[11px] text-apple-gray-400">默认</span>
+                          <button
+                            class="relative w-8 h-4 rounded-full transition-colors duration-200"
+                            :class="row.isDefault ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                            @click="handleToggleDefault(row)"
+                          >
+                            <span class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200"
+                              :class="row.isDefault ? 'translate-x-4' : ''" />
+                          </button>
+                        </label>
                         <button
-                          class="px-2.5 py-1 text-xs rounded font-medium transition-colors"
-                          :class="row.isDefault
-                            ? 'bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20'
-                            : 'bg-apple-gray-200 dark:bg-apple-gray-700 text-apple-gray-500 hover:bg-apple-gray-300 dark:hover:bg-apple-gray-600'"
-                          @click="handleToggleDefault(row)">
-                          {{ row.isDefault ? '解除默认' : '设为默认' }}
-                        </button>
-                        <button
-                          class="px-2.5 py-1 text-xs rounded font-medium bg-red-50 dark:bg-red-900/20 text-error-red hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                          class="px-2 py-1 text-[11px] rounded font-medium bg-red-50 dark:bg-red-900/20 text-error-red hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
                           @click="handleDeleteModel(row)">
                           删除
                         </button>
-                        <span v-if="configStore.selectedProviderId === row.providerId && configStore.selectedModelId === row.modelId" class="px-2.5 py-1 text-xs rounded font-medium bg-brian-blue text-white">当前</span>
-                        <button class="p-1.5 rounded hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" title="管理" @click="openModelModal(row.providerId)">
+                        <button class="p-1 rounded hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" title="管理" @click="openModelModal(row.providerId)">
                           <Edit3 :size="13" class="text-apple-gray-400" />
                         </button>
                       </div>

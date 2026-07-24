@@ -33,6 +33,9 @@ import { GraphExecutor } from './agent/executor';
 import { AgentLibrary } from './agent/agentLibrary';
 
 import { ChatService } from './application/ChatService';
+import { ChatDagService } from './application/ChatDagService';
+import { AgentOrchestrationService } from './application/AgentOrchestrationService';
+import { SystemAgentService } from './application/SystemAgentService';
 import { UserProfileService } from './application/UserProfileService';
 import { SelfLearningService } from './application/SelfLearningService';
 import { DocumentService } from './application/DocumentService';
@@ -115,6 +118,8 @@ export function createApp(): express.Application {
   const coreLlmService = new CoreLLMService(coreModelConfigService);
   const coreInformationService = new CoreInformationService(storageService, coreLlmService);
   const learningServiceCore = new LearningService(coreInformationService, coreLlmService, storageService);
+  // Start active learning scheduler (every 5 minutes)
+  learningServiceCore.schedule(300000);
 
   logger.info('SYSTEM', 'Core layer initialized');
 
@@ -129,7 +134,7 @@ export function createApp(): express.Application {
   // Application Layer
   // ============================================================
   const userProfileService = new UserProfileService(sqliteDB);
-  const learningService = new SelfLearningService(informationService, llmService);
+  const learningService = new SelfLearningService(informationService, llmService, modelConfigService);
   const documentService = new DocumentService(informationService);
 
   // Additional services for agent/mcp/skill/agent routes
@@ -139,7 +144,36 @@ export function createApp(): express.Application {
   const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
   const graphExecutor = new GraphExecutor(coreLlmService, toolService);
 
-  const chatService = new ChatService(informationService, llmService, orchestrator, userProfileService, metaAgent, graphExecutor, modelConfigService);
+  const chatDagService = new ChatDagService(informationService, llmService, modelConfigService);
+  const systemAgentService = new SystemAgentService(agentBuilder);
+
+  // 启动时确保系统内置 Planner + Evaluator 存在
+  systemAgentService.ensureSystemAgents().then(({ planner, evaluator }) => {
+    logger.info('SYSTEM', `[app] system agents ready: planner=${planner.id} evaluator=${evaluator.id}`);
+  }).catch((e: any) => {
+    logger.warn('SYSTEM', `[app] system agents init failed: ${(e as Error).message}`);
+  });
+
+  const agentOrchestrationService = new AgentOrchestrationService(
+    informationService, llmService, modelConfigService, agentBuilder, agentLibrary, metaAgent, graphExecutor
+  );
+  const chatService = new ChatService(informationService, llmService, orchestrator, userProfileService, modelConfigService, chatDagService, agentOrchestrationService, learningService);
+
+  // Backfill semantic summaries for legacy messages in the background (non-blocking)
+  setImmediate(() => {
+    chatDagService.backfillSummaries().catch(e =>
+      logger.warn('SYSTEM', `[app] summary backfill failed: ${(e as Error).message}`)
+    );
+  });
+
+  // AgentLibrary maintenance: periodic self-optimization (decay/boost/deprecate)
+  setInterval(() => {
+    agentLibrary.maintenance().then((r: any) => {
+      if (r && (r.decayed > 0 || r.boosted > 0 || r.deprecated > 0)) {
+        logger.info('SYSTEM', `[maintenance] decayed=${r.decayed} boosted=${r.boosted} deprecated=${r.deprecated}`);
+      }
+    }).catch((e: any) => logger.warn('SYSTEM', `[maintenance] failed: ${e}`));
+  }, 60 * 60 * 1000); // Every hour
 
   logger.info('SYSTEM', 'Application layer initialized');
 

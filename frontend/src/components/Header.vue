@@ -19,7 +19,7 @@ const menuItems = [
   { icon: Puzzle, route: '/work', label: 'Work' },
   { icon: Wand2, route: '/skill', label: 'Skill' },
   { icon: Cpu, route: '/models', label: '模型' },
-  { icon: Bot, route: '/agent', label: 'Agent' },
+  { icon: Bot, route: '/agent', label: 'Agent管理' },
 ]
 
 function isActive(menuRoute: string): boolean {

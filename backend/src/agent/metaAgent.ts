@@ -339,9 +339,10 @@ export class MetaAgent {
 
     // Build system prompt
     const systemPromptParts: string[] = [];
-    systemPromptParts.push(`You are an AI agent designed to handle "${taskType}" tasks.`);
+    systemPromptParts.push(`You are an AI agent designed to handle "${taskType}" tasks. 请使用中文回复。`);
     systemPromptParts.push(`Style: ${soul.style}`);
     systemPromptParts.push(`Personality: ${soul.personality}`);
+    systemPromptParts.push(`你可以使用可用的工具（如 web_fetch 访问互联网）来完成需要外部信息的任务。`);
 
     if (soul.contentRules && Array.isArray(soul.contentRules) && soul.contentRules.length > 0) {
       systemPromptParts.push('\nContent Guidelines:');

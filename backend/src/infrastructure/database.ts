@@ -148,6 +148,19 @@ function createTables(db: Database.Database): void {
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
     );
 
+    CREATE TABLE IF NOT EXISTS message_references (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      msg_id TEXT NOT NULL,
+      referenced_msg_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(msg_id, referenced_msg_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_msg_refs_session ON message_references(session_id);
+    CREATE INDEX IF NOT EXISTS idx_msg_refs_msg ON message_references(msg_id);
+    CREATE INDEX IF NOT EXISTS idx_msg_refs_referenced ON message_references(referenced_msg_id);
+
     CREATE TABLE IF NOT EXISTS memory_ratio_config (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -821,6 +834,61 @@ function runMigrations(db: Database.Database): void {
     }
   } catch (e: any) {
     logger.info('Database', `[runMigrations] user_messages_fts migration failed: ${e.message || e}`);
+  }
+
+  // Backfill message_references from legacy user_messages.metadata.selectedMessageIds
+  logger.info('Database', '[runMigrations] Checking message_references backfill...');
+  try {
+    // Migrations run before CREATE TABLE — ensure the table exists first
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS message_references (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        msg_id TEXT NOT NULL,
+        referenced_msg_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(msg_id, referenced_msg_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_msg_refs_session ON message_references(session_id);
+      CREATE INDEX IF NOT EXISTS idx_msg_refs_msg ON message_references(msg_id);
+      CREATE INDEX IF NOT EXISTS idx_msg_refs_referenced ON message_references(referenced_msg_id);
+    `);
+    const userMessagesExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='user_messages'"
+    ).get();
+    const legacyRows = userMessagesExists
+      ? db.prepare("SELECT session_id, msg_id, metadata FROM user_messages WHERE metadata LIKE '%selectedMessageIds%'").all() as any[]
+      : [];
+    if (legacyRows.length > 0) {
+      const insertRef = db.prepare(
+        'INSERT OR IGNORE INTO message_references (id, session_id, msg_id, referenced_msg_id, created_at) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?)'
+      );
+      const findByMsgId = db.prepare('SELECT msg_id FROM user_messages WHERE msg_id = ?');
+      const findByRowId = db.prepare('SELECT msg_id FROM user_messages WHERE id = ?');
+      let migrated = 0;
+      for (const row of legacyRows) {
+        try {
+          const meta = JSON.parse(row.metadata || '{}');
+          const ids: unknown = meta.selectedMessageIds;
+          if (!Array.isArray(ids)) continue;
+          for (const rawId of ids) {
+            if (typeof rawId !== 'string' || !rawId) continue;
+            // Legacy data may store either msg_id or row id — resolve to msg_id
+            const resolved = (findByMsgId.get(rawId) as any)?.msg_id
+              ?? (findByRowId.get(rawId) as any)?.msg_id;
+            if (resolved) {
+              const r = insertRef.run(row.session_id, row.msg_id, resolved, Date.now());
+              migrated += r.changes;
+            }
+          }
+        } catch { /* ignore malformed metadata */ }
+      }
+      logger.info('Database', `[runMigrations] message_references: backfilled ${migrated} references from ${legacyRows.length} legacy rows`);
+    } else {
+      logger.info('Database', '[runMigrations] message_references: no legacy selectedMessageIds found, skip');
+    }
+  } catch (e: any) {
+    logger.info('Database', `[runMigrations] message_references backfill failed: ${e.message || e}`);
   }
 
   logger.info('Database', '[runMigrations] Checking exchange_agent_chains table migration...');

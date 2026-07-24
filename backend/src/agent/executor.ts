@@ -201,12 +201,12 @@ export class GraphExecutor {
     // Build a wrapped LLM interface that includes agent context
     const wrappedLlm = {
       chat: async (messages: ChatMessage[], options?: any) => {
-        // Prepend agent system prompt
         const fullMessages: ChatMessage[] = [
           { role: 'system', content: agent.prompt.system },
           ...messages,
         ];
-        return this.llm.chat(fullMessages, options);
+        const opts = { ...(options || {}), modelId: agent.llm?.modelId || agent.llm };
+        return this.llm.chat(fullMessages, opts);
       },
     };
 
@@ -228,7 +228,8 @@ export class GraphExecutor {
           { role: 'system', content: agent.prompt.system },
           ...messages,
         ];
-        return this.llm.chat(fullMessages, options);
+        const opts = { ...(options || {}), modelId: agent.llm?.modelId || agent.llm };
+        return this.llm.chat(fullMessages, opts);
       },
     };
 
@@ -473,7 +474,9 @@ Respond with JSON:
     callbacks?: {
       onAgentOutput?: (agentId: string, output: string) => void;
       onAgentStatus?: (agentId: string, status: string) => void;
-    }
+      onAgentInput?: (agentId: string, input: { systemPrompt: string; instruction: string }) => void;
+    },
+    signal?: AbortSignal,
   ): Promise<GraphState> {
     // 1. Topological sort the graph
     const sorted = this.topologicalSort(taskGraph);
@@ -529,6 +532,7 @@ Respond with JSON:
       }
 
       // Execute ready nodes in parallel
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const results = await Promise.all(
         readyNodes.map(async (nodeId) => {
           const node = nodeMap.get(nodeId);
@@ -545,6 +549,11 @@ Respond with JSON:
 
             const taskDescription = node.description || node.agent?.prompt?.instruction || 'Execute the task';
 
+            callbacks?.onAgentInput?.(nodeId, {
+              systemPrompt: agent.prompt?.system || '',
+              instruction: taskDescription,
+            });
+
             switch (strategy) {
               case 'plan-execute': {
                 const planResult = await this.executePlanExecute(taskDescription, agent, state);
@@ -559,7 +568,8 @@ Respond with JSON:
                       { role: 'system', content: agent.prompt.system },
                       ...msgs,
                     ];
-                    return this.llm.chat(fullMessages, opts);
+                    const mergedOpts = { ...(opts || {}), modelId: agent.llm?.modelId || agent.llm };
+                    return this.llm.chat(fullMessages, mergedOpts);
                   },
                 });
                 result = cotResult;
@@ -611,7 +621,8 @@ Respond with JSON:
                         { role: 'system', content: agent.prompt.system },
                         ...msgs,
                       ];
-                      return this.llm.chat(fullMessages, opts);
+                      const mergedOpts = { ...(opts || {}), modelId: agent.llm?.modelId || agent.llm };
+                      return this.llm.chat(fullMessages, mergedOpts);
                     },
                   });
                   trace.push({ strategy: 'cot', retry: true });

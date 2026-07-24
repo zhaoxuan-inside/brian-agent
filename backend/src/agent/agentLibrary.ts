@@ -87,6 +87,13 @@ export class AgentLibrary {
     return agents;
   }
 
+  async getAllActive(): Promise<WorkAgent[]> {
+    const agents = await this.getAll();
+    return agents.filter(a => a.strength > this.getMinStrength && a.useCount > 0);
+  }
+
+  private get getMinStrength(): number { return DORMANT_THRESHOLD; }
+
   async update(agentId: string, updates: Partial<WorkAgent>): Promise<void> {
     const existing = await this.get(agentId);
     if (!existing) {
@@ -523,5 +530,80 @@ export class AgentLibrary {
       ...restored,
       updatedAt: Date.now(),
     });
+  }
+
+  // ============================================================
+  // 自优化闭环：反馈记录 / 可靠性更新 / 强度衰减 / 定时维护
+  // ============================================================
+
+  /**
+   * 评估Agent 对工作Agent 输出的评分回写。影响 reliability（指数移动平均）
+   * 和 strength（正/负强化），驱动自优化。
+   */
+  async recordFeedback(
+    agentId: string,
+    score: number,
+    rating: FeedbackRating = score >= 0.7 ? 'good' : score >= 0.4 ? 'neutral' : 'bad'
+  ): Promise<void> {
+    const agent = await this.get(agentId);
+    if (!agent) return;
+
+    // 可靠性指数移动平均（EMA）
+    const newReliability = agent.reliability * 0.8 + score * 0.2;
+    // 强度正/负强化
+    const strengthDelta = score >= 0.7 ? POSITIVE_REINFORCEMENT : score < 0.4 ? NEGATIVE_REINFORCEMENT : 0;
+    const newStrength = Math.max(MIN_STRENGTH, Math.min(MAX_STRENGTH, agent.strength + strengthDelta));
+
+    const now = Date.now();
+    const feedbackEntry = { rating, score, timestamp: now };
+    const updatedHistory = [...(agent.feedbackHistory ?? []).slice(-99), feedbackEntry];
+
+    await this.update(agentId, {
+      ...agent,
+      reliability: newReliability,
+      strength: newStrength,
+      useCount: (agent.useCount ?? 0) + 1,
+      lastUsedAt: now,
+      feedbackHistory: updatedHistory,
+    });
+  }
+
+  /**
+   * 定时维护：扫描闲置/低可靠 agent → 衰减 strength，
+   * 高可靠+高频 agent → 增强 strength；低 strength → 标记 deprecated。
+   */
+  async maintenance(): Promise<{
+    decayed: number;
+    boosted: number;
+    deprecated: number;
+  }> {
+    const agents = await this.getAll();
+    const now = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    let decayed = 0, boosted = 0, deprecated = 0;
+
+    for (const agent of agents) {
+      const daysSinceLastUse = agent.lastUsedAt ? (now - agent.lastUsedAt) / DAY_MS : 999;
+
+      if (daysSinceLastUse > 7 && agent.strength > MIN_STRENGTH) {
+        // 闲置衰减
+        const newStrength = Math.max(MIN_STRENGTH, agent.strength - DECAY_RATE);
+        await this.update(agent.id, { ...agent, strength: newStrength });
+        decayed++;
+      }
+
+      if (agent.reliability >= 0.8 && (agent.useCount ?? 0) >= 5 && agent.strength < MAX_STRENGTH) {
+        // 高可靠+高频 → 强化
+        const newStrength = Math.min(MAX_STRENGTH, agent.strength + DECAY_RATE);
+        await this.update(agent.id, { ...agent, strength: newStrength });
+        boosted++;
+      }
+
+      if (agent.strength <= DORMANT_THRESHOLD) {
+        deprecated++;
+      }
+    }
+
+    return { decayed, boosted, deprecated };
   }
 }

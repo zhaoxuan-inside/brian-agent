@@ -7,6 +7,11 @@ import { createToggleHandler, createDirectToggleHandler } from './toggleHandler'
 export function createAgentRoutes(agentBuilder: AgentBuilder, _metaAgent: MetaAgent): express.Router {
   const router = express.Router();
 
+  async function guardSystemAgent(id: string): Promise<boolean> {
+    const agent = await agentBuilder.get(id);
+    return !!(agent?.isSystem);
+  }
+
   router.get('/', async (req, res) => {
     try {
       const { search } = req.query;
@@ -73,6 +78,10 @@ export function createAgentRoutes(agentBuilder: AgentBuilder, _metaAgent: MetaAg
   router.put('/:id', async (req, res) => {
     try {
       const { id } = req.params;
+      if (await guardSystemAgent(id)) {
+        res.status(403).json({ error: '系统 Agent 不可修改', code: 'SYSTEM_AGENT_PROTECTED' });
+        return;
+      }
       const agent = await agentBuilder.update(id, req.body);
       logger.info('Agent', `Agent updated: ${id}`);
       res.json(agent);
@@ -88,6 +97,10 @@ export function createAgentRoutes(agentBuilder: AgentBuilder, _metaAgent: MetaAg
   router.delete('/:id', async (req, res) => {
     try {
       const { id } = req.params;
+      if (await guardSystemAgent(id)) {
+        res.status(403).json({ error: '系统 Agent 不可删除', code: 'SYSTEM_AGENT_PROTECTED' });
+        return;
+      }
       await agentBuilder.delete(id);
       logger.info('Agent', `Agent deleted: ${id}`);
       res.json({ success: true });
@@ -96,11 +109,19 @@ export function createAgentRoutes(agentBuilder: AgentBuilder, _metaAgent: MetaAg
     }
   });
 
-  router.post('/:id/toggle', createDirectToggleHandler(
-    (id) => agentBuilder.toggle(id),
-    'Agent',
-    'AGENT_TOGGLE_ERROR',
-  ));
+  router.post('/:id/toggle', async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (await guardSystemAgent(id)) {
+        res.status(403).json({ error: '系统 Agent 不可切换状态', code: 'SYSTEM_AGENT_PROTECTED' });
+        return;
+      }
+      const agent = await agentBuilder.toggle(id);
+      res.json(agent);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message, code: 'AGENT_TOGGLE_ERROR' });
+    }
+  });
 
   router.get('/:id/mcps', async (req, res) => {
     try {

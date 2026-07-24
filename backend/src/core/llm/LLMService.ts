@@ -188,7 +188,7 @@ export class LLMService {
     }
   }
 
-  async chatCompletion(request: ChatCompletionRequest, modelId?: string): Promise<ChatCompletionResponse> {
+  async chatCompletion(request: ChatCompletionRequest, modelId?: string, signal?: AbortSignal): Promise<ChatCompletionResponse> {
     const wrapper = await this.getWrapper(modelId);
     const config = await this.getModelConfig(modelId);
     const startTime = Date.now();
@@ -197,7 +197,7 @@ export class LLMService {
     logger.info('LLMService', `[chatCompletion] modelId=${effectiveModelId}, msgCount=${request.messages.length}, temperature=${request.temperature}, maxTokens=${request.maxTokens}`);
 
     try {
-      const response = await wrapper.chatCompletion(request);
+      const response = await wrapper.chatCompletion(request, signal);
       const latency = Date.now() - startTime;
       const tokens = response.usage?.totalTokens || 0;
       logger.info('LLMService', `[chatCompletion] success: latency=${latency}ms, tokens=${tokens} (in=${response.usage?.promptTokens}, out=${response.usage?.completionTokens}), modelId=${effectiveModelId}`);
