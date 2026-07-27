@@ -1,0 +1,63 @@
+/**
+ * @fileoverview 共享错误类型定义。
+ *
+ * 提供统一的错误类层次，便于各 Provider 抛出结构化错误，
+ * AOP 层与 access 层可据此填充 Output 的 error / error_code 字段。
+ */
+
+/**
+ * Provider 错误基类。
+ *
+ * 所有自定义错误继承此类，携带错误码与错误信息。
+ */
+export class ProviderError extends Error {
+  /** 错误码 */
+  readonly error_code: string;
+
+  constructor(message: string, error_code: string) {
+    super(message);
+    this.name = this.constructor.name;
+    this.error_code = error_code;
+  }
+}
+
+/**
+ * 组件未启用错误。
+ *
+ * 当 Provider 处于 disabled 状态时执行任何操作将抛出此错误。
+ */
+export class ComponentDisabledError extends ProviderError {
+  constructor(component: string) {
+    super(
+      `${component} 组件未启用，请先通过 enable${component} 启用`,
+      'COMPONENT_DISABLED',
+    );
+  }
+}
+
+/**
+ * 参数校验错误。
+ */
+export class ValidationError extends ProviderError {
+  constructor(message: string) {
+    super(message, 'VALIDATION_ERROR');
+  }
+}
+
+/**
+ * 资源不存在错误。
+ */
+export class NotFoundError extends ProviderError {
+  constructor(resource: string, id: string) {
+    super(`${resource} 不存在: ${id}`, 'NOT_FOUND');
+  }
+}
+
+/**
+ * 数据库操作错误。
+ */
+export class DatabaseError extends ProviderError {
+  constructor(message: string) {
+    super(message, 'DATABASE_ERROR');
+  }
+}

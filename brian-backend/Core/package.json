@@ -1,0 +1,26 @@
+{
+  "name": "@brian-agent/core",
+  "version": "1.0.0",
+  "description": "Brian-Agent Core 层业务逻辑模块集合",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@brian-agent/base": "file:../Base",
+    "magic-string": "^0.30.21",
+    "nodejieba": "^3.5.8",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/uuid": "^9.0.8",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.0"
+  }
+}

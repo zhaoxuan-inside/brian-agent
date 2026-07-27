@@ -330,7 +330,7 @@ export class ChatService {
                 startTime: think?.startTime || Date.now(),
                 endTime: think?.endTime || Date.now(),
                 strategy: sr.strategy || cos.strategy,
-                llm: sr.llm || { providerId: 'default', modelId: 'default', temperature: 0.7, maxTokens: 4096 },
+                llm: sr.llm || { providerId: '', modelId: '', temperature: 0.7, maxTokens: 4096 },
                 skillIds: sr.skillIds || [],
                 mcpIds: sr.mcpIds || [],
                 soulId: sr.soulId || '',
@@ -555,6 +555,12 @@ export class ChatService {
    */
   async getMessageDetail(msgId: string): Promise<MessageDetail | null> {
     return this.chatDagService.getMessageDetail(msgId);
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    logger.info('ChatService', `[deleteSession] sessionId=${sessionId}`);
+    await this.informationService.deleteSession(sessionId);
+    logger.info('ChatService', `[deleteSession] done sessionId=${sessionId}`);
   }
 
   async listChats(userId: string): Promise<{ sessionId: string; lastMessage: string; lastTime: number }[]> {

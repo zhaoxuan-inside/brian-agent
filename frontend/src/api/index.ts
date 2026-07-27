@@ -238,6 +238,9 @@ export const chatApi = {
       `/chat/list?userId=${userId}`
     ),
 
+  deleteSession: (sessionId: string) =>
+    fetchApi<{ success: boolean }>(`/chat/session/${sessionId}`, { method: 'DELETE' }),
+
   exchanges: (sessionId: string, userId: string) =>
     fetchApi<{
       exchanges: {
@@ -517,6 +520,16 @@ export const learningApi = {
   // 洞察
   getInsights: (limit?: number) =>
     fetchApi<Array<{ timestamp: number; insight?: string; content?: string }>>(`/learning/insights${limit ? `?limit=${limit}` : ''}`),
+
+  // 学习控制（后端尚未实现，调用失败会优雅降级）
+  startLearning: () =>
+    fetchApi<{ success: boolean }>('/learning/start', { method: 'POST' }),
+
+  stopLearning: () =>
+    fetchApi<{ success: boolean }>('/learning/stop', { method: 'POST' }),
+
+  configDriverWeights: (weights: Record<string, number>) =>
+    fetchApi<{ success: boolean }>('/learning/driver-weights', { method: 'PUT', body: JSON.stringify(weights) }),
 };
 
 // ============================================================

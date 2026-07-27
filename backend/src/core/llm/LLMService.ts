@@ -194,6 +194,13 @@ export class LLMService {
     const startTime = Date.now();
     const effectiveModelId = modelId || this.defaultModelId;
 
+    // Override model name with the actual configured model ID if the request has a generic/empty model
+    const actualModelName = config.modelId || config.name;
+    if (actualModelName && actualModelName !== 'fallback' && request.model !== actualModelName) {
+      logger.info('LLMService', `[chatCompletion] overriding model: ${request.model} -> ${actualModelName}`);
+      request = { ...request, model: actualModelName };
+    }
+
     logger.info('LLMService', `[chatCompletion] modelId=${effectiveModelId}, msgCount=${request.messages.length}, temperature=${request.temperature}, maxTokens=${request.maxTokens}`);
 
     try {
@@ -296,7 +303,7 @@ export class LLMService {
         logger.info('LLMService', `[getModelConfig] Using in-memory wrapper for id=${id}`);
         return {
           id,
-          userId: 'default',
+          userId: '',
           name: id,
           type: wrapper.provider,
           endpoint: wrapper.baseUrl,

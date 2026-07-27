@@ -223,7 +223,35 @@ export class StrategyFactory {
       case 'reflexion':
         return new ReflexionStrategy(llm);
       default:
-        return new ReACTStrategy(llm);
+        return new CoTStrategy(llm);
     }
+  }
+
+  /**
+   * Select the optimal strategy type based on task characteristics.
+   * CoT is the default strategy for all unrecognized/ambiguous tasks.
+   */
+  static select(task: {
+    intent: string;
+    complexity: number;
+    domain?: string;
+  }): StrategyType {
+    if (task.complexity >= 0.7) {
+      return 'plan-execute';
+    }
+
+    if (task.complexity >= 0.4 && task.complexity < 0.7) {
+      const reasoningIntents = ['analysis', 'explanation', 'comparison', 'summarization', 'planning'];
+      if (reasoningIntents.includes(task.intent) || (task.domain && /math|logic|science|reasoning|code/i.test(task.domain))) {
+        return 'cot';
+      }
+    }
+
+    const actionIntents = ['debugging', 'code_generation', 'creation', 'search', 'transformation'];
+    if (actionIntents.includes(task.intent)) {
+      return 'react';
+    }
+
+    return 'cot';
   }
 }

@@ -1,6 +1,7 @@
 import { LLMService } from '../core/llm';
 import { InformationService } from '../core/information';
 import type { ChatMessage, LLMResponse } from '../shared/types';
+import { StrategyFactory } from '../strategy/ThinkingStrategy';
 
 export class TaskPlanner {
   private llm: LLMService;
@@ -259,21 +260,6 @@ Respond as JSON:
    * Select the best execution strategy based on complexity and intent.
    */
   selectStrategy(complexity: number, intent: string): string {
-    if (complexity >= 0.7) {
-      return 'plan-execute';
-    }
-
-    if (complexity >= 0.4 && complexity < 0.7) {
-      const reasoningIntents = ['analysis', 'explanation', 'comparison', 'code_generation'];
-      if (reasoningIntents.includes(intent)) {
-        return 'cot';
-      }
-    }
-
-    if (complexity < 0.3) {
-      return 'react';
-    }
-
-    return 'react';
+    return StrategyFactory.select({ intent, complexity });
   }
 }

@@ -37,7 +37,7 @@ export class AgentOrchestrator {
   async orchestrate(messages: ChatMessage[], context: Record<string, any>): Promise<OrchestrationResult> {
     const start = Date.now();
     const agentResults: OrchestrationResult['agentResults'] = [];
-    const orgContext = { ...context, strategy: context.strategy || 'default' };
+    const orgContext = { ...context, strategy: context.strategy || '' };
 
     logger.info('AgentOrchestrator', `[orchestrate] starting with ${messages.length} messages, userId=${context.userId}, chatId=${context.chatId}, registeredAgents=${this.agents.size}`);
 

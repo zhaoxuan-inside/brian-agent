@@ -272,7 +272,7 @@ export class GraphExecutor {
       name: `sub-${parentId}-${Date.now()}`,
       taskFeatures: { parentId, task },
       strategy: 'react',
-      llm: { providerId: 'default', modelId: 'default', temperature: 0.3, maxTokens: 2048 },
+      llm: { providerId: '', modelId: '', temperature: 0.3, maxTokens: 2048 },
       prompt: {
         system: `You are a sub-agent spawned by agent ${parentId}. Complete the assigned task efficiently.`,
         instruction: typeof task === 'string' ? task : JSON.stringify(task),

@@ -135,6 +135,19 @@ export function createChatRoutes(chatService: ChatService): express.Router {
     }
   });
 
+  router.delete('/session/:sessionId', async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      logger.info('ChatRoutes', `[DELETE /session] sessionId=${sessionId}`);
+      await chatService.deleteSession(sessionId);
+      logger.info('ChatRoutes', `[DELETE /session] done sessionId=${sessionId}`);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error('ChatRoutes', `[DELETE /session] error: ${(error as Error).message}`);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
   router.get('/dag/:sessionId', async (req, res) => {
     try {
       const { sessionId } = req.params;

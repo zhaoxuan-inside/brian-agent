@@ -386,7 +386,7 @@ export function createConfigRoutes(
     try {
       const { name, version, url, userId, description, category, author } = req.body;
       const result = await mcpManager.installMCP({
-        userId: userId || 'default',
+        userId: userId || '',
         name,
         description: description || '',
         category: category || 'general',
@@ -565,9 +565,9 @@ export function createConfigRoutes(
         return;
       }
 
-      logger.info('ConfigRoutes', `[POST /model/batch] providerId=${providerId} modelCount=${modelIds.length} userId=${userId || 'default'}`);
+      logger.info('ConfigRoutes', `[POST /model/batch] providerId=${providerId} modelCount=${modelIds.length} userId=${userId || ''}`);
 
-      const uid = userId || 'default';
+      const uid = userId || '';
 
       // 获取提供商的模型详情（用于填充 modelName, maxTokens 等字段）
       const llmConfig = llmConfigService.getConfig();

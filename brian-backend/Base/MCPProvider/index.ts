@@ -1,0 +1,46 @@
+/**
+ * @fileoverview MCPProvider 模块统一导出。
+ */
+
+export { MCPAccess } from './access/MCPAccess';
+export {
+  McpContext,
+  AddMcpProviderInput,
+  AddMcpProviderOutput,
+  DelMcpProviderInput,
+  DelMcpProviderOutput,
+  UpdateMcpProviderInput,
+  UpdateMcpProviderOutput,
+  SoMcpProviderInput,
+  SoMcpProviderOutput,
+  TestMcpProviderInput,
+  TestMcpProviderOutput,
+  ListMcpInput,
+  ListMcpOutput,
+  InstallMcpInput,
+  InstallMcpOutput,
+  StartMcpInput,
+  StartMcpOutput,
+  StopMcpInput,
+  StopMcpOutput,
+  UninstallMcpInput,
+  UninstallMcpOutput,
+  UpdateMcpInput,
+  UpdateMcpOutput,
+  GetMcpInput,
+  GetMcpOutput,
+  SoMcpInput,
+  SoMcpOutput,
+  ExecMcpInput,
+  ExecMcpOutput,
+  EnableMCPInput,
+  EnableMCPOutput,
+  MCP_PROVIDER_TABLE,
+  MCP_CACHE_TABLE,
+  MCP_INSTALL_TABLE,
+  MCP_USAGE_TABLE,
+  MCP_CONFIG_TABLE,
+  MCP_DEFAULT_CONFIGS,
+  MCP_DEFAULT_PROVIDERS,
+} from './domain/types';
+export type { McpProviderData, McpData, McpProviderRecord, McpInstallRecord } from './domain/types';

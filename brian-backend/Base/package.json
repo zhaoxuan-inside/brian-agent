@@ -1,0 +1,28 @@
+{
+  "name": "@brian-agent/base",
+  "version": "1.0.0",
+  "description": "Brian-Agent Base 层 Provider 模块集合 (DDD 四层架构)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "tiny-graph-db": "^1.0.4",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.12.7",
+    "@types/uuid": "^9.0.8",
+    "congraphdb": "^0.2.1",
+    "graphdblite": "^0.1.2",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.0"
+  }
+}

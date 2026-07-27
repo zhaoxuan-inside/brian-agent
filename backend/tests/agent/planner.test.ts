@@ -215,7 +215,7 @@ describe('TaskPlanner', () => {
     });
 
     it('returns cot for low complexity', () => {
-      expect(planner.selectStrategy(0.2, 'analysis')).toBe('react');
+      expect(planner.selectStrategy(0.2, 'analysis')).toBe('cot');
     });
 
     it('returns cot for medium complexity with reasoning intents', () => {

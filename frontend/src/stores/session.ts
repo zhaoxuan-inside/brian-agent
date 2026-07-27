@@ -327,6 +327,20 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  async function deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      await chatApi.deleteSession(sessionId)
+      chatList.value = chatList.value.filter(c => c.sessionId !== sessionId)
+      if (currentSessionId.value === sessionId) {
+        clearMessages()
+      }
+      return true
+    } catch (e) {
+      console.error('[sessionStore] deleteSession failed:', e)
+      return false
+    }
+  }
+
   async function loadExchanges(sessionId: string, userId: string) {
     isLoadingExchanges.value = true
     try {
@@ -480,6 +494,7 @@ export const useSessionStore = defineStore('session', () => {
     startProcessing,
     stopProcessing,
     loadChatList,
+    deleteSession,
     loadExchanges,
     loadDag,
     toggleMsgSelection,

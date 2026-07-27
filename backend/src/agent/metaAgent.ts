@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { WorkAgent, StrategyType } from '../shared/types';
 import { generateSoulConfig } from './capability/soulConfig';
 import { getWorkTemplate } from './capability/promptTemplate';
+import { StrategyFactory } from '../strategy/ThinkingStrategy';
 
 export class MetaAgent {
   private llm: LLMService;
@@ -135,7 +136,11 @@ export class MetaAgent {
     const skillIds = await this.selectSkills(taskFeatures);
     const mcpIds = this.selectMCP(taskFeatures);
     const prompt = await this.generatePrompt(taskFeatures, skillIds);
-    const strategy = this.selectStrategy(taskFeatures);
+    const strategy = StrategyFactory.select({
+      intent: (taskFeatures.intent as string) || 'general',
+      complexity: (taskFeatures.complexity as number) || 0.3,
+      domain: (taskFeatures.domain as string) || 'general',
+    });
 
     const id = uuidv4();
     const now = Date.now();
@@ -237,9 +242,10 @@ export class MetaAgent {
       }
     }
 
+    // No models available — return empty config; LLMService will handle resolution or throw
     return {
-      providerId: 'default',
-      modelId: 'default',
+      providerId: '',
+      modelId: '',
       temperature: 0.5,
       maxTokens: 4096,
     };
@@ -380,29 +386,6 @@ export class MetaAgent {
     const instruction = workTemplate;
 
     return { system, instruction };
-  }
-
-  private selectStrategy(taskFeatures: Record<string, unknown>): string {
-    const complexity = (taskFeatures.complexity as number) || 0.3;
-    const intent = (taskFeatures.intent as string) || 'general';
-
-    if (complexity >= 0.7) {
-      return 'plan-execute';
-    }
-
-    if (complexity >= 0.4 && complexity < 0.7) {
-      const reasoningIntents = ['analysis', 'explanation', 'code_generation'];
-      if (reasoningIntents.includes(intent)) {
-        return 'cot';
-      }
-    }
-
-    const actionIntents = ['creation', 'fix', 'debugging', 'search', 'execution'];
-    if (actionIntents.includes(intent)) {
-      return 'react';
-    }
-
-    return 'react';
   }
 
   private configureSoul(taskFeatures: Record<string, unknown>): Record<string, unknown> {

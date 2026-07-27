@@ -9,3 +9,4 @@ export * from './DBWrapper';
 export * from './MQWrapper';
 export * from './db/SQLiteGraphDB';
 export * from './db/SQLiteVectorDB';
+export * from './VectorDBProvider';

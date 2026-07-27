@@ -543,6 +543,14 @@ export class InformationService {
     await this.db.run('DELETE FROM memory_nodes WHERE id = ?', [id]);
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    // Delete related data first, then messages
+    await this.db.run('DELETE FROM message_references WHERE session_id = ?', [sessionId]);
+    await this.db.run('DELETE FROM exchange_agent_chains WHERE session_id = ?', [sessionId]);
+    await this.db.run('DELETE FROM user_message_keyword WHERE msg_id IN (SELECT msg_id FROM user_messages WHERE session_id = ?)', [sessionId]);
+    await this.db.run('DELETE FROM user_messages WHERE session_id = ?', [sessionId]);
+  }
+
   async incrementMemoryAccess(id: string): Promise<void> {
     await this.db.run(`
       UPDATE memory_nodes

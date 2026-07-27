@@ -116,7 +116,7 @@ describe('LearningService', () => {
 
   it('should onMessage extract preferences', () => {
     learning.onMessage({ role: 'user', content: 'I prefer using TypeScript' });
-    const prefs = storage.sqlite.getPreferences('default', 'general');
+    const prefs = storage.sqlite.getPreferences('', 'general');
     expect(prefs.length).toBeGreaterThan(0);
   });
 

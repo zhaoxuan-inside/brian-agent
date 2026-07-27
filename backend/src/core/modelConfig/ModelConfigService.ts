@@ -47,7 +47,7 @@ export class ModelConfigService {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS user_model_config (
         id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL DEFAULT 'default',
+        user_id TEXT NOT NULL DEFAULT '',
         provider_id TEXT NOT NULL,
         provider_name TEXT NOT NULL DEFAULT '',
         model_id TEXT NOT NULL,
@@ -72,7 +72,7 @@ export class ModelConfigService {
   private rowToConfig(row: Record<string, unknown>): ModelConfig {
     return {
       id: String(row.id),
-      userId: String(row.user_id || 'default'),
+      userId: String(row.user_id || ''),
       providerId: String(row.provider_id || ''),
       providerName: String(row.provider_name || ''),
       modelId: String(row.model_id || ''),
@@ -139,7 +139,7 @@ export class ModelConfigService {
       INSERT INTO user_model_config (id, user_id, provider_id, provider_name, model_id, model_name, max_tokens, supports_vision, supports_tools, quota_tokens_per_day, quota_tokens_per_week, quota_tokens_per_month, quota_calls_per_day, quota_calls_per_week, quota_calls_per_month, is_default, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, data.userId || 'default', data.providerId, data.providerName, data.modelId, data.modelName,
+      id, data.userId || '', data.providerId, data.providerName, data.modelId, data.modelName,
       data.maxTokens, data.supportsVision ? 1 : 0, data.supportsTools ? 1 : 0,
       data.quotaTokensPerDay, data.quotaTokensPerWeek, data.quotaTokensPerMonth,
       data.quotaCallsPerDay, data.quotaCallsPerWeek, data.quotaCallsPerMonth,
@@ -149,7 +149,7 @@ export class ModelConfigService {
   }
 
   async batchSaveConfigs(providerId: string, models: Array<Record<string, unknown>>, userId?: string): Promise<ModelConfig[]> {
-    const uid = userId || 'default';
+    const uid = userId || '';
     const now = Date.now();
     logger.info('ModelConfigService', `[batchSaveConfigs] providerId=${providerId} userId=${uid} modelCount=${models.length}`);
 
@@ -275,7 +275,7 @@ export class ModelConfigService {
   }
 
   async deleteConfigsByProvider(providerId: string, userId?: string): Promise<number> {
-    const uid = userId || 'default';
+    const uid = userId || '';
     const result = this.db.prepare(
       'DELETE FROM user_model_config WHERE provider_id = ? AND user_id = ?'
     ).run(providerId, uid);
@@ -284,7 +284,7 @@ export class ModelConfigService {
   }
 
   async setDefault(id: string, userId?: string): Promise<void> {
-    const uid = userId || 'default';
+    const uid = userId || '';
     logger.info('ModelConfigService', `[setDefault] id=${id} userId=${uid}`);
 
     this.db.prepare('UPDATE user_model_config SET is_default = 0 WHERE user_id = ?').run(uid);
@@ -303,7 +303,7 @@ export class ModelConfigService {
   }
 
   async getDefaultConfig(userId?: string): Promise<ModelConfig | undefined> {
-    const uid = userId || 'default';
+    const uid = userId || '';
     const row = this.db.prepare(
       'SELECT * FROM user_model_config WHERE user_id = ? AND is_default = 1 LIMIT 1'
     ).get(uid) as Record<string, unknown> | undefined;

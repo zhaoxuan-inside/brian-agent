@@ -8,14 +8,20 @@ import { SQLiteWrapper as SQLiteDB } from './base/DBWrapper';
 import type { DBWrapper } from './base/DBWrapper';
 import { SQLiteVectorDB } from './base/db/SQLiteVectorDB';
 import { SQLiteGraphDB } from './base/db/SQLiteGraphDB';
+import { VectorDBProvider } from './base/VectorDBProvider';
 import { SQLiteMQ } from './base/MQWrapper';
 
 import { LLMService } from './core/llm/LLMService';
+import { LLMCore } from './core/llm/LLMCore';
 import { LLMService as CoreLLMService } from './core/llm';
 import { ModelConfigService as CoreModelConfigService } from './core/llm/modelConfig';
 import { MCPManager } from './core/mcp/MCPManager';
+import { MCPCore } from './core/mcp/MCPCore';
 import { SkillManager } from './core/skill/SkillManager';
+import { SkillCore } from './core/skill/SkillCore';
 import { SoulManager } from './core/soul/SoulManager';
+import { SoulCore } from './core/soul/SoulCore';
+import { MQCore, type MQOperations } from './core/mq/MQCore';
 import { WorkManager } from './core/work/WorkManager';
 import { InformationService } from './core/information/InformationService';
 import { InformationService as CoreInformationService } from './core/information';
@@ -31,6 +37,9 @@ import { AgentBuilder } from './agent/agentBuilder';
 import { MetaAgent } from './agent/metaAgent';
 import { GraphExecutor } from './agent/executor';
 import { AgentLibrary } from './agent/agentLibrary';
+import { WriterAgent } from './agent/writer';
+import { EvolutorAgent } from './agent/evoluator';
+import { StrategyConfigService } from './strategy/StrategyConfigService';
 
 import { ChatService } from './application/ChatService';
 import { ChatDagService } from './application/ChatDagService';
@@ -95,6 +104,7 @@ export function createApp(): express.Application {
     },
   };
   const vectorDB = new SQLiteVectorDB(sqliteDB);
+  const vectorDBProvider = new VectorDBProvider(sqliteDB);
   const graphDB = new SQLiteGraphDB(sqliteDB);
   const mq = new SQLiteMQ(sqliteDB);
 
@@ -118,6 +128,32 @@ export function createApp(): express.Application {
   const coreLlmService = new CoreLLMService(coreModelConfigService);
   const coreInformationService = new CoreInformationService(storageService, coreLlmService);
   const learningServiceCore = new LearningService(coreInformationService, coreLlmService, storageService);
+
+  // Core Layer: Selection/Optimization services (match, optimize, age)
+  const mqOperations: MQOperations = {
+    sendMQ: async (queue, payload, priority) => {
+      let payloadObj: Record<string, any>;
+      try { payloadObj = JSON.parse(payload); } catch { payloadObj = { data: payload }; }
+      return mq.enqueue({ queue, payload: payloadObj, priority: priority ?? 5, maxRetries: 3 });
+    },
+    consumeMQ: async (queue) => {
+      const msg = await mq.dequeue(queue);
+      if (!msg) return null;
+      const payloadStr = typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload);
+      return { msg_id: msg.id, payload: payloadStr, priority: msg.priority ?? 5 };
+    },
+    ackMQ: async (msg_id) => { await mq.ack(msg_id); },
+    nackMQ: async (msg_id) => { await mq.nack(msg_id); },
+    getQueueStats: async (queue) => {
+      const stats = await mq.getQueueStats(queue || '');
+      return [{ queue: queue || '', ...stats }];
+    },
+  };
+  const mqCore = new MQCore(mqOperations);
+  const llmCore = new LLMCore(sqliteDB, llmService);
+  const mcpCore = new MCPCore(sqliteDB, llmService, mcpManager);
+  const skillCore = new SkillCore(sqliteDB, llmService, skillManager);
+  const soulCore = new SoulCore(sqliteDB, llmService, soulManager);
   // Start active learning scheduler (every 5 minutes)
   learningServiceCore.schedule(300000);
 
@@ -143,6 +179,8 @@ export function createApp(): express.Application {
   const agentBuilder = new AgentBuilder(storageService, coreLlmService);
   const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
   const graphExecutor = new GraphExecutor(coreLlmService, toolService);
+  const writerAgent = new WriterAgent(coreLlmService);
+  const evolutorAgent = new EvolutorAgent(coreLlmService);
 
   const chatDagService = new ChatDagService(informationService, llmService, modelConfigService);
   const systemAgentService = new SystemAgentService(agentBuilder);
@@ -157,6 +195,15 @@ export function createApp(): express.Application {
   const agentOrchestrationService = new AgentOrchestrationService(
     informationService, llmService, modelConfigService, agentBuilder, agentLibrary, metaAgent, graphExecutor
   );
+
+  // Seed built-in strategies (CoT, ReAct) at startup — immutable
+  const strategyConfigService = new StrategyConfigService(sqliteDB);
+  setImmediate(() => {
+    strategyConfigService.ensureBuiltinStrategies().catch(e =>
+      logger.warn('SYSTEM', `[app] builtin strategies seed failed: ${(e as Error).message}`)
+    );
+  });
+
   const chatService = new ChatService(informationService, llmService, orchestrator, userProfileService, modelConfigService, chatDagService, agentOrchestrationService, learningService);
 
   // Backfill semantic summaries for legacy messages in the background (non-blocking)

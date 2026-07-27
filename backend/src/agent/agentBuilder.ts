@@ -93,8 +93,8 @@ export class AgentBuilder {
         stopConditions: input.strategy?.stopConditions || [],
       },
       llm: {
-        providerId: input.llm?.providerId || 'default',
-        modelId: input.llm?.modelId || 'default',
+        providerId: input.llm?.providerId || '',
+        modelId: input.llm?.modelId || '',
         temperature: input.llm?.temperature ?? 0.5,
         maxTokens: input.llm?.maxTokens || 4096,
       },

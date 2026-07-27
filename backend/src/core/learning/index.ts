@@ -73,7 +73,7 @@ export class LearningService {
     // Extract user preferences
     const preference = this.extractPreference(message.content);
     if (preference) {
-      this.updateUserProfile('default', preference);
+      this.updateUserProfile('', preference);
     }
 
     // Detect knowledge gaps

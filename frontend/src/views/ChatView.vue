@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Plus, History, X, PanelRight } from '@lucide/vue'
+import { ref, computed } from 'vue'
+import { Plus, History, X, PanelRight, Search, Trash2, CheckSquare, Square } from '@lucide/vue'
 import NeuralBackground from '../components/NeuralBackground.vue'
 import Header from '../components/Header.vue'
 import ChatArea from '../components/ChatArea.vue'
@@ -8,6 +8,10 @@ import { useSessionStore } from '../stores/session'
 
 const sessionStore = useSessionStore()
 const showSidebar = ref(false)
+const showSearch = ref(false)
+const searchQuery = ref('')
+const selectedSessions = ref<Set<string>>(new Set())
+const overflowWarning = ref(false)
 
 function toggleSidebar() {
   showSidebar.value = !showSidebar.value
@@ -16,9 +20,52 @@ function toggleSidebar() {
   }
 }
 
+// Sorted by time descending
+const sortedChatList = computed(() => {
+  return [...sessionStore.chatList].sort((a, b) => b.lastTime - a.lastTime)
+})
+
+// Filtered by search query
+const filteredChatList = computed(() => {
+  if (!searchQuery.value) return sortedChatList.value
+  return sortedChatList.value.filter(c =>
+    (c.lastMessage || '新会话').toLowerCase().includes(searchQuery.value.toLowerCase())
+  )
+})
+
+const allSelected = computed(() => {
+  return filteredChatList.value.length > 0 &&
+    filteredChatList.value.every(c => selectedSessions.value.has(c.sessionId))
+})
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedSessions.value = new Set()
+  } else {
+    selectedSessions.value = new Set(filteredChatList.value.map(c => c.sessionId))
+  }
+}
+
+function toggleSelect(sessionId: string) {
+  const next = new Set(selectedSessions.value)
+  if (next.has(sessionId)) {
+    next.delete(sessionId)
+  } else {
+    next.add(sessionId)
+  }
+  selectedSessions.value = next
+}
+
 async function handleSelectChat(sessionId: string) {
+  // Session overflow check (simple limit: 100 messages per session)
+  try {
+    await sessionStore.loadChatHistory(sessionId, 'default-user')
+    if (sessionStore.messages.length >= 100) {
+      overflowWarning.value = true
+      setTimeout(() => { overflowWarning.value = false }, 5000)
+    }
+  } catch { /* ignore */ }
   await Promise.all([
-    sessionStore.loadChatHistory(sessionId, 'default-user'),
     sessionStore.loadExchanges(sessionId, 'default-user'),
     sessionStore.loadDag(sessionId, 'default-user'),
   ])
@@ -30,14 +77,27 @@ function handleNewChat() {
   showSidebar.value = false
 }
 
+async function handleDeleteSession(sessionId: string) {
+  await sessionStore.deleteSession(sessionId)
+}
+
+async function handleBatchDelete() {
+  const ids = Array.from(selectedSessions.value)
+  for (const id of ids) {
+    await sessionStore.deleteSession(id)
+  }
+  selectedSessions.value = new Set()
+}
+
 function formatChatTime(timestamp: number): string {
   if (!timestamp) return ''
   const date = new Date(timestamp)
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  }
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${d} ${h}:${min}`
 }
 </script>
 
@@ -46,61 +106,129 @@ function formatChatTime(timestamp: number): string {
     <NeuralBackground />
     <Header />
 
+    <!-- 会话列表按钮 (靠边自动隐藏, 悬停显示) -->
     <button
       v-if="!showSidebar"
-      class="fixed right-4 top-20 z-30 p-2 rounded-lg bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-colors shadow-sm"
-      title="展开历史对话"
+      class="fixed right-0 top-20 z-30 p-2 rounded-l-lg bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-r-0 border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue dark:hover:text-brian-blue transition-all shadow-sm hover:pr-3"
+      title="展开历史会话"
       @click="toggleSidebar"
     >
       <PanelRight :size="18" />
     </button>
 
+    <!-- 溢出提示 -->
+    <Transition name="fade">
+      <div v-if="overflowWarning" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-warning-orange/10 border border-warning-orange/30 text-warning-orange text-sm font-medium shadow-lg">
+        会话已达到上限，请创建新会话
+      </div>
+    </Transition>
+
     <Transition name="sidebar">
       <div v-if="showSidebar" class="fixed right-0 top-16 bottom-0 w-72 z-20 bg-white/95 dark:bg-apple-gray-950/95 backdrop-blur-md border-l border-apple-gray-200 dark:border-apple-gray-800 flex flex-col">
-        <div class="flex items-center justify-between p-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
-          <div class="flex items-center gap-2">
-            <History :size="18" class="text-brian-blue" />
-            <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">历史会话</h3>
-          </div>
-          <button
-            class="p-1.5 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 text-apple-gray-400 transition-colors"
-            @click="showSidebar = false"
-          >
-            <X :size="16" />
-          </button>
-        </div>
-
-        <div class="p-3">
-          <button
-            class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-brian-blue text-white text-sm font-medium hover:bg-brian-blue/90 transition-colors"
-            @click="handleNewChat"
-          >
-            <Plus :size="16" />
-            新建对话
-          </button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto px-3 pb-3">
-          <div v-if="sessionStore.chatList.length === 0" class="text-center py-8 text-apple-gray-400 text-sm">
-            暂无历史会话
-          </div>
-          <div v-else class="space-y-1">
+        <!-- 顶部操作区 -->
+        <div class="p-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <History :size="18" class="text-brian-blue" />
+              <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">历史会话</h3>
+            </div>
             <button
-              v-for="chat in sessionStore.chatList"
+              class="p-1.5 rounded-lg hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 text-apple-gray-400 transition-colors"
+              @click="showSidebar = false"
+            >
+              <X :size="16" />
+            </button>
+          </div>
+
+          <!-- 搜索 + 创建 -->
+          <div class="flex items-center gap-2">
+            <button
+              class="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-600 dark:text-apple-gray-400 text-sm hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors"
+              :title="showSearch ? '收起搜索' : '搜索会话'"
+              @click="showSearch = !showSearch"
+            >
+              <Search :size="16" />
+            </button>
+            <button
+              class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-brian-blue text-white text-sm font-medium hover:bg-brian-blue/90 transition-colors"
+              @click="handleNewChat"
+            >
+              <Plus :size="16" />
+              新建对话
+            </button>
+          </div>
+
+          <!-- 搜索输入框 -->
+          <div v-if="showSearch" class="mt-2">
+            <input
+              v-model="searchQuery"
+              placeholder="搜索会话..."
+              class="w-full px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-700 text-sm text-apple-gray-900 dark:text-apple-gray-50 focus:outline-none focus:ring-2 focus:ring-brian-blue"
+            />
+          </div>
+        </div>
+
+        <!-- 全选 + 批量删除 -->
+        <div v-if="filteredChatList.length > 0" class="flex items-center justify-between px-3 py-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
+          <button
+            class="flex items-center gap-1.5 text-xs text-apple-gray-500 hover:text-brian-blue transition-colors"
+            @click="toggleSelectAll"
+          >
+            <component :is="allSelected ? CheckSquare : Square" :size="14" />
+            {{ allSelected ? '取消全选' : '全选' }}
+          </button>
+          <button
+            v-if="selectedSessions.size > 0"
+            class="flex items-center gap-1 text-xs text-error-red hover:bg-error-red/10 px-2 py-1 rounded transition-colors"
+            @click="handleBatchDelete"
+          >
+            <Trash2 :size="12" />
+            删除({{ selectedSessions.size }})
+          </button>
+        </div>
+
+        <!-- 会话卡片列表 -->
+        <div class="flex-1 overflow-y-auto px-3 pb-3">
+          <div v-if="filteredChatList.length === 0" class="text-center py-8 text-apple-gray-400 text-sm">
+            {{ searchQuery ? '未找到匹配的会话' : '暂无历史会话' }}
+          </div>
+          <div v-else class="space-y-2 pt-2">
+            <div
+              v-for="chat in filteredChatList"
               :key="chat.sessionId"
-              class="w-full text-left px-3 py-2 rounded-lg transition-colors"
+              class="rounded-xl border transition-colors cursor-pointer"
               :class="chat.sessionId === sessionStore.currentSessionId
-                ? 'bg-brian-blue/10 dark:bg-brian-blue/20'
-                : 'hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800'"
+                ? 'bg-brian-blue/5 border-brian-blue/30'
+                : 'bg-white dark:bg-apple-gray-800/50 border-apple-gray-200 dark:border-apple-gray-700 hover:border-brian-blue/30'"
               @click="handleSelectChat(chat.sessionId)"
             >
-              <p class="text-sm text-apple-gray-900 dark:text-apple-gray-50 truncate">
-                {{ chat.lastMessage || '(空对话)' }}
-              </p>
-              <p class="text-xs text-apple-gray-400 mt-0.5">
-                {{ formatChatTime(chat.lastTime) }}
-              </p>
-            </button>
+              <div class="p-3">
+                <!-- 左上角: 时间, 右上角: 复选框 -->
+                <div class="flex items-start justify-between mb-1.5">
+                  <span class="text-xs text-apple-gray-400">{{ formatChatTime(chat.lastTime) }}</span>
+                  <button
+                    class="text-apple-gray-300 hover:text-brian-blue transition-colors"
+                    @click.stop="toggleSelect(chat.sessionId)"
+                  >
+                    <component :is="selectedSessions.has(chat.sessionId) ? CheckSquare : Square" :size="14" />
+                  </button>
+                </div>
+                <!-- 会话主题 -->
+                <div class="flex items-center justify-between">
+                  <p class="text-sm text-apple-gray-900 dark:text-apple-gray-50 truncate flex-1">
+                    {{ chat.lastMessage || '新会话' }}
+                  </p>
+                  <!-- 右端: 删除按钮 -->
+                  <button
+                    class="ml-2 p-1 rounded text-apple-gray-300 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0"
+                    title="删除会话"
+                    @click.stop="handleDeleteSession(chat.sessionId)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -123,6 +251,12 @@ function formatChatTime(timestamp: number): string {
 }
 .sidebar-leave-to {
   transform: translateX(100%);
+  opacity: 0;
+}
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s;
+}
+.fade-enter-from, .fade-leave-to {
   opacity: 0;
 }
 </style>

@@ -272,7 +272,7 @@ function createTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS skills (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       mode TEXT,
@@ -365,7 +365,7 @@ function createTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS mcps (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       category TEXT NOT NULL DEFAULT '',
@@ -420,6 +420,26 @@ function createTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_agent_library_strength ON agent_library(strength);
     CREATE INDEX IF NOT EXISTS idx_agent_library_use_count ON agent_library(use_count);
+
+    -- Agent Layer: Strategy execution config
+    CREATE TABLE IF NOT EXISTS agent_strategy_config (
+      id TEXT PRIMARY KEY,
+      strategy_name TEXT NOT NULL UNIQUE,
+      agent_strategy_brief TEXT,
+      agent_strategy_flow TEXT NOT NULL,
+      max_steps INTEGER NOT NULL DEFAULT 10,
+      step_timeout_seconds INTEGER NOT NULL DEFAULT 180,
+      reuse_probability REAL NOT NULL DEFAULT 0.75,
+      retry_count INTEGER NOT NULL DEFAULT 3,
+      retry_interval_ms TEXT NOT NULL DEFAULT '[30000,60000,120000]',
+      llm_id TEXT NOT NULL DEFAULT '',
+      think_prompt_template_id TEXT NOT NULL DEFAULT '',
+      answer_prompt_template_id TEXT NOT NULL DEFAULT '',
+      is_system INTEGER NOT NULL DEFAULT 0,
+      enable INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
 
     CREATE TABLE IF NOT EXISTS model_config (
       key TEXT PRIMARY KEY,
@@ -489,6 +509,7 @@ function createTables(db: Database.Database): void {
       constraints TEXT NOT NULL DEFAULT '[]',
       example_responses TEXT NOT NULL DEFAULT '[]',
       is_temporary INTEGER DEFAULT 0,
+      expires_at INTEGER,
       effectiveness_score REAL DEFAULT 0,
       usage_count INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
@@ -627,6 +648,126 @@ function createTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_agent_mcp_agent ON agent_mcp(agent_id);
     CREATE INDEX IF NOT EXISTS idx_agent_mcp_mcp ON agent_mcp(mcp_id);
+
+    -- Core Layer: LLM selection config
+    CREATE TABLE IF NOT EXISTS llm_core_config (
+      id TEXT PRIMARY KEY,
+      regen_rate INTEGER NOT NULL DEFAULT 75,
+      prompt_template_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Agent-LLM bindings
+    CREATE TABLE IF NOT EXISTS agent_llm (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL UNIQUE,
+      llm_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: LLM provider quota
+    CREATE TABLE IF NOT EXISTS llm_provider_quota (
+      id TEXT PRIMARY KEY,
+      llm_provider_id TEXT NOT NULL UNIQUE,
+      quota_tokens_per_day INTEGER NOT NULL DEFAULT 100000,
+      quota_tokens_per_week INTEGER NOT NULL DEFAULT 500000,
+      quota_tokens_per_month INTEGER NOT NULL DEFAULT 2000000,
+      quota_calls_per_day INTEGER NOT NULL DEFAULT 1000,
+      quota_calls_per_week INTEGER NOT NULL DEFAULT 5000,
+      quota_calls_per_month INTEGER NOT NULL DEFAULT 20000,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: MCP selection config
+    CREATE TABLE IF NOT EXISTS mcp_core_config (
+      id TEXT PRIMARY KEY,
+      regen_rate INTEGER NOT NULL DEFAULT 75,
+      prompt_template_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Skill selection config
+    CREATE TABLE IF NOT EXISTS skill_core_config (
+      id TEXT PRIMARY KEY,
+      regen_rate INTEGER NOT NULL DEFAULT 75,
+      prompt_template_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Agent-Skill bindings
+    CREATE TABLE IF NOT EXISTS agent_skill (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      UNIQUE(agent_id, skill_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_skill_agent ON agent_skill(agent_id);
+
+    -- Core Layer: Skill aging rules
+    CREATE TABLE IF NOT EXISTS skill_opt_rule (
+      id TEXT PRIMARY KEY,
+      days INTEGER NOT NULL,
+      min_usage_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Skill usage tracking
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      usage_count INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      UNIQUE(skill_id, usage_date)
+    );
+
+    -- Core Layer: Soul selection config
+    CREATE TABLE IF NOT EXISTS soul_core_config (
+      id TEXT PRIMARY KEY,
+      regen_rate INTEGER NOT NULL DEFAULT 75,
+      prompt_template_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Agent-Soul bindings
+    CREATE TABLE IF NOT EXISTS agent_soul (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL UNIQUE,
+      soul_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Soul aging rules
+    CREATE TABLE IF NOT EXISTS soul_opt_rule (
+      id TEXT PRIMARY KEY,
+      days INTEGER NOT NULL,
+      min_usage_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- Core Layer: Soul usage tracking
+    CREATE TABLE IF NOT EXISTS soul_usage (
+      id TEXT PRIMARY KEY,
+      soul_id TEXT NOT NULL,
+      usage_date TEXT NOT NULL,
+      usage_count INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      UNIQUE(soul_id, usage_date)
+    );
   `);
 
   logger.info('Database', 'All tables created successfully');
@@ -1032,6 +1173,27 @@ function runMigrations(db: Database.Database): void {
       }
     } catch (e: any) {
       logger.info('Database', `[runMigrations] ${table.name} date conversion skipped: ${e.message || e}`);
+    }
+  }
+
+  // Migration: convert legacy user_id='default' to user_id='' (empty string for global configs)
+  logger.info('Database', '[runMigrations] Checking user_id default migration...');
+  const tablesWithUserId = ['skills', 'mcps', 'user_model_config'];
+  for (const table of tablesWithUserId) {
+    try {
+      const hasDefault = db.prepare(
+        `SELECT 1 FROM ${table} WHERE user_id = 'default' LIMIT 1`
+      ).get();
+      if (hasDefault) {
+        const result = db.prepare(
+          `UPDATE ${table} SET user_id = '' WHERE user_id = 'default'`
+        ).run();
+        logger.info('Database', `[runMigrations] ${table}: converted ${result.changes} rows from user_id='default' to ''`);
+      } else {
+        logger.info('Database', `[runMigrations] ${table}: no 'default' rows found, skip`);
+      }
+    } catch (e: any) {
+      logger.info('Database', `[runMigrations] ${table} user_id migration skipped: ${e.message || e}`);
     }
   }
 
