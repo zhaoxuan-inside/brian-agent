@@ -299,3 +299,14 @@ Agent 执行过程被抽象为以下四个原子接口。各接口可独立开�
 | answer_prompt_template_id | Answer prompt 模板 ID | UUID | N | | |
 | default_max_iterations | 默认最大迭代次数 | INT | N | | 默认 10 |
 | async_worker_interval | 异步 Worker 轮询间隔（ms） | INT | N | | 默认 1000 |
+
+## 实现约定（与代码同步，2026-07-28）
+
+1. **LLM**：仅使用 Agent 已绑定的 `llm_id`（来自 Core.matchLLM），禁止 `llm_model LIMIT 1`。
+2. **执行闭环**：按 strategy 的 execution_rule（CoT/ReAct/Plan-and-Solve）调度 Think→Act→Reflect→Answer；
+   - Think/Reflect/Answer：execPrompt（若配置）+ getSoul system + execLLM(agent.llm_id) + saveInfo；
+   - Act：根据模型 next_action 调用 Base `execSkill` / `execMcp`；
+3. **规则引擎**：支持 `true_next`/`false_next`/`on_error`；Plan-and-Solve 支持跨 phase 跳转（如 SolvePhase、SummaryAnswer）与 `loop_over: sub_steps`。
+4. **评估**：execAgent 完成后向 MQ 队列 `agent.eval` 投递，由 Evolutor 消费；不直接回调 Evolutor。
+5. **ID/时间**：统一 `IdGenerator.generate()` / `IdGenerator.now()`（毫秒）。
+6. **DB**：业务 CRUD 经 RelationDBAccess.insert/select/update/count，禁止业务路径 queryRaw 拼条件。

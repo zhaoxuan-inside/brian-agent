@@ -133,7 +133,7 @@ export class AnswerOutput extends Output {
 // ---------------------------------------------------------------------------
 
 export class GetTraceInput extends Input {
-  trace_id!: string;
+  declare trace_id: string;
 }
 
 export interface TraceIteration {
@@ -189,3 +189,4 @@ export class ConfigAgentExecutionOutput extends Output {
 // ---------------------------------------------------------------------------
 
 export const AGENT_EXECUTION_CONFIG_TABLE = 'agent_execution_config';
+export const AGENT_EXECUTION_TRACE_TABLE = 'agent_execution_trace';

@@ -321,6 +321,5 @@ export class AgentLibraryService {
 }
 
 export function createAgentLibraryService(): AgentLibraryService {
-  const raw = new AgentLibraryService();
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+  return AopProxy(new AgentLibraryService());
 }

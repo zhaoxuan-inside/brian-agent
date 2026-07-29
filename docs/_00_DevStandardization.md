@@ -18,5 +18,9 @@
      1. 所有引用外部资源的ID字段（如 `llm_id`、`prompt_template_id`、`soul_id` 等），当无法确定具体值时保持为空字符串，由下层的 Provider 在运行时解析默认值；
      2. 严禁在配置表或业务代码中硬编码 `"default"` 等占位字符串作为有效的资源ID；任何无法解析的ID应在 Provider 层抛出明确的错误，而非静默失败；
 7. 日志记录规范
-     1. 日志记录都需要通过 `logProvider` 进行记录，不能直接使用 `console.log` 等函数；
-     2. 日志记录的级别（debug/info/warn/error）需要根据日志内容进行选择，不能直接使用 `console.log` 等函数；
+      1. 日志记录都需要通过 `logProvider` 进行记录，不能直接使用 `console.log` 等函数；
+      2. 日志记录的级别（debug/info/warn/error）需要根据日志内容进行选择，不能直接使用 `console.log` 等函数；
+8. 外部资源接入点唯一性原则
+      1. 系统中调用外部资源（如 LLM、Skill、MCP、Prompts 等）必须通过对应的 Provider/Access 接入层进行调用，不允许各层绕过 Provider 直接访问底层资源；
+      2. 各业务模块向内聚合至核心模块，由核心模块统一接管对外部资源的管理和调度，避免出现多个模块各自维护独立的外部资源连接；
+      3. 例如：Agent 层调用 LLM 推理必须经由 `LLMAccess.execLLM` → `LLMProvider` 这一条链路，不允许 Agent 层自行建立 HTTP 连接或 SDK 调用；同理 Skill 执行必须经由 `SkillAccess.execSkill`，MCP 调用必须经由 `MCPAccess.execMcp`，Prompt 渲染必须经由 `PromptsAccess.execPrompt`；

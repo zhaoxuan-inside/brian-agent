@@ -1,0 +1,23 @@
+{
+  "name": "@brian-agent/agent",
+  "version": "1.0.0",
+  "description": "Brian-Agent Agent 层模块集合",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@brian-agent/base": "file:../Base",
+    "@brian-agent/core": "file:../Core"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.0"
+  }
+}

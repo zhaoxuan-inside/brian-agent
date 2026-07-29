@@ -38,7 +38,7 @@ docs/_03_Agent/
 | AgentLibrary | Agent 元数据 CRUD、复用匹配、老化淘汰（仅管理 agent 表自身字段） | RelationDBProvider | - |
 | AgentBuilder | 分析任务特征 → 调用 Core 层匹配组件 → 组装 Agent 并注册 | RelationDBProvider, LLMProvider, PromptsProvider | LLMCore, MCPCore, SkillCore, SoulCore |
 | AgentExecution | 执行循环调度、原子操作分发、全链路记录 | RelationDBProvider, LLMProvider, MCPProvider, SkillProvider, SoulProvider | MQCore, InfoCore |
-| AgentStrategy | 推理策略实现（CoT/ReAct/Plan-and-Solve） | - | - |
+| AgentStrategy | 推理策略实现（CoT/ReAct/Plan-and-Solve） | RelationDBProvider, PromptsProvider | - |
 | PlannerAgent | 复杂任务识别、拆解为子任务、建立 DAG | LLMProvider, PromptsProvider | InfoCore |
 | WriterAgent | 信息汇总、人性化输出、用户画像集成 | LLMProvider, PromptsProvider | InfoCore |
 | EvolutorAgent | 响应评估打分、Agent 性能评估、优化建议 | LLMProvider, PromptsProvider, MQProvider | InfoCore |
@@ -89,7 +89,7 @@ Agent 层通过以下 Core 接口获取下层能力：
 | MCPCore | matchMCP, optimizeMCP, configMCPCore |
 | SkillCore | matchSkill, optimizeSkill, ageSkill, configSkillCore |
 | SoulCore | matchSoul, optimizeSoul, ageSoul, configSoulCore |
-| MQCore | startWorker, stopWorker, getWorker |
+| MQCore | startWorker, stopWorker, soWorker |
 
 ## 重要内容
 

@@ -1,11 +1,11 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import { IdGenerator } from '@brian-agent/base';
-import { AGENT_EXECUTION_CONFIG_TABLE } from '../domain/types';
+import { AGENT_EXECUTION_CONFIG_TABLE, AGENT_EXECUTION_TRACE_TABLE } from '../domain/types';
 
 export class AgentExecutionSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  init(): void {
+  async init(): Promise<void> {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_EXECUTION_CONFIG_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -16,14 +16,42 @@ export class AgentExecutionSchemaInitializer {
         async_worker_interval INTEGER NOT NULL DEFAULT 1000
       )`,
     );
-    const ex = this.relationDb.queryRaw<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${AGENT_EXECUTION_CONFIG_TABLE}`,
-    );
-    if (ex[0]?.count > 0) return;
-    const now = Math.floor(Date.now() / 1000);
     this.relationDb.executeRaw(
-      `INSERT INTO ${AGENT_EXECUTION_CONFIG_TABLE} (id, created, updated, think_prompt_template_id, reflect_prompt_template_id, answer_prompt_template_id, default_max_iterations, async_worker_interval) VALUES (?, ?, ?, ?, ?, ?, 10, 1000)`,
-      [IdGenerator.uuid(), now, now, '', '', ''],
+      `CREATE INDEX IF NOT EXISTS idx_agent_execution_config_created ON ${AGENT_EXECUTION_CONFIG_TABLE}(created)`,
     );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS idx_agent_execution_config_updated ON ${AGENT_EXECUTION_CONFIG_TABLE}(updated)`,
+    );
+
+    // agent_execution_trace 表：每次 execAgent 的完整轨迹持久化
+    this.relationDb.executeRaw(
+      `CREATE TABLE IF NOT EXISTS ${AGENT_EXECUTION_TRACE_TABLE} (
+        id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+        trace_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
+        start_time INTEGER NOT NULL, end_time INTEGER NOT NULL,
+        iterations_json TEXT NOT NULL, total_token_usage INTEGER NOT NULL,
+        answer TEXT
+      )`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS idx_agent_execution_trace_created ON ${AGENT_EXECUTION_TRACE_TABLE}(created)`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS idx_agent_execution_trace_agent ON ${AGENT_EXECUTION_TRACE_TABLE}(agent_id)`,
+    );
+
+    const count = await this.relationDb.count(AGENT_EXECUTION_CONFIG_TABLE);
+    if (count > 0) return;
+    const now = IdGenerator.now();
+    await this.relationDb.insert(AGENT_EXECUTION_CONFIG_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'think_prompt_template_id', value: '' },
+      { field: 'reflect_prompt_template_id', value: '' },
+      { field: 'answer_prompt_template_id', value: '' },
+      { field: 'default_max_iterations', value: 10 },
+      { field: 'async_worker_interval', value: 1000 },
+    ]);
   }
 }

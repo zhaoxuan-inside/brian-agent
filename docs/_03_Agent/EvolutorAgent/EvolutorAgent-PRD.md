@@ -243,3 +243,10 @@
 | eval_frequency_threshold | 累计未评估次数阈值 | INT | N | | 默认 5 |
 | eval_schedule_interval_ms | 定时评估间隔（毫秒） | INT | N | | 默认 3600000 |
 | eval_batch_size | 每批评估数量 | INT | N | | 默认 20 |
+
+## 实现约定（与代码同步，2026-07-28）
+
+1. **优化决策**：evalWorkAgent/evalWriterAgent 在 need_optimize 时向 MQ `agent.optimize` 发送消息，**不**直接调用 optimizeAgent。
+2. **startEvalSchedule**：通过 MQCore.startWorker 启动 `agent.optimize`、`agent.eval`、`agent.eval_schedule` 三类 worker；optimize worker 内调用 AgentBuilder.optimizeAgent。
+3. **LLM**：使用 Evolutor 系统 Agent 自身绑定的 llm_id（Core.matchLLM），禁止 llm_model 自选。
+4. **stopEvalSchedule**：调用 MQCore.stopWorker(identifier)。

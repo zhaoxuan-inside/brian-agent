@@ -5,7 +5,7 @@ import { WRITER_AGENT_CONFIG_TABLE, WRITER_AGENT_USER_PROFILE_TABLE } from '../d
 export class WriterAgentSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  init(): void {
+  async init(): Promise<void> {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${WRITER_AGENT_CONFIG_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -27,14 +27,18 @@ export class WriterAgentSchemaInitializer {
         additional_preferences TEXT
       )`,
     );
-    const ex = this.relationDb.queryRaw<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${WRITER_AGENT_CONFIG_TABLE}`,
-    );
-    if (ex[0]?.count > 0) return;
-    const now = Math.floor(Date.now() / 1000);
-    this.relationDb.executeRaw(
-      `INSERT INTO ${WRITER_AGENT_CONFIG_TABLE} (id, created, updated, write_prompt_template_id, default_language, default_style, default_depth, default_format) VALUES (?, ?, ?, ?, 'zh-CN', 'clear', 'medium', 'MARKDOWN')`,
-      [IdGenerator.uuid(), now, now, ''],
-    );
+    const count = await this.relationDb.count(WRITER_AGENT_CONFIG_TABLE);
+    if (count > 0) return;
+    const now = IdGenerator.now();
+    await this.relationDb.insert(WRITER_AGENT_CONFIG_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'write_prompt_template_id', value: '' },
+      { field: 'default_language', value: 'zh-CN' },
+      { field: 'default_style', value: 'clear' },
+      { field: 'default_depth', value: 'medium' },
+      { field: 'default_format', value: 'MARKDOWN' },
+    ]);
   }
 }

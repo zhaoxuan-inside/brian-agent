@@ -39,6 +39,16 @@ import { GraphExecutor } from './agent/executor';
 import { AgentLibrary } from './agent/agentLibrary';
 import { WriterAgent } from './agent/writer';
 import { EvolutorAgent } from './agent/evoluator';
+
+import { createAgentLibraryService } from './agent/AgentLibrary';
+import { setDatabase as setAgentLibraryDb } from './agent/AgentLibrary/db';
+import { createAgentStrategyService } from './agent/AgentStrategy';
+import { createAgentBuilderService } from './agent/AgentBuilder';
+import { createAgentExecutionService } from './agent/AgentExecution';
+import { createPlannerAgentService } from './agent/PlannerAgent';
+import { createWriterAgentService } from './agent/WriterAgent';
+import { createEvolutorAgentService } from './agent/EvolutorAgent';
+
 import { StrategyConfigService } from './strategy/StrategyConfigService';
 
 import { ChatService } from './application/ChatService';
@@ -73,10 +83,9 @@ export function createApp(): express.Application {
   const config = getConfig();
 
   // ============================================================
-  // Base Layer: DB & MQ — 使用 initDatabase() 已创建的共享连接
+  // Base Layer: DB & MQ
   // ============================================================
   const rawDb = getDatabase();
-  // 适配器：将 better-sqlite3 的 Database 包装为 DBWrapper 接口
   const sqliteDB: DBWrapper = {
     query: async <T>(sql: string, params?: any[]): Promise<T[]> => {
       const stmt = rawDb.prepare(sql);
@@ -123,13 +132,11 @@ export function createApp(): express.Application {
   const libraryService = new LibraryService(sqliteDB);
   const storageService = new StorageService();
   const coreModelConfigService = new CoreModelConfigService();
-  // Initialize LLM service with fallback to global model config
   llmService.setFallbackConfigProvider(coreModelConfigService);
   const coreLlmService = new CoreLLMService(coreModelConfigService);
   const coreInformationService = new CoreInformationService(storageService, coreLlmService);
   const learningServiceCore = new LearningService(coreInformationService, coreLlmService, storageService);
 
-  // Core Layer: Selection/Optimization services (match, optimize, age)
   const mqOperations: MQOperations = {
     sendMQ: async (queue, payload, priority) => {
       let payloadObj: Record<string, any>;
@@ -154,7 +161,6 @@ export function createApp(): express.Application {
   const mcpCore = new MCPCore(sqliteDB, llmService, mcpManager);
   const skillCore = new SkillCore(sqliteDB, llmService, skillManager);
   const soulCore = new SoulCore(sqliteDB, llmService, soulManager);
-  // Start active learning scheduler (every 5 minutes)
   learningServiceCore.schedule(300000);
 
   logger.info('SYSTEM', 'Core layer initialized');
@@ -167,25 +173,39 @@ export function createApp(): express.Application {
   logger.info('SYSTEM', 'Strategy layer initialized');
 
   // ============================================================
+  // Agent Layer (PRD modules)
+  // ============================================================
+  setAgentLibraryDb(rawDb);
+
+  const agentLibraryService = createAgentLibraryService();
+  const agentStrategyService = createAgentStrategyService(rawDb);
+  const agentBuilderService = createAgentBuilderService(rawDb, agentLibraryService, agentStrategyService, llmService);
+  const agentExecutionService = createAgentExecutionService(rawDb, llmService, skillManager, mcpManager, mqCore);
+  const plannerAgentService = createPlannerAgentService(rawDb, llmService);
+  const writerAgentService = createWriterAgentService(rawDb, llmService);
+  const evolutorAgentService = createEvolutorAgentService(rawDb, llmService);
+
+  // Legacy agent subsystem (kept for backward compatibility with access layer routes)
+  const toolService = new ToolService();
+  const agentLibrary = new AgentLibrary(storageService);
+  const legacyAgentBuilder = new AgentBuilder(storageService, coreLlmService);
+  const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
+  const graphExecutor = new GraphExecutor(coreLlmService, toolService);
+  const writerAgentLegacy = new WriterAgent(coreLlmService);
+  const evolutorAgentLegacy = new EvolutorAgent(coreLlmService);
+
+  logger.info('SYSTEM', 'Agent layer initialized');
+
+  // ============================================================
   // Application Layer
   // ============================================================
   const userProfileService = new UserProfileService(sqliteDB);
   const learningService = new SelfLearningService(informationService, llmService, modelConfigService);
   const documentService = new DocumentService(informationService);
 
-  // Additional services for agent/mcp/skill/agent routes
-  const toolService = new ToolService();
-  const agentLibrary = new AgentLibrary(storageService);
-  const agentBuilder = new AgentBuilder(storageService, coreLlmService);
-  const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
-  const graphExecutor = new GraphExecutor(coreLlmService, toolService);
-  const writerAgent = new WriterAgent(coreLlmService);
-  const evolutorAgent = new EvolutorAgent(coreLlmService);
-
   const chatDagService = new ChatDagService(informationService, llmService, modelConfigService);
-  const systemAgentService = new SystemAgentService(agentBuilder);
+  const systemAgentService = new SystemAgentService(legacyAgentBuilder as any);
 
-  // 启动时确保系统内置 Planner + Evaluator 存在
   systemAgentService.ensureSystemAgents().then(({ planner, evaluator }) => {
     logger.info('SYSTEM', `[app] system agents ready: planner=${planner.id} evaluator=${evaluator.id}`);
   }).catch((e: any) => {
@@ -193,10 +213,9 @@ export function createApp(): express.Application {
   });
 
   const agentOrchestrationService = new AgentOrchestrationService(
-    informationService, llmService, modelConfigService, agentBuilder, agentLibrary, metaAgent, graphExecutor
+    informationService, llmService, modelConfigService, legacyAgentBuilder as any, agentLibrary as any, metaAgent as any, graphExecutor as any
   );
 
-  // Seed built-in strategies (CoT, ReAct) at startup — immutable
   const strategyConfigService = new StrategyConfigService(sqliteDB);
   setImmediate(() => {
     strategyConfigService.ensureBuiltinStrategies().catch(e =>
@@ -206,21 +225,11 @@ export function createApp(): express.Application {
 
   const chatService = new ChatService(informationService, llmService, orchestrator, userProfileService, modelConfigService, chatDagService, agentOrchestrationService, learningService);
 
-  // Backfill semantic summaries for legacy messages in the background (non-blocking)
   setImmediate(() => {
     chatDagService.backfillSummaries().catch(e =>
       logger.warn('SYSTEM', `[app] summary backfill failed: ${(e as Error).message}`)
     );
   });
-
-  // AgentLibrary maintenance: periodic self-optimization (decay/boost/deprecate)
-  setInterval(() => {
-    agentLibrary.maintenance().then((r: any) => {
-      if (r && (r.decayed > 0 || r.boosted > 0 || r.deprecated > 0)) {
-        logger.info('SYSTEM', `[maintenance] decayed=${r.decayed} boosted=${r.boosted} deprecated=${r.deprecated}`);
-      }
-    }).catch((e: any) => logger.warn('SYSTEM', `[maintenance] failed: ${e}`));
-  }, 60 * 60 * 1000); // Every hour
 
   logger.info('SYSTEM', 'Application layer initialized');
 
@@ -240,7 +249,7 @@ export function createApp(): express.Application {
   app.use('/api/profile', createProfileRoutes(userProfileService));
   app.use('/api/mcp', createMCPRoutes(toolService, mcpManager));
   app.use('/api/skill', createSkillRoutes(skillManager));
-  app.use('/api/agent', createAgentRoutes(agentBuilder, metaAgent));
+  app.use('/api/agent', createAgentRoutes(legacyAgentBuilder as any, metaAgent as any));
   app.use('/api/system', createSystemRoutes(coreLlmService));
   app.use('/api/library', createLibraryRoutes(sqliteDB));
 

@@ -28,9 +28,6 @@
 
 export * from './shared';
 
-// StorageProvider
-export * from './StorageProvider';
-
 // MQCoreProvider
 export * from './MQCoreProvider';
 
@@ -46,14 +43,5 @@ export * from './SkillCoreProvider';
 // SoulCoreProvider
 export * from './SoulCoreProvider';
 
-// ThinkingStrategyCoreProvider
-export * from './ThinkingStrategyCoreProvider';
-
 // InfoCoreProvider
 export * from './InfoCoreProvider';
-
-// LearningCoreProvider
-export * from './LearningCoreProvider';
-
-// CognitiveCoreProvider
-export * from './CognitiveCoreProvider';

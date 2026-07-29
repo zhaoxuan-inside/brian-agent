@@ -5,7 +5,7 @@ import { AGENT_EVALUATION_TABLE, EVOLUTOR_AGENT_CONFIG_TABLE } from '../domain/t
 export class EvolutorAgentSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  init(): void {
+  async init(): Promise<void> {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_EVALUATION_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -30,14 +30,19 @@ export class EvolutorAgentSchemaInitializer {
       )`,
     );
 
-    const ex = this.relationDb.queryRaw<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${EVOLUTOR_AGENT_CONFIG_TABLE}`,
-    );
-    if (ex[0]?.count > 0) return;
-    const now = Math.floor(Date.now() / 1000);
-    this.relationDb.executeRaw(
-      `INSERT INTO ${EVOLUTOR_AGENT_CONFIG_TABLE} (id, created, updated, eval_work_prompt_template_id, eval_write_prompt_template_id, optimize_threshold, eval_frequency_threshold, eval_schedule_interval_ms, eval_batch_size) VALUES (?, ?, ?, ?, ?, 60, 5, 3600000, 20)`,
-      [IdGenerator.uuid(), now, now, '', ''],
-    );
+    const count = await this.relationDb.count(EVOLUTOR_AGENT_CONFIG_TABLE);
+    if (count > 0) return;
+    const now = IdGenerator.now();
+    await this.relationDb.insert(EVOLUTOR_AGENT_CONFIG_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'eval_work_prompt_template_id', value: '' },
+      { field: 'eval_write_prompt_template_id', value: '' },
+      { field: 'optimize_threshold', value: 60 },
+      { field: 'eval_frequency_threshold', value: 5 },
+      { field: 'eval_schedule_interval_ms', value: 3600000 },
+      { field: 'eval_batch_size', value: 20 },
+    ]);
   }
 }

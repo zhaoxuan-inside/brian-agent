@@ -1,28 +1,28 @@
-import type { AgentTypeEnum, EvalTypeEnum, ResponseFormatEnum, StyleEnum, DepthEnum, ToolTypeEnum, TaskDag, WorkAgentResult, ScoresEvalWork, ScoresEvalWriter, UserProfile, ExecutionRuleSteps, ExecutionRulePhase, ExecutionRuleStep } from './AgentLibrary/agentTypes';
-export type { AgentTypeEnum, EvalTypeEnum, ResponseFormatEnum, StyleEnum, DepthEnum, ToolTypeEnum, TaskDag, WorkAgentResult, ScoresEvalWork, ScoresEvalWriter, UserProfile, ExecutionRuleSteps, ExecutionRulePhase, ExecutionRuleStep };
+import type { AgentTypeEnum, EvalTypeEnum, ResponseFormatEnum, StyleEnum, DepthEnum, ToolTypeEnum, WorkAgentResult, ScoresEvalWork, ScoresEvalWriter, UserProfile, ExecutionRuleSteps, ExecutionRulePhase, ExecutionRuleStep } from './AgentLibrary/agentTypes';
+export type { AgentTypeEnum, EvalTypeEnum, ResponseFormatEnum, StyleEnum, DepthEnum, ToolTypeEnum, WorkAgentResult, ScoresEvalWork, ScoresEvalWriter, UserProfile, ExecutionRuleSteps, ExecutionRulePhase, ExecutionRuleStep };
 
-// types
 export type { GraphNode, GraphEdge, TaskGraph, ExecutionTrace, ReACTTrace } from './types';
 
-// AOP
 export { AopProxy } from './infra/aopProxy';
 export type { Interceptor, AopProxyOptions } from './infra/aopProxy';
+export type { AgentDatabase } from './infra/dbTypes';
 
-// Infrastructure
 export { parseInput, validateInput, preprocess, extractContext } from './infra/inputAdapter';
 export { initState, updateState, createCheckpoint, restoreCheckpoint, listCheckpoints } from './infra/stateManager';
 export { formatOutput, formatAsText, formatAsJSON, formatAsMarkdown, applyTemplate } from './infra/outputFormatter';
 
-// Capability
 export { buildSystemPrompt, injectVariables, injectSoul, injectTools, getSoulTemplate, getWorkTemplate } from './capability/promptTemplate';
 export { defineStyle, definePersonality, defineContentRules, defineConstraints, defineTemperatureProfile, generateSoulConfig } from './capability/soulConfig';
 export type { SoulConfig } from './capability/soulConfig';
 
-// === PRD Agent Layer Modules ===
+export { execThink, execAct, execReflect, execAnswer } from './atomic';
+export type { ThinkStep, ObserveEntry } from './atomic/think';
+
+export { executeReACT, executePlanExecute, executeCoT } from './strategy';
 
 export { AgentLibraryService, createAgentLibraryService } from './AgentLibrary/AgentLibrary';
 export type { AddAgentInput, MatchAgentInput, UpdateAgentInput, RecordAgentUsageInput, GetAgentInput, AgeAgentInput, GetAgentRuleInput, UpdateAgentRuleInput, ConfigAgentLibraryInput, AddAgentOutput, MatchAgentOutput, UpdateAgentOutput, RecordAgentUsageOutput, GetAgentOutput, AgeAgentOutput, GetAgentRuleOutput, UpdateAgentRuleOutput, ConfigAgentLibraryOutput } from './AgentLibrary/AgentLibrary';
-export { getAgentByAgentId, listAgents, recordAgentUsage, getAgentLibraryConfig } from './AgentLibrary/db';
+export { getAgentByAgentId, listAgents, recordAgentUsage, getAgentLibraryConfig, setDatabase } from './AgentLibrary/db';
 
 export { AgentBuilderService, createAgentBuilderService } from './AgentBuilder/AgentBuilder';
 export type { BuildAgentInput, OptimizeAgentInput, BuildPlannerAgentInput, BuildWriterAgentInput, BuildEvolutorAgentInput, ConfigAgentBuilderInput, BuildAgentOutput, OptimizeAgentOutput, BuildPlannerAgentOutput, BuildWriterAgentOutput, BuildEvolutorAgentOutput, ConfigAgentBuilderOutput } from './AgentBuilder/AgentBuilder';
@@ -33,8 +33,8 @@ export type { ExecAgentInput, ExecAgentAsyncInput, ThinkInput, ActInput, Reflect
 export { AgentStrategyService, createAgentStrategyService } from './AgentStrategy/AgentStrategy';
 export type { MatchStrategyInput, GetStrategyInput, SoStrategyInput, AddStrategyInput, UpdateStrategyInput, ConfigAgentStrategyInput, MatchStrategyOutput, GetStrategyOutput, SoStrategyOutput, AddStrategyOutput, UpdateStrategyOutput, ConfigAgentStrategyOutput } from './AgentStrategy/AgentStrategy';
 
-export { PlannerAgentService, createPlannerAgentService } from './PlannerAgent/PlannerAgent';
-export type { PlanInput, ReplanInput, GetPlanInput, ConfigPlannerAgentInput, PlanOutput, ReplanOutput, GetPlanOutput, ConfigPlannerAgentOutput } from './PlannerAgent/PlannerAgent';
+export { PlannerAgentService, createPlannerAgentService, validateDAG, mergeSimilarTasks } from './PlannerAgent/PlannerAgent';
+export type { PlanInput, ReplanInput, GetPlanInput, ConfigPlannerAgentInput, PlanOutput, ReplanOutput, GetPlanOutput, ConfigPlannerAgentOutput, DagNode, DagEdge, TaskDag } from './PlannerAgent/PlannerAgent';
 
 export { WriterAgentService, createWriterAgentService } from './WriterAgent/WriterAgent';
 export type { WriteInput, SaveUserProfileInput, GetUserProfileInput, ConfigWriterAgentInput, WriteOutput, SaveUserProfileOutput, GetUserProfileOutput, ConfigWriterAgentOutput } from './WriterAgent/WriterAgent';
@@ -42,14 +42,6 @@ export type { WriteInput, SaveUserProfileInput, GetUserProfileInput, ConfigWrite
 export { EvolutorAgentService, createEvolutorAgentService } from './EvolutorAgent/EvolutorAgent';
 export type { EvalWorkAgentInput, EvalWriterAgentInput, StartEvalScheduleInput, StopEvalScheduleInput, GetEvaluationInput, GetEvolutionReportInput, ConfigEvolutorAgentInput, EvalWorkAgentOutput, EvalWriterAgentOutput, StartEvalScheduleOutput, StopEvalScheduleOutput, GetEvaluationOutput, GetEvolutionReportOutput, ConfigEvolutorAgentOutput } from './EvolutorAgent/EvolutorAgent';
 
-// Atomic functions
-export { execThink, execAct, execReflect, execAnswer } from './atomic';
-export type { ThinkStep, ObserveEntry } from './atomic/think';
-
-// Strategy execution
-export { executeReACT, executePlanExecute, executeCoT } from './strategy';
-
-// Legacy (kept for compatibility with app.ts)
 export { AgentLibrary } from './agentLibrary';
 export { AgentBuilder } from './agentBuilder';
 export { MetaAgent } from './metaAgent';

@@ -1,4 +1,4 @@
-import type { RelationDBAccess, LLMAccess, PromptsAccess, Logger } from '@brian-agent/base';
+import type { RelationDBAccess, LLMAccess, PromptsAccess, MQAccess, Logger } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import type { InfoCoreAccess, MQCoreAccess } from '@brian-agent/core';
 import type { AgentBuilderAccess } from '../../AgentBuilder/access/AgentBuilderAccess';
@@ -19,28 +19,76 @@ import {
 
 export class EvolutorAgentAccess {
   private readonly service: EvolutorAgentService;
+  private readonly initPromise: Promise<void>;
 
   constructor(
     relationDb: RelationDBAccess,
     llmAccess: LLMAccess,
     promptsAccess: PromptsAccess,
     infoCore: InfoCoreAccess,
+    mqAccess: MQAccess,
     mqCore: MQCoreAccess,
     agentBuilder: AgentBuilderAccess,
     agentLibrary: AgentLibraryAccess,
     agentExecution: AgentExecutionAccess,
     logger?: Logger,
   ) {
-    new EvolutorAgentSchemaInitializer(relationDb).init();
-    const raw = new EvolutorAgentService(relationDb, llmAccess, promptsAccess, infoCore, mqCore, agentBuilder, agentLibrary, agentExecution);
+    this.initPromise = new EvolutorAgentSchemaInitializer(relationDb).init();
+    const raw = new EvolutorAgentService(
+      relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore,
+      agentBuilder, agentLibrary, agentExecution,
+    );
     this.service = AopProxy.wrap(raw, { logger });
   }
 
-  async evalWorkAgent(i: EvalWorkAgentInput, c: EvolutorAgentContext, o: EvalWorkAgentOutput) { return this.service.evalWorkAgent(i, c, o); }
-  async evalWriterAgent(i: EvalWriterAgentInput, c: EvolutorAgentContext, o: EvalWriterAgentOutput) { return this.service.evalWriterAgent(i, c, o); }
-  async startEvalSchedule(i: StartEvalScheduleInput, c: EvolutorAgentContext, o: StartEvalScheduleOutput) { return this.service.startEvalSchedule(i, c, o); }
-  async stopEvalSchedule(i: StopEvalScheduleInput, c: EvolutorAgentContext, o: StopEvalScheduleOutput) { return this.service.stopEvalSchedule(i, c, o); }
-  async getEvaluation(i: GetEvaluationInput, c: EvolutorAgentContext, o: GetEvaluationOutput) { return this.service.getEvaluation(i, c, o); }
-  async getEvolutionReport(i: GetEvolutionReportInput, c: EvolutorAgentContext, o: GetEvolutionReportOutput) { return this.service.getEvolutionReport(i, c, o); }
-  async configEvolutorAgent(i: ConfigEvolutorAgentInput, c: EvolutorAgentContext, o: ConfigEvolutorAgentOutput) { return this.service.configEvolutorAgent(i, c, o); }
+  async initialize(): Promise<void> { await this.initPromise; }
+
+  async evalWorkAgent(
+    i: EvalWorkAgentInput, c: EvolutorAgentContext, o: EvalWorkAgentOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.evalWorkAgent(i, c, o);
+  }
+
+  async evalWriterAgent(
+    i: EvalWriterAgentInput, c: EvolutorAgentContext, o: EvalWriterAgentOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.evalWriterAgent(i, c, o);
+  }
+
+  async startEvalSchedule(
+    i: StartEvalScheduleInput, c: EvolutorAgentContext, o: StartEvalScheduleOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.startEvalSchedule(i, c, o);
+  }
+
+  async stopEvalSchedule(
+    i: StopEvalScheduleInput, c: EvolutorAgentContext, o: StopEvalScheduleOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.stopEvalSchedule(i, c, o);
+  }
+
+  async getEvaluation(
+    i: GetEvaluationInput, c: EvolutorAgentContext, o: GetEvaluationOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.getEvaluation(i, c, o);
+  }
+
+  async getEvolutionReport(
+    i: GetEvolutionReportInput, c: EvolutorAgentContext, o: GetEvolutionReportOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.getEvolutionReport(i, c, o);
+  }
+
+  async configEvolutorAgent(
+    i: ConfigEvolutorAgentInput, c: EvolutorAgentContext, o: ConfigEvolutorAgentOutput,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.configEvolutorAgent(i, c, o);
+  }
 }

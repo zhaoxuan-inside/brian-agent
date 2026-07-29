@@ -1,37 +1,38 @@
+import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
-import { getDatabase } from '../../infrastructure/database';
 
-const DB = getDatabase();
 const MODULE = 'EvolutorAgent';
 
-DB.exec(`CREATE TABLE IF NOT EXISTS agent_evaluation (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  eval_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
-  eval_type TEXT NOT NULL, work_id TEXT NOT NULL DEFAULT '',
-  interact_id TEXT NOT NULL DEFAULT '', scores TEXT NOT NULL DEFAULT '{}',
-  suggestions TEXT, need_optimize INTEGER NOT NULL DEFAULT 0
-)`);
-DB.prepare('CREATE INDEX IF NOT EXISTS idx_agent_eval_agent_id ON agent_evaluation(agent_id)').run();
-DB.prepare('CREATE INDEX IF NOT EXISTS idx_agent_eval_eval_type ON agent_evaluation(eval_type)').run();
+function ensureTable(db: AgentDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_evaluation (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    eval_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
+    eval_type TEXT NOT NULL, work_id TEXT NOT NULL DEFAULT '',
+    interact_id TEXT NOT NULL DEFAULT '', scores TEXT NOT NULL DEFAULT '{}',
+    suggestions TEXT, need_optimize INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_agent_eval_agent_id ON agent_evaluation(agent_id)').run();
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_agent_eval_eval_type ON agent_evaluation(eval_type)').run();
 
-DB.exec(`CREATE TABLE IF NOT EXISTS evolutor_agent_config (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  eval_work_prompt_template_id TEXT NOT NULL DEFAULT '',
-  eval_write_prompt_template_id TEXT NOT NULL DEFAULT '',
-  optimize_threshold INTEGER NOT NULL DEFAULT 60,
-  eval_frequency_threshold INTEGER NOT NULL DEFAULT 5,
-  eval_schedule_interval_ms INTEGER NOT NULL DEFAULT 3600000,
-  eval_batch_size INTEGER NOT NULL DEFAULT 20
-)`);
-const ECONF = DB.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown> | undefined;
-if (!ECONF) {
-  const now = Date.now();
-  DB.prepare('INSERT INTO evolutor_agent_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  db.exec(`CREATE TABLE IF NOT EXISTS evolutor_agent_config (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    eval_work_prompt_template_id TEXT NOT NULL DEFAULT '',
+    eval_write_prompt_template_id TEXT NOT NULL DEFAULT '',
+    optimize_threshold INTEGER NOT NULL DEFAULT 60,
+    eval_frequency_threshold INTEGER NOT NULL DEFAULT 5,
+    eval_schedule_interval_ms INTEGER NOT NULL DEFAULT 3600000,
+    eval_batch_size INTEGER NOT NULL DEFAULT 20
+  )`);
+  const econf = db.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!econf) {
+    const now = Date.now();
+    db.prepare('INSERT INTO evolutor_agent_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  }
 }
 
 class EvalWorkAgentInput extends Input {
@@ -95,14 +96,18 @@ export { EvalWorkAgentContext, EvalWriterAgentContext, StartEvalScheduleContext,
 export { EvalWorkAgentOutput, EvalWriterAgentOutput, StartEvalScheduleOutput, StopEvalScheduleOutput, GetEvaluationOutput, GetEvolutionReportOutput, ConfigEvolutorAgentOutput };
 
 export class EvolutorAgentService {
+  private db: AgentDatabase;
   private activeIntervals: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(private llmService?: LLMService) {}
+  constructor(db: AgentDatabase, private llmService?: LLMService) {
+    this.db = db;
+    ensureTable(db);
+  }
 
   async evalWorkAgent(input: EvalWorkAgentInput, _context: EvalWorkAgentContext, output: EvalWorkAgentOutput): Promise<boolean> {
     logger.info(MODULE, '[evalWorkAgent] start', { agent_id: input.agent_id });
 
-    const agent = DB.prepare('SELECT * FROM agent WHERE agent_id = ?').get(input.agent_id) as Record<string, unknown> | undefined;
+    const agent = this.db.prepare('SELECT * FROM agent WHERE agent_id = ?').get(input.agent_id) as Record<string, unknown> | undefined;
     if (!agent) return false;
 
     let scores: Record<string, number>;
@@ -137,19 +142,19 @@ export class EvolutorAgentService {
     scores.overall = overall;
 
     const evalId = generateId();
-    const config = DB.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
+    const config = this.db.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
     const optimizeThreshold = Number(config?.optimize_threshold) || 60;
     const needOptimize = overall < optimizeThreshold;
 
     const now = Date.now();
-    DB.prepare(`INSERT INTO agent_evaluation (id,created,updated,eval_id,agent_id,eval_type,work_id,interact_id,scores,suggestions,need_optimize)
+    this.db.prepare(`INSERT INTO agent_evaluation (id,created,updated,eval_id,agent_id,eval_type,work_id,interact_id,scores,suggestions,need_optimize)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
       generateId(), now, now, evalId, input.agent_id, 'WORK_AGENT',
       input.work_id || '', input.interact_id || '', JSON.stringify(scores),
       needOptimize ? JSON.stringify(['Consider task content detail', 'Review agent configuration']) : null,
       needOptimize ? 1 : 0
     );
-    DB.prepare('UPDATE agent SET eval_score = ?, updated = ? WHERE agent_id = ?').run(overall, now, input.agent_id);
+    this.db.prepare('UPDATE agent SET eval_score = ?, updated = ? WHERE agent_id = ?').run(overall, now, input.agent_id);
 
     output.eval_id = evalId;
     output.scores = scores;
@@ -194,19 +199,19 @@ export class EvolutorAgentService {
     scores.overall = overall;
 
     const evalId = generateId();
-    const config = DB.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
+    const config = this.db.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
     const optimizeThreshold = Number(config?.optimize_threshold) || 60;
     const needOptimize = overall < optimizeThreshold;
 
     const now = Date.now();
-    DB.prepare(`INSERT INTO agent_evaluation (id,created,updated,eval_id,agent_id,eval_type,work_id,interact_id,scores,suggestions,need_optimize)
+    this.db.prepare(`INSERT INTO agent_evaluation (id,created,updated,eval_id,agent_id,eval_type,work_id,interact_id,scores,suggestions,need_optimize)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
       generateId(), now, now, evalId, input.agent_id, 'WRITER_AGENT',
       input.work_id || '', input.interact_id || '', JSON.stringify(scores),
       needOptimize ? JSON.stringify(['Consider restructuring the response', 'Review user profile alignment']) : null,
       needOptimize ? 1 : 0
     );
-    DB.prepare('UPDATE agent SET eval_score = ?, updated = ? WHERE agent_id = ?').run(overall, now, input.agent_id);
+    this.db.prepare('UPDATE agent SET eval_score = ?, updated = ? WHERE agent_id = ?').run(overall, now, input.agent_id);
 
     output.eval_id = evalId;
     output.scores = scores;
@@ -263,7 +268,7 @@ export class EvolutorAgentService {
       sql += ' LIMIT ? OFFSET ?';
       params.push(input.page_size, (input.page_num - 1) * input.page_size);
     }
-    const rows = DB.prepare(sql).all(...params) as Record<string, unknown>[];
+    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
     output.evaluations = rows.map((r: Record<string, unknown>) => ({
       ...r,
       scores: JSON.parse((r.scores as string) || '{}'),
@@ -274,10 +279,10 @@ export class EvolutorAgentService {
   }
 
   getEvolutionReport(input: GetEvolutionReportInput, _context: GetEvolutionReportContext, output: GetEvolutionReportOutput): boolean {
-    const agent = DB.prepare('SELECT * FROM agent WHERE agent_id = ?').get(input.agent_id) as Record<string, unknown> | undefined;
+    const agent = this.db.prepare('SELECT * FROM agent WHERE agent_id = ?').get(input.agent_id) as Record<string, unknown> | undefined;
     const days = input.time_range_days || 30;
     const cutoff = Date.now() - days * 86400 * 1000;
-    const evaluations = DB.prepare('SELECT * FROM agent_evaluation WHERE agent_id = ? AND created >= ? ORDER BY created ASC').all(input.agent_id, cutoff) as Record<string, unknown>[];
+    const evaluations = this.db.prepare('SELECT * FROM agent_evaluation WHERE agent_id = ? AND created >= ? ORDER BY created ASC').all(input.agent_id, cutoff) as Record<string, unknown>[];
 
     const scoreTrend = evaluations.map(e => {
       const scores = JSON.parse((e.scores as string) || '{}');
@@ -309,8 +314,8 @@ export class EvolutorAgentService {
     if (input.eval_frequency_threshold !== undefined) { sets.push('eval_frequency_threshold = ?'); params.push(input.eval_frequency_threshold); }
     if (input.eval_schedule_interval_ms !== undefined) { sets.push('eval_schedule_interval_ms = ?'); params.push(input.eval_schedule_interval_ms); }
     if (input.eval_batch_size !== undefined) { sets.push('eval_batch_size = ?'); params.push(input.eval_batch_size); }
-    DB.prepare(`UPDATE evolutor_agent_config SET ${sets.join(',')}`).run(...params);
-    const config = DB.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
+    this.db.prepare(`UPDATE evolutor_agent_config SET ${sets.join(',')}`).run(...params);
+    const config = this.db.prepare('SELECT * FROM evolutor_agent_config LIMIT 1').get() as Record<string, unknown>;
     output.eval_work_prompt_template_id = config.eval_work_prompt_template_id as string;
     output.eval_write_prompt_template_id = config.eval_write_prompt_template_id as string;
     output.optimize_threshold = Number(config.optimize_threshold) || 60;
@@ -344,7 +349,7 @@ export class EvolutorAgentService {
 
   private processBatchEvaluation(batchSize: number): void {
     try {
-      const rows = DB.prepare('SELECT * FROM agent WHERE enable=1 AND agent_type=? ORDER BY updated DESC LIMIT ?').all('WORKER', batchSize) as Record<string, unknown>[];
+      const rows = this.db.prepare('SELECT * FROM agent WHERE enable=1 AND agent_type=? ORDER BY updated DESC LIMIT ?').all('WORKER', batchSize) as Record<string, unknown>[];
       for (const row of rows) {
         const evalInput = new EvalWorkAgentInput({
           agent_id: row.agent_id as string, work_id: '', interact_id: '',
@@ -360,7 +365,6 @@ export class EvolutorAgentService {
   }
 }
 
-export function createEvolutorAgentService(llmService?: LLMService): EvolutorAgentService {
-  const raw = new EvolutorAgentService(llmService);
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+export function createEvolutorAgentService(db: AgentDatabase, llmService?: LLMService): EvolutorAgentService {
+  return AopProxy(new EvolutorAgentService(db, llmService));
 }

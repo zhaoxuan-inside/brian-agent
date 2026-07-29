@@ -1,3 +1,4 @@
+import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
 import { NotFoundError } from '../../shared/errors';
 import { logger } from '../../infrastructure/logger';
@@ -5,25 +6,38 @@ import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
 import { getAgentByAgentId, recordAgentUsage } from '../AgentLibrary/db';
 import type { LLMService } from '../../core/llm/LLMService';
+import type { SkillManager } from '../../core/skill/SkillManager';
+import type { MCPManager } from '../../core/mcp/MCPManager';
+import type { MQCore } from '../../core/mq/MQCore';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
-import { getDatabase } from '../../infrastructure/database';
 
-const DB = getDatabase();
 const MODULE = 'AgentExecution';
 
-DB.exec(`CREATE TABLE IF NOT EXISTS agent_execution_config (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  think_prompt_template_id TEXT NOT NULL DEFAULT '',
-  reflect_prompt_template_id TEXT NOT NULL DEFAULT '',
-  answer_prompt_template_id TEXT NOT NULL DEFAULT '',
-  default_max_iterations INTEGER NOT NULL DEFAULT 10,
-  async_worker_interval INTEGER NOT NULL DEFAULT 1000
-)`);
+function ensureTables(db: AgentDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_execution_config (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    think_prompt_template_id TEXT NOT NULL DEFAULT '',
+    reflect_prompt_template_id TEXT NOT NULL DEFAULT '',
+    answer_prompt_template_id TEXT NOT NULL DEFAULT '',
+    default_max_iterations INTEGER NOT NULL DEFAULT 10,
+    async_worker_interval INTEGER NOT NULL DEFAULT 1000
+  )`);
 
-const ECONF = DB.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown> | undefined;
-if (!ECONF) {
-  const now = Date.now();
-  DB.prepare('INSERT INTO agent_execution_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  const econf = db.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!econf) {
+    const now = Date.now();
+    db.prepare('INSERT INTO agent_execution_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  }
+
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_execution_trace (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    trace_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
+    work_id TEXT NOT NULL DEFAULT '', interact_id TEXT NOT NULL DEFAULT '',
+    task_content TEXT NOT NULL DEFAULT '', history TEXT NOT NULL DEFAULT '[]',
+    iterations INTEGER NOT NULL DEFAULT 0, answer TEXT NOT NULL DEFAULT '',
+    elapsed_ms INTEGER NOT NULL DEFAULT 0, token_usage INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_exec_trace_agent_id ON agent_execution_trace(agent_id)').run();
 }
 
 class ExecAgentInput extends Input {
@@ -63,7 +77,7 @@ class ActInput extends Input {
   constructor(d: Partial<ActInput>) { super(d); Object.assign(this, d); }
 }
 class ActContext extends Context { }
-class ActOutput extends Output { result?: string; tool_type?: string; tool_id?: string; elapsed_ms?: number; }
+class ActOutput extends Output { result?: string; tool_type?: string; tool_id?: string; elapsed_ms?: number; success_status?: boolean; }
 
 class ReflectInput extends Input {
   agent_id!: string; llm_id?: string; soul_id?: string;
@@ -111,14 +125,25 @@ export { ExecAgentOutput, ExecAgentAsyncOutput, ThinkOutput, ActOutput, ReflectO
 
 const DEFAULT_SYSTEM_PROMPT = `You are an AI agent designed to solve tasks. Follow this process:
 1. THINK: Analyze the task and decide the next action
-2. ACT: Execute tools (if needed) 
+2. ACT: Execute tools (if needed)
 3. REFLECT: Evaluate results and decide whether to continue
 4. ANSWER: Provide the final answer
 
 Always respond with clear, structured output. Use Chinese unless the task is in another language.`;
 
 export class AgentExecutionService {
-  constructor(private llmService?: LLMService) {}
+  private db: AgentDatabase;
+
+  constructor(
+    db: AgentDatabase,
+    private llmService?: LLMService,
+    private skillManager?: SkillManager,
+    private mcpManager?: MCPManager,
+    private mqCore?: MQCore,
+  ) {
+    this.db = db;
+    ensureTables(db);
+  }
 
   async execAgent(input: ExecAgentInput, _context: ExecAgentContext, output: ExecAgentOutput): Promise<boolean> {
     logger.info(MODULE, '[execAgent] start', { agent_id: input.agent_id, task: input.task_content?.substring(0, 100) });
@@ -127,12 +152,13 @@ export class AgentExecutionService {
     const agent = getAgentByAgentId(input.agent_id);
     if (!agent || agent.enable === 0) throw new NotFoundError(`Agent ${input.agent_id} not found or disabled`);
 
-    const config = DB.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown>;
+    const config = this.db.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown>;
     const maxIter = input.max_iterations ?? (Number(config.default_max_iterations) || 10);
     const traceId = generateId();
 
     const history: string[] = [];
     let iterations = 0;
+    let totalTokenUsage = 0;
 
     const doThink = async (iter: number): Promise<{ reasoning: string; nextAction: string; tokenUsage: number }> => {
       if (!this.llmService) {
@@ -150,11 +176,13 @@ export class AgentExecutionService {
       try {
         const resp = await this.llmService.chatCompletion(request);
         const content = resp.choices?.[0]?.message?.content || '';
+        const tok = resp.usage?.totalTokens || 0;
+        totalTokenUsage += tok;
         const isFinished = /\bFINISH\b/i.test(content);
         return {
           reasoning: content,
           nextAction: isFinished ? 'FINISH' : 'ACT',
-          tokenUsage: resp.usage?.totalTokens || 0,
+          tokenUsage: tok,
         };
       } catch (e) {
         logger.warn(MODULE, '[execAgent] think failed', { error: (e as Error).message });
@@ -177,10 +205,12 @@ export class AgentExecutionService {
         };
         const resp = await this.llmService.chatCompletion(request);
         const content = resp.choices?.[0]?.message?.content || '';
+        const tok = resp.usage?.totalTokens || 0;
+        totalTokenUsage += tok;
         return {
           shouldContinue: /\bCONTINUE\b/i.test(content) && !/\bFINISH\b/i.test(content),
           reflection: content,
-          tokenUsage: resp.usage?.totalTokens || 0,
+          tokenUsage: tok,
         };
       } catch (e) {
         logger.warn(MODULE, '[execAgent] reflect failed', { error: (e as Error).message });
@@ -203,9 +233,11 @@ export class AgentExecutionService {
           maxTokens: 4096,
         };
         const resp = await this.llmService.chatCompletion(request);
+        const tok = resp.usage?.totalTokens || 0;
+        totalTokenUsage += tok;
         return {
           answer: resp.choices?.[0]?.message?.content || input.task_content,
-          tokenUsage: resp.usage?.totalTokens || 0,
+          tokenUsage: tok,
         };
       } catch (e) {
         return { answer: `[Agent ${input.agent_id}] Error generating answer: ${(e as Error).message}`, tokenUsage: 0 };
@@ -230,12 +262,23 @@ export class AgentExecutionService {
 
     try {
       recordAgentUsage({ agent_id: input.agent_id, work_id: input.work_id, interact_id: input.interact_id });
-    } catch {}
+    } catch { /* non-critical */ }
 
     output.answer = answerResult.answer;
     output.iterations = iterations;
     output.trace_id = traceId;
     output.elapsed_ms = Date.now() - startTime;
+
+    try {
+      const now = Date.now();
+      this.db.prepare(`INSERT INTO agent_execution_trace (id,created,updated,trace_id,agent_id,work_id,interact_id,task_content,history,iterations,answer,elapsed_ms,token_usage)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        generateId(), now, now, traceId, input.agent_id, input.work_id || '', input.interact_id || '',
+        input.task_content, JSON.stringify(history), iterations, answerResult.answer,
+        output.elapsed_ms, totalTokenUsage
+      );
+    } catch { /* trace storage is non-critical */ }
+
     logger.info(MODULE, '[execAgent] done', { agent_id: input.agent_id, iterations, elapsed_ms: output.elapsed_ms });
     return true;
   }
@@ -288,16 +331,48 @@ export class AgentExecutionService {
     return true;
   }
 
-  act(input: ActInput, _context: ActContext, output: ActOutput): boolean {
+  async act(input: ActInput, _context: ActContext, output: ActOutput): Promise<boolean> {
+    const startTime = Date.now();
+
+    let action: { tool_type?: string; tool_id?: string; tool_name?: string; args?: Record<string, unknown> } | null = null;
+    if (input.next_action) {
+      try { action = JSON.parse(input.next_action); } catch { action = null; }
+    }
+
+    if (!action) {
+      output.result = 'No action required';
+      output.tool_type = 'NONE';
+      output.success_status = true;
+      output.elapsed_ms = Date.now() - startTime;
+      return true;
+    }
+
+    const toolType = action.tool_type || 'Skill';
+    const toolId = action.tool_id || action.tool_name || '';
+    const args = action.args || {};
+
+    output.tool_type = toolType;
+    output.tool_id = toolId;
+
     try {
-      const action = input.next_action ? (() => { try { return JSON.parse(input.next_action); } catch { return null; } })() : null;
-      output.tool_type = action?.tool_type || 'NONE';
-      output.tool_id = action?.tool_id || '';
-      output.result = action ? `Act executed: ${JSON.stringify(action.params || {})}` : 'No action required';
+      if (toolType === 'Skill' && this.skillManager) {
+        const result = await this.skillManager.executeSkill(toolId, args);
+        output.result = typeof result === 'string' ? result : JSON.stringify(result);
+        output.success_status = true;
+      } else if (toolType === 'MCP' && this.mcpManager) {
+        const result = await this.mcpManager.execute({ toolName: toolId, args } as unknown as Parameters<typeof this.mcpManager.execute>[0]);
+        output.result = typeof result === 'string' ? result : JSON.stringify(result);
+        output.success_status = true;
+      } else {
+        output.result = `Tool type "${toolType}" is not available (no ${toolType.toLowerCase()} manager configured)`;
+        output.success_status = false;
+      }
     } catch (e) {
       output.result = `Act error: ${(e as Error).message}`;
-      output.tool_type = 'NONE';
+      output.success_status = false;
     }
+
+    output.elapsed_ms = Date.now() - startTime;
     return true;
   }
 
@@ -361,19 +436,56 @@ export class AgentExecutionService {
   }
 
   getTrace(input: GetTraceInput, _context: GetTraceContext, output: GetTraceOutput): boolean {
+    const row = this.db.prepare('SELECT * FROM agent_execution_trace WHERE trace_id = ?').get(input.trace_id) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      output.trace = {
+        trace_id: input.trace_id,
+        error: 'Trace not found',
+      };
+      return true;
+    }
+
+    let history: unknown[];
+    try { history = JSON.parse(row.history as string); } catch { history = []; }
+
     output.trace = {
-      trace_id: input.trace_id,
-      started_at: Date.now(),
-      iterations: [],
-      total_token_usage: 0,
-      total_elapsed_ms: 0,
+      trace_id: row.trace_id,
+      agent_id: row.agent_id,
+      work_id: row.work_id,
+      interact_id: row.interact_id,
+      task_content: row.task_content,
+      iterations: row.iterations,
+      elapsed_ms: row.elapsed_ms,
+      token_usage: row.token_usage,
+      answer: row.answer,
+      history,
+      started_at: row.created,
     };
     return true;
   }
 
   getExecQueueStatus(_input: GetExecQueueStatusInput, _context: GetExecQueueStatusContext, output: GetExecQueueStatusOutput): boolean {
-    output.queue_stats = { pending: 0, processing: 0, completed: 0, failed: 0 };
-    output.workers = [];
+    if (this.mqCore) {
+      const getWorkerOutput = { workers: [] as { status: string }[] };
+      this.mqCore.getWorker(
+        { queue: 'agent.execution' } as Parameters<typeof this.mqCore.getWorker>[0],
+        {} as Parameters<typeof this.mqCore.getWorker>[1],
+        getWorkerOutput as Parameters<typeof this.mqCore.getWorker>[2],
+      );
+
+      const running = getWorkerOutput.workers.filter(w => w.status === 'RUNNING').length;
+      output.queue_stats = {
+        pending: 0,
+        processing: running,
+        completed: 0,
+        failed: 0,
+      };
+      output.workers = getWorkerOutput.workers;
+    } else {
+      output.queue_stats = { pending: 0, processing: 0, completed: 0, failed: 0 };
+      output.workers = [];
+    }
     return true;
   }
 
@@ -387,8 +499,8 @@ export class AgentExecutionService {
     if (input.answer_prompt_template_id !== undefined) { sets.push('answer_prompt_template_id = ?'); params.push(input.answer_prompt_template_id); }
     if (input.default_max_iterations !== undefined) { sets.push('default_max_iterations = ?'); params.push(input.default_max_iterations); }
     if (input.async_worker_interval !== undefined) { sets.push('async_worker_interval = ?'); params.push(input.async_worker_interval); }
-    DB.prepare(`UPDATE agent_execution_config SET ${sets.join(',')}`).run(...params);
-    const config = DB.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown>;
+    this.db.prepare(`UPDATE agent_execution_config SET ${sets.join(',')}`).run(...params);
+    const config = this.db.prepare('SELECT * FROM agent_execution_config LIMIT 1').get() as Record<string, unknown>;
     output.think_prompt_template_id = config.think_prompt_template_id as string;
     output.reflect_prompt_template_id = config.reflect_prompt_template_id as string;
     output.answer_prompt_template_id = config.answer_prompt_template_id as string;
@@ -399,7 +511,12 @@ export class AgentExecutionService {
   }
 }
 
-export function createAgentExecutionService(llmService?: LLMService): AgentExecutionService {
-  const raw = new AgentExecutionService(llmService);
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+export function createAgentExecutionService(
+  db: AgentDatabase,
+  llmService?: LLMService,
+  skillManager?: SkillManager,
+  mcpManager?: MCPManager,
+  mqCore?: MQCore,
+): AgentExecutionService {
+  return AopProxy(new AgentExecutionService(db, llmService, skillManager, mcpManager, mqCore));
 }

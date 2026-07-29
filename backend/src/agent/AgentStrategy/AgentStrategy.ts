@@ -1,87 +1,86 @@
+import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
 import { ValidationError } from '../../shared/errors';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
-import { getDatabase } from '../../infrastructure/database';
 
-const DB = getDatabase();
 const MODULE = 'AgentStrategy';
 
-DB.exec(`CREATE TABLE IF NOT EXISTS agent_strategy (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  strategy_id TEXT NOT NULL UNIQUE, strategy_label TEXT NOT NULL,
-  suitable_complexity_min INTEGER NOT NULL DEFAULT 0,
-  suitable_complexity_max INTEGER NOT NULL DEFAULT 100,
-  suitable_domains TEXT NOT NULL DEFAULT '["*"]',
-  execution_rule TEXT NOT NULL DEFAULT '{}',
-  enable INTEGER NOT NULL DEFAULT 1
-)`);
+function ensureTables(db: AgentDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_strategy (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    strategy_id TEXT NOT NULL UNIQUE, strategy_label TEXT NOT NULL,
+    suitable_complexity_min INTEGER NOT NULL DEFAULT 0,
+    suitable_complexity_max INTEGER NOT NULL DEFAULT 100,
+    suitable_domains TEXT NOT NULL DEFAULT '["*"]',
+    execution_rule TEXT NOT NULL DEFAULT '{}',
+    enable INTEGER NOT NULL DEFAULT 1
+  )`);
 
-DB.exec(`CREATE TABLE IF NOT EXISTS agent_strategy_config (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  default_strategy_id TEXT NOT NULL DEFAULT '',
-  match_prompt_template_id TEXT NOT NULL DEFAULT ''
-)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_strategy_match_config (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    default_strategy_id TEXT NOT NULL DEFAULT '',
+    match_prompt_template_id TEXT NOT NULL DEFAULT ''
+  )`);
 
-const SCONF = DB.prepare('SELECT * FROM agent_strategy_config LIMIT 1').get() as Record<string, unknown> | undefined;
-if (!SCONF) {
-  const now = Date.now();
-  DB.prepare('INSERT INTO agent_strategy_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
-}
+  const sconf = db.prepare('SELECT * FROM agent_strategy_match_config LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!sconf) {
+    const now = Date.now();
+    db.prepare('INSERT INTO agent_strategy_match_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  }
 
-function seedStrategies(): void {
-  const existing = DB.prepare('SELECT COUNT(*) as c FROM agent_strategy').get() as { c: number };
-  if (existing.c > 0) return;
-  logger.info(MODULE, '[seedStrategies] seeding built-in strategies');
-  const now = Date.now();
-  const strategies = [
-    {
-      label: 'CoT', cmin: 0, cmax: 40, rule: JSON.stringify({
-        version: '1.0', max_iterations: 1,
-        steps: [{ step: 'Think', next: 'Answer', on_error: 'Answer' }, { step: 'Answer', next: null }],
-      }),
-    },
-    {
-      label: 'ReAct', cmin: 30, cmax: 70, rule: JSON.stringify({
-        version: '1.0', max_iterations: 10,
-        steps: [
-          { step: 'Think', next: 'Act', on_error: 'Answer' },
-          { step: 'Act', next: 'Reflect' },
-          { step: 'Reflect', condition_field: 'should_continue', true_next: 'Think', false_next: 'Answer' },
-          { step: 'Answer', next: null },
-        ],
-      }),
-    },
-    {
-      label: 'Plan-and-Solve', cmin: 60, cmax: 100, rule: JSON.stringify({
-        version: '1.0', max_iterations: 20,
-        phases: [
-          { phase: 'Plan', steps: [{ step: 'Think', next: 'SolvePhase', on_error: 'Answer' }] },
-          {
-            phase: 'Solve', loop_over: 'sub_steps',
-            steps: [
-              { step: 'Act', next: 'Reflect' },
-              { step: 'Reflect', condition_field: 'should_continue', true_next: 'Act', false_next: 'SummaryAnswer' },
-            ],
-          },
-          { phase: 'Summary', steps: [{ step: 'Answer', next: null }] },
-        ],
-      }),
-    },
-  ];
-  for (const s of strategies) {
-    const sid = generateId();
-    const rid = generateId();
-    DB.prepare(`INSERT INTO agent_strategy (id,created,updated,strategy_id,strategy_label,suitable_complexity_min,suitable_complexity_max,execution_rule)
-      VALUES (?,?,?,?,?,?,?,?)`).run(rid, now, now, sid, s.label, s.cmin, s.cmax, s.rule);
-    const defRow = DB.prepare('SELECT default_strategy_id FROM agent_strategy_config WHERE default_strategy_id != ? LIMIT 1').get('');
-    if (!defRow) {
-      DB.prepare('UPDATE agent_strategy_config SET default_strategy_id = ?, updated = ?').run(sid, now);
+  const existing = db.prepare('SELECT COUNT(*) as c FROM agent_strategy').get() as { c: number };
+  if (existing.c === 0) {
+    logger.info(MODULE, '[seedStrategies] seeding built-in strategies');
+    const now = Date.now();
+    const strategies = [
+      {
+        label: 'CoT', cmin: 0, cmax: 40, rule: JSON.stringify({
+          version: '1.0', max_iterations: 1,
+          steps: [{ step: 'Think', next: 'Answer', on_error: 'Answer' }, { step: 'Answer', next: null }],
+        }),
+      },
+      {
+        label: 'ReAct', cmin: 30, cmax: 70, rule: JSON.stringify({
+          version: '1.0', max_iterations: 10,
+          steps: [
+            { step: 'Think', next: 'Act', on_error: 'Answer' },
+            { step: 'Act', next: 'Reflect' },
+            { step: 'Reflect', condition_field: 'should_continue', true_next: 'Think', false_next: 'Answer' },
+            { step: 'Answer', next: null },
+          ],
+        }),
+      },
+      {
+        label: 'Plan-and-Solve', cmin: 60, cmax: 100, rule: JSON.stringify({
+          version: '1.0', max_iterations: 20,
+          phases: [
+            { phase: 'Plan', steps: [{ step: 'Think', next: 'SolvePhase', on_error: 'Answer' }] },
+            {
+              phase: 'Solve', loop_over: 'sub_steps',
+              steps: [
+                { step: 'Act', next: 'Reflect' },
+                { step: 'Reflect', condition_field: 'should_continue', true_next: 'Act', false_next: 'SummaryAnswer' },
+              ],
+            },
+            { phase: 'Summary', steps: [{ step: 'Answer', next: null }] },
+          ],
+        }),
+      },
+    ];
+    for (const s of strategies) {
+      const sid = generateId();
+      const rid = generateId();
+      db.prepare(`INSERT INTO agent_strategy (id,created,updated,strategy_id,strategy_label,suitable_complexity_min,suitable_complexity_max,execution_rule)
+        VALUES (?,?,?,?,?,?,?,?)`).run(rid, now, now, sid, s.label, s.cmin, s.cmax, s.rule);
+      const defRow = db.prepare('SELECT default_strategy_id FROM agent_strategy_match_config WHERE default_strategy_id != ? LIMIT 1').get('');
+      if (!defRow) {
+        db.prepare('UPDATE agent_strategy_match_config SET default_strategy_id = ?, updated = ?').run(sid, now);
+      }
     }
   }
 }
-seedStrategies();
 
 class MatchStrategyInput extends Input {
   task_content!: string;
@@ -140,9 +139,16 @@ export { MatchStrategyContext, GetStrategyContext, SoStrategyContext, AddStrateg
 export { MatchStrategyOutput, GetStrategyOutput, SoStrategyOutput, AddStrategyOutput, UpdateStrategyOutput, ConfigAgentStrategyOutput };
 
 export class AgentStrategyService {
+  private db: AgentDatabase;
+
+  constructor(db: AgentDatabase) {
+    this.db = db;
+    ensureTables(db);
+  }
+
   matchStrategy(input: MatchStrategyInput, _context: MatchStrategyContext, output: MatchStrategyOutput): boolean {
     logger.info(MODULE, '[matchStrategy] start', { complexity: input.task_complexity });
-    const strategies = DB.prepare('SELECT * FROM agent_strategy WHERE enable=1').all() as Record<string, unknown>[];
+    const strategies = this.db.prepare('SELECT * FROM agent_strategy WHERE enable=1').all() as Record<string, unknown>[];
     const complexity = input.task_complexity ?? 50;
 
     const candidates = strategies.filter(s => {
@@ -161,7 +167,7 @@ export class AgentStrategyService {
       });
       output.strategy_id = candidates[0].strategy_id as string;
     } else {
-      const def = DB.prepare('SELECT default_strategy_id FROM agent_strategy_config LIMIT 1').get() as Record<string, unknown> | undefined;
+      const def = this.db.prepare('SELECT default_strategy_id FROM agent_strategy_match_config LIMIT 1').get() as Record<string, unknown> | undefined;
       output.strategy_id = (def?.default_strategy_id as string) || (strategies[0]?.strategy_id as string) || '';
     }
     logger.info(MODULE, '[matchStrategy] result', { strategy_id: output.strategy_id });
@@ -169,7 +175,7 @@ export class AgentStrategyService {
   }
 
   getStrategy(input: GetStrategyInput, _context: GetStrategyContext, output: GetStrategyOutput): boolean {
-    const row = DB.prepare('SELECT * FROM agent_strategy WHERE strategy_id = ?').get(input.strategy_id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare('SELECT * FROM agent_strategy WHERE strategy_id = ?').get(input.strategy_id) as Record<string, unknown> | undefined;
     if (!row) return false;
     output.strategy_id = row.strategy_id as string;
     output.strategy_label = row.strategy_label as string;
@@ -185,7 +191,7 @@ export class AgentStrategyService {
       sql += ' LIMIT ? OFFSET ?';
       params.push(input.page_size, (input.page_num - 1) * input.page_size);
     }
-    output.strategies = DB.prepare(sql).all(...params) as Record<string, unknown>[];
+    output.strategies = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
     return true;
   }
 
@@ -201,7 +207,7 @@ export class AgentStrategyService {
     const strategyId = generateId();
     const rowId = generateId();
     const now = Date.now();
-    DB.prepare(`INSERT INTO agent_strategy (id,created,updated,strategy_id,strategy_label,suitable_complexity_min,suitable_complexity_max,suitable_domains,execution_rule)
+    this.db.prepare(`INSERT INTO agent_strategy (id,created,updated,strategy_id,strategy_label,suitable_complexity_min,suitable_complexity_max,suitable_domains,execution_rule)
       VALUES (?,?,?,?,?,?,?,?,?)`).run(
       rowId, now, now, strategyId, input.strategy_label,
       input.suitable_complexity_min, input.suitable_complexity_max,
@@ -214,7 +220,7 @@ export class AgentStrategyService {
 
   updateStrategy(input: UpdateStrategyInput, _context: UpdateStrategyContext, _output: UpdateStrategyOutput): boolean {
     logger.info(MODULE, '[updateStrategy] start', { strategy_id: input.strategy_id });
-    const existing = DB.prepare('SELECT * FROM agent_strategy WHERE strategy_id = ?').get(input.strategy_id) as Record<string, unknown> | undefined;
+    const existing = this.db.prepare('SELECT * FROM agent_strategy WHERE strategy_id = ?').get(input.strategy_id) as Record<string, unknown> | undefined;
     if (!existing) throw new ValidationError(`Strategy ${input.strategy_id} not found`);
     const now = Date.now();
     const sets: string[] = ['updated = ?'];
@@ -226,7 +232,7 @@ export class AgentStrategyService {
     if (input.execution_rule !== undefined) { sets.push('execution_rule = ?'); params.push(input.execution_rule); }
     if (input.enable !== undefined) { sets.push('enable = ?'); params.push(input.enable ? 1 : 0); }
     params.push(input.strategy_id);
-    DB.prepare(`UPDATE agent_strategy SET ${sets.join(',')} WHERE strategy_id = ?`).run(...params);
+    this.db.prepare(`UPDATE agent_strategy SET ${sets.join(',')} WHERE strategy_id = ?`).run(...params);
     logger.info(MODULE, '[updateStrategy] done');
     return true;
   }
@@ -238,8 +244,8 @@ export class AgentStrategyService {
     const params: unknown[] = [now];
     if (input.default_strategy_id !== undefined) { sets.push('default_strategy_id = ?'); params.push(input.default_strategy_id); }
     if (input.match_prompt_template_id !== undefined) { sets.push('match_prompt_template_id = ?'); params.push(input.match_prompt_template_id); }
-    DB.prepare(`UPDATE agent_strategy_config SET ${sets.join(',')}`).run(...params);
-    const config = DB.prepare('SELECT * FROM agent_strategy_config LIMIT 1').get() as Record<string, unknown>;
+    this.db.prepare(`UPDATE agent_strategy_match_config SET ${sets.join(',')}`).run(...params);
+    const config = this.db.prepare('SELECT * FROM agent_strategy_match_config LIMIT 1').get() as Record<string, unknown>;
     output.default_strategy_id = config.default_strategy_id as string;
     output.match_prompt_template_id = config.match_prompt_template_id as string;
     logger.info(MODULE, '[configAgentStrategy] done');
@@ -247,7 +253,6 @@ export class AgentStrategyService {
   }
 }
 
-export function createAgentStrategyService(): AgentStrategyService {
-  const raw = new AgentStrategyService();
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+export function createAgentStrategyService(db: AgentDatabase): AgentStrategyService {
+  return AopProxy(new AgentStrategyService(db));
 }

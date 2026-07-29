@@ -1,35 +1,36 @@
+import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
-import { getDatabase } from '../../infrastructure/database';
 
-const DB = getDatabase();
 const MODULE = 'WriterAgent';
 
-DB.exec(`CREATE TABLE IF NOT EXISTS writer_agent_config (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  write_prompt_template_id TEXT NOT NULL DEFAULT '',
-  default_language TEXT NOT NULL DEFAULT 'zh-CN',
-  default_style TEXT NOT NULL DEFAULT 'clear',
-  default_depth TEXT NOT NULL DEFAULT 'medium',
-  default_format TEXT NOT NULL DEFAULT 'MARKDOWN'
-)`);
+function ensureTable(db: AgentDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS writer_agent_config (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    write_prompt_template_id TEXT NOT NULL DEFAULT '',
+    default_language TEXT NOT NULL DEFAULT 'zh-CN',
+    default_style TEXT NOT NULL DEFAULT 'clear',
+    default_depth TEXT NOT NULL DEFAULT 'medium',
+    default_format TEXT NOT NULL DEFAULT 'MARKDOWN'
+  )`);
 
-const WCONF = DB.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown> | undefined;
-if (!WCONF) {
-  const now = Date.now();
-  DB.prepare('INSERT INTO writer_agent_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  const wconf = db.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!wconf) {
+    const now = Date.now();
+    db.prepare('INSERT INTO writer_agent_config (id,created,updated) VALUES (?,?,?)').run(generateId(), now, now);
+  }
+
+  db.exec(`CREATE TABLE IF NOT EXISTS writer_agent_user_profile (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    session_id TEXT NOT NULL UNIQUE, language TEXT NOT NULL DEFAULT 'zh-CN',
+    style TEXT NOT NULL DEFAULT 'clear', depth TEXT NOT NULL DEFAULT 'medium',
+    format TEXT NOT NULL DEFAULT 'MARKDOWN', additional_preferences TEXT
+  )`);
 }
-
-DB.exec(`CREATE TABLE IF NOT EXISTS writer_agent_user_profile (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  session_id TEXT NOT NULL UNIQUE, language TEXT NOT NULL DEFAULT 'zh-CN',
-  style TEXT NOT NULL DEFAULT 'clear', depth TEXT NOT NULL DEFAULT 'medium',
-  format TEXT NOT NULL DEFAULT 'MARKDOWN', additional_preferences TEXT
-)`);
 
 class WriteInput extends Input {
   work_id!: string; interact_id!: string; user_query!: string;
@@ -71,7 +72,12 @@ export { WriteContext, SaveUserProfileContext, GetUserProfileContext, ConfigWrit
 export { WriteOutput, SaveUserProfileOutput, GetUserProfileOutput, ConfigWriterAgentOutput };
 
 export class WriterAgentService {
-  constructor(private llmService?: LLMService) {}
+  private db: AgentDatabase;
+
+  constructor(db: AgentDatabase, private llmService?: LLMService) {
+    this.db = db;
+    ensureTable(db);
+  }
 
   async write(input: WriteInput, _context: WriteContext, output: WriteOutput): Promise<boolean> {
     logger.info(MODULE, '[write] start', { work_id: input.work_id, query: input.user_query?.substring(0, 100) });
@@ -128,7 +134,7 @@ export class WriterAgentService {
   saveUserProfile(input: SaveUserProfileInput, _context: SaveUserProfileContext, _output: SaveUserProfileOutput): boolean {
     logger.info(MODULE, '[saveUserProfile] start', { session_id: input.session_id });
     if (!input.session_id) return false;
-    const existing = DB.prepare('SELECT id FROM writer_agent_user_profile WHERE session_id = ?').get(input.session_id) as Record<string, unknown> | undefined;
+    const existing = this.db.prepare('SELECT id FROM writer_agent_user_profile WHERE session_id = ?').get(input.session_id) as Record<string, unknown> | undefined;
     if (existing) {
       const now = Date.now();
       const sets: string[] = ['updated = ?'];
@@ -139,11 +145,11 @@ export class WriterAgentService {
       if (input.format !== undefined) { sets.push('format = ?'); params.push(input.format); }
       if (input.additional_preferences !== undefined) { sets.push('additional_preferences = ?'); params.push(input.additional_preferences); }
       params.push(input.session_id);
-      DB.prepare(`UPDATE writer_agent_user_profile SET ${sets.join(',')} WHERE session_id = ?`).run(...params);
+      this.db.prepare(`UPDATE writer_agent_user_profile SET ${sets.join(',')} WHERE session_id = ?`).run(...params);
     } else {
       const id = generateId();
       const now = Date.now();
-      DB.prepare(`INSERT INTO writer_agent_user_profile (id,created,updated,session_id,language,style,depth,format,additional_preferences)
+      this.db.prepare(`INSERT INTO writer_agent_user_profile (id,created,updated,session_id,language,style,depth,format,additional_preferences)
         VALUES (?,?,?,?,?,?,?,?,?)`).run(
         id, now, now, input.session_id, input.language || 'zh-CN', input.style || 'clear',
         input.depth || 'medium', input.format || 'MARKDOWN', input.additional_preferences || null
@@ -154,7 +160,7 @@ export class WriterAgentService {
   }
 
   getUserProfile(input: GetUserProfileInput, _context: GetUserProfileContext, output: GetUserProfileOutput): boolean {
-    const row = DB.prepare('SELECT * FROM writer_agent_user_profile WHERE session_id = ?').get(input.session_id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare('SELECT * FROM writer_agent_user_profile WHERE session_id = ?').get(input.session_id) as Record<string, unknown> | undefined;
     if (!row) {
       output.user_profile = { language: 'zh-CN', style: 'clear', depth: 'medium', format: 'MARKDOWN' };
     } else {
@@ -190,8 +196,8 @@ export class WriterAgentService {
       if (!VALID_FORMATS.includes(input.default_format)) return false;
       sets.push('default_format = ?'); params.push(input.default_format);
     }
-    DB.prepare(`UPDATE writer_agent_config SET ${sets.join(',')}`).run(...params);
-    const config = DB.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown>;
+    this.db.prepare(`UPDATE writer_agent_config SET ${sets.join(',')}`).run(...params);
+    const config = this.db.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown>;
     output.write_prompt_template_id = config.write_prompt_template_id as string;
     output.default_language = config.default_language as string;
     output.default_style = config.default_style as string;
@@ -210,7 +216,7 @@ export class WriterAgentService {
         format: input.user_preferences.format || 'MARKDOWN',
       };
     }
-    const config = DB.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown>;
+    const config = this.db.prepare('SELECT * FROM writer_agent_config LIMIT 1').get() as Record<string, unknown>;
     return {
       language: (config?.default_language as string) || 'zh-CN',
       style: (config?.default_style as string) || 'clear',
@@ -234,7 +240,6 @@ export class WriterAgentService {
   }
 }
 
-export function createWriterAgentService(llmService?: LLMService): WriterAgentService {
-  const raw = new WriterAgentService(llmService);
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+export function createWriterAgentService(db: AgentDatabase, llmService?: LLMService): WriterAgentService {
+  return AopProxy(new WriterAgentService(db, llmService));
 }

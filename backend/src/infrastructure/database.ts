@@ -441,6 +441,140 @@ function createTables(db: Database.Database): void {
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
     );
 
+    -- Agent Layer (PRD): Agent repository (AgentLibrary)
+    CREATE TABLE IF NOT EXISTS agent (
+      id TEXT PRIMARY KEY,
+      created INTEGER NOT NULL,
+      updated INTEGER NOT NULL,
+      agent_id TEXT NOT NULL UNIQUE,
+      agent_name TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      strategy_id TEXT NOT NULL DEFAULT '',
+      llm_id TEXT NOT NULL DEFAULT '',
+      soul_id TEXT NOT NULL DEFAULT '',
+      task_signature TEXT NOT NULL DEFAULT '',
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      eval_score INTEGER NOT NULL DEFAULT 50,
+      enable INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_agent_type ON agent(agent_type);
+    CREATE INDEX IF NOT EXISTS idx_agent_created ON agent(created);
+
+    CREATE TABLE IF NOT EXISTS agent_usage (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      agent_id TEXT NOT NULL, work_id TEXT NOT NULL DEFAULT '',
+      interact_id TEXT NOT NULL DEFAULT '', usage_context TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_usage_agent_id ON agent_usage(agent_id);
+
+    CREATE TABLE IF NOT EXISTS agent_opt_rule (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      days INTEGER NOT NULL DEFAULT 30, min_usage_count INTEGER NOT NULL DEFAULT 0,
+      min_eval_score INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_library_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      prompt_template_id TEXT NOT NULL DEFAULT '',
+      similarity_threshold REAL NOT NULL DEFAULT 0.7,
+      max_agent_count INTEGER NOT NULL DEFAULT 100
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_strategy (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      strategy_id TEXT NOT NULL UNIQUE, strategy_label TEXT NOT NULL,
+      suitable_complexity_min INTEGER NOT NULL DEFAULT 0,
+      suitable_complexity_max INTEGER NOT NULL DEFAULT 100,
+      suitable_domains TEXT NOT NULL DEFAULT '["*"]',
+      execution_rule TEXT NOT NULL DEFAULT '{}',
+      enable INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS agent_strategy_match_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      default_strategy_id TEXT NOT NULL DEFAULT '',
+      match_prompt_template_id TEXT NOT NULL DEFAULT ''
+    );
+
+    -- Agent Layer (PRD): Builder config
+    CREATE TABLE IF NOT EXISTS agent_builder_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      task_analysis_prompt_template_id TEXT NOT NULL DEFAULT '',
+      default_strategy_id TEXT NOT NULL DEFAULT '',
+      auto_optimize INTEGER NOT NULL DEFAULT 1
+    );
+
+    -- Agent Layer (PRD): Execution config and traces
+    CREATE TABLE IF NOT EXISTS agent_execution_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      think_prompt_template_id TEXT NOT NULL DEFAULT '',
+      reflect_prompt_template_id TEXT NOT NULL DEFAULT '',
+      answer_prompt_template_id TEXT NOT NULL DEFAULT '',
+      default_max_iterations INTEGER NOT NULL DEFAULT 10,
+      async_worker_interval INTEGER NOT NULL DEFAULT 1000
+    );
+    CREATE TABLE IF NOT EXISTS agent_execution_trace (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      trace_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
+      work_id TEXT NOT NULL DEFAULT '', interact_id TEXT NOT NULL DEFAULT '',
+      task_content TEXT NOT NULL DEFAULT '', history TEXT NOT NULL DEFAULT '[]',
+      iterations INTEGER NOT NULL DEFAULT 0, answer TEXT NOT NULL DEFAULT '',
+      elapsed_ms INTEGER NOT NULL DEFAULT 0, token_usage INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_exec_trace_agent_id ON agent_execution_trace(agent_id);
+
+    -- Agent Layer (PRD): Planner
+    CREATE TABLE IF NOT EXISTS agent_plan (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      plan_id TEXT NOT NULL UNIQUE, work_id TEXT NOT NULL DEFAULT '',
+      interact_id TEXT NOT NULL DEFAULT '', task_dag TEXT NOT NULL DEFAULT '{}',
+      parent_plan_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_plan_work_id ON agent_plan(work_id);
+
+    CREATE TABLE IF NOT EXISTS planner_agent_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      complexity_decompose_threshold INTEGER NOT NULL DEFAULT 50,
+      plan_prompt_template_id TEXT NOT NULL DEFAULT '',
+      max_subtask_count INTEGER NOT NULL DEFAULT 10
+    );
+
+    -- Agent Layer (PRD): Writer
+    CREATE TABLE IF NOT EXISTS writer_agent_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      write_prompt_template_id TEXT NOT NULL DEFAULT '',
+      default_language TEXT NOT NULL DEFAULT 'zh-CN',
+      default_style TEXT NOT NULL DEFAULT 'clear',
+      default_depth TEXT NOT NULL DEFAULT 'medium',
+      default_format TEXT NOT NULL DEFAULT 'MARKDOWN'
+    );
+    CREATE TABLE IF NOT EXISTS writer_agent_user_profile (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      session_id TEXT NOT NULL UNIQUE, language TEXT NOT NULL DEFAULT 'zh-CN',
+      style TEXT NOT NULL DEFAULT 'clear', depth TEXT NOT NULL DEFAULT 'medium',
+      format TEXT NOT NULL DEFAULT 'MARKDOWN', additional_preferences TEXT
+    );
+
+    -- Agent Layer (PRD): Evolutor
+    CREATE TABLE IF NOT EXISTS agent_evaluation (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      eval_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL,
+      eval_type TEXT NOT NULL, work_id TEXT NOT NULL DEFAULT '',
+      interact_id TEXT NOT NULL DEFAULT '', scores TEXT NOT NULL DEFAULT '{}',
+      suggestions TEXT, need_optimize INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_eval_agent_id ON agent_evaluation(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_eval_eval_type ON agent_evaluation(eval_type);
+
+    CREATE TABLE IF NOT EXISTS evolutor_agent_config (
+      id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+      eval_work_prompt_template_id TEXT NOT NULL DEFAULT '',
+      eval_write_prompt_template_id TEXT NOT NULL DEFAULT '',
+      optimize_threshold INTEGER NOT NULL DEFAULT 60,
+      eval_frequency_threshold INTEGER NOT NULL DEFAULT 5,
+      eval_schedule_interval_ms INTEGER NOT NULL DEFAULT 3600000,
+      eval_batch_size INTEGER NOT NULL DEFAULT 20
+    );
+
     CREATE TABLE IF NOT EXISTS model_config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

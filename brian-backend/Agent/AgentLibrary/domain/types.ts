@@ -20,7 +20,7 @@ export interface AgentRecord {
   task_signature: string;
   usage_count: number;
   eval_score: number;
-  enable: boolean;
+  enable: number | boolean;
 }
 
 export interface AgentUsageRecord {
@@ -51,10 +51,6 @@ export interface AgentLibraryConfigRecord {
   max_agent_count: number;
 }
 
-// ---------------------------------------------------------------------------
-// addAgent
-// ---------------------------------------------------------------------------
-
 export class AddAgentInput extends Input {
   agent_id!: string;
   agent_type!: string;
@@ -69,10 +65,6 @@ export class AddAgentOutput extends Output {
   agent_id = '';
 }
 
-// ---------------------------------------------------------------------------
-// matchAgent
-// ---------------------------------------------------------------------------
-
 export class MatchAgentInput extends Input {
   task_signature!: string;
   agent_type?: string;
@@ -84,10 +76,6 @@ export class MatchAgentOutput extends Output {
   similarity_score = 0;
 }
 
-// ---------------------------------------------------------------------------
-// updateAgent
-// ---------------------------------------------------------------------------
-
 export class UpdateAgentInput extends Input {
   agent_id!: string;
   agent_name?: string;
@@ -95,13 +83,11 @@ export class UpdateAgentInput extends Input {
   eval_score?: number;
   enable?: boolean;
   strategy_id?: string;
+  llm_id?: string;
+  soul_id?: string;
 }
 
 export class UpdateAgentOutput extends Output {}
-
-// ---------------------------------------------------------------------------
-// recordAgentUsage
-// ---------------------------------------------------------------------------
 
 export class RecordAgentUsageInput extends Input {
   agent_id!: string;
@@ -111,10 +97,6 @@ export class RecordAgentUsageInput extends Input {
 }
 
 export class RecordAgentUsageOutput extends Output {}
-
-// ---------------------------------------------------------------------------
-// getAgent
-// ---------------------------------------------------------------------------
 
 export class GetAgentInput extends Input {
   agent_id?: string;
@@ -128,19 +110,11 @@ export class GetAgentOutput extends Output {
   agents: AgentRecord[] = [];
 }
 
-// ---------------------------------------------------------------------------
-// ageAgent
-// ---------------------------------------------------------------------------
-
 export class AgeAgentInput extends Input {}
 
 export class AgeAgentOutput extends Output {
   aged_count = 0;
 }
-
-// ---------------------------------------------------------------------------
-// getAgentRule
-// ---------------------------------------------------------------------------
 
 export class GetAgentRuleInput extends Input {
   conditions?: Condition[];
@@ -152,19 +126,11 @@ export class GetAgentRuleOutput extends Output {
   rules: AgentOptRuleRecord[] = [];
 }
 
-// ---------------------------------------------------------------------------
-// updateAgentRule
-// ---------------------------------------------------------------------------
-
 export class UpdateAgentRuleInput extends Input {
   operations!: Operation[];
 }
 
 export class UpdateAgentRuleOutput extends Output {}
-
-// ---------------------------------------------------------------------------
-// configAgentLibrary
-// ---------------------------------------------------------------------------
 
 export class ConfigAgentLibraryInput extends Input {
   prompt_template_id?: string;
@@ -173,14 +139,15 @@ export class ConfigAgentLibraryInput extends Input {
 }
 
 export class ConfigAgentLibraryOutput extends Output {
-  config: AgentLibraryConfigRecord | null = null;
+  prompt_template_id = '';
+  similarity_threshold = 0.7;
+  max_agent_count = 100;
 }
-
-// ---------------------------------------------------------------------------
-// Tables
-// ---------------------------------------------------------------------------
 
 export const AGENT_TABLE = 'agent';
 export const AGENT_USAGE_TABLE = 'agent_usage';
 export const AGENT_OPT_RULE_TABLE = 'agent_opt_rule';
 export const AGENT_LIBRARY_CONFIG_TABLE = 'agent_library_config';
+
+export const VALID_AGENT_TYPES = ['WORKER', 'PLANNER', 'WRITER', 'EVOLUTOR'] as const;
+export const SYSTEM_AGENT_TYPES = ['PLANNER', 'WRITER', 'EVOLUTOR'] as const;

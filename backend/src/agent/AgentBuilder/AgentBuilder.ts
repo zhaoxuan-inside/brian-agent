@@ -1,3 +1,4 @@
+import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
 import { ValidationError, NotFoundError } from '../../shared/errors';
 import { logger } from '../../infrastructure/logger';
@@ -9,22 +10,22 @@ import { AddAgentInput, AddAgentContext, AddAgentOutput, MatchAgentInput, MatchA
 import type { AgentTypeEnum } from '../AgentLibrary/agentTypes';
 import type { AgentStrategyService } from '../AgentStrategy/AgentStrategy';
 import type { LLMService } from '../../core/llm/LLMService';
-import { getDatabase } from '../../infrastructure/database';
 
-const DB = getDatabase();
 const MODULE = 'AgentBuilder';
 
-DB.exec(`CREATE TABLE IF NOT EXISTS agent_builder_config (
-  id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-  task_analysis_prompt_template_id TEXT NOT NULL DEFAULT '',
-  default_strategy_id TEXT NOT NULL DEFAULT '',
-  auto_optimize INTEGER NOT NULL DEFAULT 1
-)`);
+function ensureTable(db: AgentDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_builder_config (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+    task_analysis_prompt_template_id TEXT NOT NULL DEFAULT '',
+    default_strategy_id TEXT NOT NULL DEFAULT '',
+    auto_optimize INTEGER NOT NULL DEFAULT 1
+  )`);
 
-const BROW = DB.prepare('SELECT * FROM agent_builder_config LIMIT 1').get() as Record<string, unknown> | undefined;
-if (!BROW) {
-  const now = Date.now();
-  DB.prepare('INSERT INTO agent_builder_config (id,created,updated,auto_optimize) VALUES (?,?,?,1)').run(generateId(), now, now);
+  const brow = db.prepare('SELECT * FROM agent_builder_config LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!brow) {
+    const now = Date.now();
+    db.prepare('INSERT INTO agent_builder_config (id,created,updated,auto_optimize) VALUES (?,?,?,1)').run(generateId(), now, now);
+  }
 }
 
 class BuildAgentInput extends Input {
@@ -77,11 +78,17 @@ export { BuildAgentContext, OptimizeAgentContext, BuildPlannerAgentContext, Buil
 export { BuildAgentOutput, OptimizeAgentOutput, BuildPlannerAgentOutput, BuildWriterAgentOutput, BuildEvolutorAgentOutput, ConfigAgentBuilderOutput };
 
 export class AgentBuilderService {
+  private db: AgentDatabase;
+
   constructor(
+    db: AgentDatabase,
     private libraryService: AgentLibraryService,
     private strategyService: AgentStrategyService,
     private llmService?: LLMService,
-  ) {}
+  ) {
+    this.db = db;
+    ensureTable(db);
+  }
 
   buildAgent(input: BuildAgentInput, context: BuildAgentContext, output: BuildAgentOutput): boolean {
     logger.info(MODULE, '[buildAgent] start', { task: input.task_content?.substring(0, 100), force_new: input.force_new });
@@ -199,8 +206,8 @@ export class AgentBuilderService {
     if (input.task_analysis_prompt_template_id !== undefined) { sets.push('task_analysis_prompt_template_id = ?'); params.push(input.task_analysis_prompt_template_id); }
     if (input.default_strategy_id !== undefined) { sets.push('default_strategy_id = ?'); params.push(input.default_strategy_id); }
     if (input.auto_optimize !== undefined) { sets.push('auto_optimize = ?'); params.push(input.auto_optimize ? 1 : 0); }
-    DB.prepare(`UPDATE agent_builder_config SET ${sets.join(',')}`).run(...params);
-    const config = DB.prepare('SELECT * FROM agent_builder_config LIMIT 1').get() as Record<string, unknown>;
+    this.db.prepare(`UPDATE agent_builder_config SET ${sets.join(',')}`).run(...params);
+    const config = this.db.prepare('SELECT * FROM agent_builder_config LIMIT 1').get() as Record<string, unknown>;
     output.task_analysis_prompt_template_id = config.task_analysis_prompt_template_id as string;
     output.default_strategy_id = config.default_strategy_id as string;
     output.auto_optimize = Boolean(config.auto_optimize);
@@ -260,10 +267,10 @@ export class AgentBuilderService {
 }
 
 export function createAgentBuilderService(
+  db: AgentDatabase,
   libraryService: AgentLibraryService,
   strategyService: AgentStrategyService,
   llmService?: LLMService,
 ): AgentBuilderService {
-  const raw = new AgentBuilderService(libraryService, strategyService, llmService);
-  return AopProxy(raw, { logger: { info: (m: string, msg: string) => logger.info(m, msg) } });
+  return AopProxy(new AgentBuilderService(db, libraryService, strategyService, llmService));
 }

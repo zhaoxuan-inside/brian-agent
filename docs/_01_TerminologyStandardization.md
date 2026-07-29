@@ -27,3 +27,13 @@
 `aging`：老化，GraphDBProvider 中基于保留窗口内激活数量判定边是否需要标记为非激活状态的机制；
 `sandbox`：沙箱，隔离的代码执行环境，SkillProvider 使用 Node.js vm 模块实现沙箱执行；
 `upsert`：存在则更新、不存在则新增的写入语义，各 Provider 的按天使用统计表（如 xxx_usage）均采用此语义维护当日计数；
+`opt`：optimize 的缩写，Core 层用于优化组件绑定接口的动词前缀，表示对该组件的最优匹配与绑定调整，如 optSkill、optMCP、optSoul；
+`exec`：execute 的缩写，用于执行类接口的动词前缀，表示触发实际的运行或调用，如 execAgent、execLLM、execPrompt、execSkill、execMcp；
+`agent`：智能体，系统中自主执行任务的实体，由 strategy、llm、skill、mcp、soul 等组件组成；分为 Worker Agent（执行任务）和 System Agent（PlannerAgent、WriterAgent、EvolutorAgent）；
+`strategy`：策略，定义 Agent 执行循环的推理模式，如 CoT（链式思考）、ReAct（推理-行动）、Plan-and-Solve（先规划再求解）；由 AgentStrategy 模块管理；
+`eval`：evaluation 的缩写，表示对 Agent 执行结果的评估评分过程，由 EvolutorAgent 执行，输出 correctness、completeness、efficiency、relevance 等多维度评分；
+`aging`：老化，AgentLibrary 中自动禁用低活跃度和低评分的 Agent 的机制，基于 agent_opt_rule 规则定时执行；
+`signature`：签名（task_signature），Agent 的任务特征摘要字符串，格式为 `[domain] 任务前256字`，用于 Agent 匹配时的相似度计算；
+`trace`：轨迹，Agent 执行过程中记录的完整操作历史，包含 Think/Act/Reflect/Answer 各步骤的输入输出和耗时，用于评估和回溯；
+`plan`：规划，PlannerAgent 将任务分解为 DAG 子任务图的结果，包含节点（task_id、task_content、dependencies）和边（from_task_id → to_task_id）；
+`config`：configure 的缩写，用于配置类接口的动词前缀，表示对模块级配置的查询与更新，如 configAgentLibrary、configAgentExecution；

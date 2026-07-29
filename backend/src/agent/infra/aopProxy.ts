@@ -19,7 +19,8 @@ const defaultLogger = {
   info: (module: string, msg: string) => logger.info(module, msg),
 };
 
-function createLogInterceptor(): Interceptor {
+function createLogInterceptor(log?: { info: (module: string, msg: string) => void }): Interceptor {
+  const logFn = log || defaultLogger;
   return {
     beforeExecute(methodName) {
       defaultLogger.info('AOP', `[${methodName}] call start`);
@@ -50,7 +51,7 @@ export function AopProxy<T extends object>(
   options: AopProxyOptions = {},
 ): T {
   const interceptors: Interceptor[] = [
-    createLogInterceptor(),
+    createLogInterceptor(options.logger),
     ...(options.interceptors || []),
   ];
 

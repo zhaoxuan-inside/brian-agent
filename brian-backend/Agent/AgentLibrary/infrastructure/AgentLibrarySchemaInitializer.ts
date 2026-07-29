@@ -7,7 +7,7 @@ import {
 export class AgentLibrarySchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  init(): void {
+  async init(): Promise<void> {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -18,6 +18,7 @@ export class AgentLibrarySchemaInitializer {
       )`,
     );
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_created ON ${AGENT_TABLE}(created)`);
+    this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_updated ON ${AGENT_TABLE}(updated)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_type ON ${AGENT_TABLE}(agent_type)`);
 
     this.relationDb.executeRaw(
@@ -38,6 +39,7 @@ export class AgentLibrarySchemaInitializer {
       )`,
     );
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_opt_rule_created ON ${AGENT_OPT_RULE_TABLE}(created)`);
+    this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_opt_rule_days ON ${AGENT_OPT_RULE_TABLE}(days)`);
 
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_LIBRARY_CONFIG_TABLE} (
@@ -47,18 +49,20 @@ export class AgentLibrarySchemaInitializer {
       )`,
     );
 
-    this.insertDefaultConfig();
+    await this.insertDefaultConfig();
   }
 
-  private insertDefaultConfig(): void {
-    const ex = this.relationDb.queryRaw<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${AGENT_LIBRARY_CONFIG_TABLE}`,
-    );
-    if (ex[0]?.count > 0) return;
-    const now = Math.floor(Date.now() / 1000);
-    this.relationDb.executeRaw(
-      `INSERT INTO ${AGENT_LIBRARY_CONFIG_TABLE} (id, created, updated, prompt_template_id, similarity_threshold, max_agent_count) VALUES (?, ?, ?, ?, 0.7, 100)`,
-      [IdGenerator.uuid(), now, now, ''],
-    );
+  private async insertDefaultConfig(): Promise<void> {
+    const count = await this.relationDb.count(AGENT_LIBRARY_CONFIG_TABLE);
+    if (count > 0) return;
+    const now = IdGenerator.now();
+    await this.relationDb.insert(AGENT_LIBRARY_CONFIG_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'prompt_template_id', value: '' },
+      { field: 'similarity_threshold', value: 0.7 },
+      { field: 'max_agent_count', value: 100 },
+    ]);
   }
 }

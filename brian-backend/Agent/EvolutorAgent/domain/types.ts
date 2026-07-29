@@ -43,7 +43,7 @@ export class EvalWorkAgentInput extends Input {
   interact_id!: string;
   task_content!: string;
   agent_output!: string;
-  trace_id!: string;
+  declare trace_id: string;
 }
 
 export interface EvalScores {
@@ -138,7 +138,7 @@ export class GetEvolutionReportOutput extends Output {
     agent_id: string; agent_name: string; agent_type: string;
     score_trend: Array<{ date: number; overall: number; correctness: number; completeness: number }>;
     component_changes: Array<{ time: number; component: string; from: string; to: string }>;
-    usage_trend: Array<{ date: number; usage_count: number }>;
+    usage_trend: Array<{ date: string; count: number }>;
     current_score: number;
     evolution_summary: string;
   } | null = null;

@@ -61,7 +61,7 @@
 
 ### 2.3. 更新 Agent（updateAgent）
 
-**功能**：更新 `agent` 表的元数据字段（名称、任务特征签名、评估分数、启用状态、策略 ID）。不涉及 Skill/MCP/LLM/Soul 绑定变更——绑定变更统一通过 AgentBuilder.optimizeAgent 调用 Core 层的 optimize/match 接口完成。
+**功能**：更新 `agent` 表的元数据字段（名称、任务特征签名、评估分数、启用状态、策略 ID、llm_id、soul_id）。Skill/MCP 1-to-many 绑定仍由 Core 管理；llm_id/soul_id 的 1-to-1 外键可由 Evolutor 触发的 optimizeAgent 写回。
 **入参**：
 - input：UpdateAgentInput（继承 Input），包含以下字段：
   - agent_id：Agent ID
@@ -70,6 +70,8 @@
   - eval_score：评估分数（可选，0-100）
   - enable：启用/禁用（可选）
   - strategy_id：策略 ID（可选）
+  - llm_id：绑定的 LLM ID（可选，来自 Core.matchLLM）
+  - soul_id：绑定的 Soul ID（可选，来自 Core.matchSoul/optSoul）
 - context：UpdateAgentContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
 - output：UpdateAgentOutput（继承 Output），承载返回内容
 
@@ -130,15 +132,16 @@
 
 **处理流程**：
 
-1. 调用 RelationDBProvider.selectDB 加载 `agent_opt_rule` 表中的所有老化规则（ALL rules must be satisfied：所有规则必须全部满足，Agent 才会被老化），每条规则包含：
-   - days：统计天数
-   - min_usage_count：最小使用次数阈值
-   - min_eval_score：最小评估分数阈值
-2. 对每条规则：调用 RelationDBProvider 统计 `agent_usage` 表中各 Agent 在指定 days 天内的使用次数（`COUNT(*) WHERE created >= now() - days * 86400`）；
-3. 调用 RelationDBProvider.selectDB 查询 `agent` 表获取每个 Agent 的 eval_score；
-4. 收集使用次数 < min_usage_count 且 eval_score < min_eval_score 的 agent_id 作为待老化列表（排除 PlannerAgent、WriterAgent、EvolutorAgent 类型的系统级 Agent）；
-5. 迭代待老化列表，对每个 agent_id 调用 RelationDBProvider.updateDB 将 `agent` 表的 `enable` 字段置为 false；
-6. 将老化的 Agent 数量写入 output 返回；
+1. 调用 RelationDBAccess.select 加载 `agent_opt_rule` 全部规则；
+2. **ALL-rules 语义**：对每个启用中的非系统 Agent，当且仅当「每一条规则」都同时满足  
+   `窗口内 usage_count < min_usage_count` **且** `eval_score < min_eval_score` 时，才将该 Agent 老化；  
+   任一条规则不满足（使用足够多或评分足够高）则保留；
+3. 时间窗口使用毫秒：`IdGenerator.now() - days * 24 * 60 * 60 * 1000`；
+4. 排除 `PLANNER` / `WRITER` / `EVOLUTOR` 系统 Agent；
+5. 对通过 ALL-rules 判定的 agent_id 调用 RelationDBAccess.update 将 `enable=0`；
+6. 将老化数量写入 output；
+
+> 分页 Page 字段统一为 Base 定义：`{ current, size }`（从 1 开始），禁止使用 page/page_size。
 
 ### 2.7. 老化规则管理（getAgentRule / updateAgentRule）
 

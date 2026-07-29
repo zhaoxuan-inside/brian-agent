@@ -3,6 +3,7 @@ export {
   AgentBuilderContext,
   BuildAgentInput, BuildAgentOutput,
   OptimizeAgentInput, OptimizeAgentOutput,
+  BuildSystemAgentOutput,
   BuildPlannerAgentInput, BuildPlannerAgentOutput,
   BuildWriterAgentInput, BuildWriterAgentOutput,
   BuildEvolutorAgentInput, BuildEvolutorAgentOutput,

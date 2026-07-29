@@ -1,3 +1,4 @@
+export * from './shared';
 export * from './AgentStrategy';
 export * from './AgentLibrary';
 export * from './AgentBuilder';

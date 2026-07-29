@@ -5,7 +5,7 @@ import { AGENT_PLAN_TABLE, PLANNER_AGENT_CONFIG_TABLE } from '../domain/types';
 export class PlannerAgentSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  init(): void {
+  async init(): Promise<void> {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_PLAN_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -25,14 +25,16 @@ export class PlannerAgentSchemaInitializer {
       )`,
     );
 
-    const ex = this.relationDb.queryRaw<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${PLANNER_AGENT_CONFIG_TABLE}`,
-    );
-    if (ex[0]?.count > 0) return;
-    const now = Math.floor(Date.now() / 1000);
-    this.relationDb.executeRaw(
-      `INSERT INTO ${PLANNER_AGENT_CONFIG_TABLE} (id, created, updated, complexity_decompose_threshold, plan_prompt_template_id, max_subtask_count) VALUES (?, ?, ?, 50, ?, 10)`,
-      [IdGenerator.uuid(), now, now, ''],
-    );
+    const count = await this.relationDb.count(PLANNER_AGENT_CONFIG_TABLE);
+    if (count > 0) return;
+    const now = IdGenerator.now();
+    await this.relationDb.insert(PLANNER_AGENT_CONFIG_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'complexity_decompose_threshold', value: 50 },
+      { field: 'plan_prompt_template_id', value: '' },
+      { field: 'max_subtask_count', value: 10 },
+    ]);
   }
 }

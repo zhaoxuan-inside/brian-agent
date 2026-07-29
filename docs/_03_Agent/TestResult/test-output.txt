@@ -1,0 +1,1934 @@
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /home/hardstone/CodeSpace/GitHub/brian-agent/backend
+
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.486Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.486Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.492Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.492Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.511Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > valid DAG with no cycles passes
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > cycle detection: 3-node cycle detected
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > unknown from_task_id in edge: error
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > unknown to_task_id in edge: error
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > unknown dependency in node.dependencies: error
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > single node, no edges: valid
+ ✓ tests/agent/prd-planner-agent.test.ts > validateDAG (standalone) > diamond dependency (1->2, 1->3, 2->4, 3->4): valid (no cycles)
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-001: simple task (short content, below threshold=50) returns single-node DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-002: complex task (long content > 200 chars) triggers LLM and returns multi-node DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-003: plan returns plan_id and task_dag with nodes
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-004: LLM returns invalid DAG (with cycle) falls back to heuristic DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-005: without LLM service falls back to heuristic DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-006: plan result persists in DB and can be directly queried
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-007: content at complexity threshold border (200 chars → complexity=50) triggers decomposition
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-008: LLM returns JSON without edges but with valid dependencies — still valid DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-009: LLM throws error falls back to heuristic DAG
+ ✓ tests/agent/prd-planner-agent.test.ts > plan > TC-PA-010: multiple distinct work_ids save separate plans
+ ✓ tests/agent/prd-planner-agent.test.ts > replan > TC-PA-011: create a plan then replan with a failed task succeeds
+ ✓ tests/agent/prd-planner-agent.test.ts > replan > TC-PA-012: replan with non-existent plan_id returns false
+ ✓ tests/agent/prd-planner-agent.test.ts > replan > TC-PA-013: new_plan_id differs from original plan
+ ✓ tests/agent/prd-planner-agent.test.ts > replan > TC-PA-014: parent_plan_id links to original plan
+ ✓ tests/agent/prd-planner-agent.test.ts > getPlan > TC-PA-015: query by plan_id returns one plan
+ ✓ tests/agent/prd-planner-agent.test.ts > getPlan > TC-PA-016: query by work_id returns all plans for that work
+ ✓ tests/agent/prd-planner-agent.test.ts > getPlan > TC-PA-017: non-existent plan_id returns false
+ ✓ tests/agent/prd-planner-agent.test.ts > getPlan > TC-PA-018: getPlan without plan_id or work_id returns empty plans
+ ✓ tests/agent/prd-planner-agent.test.ts > configPlannerAgent > TC-PA-019: initial config returns complexity_decompose_threshold=50, plan_prompt_template_id='', max_subtask_count=10
+ ✓ tests/agent/prd-planner-agent.test.ts > configPlannerAgent > TC-PA-020: update complexity_decompose_threshold and max_subtask_count works
+ ✓ tests/agent/prd-planner-agent.test.ts > configPlannerAgent > TC-PA-021: update only plan_prompt_template_id leaves other config at defaults
+[2026-07-28T12:46:33.493Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w1","task":"Short task"}
+[2026-07-28T12:46:33.493Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"b2d48566-06af-4585-be4e-89d214d9220e"}
+[2026-07-28T12:46:33.493Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.494Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.494Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w2","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.497Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"28d76fab-e5ef-48ee-b10a-8805cc01705b","sub_tasks":2}
+[2026-07-28T12:46:33.497Z] [-] [INFO] [AOP] [plan] call completed (3ms)
+[2026-07-28T12:46:33.498Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.498Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w3","task":"Another short task"}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"1a9cb7f8-3d02-4635-b683-96e630c2c857"}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.500Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.500Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w4","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.500Z] [-] [WARN] [PlannerAgent] [plan] LLM DAG validation failed (attempt 1/2): DAG contains 1 cycle(s)
+[2026-07-28T12:46:33.500Z] [-] [WARN] [PlannerAgent] [plan] LLM DAG validation failed (attempt 2/2): DAG contains 1 cycle(s)
+[2026-07-28T12:46:33.500Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"b42e775a-6fe2-49a7-8100-c82726f23419","sub_tasks":5}
+[2026-07-28T12:46:33.500Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.501Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w5","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"16c018cd-537e-4dc9-9746-aa2879b9660a","sub_tasks":5}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.502Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w6","task":"Persist test task"}
+[2026-07-28T12:46:33.502Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"1382aa23-ff64-4fd0-92f9-edea7b08fa81"}
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.503Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w7","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"37acc79b-0aad-4201-9f54-cadb86202d1d","sub_tasks":2}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.504Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.504Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w8","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.504Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"6aff3466-ed53-4051-8235-548510dc16fe","sub_tasks":2}
+[2026-07-28T12:46:33.504Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.505Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.505Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"w9","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.505Z] [-] [WARN] [PlannerAgent] [plan] LLM decomposition attempt 1 failed | {"error":"LLM unavailable"}
+[2026-07-28T12:46:33.506Z] [-] [WARN] [PlannerAgent] [plan] LLM decomposition attempt 2 failed | {"error":"LLM unavailable"}
+[2026-07-28T12:46:33.506Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"5f4d23a7-a6e9-4b20-916c-a519805a6207","sub_tasks":5}
+[2026-07-28T12:46:33.506Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.508Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.509Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"work_a","task":"Task for work A"}
+[2026-07-28T12:46:33.509Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"2246a99a-83ad-4f10-aea5-69034e800a42"}
+[2026-07-28T12:46:33.510Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.510Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.510Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"work_b","task":"Task for work B"}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"409dbef7-9617-47f2-b7f3-c8532c34b39a"}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AOP] [plan] call completed (2ms)
+[2026-07-28T12:46:33.513Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.514Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"rw1","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.514Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"294a1a70-14de-4452-82cd-a4cdd5fed7e2","sub_tasks":2}
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AOP] [replan] call start
+[2026-07-28T12:46:33.514Z] [-] [INFO] [PlannerAgent] [replan] start | {"plan_id":"294a1a70-14de-4452-82cd-a4cdd5fed7e2","failed_task_id":"n1"}
+[2026-07-28T12:46:33.515Z] [-] [INFO] [PlannerAgent] [replan] done | {"new_plan_id":"c0ba7d83-5c1f-441d-9a6b-a9545b5359d6","remaining":2}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [replan] call start
+[2026-07-28T12:46:33.516Z] [-] [INFO] [PlannerAgent] [replan] start | {"plan_id":"nonexistent-plan-id","failed_task_id":"task-1"}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.516Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"rw2","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"5485d89f-d872-44f9-aa94-fe057c11ce6a","sub_tasks":2}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AOP] [replan] call start
+[2026-07-28T12:46:33.517Z] [-] [INFO] [PlannerAgent] [replan] start | {"plan_id":"5485d89f-d872-44f9-aa94-fe057c11ce6a","failed_task_id":"n1"}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [PlannerAgent] [replan] done | {"new_plan_id":"45299af2-5216-4ce7-b5db-073bc81bee56","remaining":2}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.518Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"rw3","task":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [PlannerAgent] [plan] done | {"plan_id":"46458936-b791-474e-87b7-5e9ebfff1eac","sub_tasks":2}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AOP] [replan] call start
+[2026-07-28T12:46:33.518Z] [-] [INFO] [PlannerAgent] [replan] start | {"plan_id":"46458936-b791-474e-87b7-5e9ebfff1eac","failed_task_id":"n1"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [PlannerAgent] [replan] done | {"new_plan_id":"20fe9e7c-e7ea-4a1d-9431-a86fe12d37f1","remaining":2}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.519Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"gw1","task":"GetPlan test task"}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"629e305e-bbb0-4e8a-b8ed-24184fd034aa"}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AOP] [getPlan] call start
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.520Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"gw2","task":"First task for work"}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"0aa0c0a6-7bb6-4cb2-9b18-d13043990355"}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [plan] call completed (0ms)
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [plan] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [PlannerAgent] [plan] start | {"work_id":"gw2","task":"Second task for work"}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [PlannerAgent] [plan] simple task, single node dag | {"plan_id":"50108ee2-3190-4ba8-8ad3-8c7b96be2df3"}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [plan] call completed (1ms)
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [getPlan] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [getPlan] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [getPlan] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [configPlannerAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] done
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [configPlannerAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] done
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [configPlannerAgent] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] done
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [configPlannerAgent] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [PlannerAgent] [configPlannerAgent] done
+[2026-07-28T12:46:33.486Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.487Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":82,"need_optimize":false}
+[2026-07-28T12:46:33.487Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.490Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.490Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"nonexistent"}
+[2026-07-28T12:46:33.490Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.492Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.493Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.495Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":89,"need_optimize":false}
+[2026-07-28T12:46:33.496Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (3ms)
+[2026-07-28T12:46:33.497Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.497Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.497Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":28,"need_optimize":true}
+[2026-07-28T12:46:33.498Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.499Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":76,"need_optimize":false}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.500Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.500Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":76,"need_optimize":false}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.503Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":82,"need_optimize":false}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.505Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.505Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.507Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":82,"need_optimize":false}
+[2026-07-28T12:46:33.507Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (2ms)
+[2026-07-28T12:46:33.508Z] [-] [INFO] [AOP] [evalWriterAgent] call start
+[2026-07-28T12:46:33.509Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] start | {"agent_id":"writer-agent"}
+[2026-07-28T12:46:33.509Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] done | {"overall":85,"need_optimize":false}
+[2026-07-28T12:46:33.509Z] [-] [INFO] [AOP] [evalWriterAgent] call completed (1ms)
+[2026-07-28T12:46:33.510Z] [-] [INFO] [AOP] [evalWriterAgent] call start
+[2026-07-28T12:46:33.510Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] start | {"agent_id":"writer-agent"}
+[2026-07-28T12:46:33.510Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] done | {"overall":82,"need_optimize":false}
+[2026-07-28T12:46:33.510Z] [-] [INFO] [AOP] [evalWriterAgent] call completed (0ms)
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AOP] [evalWriterAgent] call start
+[2026-07-28T12:46:33.512Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] start | {"agent_id":"writer-agent"}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] done | {"overall":18,"need_optimize":true}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AOP] [evalWriterAgent] call completed (0ms)
+[2026-07-28T12:46:33.513Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.513Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.513Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"aad64344-8e8a-4f4f-94d8-78ea62dfb8c1","interval_ms":60000}
+[2026-07-28T12:46:33.515Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.518Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.518Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"79a14516-bc3f-44f7-a5ea-7d9650afa09c","interval_ms":60000}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AOP] [stopEvalSchedule] call start
+[2026-07-28T12:46:33.518Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] start | {"worker_id":"79a14516-bc3f-44f7-a5ea-7d9650afa09c"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] done
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"ba9c4c6b-b8ef-4cec-a25b-e2c909e97b74","interval_ms":60000}
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"40cb556b-15ab-4f5b-83d9-5f5679e56de3","interval_ms":120000}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [stopEvalSchedule] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] start | {}
+[2026-07-28T12:46:33.524Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] done
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"63db0edd-d53c-41d4-8851-9af4ef701708","interval_ms":60000}
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"45a67a17-ab8e-42c6-9432-6243f7c22409","interval_ms":60000}
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.532Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.532Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"9b9abf6a-09d8-4aa6-9312-976b695ebedb","interval_ms":3600000}
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.533Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.533Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"9815e5ea-42f6-427d-8c13-71f272682444","interval_ms":5000}
+[2026-07-28T12:46:38.533Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:38.533Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":82,"need_optimize":false}
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-001: basic write with agent_results calls LLM and returns response in MARKDOWN
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-002: write with empty agent_results calls LLM with fallback results text
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-003: write when LLM returns empty content uses resultsText as fallback
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-004: write without llmService uses fallback response
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-005: write without llmService and without agent_results uses fallback with defaults
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-006: write sets elapsed_ms and token_usage on output
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-007: custom user_preferences override default style in LLM system prompt
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-008: partial user_preferences fill defaults for unspecified fields
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-009: LLM call fails falls back to buildFallbackResponse
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-010: LLM call fails with empty agent_results fills fallback
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.write > TC-WA-011: user_query can be empty string
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.saveUserProfile > TC-WA-012: first save creates record with all fields
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.saveUserProfile > TC-WA-013: upsert updates existing record, only specified fields change
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.saveUserProfile > TC-WA-014: upsert can update additional_preferences independently
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.saveUserProfile > TC-WA-015: empty session_id returns false
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.getUserProfile > TC-WA-016: query existing profile returns correct fields
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.getUserProfile > TC-WA-017: query non-existing profile returns default
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.getUserProfile > TC-WA-018: additional_preferences saved and retrieved correctly (null case)
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-019: initial config has expected defaults
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-020: configWriterAgent returns defaults in output when called with no overrides
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-021: update all valid fields persists correctly
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-022: partial update changes only specified fields
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-023: invalid style returns false and does not persist
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-024: invalid depth returns false and does not persist
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-025: invalid format returns false and does not persist
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-026: all valid style values accepted
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-027: all valid depth values accepted
+ ✓ tests/agent/prd-writer-agent.test.ts > WriterAgentService.configWriterAgent > TC-WA-028: all valid format values accepted
+[2026-07-28T12:46:33.487Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.487Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.488Z] [-] [INFO] [AOP] [write] call completed (1ms)
+[2026-07-28T12:46:33.492Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.492Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.492Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.493Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.493Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.493Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.494Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.494Z] [-] [INFO] [AOP] [write] call completed (1ms)
+[2026-07-28T12:46:33.497Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.497Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.497Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.497Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.498Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.498Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.498Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.498Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.499Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.500Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.500Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.500Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.500Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.501Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.501Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.501Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.502Z] [-] [WARN] [WriterAgent] [write] LLM failed, using fallback | {"error":"LLM timeout"}
+[2026-07-28T12:46:33.502Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":1}
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [write] call completed (1ms)
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.502Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":"What is the weather today?"}
+[2026-07-28T12:46:33.502Z] [-] [WARN] [WriterAgent] [write] LLM failed, using fallback | {"error":"API error"}
+[2026-07-28T12:46:33.502Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [write] call completed (0ms)
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [write] call start
+[2026-07-28T12:46:33.506Z] [-] [INFO] [WriterAgent] [write] start | {"work_id":"work-1","query":""}
+[2026-07-28T12:46:33.507Z] [-] [INFO] [WriterAgent] [write] done | {"elapsed_ms":0}
+[2026-07-28T12:46:33.507Z] [-] [INFO] [AOP] [write] call completed (4ms)
+[2026-07-28T12:46:33.508Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.508Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":"session-1"}
+[2026-07-28T12:46:33.508Z] [-] [INFO] [WriterAgent] [saveUserProfile] done
+[2026-07-28T12:46:33.509Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.509Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":"session-2"}
+[2026-07-28T12:46:33.511Z] [-] [INFO] [WriterAgent] [saveUserProfile] done
+[2026-07-28T12:46:33.511Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.511Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":"session-2"}
+[2026-07-28T12:46:33.511Z] [-] [INFO] [WriterAgent] [saveUserProfile] done
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.516Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":"session-ap"}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [WriterAgent] [saveUserProfile] done
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.516Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":"session-ap"}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [WriterAgent] [saveUserProfile] done
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [saveUserProfile] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [WriterAgent] [saveUserProfile] start | {"session_id":""}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [getUserProfile] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [getUserProfile] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [getUserProfile] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.530Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.532Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.533Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [configWriterAgent] call start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [WriterAgent] [configWriterAgent] done
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > seed data > auto-seeds 3 built-in strategies on first construction
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > seed data > seeded strategies have correct complexity ranges
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > seed data > seeded strategies have enable=1
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > seed data > seeded strategies have valid JSON execution_rule
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > seed data > seed is idempotent (second service construction does not add duplicates)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-001: complexity=20 matches CoT (sole candidate in 0-40 range)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-002: complexity=50 matches ReAct (sole candidate in 30-70 range)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-003: complexity=80 matches Plan-and-Solve (sole candidate in 60-100 range)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-004: complexity=40 boundary — selects by nearest midpoint (ReAct midpoint 50 is closer than CoT midpoint 20)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-005: complexity=120 beyond all max ranges falls back to default_strategy_id
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-006: complexity=-10 below all min ranges falls back to default_strategy_id
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-007: when multiple candidates, selects by nearest mid-point distance (complexity=30, CoT midpoint 20 distance 10, ReAct midpoint 50 distance 20)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-008: no candidates falls back to default_strategy_id from config when set
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-009: returns a strategy_id even when only one enabled strategy exists
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > matchStrategy > TC-AS-010: returns empty string when no enabled strategies exist and no default is configured
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > getStrategy > TC-AS-011: query by strategy_id returns correct label and execution_rule
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > getStrategy > TC-AS-012: non-existent strategy_id returns false
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > getStrategy > execution_rule is a valid JSON string
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > TC-AS-013: query all returns 3 seed strategies
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > TC-AS-014: returns all strategies regardless of conditions (conditions field not used for SQL filtering)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > TC-AS-015: pagination returns correct page
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > page 2 returns next strategy
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > TC-AS-016: order_by works (ASC vs DESC on strategy_label)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > soStrategy > order_by defaults to created DESC when not specified
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-017: add custom strategy with valid data returns true and generates a strategy_id
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > newly added strategy is retrievable via getStrategy
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-018: empty/falsy strategy_label returns false
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-019: invalid JSON execution_rule throws ValidationError
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-020: complexity_min > complexity_max throws ValidationError
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-021: steps mode execution_rule accepted (JSON with steps array)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > addStrategy > TC-AS-022: phases mode execution_rule accepted (JSON with phases array)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > TC-AS-023: update strategy_label works
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > TC-AS-024: update complexity range works
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > TC-AS-025: update enable status toggles (true → false and false → true)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > TC-AS-026: update execution_rule works
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > TC-AS-027: non-existent strategy_id throws ValidationError
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > updateStrategy > partial update: only specified fields are changed
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > configAgentStrategy > TC-AS-028: config initialized with default_strategy_id set to first seed strategy (CoT)
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > configAgentStrategy > TC-AS-029: update default_strategy_id works
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > configAgentStrategy > TC-AS-030: update match_prompt_template_id works
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > configAgentStrategy > TC-AS-031: config returns both default_strategy_id and match_prompt_template_id
+ ✓ tests/agent/prd-agent-strategy.test.ts > AgentStrategyService > configAgentStrategy > partial config update: only specified fields are updated
+[2026-07-28T12:46:33.566Z] [-] [ERROR] [AgentExecution] [execAgentAsync] job failed | {"job_id":"84950d2d-eb76-4d9f-8aec-32c50255a8b4","error":"The database connection is not open"}
+[2026-07-28T12:46:33.496Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.497Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.499Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.504Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":20}
+[2026-07-28T12:46:33.504Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"c061fc57-aa79-4b00-a68e-1ebda4a7a6d6"}
+[2026-07-28T12:46:33.505Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.511Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.511Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":50}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"00235877-1c57-4cfc-bb48-b3ee888fa1d4"}
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.512Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":80}
+[2026-07-28T12:46:33.513Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"76363b6d-5c1d-4cdb-a750-5c5e2eda105f"}
+[2026-07-28T12:46:33.513Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":40}
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"328c8651-149e-43fc-8bb2-66e2b8324ad7"}
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":120}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"e5be9382-e70b-41b7-906a-2b071810cd2f"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":-10}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4b210bb7-a3d5-4572-91b8-790a987eceff"}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":30}
+[2026-07-28T12:46:33.519Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"20efd7dd-d4a1-4860-b17b-4944b6c31ae1"}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":150}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"d6d4dd5e-90d8-43a4-a01b-e6e7d37cd5e9"}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":20}
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"ac680cd5-2457-4082-8724-adb987e9a18f"}
+[2026-07-28T12:46:33.528Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.529Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.529Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":50}
+[2026-07-28T12:46:33.529Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":""}
+[2026-07-28T12:46:33.530Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AOP] [getStrategy] call start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [getStrategy] call start
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AOP] [getStrategy] call start
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.542Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.542Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [soStrategy] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"Custom Strategy"}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentStrategy] [addStrategy] done | {"strategy_id":"9171dc5f-0b47-4167-b821-d65d0e845578"}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"Retrievable"}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AgentStrategy] [addStrategy] done | {"strategy_id":"0ebef526-3700-4fad-aad9-7d802b613555"}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [getStrategy] call start
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":""}
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"BadJSON"}
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AOP] [addStrategy] call failed: execution_rule must be valid JSON (1ms)
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"BadJSON"}
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AOP] [addStrategy] call failed: execution_rule must be valid JSON (0ms)
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"InvertedRange"}
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AOP] [addStrategy] call failed: suitable_complexity_min must be <= suitable_complexity_max (0ms)
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"InvertedRange"}
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AOP] [addStrategy] call failed: suitable_complexity_min must be <= suitable_complexity_max (0ms)
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"StepsMode"}
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentStrategy] [addStrategy] done | {"strategy_id":"3bfd6603-b0cc-49e1-b479-2afd0c678b16"}
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AOP] [addStrategy] call start
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentStrategy] [addStrategy] start | {"label":"PhasesMode"}
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentStrategy] [addStrategy] done | {"strategy_id":"5534e7b7-7a05-4344-95c6-17584e3be962"}
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"aa99845c-bd73-490e-bd79-27221b357c59"}
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"573791a2-4e4a-4a50-8477-98c36aabcc87"}
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"f7d8b76c-98c8-4fa0-b701-296b993517a5"}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"f7d8b76c-98c8-4fa0-b701-296b993517a5"}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"63ae93db-e49f-43b1-8a8e-3741f538a21f"}
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"non-existent-id"}
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [updateStrategy] call failed: Strategy non-existent-id not found (1ms)
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"non-existent-id"}
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [updateStrategy] call failed: Strategy non-existent-id not found (0ms)
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [updateStrategy] call start
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AgentStrategy] [updateStrategy] start | {"strategy_id":"e075256b-5029-4d16-ab58-d0f6a657fbfd"}
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AgentStrategy] [updateStrategy] done
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AOP] [configAgentStrategy] call start
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] start
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] done
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AOP] [configAgentStrategy] call start
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] start
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] done
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AOP] [configAgentStrategy] call start
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] start
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] done
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AOP] [configAgentStrategy] call start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] done
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AOP] [configAgentStrategy] call start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentStrategy] [configAgentStrategy] done
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > basic execution with LLM mock: returns answer, iterations >= 1, trace_id set, elapsed_ms > 0
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > agent not found: throws NotFoundError
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > disabled agent: throws NotFoundError
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > max iterations limit: mock returns CONTINUE content each time, respects max_iterations=3
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > LLM unavailable: create service without LLM, expect fallback response
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > agent usage recorded after execution (check usage_count incremented)
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgent > execution trace saved to agent_execution_trace table
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgentAsync > normal submit returns job_id
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > execAgentAsync > job_id is a valid UUID-like string
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > think > basic think: LLM called, reasoning returned, next_action = FINISH (when content contains FINISH)
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > think > think with non-FINISH content returns next_action = ACT
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > think > LLM unavailable: returns fallback reasoning
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > think > custom context_data and history passed
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > act > null/empty next_action: returns "No action required", tool_type=NONE
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > act > JSON action parsing works
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > act > invalid JSON in next_action: handles gracefully (parsed as null, falls back)
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > act > empty string next_action treated as no action
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > reflect > iteration < max_iterations: LLM called for reflection
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > reflect > LLM returns FINISH → should_continue = false
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > reflect > iteration >= max_iterations: immediately returns should_continue=false without LLM call
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > reflect > LLM unavailable: returns should_continue=false
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > answer > basic answer: LLM called, answer returned
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > answer > LLM unavailable: returns fallback answer with task_content
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > answer > LLM throws error: graceful fallback included in answer
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > getTrace > trace not found: returns trace_id in output with error message
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > getTrace > create a trace by running execAgent, then query it
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > getTrace > history is parsed as JSON array from the stored string
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > getExecQueueStatus > without MQCore: returns zeroed stats
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > getExecQueueStatus > queue_stats has all expected keys
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > configAgentExecution > config initialized: default_max_iterations=10, async_worker_interval=1000, prompt template IDs are empty strings
+ ✓ tests/agent/prd-agent-execution.test.ts > AgentExecutionService > configAgentExecution > update config fields: all updated correctly
+[2026-07-28T12:46:33.502Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"Write a unit test"}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"test-agent","iterations":1,"elapsed_ms":1}
+[2026-07-28T12:46:33.503Z] [-] [INFO] [AOP] [execAgent] call completed (1ms)
+[2026-07-28T12:46:33.506Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.506Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"non-existent-agent","task":"test"}
+[2026-07-28T12:46:33.507Z] [-] [INFO] [AOP] [execAgent] call failed: Agent non-existent-agent not found or disabled not found (1ms)
+[2026-07-28T12:46:33.508Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.509Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"test"}
+[2026-07-28T12:46:33.509Z] [-] [INFO] [AOP] [execAgent] call failed: Agent test-agent not found or disabled not found (0ms)
+[2026-07-28T12:46:33.510Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"Complex multi-step task"}
+[2026-07-28T12:46:33.515Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"test-agent","iterations":3,"elapsed_ms":1}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AOP] [execAgent] call completed (5ms)
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"no-llm-agent","task":"Do something without LLM"}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"no-llm-agent","iterations":1,"elapsed_ms":0}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [execAgent] call completed (0ms)
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"task"}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"test-agent","iterations":1,"elapsed_ms":0}
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [execAgent] call completed (0ms)
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"trace test task"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"test-agent","iterations":1,"elapsed_ms":0}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [execAgent] call completed (0ms)
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AOP] [execAgentAsync] call start
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AgentExecution] [execAgentAsync] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.530Z] [-] [INFO] [AOP] [execAgentAsync] call start
+[2026-07-28T12:46:33.530Z] [-] [INFO] [AgentExecution] [execAgentAsync] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [think] call start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [think] call completed (0ms)
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AOP] [think] call start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AOP] [think] call completed (1ms)
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AOP] [think] call start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [think] call completed (1ms)
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [think] call start
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AOP] [think] call completed (1ms)
+[2026-07-28T12:46:33.542Z] [-] [INFO] [AOP] [act] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [act] call completed (1ms)
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [act] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [act] call completed (0ms)
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [act] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [act] call completed (0ms)
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [act] call start
+[2026-07-28T12:46:33.548Z] [-] [INFO] [AOP] [act] call completed (0ms)
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AOP] [reflect] call start
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AOP] [reflect] call completed (1ms)
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AOP] [reflect] call start
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AOP] [reflect] call completed (0ms)
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AOP] [reflect] call start
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AOP] [reflect] call completed (0ms)
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [reflect] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [reflect] call completed (0ms)
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AOP] [answer] call start
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AOP] [answer] call completed (0ms)
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [answer] call start
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AOP] [answer] call completed (0ms)
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AOP] [answer] call start
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AOP] [answer] call completed (0ms)
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AOP] [getTrace] call start
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"trace-query-agent","task":"trace query task"}
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"trace-query-agent","iterations":1,"elapsed_ms":1}
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AOP] [execAgent] call completed (1ms)
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AOP] [getTrace] call start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AOP] [execAgent] call start
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"history-parse-agent","task":"history test"}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentExecution] [execAgent] done | {"agent_id":"history-parse-agent","iterations":1,"elapsed_ms":0}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AOP] [execAgent] call completed (1ms)
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AOP] [getTrace] call start
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [getExecQueueStatus] call start
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AOP] [getExecQueueStatus] call start
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [configAgentExecution] call start
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AgentExecution] [configAgentExecution] start
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AgentExecution] [configAgentExecution] done
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [configAgentExecution] call start
+[2026-07-28T12:46:33.565Z] [-] [INFO] [AgentExecution] [configAgentExecution] start
+[2026-07-28T12:46:33.565Z] [-] [INFO] [AgentExecution] [configAgentExecution] done
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"async task"}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentExecution] [execAgent] start | {"agent_id":"test-agent","task":"uuid test"}
+[2026-07-28T12:46:33.566Z] [-] [ERROR] [AgentExecution] [execAgentAsync] job failed | {"job_id":"6b83701c-9949-420b-927c-966b201920da","error":"The database connection is not open"}
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-001: evaluates with LLM and returns scores for all 5 dimensions
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-002: agent not found returns false
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-003: overall >= threshold: need_optimize=false
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-004: overall < 60: need_optimize=true, suggestions non-empty
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-005: without LLM service uses heuristic scores
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-006: LLM fails falls back to heuristic evaluation
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-007: evaluation persisted to agent_evaluation table
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWorkAgent > TC-EA-008: agent eval_score updated in agent table
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWriterAgent > TC-EA-009: evaluates Writer with LLM for 5 dimensions
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWriterAgent > TC-EA-010: eval_type=WRITER_AGENT in stored record
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > evalWriterAgent > TC-EA-011: need_optimize detection based on threshold for Writer
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-012: startEvalSchedule returns worker_id
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-013: stopEvalSchedule with worker_id stops specific worker
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-014: stopEvalSchedule without worker_id stops all workers
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-015: duplicate start does not throw
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-016: default interval_ms used when not provided
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-017: schedule timer fires with fake timers
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-018: stopEvalSchedule with non-existent worker_id does not throw
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > startEvalSchedule & stopEvalSchedule > TC-EA-019: stopEvalSchedule returns true
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvaluation > TC-EA-020: query by agent_id returns evaluations
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvaluation > TC-EA-021: query by eval_type filters correctly
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvaluation > TC-EA-022: pagination works
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvaluation > TC-EA-023: second page returns correct offset
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvaluation > TC-EA-024: empty results returns empty array
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvolutionReport > TC-EA-025: basic report for agent with evaluations
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvolutionReport > TC-EA-026: report includes component_changes and usage_trend
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvolutionReport > TC-EA-027: no evaluations: report with empty trends
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvolutionReport > TC-EA-028: report includes evolution_summary
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > getEvolutionReport > TC-EA-029: agent without evals still reports agent metadata
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > configEvolutorAgent > TC-EA-030: initial config has default values
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > configEvolutorAgent > TC-EA-031: update optimize_threshold works
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > configEvolutorAgent > TC-EA-032: update eval_schedule_interval_ms and eval_batch_size
+ ✓ tests/agent/prd-evolutor-agent.test.ts > EvolutorAgentService > configEvolutorAgent > TC-EA-033: update eval_frequency_threshold persists
+[2026-07-28T12:46:38.533Z] [-] [INFO] [AOP] [stopEvalSchedule] call start
+[2026-07-28T12:46:38.533Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] start | {"worker_id":"9815e5ea-42f6-427d-8c13-71f272682444"}
+[2026-07-28T12:46:38.533Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [stopEvalSchedule] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] start | {"worker_id":"nonexistent"}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] done
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AOP] [startEvalSchedule] call start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [EvolutorAgent] [startEvalSchedule] started | {"worker_id":"42415e44-86ff-4f2b-897e-c9dcc7864efa","interval_ms":3600000}
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AOP] [stopEvalSchedule] call start
+[2026-07-28T12:46:33.539Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] start | {"worker_id":"42415e44-86ff-4f2b-897e-c9dcc7864efa"}
+[2026-07-28T12:46:33.539Z] [-] [INFO] [EvolutorAgent] [stopEvalSchedule] done
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.545Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.547Z] [-] [INFO] [AOP] [getEvaluation] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [evalWriterAgent] call start
+[2026-07-28T12:46:33.554Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] start | {"agent_id":"writer-agent"}
+[2026-07-28T12:46:33.554Z] [-] [INFO] [EvolutorAgent] [evalWriterAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AOP] [evalWriterAgent] call completed (1ms)
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AOP] [getEvaluation] call start
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.561Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.562Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.563Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.563Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.564Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.564Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AOP] [getEvaluation] call start
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.567Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.567Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.568Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.569Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.569Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.569Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.569Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.569Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.569Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.569Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (0ms)
+[2026-07-28T12:46:33.569Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.570Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.570Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":86,"need_optimize":false}
+[2026-07-28T12:46:33.570Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.570Z] [-] [INFO] [AOP] [getEvaluation] call start
+[2026-07-28T12:46:33.572Z] [-] [INFO] [AOP] [getEvaluation] call start
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.575Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.575Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":78,"need_optimize":false}
+[2026-07-28T12:46:33.575Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (2ms)
+[2026-07-28T12:46:33.575Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.576Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.576Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":89,"need_optimize":false}
+[2026-07-28T12:46:33.576Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AOP] [getEvolutionReport] call start
+[2026-07-28T12:46:33.583Z] [-] [INFO] [AOP] [getEvolutionReport] call start
+[2026-07-28T12:46:33.586Z] [-] [INFO] [AOP] [getEvolutionReport] call start
+[2026-07-28T12:46:33.589Z] [-] [INFO] [AOP] [evalWorkAgent] call start
+[2026-07-28T12:46:33.589Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] start | {"agent_id":"test-agent"}
+[2026-07-28T12:46:33.590Z] [-] [INFO] [EvolutorAgent] [evalWorkAgent] done | {"overall":68,"need_optimize":false}
+[2026-07-28T12:46:33.590Z] [-] [INFO] [AOP] [evalWorkAgent] call completed (1ms)
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AOP] [getEvolutionReport] call start
+[2026-07-28T12:46:33.594Z] [-] [INFO] [AOP] [getEvolutionReport] call start
+[2026-07-28T12:46:33.595Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.595Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.596Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2026-07-28T12:46:33.596Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.596Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.597Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2026-07-28T12:46:33.598Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.598Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.598Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2026-07-28T12:46:33.600Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.600Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.601Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.604Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.604Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2026-07-28T12:46:33.604Z] [-] [INFO] [AOP] [configEvolutorAgent] call start
+[2026-07-28T12:46:33.604Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] start
+[2026-07-28T12:46:33.605Z] [-] [INFO] [EvolutorAgent] [configEvolutorAgent] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"test-worker-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"test-worker-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"planner-1","agent_type":"PLANNER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"planner-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"evolutor-1","agent_type":"EVOLUTOR"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"evolutor-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call failed: agent_id, agent_type, and strategy_id are required (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"test-worker-1","agent_type":"INVALID_TYPE"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call failed: Invalid agent_type: INVALID_TYPE (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"test-worker-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call failed: agent_id, agent_type, and strategy_id are required (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"agent-minimal","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"agent-minimal"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"test-worker-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"test-worker-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[coding] any task"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"sim-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"sim-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[coding] write a function to sort"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"sim-agent","score":0.6666666666666666}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"cooking-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"cooking-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[coding] write code"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"worker-a","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"worker-a"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-a","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-a"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[data] process data","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] matched by type filter | {"agent_id":"writer-a","score":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"partial-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"partial-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"coding function"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"partial-agent","score":0.6666666666666666}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"disabled-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"disabled-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [matchAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[target] match me"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call failed: eval_score must be 0-100 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call failed: eval_score must be 0-100 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"non-existent-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call failed: Agent non-existent-agent not found (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"update-target","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"update-target"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"usage-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"usage-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"usage-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"usage-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"usage-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call failed: Agent  not found (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"usage-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"usage-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"ghost-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call failed: Agent ghost-agent not found (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"usage-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"usage-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"usage-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"usage-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"usage-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"usage-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"usage-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"usage-agent","work_id":"work-001"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"non-existent-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call failed: Agent non-existent-agent not found (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-1","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"qa-2","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"qa-2"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"writer-1","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"writer-1"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [getAgent] start | {}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"age-worker","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"age-worker"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] done | {"aged_count":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"age-single","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"age-single"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] done | {"aged_count":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"sys-planner","agent_type":"PLANNER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"sys-planner"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"sys-writer","agent_type":"WRITER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"sys-writer"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"sys-evolutor","agent_type":"EVOLUTOR"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"sys-evolutor"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] done | {"aged_count":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"already-disabled","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"already-disabled"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] done | {"aged_count":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"busy-agent","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"busy-agent"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [ageAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [ageAgent] done | {"aged_count":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [getAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: days must be a positive integer (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: days must be a positive integer (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"bootstrap","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"bootstrap"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [addAgent] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"bootstrap","agent_type":"WORKER"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"bootstrap"}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":0}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] done
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: min_eval_score must be 0-100 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: min_eval_score must be 0-100 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: min_usage_count must be >= 0 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: Rule non-existent-rule not found (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: id is required for DELETE (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [updateAgentRule] start | {"ops":1}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [updateAgentRule] call failed: id is required for UPDATE (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] done | {"agentCount":0,"maxCount":100}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] done | {"agentCount":0,"maxCount":100}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] done | {"agentCount":0,"maxCount":30}
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call failed: similarity_threshold must be 0-1 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call failed: similarity_threshold must be 0-1 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call failed: max_agent_count must be >= 1 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AgentLibrary] [configAgentLibrary] start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [configAgentLibrary] call failed: max_agent_count must be >= 1 (0ms)
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+[2025-01-15T12:00:00.000Z] [-] [INFO] [AOP] [calculateSimilarity] call start
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-001: normal add WORKER Agent
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-002: add PLANNER agent
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-003: add WRITER agent
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-004: add EVOLUTOR agent
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-005: empty agent_id throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-006: invalid agent_type throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-007: empty strategy_id throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-008: optional fields default to empty string or agent_id for name
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > addAgent > TC-AL-009: custom agent_name stored correctly
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-010: empty agent table returns empty agent_id and score 0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-011: similar task_signature matches with score >= threshold
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-012: dissimilar signatures score below threshold
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-015: agent_type filter works
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-016: custom similarity_threshold overrides config default
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > matchAgent > TC-AL-017: disabled agents not in candidates
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-019: update agent_name
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-020: update eval_score (valid range)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-021: eval_score=0 (lower boundary)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-022: eval_score=100 (upper boundary)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-023: eval_score < 0 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-024: eval_score > 100 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-025: disable agent (enable true -> false)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-026: re-enable agent (enable false -> true)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-027: update non-existent agent throws NotFoundError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgent > TC-AL-028: batch update multiple fields
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > recordAgentUsage > TC-AL-029: normal record usage increments usage_count
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > recordAgentUsage > TC-AL-030: empty agent_id throws NotFoundError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > recordAgentUsage > TC-AL-031: non-existent agent throws NotFoundError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > recordAgentUsage > TC-AL-032: multiple calls accumulate usage_count
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > recordAgentUsage > TC-AL-033: custom usage_context stored
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-034: query by agent_id returns single result
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-035: query by agent_type filters correctly
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-036: non-existent ID throws NotFoundError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-038a: pagination with page_num/page_size works
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-038b: second page returns remaining agents
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgent > TC-AL-038c: order_by works
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-040: no rules returns aged_count=0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-041: agent ages when any rule matches (any-rule OR semantics)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-042: single rule with matching conditions ages the agent
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-043: system agents (PLANNER/WRITER/EVOLUTOR) excluded from aging
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-044: already disabled agents skipped
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > ageAgent > TC-AL-045: high usage_count prevents aging when usage >= min_usage_count
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgentRule > TC-AL-046: empty rules returns empty list
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > getAgentRule > returns all rules when present
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-048: INSERT a new rule
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-049: INSERT with days <= 0 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-049b: INSERT with negative days throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-050: UPDATE an existing rule
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-051: DELETE a rule
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-052: empty operations returns true (no-op)
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-053: INSERT with min_eval_score out of 0-100 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-053b: INSERT with negative min_eval_score throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-053c: INSERT with negative min_usage_count throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-054: UPDATE non-existent rule throws NotFoundError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-054b: DELETE without id throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > updateAgentRule > TC-AL-054c: UPDATE without id throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-055: initial config has defaults
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-056: update similarity_threshold
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-057: update max_agent_count
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-058: similarity_threshold > 1 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-058b: similarity_threshold < 0 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-059: max_agent_count=0 throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > configAgentLibrary > TC-AL-059b: max_agent_count negative throws ValidationError
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > same strings return 1.0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > completely different strings return 0.0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > empty first string returns 0.0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > empty second string returns 0.0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > both empty strings returns 0.0
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > partial overlap calculates correct Jaccard coefficient
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > one word common with different lengths
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > case insensitive comparison
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > treats commas as word separators
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > treats underscores as word separators
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > treats hyphens as word separators
+ ✓ tests/agent/prd-agent-library.test.ts > AgentLibrary PRD Service > calculateSimilarity > ignores duplicate words within each string
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-001: creates a new WORKER agent with strategy_id, llm_id="", soul_id=""
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-002: reuses existing agent when matching agent found
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-003: force_new=true creates a new agent even when matching agent exists
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-004: default force_new=false reuses matching agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-005: auto-estimates domain and complexity from task_content
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-005b: uses explicit task_complexity and task_domain when provided
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-006: estimates backend domain for API-related task
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-006b: estimates data_science domain for ML tasks
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-006c: estimates devops domain for deployment tasks
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-006d: estimates security domain for auth tasks
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-006e: estimates general domain for unrecognized tasks
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-007: throws when strategy table is empty (empty strategy_id rejected by addAgent)
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-008: buildAgent returns true on success
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-009: distinct task contents create distinct agents with different strategy_ids
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-010: auto-generates agent name from agent_id
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-011: first build does not generate usage records
+ ✓ tests/agent/prd-agent-builder.test.ts > buildAgent > TC-AB-012: reuse records agent usage
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-013: detects strategy change when current and matched differ
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-014: optimized=false when no components need changing
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-015: optimize updates agent strategy_id when change detected
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-019: throws NotFoundError for non-existent agent
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-020: accepts usage_feedback without error
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-016: completes without error when no strategies are enabled
+ ✓ tests/agent/prd-agent-builder.test.ts > optimizeAgent > TC-AB-017: second optimize with no changes returns optimized=false
+ ✓ tests/agent/prd-agent-builder.test.ts > buildPlannerAgent > TC-AB-021: first build creates PLANNER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildPlannerAgent > TC-AB-022: reuses existing PLANNER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildPlannerAgent > TC-AB-023: force_new=true creates a new PLANNER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildPlannerAgent > TC-AB-024: force_new=false reuses existing PLANNER
+ ✓ tests/agent/prd-agent-builder.test.ts > buildWriterAgent > TC-AB-025: first build creates WRITER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildWriterAgent > TC-AB-026: reuses existing WRITER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildWriterAgent > TC-AB-027: force_new=true creates a new WRITER agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildEvolutorAgent > TC-AB-028: first build creates EVOLUTOR agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildEvolutorAgent > TC-AB-029: reuses existing EVOLUTOR agent
+ ✓ tests/agent/prd-agent-builder.test.ts > buildEvolutorAgent > TC-AB-030: force_new=true creates a new EVOLUTOR agent
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-031: initial config has default values
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-032: updates task_analysis_prompt_template_id
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-033: clears task_analysis_prompt_template_id to empty
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-034: updates default_strategy_id
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-035: updates multiple config fields simultaneously
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-036: toggles auto_optimize
+ ✓ tests/agent/prd-agent-builder.test.ts > configAgentBuilder > TC-AB-036b: toggling auto_optimize does not affect other config values
+ ✓ tests/agent/prd-agent-builder.test.ts > Integration scenarios > builds WORKER, PLANNER, WRITER, EVOLUTOR agents independently
+ ✓ tests/agent/prd-agent-builder.test.ts > Integration scenarios > optimizeAgent on a system agent updates strategy if changed
+ ✓ tests/agent/prd-agent-builder.test.ts > Integration scenarios > configAgentBuilder updates do not affect agent creation
+ ✓ tests/agent/prd-agent-builder.test.ts > Integration scenarios > buildAgent with force_new=false on empty library creates new agent
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.514Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.515Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.515Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.516Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"97459627-dccc-4861-abd9-4f6892b9fc20"}
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.517Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"e2aaea85-74c2-4bd9-9843-e964add40aa0","agent_type":"WORKER"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"e2aaea85-74c2-4bd9-9843-e964add40aa0"}
+[2026-07-28T12:46:33.518Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"e2aaea85-74c2-4bd9-9843-e964add40aa0","strategy_id":"97459627-dccc-4861-abd9-4f6892b9fc20"}
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.520Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.521Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.522Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"a071a903-0e24-49e3-8602-97ea4b502541"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118","agent_type":"WORKER"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118","strategy_id":"a071a903-0e24-49e3-8602-97ea4b502541"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React UI component"}
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.523Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React UI component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AgentLibrary] [matchAgent] matched by type filter | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118","score":0.7142857142857143}
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118","work_id":"work-2"}
+[2026-07-28T12:46:33.524Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2026-07-28T12:46:33.525Z] [-] [INFO] [AgentBuilder] [buildAgent] reused existing | {"agent_id":"ddedd754-ecd7-4eb8-bb01-7d49a0a6a118"}
+[2026-07-28T12:46:33.526Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.526Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.526Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.526Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.527Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.527Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.527Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.527Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"413e47c0-0d7c-4165-8fec-55713992f69c"}
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"bf933d75-b2f1-45bf-8c15-165094102006","agent_type":"WORKER"}
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"bf933d75-b2f1-45bf-8c15-165094102006"}
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"bf933d75-b2f1-45bf-8c15-165094102006","strategy_id":"413e47c0-0d7c-4165-8fec-55713992f69c"}
+[2026-07-28T12:46:33.531Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component","force_new":true}
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"413e47c0-0d7c-4165-8fec-55713992f69c"}
+[2026-07-28T12:46:33.532Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"b3fca451-3de1-4a78-b485-83ae6b992bc8","agent_type":"WORKER"}
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"b3fca451-3de1-4a78-b485-83ae6b992bc8"}
+[2026-07-28T12:46:33.533Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"b3fca451-3de1-4a78-b485-83ae6b992bc8","strategy_id":"413e47c0-0d7c-4165-8fec-55713992f69c"}
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.534Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"73793140-3432-466e-994c-071643794762"}
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.535Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","agent_type":"WORKER"}
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9"}
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","strategy_id":"73793140-3432-466e-994c-071643794762"}
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.536Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AgentLibrary] [matchAgent] matched by type filter | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","score":1}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","work_id":"work-2"}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AgentBuilder] [buildAgent] reused existing | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9"}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component","force_new":false}
+[2026-07-28T12:46:33.537Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AgentLibrary] [matchAgent] matched by type filter | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","score":1}
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9","work_id":"work-3"}
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2026-07-28T12:46:33.538Z] [-] [INFO] [AgentBuilder] [buildAgent] reused existing | {"agent_id":"75283988-1b50-47e0-ae53-67da92c955d9"}
+[2026-07-28T12:46:33.539Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Create a React frontend component with CSS"}
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.540Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Create a React frontend component with CSS","agent_type":"WORKER"}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":42}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"013f051f-4fcc-47ed-b9b4-523298ab0d33"}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"2de711c0-e3b6-4a72-ae61-18883b6af66b","agent_type":"WORKER"}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"2de711c0-e3b6-4a72-ae61-18883b6af66b"}
+[2026-07-28T12:46:33.541Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"2de711c0-e3b6-4a72-ae61-18883b6af66b","strategy_id":"013f051f-4fcc-47ed-b9b4-523298ab0d33"}
+[2026-07-28T12:46:33.542Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"General task"}
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[custom-domain] General task","agent_type":"WORKER"}
+[2026-07-28T12:46:33.543Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":75}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"f253ec65-284d-4ffe-a9ee-249e8b5a1163"}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"cd0c0247-3c1e-4388-a2b9-992eb7e467c4","agent_type":"WORKER"}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"cd0c0247-3c1e-4388-a2b9-992eb7e467c4"}
+[2026-07-28T12:46:33.544Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"cd0c0247-3c1e-4388-a2b9-992eb7e467c4","strategy_id":"f253ec65-284d-4ffe-a9ee-249e8b5a1163"}
+[2026-07-28T12:46:33.545Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.546Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Build a REST API server with database"}
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.549Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[backend] Build a REST API server with database","agent_type":"WORKER"}
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":37}
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"74dd8c45-c646-4902-b190-1b078bfc785e"}
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.550Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"2a6d7242-1974-4fe1-869a-0a9c2f6e41ff","agent_type":"WORKER"}
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"2a6d7242-1974-4fe1-869a-0a9c2f6e41ff"}
+[2026-07-28T12:46:33.551Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"2a6d7242-1974-4fe1-869a-0a9c2f6e41ff","strategy_id":"74dd8c45-c646-4902-b190-1b078bfc785e"}
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Train a machine learning model for analytics"}
+[2026-07-28T12:46:33.552Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[data_science] Train a machine learning model for analytics","agent_type":"WORKER"}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":44}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"2217c383-11c2-46f8-a093-37b9a5a85b15"}
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.553Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"d0a46453-7593-49bc-bc60-7931c56f10f4","agent_type":"WORKER"}
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"d0a46453-7593-49bc-bc60-7931c56f10f4"}
+[2026-07-28T12:46:33.554Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"d0a46453-7593-49bc-bc60-7931c56f10f4","strategy_id":"2217c383-11c2-46f8-a093-37b9a5a85b15"}
+[2026-07-28T12:46:33.555Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Deploy infrastructure with docker on kubernetes cluster"}
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.556Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[devops] Deploy infrastructure with docker on kubernetes cluster","agent_type":"WORKER"}
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":30.65}
+[2026-07-28T12:46:33.557Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"a6a5ddd9-9130-40b3-a349-dc37cc92cd77"}
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"0d9bff71-e4de-48b4-94b0-b2fb4daa1b69","agent_type":"WORKER"}
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"0d9bff71-e4de-48b4-94b0-b2fb4daa1b69"}
+[2026-07-28T12:46:33.558Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"0d9bff71-e4de-48b4-94b0-b2fb4daa1b69","strategy_id":"a6a5ddd9-9130-40b3-a349-dc37cc92cd77"}
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Implement OAuth authentication with encryption"}
+[2026-07-28T12:46:33.559Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[security] Implement OAuth authentication with encryption","agent_type":"WORKER"}
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.560Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":46}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"aa451740-dc40-4ac8-a7d2-43e8a8e14f34"}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"6eb070ef-cfff-48b4-a8ff-5d320863acd0","agent_type":"WORKER"}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"6eb070ef-cfff-48b4-a8ff-5d320863acd0"}
+[2026-07-28T12:46:33.561Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"6eb070ef-cfff-48b4-a8ff-5d320863acd0","strategy_id":"aa451740-dc40-4ac8-a7d2-43e8a8e14f34"}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Do something completely random and abstract"}
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.562Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Do something completely random and abstract","agent_type":"WORKER"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":43}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"2c440702-4897-4ca1-863f-799455a573a9"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"d6add72c-ea36-4998-8453-2d1b66afcad4","agent_type":"WORKER"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"d6add72c-ea36-4998-8453-2d1b66afcad4"}
+[2026-07-28T12:46:33.563Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"d6add72c-ea36-4998-8453-2d1b66afcad4","strategy_id":"2c440702-4897-4ca1-863f-799455a573a9"}
+[2026-07-28T12:46:33.564Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.565Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.565Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Some task"}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Some task","agent_type":"WORKER"}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":9}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":""}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"4ced6b2c-27c4-4e1d-915c-381e7071e16e","agent_type":"WORKER"}
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AOP] [addAgent] call failed: agent_id, agent_type, and strategy_id are required (0ms)
+[2026-07-28T12:46:33.566Z] [-] [INFO] [AOP] [buildAgent] call failed: agent_id, agent_type, and strategy_id are required (1ms)
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"A valid task description"}
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.567Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] A valid task description","agent_type":"WORKER"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":24}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"b2ccf13e-5ba9-40f1-8c24-df8f1dc3578a"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"7f862f7d-8ab5-41de-90ff-3638cb213008","agent_type":"WORKER"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"7f862f7d-8ab5-41de-90ff-3638cb213008"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"7f862f7d-8ab5-41de-90ff-3638cb213008","strategy_id":"b2ccf13e-5ba9-40f1-8c24-df8f1dc3578a"}
+[2026-07-28T12:46:33.568Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"3a737db1-af33-430d-bac3-da98d4bbd237"}
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.573Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"64aca464-a869-4df8-8c07-5e66cdcc6976","agent_type":"WORKER"}
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"64aca464-a869-4df8-8c07-5e66cdcc6976"}
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"64aca464-a869-4df8-8c07-5e66cdcc6976","strategy_id":"3a737db1-af33-430d-bac3-da98d4bbd237"}
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Deploy docker containers to AWS cloud infrastructure"}
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.577Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[data_science] Deploy docker containers to AWS cloud infrastructure","agent_type":"WORKER"}
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":30.26}
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"3a737db1-af33-430d-bac3-da98d4bbd237"}
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.578Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"6573e96c-7094-4bf3-91e8-36d31e938f36","agent_type":"WORKER"}
+[2026-07-28T12:46:33.579Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"6573e96c-7094-4bf3-91e8-36d31e938f36"}
+[2026-07-28T12:46:33.579Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"6573e96c-7094-4bf3-91e8-36d31e938f36","strategy_id":"3a737db1-af33-430d-bac3-da98d4bbd237"}
+[2026-07-28T12:46:33.582Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.583Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.583Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Some task"}
+[2026-07-28T12:46:33.583Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.583Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Some task","agent_type":"WORKER"}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":9}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"f0ff5ab7-47e3-47f9-a12f-40c3db93be2f"}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"d56cd576-7d1f-4392-adcf-b47658820dca","agent_type":"WORKER"}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"d56cd576-7d1f-4392-adcf-b47658820dca"}
+[2026-07-28T12:46:33.585Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"d56cd576-7d1f-4392-adcf-b47658820dca","strategy_id":"f0ff5ab7-47e3-47f9-a12f-40c3db93be2f"}
+[2026-07-28T12:46:33.586Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.587Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.587Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.587Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.587Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.587Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"7c589857-f0fa-45e9-bc53-e4b41adba210"}
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"67ded9fa-2562-4938-98f1-2d193decc6c9","agent_type":"WORKER"}
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"67ded9fa-2562-4938-98f1-2d193decc6c9"}
+[2026-07-28T12:46:33.588Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"67ded9fa-2562-4938-98f1-2d193decc6c9","strategy_id":"7c589857-f0fa-45e9-bc53-e4b41adba210"}
+[2026-07-28T12:46:33.589Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.590Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.590Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React frontend component"}
+[2026-07-28T12:46:33.590Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.590Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React frontend component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":32}
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"b08dcf39-619b-47af-829f-78916acb82c0"}
+[2026-07-28T12:46:33.591Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447","agent_type":"WORKER"}
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447"}
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447","strategy_id":"b08dcf39-619b-47af-829f-78916acb82c0"}
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React UI component"}
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.592Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React UI component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.593Z] [-] [INFO] [AgentLibrary] [matchAgent] matched by type filter | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447","score":0.7142857142857143}
+[2026-07-28T12:46:33.593Z] [-] [INFO] [AOP] [recordAgentUsage] call start
+[2026-07-28T12:46:33.593Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] start | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447","work_id":"work-2"}
+[2026-07-28T12:46:33.594Z] [-] [INFO] [AgentLibrary] [recordAgentUsage] done
+[2026-07-28T12:46:33.595Z] [-] [INFO] [AgentBuilder] [buildAgent] reused existing | {"agent_id":"eff516a9-028f-4e6e-8316-82a0a65e8447"}
+[2026-07-28T12:46:33.595Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.600Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.600Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.600Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.600Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.602Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.602Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.602Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4f32e2b7-38ca-4b3a-b81c-456dc1080448"}
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710","agent_type":"WORKER"}
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710"}
+[2026-07-28T12:46:33.603Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710","strategy_id":"4f32e2b7-38ca-4b3a-b81c-456dc1080448"}
+[2026-07-28T12:46:33.604Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.604Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710"}
+[2026-07-28T12:46:33.604Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.605Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710"}
+[2026-07-28T12:46:33.605Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.605Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.605Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4f32e2b7-38ca-4b3a-b81c-456dc1080448"}
+[2026-07-28T12:46:33.606Z] [-] [INFO] [AOP] [updateAgent] call start
+[2026-07-28T12:46:33.606Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710"}
+[2026-07-28T12:46:33.606Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"d8bf2c08-2706-4689-a330-36c2f7cda710"}
+[2026-07-28T12:46:33.607Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":true,"changes":1}
+[2026-07-28T12:46:33.608Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.609Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.609Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.609Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.609Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.610Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.610Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.610Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.610Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"acd54572-5eda-4658-bee2-766a3235c34d"}
+[2026-07-28T12:46:33.611Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.611Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"fd848d29-6175-4fe5-92a5-ea5134fc16c7","agent_type":"WORKER"}
+[2026-07-28T12:46:33.611Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"fd848d29-6175-4fe5-92a5-ea5134fc16c7"}
+[2026-07-28T12:46:33.611Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"fd848d29-6175-4fe5-92a5-ea5134fc16c7","strategy_id":"acd54572-5eda-4658-bee2-766a3235c34d"}
+[2026-07-28T12:46:33.611Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.612Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"fd848d29-6175-4fe5-92a5-ea5134fc16c7"}
+[2026-07-28T12:46:33.612Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.612Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"fd848d29-6175-4fe5-92a5-ea5134fc16c7"}
+[2026-07-28T12:46:33.612Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.612Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.613Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"acd54572-5eda-4658-bee2-766a3235c34d"}
+[2026-07-28T12:46:33.613Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":false,"changes":0}
+[2026-07-28T12:46:33.614Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.615Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.615Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.615Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.615Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.616Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.616Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.616Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4e1d63bc-57c4-410a-95bc-c081881e7a7a"}
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155","agent_type":"WORKER"}
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155"}
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155","strategy_id":"4e1d63bc-57c4-410a-95bc-c081881e7a7a"}
+[2026-07-28T12:46:33.617Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.618Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155"}
+[2026-07-28T12:46:33.618Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.618Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155"}
+[2026-07-28T12:46:33.618Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.618Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.619Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4e1d63bc-57c4-410a-95bc-c081881e7a7a"}
+[2026-07-28T12:46:33.619Z] [-] [INFO] [AOP] [updateAgent] call start
+[2026-07-28T12:46:33.619Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155"}
+[2026-07-28T12:46:33.619Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"901d95ac-7a30-408b-a42a-2cddad44f155"}
+[2026-07-28T12:46:33.620Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":true,"changes":1}
+[2026-07-28T12:46:33.621Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"non-existent-agent"}
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"non-existent-agent"}
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AOP] [getAgent] call failed: Agent non-existent-agent not found (0ms)
+[2026-07-28T12:46:33.622Z] [-] [INFO] [AOP] [optimizeAgent] call failed: Agent non-existent-agent not found (0ms)
+[2026-07-28T12:46:33.623Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.623Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.623Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.624Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.624Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.624Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.624Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.624Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.625Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"8278b246-886a-4462-be64-58200f946b03"}
+[2026-07-28T12:46:33.625Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.625Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"7699f5b5-57ea-49b9-becb-003b43370662","agent_type":"WORKER"}
+[2026-07-28T12:46:33.625Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"7699f5b5-57ea-49b9-becb-003b43370662"}
+[2026-07-28T12:46:33.625Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"7699f5b5-57ea-49b9-becb-003b43370662","strategy_id":"8278b246-886a-4462-be64-58200f946b03"}
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"7699f5b5-57ea-49b9-becb-003b43370662"}
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"7699f5b5-57ea-49b9-becb-003b43370662"}
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"8278b246-886a-4462-be64-58200f946b03"}
+[2026-07-28T12:46:33.626Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":false,"changes":0}
+[2026-07-28T12:46:33.627Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.628Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.628Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.628Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.628Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.629Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.629Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.629Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.629Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4ced02ea-c4cf-4f7d-8b57-60f9ae87a994"}
+[2026-07-28T12:46:33.629Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"2205a8ad-1bac-4b0d-aff8-26213d30b2ee","agent_type":"WORKER"}
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"2205a8ad-1bac-4b0d-aff8-26213d30b2ee"}
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"2205a8ad-1bac-4b0d-aff8-26213d30b2ee","strategy_id":"4ced02ea-c4cf-4f7d-8b57-60f9ae87a994"}
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"2205a8ad-1bac-4b0d-aff8-26213d30b2ee"}
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.630Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"2205a8ad-1bac-4b0d-aff8-26213d30b2ee"}
+[2026-07-28T12:46:33.631Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.631Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.631Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"4ced02ea-c4cf-4f7d-8b57-60f9ae87a994"}
+[2026-07-28T12:46:33.631Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":false,"changes":0}
+[2026-07-28T12:46:33.632Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.633Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.633Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.633Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.633Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"35f53dce-77b4-425e-9463-9e1180e05d44"}
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f","agent_type":"WORKER"}
+[2026-07-28T12:46:33.635Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f","strategy_id":"35f53dce-77b4-425e-9463-9e1180e05d44"}
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.636Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.637Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.637Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"35f53dce-77b4-425e-9463-9e1180e05d44"}
+[2026-07-28T12:46:33.637Z] [-] [INFO] [AOP] [updateAgent] call start
+[2026-07-28T12:46:33.637Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.638Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.638Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":true,"changes":1}
+[2026-07-28T12:46:33.638Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.638Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.638Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.639Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"953f3443-65b2-4e5e-8fce-f9e71495265f"}
+[2026-07-28T12:46:33.639Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.639Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":35}
+[2026-07-28T12:46:33.639Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"35f53dce-77b4-425e-9463-9e1180e05d44"}
+[2026-07-28T12:46:33.639Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":false,"changes":0}
+[2026-07-28T12:46:33.640Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.640Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.640Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.640Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.640Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.641Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.641Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"5e6f4f6d-fd9b-4617-a912-08808515e0f2","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.641Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"5e6f4f6d-fd9b-4617-a912-08808515e0f2"}
+[2026-07-28T12:46:33.642Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.642Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.642Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.642Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.642Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.643Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.643Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"8255ba4b-66d5-4339-bf7c-7ce2f57868e6","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.644Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"8255ba4b-66d5-4339-bf7c-7ce2f57868e6"}
+[2026-07-28T12:46:33.644Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.644Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.644Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.644Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.645Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.646Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.646Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.646Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.646Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"e4c25f68-02ef-4c36-8561-7c64af2c4770","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"e4c25f68-02ef-4c36-8561-7c64af2c4770"}
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"c2c0e6e2-507f-49ec-be81-9c600cc8dcb4","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"c2c0e6e2-507f-49ec-be81-9c600cc8dcb4"}
+[2026-07-28T12:46:33.647Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"f85f4d91-a583-485b-a6e9-d1a2027261c0","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"f85f4d91-a583-485b-a6e9-d1a2027261c0"}
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.648Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.649Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.650Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.650Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.650Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.650Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WRITER"}
+[2026-07-28T12:46:33.651Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.651Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"6689e871-bf73-4f68-b900-ba9d9ae1d329","agent_type":"WRITER"}
+[2026-07-28T12:46:33.652Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"6689e871-bf73-4f68-b900-ba9d9ae1d329"}
+[2026-07-28T12:46:33.653Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.654Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.654Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.654Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.654Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WRITER"}
+[2026-07-28T12:46:33.655Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"4af5f5d1-504f-4d65-86d5-b205daf84126","agent_type":"WRITER"}
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"4af5f5d1-504f-4d65-86d5-b205daf84126"}
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.656Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WRITER"}
+[2026-07-28T12:46:33.657Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WRITER"}
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.658Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"0d993a21-e909-40ab-955c-ee28e4e929dc","agent_type":"WRITER"}
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"0d993a21-e909-40ab-955c-ee28e4e929dc"}
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"e7cd3076-662b-469a-9322-c7737b7e8b3f","agent_type":"WRITER"}
+[2026-07-28T12:46:33.659Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"e7cd3076-662b-469a-9322-c7737b7e8b3f"}
+[2026-07-28T12:46:33.660Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.660Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.660Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.661Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.661Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.661Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.661Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"b589906b-f613-46dd-a149-d3ed5de68f51","agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.661Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"b589906b-f613-46dd-a149-d3ed5de68f51"}
+[2026-07-28T12:46:33.662Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.663Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.663Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.663Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.664Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.665Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.665Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"8d3bf3ce-2a74-41c7-a6e1-e186c9b91abc","agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.665Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"8d3bf3ce-2a74-41c7-a6e1-e186c9b91abc"}
+[2026-07-28T12:46:33.665Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.666Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.666Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.666Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.666Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.667Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"18c47ba9-4ae4-4cd7-9cf9-94b6cdfbd3fb","agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"18c47ba9-4ae4-4cd7-9cf9-94b6cdfbd3fb"}
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"2b9c7707-064b-496f-9b42-09f90d5e33d7","agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.668Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"2b9c7707-064b-496f-9b42-09f90d5e33d7"}
+[2026-07-28T12:46:33.669Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.670Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.670Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.670Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.670Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.671Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.672Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.672Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.672Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.672Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.675Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.676Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.676Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.676Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.679Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.680Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.681Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.681Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.681Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a React component"}
+[2026-07-28T12:46:33.681Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.681Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[frontend] Write a React component","agent_type":"WORKER"}
+[2026-07-28T12:46:33.682Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.682Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.682Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":23}
+[2026-07-28T12:46:33.683Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"10676ce4-7720-4ec9-87d7-8da66dde053d"}
+[2026-07-28T12:46:33.683Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.683Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"a2b2e623-0466-405a-a23b-043694236527","agent_type":"WORKER"}
+[2026-07-28T12:46:33.683Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"a2b2e623-0466-405a-a23b-043694236527"}
+[2026-07-28T12:46:33.683Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"a2b2e623-0466-405a-a23b-043694236527","strategy_id":"10676ce4-7720-4ec9-87d7-8da66dde053d"}
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"PLANNER"}
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"23761c19-b795-4846-8a1a-732b6baf9db7","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.684Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"23761c19-b795-4846-8a1a-732b6baf9db7"}
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AOP] [buildWriterAgent] call start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentBuilder] [buildWriterAgent] start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"WRITER"}
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"8553ad9d-ef6a-4cd9-b9fe-b6ede3488188","agent_type":"WRITER"}
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"8553ad9d-ef6a-4cd9-b9fe-b6ede3488188"}
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AOP] [buildEvolutorAgent] call start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentBuilder] [buildEvolutorAgent] start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.685Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.686Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.686Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"0a4cf2c7-da2a-4bc4-b2d3-3374c0a0013b","agent_type":"EVOLUTOR"}
+[2026-07-28T12:46:33.686Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"0a4cf2c7-da2a-4bc4-b2d3-3374c0a0013b"}
+[2026-07-28T12:46:33.686Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.686Z] [-] [INFO] [AOP] [buildPlannerAgent] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentBuilder] [buildPlannerAgent] start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467","agent_type":"PLANNER"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AOP] [optimizeAgent] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentBuilder] [optimizeAgent] start | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AOP] [getAgent] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentLibrary] [getAgent] start | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":7}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"3c6b1b48-5faf-4d75-95d1-cda66e36d85f"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AOP] [updateAgent] call start
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentLibrary] [updateAgent] start | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentLibrary] [updateAgent] done | {"agent_id":"a54b6575-0587-4fb7-b6cd-f0fa7a757467"}
+[2026-07-28T12:46:33.687Z] [-] [INFO] [AgentBuilder] [optimizeAgent] done | {"optimized":true,"changes":1}
+[2026-07-28T12:46:33.688Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.688Z] [-] [INFO] [AOP] [configAgentBuilder] call start
+[2026-07-28T12:46:33.688Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] start
+[2026-07-28T12:46:33.689Z] [-] [INFO] [AgentBuilder] [configAgentBuilder] done
+[2026-07-28T12:46:33.689Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.689Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write a sorting algorithm"}
+[2026-07-28T12:46:33.689Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.689Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write a sorting algorithm","agent_type":"WORKER"}
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":25}
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"783b36bd-9842-4062-a3eb-9510d585df58"}
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.690Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"6b2ca090-9569-4475-8ab5-53a713cc7d30","agent_type":"WORKER"}
+[2026-07-28T12:46:33.691Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"6b2ca090-9569-4475-8ab5-53a713cc7d30"}
+[2026-07-28T12:46:33.691Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"6b2ca090-9569-4475-8ab5-53a713cc7d30","strategy_id":"783b36bd-9842-4062-a3eb-9510d585df58"}
+[2026-07-28T12:46:33.692Z] [-] [INFO] [AgentStrategy] [seedStrategies] seeding built-in strategies
+[2026-07-28T12:46:33.693Z] [-] [INFO] [AOP] [buildAgent] call start
+[2026-07-28T12:46:33.693Z] [-] [INFO] [AgentBuilder] [buildAgent] start | {"task":"Write code","force_new":false}
+[2026-07-28T12:46:33.694Z] [-] [INFO] [AOP] [matchAgent] call start
+[2026-07-28T12:46:33.694Z] [-] [INFO] [AgentLibrary] [matchAgent] start | {"task_signature":"[general] Write code","agent_type":"WORKER"}
+[2026-07-28T12:46:33.695Z] [-] [INFO] [AgentLibrary] [matchAgent] result | {"agent_id":"","score":0}
+[2026-07-28T12:46:33.695Z] [-] [INFO] [AOP] [matchStrategy] call start
+[2026-07-28T12:46:33.695Z] [-] [INFO] [AgentStrategy] [matchStrategy] start | {"complexity":10}
+[2026-07-28T12:46:33.695Z] [-] [INFO] [AgentStrategy] [matchStrategy] result | {"strategy_id":"77bb08a2-85b2-44c1-8234-1890ee1fda29"}
+[2026-07-28T12:46:33.695Z] [-] [INFO] [AOP] [addAgent] call start
+[2026-07-28T12:46:33.696Z] [-] [INFO] [AgentLibrary] [addAgent] start | {"agent_id":"c51b86b8-7068-432d-ab51-e91d3d17cc23","agent_type":"WORKER"}
+[2026-07-28T12:46:33.696Z] [-] [INFO] [AgentLibrary] [addAgent] done | {"agent_id":"c51b86b8-7068-432d-ab51-e91d3d17cc23"}
+[2026-07-28T12:46:33.696Z] [-] [INFO] [AgentBuilder] [buildAgent] created new | {"agent_id":"c51b86b8-7068-432d-ab51-e91d3d17cc23","strategy_id":"77bb08a2-85b2-44c1-8234-1890ee1fda29"}
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-001: should format [domain] + body
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-002: should default domain to general when omitted
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-003: should default domain to general when whitespace only
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-004: should truncate taskContent longer than 256 chars
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-005: should not truncate taskContent exactly 256 chars
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-006: should handle null/undefined taskContent without throwing
+ ✓ tests/agent/prd-agent-shared.test.ts > buildTaskSignature > TC-SH-007: should handle domain with special characters
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-008: should parse a pure JSON object
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-009: should extract embedded JSON from surrounding text
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-010: should parse nested JSON objects
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-011: multiple JSON blocks in text (greedy regex cannot extract first)
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-012: should return null for empty string
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-013: should return null for plain text without JSON
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-014: should return null for malformed JSON
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-015: should return null for JSON array (non-object)
+ ✓ tests/agent/prd-agent-shared.test.ts > parseJsonObject > TC-SH-016: should extract cross-line embedded JSON
+
+ Test Files  8 passed (8)
+      Tests  298 passed (298)
+   Start at  20:46:32
+   Duration  1.20s (transform 883ms, setup 2ms, collect 2.05s, tests 746ms, environment 1ms, prepare 891ms)
+
