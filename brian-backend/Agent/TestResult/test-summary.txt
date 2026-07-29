@@ -1,0 +1,119 @@
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-001: 正常新增策略
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-002: label 为空抛异常
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-003: complexity 范围非法
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-004: 重复 label 抛异常
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-005: execution_rule 无效 JSON
+ ✓ test/agent-strategy.test.ts > AgentStrategy > addStrategy > TC-AS-006: execution_rule 不含 steps/phases
+ ✓ test/agent-strategy.test.ts > AgentStrategy > matchStrategy > TC-AS-011: 按复杂度匹配
+ ✓ test/agent-strategy.test.ts > AgentStrategy > getStrategy > TC-AS-021: 不存在抛 NotFoundError
+ ✓ test/agent-strategy.test.ts > AgentStrategy > updateStrategy > TC-AS-032: 不存在抛 NotFoundError
+ ✓ test/agent-strategy.test.ts > AgentStrategy > configAgentStrategy > TC-AS-050: 配置可用
+ ✓ test/agent-strategy.test.ts > AgentStrategy > configAgentStrategy > TC-AS-052: default_strategy_id 不存在抛异常
+ ✓ test/agent-builder.test.ts > AgentBuilder > buildPlannerAgent > TC-AB-021: 首次构建 (force_new)
+ ✓ test/agent-builder.test.ts > AgentBuilder > buildPlannerAgent > TC-AB-022: 复用已有 Planner
+ ✓ test/agent-builder.test.ts > AgentBuilder > buildWriterAgent > TC-AB-025: 首次构建 Writer
+ ✓ test/agent-builder.test.ts > AgentBuilder > buildEvolutorAgent > TC-AB-028: 首次构建 Evolutor
+ ✓ test/agent-builder.test.ts > AgentBuilder > configAgentBuilder > TC-AB-031: 配置可用
+ ✓ test/agent-builder.test.ts > AgentBuilder > configAgentBuilder > TC-AB-036: 更新 auto_optimize
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-001: 正常新增 WORKER Agent
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-002~004: 四种 Agent 类型均可新增
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-005: agent_id 为空抛 ValidationError
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-006: agent_type 非法抛异常
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-007: strategy_id 为空抛异常
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-008: 可选字段默认值
+ ✓ test/agent-library.test.ts > AgentLibrary > addAgent > TC-AL-009: agent_name 自定义
+ ✓ test/agent-library.test.ts > AgentLibrary > matchAgent > TC-AL-011: 简单相似度匹配成功
+ ✓ test/agent-library.test.ts > AgentLibrary > matchAgent > TC-AL-012: 相似度低于阈值不匹配
+ ✓ test/agent-library.test.ts > AgentLibrary > matchAgent > TC-AL-015: 按 agent_type 过滤
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgent > TC-AL-019: 更新 agent_name
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgent > TC-AL-020~24: eval_score 范围校验
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgent > TC-AL-027: 不存在的 Agent 抛 NotFoundError
+ ✓ test/agent-library.test.ts > AgentLibrary > recordAgentUsage > TC-AL-029: 正常记录并自增 usage_count
+ ✓ test/agent-library.test.ts > AgentLibrary > recordAgentUsage > TC-AL-030: agent_id 为空抛异常
+ ✓ test/agent-library.test.ts > AgentLibrary > ageAgent > TC-AL-042: 老化功能测试
+ ✓ test/agent-library.test.ts > AgentLibrary > ageAgent > TC-AL-043: 系统 Agent 不参与老化
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgentRule > TC-AL-048: INSERT 新规则
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgentRule > TC-AL-049: days <= 0 抛异常
+ ✓ test/agent-library.test.ts > AgentLibrary > updateAgentRule > TC-AL-052: operations 为空抛异常
+ ✓ test/agent-library.test.ts > AgentLibrary > configAgentLibrary > TC-AL-055: 配置可用
+ ✓ test/agent-library.test.ts > AgentLibrary > configAgentLibrary > TC-AL-058: similarity_threshold 超出范围抛异常
+ ✓ test/writer-agent.test.ts > WriterAgent > saveUserProfile > TC-WR-001: 首次保存用户配置
+ ✓ test/writer-agent.test.ts > WriterAgent > saveUserProfile > TC-WR-002: 更新已有配置
+ ✓ test/writer-agent.test.ts > WriterAgent > saveUserProfile > TC-WR-003: format 非法值抛异常
+ ✓ test/writer-agent.test.ts > WriterAgent > saveUserProfile > TC-WR-004: 不存在的用户返回默认值
+ ✓ test/writer-agent.test.ts > WriterAgent > configWriterAgent > TC-WR-010: 配置可用
+ ✓ test/writer-agent.test.ts > WriterAgent > configWriterAgent > TC-WR-012: default_format 非法值抛异常
+ ✓ test/planner-agent.test.ts > PlannerAgent > plan > TC-PA-001: 生成单节点 DAG
+ ✓ test/planner-agent.test.ts > PlannerAgent > plan > TC-PA-002: plan_id 唯一
+ ✓ test/planner-agent.test.ts > PlannerAgent > configPlannerAgent > TC-PA-010: 配置可用
+ ✓ test/planner-agent.test.ts > PlannerAgent > configPlannerAgent > TC-PA-012: threshold 超出范围抛异常
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > evalWorkAgent > TC-EA-001: 使用默认评分
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > evalWorkAgent > TC-EA-002: need_optimize 基于阈值
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > getEvaluation > TC-EA-010: 查询评估记录
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > getEvolutionReport > TC-EA-020: 不存在抛 NotFoundError
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > getEvolutionReport > TC-EA-021: 返回趋势数据
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > configEvolutorAgent > TC-EA-030: 配置可用
+ ✓ test/evolutor-agent.test.ts > EvolutorAgent > configEvolutorAgent > TC-EA-031: optimize_threshold 范围校验
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-001: builds context with all fields populated and returns correct output
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-002: builds context with only session_id, nullable fields default to empty string
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-003: throws ValidationError when session_id is empty
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-004: does not persist snapshot when enable_snapshot_persistence is disabled
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-005: generates a unique context_id for each invocation
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-006: handles empty context items from InfoCore gracefully
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-007: passes session_id to InfoCore.context correctly
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-008: classifies all items as unknown source in summary
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-009: InfoCore.context error propagates
+ ✓ test/agent-context.test.ts > AgentContext > buildAgentContext > TC-AC-010: sets elapsed_ms on output via AOP proxy
+ ✓ test/agent-context.test.ts > AgentContext > getContextByTrace > TC-AC-011: retrieves snapshot by trace_id successfully
+ ✓ test/agent-context.test.ts > AgentContext > getContextByTrace > TC-AC-012: returns empty output when trace_id not found
+ ✓ test/agent-context.test.ts > AgentContext > getContextByTrace > TC-AC-013: throws ValidationError when trace_id is empty
+ ✓ test/agent-context.test.ts > AgentContext > getContextByTrace > TC-AC-014: handles corrupted JSON in context_sources_summary gracefully
+ ✓ test/agent-context.test.ts > AgentContext > getContextByTrace > TC-AC-015: handles missing fields in snapshot row gracefully
+ ✓ test/agent-context.test.ts > AgentContext > getContextByAgent > TC-AC-021: retrieves snapshot by agent_id and work_id successfully
+ ✓ test/agent-context.test.ts > AgentContext > getContextByAgent > TC-AC-022: returns empty output when agent_id + work_id not found
+ ✓ test/agent-context.test.ts > AgentContext > getContextByAgent > TC-AC-023: throws ValidationError when agent_id is empty
+ ✓ test/agent-context.test.ts > AgentContext > getContextByAgent > TC-AC-024: throws ValidationError when work_id is empty
+ ✓ test/agent-context.test.ts > AgentContext > getContextByAgent > TC-AC-025: queries with correct Operator.EQ conditions
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-031: retrieves full detail with info_ids grouped by source
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-032: filters by specified sources
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-033: returns empty sources when context_id not found
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-034: throws ValidationError when context_id is empty
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-035: handles snapshot with zero items
+ ✓ test/agent-context.test.ts > AgentContext > getContextDetail > TC-AC-036: groups items by different sources correctly
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-041: updates max_context_items successfully
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-042: disables snapshot persistence
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-043: enables snapshot persistence
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-044: throws ValidationError when max_context_items is zero
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-045: throws ValidationError when max_context_items is negative
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-046: throws ValidationError when max_context_items is not integer
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-047: returns defaults when config is called with no arguments
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-048: partial update preserves other config values
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-049: auto-creates default config row when none exists
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-050: throws ValidationError when max_context_items is NaN
+ ✓ test/agent-context.test.ts > AgentContext > configAgentContext > TC-AC-051: only max_context_items updated preserves enable_snapshot_persistence
+ ✓ test/agent-context.test.ts > AgentContext > output types initialization > all Output classes have correct default values
+ ✓ test/agent-context.test.ts > AgentContext > domain constants > table name constants are correct
+ ✓ test/agent-context.test.ts > AgentContext > domain constants > default config values are correct
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-001: 正常格式 [domain] + 正文
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-002: domain 为空默认 general
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-003: domain 为 whitespace 默认 general
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-004: body 超 256 截断
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-005: body 恰好 256 不截断
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-006: null/undefined 处理
+ ✓ test/shared-full.test.ts > AgentShared - buildTaskSignature > TC-SH-007: domain 含特殊字符
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-008: 纯 JSON 对象
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-009: 从混合文本提取 JSON
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-010: 嵌套 JSON
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-011: 多个 JSON 块时, 贪婪匹配整个 {} 块, 首个不合法 JSON 返回 null
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-012: 空字符串返回 null
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-013: 非 JSON 纯文本返回 null
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-014: 格式错误 JSON 返回 null
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-015: JSON 数组返回该数组（typeof object）
+ ✓ test/shared-full.test.ts > AgentShared - parseJsonObject > TC-SH-016: 跨行嵌入式 JSON
+ ✓ test/signature.test.ts > buildTaskSignature > formats as [domain] first 256 chars
+ ✓ test/signature.test.ts > buildTaskSignature > defaults domain to general
+ ✓ test/signature.test.ts > buildTaskSignature > truncates body to 256
+ ✓ test/signature.test.ts > parseJsonObject > parses pure json
+ ✓ test/signature.test.ts > parseJsonObject > extracts embedded json
+ Test Files  9 passed (9)
+      Tests  117 passed (117)

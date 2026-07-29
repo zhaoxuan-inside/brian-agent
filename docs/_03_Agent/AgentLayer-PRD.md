@@ -19,6 +19,8 @@ docs/_03_Agent/
 │   └── AgentLibrary-PRD.md
 ├── AgentBuilder/              # Agent 构建：动态组装 Agent 实例
 │   └── AgentBuilder-PRD.md
+├── AgentContext/              # Agent 上下文：统一上下文构建入口、快照持久化
+│   └── AgentContext-PRD.md
 ├── AgentExecution/            # Agent 执行：执行引擎与原子操作
 │   └── AgentExecution-PRD.md
 ├── AgentStrategy/             # Agent 策略：推理策略模式
@@ -37,11 +39,12 @@ docs/_03_Agent/
 |------|------|---------------------|------------------|
 | AgentLibrary | Agent 元数据 CRUD、复用匹配、老化淘汰（仅管理 agent 表自身字段） | RelationDBProvider | - |
 | AgentBuilder | 分析任务特征 → 调用 Core 层匹配组件 → 组装 Agent 并注册 | RelationDBProvider, LLMProvider, PromptsProvider | LLMCore, MCPCore, SkillCore, SoulCore |
-| AgentExecution | 执行循环调度、原子操作分发、全链路记录 | RelationDBProvider, LLMProvider, MCPProvider, SkillProvider, SoulProvider | MQCore, InfoCore |
+| AgentContext | 封装 InfoCore.context，统一 Agent 层上下文入口；上下文快照持久化与查询 | RelationDBProvider | InfoCore |
+| AgentExecution | 执行循环调度、原子操作分发、全链路记录 | RelationDBProvider, LLMProvider, MCPProvider, SkillProvider, SoulProvider | MQCore, InfoCore, AgentContext |
 | AgentStrategy | 推理策略实现（CoT/ReAct/Plan-and-Solve） | RelationDBProvider, PromptsProvider | - |
-| PlannerAgent | 复杂任务识别、拆解为子任务、建立 DAG | LLMProvider, PromptsProvider | InfoCore |
-| WriterAgent | 信息汇总、人性化输出、用户画像集成 | LLMProvider, PromptsProvider | InfoCore |
-| EvolutorAgent | 响应评估打分、Agent 性能评估、优化建议 | LLMProvider, PromptsProvider, MQProvider | InfoCore |
+| PlannerAgent | 复杂任务识别、拆解为子任务、建立 DAG | LLMProvider, PromptsProvider | InfoCore, AgentContext |
+| WriterAgent | 信息汇总、人性化输出、用户画像集成 | LLMProvider, PromptsProvider | InfoCore, AgentContext |
+| EvolutorAgent | 响应评估打分、Agent 性能评估、优化建议 | LLMProvider, PromptsProvider, MQProvider | InfoCore, AgentContext |
 
 > Agent 与 LLM/Skill/MCP/Soul 的 1-to-many 绑定关系（agent_llm、agent_skill、agent_mcp、agent_soul 表）由 Core 层统一管理，Agent 层不重复维护这些绑定表。Agent 层的 `agent` 表仅持有 1-to-1 的外键引用（llm_id、soul_id、strategy_id）。
 

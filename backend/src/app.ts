@@ -48,6 +48,8 @@ import { createAgentExecutionService } from './agent/AgentExecution';
 import { createPlannerAgentService } from './agent/PlannerAgent';
 import { createWriterAgentService } from './agent/WriterAgent';
 import { createEvolutorAgentService } from './agent/EvolutorAgent';
+import { createAgentContextService } from './agent/AgentContext';
+import { setDatabase as setAgentContextDb } from './agent/AgentContext/db';
 
 import { StrategyConfigService } from './strategy/StrategyConfigService';
 
@@ -176,14 +178,16 @@ export function createApp(): express.Application {
   // Agent Layer (PRD modules)
   // ============================================================
   setAgentLibraryDb(rawDb);
+  setAgentContextDb(rawDb);
 
+  const agentContextService = createAgentContextService(coreInformationService);
   const agentLibraryService = createAgentLibraryService();
   const agentStrategyService = createAgentStrategyService(rawDb);
   const agentBuilderService = createAgentBuilderService(rawDb, agentLibraryService, agentStrategyService, llmService);
-  const agentExecutionService = createAgentExecutionService(rawDb, llmService, skillManager, mcpManager, mqCore);
-  const plannerAgentService = createPlannerAgentService(rawDb, llmService);
-  const writerAgentService = createWriterAgentService(rawDb, llmService);
-  const evolutorAgentService = createEvolutorAgentService(rawDb, llmService);
+  const agentExecutionService = createAgentExecutionService(rawDb, llmService, skillManager, mcpManager, mqCore, agentContextService);
+  const plannerAgentService = createPlannerAgentService(rawDb, llmService, agentContextService);
+  const writerAgentService = createWriterAgentService(rawDb, llmService, agentContextService);
+  const evolutorAgentService = createEvolutorAgentService(rawDb, llmService, agentContextService);
 
   // Legacy agent subsystem (kept for backward compatibility with access layer routes)
   const toolService = new ToolService();

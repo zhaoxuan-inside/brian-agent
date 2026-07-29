@@ -5,6 +5,8 @@ import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
 import { getAgentByAgentId, recordAgentUsage } from '../AgentLibrary/db';
+import type { AgentContextService, ContextItem } from '../AgentContext';
+import { BuildAgentContextInput, BuildAgentContextOutput } from '../AgentContext';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { SkillManager } from '../../core/skill/SkillManager';
 import type { MCPManager } from '../../core/mcp/MCPManager';
@@ -45,6 +47,7 @@ class ExecAgentInput extends Input {
   work_id!: string;
   interact_id!: string;
   task_content!: string;
+  session_id?: string;
   max_iterations?: number;
   constructor(d: Partial<ExecAgentInput>) { super(d); Object.assign(this, d); }
 }
@@ -140,6 +143,7 @@ export class AgentExecutionService {
     private skillManager?: SkillManager,
     private mcpManager?: MCPManager,
     private mqCore?: MQCore,
+    private agentContextService?: AgentContextService,
   ) {
     this.db = db;
     ensureTables(db);
@@ -156,6 +160,23 @@ export class AgentExecutionService {
     const maxIter = input.max_iterations ?? (Number(config.default_max_iterations) || 10);
     const traceId = generateId();
 
+    let contextText = '';
+    if (this.agentContextService && input.session_id) {
+      try {
+        const ctxOut = new BuildAgentContextOutput();
+        await this.agentContextService.buildAgentContext(
+          new BuildAgentContextInput({ session_id: input.session_id, agent_id: input.agent_id, work_id: input.work_id, trace_id: traceId }),
+          {} as any,
+          ctxOut
+        );
+        if (ctxOut.context_data && ctxOut.context_data.length > 0) {
+          contextText = ctxOut.context_data.map((item: ContextItem) => `[${item.source}] ${item.content}`).join('\n');
+        }
+      } catch (e) {
+        logger.warn(MODULE, '[execAgent] buildAgentContext failed', { error: (e as Error).message });
+      }
+    }
+
     const history: string[] = [];
     let iterations = 0;
     let totalTokenUsage = 0;
@@ -168,7 +189,7 @@ export class AgentExecutionService {
         model: '',
         messages: [
           { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
-          { role: 'user', content: `Task: ${input.task_content}\nIteration: ${iter}/${maxIter}\nHistory: ${history.join('\n')}\n\nThink about the next step. Respond with: FINISH to end, or ACT to use a tool.` },
+          { role: 'user', content: `Context:\n${contextText}\n\nTask: ${input.task_content}\nIteration: ${iter}/${maxIter}\nHistory: ${history.join('\n')}\n\nThink about the next step. Respond with: FINISH to end, or ACT to use a tool.` },
         ],
         temperature: 0.3,
         maxTokens: 1024,
@@ -198,7 +219,7 @@ export class AgentExecutionService {
           model: '',
           messages: [
             { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
-            { role: 'user', content: `Task: ${input.task_content}\nIteration: ${iter}/${maxIter}\nHistory: ${history.join('\n')}\n\nShould we continue or give the final answer? Respond CONTINUE or FINISH.` },
+            { role: 'user', content: `Context:\n${contextText}\n\nTask: ${input.task_content}\nIteration: ${iter}/${maxIter}\nHistory: ${history.join('\n')}\n\nShould we continue or give the final answer? Respond CONTINUE or FINISH.` },
           ],
           temperature: 0.1,
           maxTokens: 512,
@@ -227,7 +248,7 @@ export class AgentExecutionService {
           model: '',
           messages: [
             { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
-            { role: 'user', content: `Task: ${input.task_content}\nCompleted in ${iterations} iterations.\nHistory: ${history.join('\n')}\n\nGenerate the final answer.` },
+            { role: 'user', content: `Context:\n${contextText}\n\nTask: ${input.task_content}\nCompleted in ${iterations} iterations.\nHistory: ${history.join('\n')}\n\nGenerate the final answer.` },
           ],
           temperature: 0.5,
           maxTokens: 4096,
@@ -517,6 +538,7 @@ export function createAgentExecutionService(
   skillManager?: SkillManager,
   mcpManager?: MCPManager,
   mqCore?: MQCore,
+  agentContextService?: AgentContextService,
 ): AgentExecutionService {
-  return AopProxy(new AgentExecutionService(db, llmService, skillManager, mcpManager, mqCore));
+  return AopProxy(new AgentExecutionService(db, llmService, skillManager, mcpManager, mqCore, agentContextService));
 }

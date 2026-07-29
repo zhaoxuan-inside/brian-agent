@@ -42,7 +42,7 @@
    d. 将用户画像作为 prompt 的一部分传递给 LLM，控制回复的风格深度；
 
 3. **构建写作上下文**
-   a. 调用 InfoCore.context 获取当前 session 的上下文（对话历史）；
+   a. 调用 AgentContext.buildAgentContext({ session_id, agent_id, work_id }) 获取当前 session 的上下文（对话历史）；
    b. 收集 agent_results 中每个 Agent 的 task_content 和 result，按 Agent 处理顺序排列；
    c. 若 agent_results 为空（简单任务未拆分）：直接使用上游单个 Agent 的输出；
 

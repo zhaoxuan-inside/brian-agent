@@ -42,6 +42,9 @@ export type { WriteInput, SaveUserProfileInput, GetUserProfileInput, ConfigWrite
 export { EvolutorAgentService, createEvolutorAgentService } from './EvolutorAgent/EvolutorAgent';
 export type { EvalWorkAgentInput, EvalWriterAgentInput, StartEvalScheduleInput, StopEvalScheduleInput, GetEvaluationInput, GetEvolutionReportInput, ConfigEvolutorAgentInput, EvalWorkAgentOutput, EvalWriterAgentOutput, StartEvalScheduleOutput, StopEvalScheduleOutput, GetEvaluationOutput, GetEvolutionReportOutput, ConfigEvolutorAgentOutput } from './EvolutorAgent/EvolutorAgent';
 
+export { AgentContextService, createAgentContextService, BuildAgentContextInput, BuildAgentContextOutput, GetContextByTraceInput, GetContextByTraceOutput, GetContextByAgentInput, GetContextByAgentOutput, GetContextDetailInput, GetContextDetailOutput, ConfigAgentContextInput, ConfigAgentContextOutput } from './AgentContext/AgentContext';
+export type { ContextSource, ContextItem, InfoContextProvider, SourceCounts, SourceDetail } from './AgentContext/AgentContext';
+
 export { AgentLibrary } from './agentLibrary';
 export { AgentBuilder } from './agentBuilder';
 export { MetaAgent } from './metaAgent';

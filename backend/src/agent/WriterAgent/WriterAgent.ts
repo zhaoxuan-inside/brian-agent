@@ -3,6 +3,8 @@ import { Input, Context, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
+import type { AgentContextService } from '../AgentContext';
+import { BuildAgentContextInput, BuildAgentContextOutput } from '../AgentContext';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
 
@@ -36,6 +38,7 @@ class WriteInput extends Input {
   work_id!: string; interact_id!: string; user_query!: string;
   agent_results!: { agent_id: string; task_content: string; result: string }[];
   user_preferences?: Record<string, string>;
+  session_id?: string;
   constructor(d: Partial<WriteInput>) { super(d); Object.assign(this, d); }
 }
 class WriteContext extends Context { }
@@ -74,7 +77,7 @@ export { WriteOutput, SaveUserProfileOutput, GetUserProfileOutput, ConfigWriterA
 export class WriterAgentService {
   private db: AgentDatabase;
 
-  constructor(db: AgentDatabase, private llmService?: LLMService) {
+  constructor(db: AgentDatabase, private llmService?: LLMService, private agentContextService?: AgentContextService) {
     this.db = db;
     ensureTable(db);
   }
@@ -83,6 +86,23 @@ export class WriterAgentService {
     logger.info(MODULE, '[write] start', { work_id: input.work_id, query: input.user_query?.substring(0, 100) });
     const startTime = Date.now();
     const profile = this.loadProfile(input);
+
+    let contextText = '';
+    if (this.agentContextService && input.session_id) {
+      try {
+        const ctxOut = new BuildAgentContextOutput();
+        await this.agentContextService.buildAgentContext(
+          new BuildAgentContextInput({ session_id: input.session_id, agent_id: undefined, work_id: input.work_id, trace_id: undefined }),
+          {} as any,
+          ctxOut
+        );
+        if (ctxOut.context_data && ctxOut.context_data.length > 0) {
+          contextText = ctxOut.context_data.map((item: import('../AgentContext').ContextItem) => `[${item.source}] ${item.content}`).join('\n');
+        }
+      } catch (e) {
+        logger.warn(MODULE, '[write] buildAgentContext failed', { error: (e as Error).message });
+      }
+    }
 
     const resultsText = (input.agent_results || []).map(r =>
       `### ${r.task_content}\n${r.result}`
@@ -106,7 +126,7 @@ export class WriterAgentService {
             },
             {
               role: 'user',
-              content: `User question: ${input.user_query}\n\nAgent results:\n${resultsText}\n\nGenerate a well-formatted final response.`
+              content: `Context:\n${contextText}\n\nUser question: ${input.user_query}\n\nAgent results:\n${resultsText}\n\nGenerate a well-formatted final response.`
             },
           ],
           temperature: 0.5,
@@ -240,6 +260,6 @@ export class WriterAgentService {
   }
 }
 
-export function createWriterAgentService(db: AgentDatabase, llmService?: LLMService): WriterAgentService {
-  return AopProxy(new WriterAgentService(db, llmService));
+export function createWriterAgentService(db: AgentDatabase, llmService?: LLMService, agentContextService?: AgentContextService): WriterAgentService {
+  return AopProxy(new WriterAgentService(db, llmService, agentContextService));
 }

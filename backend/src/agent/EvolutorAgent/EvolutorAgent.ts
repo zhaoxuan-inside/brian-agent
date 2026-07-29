@@ -3,6 +3,8 @@ import { Input, Context, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
+import type { AgentContextService } from '../AgentContext';
+import { BuildAgentContextInput, BuildAgentContextOutput } from '../AgentContext';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
 
@@ -38,6 +40,7 @@ function ensureTable(db: AgentDatabase): void {
 class EvalWorkAgentInput extends Input {
   agent_id!: string; work_id!: string; interact_id!: string;
   task_content!: string; agent_output!: string; trace_id!: string;
+  session_id?: string;
   constructor(d: Partial<EvalWorkAgentInput>) { super(d); Object.assign(this, d); }
 }
 class EvalWorkAgentContext extends Context { }
@@ -47,6 +50,7 @@ class EvalWriterAgentInput extends Input {
   agent_id!: string; work_id!: string; interact_id!: string;
   user_query!: string; final_response!: string;
   agent_results!: { agent_id: string; task_content: string; result: string }[];
+  session_id?: string;
   constructor(d: Partial<EvalWriterAgentInput>) { super(d); Object.assign(this, d); }
 }
 class EvalWriterAgentContext extends Context { }
@@ -99,7 +103,7 @@ export class EvolutorAgentService {
   private db: AgentDatabase;
   private activeIntervals: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(db: AgentDatabase, private llmService?: LLMService) {
+  constructor(db: AgentDatabase, private llmService?: LLMService, private agentContextService?: AgentContextService) {
     this.db = db;
     ensureTable(db);
   }
@@ -110,6 +114,23 @@ export class EvolutorAgentService {
     const agent = this.db.prepare('SELECT * FROM agent WHERE agent_id = ?').get(input.agent_id) as Record<string, unknown> | undefined;
     if (!agent) return false;
 
+    let contextText = '';
+    if (this.agentContextService && input.session_id) {
+      try {
+        const ctxOut = new BuildAgentContextOutput();
+        await this.agentContextService.buildAgentContext(
+          new BuildAgentContextInput({ session_id: input.session_id, agent_id: input.agent_id, work_id: input.work_id, trace_id: input.trace_id }),
+          {} as any,
+          ctxOut
+        );
+        if (ctxOut.context_data && ctxOut.context_data.length > 0) {
+          contextText = ctxOut.context_data.map((item: import('../AgentContext').ContextItem) => `[${item.source}] ${item.content}`).join('\n');
+        }
+      } catch (e) {
+        logger.warn(MODULE, '[evalWorkAgent] buildAgentContext failed', { error: (e as Error).message });
+      }
+    }
+
     let scores: Record<string, number>;
 
     if (this.llmService) {
@@ -118,7 +139,7 @@ export class EvolutorAgentService {
           model: '',
           messages: [
             { role: 'system', content: 'You are an evaluation agent. Score a worker agent\'s output on 4 dimensions (0-100): correctness (accuracy), completeness (thoroughness), efficiency (token/iteration efficiency), relevance (task alignment). Output JSON: {"correctness":N,"completeness":N,"efficiency":N,"relevance":N,"overall":N}.' },
-            { role: 'user', content: `Task: ${input.task_content}\n\nAgent Output: ${input.agent_output}\n\nEvaluate and output JSON only.` },
+            { role: 'user', content: `Context:\n${contextText}\n\nTask: ${input.task_content}\n\nAgent Output: ${input.agent_output}\n\nEvaluate and output JSON only.` },
           ],
           temperature: 0.1,
           maxTokens: 512,
@@ -167,6 +188,23 @@ export class EvolutorAgentService {
   async evalWriterAgent(input: EvalWriterAgentInput, _context: EvalWriterAgentContext, output: EvalWriterAgentOutput): Promise<boolean> {
     logger.info(MODULE, '[evalWriterAgent] start', { agent_id: input.agent_id });
 
+    let contextText = '';
+    if (this.agentContextService && input.session_id) {
+      try {
+        const ctxOut = new BuildAgentContextOutput();
+        await this.agentContextService.buildAgentContext(
+          new BuildAgentContextInput({ session_id: input.session_id, agent_id: input.agent_id, work_id: input.work_id, trace_id: undefined }),
+          {} as any,
+          ctxOut
+        );
+        if (ctxOut.context_data && ctxOut.context_data.length > 0) {
+          contextText = ctxOut.context_data.map((item: import('../AgentContext').ContextItem) => `[${item.source}] ${item.content}`).join('\n');
+        }
+      } catch (e) {
+        logger.warn(MODULE, '[evalWriterAgent] buildAgentContext failed', { error: (e as Error).message });
+      }
+    }
+
     let scores: Record<string, number>;
 
     if (this.llmService) {
@@ -175,7 +213,7 @@ export class EvolutorAgentService {
           model: '',
           messages: [
             { role: 'system', content: 'You are an evaluation agent. Score a writer agent\'s response on 4 dimensions (0-100): clarity (readability), informativeness (content quality), user_alignment (matches user intent), conciseness (no fluff). Output JSON: {"clarity":N,"informativeness":N,"user_alignment":N,"conciseness":N,"overall":N}.' },
-            { role: 'user', content: `User query: ${input.user_query}\n\nResponse: ${input.final_response}\n\nEvaluate and output JSON only.` },
+            { role: 'user', content: `Context:\n${contextText}\n\nUser query: ${input.user_query}\n\nResponse: ${input.final_response}\n\nEvaluate and output JSON only.` },
           ],
           temperature: 0.1,
           maxTokens: 512,
@@ -365,6 +403,6 @@ export class EvolutorAgentService {
   }
 }
 
-export function createEvolutorAgentService(db: AgentDatabase, llmService?: LLMService): EvolutorAgentService {
-  return AopProxy(new EvolutorAgentService(db, llmService));
+export function createEvolutorAgentService(db: AgentDatabase, llmService?: LLMService, agentContextService?: AgentContextService): EvolutorAgentService {
+  return AopProxy(new EvolutorAgentService(db, llmService, agentContextService));
 }

@@ -810,6 +810,57 @@ export class InformationService {
     return parts.join('\n');
   }
 
+  async context(sessionId: string, options?: { maxContextItems?: number }): Promise<{ info_id: string; content: string; source: 'pinned' | 'timeline' | 'tag_relative' | 'similarity' | 'keyword' | 'random' }[]> {
+    const max = options?.maxContextItems ?? 200;
+    const items: { info_id: string; content: string; source: 'pinned' | 'timeline' | 'tag_relative' | 'similarity' | 'keyword' | 'random' }[] = [];
+
+    const pinned = await this.getPinnedMemories();
+    for (const mem of pinned) {
+      items.push({
+        info_id: mem.graphNodeId || mem.id || uuidv4(),
+        content: mem.summary || mem.rawContent?.substring(0, 200) || '',
+        source: 'pinned',
+      });
+    }
+
+    const recentMessages = this.getRecentMessages(sessionId, 20);
+    for (const msg of recentMessages) {
+      items.push({
+        info_id: msg.id || uuidv4(),
+        content: `${msg.role}: ${msg.content?.substring(0, 500) || ''}`,
+        source: 'timeline',
+      });
+    }
+
+    const working = this.getWorking(sessionId);
+    for (const item of working.slice(0, 10)) {
+      items.push({
+        info_id: item.id,
+        content: `[${item.type}] ${item.content?.substring(0, 300) || ''}`,
+        source: 'keyword',
+      });
+    }
+
+    const queryForRetrieval = recentMessages.length > 0
+      ? recentMessages.map(m => m.content).join(' ')
+      : sessionId;
+    const retrieved = await this.retrieve(queryForRetrieval, Math.floor(max / 2));
+    for (const mem of retrieved) {
+      if (!this.isPinned(mem.graphNodeId || mem.id)) {
+        items.push({
+          info_id: mem.graphNodeId || mem.id || uuidv4(),
+          content: mem.summary || mem.rawContent?.substring(0, 200) || '',
+          source: 'similarity',
+        });
+      }
+    }
+
+    if (items.length > max) {
+      return items.slice(0, max);
+    }
+    return items;
+  }
+
   // ============================================================
   // Consolidation
   // ============================================================

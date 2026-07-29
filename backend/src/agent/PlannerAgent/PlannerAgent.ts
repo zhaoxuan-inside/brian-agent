@@ -3,6 +3,8 @@ import { Input, Context, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';
+import type { AgentContextService } from '../AgentContext';
+import { BuildAgentContextInput, BuildAgentContextOutput } from '../AgentContext';
 import type { LLMService } from '../../core/llm/LLMService';
 import type { ChatCompletionRequest } from '../../base/LLMWrapper';
 
@@ -177,6 +179,7 @@ function computeContentSimilarity(a: string, b: string): number {
 
 class PlanInput extends Input {
   work_id!: string; interact_id!: string; task_content!: string;
+  session_id?: string;
   constructor(d: Partial<PlanInput>) { super(d); Object.assign(this, d); }
 }
 class PlanContext extends Context { }
@@ -216,7 +219,7 @@ export { PlanOutput, ReplanOutput, GetPlanOutput, ConfigPlannerAgentOutput };
 export class PlannerAgentService {
   private db: AgentDatabase;
 
-  constructor(db: AgentDatabase, private llmService?: LLMService) {
+  constructor(db: AgentDatabase, private llmService?: LLMService, private agentContextService?: AgentContextService) {
     this.db = db;
     ensureTable(db);
   }
@@ -228,6 +231,23 @@ export class PlannerAgentService {
     const threshold = Number(config.complexity_decompose_threshold) || 50;
     const complexity = this.estimateComplexity(input.task_content);
     const planId = generateId();
+
+    let contextText = '';
+    if (this.agentContextService && input.session_id) {
+      try {
+        const ctxOut = new BuildAgentContextOutput();
+        await this.agentContextService.buildAgentContext(
+          new BuildAgentContextInput({ session_id: input.session_id, agent_id: undefined, work_id: input.work_id, trace_id: undefined }),
+          {} as any,
+          ctxOut
+        );
+        if (ctxOut.context_data && ctxOut.context_data.length > 0) {
+          contextText = ctxOut.context_data.map((item: import('../AgentContext').ContextItem) => `[${item.source}] ${item.content}`).join('\n');
+        }
+      } catch (e) {
+        logger.warn(MODULE, '[plan] buildAgentContext failed', { error: (e as Error).message });
+      }
+    }
 
     if (complexity < threshold) {
       const dag: TaskDag = {
@@ -251,7 +271,7 @@ export class PlannerAgentService {
             model: '',
             messages: [
               { role: 'system', content: 'You are a task decomposition planner. Break down complex tasks into smaller sub-tasks with dependencies. Output JSON with "nodes" (each: task_id, task_content, task_complexity 0-100, task_domain, priority, dependencies[]) and "edges" (each: from_task_id, to_task_id). Every task_id must be a unique random string. Dependencies must reference valid task_ids. No cycles allowed.' },
-              { role: 'user', content: `Decompose this task into sub-tasks:\n${input.task_content}\n\nOutput valid JSON only.` },
+              { role: 'user', content: `Context:\n${contextText}\n\nDecompose this task into sub-tasks:\n${input.task_content}\n\nOutput valid JSON only.` },
             ],
             temperature: 0.3,
             maxTokens: 2048,
@@ -408,6 +428,6 @@ export class PlannerAgentService {
 
 export { validateDAG, mergeSimilarTasks, type DagNode, type DagEdge, type TaskDag };
 
-export function createPlannerAgentService(db: AgentDatabase, llmService?: LLMService): PlannerAgentService {
-  return AopProxy(new PlannerAgentService(db, llmService));
+export function createPlannerAgentService(db: AgentDatabase, llmService?: LLMService, agentContextService?: AgentContextService): PlannerAgentService {
+  return AopProxy(new PlannerAgentService(db, llmService, agentContextService));
 }

@@ -42,7 +42,7 @@
    c. 若超出限额，返回 false 并记录告警日志："LLM 调用已超出限额"；
 
 3. **构建初始上下文**
-   a. 调用 InfoCore.context 构建当前 session 的上下文数据；
+   a. 调用 AgentContext.buildAgentContext({ session_id, agent_id, work_id, trace_id }) 构建当前 session 的上下文数据，同时持久化上下文快照（返回 context_data 和 context_id）；
    b. 将 task_content 拼接到上下文前端；
    c. 调用 SoulProvider.getSoul(soul_id) 获取 Soul 内容，作为系统 prompt 头部；
 

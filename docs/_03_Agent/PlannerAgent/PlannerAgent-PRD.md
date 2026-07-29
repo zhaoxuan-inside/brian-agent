@@ -63,7 +63,7 @@
    c. 若复杂度 < complexity_decompose_threshold：返回单节点 DAG（nodes 仅含 1 个原任务），直接返回 — 无需拆分；
 
 3. **任务拆解**
-   a. 调用 InfoCore.context 获取当前 session 的上下文（用于理解任务背景）；
+   a. 调用 AgentContext.buildAgentContext({ session_id }) 获取当前 session 的上下文（用于理解任务背景）；
    b. 调用 RelationDBProvider.selectOneDB 查询 `planner_agent_config` 表获取 `plan_prompt_template_id`；
    c. 调用 PromptsProvider.execPrompt 使用 `plan_prompt_template_id` 结合 `task_content` 和上下文构建拆分 prompt；
    d. 调用 LLMProvider.execLLM 生成任务拆解方案，要求输出 JSON 格式的 DAG（nodes + edges）；

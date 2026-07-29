@@ -37,3 +37,7 @@
 `trace`：轨迹，Agent 执行过程中记录的完整操作历史，包含 Think/Act/Reflect/Answer 各步骤的输入输出和耗时，用于评估和回溯；
 `plan`：规划，PlannerAgent 将任务分解为 DAG 子任务图的结果，包含节点（task_id、task_content、dependencies）和边（from_task_id → to_task_id）；
 `config`：configure 的缩写，用于配置类接口的动词前缀，表示对模块级配置的查询与更新，如 configAgentLibrary、configAgentExecution；
+`build`：构建，用于构建、创建类接口的动词前缀，表示构造并返回复杂对象或上下文数据，如 buildAgentContext、buildWriterAgent；由 AgentBuilder、AgentContext 等模块使用；
+`context_id`：上下文快照 ID，AgentContext 模块在每次调用 buildAgentContext 时生成的 UUID，用于唯一标识一次上下文构建的元数据快照，支持后续追溯和可视化；
+`snapshot`：上下文快照，AgentContext 模块持久化的某次执行上下文元数据记录，包含 context_id、session_id、agent_id、work_id、trace_id、context_total_count、context_sources_summary，不存储 info 内容本身；
+`source`：上下文来源分类，标识 info 记录在上下文中的来源渠道；有效值包括 pinned（钉住消息）、timeline（时间线关联）、tag_relative（标签相关性）、similarity（语义相似度）、keyword（关键词匹配）、random（随机采样）；

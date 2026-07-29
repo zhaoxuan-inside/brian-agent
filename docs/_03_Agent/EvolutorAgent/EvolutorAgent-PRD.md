@@ -41,7 +41,7 @@
 
 2. **加载评估上下文**
    a. 若 `trace_id` 非空：调用 AgentExecution.getTrace 获取执行追踪详情（含 Think/Act/Reflect/Answer 全链路）；
-   b. 调用 InfoCore.context 获取当前 session 的上下文（用于理解任务背景和判断输出相关性）；
+   b. 调用 AgentContext.buildAgentContext({ session_id, agent_id, work_id, trace_id }) 获取当前 session 的上下文（用于理解任务背景和判断输出相关性）；
 
 3. **执行评估**
    a. 调用 RelationDBProvider.selectOneDB 查询 `evolutor_agent_config` 表获取 `eval_work_prompt_template_id`；
@@ -91,7 +91,7 @@
 **处理流程**：
 
 1. 获取 EvolutorAgent 实例（同 evalWorkAgent 步骤 1）；
-2. 调用 InfoCore.context 获取对话上下文；
+2. 调用 AgentContext.buildAgentContext({ session_id, agent_id, work_id }) 获取对话上下文；
 3. 调用 RelationDBProvider.selectOneDB 查询 `evolutor_agent_config` 表获取 `eval_write_prompt_template_id`；
 4. 调用 PromptsProvider.execPrompt + LLMProvider.execLLM 生成四维评分和优化建议；
 5. 保存评估结果到 `agent_evaluation` 表（eval_type = WRITER）；
