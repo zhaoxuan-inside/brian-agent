@@ -114,12 +114,42 @@ export class PlannerAgentService {
     return true;
   }
 
+  /**
+   * 最大允许的 REPLAN parent 链深度（硬上限，防止无限递归重规划）。
+   *
+   * 说明：
+   * - 每次 replan 会把新 plan 的 parent_plan_id 指向旧 plan，形成链式链表；
+   * - handleDAGFailure 在达到 max_plan_retries（默认 2 次）时本就会终止，
+   *   但为了防止上层代码误用（重复调用 replan 而不推进 plan_retry_count），
+   *   此处再增加一层全局限流保护，<= 4 层时始终允许，超过即拒绝。
+   * - 该值为代码常量，不影响现有配置和测试。
+   */
+  private static readonly MAX_TOTAL_REPLAN_DEPTH = 4;
+
   async replan(input: ReplanInput, ctx: PlannerAgentContext, output: ReplanOutput): Promise<boolean> {
     const row = await this.relationDb.selectOne(AGENT_PLAN_TABLE, [
       { field: 'plan_id', operator: Operator.EQ, value: input.plan_id },
     ]);
     if (!row) throw new NotFoundError('Plan', input.plan_id);
     const old = mapPlan(row);
+
+    // ===== 新增：parent_plan_id 链深度检查，防止无限递归 =====
+    let depth = 0;
+    let cursor: string | null = old.parent_plan_id || null;
+    while (cursor) {
+      depth++;
+      if (depth > PlannerAgentService.MAX_TOTAL_REPLAN_DEPTH) {
+        throw new ValidationError(
+          `REPLAN 递归深度超过上限 (${PlannerAgentService.MAX_TOTAL_REPLAN_DEPTH})，已强制终止以防止无限循环。请检查 Planner 输出是否产生了相同的失败任务。`,
+        );
+      }
+      const parentRow = await this.relationDb.selectOne(AGENT_PLAN_TABLE, [
+        { field: 'plan_id', operator: Operator.EQ, value: cursor },
+      ]);
+      cursor = parentRow?.parent_plan_id ? String(parentRow.parent_plan_id) : null;
+    }
+    // ===== 深度检查结束 =====
+
     const oldDag = JSON.parse(old.task_dag) as TaskDag;
     const completed = new Set(input.completed_task_ids ?? []);
 

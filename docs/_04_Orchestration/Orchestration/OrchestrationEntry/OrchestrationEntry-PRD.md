@@ -36,15 +36,15 @@
 2. **保存用户请求**
    a. 调用 InfoCore.saveInfo，传入 `{ session_id, work_id, interact_id, info_creator_id: "USER", info_creator_role: "REQUEST", info: user_query }`，记录用户的原始输入；
 
-3. **构建工作上下文**
-   a. 调用 `buildWorkContext`（详见 2.4）构建完整的工作上下文数据，供后续编排策略使用；
-
-4. **选择编排策略**
+3. **选择编排策略**
    a. 若 `force_orchestration_strategy` 非空，直接使用入参指定的策略；
    b. 否则调用 `selectOrchestrationStrategy`（详见 2.2）根据任务特征自动选择策略；
 
-5. **更新 Work 状态**
-   a. 调用 RelationDBProvider.updateDB 将 `orchestration_work` 表中该 work_id 的 status 置为 "PROCESSING"；
+4. **更新 Work 状态**
+   a. 调用 RelationDBProvider.updateDB 将 `orchestration_work` 表中该 work_id 的 status 置为 "PROCESSING"，并记录选中的 orchestration_strategy；
+
+5. **构建工作上下文**
+   a. 调用 `buildWorkContext`（详见 2.4）构建完整的工作上下文数据，供后续编排策略使用；
 
 6. **启动编排**
    a. 调用 OrchestrationStrategy.startOrchestration，传入 `work_id`、`interact_id`、`user_query`、编排策略、工作上下文；

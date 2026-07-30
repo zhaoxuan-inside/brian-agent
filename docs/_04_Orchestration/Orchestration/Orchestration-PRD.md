@@ -50,9 +50,10 @@ docs/_04_Orchestration/Orchestration/
 ┌─────────────────────────────────────────────────────┐
 │ OrchestrationEntry.receiveWork                      │
 │ 1. 生成 work_id、interact_id                        │
-│ 2. 调用 InfoCore.context 构建会话上下文               │
-│ 3. 调用 InfoCore.saveInfo 保存用户请求（REQUEST）     │
-│ 4. 选择编排策略 → 调用 Strategy.start 编排            │
+│ 2. 调用 InfoCore.saveInfo 保存用户请求（REQUEST）     │
+│ 3. 选择编排策略 → 调用 selectOrchestrationStrategy   │
+│ 4. 调用 InfoCore.context 构建会话上下文               │
+│ 5. 调用 Strategy.start 启动编排                      │
 └─────────────────────────────────────────────────────┘
     │
     ▼

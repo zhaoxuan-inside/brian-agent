@@ -332,45 +332,52 @@ Simple 编排策略使用 JSONNode 的声明式定义：
       "node_type": "SAVE_USER_INPUT",
       "params": { "info_creator_role": "REQUEST", "update_work_status": "PROCESSING" },
       "next": "node_2",
-      "on_error": "node_7"
+      "on_error": "node_8"
     },
     {
       "node_id": "node_2",
       "node_type": "BUILD_WORK_CONTEXT",
       "params": { "max_recent_works": 5, "include_user_profile": true },
       "next": "node_3",
-      "on_error": "node_7"
+      "on_error": "node_8"
     },
     {
       "node_id": "node_3",
       "node_type": "BUILD_WORK_AGENT",
       "params": { "force_new": false },
       "next": "node_4",
-      "on_error": "node_7"
+      "on_error": "node_8"
     },
     {
       "node_id": "node_4",
       "node_type": "EXEC_AGENT",
       "params": { "agent_id_key": "current_agent_id", "save_result_key": "agent_answer" },
       "next": "node_5",
-      "on_error": "node_7"
+      "on_error": "node_8"
     },
     {
       "node_id": "node_5",
       "node_type": "WRITE_RESULT",
       "params": { "agent_results_key": "agent_results", "save_response_key": "final_response" },
       "next": "node_6",
-      "on_error": "node_7"
+      "on_error": "node_8"
     },
     {
       "node_id": "node_6",
-      "node_type": "SAVE_RESPONSE",
-      "params": { "response_key": "final_response", "update_work_status": "COMPLETED" },
-      "next": null,
-      "on_error": "node_7"
+      "node_type": "EVAL_RESULT",
+      "params": { "agent_results_key": "agent_results", "final_response_key": "final_response", "async": true },
+      "next": "node_7",
+      "on_error": "node_8"
     },
     {
       "node_id": "node_7",
+      "node_type": "SAVE_RESPONSE",
+      "params": { "response_key": "final_response", "update_work_status": "COMPLETED" },
+      "next": null,
+      "on_error": "node_8"
+    },
+    {
+      "node_id": "node_8",
       "node_type": "HANDLE_ERROR",
       "params": { "default_response": "抱歉，处理您的问题时出现了错误。", "update_work_status": "FAILED" },
       "next": null
