@@ -34,6 +34,7 @@ SelfLearning Application 是系统的自主学习引擎，负责驱动系统从�
 | Core | InfoCore | lastNInfo | 查询对话历史供学习 |
 | Core | MQCore | startWorker | 启动学习任务 Worker |
 | Core | MQCore | stopWorker | 停止学习任务 Worker |
+| Core | LLMCore | execLLM | 调用 LLM 执行文档学习分析 |
 | Base | GraphDBProvider | addGraphEdge | 建立 Tag 之间的边 |
 | Base | GraphDBProvider | activateGraphEdge | 激活 Tag 边 |
 | Base | GraphDBProvider | ageGraphEdge | 老化 Tag 边 |
@@ -190,25 +191,17 @@ SelfLearning Application 是系统的自主学习引擎，负责驱动系统从�
 3. 若 learning_mode 含 TAG_MAINTENANCE：调用 stopTagMaintenance 停止 Tag 图维护；
 4. 返回停止结果；
 
-#### 3.2.3. 配置随机因子（configDriverWeights）
+#### 3.2.3. 随机触发学习（委托 configSelfLearning）
 
-**功能**：配置随机触发学习的概率和各驱动因子的权重
+随机学习的触发因子和各驱动权重由 `configSelfLearning`（见 3.7 节）统一管理，不单独暴露独立的配置端点。配置项包括：
 
-**URL**：`POST /api/learning/driver`
-
-**入参（ConfigDriverWeightsInput extends Input）**：
-- random_factor（INT，可选）：随机触发因子（0-100），数值越大触发概率越高，默认 10
-- document_weight（INT，可选）：文档学习权重，默认 40
-- conversation_weight（INT，可选）：对话学习权重，默认 30
-- tag_maintenance_weight（INT，可选）：Tag 图维护权重，默认 30
-- learning_interval_ms（INT，可选）：学习检查间隔（毫秒），默认 600000（10 分钟）
-
-**处理流程**：
-
-1. 校验 random_factor 为 0-100 整数；
-2. 校验各权重为正整数；
-3. 调用 RelationDBProvider.updateDB 更新 `self_learning_config` 表；
-4. 返回更新后配置；
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| random_factor | 随机触发因子（0-100） | 10 |
+| document_weight | 文档学习权重 | 40 |
+| conversation_weight | 对话学习权重 | 30 |
+| tag_maintenance_weight | Tag 图维护权重 | 30 |
+| learning_interval_ms | 学习检查间隔（ms） | 600000 |
 
 **随机触发逻辑**（由定时 Worker 执行）：
 1. 每隔 learning_interval_ms 生成随机数（0-100）；
@@ -223,15 +216,24 @@ SelfLearning Application 是系统的自主学习引擎，负责驱动系统从�
 **处理流程**：
 
 1. 读取文件内容（Markdown 格式）；
-2. 将文件内容作为用户输入，构建一个学习 work 请求：
-   - session_id：使用系统内置的 "self_learning" session；
-   - user_query：`"请学习以下文档内容并提取关键知识：\n\n{文件内容}"`；
-   - force_orchestration_strategy：根据文件大小选择（< 5000 字 → SIMPLE，≥ 5000 字 → PLANNING）；
-3. 调用 OrchestrationEntry.receiveWorkAsync 异步提交学习 work；
-4. Work 执行完成后，Orchestration 层会通过 WriterAgent 生成学习总结，通过 EvolutorAgent 评估学习质量；
-5. 调用 InfoCore.saveInfo 将学习产生的知识保存为 info（info_creator_role=AGENT，标记为学习产出）；
-6. 更新 `self_learning_file` 表该文件状态为 COMPLETED，记录 learned_at；
-7. 若学习失败（Orchestration 返回 FAILED），记录错误信息，状态置为 FAILED；
+2. 确保 `"self_learning"` session 存在（首次调用时自动创建）：
+   a. 调用 RelationDBProvider.selectOneDB 查询 `chat_session` 表（库名=chat），session_id=`"self_learning"`；
+   b. 若不存在，调用 RelationDBProvider.insertDB 创建系统内置会话记录 `{ session_id: "self_learning", session_title: "系统自主学习" }`；
+3. 调用 RelationDBProvider.selectOneDB 查询 `self_learning_config` 表获取 `document_split_threshold`（默认 5000 字符）；
+4. 若文件字符数 > `document_split_threshold`，执行分块策略：
+   a. 按 Markdown 标题（`##` 或 `#`）分隔为多个章节块（chunk）；
+   b. 每个章节块作为独立的学习单元处理；
+   c. 若单个章节块仍超过阈值，按固定大小（`document_split_threshold` 字符）继续切分；
+   d. 各分块按顺序依次学习，前一个分块完成后再处理下一个；
+5. 将当前块内容作为用户输入，构建一个学习 work 请求：
+   - session_id：使用系统内置的 `"self_learning"` session；
+   - user_query：`"请学习以下文档内容并提取关键知识：\n\n{块内容}"`；
+   - force_orchestration_strategy：根据块大小选择（< `document_split_threshold` → SIMPLE，≥ `document_split_threshold` → PLANNING）；
+6. 调用 OrchestrationEntry.receiveWorkAsync 异步提交学习 work；
+7. Work 执行完成后，Orchestration 层会通过 WriterAgent 生成学习总结，通过 EvolutorAgent 评估学习质量；
+8. 调用 InfoCore.saveInfo 将学习产生的知识保存为 info（info_creator_role=AGENT，标记为学习产出）；
+9. 所有分块处理完成后，更新 `self_learning_file` 表该文件状态为 COMPLETED，记录 learned_at；
+10. 若任一阶段学习失败（Orchestration 返回 FAILED），记录错误信息，状态置为 FAILED；
 
 ### 3.4. Tag 图维护
 
@@ -435,15 +437,6 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
       "last_run_at": 1234567890,
       "next_run_at": 1234567890,
       "status": "ENABLED"
-    },
-    {
-      "task_id": "builtin_4",
-      "task_name": "随机获取用户消息建立用户画像",
-      "task_type": "USER_PROFILE",
-      "cron": "0 0 */6 * * *",
-      "last_run_at": 1234567890,
-      "next_run_at": 1234567890,
-      "status": "ENABLED"
     }
   ]
 }
@@ -520,27 +513,24 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 4. 调用 RelationDBProvider.selectDB 查询 `self_learning_task` 表统计本周学习次数趋势；
 5. 组装返回；
 
-### 3.7. 配置（configSelfLearning）
+### 3.7. 配置（委托 Config Application）
 
-**功能**：配置 SelfLearning Application 的参数
+SelfLearning 模块的配置通过 Config Application 统一管理（`/api/config/update`，config_key 前缀 `self_learning.`）。SelfLearning 对内保留 `configSelfLearning` 方法供 Config Application 代理调用，不对外暴露独立 HTTP 配置端点。随机学习的驱动因子权重也由此方法统一管理（不再单独暴露 `configDriverWeights`）。
 
-**URL**：`POST /api/learning/config`
+对内 `configSelfLearning` 方法管理的可配置项：
 
-**入参**：
-- input：ConfigSelfLearningInput（继承 Input），包含以下字段：
-  - random_factor（INT，可选）：随机触发因子，默认 10
-  - document_weight（INT，可选）：文档学习权重，默认 40
-  - conversation_weight（INT，可选）：对话学习权重，默认 30
-  - tag_maintenance_weight（INT，可选）：Tag 图维护权重，默认 30
-  - learning_interval_ms（INT，可选）：学习检查间隔，默认 600000
-  - default_learning_rate（INT，可选）：默认学习速率，默认 5
-  - tag_connection_check_interval_ms（INT，可选）：Tag 连接检查间隔，默认 1800000（30 分钟）
-  - tag_aging_cron（STRING，可选）：Tag 老化 cron 表达式，默认 "0 0 2 * * *"
-  - orphan_tag_check_cron（STRING，可选）：孤立 Tag 检测 cron，默认 "0 0 3 * * *"
-  - document_split_threshold（INT，可选）：文档拆分阈值（字数），默认 5000
-- context：ConfigSelfLearningContext（继承 Context）
-- output：ConfigSelfLearningOutput（继承 Output），承载返回内容：
-  - 当前生效的全部配置
+| 配置项 | config_key | 类型 | 默认值 | 说明 |
+|--------|-----------|------|--------|------|
+| random_factor | `self_learning.random_factor` | INT | 10 | 随机触发因子（0-100） |
+| document_weight | `self_learning.document_weight` | INT | 40 | 文档学习权重 |
+| conversation_weight | `self_learning.conversation_weight` | INT | 30 | 对话学习权重 |
+| tag_maintenance_weight | `self_learning.tag_maintenance_weight` | INT | 30 | Tag 图维护权重 |
+| learning_interval_ms | `self_learning.learning_interval_ms` | INT | 600000 | 学习检查间隔（ms） |
+| default_learning_rate | `self_learning.default_learning_rate` | INT | 5 | 默认学习速率 |
+| tag_connection_check_interval_ms | `self_learning.tag_connection_check_interval_ms` | INT | 1800000 | Tag 连接检查间隔（ms） |
+| tag_aging_cron | `self_learning.tag_aging_cron` | STRING | "0 0 2 * * *" | Tag 老化 cron 表达式 |
+| orphan_tag_check_cron | `self_learning.orphan_tag_check_cron` | STRING | "0 0 3 * * *" | 孤立 Tag 检测 cron |
+| document_split_threshold | `self_learning.document_split_threshold` | INT | 5000 | 文档拆分阈值（字符数） |
 
 **处理流程**：
 
@@ -553,13 +543,17 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 
 1. 所有方法通过代理模式（AOP）增加切面注入能力，默认记录日志和耗时；
 2. 自学习任务通过 MQ 异步执行，不阻塞主流程；文档学习委托给 Orchestration 层（receiveWorkAsync），由 Orchestration 层负责 Agent 编排和执行；
-3. Tag 图维护是核心学习方向，包含三个子任务：相似性连接建立（graphTag）、连接激活（activateGraphEdge）、连接老化（ageGraphEdge），三者协同工作维持 Tag 图的动态平衡；
-4. Tag 连接老化是动态可逆的——被老化的边在后续被激活后会自动恢复为活跃状态；
-5. 学习速率控制：通过 MQ 消费速率和 learning_rate 配置避免短时间内大量调用 LLM 造成成本过高；
-6. 内置学习任务不可删除，但可以通过配置 cron 表达式调整执行频率；
-7. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
-8. 所有日志通过 LogProvider 记录，禁止 console.log；
-9. 所有 ID 通过 IdGenerator.generate() 生成；
+3. 文档分块策略：超过 `document_split_threshold` 字符的文件按 Markdown 标题分隔为章节块依次学习，避免单次请求超出 LLM 上下文窗口；
+4. 系统内置 `"self_learning"` session 由 SelfLearning 模块在首次使用时自动创建，用于承载文档学习的 work 上下文；
+5. Tag 图维护是核心学习方向，包含三个子任务：相似性连接建立（graphTag）、连接激活（activateGraphEdge）、连接老化（ageGraphEdge），三者协同工作维持 Tag 图的动态平衡；
+6. Tag 连接老化是动态可逆的——被老化的边在后续被激活后会自动恢复为活跃状态；
+7. 学习速率控制：通过 MQ 消费速率和 learning_rate 配置避免短时间内大量调用 LLM 造成成本过高；
+8. 内置学习任务不可删除，但可以通过配置 cron 表达式调整执行频率；
+9. **用户画像生成调度归口 UserProfile Application**：SelfLearning 不维护独立的 USER_PROFILE 定时任务；
+10. 配置管理委托 Config Application：SelfLearning 不对前端暴露独立配置端点，对内保留 configSelfLearning 供 Config Application 代理；
+11. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
+12. 所有日志通过 LogProvider 记录，禁止 console.log；
+13. 所有 ID 通过 IdGenerator.generate() 生成；
 
 ## 5. 表设计
 
@@ -610,7 +604,7 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 | updated | 最后更新时间 | timestamp | N | 普通索引 | |
 | task_id | 任务 ID | UUID | N | 唯一索引 | |
 | task_name | 任务名称 | VARCHAR | N | | |
-| task_type | 任务类型 | ENUM | N | | DOCUMENT / CONVERSATION / TAG_MAINTENANCE / USER_PROFILE |
+| task_type | 任务类型 | ENUM | N | | DOCUMENT / CONVERSATION / TAG_MAINTENANCE |
 | status | 任务状态 | ENUM | N | 普通索引 | PENDING / RUNNING / COMPLETED / FAILED |
 | progress | 进度百分比 | INT | N | | 0-100 |
 | scheduled_at | 计划执行时间 | timestamp | Y | | |
@@ -630,7 +624,7 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 | updated | 最后更新时间 | timestamp | N | 普通索引 | |
 | task_id | 任务 ID | UUID | N | 唯一索引 | 内置任务 ID 固定 |
 | task_name | 任务名称 | VARCHAR | N | | |
-| task_type | 任务类型 | ENUM | N | | TAG_MAINTENANCE_CONNECTION / TAG_MAINTENANCE_ESTABLISH / TAG_MAINTENANCE_AGING / USER_PROFILE |
+| task_type | 任务类型 | ENUM | N | | TAG_MAINTENANCE_CONNECTION / TAG_MAINTENANCE_ESTABLISH / TAG_MAINTENANCE_AGING |
 | cron | cron 表达式 | VARCHAR | N | | |
 | last_run_at | 上次执行时间 | timestamp | Y | | |
 | next_run_at | 下次执行时间 | timestamp | Y | | |
@@ -692,7 +686,7 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 | 前端页面需求 | 对应接口 | 说明 |
 |------------|---------|------|
 | 开始/暂停学习 | startLearning / stopLearning | 控制学习启停 |
-| 随机因子配置 | configDriverWeights | 配置随机触发概率 |
+| 随机因子配置 | 委托 Config Application | `POST /api/config/update` (config_key=self_learning.*) |
 | 学习模式选择 | startLearning（learning_mode） | 选择文档/对话/Tag图维护 |
 | 当前任务卡片 | getLearningProgress | 展示当前执行任务 |
 | 任务队列 | getLearningProgress | 待执行任务列表 |

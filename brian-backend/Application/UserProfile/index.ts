@@ -1,0 +1,25 @@
+export { UserProfileAccess } from './access/UserProfileAccess';
+
+export {
+  UserProfileContext,
+  ConfigProfileDirectionInput,
+  ConfigProfileDirectionOutput,
+  GetProfileDirectionInput,
+  GetProfileDirectionOutput,
+  GetUserProfileInput,
+  GetUserProfileOutput,
+  GenerateProfileInput,
+  GenerateProfileOutput,
+  SaveUserPreferenceInput,
+  SaveUserPreferenceOutput,
+  GetProfileHistoryInput,
+  GetProfileHistoryOutput,
+  GetProfileByVersionInput,
+  GetProfileByVersionOutput,
+  ConfigUserProfileInput,
+  ConfigUserProfileOutput,
+  USER_PROFILE_DIRECTION_TABLE,
+  USER_PROFILE_RECORD_TABLE,
+  USER_PROFILE_DIMENSION_DATA_TABLE,
+  USER_PROFILE_CONFIG_TABLE,
+} from './domain/types';

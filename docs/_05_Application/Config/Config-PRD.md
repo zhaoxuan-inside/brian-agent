@@ -3,10 +3,11 @@
 ## 1. 设计目标
 
 1. 为整个系统提供配置注册机制，本层及以下所有层的所有模块均可通过注册声明自己的配置项；
-2. 管理所有配置项的可见性（readable）和可修改性（writable）权限，支持运行时动态调整；
+2. 管理所有配置项的可见性（readable）和可修改性（writable）权限，**采用三级层级继承控制模型**（层级 → 模块 → 功能/分类），上层权限约束下层，支持运行时动态调整；
 3. 提供统一的配置查询入口，支持按分层（Base/Core/Agent/Orchestration/Application）→ 模块 → 配置分类 → 配置项的层级结构浏览；
 4. 封装下层各模块的 config* 接口，Application 层之上的 HTTP 路由统一通过 Config Application 访问配置，不直接调用下层 config* 方法；
-5. 所有带 `_config` 后缀的表为模块可配置的项目，Config Application 需要能发现并管理这些配置。
+5. 所有带 `_config` 后缀的表为模块可配置的项目，Config Application 需要能发现并管理这些配置；
+6. **Application 层其他模块（Chat、UserProfile、SelfLearning、Visualization）不得对外暴露独立 HTTP 配置端点**（如 `/api/chat/config`、`/api/profile/config` 等），其配置通过 Config Application 的 `/api/config/update` 统一修改。
 
 ## 2. 模块职责
 
@@ -64,6 +65,50 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 | readable | BOOLEAN | 是否可查看，默认 true |
 | writable | BOOLEAN | 是否可修改，默认 true |
 
+### 2.1. 三级层级继承权限模型
+
+配置的可见性和可配置性采用三级层级继承控制：**层级（Layer）→ 模块（Module）→ 功能/分类（Category）**。上层权限约束下层，下级权限不能突破上级限制。
+
+**核心规则**：
+
+| 上级权限状态 | 下级权限约束 |
+|------------|------------|
+| 上级 readable=false | 下级所有节点强制 readable=false（不可见） |
+| 上级 readable=true, writable=false | 下级 writable 强制=false（不可修改），readable 可自由设置 |
+| 上级 readable=true, writable=true | 下级 readable 和 writable 可自由设置，但受自身上级约束 |
+
+**示例**：
+
+| 场景 | 层级 | 模块 | 功能 | 结果 |
+|------|------|------|------|------|
+| 整层不可见 | Base: readable=false | — | — | Base 层所有模块、功能均不可见 |
+| 层可见但不可改 | Core: readable=true, writable=false | LLMCore: readable=true, writable=true | regen_rate: readable=true, writable=true | LLMCore 可见但不可修改（模块 writable 被层级强制为 false） |
+| 模块不可见 | Agent: readable=true, writable=true | WriterAgent: readable=false | — | WriterAgent 所有配置不可见 |
+| 模块可见但不可改 | Agent: readable=true, writable=true | EvolutorAgent: readable=true, writable=false | optimize_threshold: readable=true, writable=true | optimize_threshold 可见但不可修改（功能 writable 被模块强制为 false） |
+
+**有效权限计算**（递推规则）：
+
+```
+effective_readable(node) = parent.effective_readable AND node.readable
+effective_writable(node) = parent.effective_writable AND node.writable
+```
+
+其中 `parent` 对于功能/分类节点是其所属模块，对于模块节点是其所属层级，对于层级节点 parent 视为 `{ readable: true, writable: true }`（层级本身无上级约束）。
+
+**权限修改约束**：修改下级节点的 readable/writable 时，若修改后的值超过了上级约束，操作被拒绝。
+
+例如：层级 Base 的 writable=false，尝试设置 LLMProvider 模块的 writable=true → 拒绝（上级 writable 已为 false）。
+
+### 2.2. 配置注册模型（同 2.0 节，此处补充层级权限元数据）
+
+各模块注册配置时除提供配置项元数据外，还需注册层级和模块的默认权限（首次注册时，后续通过权限管理接口调整）。
+
+**层级权限（layer_privilege 表）**：每个层级一行，记录该层的默认 readable/writable。
+
+**模块权限（module_privilege 表）**：每个模块一行，记录该模块的默认 readable/writable。
+
+**功能/分类权限**：沿用 config_registry 表中每个配置项的 readable/writable 字段。
+
 ## 3. 功能设计
 
 ### 3.1. 配置元数据管理
@@ -83,9 +128,49 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 2. 调用 RelationDBProvider.insertDB 向 `config_registry` 表（库名=config）写入配置元数据（upsert 语义：按 config_key 唯一约束，存在则更新，不存在则新增）；
 3. 返回注册成功的配置项数量；
 
-#### 3.1.2. 更新配置权限（updateConfigPrivilege）
+#### 3.1.2. 层级与模块权限管理
 
-**功能**：修改配置项的可见性和可修改性
+##### 3.1.2.1. 设置层级权限（updateLayerPrivilege）
+
+**功能**：设置指定层级的可见性和可修改性，影响该层下所有模块和配置项
+
+**URL**：`POST /api/config/privilege/layer`
+
+**入参（UpdateLayerPrivilegeInput extends Input）**：
+- layer（ENUM，必选）：分层标识（BASE / CORE / AGENT / ORCHESTRATION / APPLICATION）
+- readable（BOOLEAN，可选）：是否可查看
+- writable（BOOLEAN，可选）：是否可修改
+
+**处理流程**：
+
+1. 校验 layer 合法；
+2. 调用 RelationDBProvider.insertDB 向 `config_layer_privilege` 表（库名=config）写入/更新层级权限（upsert 语义）；
+3. 若 readable 从 true 变为 false：该层下所有模块和配置项在前端展示时自动隐藏（effective_readable=false）；
+4. 若 writable 从 true 变为 false：该层下所有模块和配置项的 effective_writable 强制为 false，前端表单控件变为只读；
+5. 返回更新后的层级权限；
+
+##### 3.1.2.2. 设置模块权限（updateModulePrivilege）
+
+**功能**：设置指定模块的可见性和可修改性，影响该模块下所有配置项
+
+**URL**：`POST /api/config/privilege/module`
+
+**入参（UpdateModulePrivilegeInput extends Input）**：
+- module（STRING，必选）：模块名称
+- readable（BOOLEAN，可选）：是否可查看
+- writable（BOOLEAN，可选）：是否可修改
+
+**权限修改约束**：
+
+1. 调用 RelationDBProvider.selectOneDB 查询 `config_layer_privilege` 表获取该模块所属层级的权限；
+2. 若层级 readable=false，则模块 readable 不可设置为 true（拒绝操作）；
+3. 若层级 writable=false，则模块 writable 不可设置为 true（拒绝操作）；
+4. 权限修改合法后，调用 RelationDBProvider.insertDB 向 `config_module_privilege` 表写入/更新（upsert 语义）；
+5. 返回更新后的模块权限（含 effective_readable 和 effective_writable）；
+
+##### 3.1.2.3. 设置功能/配置项权限（updateConfigPrivilege）
+
+**功能**：修改单个配置项的可见性和可修改性（受层级和模块权限约束）
 
 **URL**：`POST /api/config/privilege`
 
@@ -94,11 +179,75 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 - readable（BOOLEAN，可选）：是否可查看
 - writable（BOOLEAN，可选）：是否可修改
 
-**处理流程**：
+**权限修改约束**：
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `config_registry` 表确认 config_key 存在；
-2. 调用 RelationDBProvider.updateDB 更新 readable 和/或 writable 字段；
-3. 返回更新后的权限状态；
+2. 根据 config_key 定位所属模块和层级，查询 `config_module_privilege` 和 `config_layer_privilege` 表获取上级权限；
+3. 若模块 effective_readable=false，则 config_key 的 readable 不可设置为 true（拒绝操作）；
+4. 若模块 effective_writable=false，则 config_key 的 writable 不可设置为 true（拒绝操作）；
+5. 权限修改合法后，调用 RelationDBProvider.updateDB 更新 config_registry 中的 readable/writable 字段；
+6. 返回更新后的权限状态（含 effective_readable 和 effective_writable）；
+
+##### 3.1.2.4. 获取完整权限树（getPrivilegeTree）
+
+**功能**：获取整个系统的层级→模块→功能的权限树，展示各级的原始权限和有效权限
+
+**URL**：`GET /api/config/privilege/tree`
+
+**输出**：
+```json
+{
+  "layers": [
+    {
+      "layer": "BASE",
+      "layer_name": "基础层",
+      "readable": true,
+      "writable": true,
+      "effective_readable": true,
+      "effective_writable": true,
+      "modules": [
+        {
+          "module": "LLMProvider",
+          "module_name": "LLM Provider",
+          "readable": true,
+          "writable": true,
+          "effective_readable": true,
+          "effective_writable": true,
+          "categories": [
+            {
+              "category": "llm_provider",
+              "category_name": "LLM 提供商",
+              "readable": true,
+              "writable": true,
+              "effective_readable": true,
+              "effective_writable": true,
+              "configs": [
+                {
+                  "config_key": "llm_provider.default_enable",
+                  "config_name": "默认启用状态",
+                  "readable": true,
+                  "writable": true,
+                  "effective_readable": true,
+                  "effective_writable": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**处理流程**：
+
+1. 调用 RelationDBProvider.selectDB 查询 `config_layer_privilege` 表获取所有层级权限；
+2. 调用 RelationDBProvider.selectDB 查询 `config_module_privilege` 表获取所有模块权限；
+3. 调用 RelationDBProvider.selectDB 查询 `config_registry` 表获取所有配置项；
+4. 按层级 → 模块 → 功能/分类组装权限树；
+5. 对每个节点，按递推规则计算 effective_readable 和 effective_writable；
+6. 返回完整权限树；
 
 ### 3.2. 配置查询
 
@@ -128,12 +277,16 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
           "module_description": "LLM 提供商与模型管理",
           "readable": true,
           "writable": true,
+          "effective_readable": true,
+          "effective_writable": true,
           "categories": [
             {
               "category": "llm_provider",
               "category_name": "LLM 提供商",
               "readable": true,
               "writable": true,
+              "effective_readable": true,
+              "effective_writable": true,
               "configs": [
                 {
                   "config_key": "llm_provider.default_enable",
@@ -143,7 +296,9 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
                   "config_default": true,
                   "current_value": true,
                   "readable": true,
-                  "writable": true
+                  "writable": true,
+                  "effective_readable": true,
+                  "effective_writable": true
                 }
               ]
             }
@@ -157,11 +312,19 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 
 **处理流程**：
 
-1. 调用 RelationDBProvider.selectDB 查询 `config_registry` 表（按 layer/module/category 可选过滤）；
-2. 按 layer → module → category 层级分组；
-3. 对每个配置项，调用对应的下层 config* 接口获取当前值（current_value）；
-4. 若 readable_only=true，过滤掉 readable=false 的配置项；
-5. 返回层级结构数据；
+1. 调用 RelationDBProvider.selectDB 查询 `config_layer_privilege` 表获取所有层级权限；
+2. 调用 RelationDBProvider.selectDB 查询 `config_module_privilege` 表获取所有模块权限；
+3. 调用 RelationDBProvider.selectDB 查询 `config_registry` 表（按 layer/module/category 可选过滤）；
+4. 按 layer → module → category 层级分组；
+5. 对每个节点（层级、模块、分类、配置项），按递推规则计算 effective_readable 和 effective_writable：
+   - 层级的 effective = 原始值（层级无上级）；
+   - 模块的 effective_readable = 层级 effective_readable AND 模块 readable；
+   - 模块的 effective_writable = 层级 effective_writable AND 模块 writable；
+   - 分类的 effective = 模块 effective AND 分类原始值；
+   - 配置项的 effective = 分类 effective AND 配置项原始值；
+6. 对每个配置项，调用对应的下层 config*/get* 接口获取当前值（current_value）；
+7. 若 readable_only=true，过滤掉 effective_readable=false 的节点（整个子树不可见时一并过滤）；
+8. 返回层级结构数据（含 effective_readable 和 effective_writable）；
 
 #### 3.2.2. 获取单个配置项详情（getConfigItem）
 
@@ -178,9 +341,10 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 **处理流程**：
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `config_registry` 表获取元数据；
-2. 校验 readable 权限，若不可查看则返回 403；
-3. 调用对应下层模块的 config*/get* 接口获取当前值；
-4. 返回完整配置项数据；
+2. 根据 config_key 定位所属模块和层级，查询 `config_module_privilege` 和 `config_layer_privilege` 表计算 effective_readable；
+3. 校验 effective_readable 权限，若不可查看则返回 403；
+4. 调用对应下层模块的 config*/get* 接口获取当前值；
+5. 返回完整配置项数据（含 effective_readable 和 effective_writable）；
 
 ### 3.3. 配置修改
 
@@ -197,12 +361,13 @@ Config Application 是系统配置的统一管理入口，采用"注册 + 代理
 **处理流程**：
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `config_registry` 表获取元数据；
-2. 校验 writable 权限，若不可修改则返回 403；
-3. 校验 value 类型与 config_type 匹配；
-4. 若 config_type=ENUM，校验 value 在 config_enum_values 中；
-5. 根据 config_key 路由到对应的下层模块 config* 方法，传入新值；
-6. 调用下层方法执行配置更新；
-7. 返回更新结果；
+2. 根据 config_key 定位所属模块和层级，查询 `config_module_privilege` 和 `config_layer_privilege` 表计算 effective_writable；
+3. 校验 effective_writable 权限，若不可修改则返回 403；
+4. 校验 value 类型与 config_type 匹配；
+5. 若 config_type=ENUM，校验 value 在 config_enum_values 中；
+6. 根据 config_key 路由到对应的下层模块 config* 方法，传入新值；
+7. 调用下层方法执行配置更新；
+8. 返回更新结果；
 
 **配置路由映射表**（config_key → 下层接口）：
 
@@ -359,12 +524,14 @@ Config Application 同时作为 Base 层资源（LLM、Soul、Skill、MCP、Prom
 
 1. 所有方法通过代理模式（AOP）增加切面注入能力，默认记录日志和耗时；
 2. Config Application 是系统配置的唯一对外入口，前端只与 Config Application 交互，不直接调用下层模块的 config* 方法；
-3. 配置权限控制：每次读写配置前校验 readable/writable 权限，无权限时返回 403；
-4. 配置类型校验：修改配置时校验 value 类型与 config_type 匹配，ENUM 类型校验枚举值范围；
-5. 配置注册时机：各模块在初始化（app.ts DI 阶段）时调用 registerConfig 注册自身配置元数据；
-6. 配置路由：updateConfig 根据 config_key 的前缀（如 "llm_core."、"writer_agent."）路由到对应下层模块的 config* 方法；
-7. 所有日志通过 LogProvider 记录，禁止 console.log；
-8. 所有 ID 通过 IdGenerator.generate() 生成；
+3. **Application 层其他模块的 config* 方法为内部接口**，仅供 Config Application 代理调用，不对前端暴露独立 HTTP 端点。违规示例：`/api/chat/config`、`/api/profile/config`、`/api/learning/config`、`/api/visualization/config`；
+4. 配置权限控制采用**三级层级继承模型**（层级 → 模块 → 功能/分类），上层权限约束下层，下级权限不能突破上级限制。权限校验以 effective_readable 和 effective_writable 为准，而非原始值；
+5. 权限修改约束：修改下级节点的 readable/writable 时，若修改后的值超过了上级约束，操作被拒绝（如层级 writable=false 时，不可将模块 writable 设为 true）；
+6. 配置类型校验：修改配置时校验 value 类型与 config_type 匹配，ENUM 类型校验枚举值范围；
+7. 配置注册时机：各模块在初始化（app.ts DI 阶段）时调用 registerConfig 注册自身配置元数据；
+8. 配置路由：updateConfig 根据 config_key 的前缀（如 "llm_core."、"writer_agent."）路由到对应下层模块的 config* 方法；
+9. 所有日志通过 LogProvider 记录，禁止 console.log；
+10. 所有 ID 通过 IdGenerator.generate() 生成；
 
 ## 5. 表设计
 
@@ -390,7 +557,36 @@ Config Application 同时作为 Base 层资源（LLM、Soul、Skill、MCP、Prom
 | readable | 是否可查看 | BOOLEAN | N | | 默认 true |
 | writable | 是否可修改 | BOOLEAN | N | | 默认 true |
 
-### 5.2. Config 自身配置表（SQLite）
+### 5.2. 层级权限表（SQLite）
+
+- 表名：config_layer_privilege
+- 库名：config
+
+| 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
+| ------ | ----- | ----- | ----- | ----- | ----- |
+| id | 数据唯一标识 | UUID | N | 主键 | |
+| created | 创建时间 | timestamp | N | 普通索引 | |
+| updated | 最后更新时间 | timestamp | N | 普通索引 | |
+| layer | 分层标识 | ENUM | N | 唯一索引 | BASE / CORE / AGENT / ORCHESTRATION / APPLICATION |
+| readable | 是否可查看 | BOOLEAN | N | | 默认 true |
+| writable | 是否可修改 | BOOLEAN | N | | 默认 true |
+
+### 5.3. 模块权限表（SQLite）
+
+- 表名：config_module_privilege
+- 库名：config
+
+| 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
+| ------ | ----- | ----- | ----- | ----- | ----- |
+| id | 数据唯一标识 | UUID | N | 主键 | |
+| created | 创建时间 | timestamp | N | 普通索引 | |
+| updated | 最后更新时间 | timestamp | N | 普通索引 | |
+| module | 模块名称 | VARCHAR | N | 唯一索引 | 如 "LLMCore"、"WriterAgent" |
+| layer | 所属分层 | ENUM | N | 普通索引 | 关联 config_layer_privilege.layer |
+| readable | 是否可查看 | BOOLEAN | N | | 默认 true |
+| writable | 是否可修改 | BOOLEAN | N | | 默认 true |
+
+### 5.4. Config 自身配置表（SQLite）
 
 - 表名：config_config
 - 库名：config
@@ -413,8 +609,11 @@ Config Application 同时作为 Base 层资源（LLM、Soul、Skill、MCP、Prom
 | 第四层：配置区 | getConfigDetail（category 过滤） | 展示配置分类的具体配置项 |
 | 第五层：配置读写区 | getConfigItem / updateConfig | 查看/修改具体配置项 |
 | 面包屑导航 | 基于 getConfigDetail 层级数据 | 前端自行构建面包屑 |
-| 颜色状态（绿色/灰色） | getConfigDetail（返回 readable/writable） | 前端根据权限渲染颜色 |
-| LLM 模型管理 | LLM 管理代理接口 | 增删改查 LLM 提供商和模型 |
+| 颜色状态（绿色/灰色） | getConfigDetail（返回 effective_readable/effective_writable） | 前端根据有效权限渲染颜色 |
+| 层级权限控制 | updateLayerPrivilege | 控制整层的可见性和可修改性 |
+| 模块权限控制 | updateModulePrivilege | 控制模块的可见性和可修改性 |
+| 配置权限控制 | updateConfigPrivilege | 控制单个配置项的可见性和可修改性 |
+| 权限树查看 | getPrivilegeTree | 查看完整权限层级树 |
 | Soul 管理 | Soul 管理代理接口 | 增删改查 Soul |
 | Skill 管理 | Skill 管理代理接口 | 增删改查 Skill |
 | MCP 管理 | MCP 管理代理接口 | 安装/启停/卸载 MCP |

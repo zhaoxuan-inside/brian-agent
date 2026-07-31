@@ -2,7 +2,7 @@
 
 ## 1. 设计目标
 
-1. 支持配置要建立用户画像的分析方向（如语言偏好、回复风格偏好、知识兴趣领域、交互习惯等），指导 EvolutorAgent 和系统学习模块建立这些方向的画像；
+1. 支持配置要建立用户画像的分析方向（如语言偏好、回复风格偏好、知识兴趣领域、交互习惯、行业、学术领域等），指导 EvolutorAgent 和系统学习模块建立这些方向的画像；
 2. 展示系统对用户的多维度画像数据，供前端用户画像页面展示；
 3. 管理用户画像的生成时机和更新策略（手动触发/定时触发/事件触发）；
 4. 提供用户画像数据的历史版本追溯，展示画像随时间的演变趋势。
@@ -25,10 +25,12 @@ UserProfile Application 是用户画像的管理和展示层，负责：
 | Core | InfoCore | lastNInfo | 查询用户对话历史 |
 | Core | InfoCore | context | 构建会话上下文 |
 | Core | InfoCore | relationKInfo | 基于 Tag 相关性分析用户兴趣 |
+| Core | LLMCore | execLLM | 调用 LLM 分析用户画像（画像生成） |
 | Base | RelationDBProvider | insertDB / selectDB / updateDB / deleteDB | 画像维度配置和画像数据 CRUD |
-| Base | LLMProvider | execLLM | 调用 LLM 分析用户画像（画像生成） |
 | Base | PromptsProvider | execPrompt | 使用 Prompt 模板构建画像分析 prompt |
 | Base | LogProvider | debug / info / warn / error | 日志记录 |
+
+> **外部资源访问约束**：UserProfile 通过 `LLMCore.execLLM` 调用 LLM 推理能力（而非直接调用 `LLMProvider.execLLM`），遵循 Core 层作为统一资源调度入口的架构原则。
 
 ## 3. 功能设计
 
@@ -197,7 +199,7 @@ UserProfile Application 是用户画像的管理和展示层，负责：
    c. **knowledge_interest**：调用 InfoCore.relationKInfo 基于 Tag 分析用户兴趣领域，统计 info_tag 表中高频 Tag；
    d. **interaction_habit**：调用 RelationDBProvider.selectDB 统计对话行为（平均提问长度、引用频率、活跃时段）；
    e. **feedback_sensitivity**：调用 EvolutorAgent.getEvaluation 获取评估历史和用户反馈倾向；
-4. 调用 PromptsProvider.execPrompt + LLMProvider.execLLM 生成 profile_summary（自然语言画像总结）；
+4. 调用 PromptsProvider.execPrompt 构建画像分析 prompt，再调用 LLMCore.execLLM 生成 profile_summary（自然语言画像总结）；
 5. 调用 RelationDBProvider.selectDB 查询 `user_profile_record` 表获取画像版本演变历史；
 6. 组装完整画像数据返回；
 
@@ -217,7 +219,7 @@ UserProfile Application 是用户画像的管理和展示层，负责：
 2. 调用 InfoCore.lastNInfo 获取用户对话历史（指定 session_id 或全部）；
 3. 对每个指定维度，调用 LLM 进行分析：
    a. 调用 PromptsProvider.execPrompt 使用画像分析 prompt 模板构建 prompt；
-   b. 调用 LLMProvider.execLLM 执行分析，生成维度值；
+   b. 调用 LLMCore.execLLM 执行分析，生成维度值；
 4. 汇总各维度分析结果，生成 profile_summary；
 5. 调用 RelationDBProvider.insertDB 将新版本画像写入 `user_profile_record` 表；
 6. 调用 RelationDBProvider.insertDB 批量写入各维度数据到 `user_profile_dimension_data` 表；
@@ -282,22 +284,19 @@ UserProfile Application 是用户画像的管理和展示层，负责：
 2. 调用 RelationDBProvider.selectDB 查询 `user_profile_dimension_data` 表获取该版本各维度数据；
 3. 组装返回；
 
-### 3.4. 配置（configUserProfile）
+### 3.4. 配置（委托 Config Application）
 
-**功能**：配置 UserProfile Application 的参数
+UserProfile 模块的配置通过 Config Application 统一管理（`/api/config/update`，config_key 前缀 `user_profile.`）。UserProfile 对内保留 `configUserProfile` 方法供 Config Application 代理调用，不对外暴露独立 HTTP 配置端点。
 
-**URL**：`POST /api/profile/config`
+对内 `configUserProfile` 方法管理的可配置项：
 
-**入参**：
-- input：ConfigUserProfileInput（继承 Input），包含以下字段：
-  - auto_generate_interval_ms（INT，可选）：自动生成画像间隔（毫秒），默认 86400000（24 小时）
-  - profile_analysis_prompt_template_id（STRING，可选）：画像分析 prompt 模板 ID
-  - max_conversation_sample_count（INT，可选）：画像分析时采样的最大对话数，默认 500
-  - profile_retention_versions（INT，可选）：保留的画像历史版本数，默认 20
-  - min_confidence_threshold（DOUBLE，可选）：画像维度置信度最低阈值，默认 0.5
-- context：ConfigUserProfileContext（继承 Context）
-- output：ConfigUserProfileOutput（继承 Output），承载返回内容：
-  - 当前生效的全部配置
+| 配置项 | config_key | 类型 | 默认值 | 说明 |
+|--------|-----------|------|--------|------|
+| auto_generate_interval_ms | `user_profile.auto_generate_interval_ms` | INT | 86400000 | 自动生成间隔（ms，默认 24h） |
+| profile_analysis_prompt_template_id | `user_profile.profile_analysis_prompt_template_id` | STRING | — | 画像分析 prompt 模板 ID |
+| max_conversation_sample_count | `user_profile.max_conversation_sample_count` | INT | 500 | 最大对话采样数 |
+| profile_retention_versions | `user_profile.profile_retention_versions` | INT | 20 | 保留历史版本数 |
+| min_confidence_threshold | `user_profile.min_confidence_threshold` | DOUBLE | 0.5 | 最低置信度阈值 |
 
 **处理流程**：
 

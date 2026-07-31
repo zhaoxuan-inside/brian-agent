@@ -14,14 +14,17 @@ Visualization Application 是系统可视化数据的统一封装层，位于 Ap
 
 ### 与 Chat Application 的分工
 
+Visualization Application 是系统可视化数据的**唯一对外入口**。Chat Application 不再透传可视化数据，前端所有可视化需求统一通过 Visualization Application 接口获取。
+
 | 功能 | Chat Application | Visualization Application |
 |------|-----------------|--------------------------|
-| Agent DAG 图 | 透传 OrchestrationVisualization 数据 | 提供更丰富的扩展数据（含完整资源内容） |
-| Work 时间线 | 透传 OrchestrationVisualization 数据 | 提供更丰富的扩展数据 |
-| 消息历史列表 | 提供 | 提供增强版（含引用关系、上下文分类） |
-| 消息引用关系图 | 提供 | 提供增强版 |
+| Agent DAG 图 | 不提供（委托 Visualization） | 提供（含完整资源内容解析） |
+| Work 时间线 | 不提供（委托 Visualization） | 提供 |
+| Agent 执行全链路 | 不提供（委托 Visualization） | 提供（按 trace_id 展开 Think/Act/Reflect/Answer） |
+| 消息历史列表 | 提供基本查询 | 提供增强版（含引用关系、上下文分类） |
+| 消息引用关系图 | 不提供（委托 Visualization） | 提供 |
+| 消息关联 DAG | 不提供（委托 Visualization） | 提供 |
 | 资源内容查询 | 不提供 | 提供（根据 ID 查询任意资源完整内容） |
-| 执行过程全链路展开 | 不提供 | 提供（按 trace_id 展开 Think/Act/Reflect/Answer） |
 
 ### 依赖关系
 
@@ -425,21 +428,18 @@ Visualization Application 是系统可视化数据的统一封装层，位于 Ap
 2. 调用下层接口获取资源数据；
 3. 返回资源内容；
 
-### 3.5. 配置（configVisualization）
+### 3.5. 配置（委托 Config Application）
 
-**功能**：配置 Visualization Application 的参数
+Visualization 模块的配置通过 Config Application 统一管理（`/api/config/update`，config_key 前缀 `visualization.`）。Visualization 对内保留 `configVisualization` 方法供 Config Application 代理调用，不对外暴露独立 HTTP 配置端点。
 
-**URL**：`POST /api/visualization/config`
+对内 `configVisualization` 方法管理的可配置项：
 
-**入参**：
-- input：ConfigVisualizationInput（继承 Input），包含以下字段：
-  - max_nodes_per_graph（INT，可选）：单图最大节点数，默认 200
-  - default_message_summary_length（INT，可选）：消息摘要默认长度（字符数），默认 50
-  - resolve_content_by_default（BOOLEAN，可选）：是否默认解析 ID 引用为完整内容，默认 true
-  - max_context_samples_per_source（INT，可选）：每个上下文来源最多展示的样本数，默认 3
-- context：ConfigVisualizationContext（继承 Context）
-- output：ConfigVisualizationOutput（继承 Output），承载返回内容：
-  - 当前生效的全部配置
+| 配置项 | config_key | 类型 | 默认值 | 说明 |
+|--------|-----------|------|--------|------|
+| max_nodes_per_graph | `visualization.max_nodes_per_graph` | INT | 200 | 单图最大节点数 |
+| default_message_summary_length | `visualization.default_message_summary_length` | INT | 50 | 消息摘要默认长度（字符数） |
+| resolve_content_by_default | `visualization.resolve_content_by_default` | BOOLEAN | true | 是否默认解析 ID 引用为完整内容 |
+| max_context_samples_per_source | `visualization.max_context_samples_per_source` | INT | 3 | 每个上下文来源最多展示的样本数 |
 
 **处理流程**：
 
@@ -451,13 +451,15 @@ Visualization Application 是系统可视化数据的统一封装层，位于 Ap
 ## 4. 重要内容
 
 1. 所有方法通过代理模式（AOP）增加切面注入能力，默认记录日志和耗时；
-2. Visualization Application 是 OrchestrationVisualization 的上层封装，核心价值在于将 ID 引用解析为完整内容，减少前端多次请求；
-3. ID 引用解析策略：resolve_content 参数控制是否展开 ID 引用，默认展开；当 DAG 节点数超过阈值时，可仅返回 ID 引用以减少数据传输量；
-4. 资源内容查询（getResource）提供统一的资源查询入口，前端按需钻取详情；
-5. 消息摘要生成：对于大段消息内容，截取前 N 字符生成摘要，避免传输大量文本；
-6. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
-7. 所有日志通过 LogProvider 记录，禁止 console.log；
-8. 所有 ID 通过 IdGenerator.generate() 生成；
+2. Visualization Application 是系统可视化数据的**唯一对外入口**，Chat Application 不再透传可视化数据，前端所有可视化需求统一通过 `/api/visualization/*` 获取；
+3. Visualization Application 是 OrchestrationVisualization 的上层封装，核心价值在于将 ID 引用解析为完整内容，减少前端多次请求；
+4. ID 引用解析策略：resolve_content 参数控制是否展开 ID 引用，默认展开；当 DAG 节点数超过阈值时，可仅返回 ID 引用以减少数据传输量；
+5. 资源内容查询（getResource）提供统一的资源查询入口，前端按需钻取详情；
+6. 消息摘要生成：对于大段消息内容，截取前 N 字符生成摘要，避免传输大量文本；
+7. 配置管理委托 Config Application：Visualization 不对前端暴露独立配置端点，对内保留 configVisualization 供 Config Application 代理；
+8. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
+9. 所有日志通过 LogProvider 记录，禁止 console.log；
+10. 所有 ID 通过 IdGenerator.generate() 生成；
 
 ## 5. 表设计
 

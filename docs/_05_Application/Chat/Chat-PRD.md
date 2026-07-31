@@ -7,7 +7,8 @@
 3. 提供会话（session）管理能力：创建、删除、搜索、查询、溢出检查；
 4. 提供消息（info）管理能力：历史查询、搜索、引用记录查询；
 5. 提供 Agent 编排 DAG 可视化数据查询入口，透传 Orchestration 层可视化数据至前端；
-6. 提供工作（work）取消能力，支持中断正在执行的 work。
+6. 提供工作（work）取消能力，支持中断正在执行的 work；
+7. 注意和消息相关的内容需要进行缓存，以及分步加在的机制，加快消息以及消息关系的展示；
 
 ## 2. 模块职责
 
@@ -17,25 +18,22 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 
 | 依赖层级 | 模块 | 调用接口 | 用途 |
 |---------|------|---------|------|
-| Orchestration | OrchestrationEntry | receiveWork | 同步提交工作，获取最终回复 |
+| Orchestration | OrchestrationEntry | receiveWork | 同步提交工作，通过回调获取 SSE 事件和最终回复 |
 | Orchestration | OrchestrationEntry | receiveWorkAsync | 异步提交工作，通过回调获取结果 |
 | Orchestration | OrchestrationEntry | getWorkStatus | 查询 work 执行状态 |
 | Orchestration | OrchestrationEntry | cancelWork | 取消正在执行的 work |
-| Orchestration | OrchestrationVisualization | visualizeAgentDAG | 获取 Agent DAG 结构数据 |
-| Orchestration | OrchestrationVisualization | visualizeWorkFlow | 获取 work 流程时间线 |
-| Orchestration | OrchestrationVisualization | getAgentNodeDetail | 获取单个 Agent 节点详情 |
 | Core | InfoCore | saveInfo | 保存用户输入消息 |
 | Core | InfoCore | lastNInfo | 查询最近 N 条消息 |
 | Core | InfoCore | graphInfo | 获取会话的消息引用图结构 |
 | Core | InfoCore | keywordKInfo | 按关键词搜索消息 |
-| Core | InfoCore | similarKInfo | 按语义相似度搜索消息 |
 | Core | InfoCore | pinInfo | 钉住/取消钉住消息 |
-| Core | InfoCore | context | 构建会话上下文 |
 | Agent | WriterAgent | saveUserProfile | 保存用户偏好设置 |
 | Agent | WriterAgent | getUserProfile | 获取用户偏好设置 |
 | Agent | EvolutorAgent | getEvaluation | 获取 Agent 评估历史 |
 | Base | RelationDBProvider | insertDB / selectDB / updateDB / deleteDB | 会话和消息元数据 CRUD |
 | Base | LogProvider | debug / info / warn / error | 日志记录 |
+
+> **SSE 事件聚合约定**：OrchestrationEntry 作为事件聚合点，统一回调 SSE 事件（`agent_created`、`agent_status`、`agent_thinking`、`agent_output`、`text`、`done`、`error`）。Chat 仅依赖 `OrchestrationEntry` 一个入口，无需直接依赖 `OrchestrationExecution` 或 `AgentExecution`。
 
 ## 3. 功能设计
 
@@ -148,8 +146,8 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 1. 校验 `session_ids` 非空；
 2. 调用 RelationDBProvider.transactionDB 开启事务：
    a. 遍历 session_ids，调用 RelationDBProvider.deleteDB 删除 `chat_session` 表中对应记录；
-   b. 调用 RelationDBProvider.deleteDB 删除 `chat_session` 表中关联记录（级联清理）；
-   c. 注意：关联的消息（info_raw 表）由 InfoCore.delInfo 负责清理，不在此处删除；
+   b. 调用 RelationDBProvider.deleteDB 删除 `info_graph` 表中该 session 的引用关系记录；
+   c. 调用 RelationDBProvider.deleteDB 删除 `info_raw` 表中该 session 的消息记录（级联清理摘要、向量、标签等加工数据由 InfoCore.delInfo 负责定时清理）；
 3. 事务提交，返回 deleted_count；
 
 #### 3.3.3. 搜索会话（searchSession）
@@ -237,7 +235,7 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 
 #### 3.4.1. 查询消息历史（getChatHistory）
 
-**功能**：查询指定会话/工作的消息历史
+**功能**：查询指定会话/工作的消息历史(注意页间是时间倒序排列的，业内是时间正序排列的)
 
 **URL**：`GET /api/chat/history`
 
@@ -316,64 +314,9 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 1. 调用 InfoCore.graphInfo 获取会话内消息的引用关系图结构；
 2. 直接透传返回给前端；
 
-### 3.5. 可视化数据透传
+### 3.5. 可视化数据（委托 Visualization Application）
 
-#### 3.5.1. 获取 Agent DAG 可视化数据（getAgentDAG）
-
-**功能**：获取一次 work 的 Agent DAG 结构数据，用于前端 Canvas 渲染
-
-**URL**：`GET /api/chat/work/:work_id/dag`
-
-**入参**：
-- work_id（Path Param，必选）
-
-**输出**：
-- agent_dag_structure：透传 OrchestrationVisualization.visualizeAgentDAG 的返回结果
-
-**处理流程**：
-
-1. 调用 OrchestrationVisualization.visualizeAgentDAG(work_id) 获取 DAG 结构；
-2. 对结构中的节点，按需调用下层接口获取补充信息：
-   a. AgentExecution.getTrace(trace_id) → 执行链路详情；
-   b. AgentLibrary.getAgent(agent_id) → Agent 元数据；
-   c. AgentContext.getContextByTrace(trace_id) → 上下文来源统计；
-3. 返回完整 DAG 结构数据；
-
-#### 3.5.2. 获取 Agent 节点详情（getAgentNodeDetail）
-
-**功能**：获取单个 Agent 节点的执行详情
-
-**URL**：`GET /api/chat/work/:work_id/agent/:agent_id`
-
-**入参**：
-- work_id（Path Param，必选）
-- agent_id（Path Param，必选）
-
-**输出**：
-- agent_node_detail：透传 OrchestrationVisualization.getAgentNodeDetail 的返回结果
-
-**处理流程**：
-
-1. 调用 OrchestrationVisualization.getAgentNodeDetail(work_id, agent_id) 获取节点详情；
-2. 按需调用下层接口获取内容详情（trace、Agent 配置、上下文内容等）；
-3. 返回详情数据；
-
-#### 3.5.3. 获取 Work 执行时间线（getWorkFlow）
-
-**功能**：获取一次 work 的完整执行阶段时间线
-
-**URL**：`GET /api/chat/work/:work_id/timeline`
-
-**入参**：
-- work_id（Path Param，必选）
-
-**输出**：
-- workflow_timeline：透传 OrchestrationVisualization.visualizeWorkFlow 的返回结果
-
-**处理流程**：
-
-1. 调用 OrchestrationVisualization.visualizeWorkFlow(work_id) 获取时间线数据；
-2. 返回时间线；
+Chat Application 不直接提供可视化数据接口。前端可视化需求（Agent DAG、Work 时间线、Agent 执行详情、消息图等）统一通过 Visualization Application（`/api/visualization/*`）获取。详见 [Visualization-PRD.md](../Visualization/Visualization-PRD.md)。
 
 ### 3.6. 取消工作（cancelWork）
 
@@ -394,20 +337,17 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 2. 通过 SSE 推送 `error` 事件（error_message="用户取消"）；
 3. 返回取消结果；
 
-### 3.7. 配置（configChat）
+### 3.7. 配置（委托 Config Application）
 
-**功能**：配置 Chat Application 的参数
+Chat 模块的配置通过 Config Application 统一管理（`/api/config/update`，config_key 前缀 `chat.`）。Chat 模块对内保留 `configChat` 方法供 Config Application 代理调用，不对外暴露独立 HTTP 配置端点。
 
-**URL**：`POST /api/chat/config`
+对内 `configChat` 方法管理的可配置项：
 
-**入参**：
-- input：ConfigChatInput（继承 Input），包含以下字段：
-  - max_messages_per_session（INT，可选）：每会话最大消息数，默认 1000
-  - sse_heartbeat_interval_ms（INT，可选）：SSE 心跳间隔（毫秒），默认 30000
-  - default_history_lastN（INT，可选）：默认历史消息查询数量，默认 50
-- context：ConfigChatContext（继承 Context）
-- output：ConfigChatOutput（继承 Output），承载返回内容：
-  - 当前生效的全部配置
+| 配置项 | config_key | 类型 | 默认值 | 说明 |
+|--------|-----------|------|--------|------|
+| max_messages_per_session | `chat.max_messages_per_session` | INT | 1000 | 每会话最大消息数 |
+| sse_heartbeat_interval_ms | `chat.sse_heartbeat_interval_ms` | INT | 30000 | SSE 心跳间隔（ms） |
+| default_history_lastN | `chat.default_history_lastN` | INT | 50 | 默认历史消息查询数量 |
 
 **处理流程**：
 
@@ -422,9 +362,12 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 2. Chat Application 不直接调用 LLMProvider、SkillProvider、MCPProvider 等 Base 层 Provider，所有 LLM/Skill/MCP 调用通过 Orchestration → Agent 层完成；
 3. SSE 连接管理：每个 session 最多允许一个 SSE 连接，新连接建立时关闭旧连接；
 4. 会话溢出检查：在 submitWork 前自动检查，溢出时拒绝新消息提交；
-5. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
-6. 所有日志通过 LogProvider 记录，禁止 console.log；
-7. 所有 ID 通过 IdGenerator.generate() 生成；
+5. 配置管理委托 Config Application：Chat 不对前端暴露独立配置端点，对内保留 configChat 方法供 Config Application 代理；
+6. 可视化数据委托 Visualization Application：Chat 不提供 Agent DAG、Work 时间线、消息图等可视化接口，前端通过 `/api/visualization/*` 获取；
+7. SSE 事件由 OrchestrationEntry 统一聚合回调：Chat 仅依赖 OrchestrationEntry 一个入口接收完整事件流，无需直接依赖 OrchestrationExecution 或 AgentExecution；
+8. 所有外部资源访问必须通过对应的 Provider/Access 层，禁止绕过；
+9. 所有日志通过 LogProvider 记录，禁止 console.log；
+10. 所有 ID 通过 IdGenerator.generate() 生成；
 
 ## 5. 表设计
 
@@ -471,9 +414,9 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 | 会话删除 | deleteSession | 删除会话 |
 | 会话搜索 | searchSession（keyword） | 按关键词搜索会话 |
 | 会话溢出检查 | checkSessionOverflow | 检查消息数量上限 |
-| ChatMap 引用关系图 | getMessageGraph | 获取消息引用关系图 |
-| Agent 编排 DAG 弹窗 | getAgentDAG | 获取 Agent DAG 图结构 |
-| Agent 节点详情 | getAgentNodeDetail | 获取单个 Agent 执行详情 |
-| Work 执行时间线 | getWorkFlow | 获取 work 阶段时间线 |
-| 取消工作 | cancelWork | 中断正在执行的 work |
 | 钉住消息 | pinMessage | 钉住/取消钉住消息 |
+| ChatMap 引用关系图 | 委托 Visualization Application | `GET /api/visualization/message-graph` |
+| Agent 编排 DAG 弹窗 | 委托 Visualization Application | `GET /api/visualization/work/:work_id/dag` |
+| Agent 节点详情 | 委托 Visualization Application | `GET /api/visualization/agent/:agent_id/trace` |
+| Work 执行时间线 | 委托 Visualization Application | `GET /api/visualization/work/:work_id/timeline` |
+| 取消工作 | cancelWork | 中断正在执行的 work |
