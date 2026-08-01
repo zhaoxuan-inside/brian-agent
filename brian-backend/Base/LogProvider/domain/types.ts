@@ -177,6 +177,9 @@ export class EnableLogOutput extends Output {}
 
 export const LOG_RULE_TABLE = 'log_rule';
 export const LOG_CONFIG_TABLE = 'log_config';
+export const LOG_RECORD_TABLE = 'log_record';
+
+export type WriteMode = 'FILE' | 'BOTH' | 'SQLITE';
 
 export const LOG_DEFAULT_CONFIGS = [
   {
@@ -208,5 +211,11 @@ export const LOG_DEFAULT_CONFIGS = [
     config_value: '14',
     value_type: 'INT',
     description: '日志保留天数（两周，超过则自动清理）',
+  },
+  {
+    config_key: 'write_mode',
+    config_value: 'BOTH',
+    value_type: 'STRING',
+    description: '日志写入模式：FILE（仅文件）/ SQLITE（仅数据库）/ BOTH（双写，默认）',
   },
 ] as const;

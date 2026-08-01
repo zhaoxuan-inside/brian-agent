@@ -458,18 +458,110 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 **入参（Query String）**：
 - type（ENUM，可选）：知识类型（KNOWLEDGE / INSIGHT），不传则返回全部
 - source（ENUM，可选）：来源（DOCUMENT / CONVERSATION / TAG_MAINTENANCE）
+- insight_type（ENUM，可选）：洞察子类型（pattern / trend / anomaly / association），仅当 type=INSIGHT 时有效
+- keyword（STRING，可选）：关键词搜索（匹配 content 字段）
+- start_time（TIMESTAMP，可选）：学习时间范围起始
+- end_time（TIMESTAMP，可选）：学习时间范围结束
 - page_current（INT，可选）
-- page_size（INT，可选）
+- page_size（INT，可选，默认 20）
 
 **输出**：
-- results：学习成果列表 [{ result_id, type, source, content, summary, related_tags, learned_at }]
+- results：学习成果列表 [{ result_id, type, insight_type?, source, content, summary, related_tags, learned_at }]
 - total：总记录数
 
 **处理流程**：
 
-1. 调用 RelationDBProvider.selectDB 查询 `self_learning_result` 表（按 type、source 可选过滤）；
+1. 调用 RelationDBProvider.selectDB 查询 `self_learning_result` 表（按 type、source、keyword、时间范围可选过滤）；
 2. 对每条结果，调用 RelationDBProvider.selectDB 查询 `self_learning_result_tag` 表获取关联的 Tag 列表；
-3. 分页返回；
+3. 洞察按子类型（pattern/trend/anomaly/association）分类，基于内容特征关键词匹配；
+4. 分页返回；
+
+#### 3.6.2.1. 搜索知识（searchKnowledge）
+
+**功能**：搜索并分页获取知识条目
+
+**URL**：`GET /api/learning/knowledge`
+
+**入参（Query String）**：
+- q（STRING，可选）：关键词搜索
+- source（ENUM，可选）：来源过滤（conversation / document）
+- start_time（TIMESTAMP，可选）：学习时间范围起始（unix ms）
+- end_time（TIMESTAMP，可选）：学习时间范围结束（unix ms）
+- page（INT，可选，默认 1）：页码
+- pageSize（INT，可选，默认 20）：每页条数
+
+**输出**：
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "content": "知识内容",
+      "source": "conversation",
+      "learnTime": 1234567890,
+      "tags": ["标签1", "标签2"]
+    }
+  ],
+  "total": 42
+}
+```
+
+#### 3.6.2.2. 获取单条知识详情（getKnowledgeDetail）
+
+**功能**：获取单条知识的完整详情
+
+**URL**：`GET /api/learning/knowledge/:knowledgeId`
+
+**入参**：
+- knowledgeId（Path Param，必选）
+
+**输出**：
+```json
+{
+  "id": "uuid",
+  "content": "知识内容",
+  "source": "conversation",
+  "learnTime": 1234567890,
+  "tags": ["标签1", "标签2"]
+}
+```
+
+#### 3.6.2.3. 搜索洞察（searchInsights）
+
+**功能**：搜索并分页获取洞察，支持子类型过滤
+
+**URL**：`GET /api/learning/insights`
+
+**入参（Query String）**：
+- type（ENUM，可选）：洞察子类型（pattern / trend / anomaly / association）
+- start_time（TIMESTAMP，可选）：生成时间范围起始（unix ms）
+- end_time（TIMESTAMP，可选）：生成时间范围结束（unix ms）
+- page（INT，可选，默认 1）：页码
+- pageSize（INT，可选，默认 20）：每页条数
+
+**输出**：
+```json
+{
+  "items": [
+    {
+      "id": "insight_uuid",
+      "content": "洞察内容",
+      "type": "pattern",
+      "generateTime": 1234567890
+    }
+  ],
+  "total": 15
+}
+```
+
+**洞察子类型说明**：
+
+| 子类型 | 关键词匹配 | 说明 |
+|--------|-----------|------|
+| pattern | 模式/规律/pattern/recurring | 重复出现的规律性知识 |
+| trend | 趋势/变化/growth/decline/增加/减少/上升/下降 | 方向性变化趋势 |
+| anomaly | 异常/anomaly/outlier/unexpected/异常值/偏离 | 偏离常规的异常发现 |
+| association | 关联/关系/connection/related/correlation/相关 | 概念或实体之间的关联关系 |
 
 #### 3.6.3. 获取学习统计（getLearningStats）
 
@@ -691,8 +783,13 @@ SelfLearning 模块的配置通过 Config Application 统一管理（`/api/confi
 | 当前任务卡片 | getLearningProgress | 展示当前执行任务 |
 | 任务队列 | getLearningProgress | 待执行任务列表 |
 | 内置学习任务 | getLearningProgress | 展示内置任务及 cron |
-| 知识列表 | getLearningResults | 学习成果分页展示 |
-| 洞察列表 | getLearningResults（type=INSIGHT） | 洞察成果展示 |
+| 知识列表 | searchKnowledge | 知识条目搜索、过滤、分页展示 |
+| 知识详情 | getKnowledgeDetail | 查看单条知识完整内容 |
+| 洞察列表 | searchInsights | 洞察搜索，支持子类型过滤（pattern/trend/anomaly/association）和分页展示 |
+| 知识/洞察关键词搜索 | searchKnowledge / searchInsights（keyword / q 参数） | 全文搜索知识或洞察 |
+| 时间范围过滤 | searchKnowledge / searchInsights（start_time / end_time 参数） | 按学习/生成时间范围过滤 |
+| 知识类型过滤 | searchKnowledge（source 参数） | 按来源过滤（conversation / document） |
+| 洞察类型过滤 | searchInsights（type 参数） | 按子类型过滤（pattern/trend/anomaly/association） |
 | 学习统计 | getLearningStats | 统计数据展示 |
 | 资料库配置 | addLibrary / deleteLibrary | 管理资料库 |
 | 资料库文件列表 | getLibraryFiles / getFileContent | 浏览文件内容 |

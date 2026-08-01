@@ -11,7 +11,10 @@
 LogProvider 是日志的唯一操作入口，上层不可直接调用 console.log 或其他日志库。
 所有组件的日志输出（包括 AOP 切面自动记录的日志）均通过 LogProvider 完成。
 
-LogProvider **只支持将日志写在本地文件中**，日志文件按模块分目录存储，采用滚动方式，每一个文件最大 200MB。
+LogProvider **支持双存储模式**：本地文件 + SQLite 持久化，可通过 `write_mode` 配置项切换：
+- `FILE`：仅写入本地文件（默认行为，向后兼容）
+- `BOTH`：双写模式（文件 + SQLite），支持日志查询和统计
+- `SQLITE`：仅写入 SQLite，不写文件
 
 ### 1.3 集成依赖
 
@@ -151,10 +154,43 @@ await logAccess.enableLog(
 );
 ```
 
+### 3.7 查询日志（queryLogs）
+
+**功能**：从 SQLite log_record 表查询日志记录，支持多维过滤和分页。
+
+**条件**：
+
+| 条件 | 类型 | 说明 |
+| ------ | ---- | ---- |
+| level | STRING | 日志级别（DEBUG/INFO/WARN/ERROR） |
+| source | STRING | 日志来源模块（模糊匹配） |
+| keyword | STRING | 关键词（匹配 message 字段） |
+| start_time | INT | 起始时间（毫秒时间戳） |
+| end_time | INT | 结束时间（毫秒时间戳） |
+| page | INT | 页码，默认 1 |
+| pageSize | INT | 每页条数，默认 50 |
+
+**返回**：`{ logs: LogRecord[], total: number }`
+
+### 3.8 日志统计（getLogStats）
+
+**功能**：从 SQLite log_record 表按级别聚合统计日志数量分布。
+
+**条件**：
+
+| 条件 | 类型 | 说明 |
+| ------ | ---- | ---- |
+| start_time | INT | 起始时间（毫秒时间戳），可选 |
+| end_time | INT | 结束时间（毫秒时间戳），可选 |
+
+**返回**：`{ distribution: Array<{ level: string; count: number }> }`
+
+**注意**：queryLogs 和 getLogStats 仅在 `write_mode` 为 `BOTH` 或 `SQLITE` 时有效。若为 `FILE` 模式，SQLite 中无数据。
+
 ## 4. 数据库表结构
 
-> 日志记录不存储于数据库，只写入本地文件（见 1.4 日志文件存储设计）。
-> 数据库仅存储日志规则（log_rule）和配置项（log_config）。
+> 日志记录在 `FILE` 模式下不存储于数据库，在 `BOTH` / `SQLITE` 模式下双写到 `log_record` 表。
+> 日志规则（log_rule）和配置项（log_config）始终存储于关系数据库。
 
 ### 4.1 log_rule 表
 
@@ -195,6 +231,29 @@ await logAccess.enableLog(
 | file_path | ./data/logs | STRING | 日志文件根目录 |
 | max_file_size | 209715200 | INT | 单文件最大大小（字节，200MB = 200 * 1024 * 1024） |
 | retention_days | 14 | INT | 日志保留天数（两周，超过则自动清理） |
+| write_mode | BOTH | STRING | 写入模式：FILE（仅文件）/ SQLITE（仅数据库）/ BOTH（双写，默认） |
+
+### 4.3 log_record 表
+
+日志持久化表，在 `write_mode` 为 `BOTH` 或 `SQLITE` 时存储日志记录。
+
+| 字段 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | TEXT | NOT NULL PRIMARY KEY | UUID |
+| created | INTEGER | NOT NULL | 毫秒时间戳 |
+| updated | INTEGER | NOT NULL | 毫秒时间戳 |
+| level | TEXT | NOT NULL | 日志级别 |
+| source | TEXT | NOT NULL | 日志来源 |
+| message | TEXT | NOT NULL | 日志消息 |
+| trace_id | TEXT | | 请求追踪 ID |
+| caller | TEXT | | 调用方标识 |
+| metadata | TEXT | | JSON 元数据 |
+| elapsed_ms | INTEGER | | 耗时（毫秒） |
+
+索引：
+- idx_log_record_created (created)
+- idx_log_record_level (level)
+- idx_log_record_source (source)
 
 ## 6. LogInterceptor（AOP 日志拦截器）
 

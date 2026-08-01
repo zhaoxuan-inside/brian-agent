@@ -2,7 +2,7 @@
  * @fileoverview VectorDBProvider 模块统一导出。
  */
 
-// 组件（congraphdb 向量数据库封装）
+// 组件（LanceDB 向量数据库封装）
 export { VectorDBComponent } from '../components/VectorDB/VectorDBComponent';
 export type {
   VectorRecord as ComponentVectorRecord,

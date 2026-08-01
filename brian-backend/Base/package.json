@@ -12,11 +12,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.15.0",
     "better-sqlite3": "^11.0.0",
-    "congraphdb": "^0.2.1",
-    "graphdblite": "^0.1.2",
     "isolated-vm": "file:./SkillProvider/infrastructure/sandbox/vendor/isolated-vm",
-    "tiny-graph-db": "^1.0.4",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

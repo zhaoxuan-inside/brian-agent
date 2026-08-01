@@ -6,7 +6,7 @@
  */
 
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
-import { LOG_RULE_TABLE, LOG_CONFIG_TABLE } from '../domain/types';
+import { LOG_RULE_TABLE, LOG_CONFIG_TABLE, LOG_RECORD_TABLE } from '../domain/types';
 
 export class LogSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
@@ -43,5 +43,30 @@ export class LogSchemaInitializer {
         "updated"      INTEGER NOT NULL
       )
     `);
+
+    // log_record 表（日志持久化存储，支持 SQLite 查询）
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${LOG_RECORD_TABLE}" (
+        "id"         TEXT    NOT NULL PRIMARY KEY,
+        "created"    INTEGER NOT NULL,
+        "updated"    INTEGER NOT NULL,
+        "level"      TEXT    NOT NULL,
+        "source"     TEXT    NOT NULL,
+        "message"    TEXT    NOT NULL,
+        "trace_id"   TEXT,
+        "caller"     TEXT,
+        "metadata"   TEXT,
+        "elapsed_ms" INTEGER
+      )
+    `);
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LOG_RECORD_TABLE}_created" ON "${LOG_RECORD_TABLE}" ("created")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LOG_RECORD_TABLE}_level" ON "${LOG_RECORD_TABLE}" ("level")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LOG_RECORD_TABLE}_source" ON "${LOG_RECORD_TABLE}" ("source")`,
+    );
   }
 }

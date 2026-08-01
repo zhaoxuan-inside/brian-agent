@@ -160,6 +160,7 @@ import {
   VALID_LAYERS,
   type ConfigRegistration,
 } from '../domain/types';
+import { ALL_CONFIG_REGISTRATIONS } from '../domain/configRegistrations';
 
 export class ConfigService {
   private readonly relationDb: RelationDBAccess;
@@ -246,6 +247,22 @@ export class ConfigService {
     this.selfLearningAccess = selfLearningAccess;
     this.userProfileAccess = userProfileAccess;
     this.visualizationAccess = visualizationAccess;
+  }
+
+  // =========================================================================
+  // initRegistrations - auto-register all known module configs
+  // =========================================================================
+
+  async initRegistrations(): Promise<number> {
+    const existing = await this.relationDb.count(CONFIG_REGISTRY_TABLE, []);
+    if (existing > 0) {
+      return existing;
+    }
+    const input = new RegisterConfigInput();
+    input.registrations = ALL_CONFIG_REGISTRATIONS;
+    const output = new RegisterConfigOutput();
+    await this.registerConfig(input, new ConfigContext(), output);
+    return output.registered_count;
   }
 
   // =========================================================================

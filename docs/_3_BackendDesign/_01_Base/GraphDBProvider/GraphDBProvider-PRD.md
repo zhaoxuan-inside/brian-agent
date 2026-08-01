@@ -8,7 +8,7 @@
 4. 提供图遍历能力（邻居查询、多跳遍历）；
 5. 提供图数据生命周期管理能力，包括边的激活机制与老化机制，维护图数据的有效性；
 6. 提供可视化数据接口，支持图数据库健康状态监控；
-7. 图数据库组件默认集成 GraphDB；
+7. 图数据库组件基于 SQLite + CTE 实现，通过 better-sqlite3 操作本地数据库文件；
 
 ## 2. 对象定义
 
@@ -33,7 +33,7 @@
 
 用于新增边；更新边时使用 `Partial<GraphEdgeData>` 仅传入待更新字段。边 `id`、`created`、`updated`、`last_activation_time`、`is_active` 为系统字段，由 Provider 维护，不通过 Data 对象修改。边的激活次数不再以累计字段存储，改由按天激活统计表（见 4.4）维护，详见 3.4。
 
-`from_node_id`、`to_node_id` 用于在新增边时指定关系的起始节点和目标节点，新增时必填。GraphDB 使用原生图数据模型，关系端点由 Rel Table 的连接隐式表达，这两个字段不作为边的属性冗余存储。
+`from_node_id`、`to_node_id` 用于在新增边时指定关系的起始节点和目标节点，新增时必填。SQLite 表中 `from_node_id` / `to_node_id` 作为属性字段存储，表示关系端点。
 
 | 属性 | 类型 | 是否必填 | 说明 |
 | ------ | ----- | ----- | ----- |
@@ -393,17 +393,14 @@
 
 ## 4. 表设计
 
-> 图数据表（4.1 ~ 4.4）均存储在 GraphDB 图数据库中，逻辑库名为 `graph`；GraphDBProvider 用到的所有配置项（含图数据库启用 / 禁用状态）存储在关系数据库配置表 graphdb_config 中（库名 `graphdb`，见 4.5）。
+> 图数据表（4.1 ~ 4.4）均存储在 GraphDB 对应的 SQLite 数据库文件中，逻辑库名为 `graph`；GraphDBProvider 用到的所有配置项（含图数据库启用 / 禁用状态）存储在关系数据库配置表 graphdb_config 中（库名 `graphdb`，见 4.5）。
 >
-> GraphDB 使用图数据模型，表分为两类：
-> - **Node Table（节点表）**：存储图节点及其属性；
-> - **Rel Table（关系表）**：存储节点之间的关系（边）及其属性，关系具有 FROM -> TO 方向；
+> 图数据表均为 SQLite 普通表，关系端点通过 `from_node_id` / `to_node_id` 字段显式存储；图遍历能力通过 Cypher-to-SQL 翻译器（CypherTranslator）在应用层实现。
 
-### 4.1. 图节点表（GraphDB · Node Table）
+### 4.1. 图节点表（SQLite 表）
 
 - `表名`： graph_node
 - `库名`： graph
-- `表类型`： Node Table
 
 | 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
 | ------ | ----- | ----- | ----- | ----- | ----- |
@@ -413,20 +410,20 @@
 | node_type | 节点类型 | STRING | N | 普通索引 | |
 | content | 节点内容 | JSON | N | | |
 
-### 4.2. 图边表（GraphDB · Rel Table）
+### 4.2. 图边表（SQLite 表）
 
 - `表名`： graph_edge
 - `库名`： graph
-- `表类型`： Rel Table
-- `关系方向`： FROM graph_node -> TO graph_node
 
-> 关系的起始节点（from）和目标节点（to）由 Rel Table 的连接定义隐式表达，不作为属性字段冗余存储；新增边时通过 GraphEdgeData 的 `from_node_id` / `to_node_id` 指定端点。
+> 关系的起始节点（from_node_id）和目标节点（to_node_id）作为属性字段显式存储在表中，新增边时通过 GraphEdgeData 的 `from_node_id` / `to_node_id` 指定端点。
 
 | 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
 | ------ | ----- | ----- | ----- | ----- | ----- |
 | id | 数据唯一标识 | STRING | N | 主键 | UUID |
 | created | 创建时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
 | updated | 最后更新时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
+| from_node_id | 起始节点 ID | STRING | N | 普通索引 | 关联 graph_node.id |
+| to_node_id | 目标节点 ID | STRING | N | 普通索引 | 关联 graph_node.id |
 | edge_type | 边类型 | STRING | N | 普通索引 | |
 | weight | 权重 | DOUBLE | N | | 默认值由配置 `default_weight` 决定（默认 1.0） |
 | properties | 边属性 | JSON | Y | | |
@@ -435,11 +432,10 @@
 
 > 注：边上不再保存累计 `activation_count`，激活次数按天聚合存储于 graph_edge_daily_activation（见 4.4），由激活 / 老化机制维护。
 
-### 4.3. 图激活事件表（GraphDB · Node Table）
+### 4.3. 图激活事件表（SQLite 表）
 
 - `表名`： graph_activation_event
 - `库名`： graph
-- `表类型`： Node Table
 
 > `from_node_id`、`to_node_id` 在激活事件表中冗余存储，用于记录激活时刻关系端点的快照：避免边被删除或端点变更后丢失历史激活上下文，同时避免查询时回连 graph_edge 表。
 
@@ -454,11 +450,10 @@
 | activation_time | 激活时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
 | trigger_type | 触发类型 | STRING | N | | 实际值由 activateGraphEdge 传入或取配置 `default_trigger_type` |
 
-### 4.4. 按天激活统计表（GraphDB · Node Table）
+### 4.4. 按天激活统计表（SQLite 表）
 
 - `表名`： graph_edge_daily_activation
 - `库名`： graph
-- `表类型`： Node Table
 
 > 以 `(graph_edge_id, stat_date)` 为业务唯一键，记录每条边每天的激活次数；仅保留配置 `retention_days` 天数内的数据，超过窗口的记录由 ageGraphEdge 清理。激活次数不再以边上的累计字段维护，老化判定直接基于本表的窗口内求和。
 
@@ -506,12 +501,12 @@
 
 1. GraphDBProvider 是图数据的唯一操作入口，上层不可直接操作图数据库；
 2. 图数据库组件默认集成 GraphDB，通过 Repository 接口封装底层图数据库操作；
-3. GraphDB 使用原生图数据模型，`graph_edge` 为 Rel Table，其起始节点和目标节点由关系连接隐式表达，`from_node_id` / `to_node_id` 仅在新增边时用于指定端点，不作为边属性冗余存储；
+3. 图数据库基于 SQLite + CTE 实现，所有图数据表均为 SQLite 普通表；通过 CypherTranslator 将 Cypher 查询翻译为 SQL 执行，图遍历能力在应用层通过迭代查询实现；`graph_edge` 为 SQLite 表，`from_node_id` / `to_node_id` 作为属性字段显式存储关系端点；
 4. Condition、OrderBy、Page 为项目公共查询对象，定义于 `RelationDBProvider-PRD.md`，本 Provider 直接引用，不重复定义；
 5. 节点 / 边的系统字段（`id`、`created`、`updated` 及边的 `last_activation_time`、`is_active`）由 Provider 维护，不可通过 Data 对象修改；边的 `last_activation_time`、`is_active` 由激活 / 老化机制维护，不可通过 updateGraphEdge 直接修改；
 6. 边的激活机制通过 `activateGraphEdge` 记录激活事件并按天累计激活次数（写入 graph_edge_daily_activation），用于维护边的权重和活跃度；激活次数不再以累计字段存储，避免老边累计值天然偏高；
 7. 边的老化机制通过 `ageGraphEdge` 基于保留窗口（`retention_days`）内的激活数量判定：仅当边已度过完整观察期且窗口内激活总数低于 `min_activation_count` 时才标记为非激活，超过窗口的历史激活数据同步清理；该机制使新边与老边在同一时间窗口内公平比较；
-8. 删除节点时通过图数据库的 DETACH DELETE 级联删除关联的边，并由 Provider 清理激活事件表与按天激活统计表中引用该节点（`from_node_id` / `to_node_id`）的记录；删除边时由 Provider 清理关联的激活事件记录与按天激活统计记录（`graph_edge_id`）；
+8. 删除节点时通过 SQLite 外键约束（ON DELETE CASCADE）级联删除关联的边，并由 Provider 清理激活事件表与按天激活统计表中引用该节点（`from_node_id` / `to_node_id`）的记录；删除边时由 Provider 清理关联的激活事件记录与按天激活统计记录（`graph_edge_id`）；
 9. GraphDBProvider 用到的所有配置项（含图数据库启用 / 禁用状态 `enabled`、老化阈值 `retention_days` / `min_activation_count`、各类默认值等）统一存储于关系数据库配置表 graphdb_config（库名 `graphdb`，见 4.5），运行时按需读取；enableGraphDB 的启用 / 禁用状态同步持久化，组件初始化时恢复，避免状态丢失；
 10. `enableGraphDB` 为运行时启用 / 禁用（可恢复），`closeGraphDB` 为系统关闭时的终态释放（不可恢复，需重新初始化组件）；
 11. 所有方法通过代理模式增加切面注入能力，默认记录日志和耗时；

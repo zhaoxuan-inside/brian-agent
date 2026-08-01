@@ -3,7 +3,7 @@
  *
  * DDD 中 access 层与具体业务代码分离，作为模块对外的统一入口。
  * 本层职责：
- * 1. 创建 VectorDB 组件（congraphdb）并初始化表结构（通过 VectorDBSchemaInitializer）；
+ * 1. 创建 VectorDB 组件并初始化表结构（通过 VectorDBSchemaInitializer）；
  * 2. 封装 application 层 Service，提供 (Input, Context, Output) 签名的方法调用入口；
  * 3. 通过 AOP 代理注入日志记录与耗时统计切面；
  * 4. 通过简单改造即可将方法调用转换为 RPC 调用（方法签名保持 input/output 序列化友好）。
@@ -11,7 +11,7 @@
  * 上层（其他 Provider、application 层）通过本类访问向量数据，不直接接触 Service。
  *
  * 依赖关系：
- * - 向量数据（vector_record 集合）存储于 VectorDB 组件（congraphdb HNSW 向量数据库）；
+ * - 向量数据（vector_record 表）存储于 VectorDB 组件（LanceDB 向量数据库）；
  * - 配置项（vectordb_config）存储于关系数据库（由 RelationDBProvider 管理）。
  */
 
@@ -52,8 +52,8 @@ const DEFAULT_METRIC = 'cosine';
  * VectorDBProvider 接入层选项。
  */
 export interface VectorDBAccessOptions {
-  /** VectorDB 数据库文件路径（congraphdb） */
-  vectorDbPath: string;
+  /** LanceDB 数据目录路径 */
+  lancePath: string;
   /** 向量维度（由上层 Embedding 模型决定，默认 1536） */
   dimension?: number;
   /** 距离度量方式：cosine（默认）/ euclidean / dot */
@@ -73,7 +73,7 @@ export interface VectorDBAccessOptions {
  * await relationDb.initialize();
  *
  * const vectorDb = new VectorDBAccess(relationDb, {
- *   vectorDbPath: './data/vectordb.db',
+ *   lancePath: './data/vectordb',
  *   dimension: 1536,
  * });
  * await vectorDb.initialize();
@@ -92,37 +92,38 @@ export class VectorDBAccess {
 
   private readonly vectorDb: VectorDBComponent;
 
+  private readonly schemaInitializer: VectorDBSchemaInitializer;
+
+  private readonly dimension: number;
+
+  private readonly metric: string;
+
   /**
    * @param relationDb RelationDBProvider 接入层实例（用于配置表）
-   * @param options VectorDB 选项（向量数据库路径、维度、度量方式、日志记录器）
+   * @param options VectorDB 选项（LanceDB 数据目录、维度、度量方式、日志记录器）
    */
   constructor(
     relationDb: RelationDBAccess,
     options: VectorDBAccessOptions,
   ) {
-    const dimension = options.dimension ?? DEFAULT_DIMENSION;
-    const metric = options.metric ?? DEFAULT_METRIC;
+    this.dimension = options.dimension ?? DEFAULT_DIMENSION;
+    this.metric = options.metric ?? DEFAULT_METRIC;
 
-    // 创建 VectorDB 组件（congraphdb）
-    this.vectorDb = new VectorDBComponent(options.vectorDbPath);
+    this.vectorDb = new VectorDBComponent(options.lancePath);
 
-    // 初始化表结构：关系数据库配置表 + VectorDB 节点表 / HNSW 索引
-    new VectorDBSchemaInitializer(relationDb, this.vectorDb).init(
-      dimension,
-      metric,
-    );
+    this.schemaInitializer = new VectorDBSchemaInitializer(relationDb, this.vectorDb);
 
-    // 创建 Service（注入 VectorDB 组件与 RelationDBAccess）并通过代理模式增加切面注入能力
     const rawService = new VectorDBService(this.vectorDb, relationDb);
     this.service = AopProxy.wrap(rawService, { logger: options.logger });
   }
 
   /**
-   * 初始化组件：写入默认配置并恢复 enabled 状态。
+   * 初始化组件：创建 LanceDB 表、写入默认配置并恢复 enabled 状态。
    *
    * 必须在首次使用前调用。
    */
   async initialize(): Promise<void> {
+    await this.schemaInitializer.init(this.dimension, this.metric);
     await this.service.initialize();
   }
 

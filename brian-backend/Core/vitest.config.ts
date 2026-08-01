@@ -4,7 +4,6 @@ import path from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      congraphdb: path.resolve(__dirname, 'test/__mocks__/congraphdb.js'),
       graphdblite: path.resolve(__dirname, 'test/__mocks__/graphdblite.ts'),
     },
   },

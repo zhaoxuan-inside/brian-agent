@@ -22,6 +22,7 @@ import {
   SaveUserProfileInput, SaveUserProfileOutput,
   GetUserProfileInput, GetUserProfileOutput,
   ConfigWriterAgentInput, ConfigWriterAgentOutput,
+  type Block, type BlockMeta,
 } from '../domain/types';
 import {
   BuildWriterAgentInput, BuildWriterAgentOutput, AgentBuilderContext,
@@ -123,7 +124,17 @@ export class WriterAgentService {
       let prompt =
         `User query: ${input.user_query}\nPreferences: ${JSON.stringify(preferences)}\n` +
         `Context:\n${contextExtra}\nResults:\n${results}\n` +
-        'Write a humanized final response. Return JSON: {"response":"...","response_format":"MARKDOWN"}';
+        `Generate a structured response as a JSON array of content blocks. ` +
+        `Available block types:\n` +
+        `- "text_paragraph": plain text content\n` +
+        `- "heading": section title, meta: { "level": 2 }\n` +
+        `- "code_block": code snippet, meta: { "language": "python" }\n` +
+        `- "list_item": bullet point in a list\n` +
+        `- "artifact_preview": generated artifact or file\n` +
+        `- "error_fallback": error message\n` +
+        `Return ONLY valid JSON array, example:\n` +
+        `[{"type":"text_paragraph","content":"Hello"},{"type":"heading","content":"Code","meta":{"level":2}},` +
+        `{"type":"code_block","content":"print(1)","meta":{"language":"python"}}]`;
 
       if (config?.write_prompt_template_id) {
         try {
@@ -157,13 +168,17 @@ export class WriterAgentService {
         llmOut,
       );
       tokens = Number((llmOut.usage as Record<string, unknown> | undefined)?.total_tokens ?? 0);
-      const parsed = parseJsonObject(llmOut.result);
-      response = String(parsed?.response ?? llmOut.result ?? '');
-      if (parsed?.response_format) {
-        preferences.format = String(parsed.response_format);
-      }
+      const blocks = this.parseBlocks(llmOut.result);
+      response = blocks.map(b => b.content).join('\n\n');
+      output.blocks = blocks;
     } else {
       response = `Summary: ${input.user_query.slice(0, 100)}\n\nResults:\n${results}`;
+      output.blocks = [{
+        id: IdGenerator.generate(),
+        type: 'text_paragraph' as const,
+        content: response,
+        meta: { streaming_status: 'completed' as const },
+      }];
     }
 
     await this.agentLibrary.recordAgentUsage(
@@ -351,5 +366,37 @@ export class WriterAgentService {
       default_depth: String(row.default_depth ?? 'medium'),
       default_format: String(row.default_format ?? 'MARKDOWN'),
     };
+  }
+
+  private parseBlocks(raw: string): Block[] {
+    const VALID_TYPES = ['text_paragraph', 'heading', 'code_block', 'list_item', 'artifact_preview', 'error_fallback'];
+    try {
+      let json = raw.trim();
+      const arrStart = json.indexOf('[');
+      const arrEnd = json.lastIndexOf(']');
+      if (arrStart !== -1 && arrEnd !== -1 && arrEnd > arrStart) {
+        json = json.slice(arrStart, arrEnd + 1);
+      }
+      const parsed = JSON.parse(json);
+      if (!Array.isArray(parsed)) throw new Error('not an array');
+      return parsed.map((item: { type?: string; content?: string; meta?: BlockMeta }) => {
+        const type = (typeof item.type === 'string' && VALID_TYPES.includes(item.type))
+          ? item.type as Block['type'] : 'text_paragraph';
+        const id = IdGenerator.generate();
+        return {
+          id,
+          type,
+          content: String(item.content ?? ''),
+          meta: item.meta ? { streaming_status: 'completed' as const, ...item.meta } : { streaming_status: 'completed' as const },
+        };
+      });
+    } catch {
+      return [{
+        id: IdGenerator.generate(),
+        type: 'text_paragraph' as const,
+        content: raw,
+        meta: { streaming_status: 'completed' as const },
+      }];
+    }
   }
 }

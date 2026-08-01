@@ -1,8 +1,8 @@
 # VectorDBProvider API 文档
 
-> 解耦向量数据库和系统，通过 Repository 设计模式为上层提供统一的向量数据操作接口。
-> 基于 RelationDBProvider（SQLite）实现，向量数据以 JSON 字符串形式存储于 TEXT 字段。
-> 相似度搜索采用暴力扫描 + 余弦相似度计算。
+> 解耦向量数据库和系统，通过 DDD 四层架构为上层提供统一的向量数据操作接口。
+> 基于 LanceDB（`@lancedb/lancedb`）实现，embedding 以原生浮点数组形式存储。
+> 相似度搜索使用 LanceDB 原生 ANN 搜索（无 metadata 过滤时）或全表扫描 + JS 计算（有 metadata 过滤时）。
 
 ## 依赖
 
@@ -13,7 +13,10 @@ import { VectorDBAccess } from '@brian-agent/base/VectorDBProvider';
 const relationDb = new RelationDBAccess({ dbPath: './data/brian.db' });
 await relationDb.initialize();
 
-const vectorDb = new VectorDBAccess(relationDb);
+const vectorDb = new VectorDBAccess(relationDb, {
+  lancePath: './data/vectordb',
+  dimension: 1536,
+});
 await vectorDb.initialize();
 ```
 
@@ -125,7 +128,7 @@ VectorFilter：
 
 ## soVector - 搜索向量
 
-基于余弦相似度搜索最相似的向量，支持元数据条件过滤。
+基于相似度搜索最相似的向量，支持元数据条件过滤。
 
 ```typescript
 const output = new SoVectorOutput();
@@ -160,8 +163,8 @@ VectorQueryParam：
 处理流程：
 
 1. 未指定 top_k / similarity_threshold 时从 vectordb_config 读取默认值；
-2. 加载全部向量，应用 user_id 与 metadata 过滤（先过滤再计算相似度）；
-3. 计算余弦相似度，过滤低于阈值的结果；
+2. 无 metadata 过滤时使用 LanceDB 原生 ANN 搜索（`nearestTo` + `distanceType('cosine')`），有 user_id 过滤时通过 `where("user_id = 'xxx'")` 在 LanceDB 层完成；
+3. 有 metadata 过滤时全表扫描，JS 端逐条计算相似度，应用 metadata 过滤条件；
 4. 按相似度降序排序，取前 top_k 条。
 
 返回：output.list 为搜索结果列表（按相似度降序），每项含 id、content、score、user_id、metadata。
@@ -220,14 +223,14 @@ await vectorDb.visualizedVector({ scope: 'volume' }, new VectorContext(), volume
 // 磁盘占用
 const disk = new VisualizedVectorOutput();
 await vectorDb.visualizedVector({ scope: 'diskUsage' }, new VectorContext(), disk);
-// { disk_usage_bytes: 40960, page_size: 4096, page_count: 10 }
+// { disk_usage_bytes: 40960, page_size: 4096, page_count: 10, vector_db_usage_bytes: 20480 }
 ```
 
 | scope | 返回字段 | 说明 |
 |-------|---------|------|
 | health | connected, response_time_ms, enabled | 连接状态、响应时间、启用状态 |
-| volume | total_vectors, collection, dimension | 向量总数、集合名、维度 |
-| diskUsage | disk_usage_bytes, page_size, page_count | 磁盘占用、页大小、页数 |
+| volume | total_vectors, collection, dimension | 向量总数、表名、维度 |
+| diskUsage | disk_usage_bytes, page_size, page_count, vector_db_usage_bytes | SQLite 配置库占用、LanceDB 数据目录占用 |
 
 ---
 
@@ -258,13 +261,13 @@ await vectorDb.enableVectorDB(
 
 ## closeVectorDB - 关闭向量数据库连接
 
-系统关闭时释放资源，终态操作。
+系统关闭时释放资源，关闭 LanceDB Connection 和 Table，终态操作。
 
 ```typescript
 await vectorDb.closeVectorDB(
   new CloseVectorDBInput(),
   new VectorContext(),
-  new CloseDBOutput(),
+  new CloseVectorDBOutput(),
 );
 ```
 
@@ -274,25 +277,23 @@ await vectorDb.closeVectorDB(
 
 ## 表结构
 
-### vector_record 表
+### vector_record 表（LanceDB）
 
-向量数据存储表，embedding 以 JSON 字符串形式存储于 TEXT 字段。
+向量数据存储表，embedding 以原生浮点数组形式存储于 LanceDB。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| id | TEXT PK | UUID |
-| content | TEXT | 原始文本内容 |
-| embedding | TEXT | 向量数据（JSON 数组字符串） |
-| user_id | TEXT | 用户 ID（可空） |
-| metadata | TEXT | 元数据（JSON 字符串，可空） |
-| created | INTEGER | 创建时间（毫秒时间戳） |
-| updated | INTEGER | 最后更新时间（毫秒时间戳） |
+| id | STRING | UUID，主键 |
+| content | STRING | 原始文本内容 |
+| embedding | FLOAT[] | 向量数据（原生浮点数组） |
+| user_id | STRING | 用户 ID（可空） |
+| metadata | STRING | 元数据（JSON 字符串，可空） |
+| created | INT64 | 创建时间（毫秒时间戳） |
+| updated | INT64 | 最后更新时间（毫秒时间戳） |
 
-索引：user_id、created、updated。
+### vectordb_config 表（SQLite）
 
-### vectordb_config 表
-
-配置表，键值对结构。
+配置表，键值对结构，存储于 RelationDBProvider。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

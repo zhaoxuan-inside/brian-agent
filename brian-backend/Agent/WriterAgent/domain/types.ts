@@ -37,10 +37,25 @@ export class WriteInput extends Input {
   user_preferences?: { language?: string; style?: string; depth?: string; format?: string };
 }
 
+export interface BlockMeta {
+  level?: number;
+  language?: string;
+  streaming_status?: 'streaming' | 'completed';
+  [key: string]: unknown;
+}
+
+export interface Block {
+  id: string;
+  type: 'text_paragraph' | 'heading' | 'code_block' | 'list_item' | 'artifact_preview' | 'error_fallback';
+  content: string;
+  meta?: BlockMeta;
+}
+
 export class WriteOutput extends Output {
   response = '';
   response_format = '';
   token_usage = 0;
+  blocks: Block[] = [];
 }
 
 export class SaveUserProfileInput extends Input {

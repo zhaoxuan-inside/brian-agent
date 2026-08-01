@@ -77,4 +77,14 @@ export class LogAccess {
   async enableLog(i: EnableLogInput, c: LogContext, o: EnableLogOutput) {
     return this.service.enableLog(i, c, o);
   }
+  async queryLogs(options: {
+    level?: string; source?: string; keyword?: string;
+    start_time?: number; end_time?: number;
+    page?: number; pageSize?: number;
+  }) {
+    return this.service.queryLogs(options);
+  }
+  async getLogStats(options?: { start_time?: number; end_time?: number }) {
+    return this.service.getLogStats(options);
+  }
 }

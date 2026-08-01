@@ -218,7 +218,7 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   // Similarly handle potential soul table conflicts
   addColumnIfNotExists(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
 
-  // Use in-memory VectorDB since congraphdb native module is not available on this platform
+  // Use in-memory VectorDB for test isolation
   const vectorDbAccess = createInMemoryVectorDBAccess();
 
   const infoCore = new InfoCoreAccess(relationDb, llmAccess, promptsAccess, vectorDbAccess as any, graphDBAccess, logger);

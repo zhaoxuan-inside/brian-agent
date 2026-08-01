@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans antialiased text-apple-gray-900 dark:text-apple-gray-50 bg-white dark:bg-apple-dark-bg;
+    margin: 0;
+    padding: 0;
+  }
+  * { @apply border-apple-gray-200 dark:border-apple-gray-700; }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md border border-apple-gray-200/50 dark:border-apple-gray-700/50;
+  }
+  .glass-input {
+    @apply bg-apple-gray-50/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-apple-gray-200 dark:border-apple-gray-700;
+  }
+  .btn-primary {
+    @apply px-4 py-2 bg-brian-blue text-white font-medium rounded-xl hover:bg-brian-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-700 dark:text-apple-gray-300 font-medium rounded-xl hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors;
+  }
+  .icon-btn {
+    @apply p-2 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors;
+  }
+  .block-card {
+    @apply bg-white dark:bg-apple-gray-800 rounded-2xl shadow-sm border border-apple-gray-200 dark:border-apple-gray-700;
+  }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #C7C7CC; border-radius: 3px; }
+.dark ::-webkit-scrollbar-thumb { background: #48484A; }

@@ -3,7 +3,7 @@
 > 测试执行日期：2026-07-30
 > 测试框架：Vitest (Vitest v1+)
 > 数据库模式：SQLite (`:memory:` 内存模式)
-> 外部依赖：LLM / MCP / 图数据库 (congraphdb) 均采用 Mock
+> 外部依赖：LLM / MCP 均采用 Mock
 
 ---
 
@@ -351,7 +351,7 @@ Orchestration 测试 (Vitest + Node in-memory SQLite)
 ├─ 内部第三方组件（真实数据落库）
 │   ├─ SQLite（关系型）: 真实 :memory: 数据库，按 Access API 操作，不做 mock
 │   ├─ VectorDB         : 未在 Orchestration 直接使用，无 mock 需求
-│   ├─ GraphDB(congraphdb) : 因 Linux 无原生二进制，用 vitest alias 指向 __mocks__/congraphdb.js
+│   ├─ VectorDB(SQLite) : 基于 SQLite 实现的向量存储与检索
 │   │                     ⚠️ 注意：这与 Core 层使用的 mock 机制完全一致，非本次测试特殊引入
 │   └─ MQ               : 真实对象但 transport 层 mocked，队列消息在 Access 对象内处理
 │
@@ -364,7 +364,7 @@ Orchestration 测试 (Vitest + Node in-memory SQLite)
 
 - `beforeEach` / `afterEach` 使用 `vi.clearAllMocks()`：**清除调用历史但保留 mock 实现**（避免 IdGenerator 被 restoreAllMocks 还原后 DB 主键冲突）。
 - 外部组件的 Mock 是通过测试对象工厂（`createMock*` 系列）注入到 Access 构造函数里的——和生产代码的"读取外部 LLM/MCP 实际实例"路径完全隔离。因此 **Mock 数据不会污染生产，也不需要"恢复正确调用代码"**。生产环境构造 Access 时会注入真实的 Provider 实例。
-- congraphdb mock 是通过 vitest.config.ts `resolve.alias` 方式全局替换的，**只在测试运行时生效**，不影响 dist 产物或生产 require。
+- VectorDB 使用 SQLite 后端（通过 better-sqlite3），无需额外 mock。
 
 ---
 

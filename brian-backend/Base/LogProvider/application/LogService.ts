@@ -37,7 +37,9 @@ import {
   EnableLogOutput,
   LOG_RULE_TABLE,
   LOG_CONFIG_TABLE,
+  LOG_RECORD_TABLE,
   LOG_DEFAULT_CONFIGS,
+  type WriteMode,
 } from '../domain/types';
 
 /** 200MB（字节） */
@@ -59,6 +61,8 @@ export class LogService {
   private maxFileSize = DEFAULT_MAX_FILE_SIZE;
   /** 日志保留天数（从配置读取，缓存） */
   private retentionDays = 14;
+  /** 日志写入模式 */
+  private writeMode: WriteMode = 'BOTH';
 
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, LOG_CONFIG_TABLE);
@@ -71,6 +75,8 @@ export class LogService {
     this.logDir = await this.config.getString('file_path', './data/logs') ?? './data/logs';
     this.maxFileSize = await this.config.getInt('max_file_size', DEFAULT_MAX_FILE_SIZE);
     this.retentionDays = await this.config.getInt('retention_days', 14);
+    const modeStr = await this.config.getString('write_mode', 'BOTH') ?? 'BOTH';
+    this.writeMode = (modeStr === 'BOTH' || modeStr === 'SQLITE' || modeStr === 'FILE') ? modeStr : 'BOTH';
     await this.loadRules();
   }
 
@@ -258,7 +264,7 @@ export class LogService {
   // 日志管理
   // -------------------------------------------------------------------------
 
-  /** 写入日志到本地文件（addLog） */
+  /** 写入日志到本地文件（addLog），同时支持 SQLite 持久化 */
   async addLog(
     input: AddLogInput,
     _context: LogContext,
@@ -276,21 +282,46 @@ export class LogService {
       throw new ValidationError('message 不能为空');
     }
 
-    const line = this.formatLogLine(data);
-    const filePath = this.getModuleLogFile(data.source);
-    appendFileSync(filePath, line, 'utf-8');
+    const logId = IdGenerator.generate();
+    const now = IdGenerator.now();
 
-    // 写入后检查文件大小，若超过 200MB 则触发清理
-    try {
-      const size = statSync(filePath).size;
-      if (size >= this.maxFileSize) {
-        this.cleanLogFile(filePath);
+    // 文件写入（FILE / BOTH 模式）
+    if (this.writeMode === 'FILE' || this.writeMode === 'BOTH') {
+      const line = this.formatLogLine(data);
+      const filePath = this.getModuleLogFile(data.source);
+      appendFileSync(filePath, line, 'utf-8');
+
+      try {
+        const size = statSync(filePath).size;
+        if (size >= this.maxFileSize) {
+          this.cleanLogFile(filePath);
+        }
+      } catch {
+        // 忽略
       }
-    } catch {
-      // 忽略
     }
 
-    output.id = `${Date.now()}-${data.source}`;
+    // SQLite 写入（SQLITE / BOTH 模式）
+    if (this.writeMode === 'SQLITE' || this.writeMode === 'BOTH') {
+      try {
+        await this.relationDb.insert(LOG_RECORD_TABLE, {
+          id: logId,
+          created: now,
+          updated: now,
+          level: data.level,
+          source: data.source,
+          message: data.message,
+          trace_id: data.trace_id ?? null,
+          caller: data.caller ?? null,
+          metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+          elapsed_ms: data.elapsed_ms ?? null,
+        });
+      } catch {
+        // SQLite 写入失败不影响业务
+      }
+    }
+
+    output.id = logId;
     return true;
   }
 
@@ -619,5 +650,93 @@ export class LogService {
     }
     await this.loadRules();
     return true;
+  }
+
+  /** 从 SQLite 查询日志记录（queryLogs） */
+  async queryLogs(options: {
+    level?: string;
+    source?: string;
+    keyword?: string;
+    start_time?: number;
+    end_time?: number;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ logs: LogRecord[]; total: number }> {
+    this.ensureEnabled();
+    const conditions: Condition[] = [];
+    if (options.level) {
+      conditions.push({ field: 'level', operator: Operator.EQ, value: options.level.toUpperCase() });
+    }
+    if (options.source) {
+      conditions.push({ field: 'source', operator: Operator.LIKE, value: `%${options.source}%` });
+    }
+    if (options.start_time !== undefined) {
+      conditions.push({ field: 'created', operator: Operator.GE, value: options.start_time });
+    }
+    if (options.end_time !== undefined) {
+      conditions.push({ field: 'created', operator: Operator.LE, value: options.end_time });
+    }
+
+    const page = options.page ?? 1;
+    const pageSize = options.pageSize ?? 50;
+
+    const selectOpts: Record<string, unknown> = {
+      order_by: [{ field: 'created', direction: 'DESC' }],
+      page: { current: page, size: pageSize },
+    };
+    if (conditions.length > 0) {
+      selectOpts.conditions = conditions;
+    }
+
+    const rows = await this.relationDb.select(LOG_RECORD_TABLE, selectOpts as any);
+    const total = await this.relationDb.count(LOG_RECORD_TABLE, conditions);
+
+    let logs: LogRecord[] = rows.map((r) => ({
+      id: String(r.id),
+      created: Number(r.created),
+      updated: Number(r.updated),
+      level: String(r.level),
+      source: String(r.source),
+      message: String(r.message),
+      trace_id: r.trace_id ? String(r.trace_id) : undefined,
+      caller: r.caller ? String(r.caller) : undefined,
+      metadata: r.metadata ? (() => { try { return JSON.parse(String(r.metadata)) as Record<string, unknown>; } catch { return undefined; } })() : undefined,
+      elapsed_ms: r.elapsed_ms ? Number(r.elapsed_ms) : undefined,
+    }));
+
+    if (options.keyword) {
+      logs = logs.filter(l => l.message.includes(options.keyword!));
+    }
+
+    return { logs, total };
+  }
+
+  /** 从 SQLite 统计日志级别分布（getLogStats） */
+  async getLogStats(options?: {
+    start_time?: number;
+    end_time?: number;
+  }): Promise<{ distribution: Array<{ level: string; count: number }> }> {
+    this.ensureEnabled();
+    const conditions: Condition[] = [];
+    if (options?.start_time !== undefined) {
+      conditions.push({ field: 'created', operator: Operator.GE, value: options.start_time });
+    }
+    if (options?.end_time !== undefined) {
+      conditions.push({ field: 'created', operator: Operator.LE, value: options.end_time });
+    }
+
+    const rows = await this.relationDb.select(LOG_RECORD_TABLE, {
+      fields: ['level', 'COUNT(*) as count'],
+      conditions: conditions.length > 0 ? conditions : undefined,
+      group_by: 'level',
+      order_by: [{ field: 'count', direction: 'DESC' }],
+    } as any);
+
+    return {
+      distribution: rows.map((r: { level: string; count: number }) => ({
+        level: String(r.level),
+        count: Number(r.count),
+      })),
+    };
   }
 }

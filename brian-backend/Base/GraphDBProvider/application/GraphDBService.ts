@@ -1254,7 +1254,7 @@ export class GraphDBService {
    * PRD 3.5.1 条：根据 scope 获取图数据库的可视化信息。
    * - health：连接状态、响应时间、启用状态；
    * - volume：节点数、边数、激活事件数；
-   * - diskUsage：磁盘占用（congraphdb 暂不支持直接获取，基于数据量估算）；
+   * - diskUsage：磁盘占用（基于文件大小获取）；
    *
    * @param input 入参（scope 可视化范围）
    * @param context 执行上下文

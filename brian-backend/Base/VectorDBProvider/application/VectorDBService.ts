@@ -1,11 +1,11 @@
 /**
  * @fileoverview VectorDBProvider 应用服务层。
  *
- * 依赖 VectorDBComponent（congraphdb HNSW 向量检索）操作向量数据，
+ * 依赖 VectorDBComponent（LanceDB 向量检索）操作向量数据，
  * 依赖 RelationDBAccess（通过 IConfigStorage）操作关系数据库的 vectordb_config 配置表，
  * 依赖 ConfigService 管理配置项。
  *
- * 向量数据（vector_record 集合）存储于 VectorDB 组件，相似度搜索使用原生 HNSW 索引；
+ * 向量数据（vector_record 表）存储于 VectorDB 组件（LanceDB），相似度搜索使用 LanceDB 原生 ANN 搜索；
  * 配置项（启用 / 禁用状态、搜索默认参数）存储于关系数据库配置表 vectordb_config。
  *
  * 实现所有用例：addVector / delVector / delVectorByFilter / soVector / getVector /
@@ -59,7 +59,7 @@ import type {
  * VectorDBProvider 应用服务。
  *
  * VectorDBProvider 是向量数据的唯一操作入口，上层不可直接操作数据库。
- * 向量数据存储于 VectorDB 组件（congraphdb），配置项存储于关系数据库。
+ * 向量数据存储于 VectorDB 组件（LanceDB），配置项存储于关系数据库。
  */
 export class VectorDBService {
   /** 运行时内存中的启用状态，供各操作快速校验 */
@@ -163,7 +163,7 @@ export class VectorDBService {
       ids.push(id);
 
       // 通过 VectorDB 组件执行 upsert（MERGE 语义）
-      this.vectorDb.upsert({
+      await this.vectorDb.upsert({
         id,
         content: vec.content,
         embedding: vec.embedding,
@@ -197,7 +197,7 @@ export class VectorDBService {
       throw new ValidationError('ids 不能为空');
     }
 
-    const affected = this.vectorDb.deleteMany(input.ids);
+    const affected = await this.vectorDb.deleteMany(input.ids);
     output.affected_rows = affected;
     return true;
   }
@@ -232,11 +232,11 @@ export class VectorDBService {
    *
    * PRD 3.4 条：基于余弦相似度搜索最相似的向量，支持元数据条件过滤。
    *
-   * 处理流程：
-   * 1. 若 top_k / similarity_threshold 未指定，从 vectordb_config 读取默认值；
-   * 2. 构建过滤条件（user_id + filters）；
-   * 3. 由 VectorDB 组件执行 HNSW 相似度搜索（含后过滤 + 阈值过滤）；
-   * 4. 按相似度降序返回前 top_k 条结果。
+* 处理流程：
+ * 1. 若 top_k / similarity_threshold 未指定，从 vectordb_config 读取默认值；
+ * 2. 构建过滤条件（user_id + filters）；
+ * 3. 由 VectorDB 组件执行 LanceDB 相似度搜索（含后过滤 + 阈值过滤）；
+ * 4. 按相似度降序返回前 top_k 条结果。
    *
    * @param input 入参（query_param 查询参数）
    * @param context 执行上下文
@@ -277,8 +277,8 @@ export class VectorDBService {
       });
     }
 
-    // HNSW 相似度搜索（组件内部完成距离计算 + 后过滤 + 阈值过滤 + topK 截断）
-    const hits = this.vectorDb.search(
+    // 由 VectorDB 组件执行 LanceDB 相似度搜索（含后过滤 + 阈值过滤 + topK 截断）
+    const hits = await this.vectorDb.search(
       param.embedding,
       topK,
       threshold,
@@ -355,7 +355,7 @@ export class VectorDBService {
    * PRD 3.7.1 条：根据 scope 获取向量数据库的可视化信息。
    * - health：向量数据库连接状态、响应时间、启用状态（通过 VectorDB 组件探测）；
    * - volume：向量总数、集合名、维度（通过 VectorDB 组件获取）；
-   * - diskUsage：占用磁盘空间（通过 RelationDBProvider 的 SQLite PRAGMA 获取）。
+   * - diskUsage：占用磁盘空间（通过 RelationDBProvider 的 SQLite PRAGMA + VectorDB 组件目录大小获取）。
    *
    * @param input 入参（scope）
    * @param context 执行上下文
@@ -450,7 +450,7 @@ export class VectorDBService {
    * PRD 3.7.3 条：系统关闭时的终态释放，执行后不可通过 enableVectorDB 恢复，
    * 需重新初始化组件。
    *
-   * 关闭 VectorDB 组件，释放底层 congraphdb 连接资源。
+   * 关闭 VectorDB 组件，释放底层数据库连接资源。
    *
    * @param input 入参
    * @param context 执行上下文

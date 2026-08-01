@@ -8,7 +8,7 @@
  * - 边生命周期：activateGraphEdge / ageGraphEdge
  * - 可视化与运维：visualizedGraph / enableGraphDB / closeGraphDB
  *
- * 所有测试使用真实的 graphdblite + SQLite 数据库，不使用任何 MOCK。
+ * 所有测试使用真实的 better-sqlite3 + SQLite 数据库，不使用任何 MOCK。
  * 每个测试用例在 temp 目录中创建独立的数据库文件，测试后清理。
  */
 

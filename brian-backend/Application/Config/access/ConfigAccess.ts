@@ -132,6 +132,7 @@ export class ConfigAccess {
       chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
     );
     this.service = AopProxy.wrap(rawService, { logger });
+    rawService.initRegistrations().catch(() => {});
   }
 
   // -------------------------------------------------------------------------

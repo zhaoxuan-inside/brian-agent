@@ -1,7 +1,7 @@
 # GraphDBProvider API 文档
 
 > 解耦图数据库和系统，通过 Repository 设计模式为上层提供统一的图数据操作接口。
-> 基于 RelationDBProvider（SQLite）实现，所有图数据表（节点、边、激活事件、按天激活统计）均存储于 SQLite。
+> 基于 SQLite + CTE 实现，通过 better-sqlite3 连接本地数据库文件，CypherTranslator 将 Cypher 查询翻译为 SQL 执行。
 > content / properties 字段以 JSON 字符串形式存储于 TEXT 字段，is_active 以 INTEGER（0/1）存储布尔值。
 
 ## 依赖
