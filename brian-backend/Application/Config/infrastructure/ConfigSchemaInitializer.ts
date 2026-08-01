@@ -33,10 +33,13 @@ export class ConfigSchemaInitializer {
         "config_type"        TEXT,
         "config_default"     TEXT,
         "config_enum_values" TEXT,
+        "config_value"       TEXT,
         "readable"           INTEGER DEFAULT 1,
         "writable"           INTEGER DEFAULT 1
       )
     `);
+
+    try { this.relationDb.executeRaw(`ALTER TABLE "${CONFIG_REGISTRY_TABLE}" ADD COLUMN "config_value" TEXT`); } catch { /* exists */ }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${CONFIG_LAYER_PRIVILEGE_TABLE}" (

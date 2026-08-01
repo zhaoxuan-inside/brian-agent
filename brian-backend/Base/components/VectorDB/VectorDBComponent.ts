@@ -67,8 +67,8 @@ export class VectorDBComponent {
         id: '__placeholder__',
         content: '',
         embedding: new Array(dimension).fill(0),
-        user_id: null,
-        metadata: null,
+        user_id: '__placeholder__',
+        metadata: '{}',
         created: 0,
         updated: 0,
       };

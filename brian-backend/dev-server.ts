@@ -49,6 +49,7 @@ import { VisualizationAccess } from './Application/Visualization/access/Visualiz
 import {
   ConfigContext,
   GetConfigDetailInput, GetConfigDetailOutput,
+  GetConfigItemInput, GetConfigItemOutput,
   UpdateConfigInput, UpdateConfigOutput,
 } from './Application/Config/domain/types';
 
@@ -69,6 +70,7 @@ import {
 } from './Base/SkillProvider';
 import {
   McpContext, ListMcpInput, ListMcpOutput,
+  SoMcpProviderInput, SoMcpProviderOutput,
 } from './Base/MCPProvider';
 import {
   AgentLibraryContext, GetAgentInput, GetAgentOutput,
@@ -273,13 +275,30 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.configAccess.updateConfig(input, context, output);
         sendJson(res, 200, { success: true });
 
+      } else if (method === 'GET' && pathname.startsWith('/api/config/item/')) {
+        const configKey = pathname.split('/api/config/item/')[1];
+        const input = Object.assign(new GetConfigItemInput(), { config_key: configKey });
+        const output = new GetConfigItemOutput();
+        const context = new ConfigContext();
+        await ctx.configAccess.getConfigItem(input, context, output);
+        sendJson(res, 200, { config_item: output.config_item });
+
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
-        const input = Object.assign(new ListLLMInput(), {});
-        const output = new ListLLMOutput();
-        const context = new LLMContext();
-        await ctx.configAccess.listLLM(input, context, output);
-        sendJson(res, 200, output.models || []);
+        const provInput = Object.assign(new SoLLMProviderInput(), {});
+        const provOutput = new SoLLMProviderOutput();
+        const provContext = new LLMContext();
+        await ctx.configAccess.soLLMProvider(provInput, provContext, provOutput);
+        const providers = provOutput.list || [];
+        if (providers.length === 0) {
+          sendJson(res, 200, []);
+        } else {
+          const input = Object.assign(new ListLLMInput(), { llm_provider_id: providers[0].id });
+          const output = new ListLLMOutput();
+          const context = new LLMContext();
+          await ctx.configAccess.listLLM(input, context, output);
+          sendJson(res, 200, output.list || []);
+        }
 
       } else if (method === 'GET' && pathname.startsWith('/api/config/model/') && !pathname.includes('/test') && !pathname.includes('/default')) {
         const id = pathname.split('/api/config/model/')[1].split('/')[0];
@@ -287,7 +306,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new GetLLMOutput();
         const context = new LLMContext();
         await ctx.configAccess.getLLM(input, context, output);
-        sendJson(res, 200, output.model || { id, name: 'unknown' });
+        sendJson(res, 200, output.llm || { id, name: 'unknown' });
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
@@ -314,7 +333,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SoLLMProviderOutput();
         const context = new LLMContext();
         await ctx.configAccess.soLLMProvider(input, context, output);
-        sendJson(res, 200, output.providers || []);
+        sendJson(res, 200, output.list || []);
 
       } else if (method === 'POST' && pathname === '/api/config/provider') {
         const input = Object.assign(new AddLLMProviderInput(), body);
@@ -349,7 +368,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SoSoulOutput();
         const context = new SoulContext();
         await ctx.configAccess.soSoul(input, context, output);
-        sendJson(res, 200, output.souls || []);
+        sendJson(res, 200, output.list || []);
 
       } else if (method === 'POST' && pathname === '/api/config/soul') {
         const input = Object.assign(new AddSoulInput(), body);
@@ -376,11 +395,20 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- MCP (Config section) ----
       } else if (method === 'GET' && pathname === '/api/config/mcp') {
-        const input = Object.assign(new ListMcpInput(), {});
-        const output = new ListMcpOutput();
-        const context = new McpContext();
-        await ctx.configAccess.listMcp(input, context, output);
-        sendJson(res, 200, output.mcps || []);
+        const provInput = Object.assign(new SoMcpProviderInput(), {});
+        const provOutput = new SoMcpProviderOutput();
+        const provContext = new McpContext();
+        await ctx.configAccess.soMcpProvider(provInput, provContext, provOutput);
+        const providers = provOutput.list || [];
+        if (providers.length === 0) {
+          sendJson(res, 200, []);
+        } else {
+          const input = Object.assign(new ListMcpInput(), { mcp_provider_id: providers[0].id });
+          const output = new ListMcpOutput();
+          const context = new McpContext();
+          await ctx.configAccess.listMcp(input, context, output);
+          sendJson(res, 200, output.list || []);
+        }
 
       // ---- Agent Routes ----
       } else if (method === 'GET' && pathname === '/api/agent') {
@@ -393,6 +421,12 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'POST' && pathname === '/api/agent') {
         sendJson(res, 200, { id: `agent-${++_seq}`, name: body.name || 'new-agent' });
 
+      } else if (method === 'POST' && /\/api\/agent\/[^/]+\/toggle$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'PUT' && pathname.startsWith('/api/agent/')) {
+        sendJson(res, 200, { success: true });
+
       } else if (method === 'DELETE' && pathname.startsWith('/api/agent/')) {
         sendJson(res, 200, { success: true });
 
@@ -402,7 +436,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SoSkillOutput();
         const context = new SkillContext();
         await ctx.configAccess.soSkill(input, context, output);
-        sendJson(res, 200, { skills: output.skills || [] });
+        sendJson(res, 200, { skills: output.list || [] });
 
       } else if (method === 'POST' && pathname === '/api/skill') {
         const input = Object.assign(new AddSkillInput(), body);
@@ -410,6 +444,12 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const context = new SkillContext();
         await ctx.configAccess.addSkill(input, context, output);
         sendJson(res, 200, { id: output.skill_id, name: body.skill_brief || 'new-skill' });
+
+      } else if (method === 'POST' && /\/api\/skill\/[^/]+\/toggle$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'PUT' && /\/api\/skill\/[^/]+$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/skill/')) {
         const id = pathname.split('/api/skill/')[1];
@@ -421,14 +461,32 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- MCP (Standalone) ----
       } else if (method === 'GET' && pathname === '/api/mcp') {
-        const input = Object.assign(new ListMcpInput(), {});
-        const output = new ListMcpOutput();
-        const context = new McpContext();
-        await ctx.mcpAccess.listMcp(input, context, output);
-        sendJson(res, 200, { installed: output.mcps || [] });
+        const provInput = Object.assign(new SoMcpProviderInput(), {});
+        const provOutput = new SoMcpProviderOutput();
+        const provContext = new McpContext();
+        await ctx.mcpAccess.soMcpProvider(provInput, provContext, provOutput);
+        const providers = provOutput.list || [];
+        if (providers.length === 0) {
+          sendJson(res, 200, { installed: [] });
+        } else {
+          const input = Object.assign(new ListMcpInput(), { mcp_provider_id: providers[0].id });
+          const output = new ListMcpOutput();
+          const context = new McpContext();
+          await ctx.mcpAccess.listMcp(input, context, output);
+          sendJson(res, 200, { installed: output.list || [] });
+        }
 
       } else if (method === 'GET' && pathname === '/api/mcp/market') {
         sendJson(res, 200, { market: [] });
+
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/toggle$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/install$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'DELETE' && /\/api\/mcp\/[^/]+$/.test(pathname)) {
+        sendJson(res, 200, { success: true });
 
       // ===== Chat Routes =====
       } else if (method === 'GET' && pathname === '/api/chat/list') {

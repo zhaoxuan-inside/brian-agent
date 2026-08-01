@@ -1144,6 +1144,13 @@ export class ConfigService {
       );
     }
 
+    const row = await this.relationDb.selectOne(CONFIG_REGISTRY_TABLE, [
+      { field: 'config_key', operator: Operator.EQ, value: configKey },
+    ]);
+    if (row && row.config_value) {
+      return this.tryParse(row.config_value as string);
+    }
+
     return null;
   }
 
@@ -1342,7 +1349,12 @@ export class ConfigService {
       return;
     }
 
-    throw new ValidationError(`未找到配置键 ${configKey} 的路由`);
+    const now = Date.now();
+    const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+    await this.relationDb.update(CONFIG_REGISTRY_TABLE, [
+      { field: 'updated', value: now },
+      { field: 'config_value', value: valueStr },
+    ], [{ field: 'config_key', operator: Operator.EQ, value: configKey }]);
   }
 
   // =========================================================================

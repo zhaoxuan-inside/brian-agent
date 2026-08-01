@@ -59,6 +59,13 @@ export const configApi = {
   getConfig: () => request<{ config: Record<string, unknown> }>('/config'),
   updateConfig: (data: Record<string, unknown>) =>
     request<void>('/config', { method: 'PUT', body: JSON.stringify(data) }),
+  configTree: () => request<{ config: { layers: unknown[] } }>('/config'),
+  configItem: {
+    get: (configKey: string) =>
+      request<{ config_item: Record<string, unknown> }>(`/config/item/${encodeURIComponent(configKey)}`),
+    update: (configKey: string, value: unknown) =>
+      request<void>('/config', { method: 'PUT', body: JSON.stringify({ config_key: configKey, value }) }),
+  },
   model: {
     list: () => request<ModelInfo[]>('/config/model'),
     get: (id: string) => request<ModelInfo>(`/config/model/${encodeURIComponent(id)}`),
