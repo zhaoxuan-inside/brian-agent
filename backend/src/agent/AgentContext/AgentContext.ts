@@ -1,5 +1,5 @@
 import { Input, Context, Output } from '../../shared/base';
-import { ValidationError, NotFoundError } from '../../shared/errors';
+import { ValidationError } from '../../shared/errors';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import * as db from './db';

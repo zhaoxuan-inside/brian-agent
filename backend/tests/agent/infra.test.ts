@@ -1,7 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import os from 'os';
-import path from 'path';
-import fs from 'fs';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   parseInput,
   validateInput,
@@ -17,15 +14,10 @@ import {
 } from '../../src/agent/infra/stateManager';
 import {
   formatOutput,
-  formatAsText,
   formatAsJSON,
-  formatAsMarkdown,
   applyTemplate,
 } from '../../src/agent/infra/outputFormatter';
 import { AgentLifecycle } from '../../src/agent/lifecycle';
-import { initDatabase, closeDatabase } from '../../src/infrastructure/database';
-
-const TEST_DATA_DIR = path.join(os.tmpdir(), `brian-test-infra-${Date.now()}`);
 
 describe('InputAdapter', () => {
   describe('parseInput()', () => {

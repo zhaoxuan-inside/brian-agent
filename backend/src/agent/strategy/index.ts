@@ -1,4 +1,4 @@
-import type { ChatMessage, LLMResponse, Tool } from '../../shared/types';
+import type { ChatMessage, LLMResponse } from '../../shared/types';
 
 export type StrategyType = 'react' | 'plan-execute' | 'cot' | 'conditional-graph' | 'hybrid';
 

@@ -2,14 +2,26 @@
 
 ## 1. 设计目标
 
-1. 解耦向量数据库和系统，通过 Repository 设计模式为上层提供统一的向量数据操作接口；
+1. 解耦向量数据库和系统，通过 Provider 模式为上层提供统一的向量数据操作接口；
 2. 所有对向量数据的操作都不能直接进行，都必须要通过 VectorDBProvider；
 3. 通过对象封装方式传递向量数据与查询条件，由 Provider 内部完成对象到向量数据库操作的映射，上层不接触底层接口；
 4. 提供向量的存储、检索、删除能力；
 5. 提供向量相似性检索能力（基于余弦相似度）；
 6. 支持按元数据条件过滤向量；
 7. 提供可视化数据接口，支持向量数据库健康状态监控；
-8. 向量数据库组件默认集成 VectorDB；
+8. 向量数据库默认集成 LanceDB（基于 Lance 列式存储格式的开源向量数据库）；
+
+## 1.1. 架构说明
+
+VectorDBProvider 采用**单类提供者模式**（非 DDD 分层）：
+
+- `VectorDBProvider`（`index.ts` → `VectorDBProvider.ts`）：核心类，一个 ~730 行的类，直接封装 LanceDB 操作、SQLite 配置管理、AOP 日志代理。
+- `types.ts`：所有 Input / Output 类型定义及接口（`VectorObject`, `VectorFilter`, `VectorQueryParam`, `VectorDBSearchResult`, `VectorRecord`）。
+- `aop.ts`：AOP 代理工厂函数 `aopProxy`，为 VectorDBProvider 实例的方法调用注入日志记录与耗时统计。
+
+**依赖**：
+- **LanceDB**（`@lancedb/lancedb`）：向量数据存储与检索引擎。
+- **DBWrapper**（`src/base/DBWrapper`）：SQLite 封装，用于存储 `vectordb_config` 配置表。
 
 ## 2. 对象定义
 
@@ -91,7 +103,13 @@
 3. 如果向量 id 已存在则更新，否则新增；
 4. 返回向量 id 列表；
 
-**返回**：Boolean，表示新增/更新是否完成；向量 id 列表通过 output 参数返回
+**出参（AddVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| ids | STRING[] | 新增/更新的向量 ID 列表（顺序与入参一致） |
+
+**返回**：Boolean，表示新增/更新是否完成；向量 id 列表通过 output.ids 返回
 
 ### 3.2. 删除向量（delVector）
 
@@ -110,7 +128,13 @@
 1. 接收向量 ID 列表；
 2. 由 Provider 将 ID 映射为向量数据库的删除操作并执行；
 
-**返回**：Boolean，表示删除是否完成；影响行数通过 output 参数返回
+**出参（DelVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| affectedCount | INT | 实际删除的向量数量 |
+
+**返回**：Boolean，表示删除是否完成；影响行数通过 output.affectedCount 返回
 
 ### 3.3. 按条件删除向量（delVectorByFilter）
 
@@ -129,7 +153,13 @@
 1. 接收过滤条件对象；
 2. 由 Provider 根据 filters 生成向量数据库的删除操作并执行；
 
-**返回**：Boolean，表示删除是否完成；删除的向量数量通过 output 参数返回
+**出参（DelVectorByFilterOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| affectedCount | INT | 删除的向量数量 |
+
+**返回**：Boolean，表示删除是否完成；删除的向量数量通过 output.affectedCount 返回
 
 ### 3.4. 搜索向量（soVector）
 
@@ -146,12 +176,22 @@
 **处理流程**：
 
 1. 接收查询参数对象；
-2. 若 `top_k` 未指定，从关系数据库配置表 vectordb_config 读取 `default_top_k`（默认 10）；若 `similarity_threshold` 未指定，从 vectordb_config 读取 `default_similarity_threshold`（默认 0.0）；
-3. 由 Provider 将 query_param 映射为向量数据库的相似性搜索操作（含向量距离计算 + 元数据过滤）；
+2. 若 `top_k` 未指定，从 SQLite 配置表 vectordb_config 读取 `default_top_k`（默认 10）；若 `similarity_threshold` 未指定，从 vectordb_config 读取 `default_similarity_threshold`（默认 0.0）；
+3. 根据是否有 metadata 过滤条件选择搜索模式：
+   - **无 metadata filter**：使用 LanceDB 原生 `vectorSearch(embedding).distanceType('cosine')` 执行近似最近邻搜索，将 `_distance` 转换为 `similarity = 1 - _distance`；
+   - **有 metadata filter**：暴力扫描（`scanAllRows()` 全表读取），JS 端 `cosineSimilarity()` 逐条计算相似度，再在内存中应用 metadata 过滤条件；
 4. 按相似度降序排序，过滤低于 `similarity_threshold` 的结果；
-5. 返回前 `top_k` 条结果（含向量 id、内容、相似度分数、元数据）；
+5. 返回前 `top_k` 条结果（含向量 id、内容、相似度分数 similarity、元数据）；
 
-**返回**：Boolean，表示搜索是否完成；搜索结果通过 output 参数返回
+**出参（SoVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| results | VectorDBSearchResult[] | 搜索结果列表（按相似度降序） |
+
+> 搜索结果对象 `VectorDBSearchResult`：含 `id`、`content`、`user_id`、`similarity`（余弦相似度 [-1,1]）、`metadata`。
+
+**返回**：Boolean，表示搜索是否完成；搜索结果通过 output.results 返回
 
 ### 3.5. 获取向量（getVector）
 
@@ -171,7 +211,15 @@
 2. 由 Provider 将 ID 映射为向量数据库的查询操作并执行；
 3. 若向量不存在返回空；
 
-**返回**：Boolean，表示查询是否完成；向量信息（含 content、embedding、user_id、metadata）通过 output 参数返回
+**出参（GetVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| vector | VectorRecord \| undefined | 向量完整记录，不存在时为 undefined |
+
+> 向量记录 `VectorRecord`：含 `id`、`content`、`embedding`（Float32Array）、`user_id`、`metadata`、`created`、`updated`。
+
+**返回**：Boolean，表示查询是否完成；向量信息通过 output.vector 返回
 
 ### 3.6. 统计向量数量（countVector）
 
@@ -190,7 +238,13 @@
 1. 接收过滤条件对象；
 2. 由 Provider 根据 filters 生成向量数据库的统计操作并执行；
 
-**返回**：Boolean，表示统计是否完成；向量数量通过 output 参数返回
+**出参（CountVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| count | INT | 符合条件的向量数量 |
+
+**返回**：Boolean，表示统计是否完成；向量数量通过 output.count 返回
 
 ### 3.7. 可视化与运维
 
@@ -210,10 +264,39 @@
 
 1. 根据 scope 获取对应的可视化数据：
    - health：向量数据库健康状态（连接状态、响应时间）；
-   - volume：数据量（向量总数、集合数量、维度）；
+   - volume：数据量（向量总数、集合数、维度，其中集合数固定为 1）；
    - diskUsage：占用磁盘空间；
 
-**返回**：Boolean，表示查询是否完成；可视化数据通过 output 参数返回
+**出参（VisualizedVectorOutput extends Output）**：
+
+| 属性 | 类型 | 说明 |
+| ------ | ----- | ----- |
+| data | JSON | 可视化数据，按 scope 返回不同结构 |
+
+**health 返回结构**：
+
+| 字段 | 说明 |
+| ------ | ----- |
+| connected | LanceDB 连接是否可用 |
+| responseTime | 响应时间（ms） |
+| enabled | 当前启用状态 |
+
+**volume 返回结构**：
+
+| 字段 | 说明 |
+| ------ | ----- |
+| totalVectors | 向量总数 |
+| collections | 集合数（固定为 1） |
+| dimension | 向量维度（从首个记录的 embedding 推断） |
+
+**diskUsage 返回结构**：
+
+| 字段 | 说明 |
+| ------ | ----- |
+| estimatedBytes | 估算磁盘占用（字节，按 content + vector + metadata 估算） |
+| rowCount | 当前向量行数 |
+
+**返回**：Boolean，表示查询是否完成；可视化数据通过 output.data 返回
 
 #### 3.7.2. 启用/禁用（enableVectorDB）
 
@@ -229,13 +312,13 @@
 
 **处理流程**：
 
-1. 根据 `enable` 参数启用或禁用向量数据库，并将 `enabled` 状态持久化到关系数据库配置表 vectordb_config（库名 `vectordb`）；
-2. 禁用时关闭向量数据库连接，释放资源，将 vectordb_config 中 `enabled` 置为 false；禁用期间所有向量数据操作将返回失败（向量数据库未启用）；
-3. 启用时重新初始化向量数据库连接，恢复可用状态，将 vectordb_config 中 `enabled` 置为 true；
+1. 根据 `enable` 参数启用或禁用向量数据库，并将 `enabled` 状态持久化到 SQLite 配置表 vectordb_config；
+2. 启用/禁用仅改变内存中的 `enabled` 标记和配置表持久化值，**不关闭或重建 LanceDB 连接**；禁用期间所有向量数据操作将返回 `success=false` 并携带 `error` 信息；
+3. 组件初始化时从 vectordb_config 读取 `enabled` 状态以恢复上次的可用状态；
 
 **返回**：Boolean，表示操作是否完成
 
-> 注：组件初始化时从 vectordb_config 读取 `enabled` 状态以恢复上次的可用状态（如上次为禁用则保持禁用，避免状态丢失）；运行时内存中维护 `enabled` 状态供各操作快速校验，状态变更同步落库。
+> 注：`enableVectorDB` 仅控制运行时可用状态标记，不释放 LanceDB 连接资源。连接释放在 `closeVectorDB` 中执行。组件初始化时从 vectordb_config 读取 `enabled` 状态以恢复上次的可用状态；运行时内存中维护 `enabled` 标记供各操作快速校验，状态变更同步落库。
 
 #### 3.7.3. 关闭连接（closeVectorDB）
 
@@ -259,43 +342,40 @@
 
 ## 4. 表设计
 
-> 向量数据集合（4.1）存储在 VectorDB 向量数据库中，逻辑库名为 `vector`；VectorDBProvider 用到的所有配置项（含向量数据库启用 / 禁用状态）存储在关系数据库配置表 vectordb_config 中（库名 `vectordb`，见 4.2）。
+> 向量数据存储在 **LanceDB 表** `vector_record` 中（LanceDB 数据目录由构造参数 `lancePath` 指定），VectorDBProvider 用到的配置项存储在 **SQLite 配置表** `vectordb_config` 中。
 >
-> VectorDB 使用向量数据模型，存储单元为 Collection（集合），每个集合定义向量维度、距离度量方式和字段结构。
+> LanceDB 是列式向量数据库，表 schema 在首次写入数据时自动推断（auto-schema），距离度量方式 `distanceType('cosine')` 在查询时指定。
 
-### 4.1. 向量数据集合（VectorDB · Collection）
+### 4.1. 向量数据表（LanceDB · Table）
 
-- `集合名`： vector_record
-- `库名`： vector
-- `距离度量`： COSINE（余弦相似度，默认），支持 L2（欧氏距离）/ IP（内积）
-- `向量维度`： 由上层 Embedding 模型决定，创建集合时指定
+- `表名`： vector_record
+- `存储`： LanceDB（`@lancedb/lancedb`），数据目录由 `lancePath` 指定
+- `距离度量`： COSINE（余弦相似度），由 `soVector` 查询时通过 `.distanceType('cosine')` 指定
 
-| 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
-| ------ | ----- | ----- | ----- | ----- | ----- |
-| id | 数据唯一标识 | STRING | N | 主键 | UUID |
-| content | 原始文本内容 | STRING | N | | |
-| embedding | 向量数据 | FLOAT[] | N | 向量索引 | 维度由集合定义 |
-| user_id | 用户 ID | STRING | Y | 普通索引 | 用于按用户过滤 |
-| metadata | 元数据 | JSON | Y | | 用于按条件过滤 |
-| created | 创建时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
-| updated | 最后更新时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
+| 字段名 | 含义 | 类型 | 是否可以为空 | 备注 |
+| ------ | ----- | ----- | ----- | ----- |
+| id | 数据唯一标识 | STRING | N | UUID，主键 |
+| content | 原始文本内容 | STRING | N | |
+| vector | 向量数据 | FLOAT[] | N | 向量列，用于 vectorSearch |
+| user_id | 用户 ID | STRING | Y | 用于按用户过滤 |
+| metadata | 元数据 | JSON(STRING) | Y | 以 JSON 字符串存储，用于按条件过滤 |
+| created | 创建时间 | INT64 | N | 毫秒时间戳 |
+| updated | 最后更新时间 | INT64 | N | 毫秒时间戳 |
 
-### 4.2. VectorDBProvider 配置表（关系数据库）
+### 4.2. VectorDBProvider 配置表（SQLite）
 
 - `表名`： vectordb_config
-- `库名`： vectordb
-- `存储`： 关系数据库（由 RelationDBProvider 管理）
-- `表类型`： 关系表
+- `存储`： SQLite（通过 DBWrapper 管理）
 
-> VectorDBProvider 用到的所有配置项集中存储于关系数据库（库名 `vectordb`），采用键值对结构，运行时按需读取；搜索默认参数由 soVector 读取，向量数据库启用 / 禁用状态由 enableVectorDB 读取并持久化，避免硬编码与状态丢失。
+> VectorDBProvider 用到的所有配置项集中存储于 SQLite 配置表 vectordb_config，采用键值对结构，运行时按需读取；搜索默认参数由 soVector 读取，向量数据库启用 / 禁用状态由 enableVectorDB 读取并持久化，避免硬编码与状态丢失。
 
 | 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
 | ------ | ----- | ----- | ----- | ----- | ----- |
-| config_key | 配置键 | STRING | N | 主键 | 唯一 |
-| config_value | 配置值 | STRING | N | | 按 value_type 解析 |
-| value_type | 值类型 | STRING | N | | INT / DOUBLE / BOOLEAN / STRING |
-| description | 说明 | STRING | Y | | |
-| updated | 最后更新时间 | INT64 | N | 普通索引 | 毫秒时间戳 |
+| config_key | 配置键 | TEXT | N | PRIMARY KEY | 唯一 |
+| config_value | 配置值 | TEXT | N | | 按 value_type 解析 |
+| value_type | 值类型 | TEXT | N | | INT / DOUBLE / BOOLEAN / STRING |
+| description | 说明 | TEXT | Y | | |
+| updated | 最后更新时间 | INTEGER | N | INDEX | 毫秒时间戳 |
 
 默认配置项：
 
@@ -308,11 +388,16 @@
 
 ## 5. 重要内容
 
-1. VectorDBProvider 是向量数据的唯一操作入口，上层不可直接操作向量数据库；
-2. 向量数据库组件默认集成 VectorDB，通过 Repository 接口封装底层向量数据库操作；
-3. 上层通过对象（VectorObject / VectorFilter / VectorQueryParam）传递向量数据与查询条件，不接触底层接口，由 Provider 内部完成对象到向量数据库操作的映射；
-4. 向量相似度计算默认采用余弦相似度（cosine similarity），可通过集合配置切换为 L2 或 IP；
-5. 搜索时支持通过 VectorFilter 对元数据字段进行条件过滤，先过滤再计算相似度；搜索默认参数（`default_top_k`、`default_similarity_threshold`）存储于关系数据库配置表 vectordb_config，运行时按需读取；
-6. VectorDBProvider 用到的所有配置项（含向量数据库启用 / 禁用状态 `enabled`、搜索默认参数 `default_top_k` / `default_similarity_threshold` / `default_distance_metric` 等）统一存储于关系数据库配置表 vectordb_config（库名 `vectordb`，见 4.2），运行时按需读取；enableVectorDB 的启用 / 禁用状态同步持久化，组件初始化时恢复，避免状态丢失；
-7. `enableVectorDB` 为运行时启用 / 禁用（可恢复），`closeVectorDB` 为系统关闭时的终态释放（不可恢复，需重新初始化组件）；
-8. 所有方法通过代理模式增加切面注入能力，默认记录日志和耗时；
+1. VectorDBProvider 是向量数据的唯一操作入口，上层不可直接操作 LanceDB；
+2. 向量数据库默认集成 **LanceDB**（`@lancedb/lancedb`），通过 Provider 封装底层 LanceDB 操作（connect / createTable / openTable / add / delete / vectorSearch / countRows 等）；
+3. 上层通过对象（VectorObject / VectorFilter / VectorQueryParam）传递向量数据与查询条件，不接触底层 LanceDB API，由 Provider 内部完成对象到 LanceDB 操作的映射；
+4. 向量相似度计算默认采用余弦相似度（cosine similarity），通过 LanceDB 的 `.distanceType('cosine')` 在查询时指定；无 metadata 过滤时使用 LanceDB 原生 `vectorSearch`（高效），有 metadata 过滤时回退到内存暴力扫描 + JS 余弦相似度计算；
+5. 搜索双模式：
+   - **LanceDB 原生模式**（无 metadata filter）：调用 `table.vectorSearch(embedding).distanceType('cosine')`，将 LanceDB 返回的 `_distance` 转换为 `similarity = 1 - _distance`，速度快但不支持 metadata 过滤；
+   - **暴力扫描模式**（有 metadata filter 或 user_id 过滤）：`scanAllRows()` 全表扫描，JS 端 `cosineSimilarity()` 逐条计算相似度，再应用 metadata 过滤和阈值过滤，较慢但完整支持过滤；
+   - 搜索默认参数（`default_top_k`、`default_similarity_threshold`）存储于 SQLite 配置表 vectordb_config，运行时按需读取；
+6. VectorDBProvider 用到的所有配置项（含向量数据库启用 / 禁用状态 `enabled`、搜索默认参数 `default_top_k` / `default_similarity_threshold` / `default_distance_metric` 等）统一存储于 SQLite 配置表 vectordb_config（见 4.2），运行时按需读取；enableVectorDB 的启用 / 禁用状态同步持久化，组件初始化时恢复，避免状态丢失；
+7. `enableVectorDB` 为运行时标记切换（仅改变内存 enabled 标记 + 持久化，不释放连接），`closeVectorDB` 为系统关闭时的终态释放（清空 LanceDB 引用 + 持久化 enabled=false，不可恢复，需重新实例化组件）；
+8. 所有公共方法通过 `aopProxy` 代理注入日志记录（开始/完成/错误）与耗时统计（elapsed ms）；构造函数返回的是 Proxy 包装后的实例；
+9. `addVector` 为 upsert 语义：先按 ID 批量 DELETE 已有记录，再 ADD 新记录（两步完成，非原子操作）；id 不指定时由 `uuidv4()` 自动生成；
+10. VectorDBProvider 依赖 `DBWrapper`（SQLite 抽象）管理配置表，依赖 `@lancedb/lancedb` 管理向量数据，两者通过 `lancePath` 和 `DBWrapper` 实例注入；

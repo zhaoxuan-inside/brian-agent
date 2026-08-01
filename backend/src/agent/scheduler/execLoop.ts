@@ -372,7 +372,7 @@ function getLastObservation(ctx: ExecLoopContext): string {
   return last ? `[${last.action_type}] ${last.reasoning}` : '(no observations)';
 }
 
-function checkCancel(ctx: ExecLoopContext, lifecycle?: AgentLifecycle): boolean {
+function checkCancel(ctx: ExecLoopContext, _lifecycle?: AgentLifecycle): boolean {
   if (ctx.cancel_flag) return true;
   return false;
 }

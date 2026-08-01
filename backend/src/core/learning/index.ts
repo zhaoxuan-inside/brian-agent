@@ -4,7 +4,7 @@ import { StorageService } from '../storage';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../infrastructure/logger';
 import type { LearningQueueItem, LearningBatch, LearningPlan, TagSet } from '../../shared/types';
-import { DriverConfiguration, DriverConfig, DEFAULT_DRIVERS } from './driverConfig';
+import { DriverConfiguration, DriverConfig } from './driverConfig';
 
 interface KnowledgeItem {
   content: string;

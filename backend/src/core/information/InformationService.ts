@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DBWrapper } from '../../base/DBWrapper';
-import { EmbeddingRequest, EmbeddingResponse } from '../../base/LLMWrapper';
+import { EmbeddingRequest } from '../../base/LLMWrapper';
 import { LLMService } from '../llm/LLMService';
 import { logger } from '../../infrastructure/logger';
 

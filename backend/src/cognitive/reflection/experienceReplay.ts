@@ -244,8 +244,6 @@ export class ExperienceReplay {
     }
 
     this.replayTimer = setInterval(() => {
-      const allIds = Array.from(this.experiences.keys());
-
       // Select experiences for replay:
       // 1. Ones that haven't been replayed
       // 2. High-value experiences (successful or failed)

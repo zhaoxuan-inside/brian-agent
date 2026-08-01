@@ -5,7 +5,7 @@ import {
   Globe, Wrench, Brain, Terminal, ArrowDown, Circle
 } from '@lucide/vue'
 
-const props = defineProps<{
+defineProps<{
   visible: boolean
 }>()
 

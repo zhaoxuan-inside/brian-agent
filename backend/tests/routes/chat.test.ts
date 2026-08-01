@@ -55,7 +55,7 @@ function seedUserModelConfig(dbPath: string) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, 'default', 'openai', 'OpenAI', 'gpt-4o-mini', 'GPT-4o Mini', 128000, 1, 'active', now, now);
     db.close();
-  } catch (e) {
+  } catch (_e) {
     // Table might not exist yet — initDatabase will create it
   }
 }

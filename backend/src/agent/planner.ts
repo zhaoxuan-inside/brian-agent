@@ -1,6 +1,6 @@
 import { LLMService } from '../core/llm';
 import { InformationService } from '../core/information';
-import type { ChatMessage, LLMResponse } from '../shared/types';
+import type { ChatMessage } from '../shared/types';
 import { StrategyFactory } from '../strategy/ThinkingStrategy';
 
 export class TaskPlanner {
@@ -17,7 +17,7 @@ export class TaskPlanner {
    */
   async plan(
     userMessage: string,
-    memoryContext: any
+    _memoryContext: any
   ): Promise<{
     nodes: { id: string; description: string; agentType: string; dependencies: string[] }[];
     edges: { from: string; to: string }[];
@@ -192,8 +192,8 @@ Respond as JSON:
     }
 
     // Identify independent tasks (no dependencies) that can run in parallel
-    const independent = subTasks.filter(t => t.dependencies.length === 0);
-    const dependent = subTasks.filter(t => t.dependencies.length > 0);
+    subTasks.filter(t => t.dependencies.length === 0);
+    subTasks.filter(t => t.dependencies.length > 0);
 
     return {
       nodes: subTasks,

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DBWrapper } from '../../base/DBWrapper';
-import { SchemaField, SchemaFieldSchema } from '../skill/SkillManager';
+import { SchemaFieldSchema } from '../skill/SkillManager';
 
 export const WorkflowStepSchema = z.object({
   id: z.string(),

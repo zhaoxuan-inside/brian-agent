@@ -5,8 +5,11 @@ import { logger } from '../infrastructure/logger';
 export function createMemoryRoutes(informationService: InformationService): express.Router {
   const router = express.Router();
 
-  // Map backend MemoryNode to frontend-compatible format
-  function toMemoryItem(m: any) {
+  // Map backend MemoryNode (single or array) to frontend-compatible format
+  function toMemoryItem(m: any): any {
+    if (Array.isArray(m)) {
+      return m.map(toMemoryItem);
+    }
     return {
       ...m,
       role: m.role || m.source || 'system',

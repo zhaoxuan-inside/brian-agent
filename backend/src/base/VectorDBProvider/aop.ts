@@ -1,4 +1,4 @@
-import { Input, Output, Context } from '../../shared/base';
+import { Input, Output } from '../../shared/base';
 import { logger } from '../../infrastructure/logger';
 
 export function aopProxy<T extends object>(target: T, moduleName: string): T {

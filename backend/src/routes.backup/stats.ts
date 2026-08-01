@@ -132,10 +132,6 @@ export function createStatsRoutes(llm: LLMService): Router {
 
       // Rate limits
       const totalTokens = registeredModels.reduce((sum, m) => sum + m.stats.totalTokens, 0);
-      const totalCalls = registeredModels.reduce((sum, m) => sum + m.stats.totalCalls, 0);
-      const avgLatency = registeredModels.length > 0
-        ? Math.round(registeredModels.reduce((sum, m) => sum + m.stats.avgLatency, 0) / registeredModels.length)
-        : 0;
       
       const rateLimits = {
         daily: config.rateLimits?.daily || 100000,

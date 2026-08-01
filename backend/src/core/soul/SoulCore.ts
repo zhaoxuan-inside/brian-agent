@@ -1,7 +1,7 @@
 import { Input, Context, Output } from '../../shared/base';
 import { DBWrapper } from '../../base/DBWrapper';
 import { LLMService } from '../llm/LLMService';
-import { SoulManager, SoulConfig } from './SoulManager';
+import { SoulManager } from './SoulManager';
 import { logger } from '../../infrastructure/logger';
 
 export class MatchSoulInput extends Input {
@@ -283,8 +283,6 @@ Example: "soul-id-1"`;
         });
         return false;
       }
-
-      const promptTemplateId = await this.getPromptTemplateId();
 
       const comparisonPrompt = `You are evaluating two AI agent personas (souls) to determine which is better suited for an agent's work.
 

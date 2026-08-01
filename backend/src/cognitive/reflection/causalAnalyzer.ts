@@ -29,7 +29,6 @@ export class CausalAnalyzer {
   identifyFactors(experience: any): { factor: string; weight: number }[] {
     const factors: { factor: string; weight: number }[] = [];
     const context = (experience.context || '').toLowerCase();
-    const outcome = (experience.outcome || '').toLowerCase();
     const actions = experience.actions || [];
 
     // Factor 1: Context complexity
@@ -150,7 +149,6 @@ export class CausalAnalyzer {
   generateAlternatives(analysis: any): string[] {
     const alternatives: string[] = [];
     const factors = analysis.factors || [];
-    const rootCause = analysis.rootCause || '';
 
     // Generate alternatives based on negative factors
     for (const factor of factors) {

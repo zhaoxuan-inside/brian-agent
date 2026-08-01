@@ -20,7 +20,7 @@ const defaultLogger = {
 };
 
 function createLogInterceptor(log?: { info: (module: string, msg: string) => void }): Interceptor {
-  const logFn = log || defaultLogger;
+  const _logFn = log || defaultLogger;
   return {
     beforeExecute(methodName) {
       defaultLogger.info('AOP', `[${methodName}] call start`);

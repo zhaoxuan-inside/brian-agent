@@ -198,7 +198,7 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  async function verifyProvider(providerId: string, modelId?: string): Promise<{ ok: boolean; message: string; latency?: number }> {
+  async function verifyProvider(providerId: string, _modelId?: string): Promise<{ ok: boolean; message: string; latency?: number }> {
     try {
       const result = await configApi.provider.test(providerId)
       return { ok: result.success, message: result.message, latency: result.latency }
@@ -266,7 +266,7 @@ export const useConfigStore = defineStore('config', () => {
     }))
   }
 
-  async function setDefaultUserModel(id: string, modelId: string) {
+  async function setDefaultUserModel(id: string, _modelId: string) {
     try {
       const result = await configApi.model.setDefault(id)
       return { ok: true, message: '', data: result }
@@ -284,7 +284,7 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  async function deleteUserModel(id: string, modelId: string) {
+  async function deleteUserModel(id: string, _modelId: string) {
     try {
       const result = await configApi.model.delete(id)
       return { ok: true, message: '', data: result }

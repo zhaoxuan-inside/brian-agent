@@ -80,7 +80,7 @@ export class UserProfileService {
     return profile;
   }
 
-  async analyzeFromMessage(userId: string, userMessage: string, assistantMessage: string): Promise<void> {
+  async analyzeFromMessage(userId: string, userMessage: string, _assistantMessage: string): Promise<void> {
     logger.info('UserProfileService', `[analyzeFromMessage] userId=${userId} msgLen=${userMessage.length}`);
     const profile = await this.getProfile(userId);
 

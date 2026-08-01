@@ -39,7 +39,7 @@ describe('InformationService', () => {
     if (storage) {
       await storage.close();
     }
-    try { (info as any).tagEvolutionTimer && clearInterval((info as any).tagEvolutionTimer); } catch { /* Ignore timer cleanup errors */ }
+    try { if ((info as any).tagEvolutionTimer) clearInterval((info as any).tagEvolutionTimer); } catch { /* Ignore timer cleanup errors */ }
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('BRIAN_')) {
         delete process.env[key];

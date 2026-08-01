@@ -40,8 +40,6 @@ const agents = ref<AgentItem[]>([])
 const searchQuery = ref('')
 const generatingPrompt = ref(false)
 const suggestingSkills = ref(false)
-const suggestingMcps = ref(false)
-
 const showModal = ref(false)
 const isEditing = ref(false)
 const isSystemViewing = ref(false)
@@ -89,11 +87,6 @@ function mapAgent(raw: Record<string, unknown>): AgentItem {
   }
 }
 
-function getItemName(items: SelectableItem[], id: string): string {
-  const found = items.find(i => i.id === id)
-  return found ? found.name : id
-}
-
 function getStrategyLabel(type: string): string {
   const map: Record<string, string> = { react: 'ReAct', cot: 'Chain-of-Thought', tot: 'Tree-of-Thought', custom: 'Custom' }
   return map[type] || type
@@ -115,6 +108,7 @@ async function loadAvailableItems() {
 
   try {
       const mcps = await mcpMarketApi.installed()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       availableMcps.value = (mcps.installed || []).map((m: any) => ({
         id: String(m.id ?? ''),
         name: String(m.displayName || m.packageName || ''),
@@ -158,15 +152,6 @@ onMounted(() => {
 watch(searchQuery, () => {
   loadAgents()
 })
-
-function toggleSelect(list: string[], id: string) {
-  const idx = list.indexOf(id)
-  if (idx >= 0) {
-    list.splice(idx, 1)
-  } else {
-    list.push(id)
-  }
-}
 
 function addMcpToForm(mcpId: string) {
   if (!form.value.mcpIds.includes(mcpId)) {
@@ -442,23 +427,6 @@ async function handleSuggestSkills() {
     }
   } catch { /* ignore */ }
   suggestingSkills.value = false
-}
-
-async function handleSuggestMcps() {
-  if (!form.value.role) return
-  suggestingMcps.value = true
-  try {
-    const result = await agentApi.suggestMcps({ purpose: form.value.role, description: '' })
-    const suggested = (result.mcps || []).map((m: Record<string, unknown>) => String(m.mcpId || m.id || '')).filter((m: string) => m && !form.value.mcpIds.includes(m))
-    form.value.mcpIds.push(...suggested)
-    for (const id of suggested) {
-      const mcp = availableMcps.value.find(m => m.id === id)
-      if (mcp && !associatedMcps.value.find(a => a.id === id)) {
-        associatedMcps.value.push({ ...mcp })
-      }
-    }
-  } catch { /* ignore */ }
-  suggestingMcps.value = false
 }
 
 async function handleSuggestSouls() {

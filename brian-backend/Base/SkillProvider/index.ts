@@ -29,3 +29,7 @@ export {
 } from './domain/types';
 
 export type { SkillData, SkillRecord } from './domain/types';
+
+// sandbox 接口与实现
+export type { ISandbox, SandboxResult } from './infrastructure/sandbox/ISandbox';
+export { IsolatedVMSandbox } from './infrastructure/sandbox/IsolatedVMSandbox';

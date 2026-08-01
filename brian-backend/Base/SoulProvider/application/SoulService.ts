@@ -398,8 +398,8 @@ export class SoulService {
           valA = getUsageValue(a, ob.field);
           valB = getUsageValue(b, ob.field);
         } else {
-          valA = (a as Record<string, unknown>)[ob.field];
-          valB = (b as Record<string, unknown>)[ob.field];
+          valA = (a as unknown as Record<string, unknown>)[ob.field];
+          valB = (b as unknown as Record<string, unknown>)[ob.field];
         }
 
         // 处理 null/undefined：null 排最后（升序）或最前（降序）

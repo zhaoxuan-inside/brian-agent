@@ -17,17 +17,12 @@ const path = require('path');
 const { SQLiteDB } = require('../src/base/db/SQLiteDB');
 const { LLMService } = require('../src/core/llm/LLMService');
 const { ModelConfigService } = require('../src/core/modelConfig/ModelConfigService');
-const { InformationService, MemoryNode } = require('../src/core/information/InformationService');
-const { SelfLearningService } = require('../src/application/SelfLearningService');
+const { InformationService } = require('../src/core/information/InformationService');
 const { EvaluatorAgent } = require('../src/strategy/Agent');
 const { StrategyFactory } = require('../src/strategy/ThinkingStrategy');
 const { logger } = require('../src/infrastructure/logger');
 
 const TEST_DB_PATH = path.join(__dirname, '..', 'data', 'test-memory-e2e.db');
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 async function setupDatabase(db) {
   logger.info('E2E-Test', 'Setting up database tables...');

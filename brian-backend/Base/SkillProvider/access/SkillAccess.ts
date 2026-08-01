@@ -12,6 +12,8 @@
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { SkillSchemaInitializer } from '../infrastructure/SkillSchemaInitializer';
 import { SkillService } from '../application/SkillService';
+import { IsolatedVMSandbox } from '../infrastructure/sandbox/IsolatedVMSandbox';
+import type { ISandbox } from '../infrastructure/sandbox/ISandbox';
 import {
   SkillContext,
   AddSkillInput,
@@ -54,6 +56,7 @@ import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
  */
 export class SkillAccess {
   private readonly service: SkillService;
+  private readonly sandbox: ISandbox;
 
   /**
    * @param relationDb RelationDBProvider 接入层实例
@@ -62,8 +65,10 @@ export class SkillAccess {
   constructor(relationDb: RelationDBAccess, logger?: Logger) {
     // 初始化表结构
     new SkillSchemaInitializer(relationDb).init();
+    // 创建沙箱实例（默认使用 isolated-vm）
+    this.sandbox = new IsolatedVMSandbox();
     // 创建 Service 并通过代理模式增加切面注入能力
-    const rawService = new SkillService(relationDb);
+    const rawService = new SkillService(relationDb, this.sandbox);
     this.service = AopProxy.wrap(rawService, { logger });
   }
 

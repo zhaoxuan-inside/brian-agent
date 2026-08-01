@@ -136,9 +136,8 @@ describe('Config API Routes', () => {
         usageCount: 0,
         isTemporary: false,
       });
-    // The souls table schema doesn't have expires_at column — returns 500
-    expect(res.status).toBe(500);
-    expect(res.body).toHaveProperty('error');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('id');
   });
 
   it('GET /api/config/work returns list', async () => {

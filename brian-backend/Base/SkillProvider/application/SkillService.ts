@@ -6,13 +6,13 @@
  *
  * 实现所有用例：addSkill / getSkill / updateSkill / delSkill / soSkill / execSkill / enableSkill。
  *
- * execSkill 通过 Node.js vm 模块在沙箱中执行 Skill 的操作指南（work），
+ * execSkill 通过 ISandbox 接口在沙箱中执行 Skill 的操作指南（work），
+ * 沙箱实现由外部注入（默认使用 isolated-vm），便于灵活切换。
  * 执行成功后更新 skill_usage 表当天的 usage_count。
  */
 
-import vm from 'vm';
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import type { ISandbox } from '../infrastructure/sandbox/ISandbox';
 import { ConfigService } from '../../shared/config/ConfigService';
 import {
   ComponentDisabledError,
@@ -66,8 +66,12 @@ export class SkillService {
 
   /**
    * @param relationDb RelationDBProvider 接入层
+   * @param sandbox 沙箱执行实例（默认使用 isolated-vm）
    */
-  constructor(private readonly relationDb: RelationDBAccess) {
+  constructor(
+    private readonly relationDb: RelationDBAccess,
+    private readonly sandbox: ISandbox,
+  ) {
     this.config = new ConfigService(relationDb, SKILL_CONFIG_TABLE);
   }
 
@@ -355,7 +359,8 @@ export class SkillService {
    *
    * 处理流程：
    * 1. 根据 ID 获取 Skill 信息，校验存在性与启用状态；
-   * 2. 在 Node.js vm 沙箱中执行 Skill 的操作指南（work）；
+   * 2. 通过 ISandbox 接口在沙箱中执行 Skill 的操作指南（work）；
+   *    沙箱实现由外部注入，默认使用 isolated-vm 提供进程级隔离；
    * 3. 执行成功后，通过 RelationDBProvider 更新 skill_usage 表当天的 usage_count + 1；
    *
    * 沙箱内可用变量：
@@ -389,24 +394,16 @@ export class SkillService {
     }
 
     // 2. 在沙箱中执行 Skill 的操作指南
-    const sandbox: {
-      params: Record<string, unknown>;
-      result: unknown;
-      console: { log: (...args: unknown[]) => void };
-    } = {
-      params: input.params,
-      result: null,
-      console: { log: () => {} },
-    };
-    vm.createContext(sandbox);
-    vm.runInContext(skill.work, sandbox, {
-      timeout: SANDBOX_TIMEOUT_MS,
-    });
+    const sandboxResult = await this.sandbox.execute(
+      skill.work,
+      input.params,
+      SANDBOX_TIMEOUT_MS,
+    );
 
     // 3. 执行成功后更新 skill_usage 表当天的 usage_count
     await this.upsertSkillUsage(input.id);
 
-    output.result = sandbox.result;
+    output.result = sandboxResult.result;
     return true;
   }
 

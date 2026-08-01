@@ -34,7 +34,6 @@ const deleteTargetProviderId = ref<string | null>(null)
 const savedProviderState = ref<Record<string, string>>({})
 
 const columnSearch = ref<Record<string, string>>({})
-const activeColumnSearch = ref<string | null>(null)
 const selectedOnlineModelIds = ref<Set<string>>(new Set())
 const savedModelsForProvider = ref<Record<string, Set<string>>>({})
 
@@ -262,14 +261,6 @@ const sortedModelRows = computed(() => {
   })
   return list
 })
-
-function toggleColumnSearch(key: string) {
-  if (activeColumnSearch.value === key) {
-    activeColumnSearch.value = null
-  } else {
-    activeColumnSearch.value = key
-  }
-}
 
 function toggleOnlineModelSelect(modelId: string) {
   const s = new Set(selectedOnlineModelIds.value)

@@ -4,11 +4,8 @@ import { logger } from '../../infrastructure/logger';
 import { aopProxy } from './aop';
 import {
   VectorContext,
-  VectorObject,
   VectorFilter,
-  VectorQueryParam,
   VectorDBSearchResult,
-  VectorRecord,
   AddVectorInput,
   AddVectorOutput,
   DelVectorInput,
@@ -30,17 +27,35 @@ import {
 } from './types';
 
 const MODULE_NAME = 'VectorDBProvider';
-const VECTOR_TABLE = 'vector_record';
+const TABLE_NAME = 'vector_record';
 const CONFIG_TABLE = 'vectordb_config';
+
+function escapeSQL(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function toNumberArray(v: any): number[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return Array.from(v);
+  if (ArrayBuffer.isView(v)) return Array.from(v as any);
+  if (typeof v === 'object' && v !== null && typeof v[Symbol.iterator] === 'function') {
+    return Array.from(v);
+  }
+  return [];
+}
 
 export class VectorDBProvider {
   private enabled: boolean = true;
   private closed: boolean = false;
   private db: DBWrapper;
+  private lancePath: string;
+  private lanceDB: any = null;
+  private table: any = null;
   private schemaReady: boolean = false;
   private initPromise: Promise<void>;
 
-  constructor(db: DBWrapper) {
+  constructor(lancePath: string, db: DBWrapper) {
+    this.lancePath = lancePath;
     this.db = db;
     this.initPromise = this.initSchema().catch((err) => {
       this.schemaReady = false;
@@ -59,27 +74,6 @@ export class VectorDBProvider {
 
   private async initSchema(): Promise<void> {
     await this.db.run(`
-      CREATE TABLE IF NOT EXISTS ${VECTOR_TABLE} (
-        id TEXT PRIMARY KEY,
-        content TEXT NOT NULL,
-        embedding TEXT NOT NULL,
-        user_id TEXT,
-        metadata TEXT DEFAULT '{}',
-        created INTEGER NOT NULL,
-        updated INTEGER NOT NULL
-      )
-    `);
-    await this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_vector_record_user_id ON ${VECTOR_TABLE}(user_id)
-    `);
-    await this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_vector_record_created ON ${VECTOR_TABLE}(created)
-    `);
-    await this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_vector_record_updated ON ${VECTOR_TABLE}(updated)
-    `);
-
-    await this.db.run(`
       CREATE TABLE IF NOT EXISTS ${CONFIG_TABLE} (
         config_key TEXT PRIMARY KEY,
         config_value TEXT NOT NULL,
@@ -89,7 +83,7 @@ export class VectorDBProvider {
       )
     `);
     await this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_vectordb_config_updated ON ${CONFIG_TABLE}(updated)
+      CREATE INDEX IF NOT EXISTS idx_${CONFIG_TABLE}_updated ON ${CONFIG_TABLE}(updated)
     `);
 
     const existingConfigs = await this.db.query<{ config_key: string }>(
@@ -122,6 +116,14 @@ export class VectorDBProvider {
       this.enabled = enabledRow.config_value === 'true';
     }
 
+    const lancedbModule = await import('@lancedb/lancedb');
+    this.lanceDB = await lancedbModule.connect(this.lancePath);
+
+    const tableNames: string[] = await this.lanceDB.tableNames();
+    if (tableNames.includes(TABLE_NAME)) {
+      this.table = await this.lanceDB.openTable(TABLE_NAME);
+    }
+
     this.schemaReady = true;
     logger.info(MODULE_NAME, `Schema initialized, enabled=${this.enabled}`);
   }
@@ -136,13 +138,14 @@ export class VectorDBProvider {
 
   private async setConfigValue(key: string, value: string): Promise<void> {
     await this.db.run(
-      `INSERT INTO ${CONFIG_TABLE} (config_key, config_value, value_type, updated) VALUES (?, ?, 'BOOLEAN', ?)
+      `INSERT INTO ${CONFIG_TABLE} (config_key, config_value, value_type, updated) VALUES (?, ?, 'STRING', ?)
        ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated = excluded.updated`,
       [key, value, Date.now()]
     );
   }
 
   cosineSimilarity(a: number[], b: number[]): number {
+    if (!Array.isArray(a) || !Array.isArray(b)) return 0;
     if (a.length !== b.length) return 0;
 
     let dotProduct = 0;
@@ -211,6 +214,59 @@ export class VectorDBProvider {
     return result;
   }
 
+  private parseMetadata(raw: any): Record<string, unknown> {
+    if (!raw) return {};
+    if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+    try {
+      return JSON.parse(String(raw));
+    } catch {
+      return {};
+    }
+  }
+
+  private async scanAllRows(): Promise<any[]> {
+    if (!this.table) return [];
+
+    try {
+      const count = await this.table.countRows();
+      if (count === 0) return [];
+
+      const results = await this.table.query().limit(Math.max(count, 1)).toArray();
+
+      return results.map((r: any) => {
+        const metadata = this.parseMetadata(r.metadata);
+        return {
+          id: r.id,
+          content: r.content,
+          vector: r.vector,
+          user_id: r.user_id,
+          metadata,
+          created: r.created,
+          updated: r.updated,
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private bruteForceSearch(
+    rows: any[],
+    queryEmbedding: number[]
+  ): VectorDBSearchResult[] {
+    return rows
+      .map(row => ({
+        id: row.id,
+        content: row.content,
+        user_id: row.user_id || undefined,
+        similarity: this.cosineSimilarity(
+          queryEmbedding,
+          toNumberArray(row.vector)
+        ),
+        metadata: row.metadata,
+      }));
+  }
+
   async addVector(
     input: AddVectorInput,
     _context: VectorContext,
@@ -232,43 +288,28 @@ export class VectorDBProvider {
 
     try {
       const now = Date.now();
-      const ids: string[] = [];
+      const ids: string[] = input.vectors.map(v => v.id || uuidv4());
 
-      for (const vec of input.vectors) {
-        const id = vec.id || uuidv4();
-        ids.push(id);
+      const rows = input.vectors.map((vec, i) => ({
+        id: ids[i],
+        content: vec.content,
+        vector: vec.embedding,
+        user_id: vec.user_id || '',
+        metadata: JSON.stringify(vec.metadata || {}),
+        created: now,
+        updated: now,
+      }));
 
-        const existing = await this.db.get<{ id: string }>(
-          `SELECT id FROM ${VECTOR_TABLE} WHERE id = ?`,
-          [id]
-        );
-
-        if (existing) {
-          await this.db.run(
-            `UPDATE ${VECTOR_TABLE} SET content = ?, embedding = ?, user_id = ?, metadata = ?, updated = ? WHERE id = ?`,
-            [
-              vec.content,
-              JSON.stringify(vec.embedding),
-              vec.user_id || null,
-              JSON.stringify(vec.metadata || {}),
-              now,
-              id,
-            ]
-          );
-        } else {
-          await this.db.run(
-            `INSERT INTO ${VECTOR_TABLE} (id, content, embedding, user_id, metadata, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-              id,
-              vec.content,
-              JSON.stringify(vec.embedding),
-              vec.user_id || null,
-              JSON.stringify(vec.metadata || {}),
-              now,
-              now,
-            ]
-          );
+      if (!this.table) {
+        this.table = await this.lanceDB.createTable(TABLE_NAME, rows);
+      } else {
+        const existingIds = ids.map(id => `'${escapeSQL(id)}'`).join(',');
+        try {
+          await this.table.delete(`id IN (${existingIds})`);
+        } catch {
+          // Ignore if rows don't exist yet
         }
+        await this.table.add(rows);
       }
 
       output.success = true;
@@ -301,17 +342,19 @@ export class VectorDBProvider {
     }
 
     try {
-      let totalChanges = 0;
-      for (const id of input.ids) {
-        const result = await this.db.run(
-          `DELETE FROM ${VECTOR_TABLE} WHERE id = ?`,
-          [id]
-        );
-        totalChanges += result.changes;
+      if (!this.table || input.ids.length === 0) {
+        output.success = true;
+        output.affectedCount = 0;
+        return true;
       }
 
+      const countBefore = await this.table.countRows();
+      const idList = input.ids.map(id => `'${escapeSQL(id)}'`).join(',');
+      await this.table.delete(`id IN (${idList})`);
+      const countAfter = await this.table.countRows();
+
       output.success = true;
-      output.affectedCount = totalChanges;
+      output.affectedCount = countBefore - countAfter;
       return true;
     } catch (err: unknown) {
       output.success = false;
@@ -340,30 +383,22 @@ export class VectorDBProvider {
     }
 
     try {
-      const rows = await this.db.query<{ id: string; metadata: string }>(
-        `SELECT id, metadata FROM ${VECTOR_TABLE}`
-      );
-
+      const all = await this.scanAllRows();
       const toDelete: string[] = [];
-      for (const row of rows) {
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        } catch { /* ignore parse errors */ }
 
-        if (this.applyFilters(metadata, input.filters)) {
+      for (const row of all) {
+        if (this.applyFilters(row.metadata, input.filters)) {
           toDelete.push(row.id);
         }
       }
 
-      let totalChanges = 0;
-      for (const id of toDelete) {
-        const result = await this.db.run(`DELETE FROM ${VECTOR_TABLE} WHERE id = ?`, [id]);
-        totalChanges += result.changes;
+      if (toDelete.length > 0) {
+        const idList = toDelete.map(id => `'${escapeSQL(id)}'`).join(',');
+        await this.table.delete(`id IN (${idList})`);
       }
 
       output.success = true;
-      output.affectedCount = totalChanges;
+      output.affectedCount = toDelete.length;
       return true;
     } catch (err: unknown) {
       output.success = false;
@@ -399,63 +434,53 @@ export class VectorDBProvider {
       const topK = qp.top_k ?? (topKStr ? parseInt(topKStr, 10) : 10);
       const similarityThreshold = qp.similarity_threshold ?? (thresholdStr ? parseFloat(thresholdStr) : 0.0);
 
-      let rows: { id: string; content: string; embedding: string; user_id?: string; metadata: string }[];
+      const hasMetadataFilters = qp.filters && qp.filters.length > 0;
 
-      if (qp.user_id) {
-        rows = await this.db.query(
-          `SELECT id, content, embedding, user_id, metadata FROM ${VECTOR_TABLE} WHERE user_id = ?`,
-          [qp.user_id]
-        );
+      if (!this.table) {
+        output.success = true;
+        output.results = [];
+        return true;
+      }
+
+      let results: VectorDBSearchResult[];
+
+      if (hasMetadataFilters) {
+        const all = await this.scanAllRows();
+        results = this.bruteForceSearch(all, qp.embedding);
+
+        results = results.filter(r => {
+          if (qp.user_id && r.user_id !== qp.user_id) return false;
+          if (!this.applyFilters(r.metadata || {}, qp.filters!)) return false;
+          return r.similarity >= similarityThreshold;
+        });
       } else {
-        rows = await this.db.query(
-          `SELECT id, content, embedding, user_id, metadata FROM ${VECTOR_TABLE}`
-        );
+        let query = this.table.vectorSearch(qp.embedding).distanceType('cosine');
+
+        if (qp.user_id) {
+          query = query.where(`user_id = '${escapeSQL(qp.user_id)}'`);
+        }
+
+        const fetchK = Math.max(topK, 100);
+        query = query.limit(fetchK);
+
+        const lanceResults = await query.toArray();
+        results = lanceResults.map((r: any) => ({
+          id: r.id,
+          content: r.content,
+          user_id: r.user_id || undefined,
+          similarity: 1 - (r._distance || 0),
+          metadata: this.parseMetadata(r.metadata),
+        }));
       }
 
-      const results: VectorDBSearchResult[] = [];
-
-      for (const row of rows) {
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        } catch { /* ignore parse errors */ }
-
-        if (qp.filters && qp.filters.length > 0) {
-          if (!this.applyFilters(metadata, qp.filters)) {
-            continue;
-          }
-        }
-
-        let storedEmbedding: number[];
-        try {
-          storedEmbedding = typeof row.embedding === 'string'
-            ? JSON.parse(row.embedding)
-            : row.embedding;
-        } catch {
-          continue;
-        }
-
-        if (!Array.isArray(storedEmbedding) || storedEmbedding.length !== qp.embedding.length) {
-          continue;
-        }
-
-        const similarity = this.cosineSimilarity(qp.embedding, storedEmbedding);
-
-        if (similarity >= similarityThreshold) {
-          results.push({
-            id: row.id,
-            content: row.content,
-            user_id: row.user_id || undefined,
-            similarity,
-            metadata,
-          });
-        }
-      }
-
-      results.sort((a, b) => b.similarity - a.similarity);
+      results.sort((a, b) => {
+        const simDiff = b.similarity - a.similarity;
+        if (Math.abs(simDiff) > 1e-9) return simDiff;
+        return a.id.localeCompare(b.id);
+      });
 
       output.success = true;
-      output.results = results.slice(0, topK);
+      output.results = results.filter(r => r.similarity >= similarityThreshold).slice(0, topK);
       return true;
     } catch (err: unknown) {
       output.success = false;
@@ -484,37 +509,34 @@ export class VectorDBProvider {
     }
 
     try {
-      const row = await this.db.get<{
-        id: string; content: string; embedding: string; user_id?: string; metadata: string; created: number; updated: number;
-      }>(
-        `SELECT id, content, embedding, user_id, metadata, created, updated FROM ${VECTOR_TABLE} WHERE id = ?`,
-        [input.id]
-      );
-
-      if (!row) {
+      if (!this.table) {
         output.success = true;
         output.vector = undefined;
         return true;
       }
 
-      let embedding: number[] = [];
-      let metadata: Record<string, unknown> = {};
-      try {
-        embedding = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
-      } catch { /* ignore */ }
-      try {
-        metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-      } catch { /* ignore */ }
+      const results = await this.table
+        .query()
+        .where(`id = '${escapeSQL(input.id)}'`)
+        .limit(1)
+        .toArray();
 
+      if (!results || results.length === 0) {
+        output.success = true;
+        output.vector = undefined;
+        return true;
+      }
+
+      const row = results[0];
       output.success = true;
       output.vector = {
         id: row.id,
         content: row.content,
-        embedding,
+        embedding: toNumberArray(row.vector),
         user_id: row.user_id || undefined,
-        metadata,
-        created: row.created,
-        updated: row.updated,
+        metadata: this.parseMetadata(row.metadata),
+        created: typeof row.created === 'bigint' ? Number(row.created) : (row.created || 0),
+        updated: typeof row.updated === 'bigint' ? Number(row.updated) : (row.updated || 0),
       };
       return true;
     } catch (err: unknown) {
@@ -544,27 +566,23 @@ export class VectorDBProvider {
     }
 
     try {
-      if (!input.filters || input.filters.length === 0) {
-        const result = await this.db.get<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${VECTOR_TABLE}`
-        );
+      if (!this.table) {
         output.success = true;
-        output.count = result?.count || 0;
+        output.count = 0;
         return true;
       }
 
-      const rows = await this.db.query<{ metadata: string }>(
-        `SELECT metadata FROM ${VECTOR_TABLE}`
-      );
+      if (!input.filters || input.filters.length === 0) {
+        const count = await this.table.countRows();
+        output.success = true;
+        output.count = count;
+        return true;
+      }
 
+      const all = await this.scanAllRows();
       let count = 0;
-      for (const row of rows) {
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        } catch { /* ignore parse errors */ }
-
-        if (this.applyFilters(metadata, input.filters)) {
+      for (const row of all) {
+        if (this.applyFilters(row.metadata, input.filters)) {
           count++;
         }
       }
@@ -587,58 +605,54 @@ export class VectorDBProvider {
     await this.ensureReady();
 
     try {
-      const now = Date.now();
-
       switch (input.scope) {
         case 'health': {
           if (this.closed) {
             output.data = { connected: false, responseTime: 0, enabled: this.enabled };
+          } else if (!this.lanceDB) {
+            output.data = { connected: false, responseTime: 0, enabled: this.enabled };
           } else {
             const startTime = Date.now();
-            await this.db.get<{ config_key: string }>(
-              `SELECT config_key FROM ${CONFIG_TABLE} WHERE config_key = 'enabled'`
-            );
+            await this.lanceDB.tableNames();
             const responseTime = Date.now() - startTime;
             output.data = { connected: true, responseTime, enabled: this.enabled };
           }
           break;
         }
         case 'volume': {
-          const totalResult = await this.db.get<{ count: number }>(
-            `SELECT COUNT(*) as count FROM ${VECTOR_TABLE}`
-          );
-          const totalCount = totalResult?.count || 0;
+          if (!this.table) {
+            output.data = { totalVectors: 0, collections: 1, dimension: 0 };
+          } else {
+            const totalCount = await this.table.countRows();
 
-          const dimensionResult = await this.db.get<{ embedding: string }>(
-            `SELECT embedding FROM ${VECTOR_TABLE} LIMIT 1`
-          );
-          let dimension = 0;
-          if (dimensionResult?.embedding) {
-            try {
-              const emb = JSON.parse(dimensionResult.embedding);
-              dimension = Array.isArray(emb) ? emb.length : 0;
-            } catch { /* ignore */ }
+            let dimension = 0;
+            const all = await this.scanAllRows();
+            if (all.length > 0 && all[0].vector) {
+              const vec = toNumberArray(all[0].vector);
+              dimension = vec.length;
+            }
+
+            output.data = { totalVectors: totalCount, collections: 1, dimension };
           }
-
-          output.data = {
-            totalVectors: totalCount,
-            collections: 1,
-            dimension,
-          };
           break;
         }
         case 'diskUsage': {
-          const countResult = await this.db.get<{ count: number }>(
-            `SELECT COUNT(*) as count FROM ${VECTOR_TABLE}`
-          );
-          const rowCount = countResult?.count || 0;
+          if (!this.table) {
+            output.data = { estimatedBytes: 0, rowCount: 0 };
+          } else {
+            const rowCount = await this.table.countRows();
 
-          const sizeResult = await this.db.get<{ totalSize: number }>(
-            `SELECT SUM(LENGTH(content) + LENGTH(embedding) + LENGTH(COALESCE(metadata, '{}'))) as totalSize FROM ${VECTOR_TABLE}`
-          );
-          const estimatedBytes = sizeResult?.totalSize || 0;
+            const all = await this.scanAllRows();
+            let estimatedBytes = 0;
+            for (const r of all) {
+              estimatedBytes +=
+                (r.content ? r.content.length : 0) +
+                (r.vector ? toNumberArray(r.vector).length * 8 : 0) +
+                (r.metadata ? JSON.stringify(r.metadata).length : 0);
+            }
 
-          output.data = { estimatedBytes, rowCount };
+            output.data = { estimatedBytes, rowCount };
+          }
           break;
         }
         default:
@@ -694,6 +708,9 @@ export class VectorDBProvider {
       this.enabled = false;
 
       await this.setConfigValue('enabled', 'false');
+
+      this.lanceDB = null;
+      this.table = null;
 
       output.success = true;
       return true;

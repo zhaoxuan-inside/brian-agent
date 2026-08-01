@@ -112,8 +112,10 @@ async function loadMemory() {
   loadingMemory.value = true
   try {
     const data = await memoryApi.list()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     memories.value = ((data as any).memories || []) as MemoryItem[]
     const tagsData = await memoryApi.tags()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     memoryTags.value = (tagsData as any).tags as string[]
   } catch (e) { console.error(e) } finally { loadingMemory.value = false }
 }
@@ -232,12 +234,16 @@ async function handleDeleteLibrary(id: string) {
 // ============================================================
 interface GraphNode { id: string; name: string; weight: number; degree: number }
 interface GraphEdge { source: string; target: string; weight: number }
+interface LayoutEdge extends GraphEdge {
+  x1: number; y1: number; x2: number; y2: number;
+  strokeWidth: number; highlighted?: boolean;
+}
 const graphNodes = ref<GraphNode[]>([])
 const graphEdges = ref<GraphEdge[]>([])
 const loadingGraph = ref(false)
 const selectedTag = ref<string | null>(null)
 const selectedTagMemories = ref<MemoryItem[]>([])
-const hoveredEdge = ref<GraphEdge | null>(null)
+const hoveredEdge = ref<LayoutEdge | null>(null)
 const hoveredKeyword = ref<GraphNode | null>(null)
 const selectedKeyword = ref<string | null>(null)
 const selectedKeywordMemories = ref<MemoryItem[]>([])
@@ -246,7 +252,9 @@ async function loadTagGraph() {
   loadingGraph.value = true
   try {
     const data = await memoryApi.tagGraph()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     graphNodes.value = (data as any).nodes as GraphNode[]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     graphEdges.value = (data as any).edges as GraphEdge[]
   } catch (e) { console.error(e) } finally { loadingGraph.value = false }
 }
@@ -315,7 +323,7 @@ const graphLayout = computed(() => {
         strokeWidth: 1 + e.weight,
         highlighted: isHighlighted,
       }
-    }).filter(Boolean),
+    }).filter(e => e !== null) as LayoutEdge[],
   }
 })
 
@@ -359,7 +367,7 @@ const keywordLayout = computed(() => {
         y2: cy + radius * Math.sin(angleTo),
         strokeWidth: 2 + e.weight,
       }
-    }).filter(Boolean),
+    }).filter(e => e !== null) as LayoutEdge[],
   }
 })
 

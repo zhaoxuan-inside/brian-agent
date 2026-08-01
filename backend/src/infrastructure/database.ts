@@ -328,7 +328,11 @@ function createTables(db: Database.Database): void {
       tools TEXT NOT NULL DEFAULT '[]',
       active INTEGER DEFAULT 1,
       server_status TEXT DEFAULT 'stopped' CHECK(server_status IN ('running', 'stopped', 'error')),
-      installed_at INTEGER NOT NULL
+      installed_at INTEGER NOT NULL,
+      install_path TEXT DEFAULT '',
+      source_market TEXT DEFAULT '',
+      start_command TEXT DEFAULT '',
+      updated_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_mcp_installed_active ON mcp_installed(active);
@@ -915,7 +919,7 @@ function runMigrations(db: Database.Database): void {
   try {
     db.exec('ALTER TABLE messages ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
     logger.info('Database', '[runMigrations] messages: added updated_at column');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] messages: updated_at column already exists, skip');
   }
 
@@ -923,15 +927,15 @@ function runMigrations(db: Database.Database): void {
   logger.info('Database', '[runMigrations] Checking user_preferences key index...');
   try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_user_preferences_key ON user_preferences(key)');
-  } catch (e: any) {
-    logger.info('Database', `[runMigrations] user_preferences key index skipped: ${e.message || e}`);
+  } catch (_e: any) {
+    logger.info('Database', `[runMigrations] user_preferences key index skipped: ${_e.message || _e}`);
   }
 
   logger.info('Database', '[runMigrations] Checking user_models table migration...');
   try {
     db.exec('ALTER TABLE user_models ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0');
     logger.info('Database', '[runMigrations] user_models: added is_default column');
-  } catch (e: any) {
+  } catch (_e2: any) {
     logger.info('Database', '[runMigrations] user_models: is_default column already exists, skip');
   }
 
@@ -957,7 +961,7 @@ function runMigrations(db: Database.Database): void {
     try {
       db.exec(m.ddl);
       logger.info('Database', `[runMigrations] ${m.table}: added ${m.column} column`);
-    } catch (e: any) {
+    } catch (_e: any) {
       logger.info('Database', `[runMigrations] ${m.table}: ${m.column} column already exists, skip`);
     }
   }
@@ -966,28 +970,28 @@ function runMigrations(db: Database.Database): void {
   try {
     db.exec('ALTER TABLE mcp_installed ADD COLUMN install_path TEXT');
     logger.info('Database', '[runMigrations] mcp_installed: added install_path column');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] mcp_installed: install_path column already exists, skip');
   }
 
   try {
     db.exec('ALTER TABLE mcp_installed ADD COLUMN source_market TEXT');
     logger.info('Database', '[runMigrations] mcp_installed: added source_market column');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] mcp_installed: source_market column already exists, skip');
   }
 
   try {
     db.exec('ALTER TABLE mcp_installed ADD COLUMN start_command TEXT');
     logger.info('Database', '[runMigrations] mcp_installed: added start_command column');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] mcp_installed: start_command column already exists, skip');
   }
 
   try {
     db.exec('ALTER TABLE mcp_installed ADD COLUMN updated_at TEXT');
     logger.info('Database', '[runMigrations] mcp_installed: added updated_at column');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] mcp_installed: updated_at column already exists, skip');
   }
 
@@ -1005,7 +1009,7 @@ function runMigrations(db: Database.Database): void {
     db.exec('CREATE INDEX IF NOT EXISTS idx_agent_mcp_agent ON agent_mcp(agent_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_agent_mcp_mcp ON agent_mcp(mcp_id)');
     logger.info('Database', '[runMigrations] agent_mcp: table and indexes created');
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] agent_mcp: table already exists, skip');
   }
 
@@ -1019,7 +1023,7 @@ function runMigrations(db: Database.Database): void {
     } else {
       logger.info('Database', '[runMigrations] skills: no migration needed');
     }
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] skills: table does not exist, skip');
   }
 
@@ -1034,7 +1038,7 @@ function runMigrations(db: Database.Database): void {
     } else {
       logger.info('Database', '[runMigrations] memory_nodes: no migration needed');
     }
-  } catch (e: any) {
+  } catch (_e: any) {
     logger.info('Database', '[runMigrations] memory_nodes: table does not exist, skip');
   }
 

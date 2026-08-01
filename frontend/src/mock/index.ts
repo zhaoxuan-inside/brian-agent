@@ -9,9 +9,6 @@ import { mockData } from './data'
 function matchRoute(method: string, url: string): { data?: unknown; status?: number; delay?: number } | null {
   // 去掉 /api 前缀
   const path = url.replace(/^\/api/, '').split('?')[0]
-  const search = new URLSearchParams(url.split('?')[1] || '')
-  const body = method === 'POST' || method === 'PUT' ? null : null
-
   // ---- Chat ----
   if (path === '/chat/list' && method === 'GET') return { data: mockData.chatList }
   if (path.startsWith('/chat/history/') && method === 'GET') return { data: mockData.chatHistory }

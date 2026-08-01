@@ -318,7 +318,7 @@ describe('EvolutorAgentService', () => {
       const output = new StartEvalScheduleOutput();
       svc.startEvalSchedule(new StartEvalScheduleInput({ interval_ms: 5000 }), new StartEvalScheduleContext(), output);
 
-      const evalWriteSpy = vi.spyOn(service, 'evalWorkAgent');
+      vi.spyOn(service, 'evalWorkAgent');
 
       await vi.advanceTimersByTimeAsync(5000);
 

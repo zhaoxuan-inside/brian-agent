@@ -39,7 +39,6 @@ docs/_04_Orchestration/Orchestration/
 | OrchestrationStrategy | 编排策略定义（Simple/Planning）、策略选择、编排流程调度 | PlannerAgent, WriterAgent, EvolutorAgent | - | RelationDBProvider, LogProvider |
 | OrchestrationExecution | 任务 DAG → Agent DAG 转换、DAG 依赖解析与执行、Agent 结果传递与汇总 | AgentBuilder, AgentExecution, AgentLibrary | MQCore | RelationDBProvider, MQProvider, LogProvider |
 | JSONNode | JSONNode 原子节点定义、节点组合规则、节点执行调度语义 | - | - | RelationDBProvider, LogProvider |
-| OrchestrationVisualization | AgentDAG 结构与执行状态可视化、Work 完整流程时间线展示、Agent 详细执行链路展示 | AgentExecution, AgentLibrary, PlannerAgent | InfoCore | RelationDBProvider, LogProvider |
 
 ## 4. 编排框架整体流程
 
@@ -50,10 +49,9 @@ docs/_04_Orchestration/Orchestration/
 ┌─────────────────────────────────────────────────────┐
 │ OrchestrationEntry.receiveWork                      │
 │ 1. 生成 work_id、interact_id                        │
-│ 2. 调用 InfoCore.saveInfo 保存用户请求（REQUEST）     │
-│ 3. 选择编排策略 → 调用 selectOrchestrationStrategy   │
-│ 4. 调用 InfoCore.context 构建会话上下文               │
-│ 5. 调用 Strategy.start 启动编排                      │
+│ 2. 调用 InfoCore.context 构建会话上下文               │
+│ 3. 调用 InfoCore.saveInfo 保存用户请求（REQUEST）     │
+│ 4. 选择编排策略 → 调用 Strategy.start 编排            │
 └─────────────────────────────────────────────────────┘
     │
     ▼
@@ -110,7 +108,7 @@ Orchestration 层通过以下下层接口获取能力：
 | 下层模块 | 调用的接口 |
 |---------|-----------|
 | AgentBuilder | buildAgent, buildPlannerAgent, buildWriterAgent, buildEvolutorAgent |
-| AgentExecution | execAgent, execAgentAsync, getTrace, getExecContext, getExecContextByAgent |
+| AgentExecution | execAgent, execAgentAsync |
 | AgentLibrary | getAgent, recordAgentUsage |
 | PlannerAgent | plan, replan, getPlan |
 | WriterAgent | write, getUserProfile |
@@ -133,7 +131,6 @@ Orchestration 层通过以下下层接口获取能力：
 | DAG 依赖解析与执行调度 | 按 DAG 依赖顺序执行 Agent，将上游 Agent 输出传递给下游 Agent 作为输入；下层 AgentExecution 只执行单个 Agent | OrchestrationExecution |
 | Agent 结果汇总与后处理链 | 收集所有 WorkAgent 结果 → 调用 WriterAgent → 调用 EvolutorAgent 的完整链路；下层各 Agent 独立工作，无上层链式调度 | OrchestrationStrategy |
 | JSONNode 编排框架 | 定义编排动作的原子节点（CreateAgent、ExecAgent、WriteResult、EvalResult 等）及其组合规则，策略以此声明式定义编排流程 | JSONNode |
-| AgentDAG 结构与执行状态可视化 | 提供 AgentDAG 拓扑结构、节点执行状态、依赖关系的数据，以 ID 引用方式关联 task_id、trace_id、info_id、eval_id，具体内容由上层按 ID 自行获取；渲染由上层负责 | OrchestrationVisualization |
 
 以下能力需要在 Agent 层补充实现：
 

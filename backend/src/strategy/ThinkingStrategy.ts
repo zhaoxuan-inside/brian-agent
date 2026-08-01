@@ -113,7 +113,7 @@ export class PlanExecuteStrategy extends BaseStrategy {
     super('plan-execute', llm);
   }
 
-  async execute(messages: ChatMessage[], context: Record<string, any>): Promise<{
+  async execute(messages: ChatMessage[], _context: Record<string, any>): Promise<{
     thought: string;
     action?: { type: string; payload: any };
     response?: string;
@@ -142,7 +142,7 @@ export class CoTStrategy extends BaseStrategy {
     super('cot', llm);
   }
 
-  async execute(messages: ChatMessage[], context: Record<string, any>): Promise<{
+  async execute(messages: ChatMessage[], _context: Record<string, any>): Promise<{
     thought: string;
     action?: { type: string; payload: any };
     response?: string;

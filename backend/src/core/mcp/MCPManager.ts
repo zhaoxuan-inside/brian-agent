@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DBWrapper } from '../../base/DBWrapper';
-import { MCP, MCPFunction, MCPExecuteRequest, MCPExecuteResponse } from '../../base/MCPWrapper';
+import { MCPExecuteRequest, MCPExecuteResponse } from '../../base/MCPWrapper';
 
 export const MCPSchema = z.object({
   id: z.string(),

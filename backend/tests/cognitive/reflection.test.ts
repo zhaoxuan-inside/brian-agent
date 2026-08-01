@@ -88,7 +88,7 @@ describe('ExperienceReplay', () => {
 
   describe('classify', () => {
     it('returns category', () => {
-      const id = replay.storeExperience({
+      replay.storeExperience({
         context: 'Write code for a function',
         actions: [{ action: 'test', result: 'success' }],
         outcome: 'success',

@@ -77,7 +77,8 @@ describe('VectorDBProvider', () => {
     initDatabase();
     const rawDb = getDatabase();
     const dbWrapper = createDBWrapper(rawDb);
-    provider = new VectorDBProvider(dbWrapper);
+    const lancePath = path.join(tempDir, 'lancedb');
+    provider = new VectorDBProvider(lancePath, dbWrapper);
     await provider.ready();
   });
 
@@ -283,7 +284,6 @@ describe('VectorDBProvider', () => {
     });
 
     it('should delete vectors with GT/GE/LT/LE numeric filters', async () => {
-      // Each test is isolated — insert its own vectors
       const vectors = [
         { content: 'n1', embedding: [0.1], metadata: { count: 5 } },
         { content: 'n2', embedding: [0.2], metadata: { count: 15 } },
@@ -291,7 +291,6 @@ describe('VectorDBProvider', () => {
         { content: 'n4', embedding: [0.4], metadata: { count: 35 } },
       ];
 
-      // GT test
       await provider.addVector(
         new AddVectorInput({ vectors }),
         new VectorContext(), new AddVectorOutput()
@@ -303,13 +302,11 @@ describe('VectorDBProvider', () => {
       );
       expect(gtOutput.affectedCount).toBe(2);
 
-      // Clean up and re-insert
       await provider.delVectorByFilter(
         new DelVectorByFilterInput({ filters: [{ field: 'count', operator: 'IS_NOT_NULL' }] }),
         new VectorContext(), new DelVectorByFilterOutput()
       );
 
-      // GE test
       await provider.addVector(
         new AddVectorInput({ vectors }),
         new VectorContext(), new AddVectorOutput()
@@ -321,13 +318,11 @@ describe('VectorDBProvider', () => {
       );
       expect(geOutput.affectedCount).toBe(3);
 
-      // Clean up and re-insert
       await provider.delVectorByFilter(
         new DelVectorByFilterInput({ filters: [{ field: 'count', operator: 'IS_NOT_NULL' }] }),
         new VectorContext(), new DelVectorByFilterOutput()
       );
 
-      // LT test
       await provider.addVector(
         new AddVectorInput({ vectors }),
         new VectorContext(), new AddVectorOutput()
@@ -339,13 +334,11 @@ describe('VectorDBProvider', () => {
       );
       expect(ltOutput.affectedCount).toBe(1);
 
-      // Clean up and re-insert
       await provider.delVectorByFilter(
         new DelVectorByFilterInput({ filters: [{ field: 'count', operator: 'IS_NOT_NULL' }] }),
         new VectorContext(), new DelVectorByFilterOutput()
       );
 
-      // LE test
       await provider.addVector(
         new AddVectorInput({ vectors }),
         new VectorContext(), new AddVectorOutput()
@@ -380,7 +373,6 @@ describe('VectorDBProvider', () => {
     });
 
     it('should delete vectors with IS_NULL/IS_NOT_NULL filter', async () => {
-      // Insert vectors
       await provider.addVector(
         new AddVectorInput({
           vectors: [
@@ -391,7 +383,6 @@ describe('VectorDBProvider', () => {
         new VectorContext(), new AddVectorOutput()
       );
 
-      // IS_NULL on optional_field: vector with_null_field has optional_field=null, vector with_valid_field has optional_field=undefined
       const nullOutput = new DelVectorByFilterOutput();
       await provider.delVectorByFilter(
         new DelVectorByFilterInput({ filters: [{ field: 'optional_field', operator: 'IS_NULL' }] }),
@@ -399,7 +390,6 @@ describe('VectorDBProvider', () => {
       );
       expect(nullOutput.affectedCount).toBe(2);
 
-      // Re-insert for IS_NOT_NULL test
       await provider.addVector(
         new AddVectorInput({
           vectors: [
@@ -410,7 +400,6 @@ describe('VectorDBProvider', () => {
         new VectorContext(), new AddVectorOutput()
       );
 
-      // IS_NOT_NULL on key: only has_key has the 'key' field with a non-null value
       const notNullOutput = new DelVectorByFilterOutput();
       await provider.delVectorByFilter(
         new DelVectorByFilterInput({ filters: [{ field: 'key', operator: 'IS_NOT_NULL' }] }),
@@ -455,7 +444,6 @@ describe('VectorDBProvider', () => {
         new VectorContext(), new AddVectorOutput()
       );
 
-      // type=A OR type=B matches all 3
       const filters: VectorFilter[] = [
         { field: 'type', operator: 'EQ', value: 'A' },
         { field: 'type', operator: 'EQ', value: 'B', logic: 'OR' },
@@ -1100,8 +1088,8 @@ describe('VectorDBProvider', () => {
         new AddVectorInput({
           vectors: [
             { content: 'u1-vec', embedding: [1, 0, 0], user_id: 'user-1' },
-            { content: 'u2-vec', embedding: [0.9, 0, 0], user_id: 'user-2' },
-            { content: 'u3-vec', embedding: [0.8, 0, 0], user_id: 'user-3' },
+            { content: 'u2-vec', embedding: [0, 1, 0], user_id: 'user-2' },
+            { content: 'u3-vec', embedding: [0, 0, 1], user_id: 'user-3' },
           ],
         }),
         new VectorContext(), new AddVectorOutput()

@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { Input, Context, Output } from '../../shared/base';
+import { Context, Output } from '../../shared/base';
 import { DBWrapper } from '../../base/DBWrapper';
-import { LLMService, ModelConfig } from './LLMService';
+import { LLMService } from './LLMService';
 import { logger } from '../../infrastructure/logger';
 import { v4 as uuidv4 } from 'uuid';
 

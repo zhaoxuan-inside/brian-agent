@@ -285,6 +285,7 @@ export class ChatService {
         { role: 'user', content: request.message },
       ];
 
+      // eslint-disable-next-line @typescript-eslint/no-this-alias
       const self = this;
       const selfExchangeId = exchangeId;
 
@@ -700,7 +701,7 @@ export class ChatService {
     return context;
   }
 
-  private buildSystemPrompt(userId: string): string {
+  private buildSystemPrompt(_userId: string): string {
     return `You are Brian, an AI assistant. Use the provided context to answer the user's question.`;
   }
 

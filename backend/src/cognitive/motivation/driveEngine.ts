@@ -177,7 +177,7 @@ export class DriveEngine {
     const elapsed = (now - this.lastDecayTime) / 1000; // seconds
     if (elapsed < 1) return; // Don't decay too frequently
 
-    for (const [type, drive] of this.drives.entries()) {
+    for (const [, drive] of this.drives.entries()) {
       if (!drive.active) continue;
 
       // Decay based on time elapsed

@@ -36,6 +36,7 @@ export async function fetchApi<T>(path: string, options: RequestInit = {}): Prom
     console.log('[fetchApi] Duration:', duration, 'ms');
     console.log('[fetchApi] Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let responseData: any;
     try {
       responseData = await response.json();
@@ -52,6 +53,7 @@ export async function fetchApi<T>(path: string, options: RequestInit = {}): Prom
     }
 
     return responseData;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     const duration = Date.now() - startTime;
     console.error('[fetchApi] ====== ERROR START ======');
@@ -85,6 +87,7 @@ export async function fetchApi<T>(path: string, options: RequestInit = {}): Prom
         console.log('[fetchApi] Status:', response.status, response.statusText);
         console.log('[fetchApi] Retry Duration:', retryDuration, 'ms');
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let responseData: any;
         try {
           responseData = await response.json();
@@ -101,6 +104,7 @@ export async function fetchApi<T>(path: string, options: RequestInit = {}): Prom
         }
 
         return responseData;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (retryError: any) {
         const retryDuration = Date.now() - retryStartTime;
         console.error('[fetchApi] ====== RETRY ERROR START ======');
@@ -283,6 +287,7 @@ export const chatApi = {
       referencesIn: { msgId: string; role: string; summary: string; createdAt: number }[];
     }>(`/chat/message/${msgId}`),
   agentChain: (exchangeId: string) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     fetchApi<{ agentChain: any[] }>(`/chat/agent-chain/${exchangeId}`),
 
   search: (userId: string, query: string, limit?: number) =>

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
@@ -11,7 +11,6 @@ import { ToolService } from '../../src/core/tools';
 import { SkillManager } from '../../src/core/skill/SkillManager';
 import { ModelConfigService } from '../../src/core/llm/modelConfig';
 import { initDatabase, closeDatabase, getDatabase } from '../../src/infrastructure/database';
-import type { WorkAgent } from '../../src/shared/types';
 import type { DBWrapper } from '../../src/base/DBWrapper';
 
 const TEST_DATA_DIR = path.join(os.tmpdir(), `brian-test-metaAgent-${Date.now()}`);

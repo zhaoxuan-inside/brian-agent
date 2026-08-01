@@ -1,6 +1,6 @@
 import type { AgentDatabase } from '../infra/dbTypes';
 import { Input, Context, Output } from '../../shared/base';
-import { ValidationError, NotFoundError } from '../../shared/errors';
+import { NotFoundError } from '../../shared/errors';
 import { logger } from '../../infrastructure/logger';
 import { AopProxy } from '../infra/aopProxy';
 import { generateId } from '../AgentLibrary/agentTypes';

@@ -238,7 +238,7 @@ describe('MeaningAssigner', () => {
 
   describe('storeMeaning', () => {
     it('stores', () => {
-      const meaning = assigner.assignMeaning({
+      assigner.assignMeaning({
         description: 'Help a user',
         outcome: 'success',
       });

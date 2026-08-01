@@ -1,8 +1,8 @@
 import { LLMService } from '../core/llm';
 import { ToolService } from '../core/tools';
 import { v4 as uuidv4 } from 'uuid';
-import type { GraphState, WorkAgent, ChatMessage, LLMResponse, Tool } from '../shared/types';
-import { initState, createCheckpoint, restoreCheckpoint } from './infra/stateManager';
+import type { GraphState, WorkAgent, ChatMessage } from '../shared/types';
+import { createCheckpoint, restoreCheckpoint } from './infra/stateManager';
 import { executeReACT, executePlanExecute, executeCoT } from './strategy';
 
 export class GraphExecutor {
@@ -194,7 +194,7 @@ export class GraphExecutor {
   async executeReACT(
     task: string,
     agent: WorkAgent,
-    state: GraphState
+    _state: GraphState
   ): Promise<{ result: string; trace: any[] }> {
     const llmTools = this.tools.getToolsForLLM();
 
@@ -220,7 +220,7 @@ export class GraphExecutor {
   async executePlanExecute(
     task: string,
     agent: WorkAgent,
-    state: GraphState
+    _state: GraphState
   ): Promise<{ plan: any; result: string }> {
     const wrappedLlm = {
       chat: async (messages: ChatMessage[], options?: any) => {
@@ -454,7 +454,7 @@ Respond with JSON:
     };
   }
 
-  switchStrategy(current: string, reason: string): string {
+  switchStrategy(current: string, _reason: string): string {
     const strategyMap: Record<string, string> = {
       'react': 'plan-execute',
       'plan-execute': 'cot',

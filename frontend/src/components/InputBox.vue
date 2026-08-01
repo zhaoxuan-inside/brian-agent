@@ -118,8 +118,10 @@ async function handleSend() {
             type: string
             text?: string
             fullText?: string
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             agentChain?: any[]
             agentId?: string
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             agent?: any
             output?: string
             outputType?: string

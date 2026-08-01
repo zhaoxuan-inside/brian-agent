@@ -1,4 +1,4 @@
-import type { GraphState, StrategyType, UnifiedMemoryItem } from '../../shared/types';
+import type { GraphState } from '../../shared/types';
 import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -50,7 +50,7 @@ export function updateState(
 
 export function createCheckpoint(
   state: GraphState,
-  label: string
+  _label: string
 ): string {
   const checkpointId = uuidv4();
 

@@ -15,10 +15,8 @@ import {
   ConfigPlannerAgentContext,
   ConfigPlannerAgentOutput,
   validateDAG,
-  mergeSimilarTasks,
   DagNode,
   DagEdge,
-  TaskDag,
 } from '../../src/agent/PlannerAgent/PlannerAgent';
 
 let db: Database.Database;

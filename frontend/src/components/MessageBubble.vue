@@ -55,9 +55,10 @@ function formatPlanOutput(output: string): string {
   try {
     const tasks = JSON.parse(output)
     if (Array.isArray(tasks)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return tasks.map((t: any, i: number) => `${i + 1}. ${t.description || t.id}`).join('\n')
     }
-  } catch {}
+  } catch { /* JSON parse failure, fall through to raw output */ }
   return output.slice(0, 500)
 }
 

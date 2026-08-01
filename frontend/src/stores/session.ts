@@ -225,6 +225,7 @@ export const useSessionStore = defineStore('session', () => {
   function extractThinkingFromChain(chain: AgentNode[]) {
     const records: Array<{ agentId: string; taskId: string; systemPrompt: string; instruction: string; output: string }> = []
     for (const agent of chain) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const thinking = (agent as any).thinking
       if (thinking) {
         records.push({
@@ -427,7 +428,7 @@ export const useSessionStore = defineStore('session', () => {
           .then(r => r.json())
           .then(data => {
             if (data.agentChain?.length) {
-              storeAgentChainByExchangeId(lastAssistant.exchangeId, data.agentChain)
+              storeAgentChainByExchangeId(lastAssistant.exchangeId!, data.agentChain)
             }
           })
           .catch(() => {})

@@ -77,6 +77,7 @@ async function handleCheckPath() {
     pathInput.value = ''
     nameInput.value = ''
     categoryInput.value = ''
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     pathError.value = err?.message || '添加失败'
   }

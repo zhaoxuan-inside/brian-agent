@@ -9,6 +9,7 @@ const sessionStore = useSessionStore()
 const selectedNodeId = ref<string | null>(null)
 const detailTab = ref<'config' | 'context' | 'input' | 'output'>('config')
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface DagNodeEx { id: string; name: string; type: string; role: string; description: string; status: string; startTime?: number; endTime?: number; strategy?: string; output?: any[]; thinking?: any; children: string[]; layer: number }
 interface Edge { from: string; to: string }
 
@@ -22,6 +23,7 @@ const dagData = computed(() => {
   // Direct layer assignment: coordinator=0, workers with coordinator as parent=1, etc.
   const parentMap = new Map<string, string>() // child → parent
   for (const a of chain) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const kids = Array.isArray((a as any).children) ? (a as any).children.filter((k: any) => typeof k === 'string') : []
     for (const k of kids) {
       edges.push({ from: a.id, to: k })
@@ -37,6 +39,7 @@ const dagData = computed(() => {
 
   for (const a of chain) {
     const layer = getLayer(a.id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     nodes.push({ id: a.id, name: a.name, type: a.type, role: a.role, description: a.description || '', status: a.status, startTime: (a as any).startTime, endTime: (a as any).endTime, strategy: (a as any).strategy, output: a.output, thinking: (a as any).thinking, children: Array.isArray((a as any).children) ? (a as any).children : [], layer })
   }
 
@@ -114,7 +117,7 @@ function formatDur(s?: number, e?: number): string { if (!s) return '-'; const m
 
               <!-- Layer columns -->
               <div class="absolute inset-0 flex" style="z-index: 1">
-                <div v-for="(layerIds, li) in dagData.layers" :key="'L'+li"
+                <div v-for="(_layerIds, li) in dagData.layers" :key="'L'+li"
                   class="relative shrink-0 flex flex-col items-center justify-center" style="width: 280px">
 
                   <div class="relative z-10 flex flex-col gap-3 w-[240px]">

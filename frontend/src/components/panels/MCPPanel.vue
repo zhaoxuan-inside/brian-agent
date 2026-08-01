@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Server, Plus, Trash2, Play, Square, Download, Search, Package, Flame, Globe, X, Loader2, ChevronRight } from '@lucide/vue'
+import { ref, computed, onMounted } from 'vue'
+import { Server, Trash2, Play, Square, Download, Search, Package, Flame, Globe, X, Loader2, ChevronRight } from '@lucide/vue'
 import { configApi, mcpMarketApi } from '../../api'
 
 interface MCPItem {
@@ -54,8 +54,6 @@ const mcps = ref<MCPItem[]>([])
 const markets = ref<MCPMarket[]>([])
 const hotMcps = ref<HotMCP[]>([])
 const installedPackages = ref<Set<string>>(new Set())
-const installedFromApi = ref<Set<string>>(new Set())
-
 const activeTab = ref<'market' | 'hot' | 'installed'>('market')
 const searchQuery = ref('')
 
@@ -71,7 +69,6 @@ const pageSize = 20
 
 // Market card
 const showAddMarket = ref(false)
-const newMarketForm = ref({ name: '', url: '', description: '' })
 
 // Market MCP popup
 const showMarketPopup = ref(false)
@@ -128,6 +125,7 @@ async function fetchInstalledPage() {
     installedTotal.value = result.total || 0
 
     const existingPackageNames = new Set(mcps.value.map(m => m.args?.[0]))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installed.forEach((i: any) => {
       const pkgName = i.packageName || i.package_name
       installedPackages.value.add(pkgName)
@@ -161,6 +159,7 @@ async function loadMarketMcps() {
   try {
     const { packages } = await mcpMarketApi.market()
     if (Array.isArray(packages)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       packages.forEach((p: any) => {
         if (p.installed) {
           installedPackages.value.add(p.packageName)
@@ -193,18 +192,6 @@ async function loadHotMcps() {
 
 // ── Market management ──
 
-async function handleAddMarket() {
-  if (!newMarketForm.value.name || !newMarketForm.value.url) return
-  try {
-    const market = await mcpMarketApi.addMarket(newMarketForm.value)
-    markets.value.push(market)
-    newMarketForm.value = { name: '', url: '', description: '' }
-    showAddMarket.value = false
-  } catch (e: any) {
-    alert(e?.message || e?.error || '添加市场失败')
-  }
-}
-
 async function handleDeleteMarket(id: string) {
   if (id.startsWith('builtin-') || id === 'builtin') {
     alert('内置市场不可删除')
@@ -213,6 +200,7 @@ async function handleDeleteMarket(id: string) {
   try {
     await mcpMarketApi.deleteMarket(id)
     markets.value = markets.value.filter(m => m.id !== id)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     alert(e?.message || e?.error || '删除市场失败')
   }
@@ -245,6 +233,7 @@ async function fetchMarketMcps() {
     try {
       const result = await mcpMarketApi.getMarketMcps(currentMarket.value.id, marketMcpsPage.value, pageSize, marketMcpsSearchQuery.value)
       if (result.code === 200 && result.data) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const newMcps = (result.data.mcps || []).map((m: any) => ({
           id: m.id,
           name: m.name,
@@ -265,6 +254,7 @@ async function fetchMarketMcps() {
         marketMcpsPage.value++
       }
       break
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       retries--
       if (retries === 0) {
@@ -328,6 +318,7 @@ async function installMcpFromMarketPopup(mcp: MarketMCP) {
       })
       installedTotal.value++
     }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     console.error('Install MCP failed:', e)
   } finally {
@@ -358,19 +349,6 @@ async function remove(id: string) {
     try { await configApi.mcp.uninstall(target.name) } catch { /* ignore */ }
   }
   mcps.value = mcps.value.filter(m => m.id !== id)
-}
-
-async function toggle(id: string) {
-  const m = mcps.value.find(m => m.id === id)
-  if (!m) return
-  const oldEnabled = m.enabled
-  m.enabled = !m.enabled
-  try {
-    await configApi.mcp.update(id, { enabled: m.enabled })
-  } catch (err) {
-    console.error('[MCPPanel] toggle failed:', err)
-    m.enabled = oldEnabled
-  }
 }
 
 function toggleStatus(id: string) {

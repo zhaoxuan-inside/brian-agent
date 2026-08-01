@@ -47,6 +47,7 @@ interface PerModelEntry {
 interface HealthComponent {
   key: string
   name: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   icon: any
   status: HealthStatus
   latency: number

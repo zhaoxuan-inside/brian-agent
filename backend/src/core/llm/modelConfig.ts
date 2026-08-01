@@ -442,7 +442,7 @@ export class ModelConfigService {
     if (raw.userModels) saved.userModels = JSON.parse(raw.userModels);
     if (raw.rateLimits) saved.rateLimits = JSON.parse(raw.rateLimits);
 
-    let config = { ...DEFAULT_CONFIG };
+    const config = { ...DEFAULT_CONFIG };
     if (saved.providers) {
       config.providers = DEFAULT_PROVIDERS.map(d => {
         const sp = saved.providers!.find((p: ModelProvider) => p.id === d.id);

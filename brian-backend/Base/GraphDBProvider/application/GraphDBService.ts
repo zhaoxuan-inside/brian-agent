@@ -1,11 +1,11 @@
 /**
  * @fileoverview GraphDBProvider 应用服务层。
  *
- * 依赖 GraphDBComponent（封装 congraphdb 原生图数据库）操作图数据（节点、边、遍历），
- * 通过 Cypher 查询语言执行所有图数据 CRUD。
+ * 依赖 GraphDBComponent（基于 SQLite + CTE 的图数据库组件）操作图数据（节点、边、遍历），
+ * 通过 Cypher 查询语言（经 CypherTranslator 翻译为 SQL）执行所有图数据 CRUD。
  * 依赖 RelationDBAccess（通过 ConfigService）管理 graphdb_config 配置表。
  *
- * 图数据（节点、边、激活事件、按天激活统计）均存储于原生图数据库：
+ * 图数据（节点、边、激活事件、按天激活统计）均存储于 SQLite 图数据库：
  * - graph_node：Node Table，存储图节点
  * - graph_edge：Rel Table，存储节点间的关系（边），端点由关系连接隐式表达
  * - graph_activation_event：Node Table，存储边激活事件
@@ -1294,22 +1294,19 @@ export class GraphDBService {
         total_activation_events: Number(eventRow?.cnt ?? 0),
       };
     } else if (scope === 'diskUsage') {
-      // congraphdb 暂未提供直接的磁盘占用查询接口，基于数据量估算
+      const diskBytes = this.graphDb.getDiskUsage();
       const nodeRow = await this.graphDb.queryOne(
         `MATCH (n:graph_node) RETURN count(n) AS cnt`,
       );
       const edgeRow = await this.graphDb.queryOne(
         `MATCH ()-[e:graph_edge]->() RETURN count(e) AS cnt`,
       );
-      const nodeCount = Number(nodeRow?.cnt ?? 0);
-      const edgeCount = Number(edgeRow?.cnt ?? 0);
-      // 粗略估算：每个节点约 512 字节，每条边约 256 字节
-      const estimatedBytes = nodeCount * 512 + edgeCount * 256;
       output.data = {
-        disk_usage_bytes: estimatedBytes,
-        node_count: nodeCount,
-        edge_count: edgeCount,
-        estimated: true,
+        disk_usage_bytes: diskBytes,
+        page_size: 4096,
+        page_count: Math.ceil(diskBytes / 4096),
+        node_count: Number(nodeRow?.cnt ?? 0),
+        edge_count: Number(edgeRow?.cnt ?? 0),
       };
     } else {
       output.error = `未知的可视化范围: ${scope}`;
@@ -1323,6 +1320,8 @@ export class GraphDBService {
    * 启用/禁用图数据库（enableGraphDB）。
    *
    * PRD 3.5.2 条：运行时控制图数据库的可用状态。
+   * - 禁用时关闭图数据库连接，释放资源，将 enabled 持久化为 false；
+   * - 启用时重新打开图数据库连接，恢复可用状态，将 enabled 持久化为 true；
    * 状态同步持久化到 graphdb_config，组件初始化时恢复。
    * 禁用期间所有图数据操作将返回失败。
    *
@@ -1343,6 +1342,11 @@ export class GraphDBService {
       );
     }
     this.enabled = input.enable;
+    if (input.enable) {
+      this.graphDb.open();
+    } else {
+      this.graphDb.disconnect();
+    }
     await this.config.set(
       'enabled',
       String(input.enable),

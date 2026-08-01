@@ -199,7 +199,7 @@ export class StrategyAdjustment {
     };
 
     let coveredAspects = 0;
-    for (const [aspect, pattern] of Object.entries(aspects)) {
+    for (const [, pattern] of Object.entries(aspects)) {
       if (existing.rules.some(r => pattern.test(r))) {
         coveredAspects++;
       }

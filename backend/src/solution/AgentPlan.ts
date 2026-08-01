@@ -45,7 +45,7 @@ export class AgentPlan {
     private llmService: LLMService
   ) {}
 
-  async createPlan(userId: string, chatId: string, messages: ChatMessage[]): Promise<Plan> {
+  async createPlan(userId: string, chatId: string, _messages: ChatMessage[]): Promise<Plan> {
     const id = require('uuid').v4();
     const now = Date.now();
 

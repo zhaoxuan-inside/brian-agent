@@ -196,7 +196,7 @@ describe('Config', () => {
   });
 
   it('should watchConfig call callback on reload', async () => {
-    const { getConfig, reloadConfig, watchConfig } = await import('../../src/infrastructure/config');
+    const { reloadConfig, watchConfig } = await import('../../src/infrastructure/config');
     const calls: any[] = [];
     const unwatch = watchConfig((c) => calls.push(c.port));
     expect(calls.length).toBe(0);

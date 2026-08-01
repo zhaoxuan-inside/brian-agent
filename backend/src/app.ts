@@ -1,10 +1,10 @@
 import express from 'express';
+import path from 'path';
 import { createServer } from './infrastructure/server';
 import { logger } from './infrastructure/logger';
 import { getConfig } from './infrastructure/config';
 import { getDatabase } from './infrastructure/database';
 
-import { SQLiteWrapper as SQLiteDB } from './base/DBWrapper';
 import type { DBWrapper } from './base/DBWrapper';
 import { SQLiteVectorDB } from './base/db/SQLiteVectorDB';
 import { SQLiteGraphDB } from './base/db/SQLiteGraphDB';
@@ -114,9 +114,10 @@ export function createApp(): express.Application {
       })();
     },
   };
-  const vectorDB = new SQLiteVectorDB(sqliteDB);
-  const vectorDBProvider = new VectorDBProvider(sqliteDB);
-  const graphDB = new SQLiteGraphDB(sqliteDB);
+  const _vectorDB = new SQLiteVectorDB(sqliteDB);
+  const lanceDBPath = path.resolve(config.vectorDbPath, 'lancedb');
+  const _vectorDBProvider = new VectorDBProvider(lanceDBPath, sqliteDB);
+  const _graphDB = new SQLiteGraphDB(sqliteDB);
   const mq = new SQLiteMQ(sqliteDB);
 
   logger.info('SYSTEM', 'Base layer initialized');
@@ -131,7 +132,7 @@ export function createApp(): express.Application {
   const soulManager = new SoulManager(sqliteDB);
   const workManager = new WorkManager(sqliteDB);
   const informationService = new InformationService(sqliteDB, llmService);
-  const libraryService = new LibraryService(sqliteDB);
+  const _libraryService = new LibraryService(sqliteDB);
   const storageService = new StorageService();
   const coreModelConfigService = new CoreModelConfigService();
   llmService.setFallbackConfigProvider(coreModelConfigService);
@@ -159,10 +160,10 @@ export function createApp(): express.Application {
     },
   };
   const mqCore = new MQCore(mqOperations);
-  const llmCore = new LLMCore(sqliteDB, llmService);
-  const mcpCore = new MCPCore(sqliteDB, llmService, mcpManager);
-  const skillCore = new SkillCore(sqliteDB, llmService, skillManager);
-  const soulCore = new SoulCore(sqliteDB, llmService, soulManager);
+  const _llmCore = new LLMCore(sqliteDB, llmService);
+  const _mcpCore = new MCPCore(sqliteDB, llmService, mcpManager);
+  const _skillCore = new SkillCore(sqliteDB, llmService, skillManager);
+  const _soulCore = new SoulCore(sqliteDB, llmService, soulManager);
   learningServiceCore.schedule(300000);
 
   logger.info('SYSTEM', 'Core layer initialized');
@@ -183,11 +184,11 @@ export function createApp(): express.Application {
   const agentContextService = createAgentContextService(coreInformationService);
   const agentLibraryService = createAgentLibraryService();
   const agentStrategyService = createAgentStrategyService(rawDb);
-  const agentBuilderService = createAgentBuilderService(rawDb, agentLibraryService, agentStrategyService, llmService);
-  const agentExecutionService = createAgentExecutionService(rawDb, llmService, skillManager, mcpManager, mqCore, agentContextService);
-  const plannerAgentService = createPlannerAgentService(rawDb, llmService, agentContextService);
-  const writerAgentService = createWriterAgentService(rawDb, llmService, agentContextService);
-  const evolutorAgentService = createEvolutorAgentService(rawDb, llmService, agentContextService);
+  const _agentBuilderService = createAgentBuilderService(rawDb, agentLibraryService, agentStrategyService, llmService);
+  const _agentExecutionService = createAgentExecutionService(rawDb, llmService, skillManager, mcpManager, mqCore, agentContextService);
+  const _plannerAgentService = createPlannerAgentService(rawDb, llmService, agentContextService);
+  const _writerAgentService = createWriterAgentService(rawDb, llmService, agentContextService);
+  const _evolutorAgentService = createEvolutorAgentService(rawDb, llmService, agentContextService);
 
   // Legacy agent subsystem (kept for backward compatibility with access layer routes)
   const toolService = new ToolService();
@@ -195,8 +196,8 @@ export function createApp(): express.Application {
   const legacyAgentBuilder = new AgentBuilder(storageService, coreLlmService);
   const metaAgent = new MetaAgent(coreLlmService, coreInformationService, toolService, agentLibrary, skillManager);
   const graphExecutor = new GraphExecutor(coreLlmService, toolService);
-  const writerAgentLegacy = new WriterAgent(coreLlmService);
-  const evolutorAgentLegacy = new EvolutorAgent(coreLlmService);
+  const _writerAgentLegacy = new WriterAgent(coreLlmService);
+  const _evolutorAgentLegacy = new EvolutorAgent(coreLlmService);
 
   logger.info('SYSTEM', 'Agent layer initialized');
 

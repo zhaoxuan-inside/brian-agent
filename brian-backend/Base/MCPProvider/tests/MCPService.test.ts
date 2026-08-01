@@ -810,7 +810,7 @@ describe('MCPProvider MCPService', () => {
       await mcpAccess.soMcp(input, ctx(), output);
       expect(output.list.length).toBeGreaterThanOrEqual(2);
       for (const m of output.list) {
-        const match = m.mcp_title.includes('Alpha') || m.mcp_brief.includes('Alpha');
+        const match = m.mcp_title.includes('Alpha') || (m.mcp_brief?.includes('Alpha') ?? false);
         expect(match).toBe(true);
       }
     });

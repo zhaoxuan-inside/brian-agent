@@ -116,7 +116,7 @@ export class AnthropicWrapper extends BaseLLMWrapper {
     }
   }
 
-  async generateEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+  async generateEmbedding(_request: EmbeddingRequest): Promise<EmbeddingResponse> {
     throw new Error('Embedding not supported for Anthropic');
   }
 

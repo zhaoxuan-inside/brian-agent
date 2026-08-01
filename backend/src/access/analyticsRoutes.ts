@@ -161,19 +161,17 @@ export function createAnalyticsRoutes(
     try {
       const startTime = Date.now();
 
-      const rows = await db.query<{ cnt: number }>(
+      const _rows = await db.query<{ cnt: number }>(
         `SELECT COUNT(*) as cnt FROM vector_embeddings`,
       );
 
       const latency = Date.now() - startTime;
-      const hasData = (rows[0]?.cnt ?? 0) > 0;
-
       res.json({
         status: 'connected' as const,
         type: 'SQLite',
         latency,
       });
-    } catch (error) {
+    } catch {
       res.json({
         status: 'disconnected' as const,
         type: 'SQLite',

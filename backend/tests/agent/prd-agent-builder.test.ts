@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { setDatabase as setLibDb } from '../../src/agent/AgentLibrary/db';
-import { createAgentLibraryService, AddAgentInput, AddAgentContext, AddAgentOutput, GetAgentInput, GetAgentContext, GetAgentOutput } from '../../src/agent/AgentLibrary/AgentLibrary';
+import { createAgentLibraryService } from '../../src/agent/AgentLibrary/AgentLibrary';
 import { createAgentStrategyService } from '../../src/agent/AgentStrategy/AgentStrategy';
 import {
   createAgentBuilderService,
@@ -26,7 +26,6 @@ import {
 } from '../../src/agent/AgentBuilder/AgentBuilder';
 import type { AgentLibraryService } from '../../src/agent/AgentLibrary/AgentLibrary';
 import type { AgentStrategyService } from '../../src/agent/AgentStrategy/AgentStrategy';
-import type { AgentDatabase } from '../../src/agent/infra/dbTypes';
 
 let db: Database.Database;
 let libService: AgentLibraryService;

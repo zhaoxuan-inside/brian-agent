@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
+    "congraphdb": "^0.2.1",
+    "graphdblite": "^0.1.2",
+    "isolated-vm": "file:./SkillProvider/infrastructure/sandbox/vendor/isolated-vm",
     "tiny-graph-db": "^1.0.4",
     "uuid": "^9.0.1"
   },
@@ -20,8 +23,6 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.12.7",
     "@types/uuid": "^9.0.8",
-    "congraphdb": "^0.2.1",
-    "graphdblite": "^0.1.2",
     "typescript": "^5.9.3",
     "vitest": "^1.6.0"
   }

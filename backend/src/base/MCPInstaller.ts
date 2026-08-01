@@ -46,7 +46,7 @@ async function getSystemProxyEnv(): Promise<Record<string, string>> {
     } else {
       logger.info('MCP', '[Network] GNOME proxy not configured');
     }
-  } catch (err) {
+  } catch (_err) {
     logger.info('MCP', '[Network] GNOME proxy detection skipped (not a GNOME environment)');
   }
   
@@ -167,7 +167,7 @@ export class MCPStrategyFactory {
 }
 
 export class NpmMcpInstaller implements MCPInstaller {
-  async install(packageName: string, displayName: string, options?: Record<string, unknown>): Promise<MCPInstallationResult> {
+  async install(packageName: string, displayName: string, _options?: Record<string, unknown>): Promise<MCPInstallationResult> {
     const installDir = MCPStrategyFactory.getInstallDir(packageName);
     
     logger.info('MCP', `Installing MCP: ${packageName}, installDir: ${installDir}`);
@@ -664,7 +664,7 @@ export class GitMcpInstaller implements MCPInstaller {
     }
   }
 
-  async test(installPath: string, startCommand: string): Promise<MCPTestResult> {
+  async test(_installPath: string, _startCommand: string): Promise<MCPTestResult> {
     return { success: true, message: 'Git MCP test skipped' };
   }
 

@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+
 
 const SENTIMENT_POSITIVE = [
   'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'awesome', 'perfect',
@@ -202,7 +202,7 @@ export function extractContext(input: string): {
   // Entity extraction
   const entities: string[] = [];
   const seen = new Set<string>();
-  for (const { pattern, type } of ENTITY_PATTERNS) {
+  for (const { pattern } of ENTITY_PATTERNS) {
     const matches = trimmed.match(pattern);
     if (matches) {
       for (const m of matches) {
@@ -238,11 +238,9 @@ export function extractContext(input: string): {
 
   // Determine dominant sentiment
   let maxScore = 0;
-  let dominantSentiment = 'neutral';
-  for (const [key, score] of Object.entries(scores)) {
+  for (const [, score] of Object.entries(scores)) {
     if (score > maxScore) {
       maxScore = score;
-      dominantSentiment = key;
     }
   }
 

@@ -1,6 +1,5 @@
 import { StorageService } from '../core/storage';
 import { LLMService } from '../core/llm';
-import { v4 as uuidv4 } from 'uuid';
 import type { ChatMessage, CustomAgent } from '../shared/types';
 
 export class AgentBuilder {

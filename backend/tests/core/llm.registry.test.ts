@@ -1,10 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ModelRegistry } from '../../src/core/llm/registry';
 import { ModelConfigService } from '../../src/core/llm/modelConfig';
 import { RegisteredModel } from '../../src/shared/types';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 
 function makeModel(overrides: Partial<RegisteredModel> = {}): RegisteredModel {
   return {

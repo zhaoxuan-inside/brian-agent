@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LLMProvider, LLMWrapper, ChatCompletionRequest, ChatCompletionResponse, EmbeddingRequest, EmbeddingResponse, OpenAIWrapper, AnthropicWrapper, GoogleWrapper, DBWrapper } from '../../base';
+import { LLMWrapper, ChatCompletionRequest, ChatCompletionResponse, EmbeddingRequest, EmbeddingResponse, OpenAIWrapper, AnthropicWrapper, GoogleWrapper, DBWrapper } from '../../base';
 import { logger } from '../../infrastructure/logger';
 import { generateUUIDv7 } from '../../infrastructure/uuid';
 
@@ -462,7 +462,7 @@ export class LLMService {
     return { totalCalls, totalTokens, byModel };
   }
 
-  getUserTokenStats(userId: string): { totalCalls: number; totalTokens: number; byModel: Record<string, { calls: number; tokens: number }> } {
+  getUserTokenStats(_userId: string): { totalCalls: number; totalTokens: number; byModel: Record<string, { calls: number; tokens: number }> } {
     return { totalCalls: 0, totalTokens: 0, byModel: {} };
   }
 

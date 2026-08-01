@@ -2,7 +2,7 @@ import express from 'express';
 import { AgentBuilder } from '../agent/agentBuilder';
 import { MetaAgent } from '../agent/metaAgent';
 import { logger } from '../infrastructure/logger';
-import { createToggleHandler, createDirectToggleHandler } from './toggleHandler';
+
 
 export function createAgentRoutes(agentBuilder: AgentBuilder, _metaAgent: MetaAgent): express.Router {
   const router = express.Router();

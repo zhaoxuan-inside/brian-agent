@@ -157,7 +157,6 @@ export class ModelConfigService {
       'SELECT id, model_id FROM user_model_config WHERE provider_id = ? AND user_id = ?'
     ).all(providerId, uid) as Array<{ id: string; model_id: string }>;
 
-    const existingModelIds = new Set(existing.map(e => e.model_id));
     const incomingModelIds = new Set(models.map(m => String(m.modelId)));
 
     let removed = 0;

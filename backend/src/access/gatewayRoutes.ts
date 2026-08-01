@@ -3,7 +3,7 @@ import { ChatService } from '../application/ChatService';
 import { InformationService } from '../core/information/InformationService';
 import { logger } from '../infrastructure/logger';
 
-export function createGatewayRoutes(chatService: ChatService, informationService: InformationService): express.Router {
+export function createGatewayRoutes(chatService: ChatService, _informationService: InformationService): express.Router {
   const router = express.Router();
 
   router.post('/message', async (req, res) => {

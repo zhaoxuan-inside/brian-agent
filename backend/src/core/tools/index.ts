@@ -1,11 +1,11 @@
-import { Tool, McpPackage, McpTool, InstalledMcp } from '../../shared/types';
+import { Tool, McpPackage, McpTool } from '../../shared/types';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
-import { exec, ChildProcess } from 'child_process';
+import { exec } from 'child_process';
 import axios from 'axios';
 import { getDatabase } from '../../infrastructure/database';
-import { MCPStrategyFactory, MCPInstaller, MCPInstallationResult } from '../../base';
+import { MCPStrategyFactory } from '../../base';
 import { logger } from '../../infrastructure/logger';
 
 // ============================================================
@@ -417,7 +417,7 @@ export class ToolService {
         const timeout = (params.timeout as number) || 30000;
 
         return new Promise((resolve) => {
-          const child = exec(command, {
+          const _child = exec(command, {
             cwd: cwd ? path.resolve(cwd) : process.cwd(),
             timeout,
             maxBuffer: 10 * 1024 * 1024, // 10MB

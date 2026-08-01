@@ -285,7 +285,7 @@ export class SQLiteGraphDB {
 
   async query(
     query: string,
-    params: Record<string, any> = {}
+    _params: Record<string, any> = {}
   ): Promise<GraphQueryResult> {
     const nodes = await this.db.query<any>(
       `SELECT * FROM ${this.nodesTable} WHERE label LIKE ?`,

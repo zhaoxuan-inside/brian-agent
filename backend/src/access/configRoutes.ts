@@ -1,9 +1,9 @@
 import express from 'express';
-import { LLMService, LLMConfig, ProviderType } from '../core/llm/LLMService';
-import { MCPManager, MCPConfig } from '../core/mcp/MCPManager';
+import { LLMService, LLMConfig } from '../core/llm/LLMService';
+import { MCPManager } from '../core/mcp/MCPManager';
 import { SoulManager, SoulConfig } from '../core/soul/SoulManager';
 import { WorkManager, WorkConfig } from '../core/work/WorkManager';
-import { ModelConfigService, ModelConfig } from '../core/modelConfig/ModelConfigService';
+import { ModelConfigService } from '../core/modelConfig/ModelConfigService';
 import { ModelConfigService as LLMConfigService, ModelProvider } from '../core/llm/modelConfig';
 import { logger } from '../infrastructure/logger';
 import { getConfig, updateConfig } from '../infrastructure/config';

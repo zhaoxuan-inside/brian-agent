@@ -1378,7 +1378,8 @@ describe('GraphDBProvider', () => {
       expect(typeof output.data.disk_usage_bytes).toBe('number');
       expect(typeof output.data.node_count).toBe('number');
       expect(typeof output.data.edge_count).toBe('number');
-      expect(output.data.estimated).toBe(true);
+      expect(typeof output.data.page_size).toBe('number');
+      expect(typeof output.data.page_count).toBe('number');
     });
 
     it('非法 scope 应返回 false 并设置 error', async () => {

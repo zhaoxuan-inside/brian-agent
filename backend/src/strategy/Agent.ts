@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ChatMessage } from '../base/LLMWrapper';
-import { ThinkingStrategy, StrategyType, StrategyTypeSchema } from './ThinkingStrategy';
+import { ThinkingStrategy, StrategyTypeSchema } from './ThinkingStrategy';
 import { LLMService } from '../core/llm/LLMService';
 import { logger } from '../infrastructure/logger';
 
@@ -219,7 +219,7 @@ export class EvaluatorAgent extends BaseAgent {
     };
   }
 
-  private calculateQualityScore(messages: ChatMessage[], context: Record<string, any>): QualityScore {
+  private calculateQualityScore(messages: ChatMessage[], _context: Record<string, any>): QualityScore {
     const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
     const lastAssistantMessage = [...messages].reverse().find(m => m.role === 'assistant');
 
