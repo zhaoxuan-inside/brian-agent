@@ -304,18 +304,18 @@ export class LogService {
     // SQLite 写入（SQLITE / BOTH 模式）
     if (this.writeMode === 'SQLITE' || this.writeMode === 'BOTH') {
       try {
-        await this.relationDb.insert(LOG_RECORD_TABLE, {
-          id: logId,
-          created: now,
-          updated: now,
-          level: data.level,
-          source: data.source,
-          message: data.message,
-          trace_id: data.trace_id ?? null,
-          caller: data.caller ?? null,
-          metadata: data.metadata ? JSON.stringify(data.metadata) : null,
-          elapsed_ms: data.elapsed_ms ?? null,
-        });
+        await this.relationDb.insert(LOG_RECORD_TABLE, [
+          { field: 'id', value: logId },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'level', value: data.level },
+          { field: 'source', value: data.source },
+          { field: 'message', value: data.message },
+          { field: 'trace_id', value: data.trace_id ?? null },
+          { field: 'caller', value: data.caller ?? null },
+          { field: 'metadata', value: data.metadata ? JSON.stringify(data.metadata) : null },
+          { field: 'elapsed_ms', value: data.elapsed_ms ?? null },
+        ]);
       } catch {
         // SQLite 写入失败不影响业务
       }
@@ -733,7 +733,7 @@ export class LogService {
     } as any);
 
     return {
-      distribution: rows.map((r: { level: string; count: number }) => ({
+      distribution: rows.map((r: Record<string, unknown>) => ({
         level: String(r.level),
         count: Number(r.count),
       })),

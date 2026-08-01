@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick } from 'vue'
 import { Send, Square, Quote } from '@lucide/vue'
 
 const props = defineProps<{

@@ -13,7 +13,7 @@ function copyCode() {
   })
 }
 
-const isStreaming = computed(() => props.block.meta.status === 'streaming')
+const _isStreaming = computed(() => props.block.meta.status === 'streaming')
 </script>
 
 <template>

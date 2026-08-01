@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import {
-  MessageCircle, Brain, Network,
-  Send, Square as StopSquare, CornerUpLeft, Quote,
+  MessageCircle,
   Loader2,
 } from '@lucide/vue'
 import { useSessionStore } from '@/stores/session'
 import type { ChatMessage, Block, TextBlock } from '@/api/types'
-import { chatApi } from '@/api'
 import ChatMap from './ChatMap.vue'
 import InputBox from './InputBox.vue'
 import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
@@ -89,7 +87,7 @@ async function handleSend(content: string, citingIds: string[]) {
     const decoder = new TextDecoder()
     let buffer = ''
 
-    while (true) {
+    while (true) { // eslint-disable-line no-constant-condition
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })

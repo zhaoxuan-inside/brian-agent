@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { ChevronRight, Loader2, Wrench, CheckCircle, XCircle } from '@lucide/vue'
 import type { ToolCallBlock } from '@/api/types'
 
-const props = defineProps<{ block: ToolCallBlock }>()
+const _props = defineProps<{ block: ToolCallBlock }>()
 const isExpanded = ref(false)
 </script>
 

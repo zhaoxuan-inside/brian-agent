@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Activity, Cpu, HardDrive, Database, BarChart3, TrendingUp, Layers, Loader2, Search, RefreshCw, Eye } from '@lucide/vue'
+import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye } from '@lucide/vue'
 import { monitorApi } from '@/api'
-import type { SystemHealth, TokenUsage } from '@/api/types'
+import type { SystemHealth } from '@/api/types'
 
 const health = ref<SystemHealth>({ status: 'healthy', components: [], uptime: 0 })
 const resources = ref({ cpu: 0, memory: 0, disk: 0 })
@@ -11,7 +11,7 @@ const modelDist = ref<{ model: string; tokens: number }[]>([])
 const logs = ref<{ timestamp: number; level: string; source: string; message: string }[]>([])
 const logLevel = ref('')
 const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
-const loading = ref(false)
+const _loading = ref(false)
 
 async function fetchAll() {
   try { health.value = await monitorApi.health() } catch { /* */ }

@@ -4,19 +4,24 @@
   "description": "Brian-Agent - An intelligent personal assistant with memory and learning capabilities",
   "private": true,
   "workspaces": [
-    "backend",
-    "frontend",
+    "brian-backend/Base",
+    "brian-backend/Core",
+    "brian-backend/Agent",
+    "brian-backend/Orchestration",
+    "brian-backend/Application",
+    "brian-frontend",
     "shared"
   ],
   "scripts": {
     "dev": "npm run dev:backend & npm run dev:frontend",
-    "dev:backend": "npm run dev --workspace=backend",
-    "dev:frontend": "npm run dev --workspace=frontend",
-    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
-    "build:backend": "npm run build --workspace=backend",
-    "build:frontend": "npm run build --workspace=frontend",
-    "test": "npm run test --workspace=backend",
-    "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend"
+    "dev:backend": "npm run dev --workspace=@brian-agent/application",
+    "dev:frontend": "npm run dev --workspace=@brian-agent/frontend",
+    "build": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application && npm run build --workspace=@brian-agent/frontend",
+    "build:backend": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application",
+    "build:frontend": "npm run build --workspace=@brian-agent/frontend",
+    "test": "npm run test --workspace=@brian-agent/base && npm run test --workspace=@brian-agent/core && npm run test --workspace=@brian-agent/agent && npm run test --workspace=@brian-agent/orchestration && npm run test --workspace=@brian-agent/application",
+    "lint": "npm run lint --workspace=@brian-agent/frontend",
+    "typecheck": "npm run typecheck --workspace=@brian-agent/base && npm run typecheck --workspace=@brian-agent/core && npm run typecheck --workspace=@brian-agent/agent && npm run typecheck --workspace=@brian-agent/orchestration && npm run typecheck --workspace=@brian-agent/application"
   },
   "keywords": [
     "agent",

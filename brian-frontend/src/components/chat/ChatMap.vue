@@ -13,8 +13,8 @@ const selectedNodeId = ref<string | null>(null)
 const nodes = computed(() => sessionStore.dagNodes)
 const edges = computed(() => sessionStore.dagEdges)
 
-const WIDTH = 800
-const HEIGHT = 600
+const _WIDTH = 800
+const _HEIGHT = 600
 
 function drawMap() {
   const cvs = canvasRef.value
@@ -129,7 +129,6 @@ function handleWheel(e: WheelEvent) {
 
 function handleMouseDown(e: MouseEvent) {
   const pos = getMousePos(e)
-  const isDark = document.documentElement.classList.contains('dark')
   const ctx = canvasRef.value?.getContext('2d')
   if (!ctx) return
 

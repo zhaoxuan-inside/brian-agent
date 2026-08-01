@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Block, TextBlock, HeadingBlock, CodeBlock, ThinkingBlock, ToolCallBlock, ArtifactBlock, ErrorBlock, UnsupportedBlock, FeedbackBlock } from '@/api/types'
+import type { Block } from '@/api/types'
 import TextBlockView from './TextBlock.vue'
 import CodeBlockView from './CodeBlock.vue'
 import ThinkingBlockView from './ThinkingBlock.vue'
@@ -8,7 +8,7 @@ import ErrorBlockView from './ErrorBlock.vue'
 import FallbackBlockView from './FallbackBlock.vue'
 import FeedbackBlockView from './FeedbackBlock.vue'
 
-const props = defineProps<{ block: Block }>()
+const _props = defineProps<{ block: Block }>()
 </script>
 
 <template>

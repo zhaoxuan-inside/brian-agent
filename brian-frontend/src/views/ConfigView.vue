@@ -3,11 +3,11 @@ import { ref, computed } from 'vue'
 import {
   Server, Cpu, Bot, Workflow, AppWindow,
   Plug, Database, Boxes, Table2, Send, MessageSquare,
-  Heart, Wand2, GitBranch, Brain, GraduationCap, HardDrive,
-  Lightbulb, Library, RefreshCw, ClipboardList, Briefcase, PenLine,
-  Settings, FileText, Network, User, MessageCircle, Sparkles,
-  ChevronRight, ArrowLeft, Trash2, Loader2, Check, AlertCircle,
-  Star, FlaskConical, X, Save, Layers, Search,
+  Heart, Wand2, Brain, GraduationCap, HardDrive,
+  Lightbulb, Library, RefreshCw, Briefcase,
+  Settings, User, MessageCircle, Sparkles,
+  ChevronRight, ArrowLeft, Trash2, Loader2, AlertCircle,
+  Star, FlaskConical, X, Save, Layers,
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'

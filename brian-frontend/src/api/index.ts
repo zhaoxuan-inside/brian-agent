@@ -1,8 +1,8 @@
 import type {
-  ChatSession, ChatMessage, Block, AgentChainNode,
+  ChatSession, ChatMessage, AgentChainNode,
   DagNode, DagEdge, MemoryItem, GraphNode, GraphEdge,
   ModelProvider, ModelInfo, LearningStats, LearningProgress,
-  SystemHealth, TokenUsage, UserProfile, LibraryPath
+  SystemHealth, UserProfile, LibraryPath
 } from './types'
 
 const API_BASE = '/api'
