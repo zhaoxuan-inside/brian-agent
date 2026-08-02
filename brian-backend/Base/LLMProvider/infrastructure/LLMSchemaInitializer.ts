@@ -116,6 +116,11 @@ export class LLMSchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_MODEL_TABLE}_llm_title" ON "${LLM_MODEL_TABLE}" ("llm_title")`,
     );
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_MODEL_TABLE}" ADD COLUMN "features" TEXT`,
+      );
+    } catch { /* column already exists */ }
 
     // llm_enable 表（启用列表）
     this.relationDb.executeRaw(`

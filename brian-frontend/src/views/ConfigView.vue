@@ -352,18 +352,54 @@ const providerForm = ref({ name: '', url: '', apiKey: '', modelsPath: '', chatPa
 const providerSubmitting = ref(false)
 const showApiKey = ref(false)
 const fetchingModels = ref(false)
-const fetchedModels = ref<Array<{ id: string; name: string; brief: string }>>([])
+const fetchedModels = ref<Array<{ id: string; name: string; brief: string; features?: Record<string, unknown> }>>([])
+const cachedModels = ref<Array<{ id: string; name: string; brief: string; features?: Record<string, unknown> }>>([])
+const modelSearchQuery = ref('')
+const selectedModelIds = ref<Set<string>>(new Set())
 
-interface FetchedModel { id: string; name: string; brief: string }
+interface FetchedModel { id: string; name: string; brief: string; features?: Record<string, unknown> }
+
+const filteredCachedModels = computed(() => {
+  const q = modelSearchQuery.value.toLowerCase()
+  if (!q) return cachedModels.value
+  return cachedModels.value.filter(m =>
+    m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || (m.brief || '').toLowerCase().includes(q),
+  )
+})
+
+function toggleModelSelection(modelId: string) {
+  const s = new Set(selectedModelIds.value)
+  if (s.has(modelId)) s.delete(modelId)
+  else s.add(modelId)
+  selectedModelIds.value = s
+}
+
+function selectAllModels() {
+  if (selectedModelIds.value.size === cachedModels.value.length) {
+    selectedModelIds.value = new Set()
+  } else {
+    selectedModelIds.value = new Set(cachedModels.value.map(m => m.id))
+  }
+}
+
+async function loadCachedModels(providerId: string) {
+  try {
+    const res = await fetchApi<{ models: FetchedModel[] }>(`/config/provider/${providerId}/models`)
+    cachedModels.value = res.models || []
+  } catch {
+    cachedModels.value = []
+  }
+}
 
 async function handleFetchModels(providerId: string) {
   fetchingModels.value = true
   fetchedModels.value = []
   try {
-    const res = await fetchApi<{ models: FetchedModel[]; total: number }>(
+    const res = await fetchApi<{ models: FetchedModel[]; total: number; cached: boolean }>(
       `/config/provider/${providerId}/fetch-models`, { method: 'POST' },
     )
     fetchedModels.value = res.models || []
+    cachedModels.value = res.models || []
     showToast(`获取到 ${fetchedModels.value.length} 个模型`, 'success')
   } catch (e: unknown) {
     showToast(e instanceof Error ? e.message : '获取模型列表失败')
@@ -427,6 +463,13 @@ function openProviderModal(provider?: BackendProvider) {
     }
   }
   providerModalVisible.value = true
+  if (provider) {
+    loadCachedModels(provider.id)
+  } else {
+    cachedModels.value = []
+    modelSearchQuery.value = ''
+    selectedModelIds.value = new Set()
+  }
 }
 
 function closeProviderModal() {
@@ -434,6 +477,9 @@ function closeProviderModal() {
   editingProvider.value = null
   showApiKey.value = false
   fetchedModels.value = []
+  cachedModels.value = []
+  modelSearchQuery.value = ''
+  selectedModelIds.value = new Set()
 }
 
 async function submitProviderForm() {
@@ -1603,22 +1649,41 @@ watch(activeSubSection, async (val) => {
                 <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="providerForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
               </div>
             </fieldset>
-            <div v-if="editingProvider" class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
-              <button
-                class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-brian-blue/30 text-brian-blue hover:bg-brian-blue/5 transition-colors disabled:opacity-60"
-                :disabled="fetchingModels"
-                @click="handleFetchModels(editingProvider.id)"
-              >
-                <Loader2 v-if="fetchingModels" :size="13" class="animate-spin" />
-                <Download v-else :size="13" /> 获取模型列表
-              </button>
-              <div v-if="fetchedModels.length > 0" class="mt-3 border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg divide-y divide-apple-gray-100 dark:divide-apple-gray-700 max-h-48 overflow-y-auto">
-                <div v-for="m in fetchedModels" :key="m.id" class="px-3 py-2 flex items-start gap-2">
-                  <Boxes :size="14" class="text-apple-gray-400 mt-0.5 flex-shrink-0" />
-                  <div class="min-w-0">
-                    <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
-                    <p v-if="m.brief" class="text-[11px] text-apple-gray-400 truncate">{{ m.brief }}</p>
-                  </div>
+            <div v-if="editingProvider" class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3 space-y-2">
+              <div class="flex items-center gap-2">
+                <button
+                  class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-brian-blue/30 text-brian-blue hover:bg-brian-blue/5 transition-colors disabled:opacity-60"
+                  :disabled="fetchingModels"
+                  @click="handleFetchModels(editingProvider.id)"
+                >
+                  <Loader2 v-if="fetchingModels" :size="13" class="animate-spin" />
+                  <Download v-else :size="13" /> 获取模型列表
+                </button>
+                <span v-if="cachedModels.length > 0" class="text-[11px] text-apple-gray-400">
+                  共 {{ cachedModels.length }} 个模型，已选 {{ selectedModelIds.size }} 个
+                </span>
+              </div>
+              <div v-if="cachedModels.length > 0" class="space-y-1">
+                <div class="relative">
+                  <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+                  <input v-model="modelSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索模型名称..." />
+                </div>
+                <label class="flex items-center gap-2 px-2 py-1 text-[11px] text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
+                  <input type="checkbox" :checked="selectedModelIds.size === cachedModels.length" @change="selectAllModels" class="rounded" />
+                  全选 / 取消全选
+                </label>
+                <div class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg divide-y divide-apple-gray-100 dark:divide-apple-gray-700 max-h-64 overflow-y-auto">
+                  <label
+                    v-for="m in filteredCachedModels"
+                    :key="m.id"
+                    class="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+                  >
+                    <input type="checkbox" :checked="selectedModelIds.has(m.id)" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
+                    <div class="min-w-0">
+                      <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
+                      <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
+                    </div>
+                  </label>
                 </div>
               </div>
             </div>

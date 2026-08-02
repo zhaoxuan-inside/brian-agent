@@ -409,6 +409,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           id: m.llm_title || m.id,
           name: m.llm_title || m.name || '',
           brief: m.llm_brief || m.brief || '',
+          features: (m as any).features ? JSON.parse((m as any).features) : {},
         }));
         sendJson(res, ok ? 200 : 502, {
           models,
@@ -417,6 +418,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           error: fetchOutput.error,
           error_code: fetchOutput.error_code,
         });
+
+      } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
+        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null }>('SELECT "llm_title", "llm_brief", "features" FROM "llm_model" WHERE "llm_provider_id" = ?', [id]);
+        const models = (rows || []).map(r => ({
+          id: r.llm_title,
+          name: r.llm_title,
+          brief: r.llm_brief || '',
+          features: r.features ? (() => { try { return JSON.parse(r.features); } catch { return {}; } })() : {},
+        }));
+        sendJson(res, 200, { models });
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/chat-test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';

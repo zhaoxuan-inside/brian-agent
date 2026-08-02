@@ -541,6 +541,7 @@ let models: Array<{
             id?: string;
             owned_by?: string;
             created?: number;
+            features?: unknown;
           }>;
         };
         models = json.data ?? [];
@@ -559,7 +560,7 @@ let models: Array<{
         continue;
       }
       const brief = m.owned_by ? `owned_by: ${m.owned_by}` : null;
-
+      const features = m.features ? JSON.stringify(m.features) : null;
       const existing = await this.relationDb.selectOne(LLM_MODEL_TABLE, [
         {
           field: 'llm_provider_id',
@@ -574,6 +575,7 @@ let models: Array<{
           LLM_MODEL_TABLE,
           [
             { field: 'llm_brief', value: brief },
+            { field: 'features', value: features },
             { field: 'updated', value: now },
           ],
           [
@@ -595,6 +597,7 @@ let models: Array<{
             { field: 'llm_provider_id', value: input.llm_provider_id },
             { field: 'llm_title', value: modelId },
             { field: 'llm_brief', value: brief },
+            { field: 'features', value: features },
           ]);
         } catch {
           // skip duplicate insert
