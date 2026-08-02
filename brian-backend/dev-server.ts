@@ -61,6 +61,7 @@ import {
   UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput,
   SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput,
   GetLLMInput, GetLLMOutput, DelLLMInput, DelLLMOutput,
+  UpdateLLMInput, UpdateLLMOutput,
 } from './Base/LLMProvider';
 import {
   SoulContext, SoSoulInput, SoSoulOutput, AddSoulInput, AddSoulOutput,
@@ -327,13 +328,41 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        sendJson(res, 200, { success: true, latency: 100, message: 'Connection OK (dev mode)' });
+        const modelInput = Object.assign(new GetLLMInput(), { id });
+        const modelOutput = new GetLLMOutput();
+        const modelCtx = new LLMContext();
+        await ctx.configAccess.getLLM(modelInput, modelCtx, modelOutput);
+        const model = modelOutput.llm as Record<string, unknown> | null;
+        const providerId = (model?.llm_provider_id as string) || '';
+        if (providerId) {
+          const testInput = Object.assign(new TestLLMProviderInput(), { id: providerId });
+          const testOutput = new TestLLMProviderOutput();
+          const testCtx = new LLMContext();
+          await ctx.configAccess.testLLMProvider(testInput, testCtx, testOutput);
+          sendJson(res, 200, {
+            success: testOutput.connected !== false,
+            latency: testOutput.response_time_ms,
+            status_code: testOutput.status_code,
+            message: testOutput.connected !== false ? 'Connected' : (testOutput.error || 'Connection failed'),
+          });
+        } else {
+          sendJson(res, 200, { success: false, latency: 0, message: 'Model has no provider' });
+        }
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/default$/.test(pathname)) {
+        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        const input = Object.assign(new UpdateLLMInput(), { llm_id: id, data: { is_default: true } });
+        const output = new UpdateLLMOutput();
+        const context = new LLMContext();
+        await ctx.configAccess.updateLLM(input, context, output);
         sendJson(res, 200, { success: true });
 
-      } else if (method === 'PUT' && pathname.startsWith('/api/config/model/')) {
+      } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const id = pathname.split('/api/config/model/')[1];
+        const input = Object.assign(new UpdateLLMInput(), { llm_id: id, ...body });
+        const output = new UpdateLLMOutput();
+        const context = new LLMContext();
+        await ctx.configAccess.updateLLM(input, context, output);
         sendJson(res, 200, { success: true, id });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
@@ -377,7 +406,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        sendJson(res, 200, { success: true, latency: 120, message: 'Provider connection OK' });
+        const testInput = Object.assign(new TestLLMProviderInput(), { id });
+        const testOutput = new TestLLMProviderOutput();
+        const testCtx = new LLMContext();
+        await ctx.configAccess.testLLMProvider(testInput, testCtx, testOutput);
+        sendJson(res, 200, {
+          success: testOutput.connected !== false,
+          latency: testOutput.response_time_ms,
+          status_code: testOutput.status_code,
+          message: testOutput.connected !== false ? 'Connected' : (testOutput.error || 'Connection failed'),
+        });
 
       // ---- Soul ----
       } else if (method === 'GET' && pathname === '/api/config/soul') {

@@ -391,7 +391,10 @@ async function submitProviderForm() {
       llm_provider_brief: '',
     }}
     if (editingProvider.value) {
-      await configApi.provider.update(editingProvider.value.id, payload)
+      await fetchApi(`/config/provider/${editingProvider.value.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...payload, id: editingProvider.value.id }),
+      })
     } else {
       await fetchApi('/config/provider', { method: 'POST', body: JSON.stringify(payload) })
     }
@@ -421,7 +424,10 @@ async function handleToggleProvider(providerId: string) {
   const currentEnabled = p.enable === 1 || p.enable === true
   const newEnabled = !currentEnabled
   try {
-    await configApi.provider.update(providerId, { data: { enable: newEnabled } })
+    await fetchApi(`/config/provider/${providerId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ data: { enable: newEnabled }, id: providerId }),
+    })
     p.enable = newEnabled
     showToast(newEnabled ? '已启用' : '已停用', 'success')
   } catch (e: unknown) {
