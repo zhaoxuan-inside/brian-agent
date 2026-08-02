@@ -7,7 +7,7 @@ import {
   Settings, FileText, Network, User, MessageCircle, Sparkles,
   ChevronRight, Trash2, Loader2, Check, AlertCircle,
   Star, FlaskConical, X, Save, Layers,
-  Globe, Key, Plus, Pencil,
+  Globe, Key, Plus, Pencil, Download,
   Eye, EyeOff,
   Search, Monitor, Terminal, MessageSquare,
   BarChart3, Zap, Plug, Radio,
@@ -335,6 +335,8 @@ interface BackendProvider {
   quota_calls_per_day?: number
   quota_calls_per_week?: number
   quota_calls_per_month?: number
+  models_path?: string | null
+  chat_path?: string | null
   _displayName?: string
   _displayUrl?: string
 }
@@ -343,12 +345,32 @@ const providers = ref<BackendProvider[]>([])
 const providersLoading = ref(false)
 const providerModalVisible = ref(false)
 const editingProvider = ref<BackendProvider | null>(null)
-const providerForm = ref({ name: '', url: '', apiKey: '',
+const providerForm = ref({ name: '', url: '', apiKey: '', modelsPath: '', chatPath: '',
   quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
   quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
 })
 const providerSubmitting = ref(false)
 const showApiKey = ref(false)
+const fetchingModels = ref(false)
+const fetchedModels = ref<Array<{ id: string; name: string; brief: string }>>([])
+
+interface FetchedModel { id: string; name: string; brief: string }
+
+async function handleFetchModels(providerId: string) {
+  fetchingModels.value = true
+  fetchedModels.value = []
+  try {
+    const res = await fetchApi<{ models: FetchedModel[]; total: number }>(
+      `/config/provider/${providerId}/fetch-models`, { method: 'POST' },
+    )
+    fetchedModels.value = res.models || []
+    showToast(`获取到 ${fetchedModels.value.length} 个模型`, 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '获取模型列表失败')
+  } finally {
+    fetchingModels.value = false
+  }
+}
 
 async function loadProviders() {
   providersLoading.value = true
@@ -365,6 +387,8 @@ async function loadProviders() {
       enable: (r.enable ?? r.enabled) as boolean | number | undefined,
       _displayName: (r.llm_provider_title || r.providerName || r.id || '') as string,
       _displayUrl: (r.llm_provider_url || r.baseURL || '') as string,
+      models_path: r.models_path as string | null,
+      chat_path: r.chat_path as string | null,
       quota_tokens_per_day: r.quota_tokens_per_day as number | undefined,
       quota_tokens_per_week: r.quota_tokens_per_week as number | undefined,
       quota_tokens_per_month: r.quota_tokens_per_month as number | undefined,
@@ -386,6 +410,8 @@ function openProviderModal(provider?: BackendProvider) {
       name: provider.llm_provider_title || provider._displayName || '',
       url: provider.llm_provider_url || provider._displayUrl || '',
       apiKey: (provider.api_key as string) || '',
+      modelsPath: provider.models_path || '',
+      chatPath: provider.chat_path || '',
       quotaTokensPerDay: provider.quota_tokens_per_day || 0,
       quotaTokensPerWeek: provider.quota_tokens_per_week || 0,
       quotaTokensPerMonth: provider.quota_tokens_per_month || 0,
@@ -395,7 +421,7 @@ function openProviderModal(provider?: BackendProvider) {
     }
   } else {
     editingProvider.value = null
-    providerForm.value = { name: '', url: '', apiKey: '',
+    providerForm.value = { name: '', url: '', apiKey: '', modelsPath: '', chatPath: '',
       quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
       quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
     }
@@ -407,6 +433,7 @@ function closeProviderModal() {
   providerModalVisible.value = false
   editingProvider.value = null
   showApiKey.value = false
+  fetchedModels.value = []
 }
 
 async function submitProviderForm() {
@@ -417,6 +444,8 @@ async function submitProviderForm() {
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
       api_key: providerForm.value.apiKey || null,
+      models_path: providerForm.value.modelsPath || null,
+      chat_path: providerForm.value.chatPath || null,
       quota_tokens_per_day: providerForm.value.quotaTokensPerDay || 0,
       quota_tokens_per_week: providerForm.value.quotaTokensPerWeek || 0,
       quota_tokens_per_month: providerForm.value.quotaTokensPerMonth || 0,
@@ -1540,6 +1569,14 @@ watch(activeSubSection, async (val) => {
               <input v-model="providerForm.url" type="text" :class="inputClass" placeholder="https://api.openai.com/v1" />
             </div>
             <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模型列表路径</label>
+              <input v-model="providerForm.modelsPath" type="text" :class="inputClass" placeholder="models" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">对话 API 路径</label>
+              <input v-model="providerForm.chatPath" type="text" :class="inputClass" placeholder="chat/completions" />
+            </div>
+            <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">API Key</label>
               <div class="relative">
                 <input v-model="providerForm.apiKey" :type="showApiKey ? 'text' : 'password'" :class="inputClass + ' pr-10'" placeholder="sk-..." />
@@ -1566,6 +1603,25 @@ watch(activeSubSection, async (val) => {
                 <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="providerForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
               </div>
             </fieldset>
+            <div v-if="editingProvider" class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
+              <button
+                class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-brian-blue/30 text-brian-blue hover:bg-brian-blue/5 transition-colors disabled:opacity-60"
+                :disabled="fetchingModels"
+                @click="handleFetchModels(editingProvider.id)"
+              >
+                <Loader2 v-if="fetchingModels" :size="13" class="animate-spin" />
+                <Download v-else :size="13" /> 获取模型列表
+              </button>
+              <div v-if="fetchedModels.length > 0" class="mt-3 border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg divide-y divide-apple-gray-100 dark:divide-apple-gray-700 max-h-48 overflow-y-auto">
+                <div v-for="m in fetchedModels" :key="m.id" class="px-3 py-2 flex items-start gap-2">
+                  <Boxes :size="14" class="text-apple-gray-400 mt-0.5 flex-shrink-0" />
+                  <div class="min-w-0">
+                    <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
+                    <p v-if="m.brief" class="text-[11px] text-apple-gray-400 truncate">{{ m.brief }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeProviderModal">取消</button>

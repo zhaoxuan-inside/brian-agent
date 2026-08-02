@@ -75,6 +75,9 @@ const TEST_TIMEOUT_MS = 10000;
 /** listLLM 默认请求超时时间（毫秒） */
 const LIST_TIMEOUT_MS = 30000;
 
+/** 模型列表缓存有效期（毫秒），默认 1 小时 */
+const MODELS_CACHE_TTL_MS = 3600000;
+
 /** execLLM 默认请求超时时间（毫秒） */
 const EXEC_TIMEOUT_MS = 120000;
 
@@ -150,12 +153,7 @@ export class LLMService {
    * @returns 完整端点地址
    */
   private buildEndpoint(baseUrl: string, apiPath: string): string {
-    const base = baseUrl.replace(/\/+$/, '');
-    if (base.toLowerCase().endsWith('/v1')) {
-      const suffix = apiPath.replace(/^v1\/?/, '');
-      return suffix ? `${base}/${suffix}` : base;
-    }
-    return `${base}/${apiPath}`;
+    return `${baseUrl.replace(/\/+$/, '')}/${apiPath.replace(/^\/+/, '')}`;
   }
 
   /**
@@ -260,6 +258,8 @@ export class LLMService {
       { field: 'llm_provider_brief', value: data.llm_provider_brief ?? null },
       { field: 'enable', value: data.enable === true ? 1 : 0 },
       { field: 'api_key', value: data.api_key ?? null },
+      { field: 'models_path', value: data.models_path ?? null },
+      { field: 'chat_path', value: data.chat_path ?? null },
       { field: 'quota_tokens_per_day', value: data.quota_tokens_per_day ?? 0 },
       { field: 'quota_tokens_per_week', value: data.quota_tokens_per_week ?? 0 },
       { field: 'quota_tokens_per_month', value: data.quota_tokens_per_month ?? 0 },
@@ -314,6 +314,15 @@ export class LLMService {
     }
     if (patch.api_key !== undefined) {
       data.push({ field: 'api_key', value: patch.api_key });
+    }
+    if (patch.models_path !== undefined) {
+      data.push({ field: 'models_path', value: patch.models_path });
+    }
+    if (patch.chat_path !== undefined) {
+      data.push({ field: 'chat_path', value: patch.chat_path });
+    }
+    if (patch.models_fetched_at !== undefined) {
+      data.push({ field: 'models_fetched_at', value: patch.models_fetched_at });
     }
     for (const qf of ['quota_tokens_per_day', 'quota_tokens_per_week', 'quota_tokens_per_month',
       'quota_calls_per_day', 'quota_calls_per_week', 'quota_calls_per_month'] as const) {
@@ -487,37 +496,60 @@ export class LLMService {
     }
     const provider = row as unknown as LLMProviderRecord;
 
-    const url = this.buildEndpoint(provider.llm_provider_url, MODELS_PATH);
+    // 缓存命中：跳过远程请求，直接返回本地模型列表
+    const cacheAge = !input.force && provider.models_fetched_at
+      ? IdGenerator.now() - provider.models_fetched_at
+      : Infinity;
+    if (cacheAge < MODELS_CACHE_TTL_MS) {
+      const rows = await this.relationDb.select(LLM_MODEL_TABLE, {
+        conditions: [
+          { field: 'llm_provider_id', operator: Operator.EQ, value: input.llm_provider_id },
+        ],
+        order_by: [{ field: 'llm_title', direction: Direction.ASC }],
+      });
+      output.list = rows as unknown as LLMModelRecord[];
+      output.cached = true;
+      return true;
+    }
 
-    let models: Array<{
-      id?: string;
-      owned_by?: string;
-      created?: number;
-    }> = [];
-    try {
-      const res = await this.fetchWithTimeout(
-        url,
-        { method: 'GET' },
-        LIST_TIMEOUT_MS,
-      );
-      if (!res.ok) {
-        output.error = `获取模型列表失败: HTTP ${res.status}`;
-        output.error_code = 'REMOTE_ERROR';
+    const modelsPath = provider.models_path || MODELS_PATH;
+    const url = this.buildEndpoint(provider.llm_provider_url, modelsPath);
+
+let models: Array<{
+        id?: string;
+        owned_by?: string;
+        created?: number;
+      }> = [];
+      const headers: Record<string, string> = {};
+      if (provider.api_key) {
+        headers['Authorization'] = `Bearer ${provider.api_key}`;
+      }
+      try {
+        const res = await this.fetchWithTimeout(
+          url,
+          { method: 'GET', headers },
+          LIST_TIMEOUT_MS,
+        );
+        if (!res.ok) {
+          output.error = `获取模型列表失败: HTTP ${res.status}`;
+          output.error_code = 'REMOTE_ERROR';
+          await this.updateModelsCacheTimestamp(input.llm_provider_id);
+          return false;
+        }
+        const json = (await res.json()) as {
+          data?: Array<{
+            id?: string;
+            owned_by?: string;
+            created?: number;
+          }>;
+        };
+        models = json.data ?? [];
+      } catch (err) {
+        output.error = err instanceof Error ? err.message : String(err);
+        output.error_code = 'CONNECT_ERROR';
+        await this.updateModelsCacheTimestamp(input.llm_provider_id);
         return false;
       }
-      const json = (await res.json()) as {
-        data?: Array<{
-          id?: string;
-          owned_by?: string;
-          created?: number;
-        }>;
-      };
-      models = json.data ?? [];
-    } catch (err) {
-      output.error = err instanceof Error ? err.message : String(err);
-      output.error_code = 'CONNECT_ERROR';
-      return false;
-    }
 
     // upsert 到 llm_model 表（按 llm_provider_id + llm_title 判重）
     const now = IdGenerator.now();
@@ -555,16 +587,23 @@ export class LLMService {
         );
       } else {
         const id = IdGenerator.generate();
-        await this.relationDb.insert(LLM_MODEL_TABLE, [
-          { field: 'id', value: id },
-          { field: 'created', value: now },
-          { field: 'updated', value: now },
-          { field: 'llm_provider_id', value: input.llm_provider_id },
-          { field: 'llm_title', value: modelId },
-          { field: 'llm_brief', value: brief },
-        ]);
+        try {
+          await this.relationDb.insert(LLM_MODEL_TABLE, [
+            { field: 'id', value: id },
+            { field: 'created', value: now },
+            { field: 'updated', value: now },
+            { field: 'llm_provider_id', value: input.llm_provider_id },
+            { field: 'llm_title', value: modelId },
+            { field: 'llm_brief', value: brief },
+          ]);
+        } catch {
+          // skip duplicate insert
+        }
       }
     }
+
+    // 更新模型列表缓存时间
+    await this.updateModelsCacheTimestamp(input.llm_provider_id);
 
     // 返回该提供商下所有模型
     const rows = await this.relationDb.select(LLM_MODEL_TABLE, {
@@ -579,6 +618,14 @@ export class LLMService {
     });
     output.list = rows as unknown as LLMModelRecord[];
     return true;
+  }
+
+  private async updateModelsCacheTimestamp(providerId: string): Promise<void> {
+    await this.relationDb.update(
+      LLM_PROVIDER_TABLE,
+      [{ field: 'models_fetched_at', value: IdGenerator.now() }],
+      [{ field: 'id', operator: Operator.EQ, value: providerId }],
+    );
   }
 
   // -------------------------------------------------------------------------

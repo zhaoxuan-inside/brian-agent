@@ -107,11 +107,6 @@ function addColIfMissing(relationDb: any, table: string, column: string, type: s
 async function buildContext() {
   const logger = createLogger();
 
-  const origGen = IdGenerator.generate;
-  IdGenerator.generate = () => `gen-${++_seq}`;
-  const origNow = IdGenerator.now;
-  IdGenerator.now = () => Date.now();
-
   // ---- Base Providers ----
   const relationDb = new RelationDBAccess({ dbPath: path.join(DATA_DIR, 'brian.db'), wal: true, autoCreateConfigTable: true });
   await relationDb.initialize();
@@ -403,6 +398,57 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const context = new LLMContext();
         await ctx.configAccess.delLLMProvider(input, context, output);
         sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/fetch-models$/.test(pathname)) {
+        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        const fetchInput = Object.assign(new ListLLMInput(), { llm_provider_id: id });
+        const fetchOutput = new ListLLMOutput();
+        const fetchCtx = new LLMContext();
+        const ok = await ctx.configAccess.listLLM(fetchInput, fetchCtx, fetchOutput);
+        const models = (fetchOutput.list || []).map((m: Record<string, unknown>) => ({
+          id: m.llm_title || m.id,
+          name: m.llm_title || m.name || '',
+          brief: m.llm_brief || m.brief || '',
+        }));
+        sendJson(res, ok ? 200 : 502, {
+          models,
+          total: models.length,
+          cached: fetchOutput.cached,
+          error: fetchOutput.error,
+          error_code: fetchOutput.error_code,
+        });
+
+      } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/chat-test$/.test(pathname)) {
+        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        const row = await ctx.relationDb.selectOne('llm_provider', [{ field: 'id', operator: 'EQ' as any, value: id }]) as Record<string, unknown> | null;
+        if (!row) { sendJson(res, 404, { error: 'Provider not found' }); return; }
+        const baseUrl = String(row.llm_provider_url || '');
+        const chatPath = String(row.chat_path || 'chat/completions');
+        const apiKey = String(row.api_key || '');
+        const model = (body as Record<string, unknown>).model as string || 'gpt-3.5-turbo';
+        const url = baseUrl.replace(/\/+$/, '') + '/' + chatPath.replace(/^\/+/, '');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 15000);
+          const resp = await fetch(url, {
+            method: 'POST', headers,
+            body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5 }),
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          const text = await resp.text();
+          sendJson(res, resp.ok ? 200 : 502, {
+            ok: resp.ok,
+            status: resp.status,
+            url,
+            model,
+            response: text.length > 500 ? text.substring(0, 500) : text,
+          });
+        } catch (e: unknown) {
+          sendJson(res, 502, { ok: false, url, model, error: e instanceof Error ? e.message : String(e) });
+        }
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';

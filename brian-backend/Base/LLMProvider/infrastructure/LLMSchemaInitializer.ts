@@ -71,6 +71,27 @@ export class LLMSchemaInitializer {
         /* column already exists */
       }
     }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "models_fetched_at" INTEGER`,
+      );
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "models_path" TEXT`,
+      );
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "chat_path" TEXT`,
+      );
+    } catch {
+      /* column already exists */
+    }
 
     // llm_model 表（从提供商 API 获取的模型列表）
     this.relationDb.executeRaw(`

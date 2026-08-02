@@ -36,6 +36,10 @@ export interface LLMProviderData {
   enable?: boolean;
   /** API 密钥 */
   api_key?: string;
+  /** 模型列表 API 路径（默认 v1/models），留空使用默认 */
+  models_path?: string;
+  /** 对话补全 API 路径（默认 v1/chat/completions） */
+  chat_path?: string;
   /** 每日 Token 限额（0=不限制） */
   quota_tokens_per_day?: number;
   /** 每周 Token 限额（0=不限制） */
@@ -89,6 +93,10 @@ export interface LLMProviderRecord {
   enable: boolean;
   /** API 密钥 */
   api_key: string | null;
+  /** 模型列表 API 路径 */
+  models_path: string | null;
+  /** 对话补全 API 路径 */
+  chat_path: string | null;
   /** 每日 Token 限额 */
   quota_tokens_per_day: number | null;
   /** 每周 Token 限额 */
@@ -101,6 +109,8 @@ export interface LLMProviderRecord {
   quota_calls_per_week: number | null;
   /** 每月调用次数限额 */
   quota_calls_per_month: number | null;
+  /** 模型列表最近抓取时间（毫秒时间戳），null 表示从未抓取 */
+  models_fetched_at: number | null;
 }
 
 /**
@@ -267,12 +277,20 @@ export class TestLLMProviderOutput extends Output {
 export class ListLLMInput extends Input {
   /** LLM 提供商 ID */
   llm_provider_id!: string;
+  /** 是否强制刷新（忽略缓存） */
+  force?: boolean;
 }
 
 /** listLLM 出参 */
 export class ListLLMOutput extends Output {
   /** 模型列表 */
   list: LLMModelRecord[] = [];
+  /** 是否来自缓存 */
+  cached = false;
+  /** 错误信息 */
+  error?: string;
+  /** 错误码 */
+  error_code?: string;
 }
 
 // ---------------------------------------------------------------------------
