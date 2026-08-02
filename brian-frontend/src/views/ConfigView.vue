@@ -357,7 +357,7 @@ const cachedModels = ref<Array<{ id: string; name: string; brief: string; featur
 const modelSearchQuery = ref('')
 const selectedModelIds = ref<Set<string>>(new Set())
 
-interface FetchedModel { id: string; name: string; brief: string; features?: Record<string, unknown> }
+interface FetchedModel { id: string; name: string; brief: string; features?: Record<string, unknown>; enabled?: boolean }
 
 const filteredCachedModels = computed(() => {
   const q = modelSearchQuery.value.toLowerCase()
@@ -368,6 +368,8 @@ const filteredCachedModels = computed(() => {
 })
 
 function toggleModelSelection(modelId: string) {
+  const model = cachedModels.value.find(m => m.id === modelId)
+  if (model?.enabled) return
   const s = new Set(selectedModelIds.value)
   if (s.has(modelId)) s.delete(modelId)
   else s.add(modelId)
@@ -393,10 +395,11 @@ async function handleAddModels(providerId: string) {
 }
 
 function selectAllModels() {
-  if (selectedModelIds.value.size === cachedModels.value.length) {
+  const available = cachedModels.value.filter(m => !m.enabled)
+  if (selectedModelIds.value.size === available.length) {
     selectedModelIds.value = new Set()
   } else {
-    selectedModelIds.value = new Set(cachedModels.value.map(m => m.id))
+    selectedModelIds.value = new Set(available.map(m => m.id))
   }
 }
 
@@ -1700,9 +1703,10 @@ watch(activeSubSection, async (val) => {
                     <label
                       v-for="m in filteredCachedModels"
                       :key="m.id"
-                      class="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+                      class="flex items-start gap-2 px-3 py-2 cursor-pointer transition-colors"
+                      :class="m.enabled ? 'opacity-40 cursor-not-allowed bg-apple-gray-50 dark:bg-apple-gray-800/50' : 'hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50'"
                     >
-                      <input type="checkbox" :checked="selectedModelIds.has(m.id)" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
+                      <input type="checkbox" :checked="m.enabled || selectedModelIds.has(m.id)" :disabled="m.enabled" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
                       <div class="min-w-0">
                         <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
                         <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>

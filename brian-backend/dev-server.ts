@@ -419,12 +419,19 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null }>('SELECT "llm_title", "llm_brief", "features" FROM "llm_model" WHERE "llm_provider_id" = ?', [id]);
+        const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null }>(
+          'SELECT "llm_title", "llm_brief", "features" FROM "llm_model" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
+        );
+        const enabledRows = ctx.relationDb.queryRaw<{ llm_title: string }>(
+          'SELECT "llm_title" FROM "llm_enable" WHERE "llm_provider_id" = ?', [id],
+        );
+        const enabledSet = new Set((enabledRows || []).map(r => r.llm_title));
         const models = (rows || []).map(r => ({
           id: r.llm_title,
           name: r.llm_title,
           brief: r.llm_brief || '',
           features: r.features ? (() => { try { return JSON.parse(r.features); } catch { return {}; } })() : {},
+          enabled: enabledSet.has(r.llm_title),
         }));
         sendJson(res, 200, { models });
 
