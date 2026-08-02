@@ -374,6 +374,24 @@ function toggleModelSelection(modelId: string) {
   selectedModelIds.value = s
 }
 
+const addingModels = ref(false)
+async function handleAddModels(providerId: string) {
+  if (selectedModelIds.value.size === 0) return
+  addingModels.value = true
+  try {
+    const res = await fetchApi<{ added: number }>(`/config/provider/${providerId}/models/add`, {
+      method: 'POST',
+      body: JSON.stringify({ modelIds: [...selectedModelIds.value] }),
+    })
+    showToast(`已添加 ${res.added} 个模型`, 'success')
+    selectedModelIds.value = new Set()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '添加失败')
+  } finally {
+    addingModels.value = false
+  }
+}
+
 function selectAllModels() {
   if (selectedModelIds.value.size === cachedModels.value.length) {
     selectedModelIds.value = new Set()
@@ -1690,6 +1708,16 @@ watch(activeSubSection, async (val) => {
                         <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
                       </div>
                     </label>
+                  </div>
+                  <div v-if="selectedModelIds.size > 0" class="flex justify-end pt-2">
+                    <button
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors disabled:opacity-60"
+                      :disabled="addingModels"
+                      @click="handleAddModels(editingProvider.id)"
+                    >
+                      <Loader2 v-if="addingModels" :size="12" class="animate-spin" />
+                      <Plus v-else :size="12" /> 添加至可用模型 ({{ selectedModelIds.size }})
+                    </button>
                   </div>
                 </template>
               </div>

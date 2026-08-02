@@ -61,7 +61,7 @@ import {
   UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput,
   SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput,
   GetLLMInput, GetLLMOutput, DelLLMInput, DelLLMOutput,
-  UpdateLLMInput, UpdateLLMOutput,
+  UpdateLLMInput, UpdateLLMOutput, AddLLMInput, AddLLMOutput,
 } from './Base/LLMProvider';
 import {
   SoulContext, SoSoulInput, SoSoulOutput, AddSoulInput, AddSoulOutput,
@@ -298,28 +298,30 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
-        const provInput = Object.assign(new SoLLMProviderInput(), {});
-        const provOutput = new SoLLMProviderOutput();
-        const provContext = new LLMContext();
-        await ctx.configAccess.soLLMProvider(provInput, provContext, provOutput);
-        const providers = provOutput.list || [];
-        if (providers.length === 0) {
-          sendJson(res, 200, []);
-        } else {
-          const input = Object.assign(new ListLLMInput(), { llm_provider_id: providers[0].id });
-          const output = new ListLLMOutput();
-          const context = new LLMContext();
-          await ctx.configAccess.listLLM(input, context, output);
-          sendJson(res, 200, output.list || []);
-        }
+        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number }>(
+          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
+          [],
+        );
+        const models = (rows || []).map(r => ({
+          id: r.id,
+          modelName: r.llm_title,
+          providerId: r.llm_provider_id,
+          providerName: r.llm_provider_id,
+          llm_usage: r.llm_usage || 'text',
+          maxTokens: 4096,
+          supportsVision: false,
+          supportsTools: true,
+          isDefault: false,
+          status: r.enable ? 'active' : 'inactive',
+        }));
+        sendJson(res, 200, models);
 
       } else if (method === 'GET' && pathname.startsWith('/api/config/model/') && !pathname.includes('/test') && !pathname.includes('/default')) {
         const id = pathname.split('/api/config/model/')[1].split('/')[0];
-        const input = Object.assign(new GetLLMInput(), { id });
-        const output = new GetLLMOutput();
-        const context = new LLMContext();
-        await ctx.configAccess.getLLM(input, context, output);
-        sendJson(res, 200, output.llm || { id, name: 'unknown' });
+        const row = ctx.relationDb.queryRaw<{ id: string; llm_title: string; llm_provider_id: string; enable: number }>(
+          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_enable" WHERE "id" = ?', [id],
+        )[0];
+        sendJson(res, 200, row ? { id: row.id, modelName: row.llm_title, providerId: row.llm_provider_id, status: row.enable ? 'active' : 'inactive' } : { id, name: 'unknown' });
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
@@ -354,18 +356,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const id = pathname.split('/api/config/model/')[1];
-        const input = Object.assign(new UpdateLLMInput(), { llm_id: id, ...body });
-        const output = new UpdateLLMOutput();
-        const context = new LLMContext();
-        await ctx.configAccess.updateLLM(input, context, output);
+        const data = (body as Record<string, unknown>).data || body;
+        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_title" = ?, "llm_brief" = ?, "enable" = ? WHERE "id" = ?',
+          [data.llm_title || data.modelName || '', data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, id]); } catch {}
         sendJson(res, 200, { success: true, id });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
         const id = pathname.split('/api/config/model/')[1];
-        const input = Object.assign(new DelLLMInput(), { ids: [id] });
-        const output = new DelLLMOutput();
-        const context = new LLMContext();
-        await ctx.configAccess.delLLM(input, context, output);
+        try { ctx.relationDb.executeRaw('DELETE FROM "llm_enable" WHERE "id" = ?', [id]); } catch {}
         sendJson(res, 200, { success: true });
 
       // ---- Provider ----
@@ -429,6 +427,24 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           features: r.features ? (() => { try { return JSON.parse(r.features); } catch { return {}; } })() : {},
         }));
         sendJson(res, 200, { models });
+
+      } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/models\/add$/.test(pathname)) {
+        const providerId = pathname.split('/api/config/provider/')[1]?.split('/')[0] || '';
+        const modelIds = (body as Record<string, unknown>).modelIds as string[] || [];
+        let added = 0;
+        for (const title of modelIds) {
+          if (!title) continue;
+          const input = Object.assign(new AddLLMInput(), {
+            data: { llm_provider_id: providerId, llm_title: title, llm_usage: 'text', enable: false },
+          });
+          const output = new AddLLMOutput();
+          const llmCtx = new LLMContext();
+          try {
+            await ctx.configAccess.addLLM(input, llmCtx, output);
+            added++;
+          } catch { /* skip duplicates */ }
+        }
+        sendJson(res, 200, { added });
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/chat-test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
