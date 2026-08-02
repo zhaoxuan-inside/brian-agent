@@ -8,6 +8,7 @@ import {
   ChevronRight, Trash2, Loader2, Check, AlertCircle,
   Star, FlaskConical, X, Save, Layers,
   Globe, Key, Plus, Pencil,
+  Eye, EyeOff,
   Search, Monitor, Terminal, MessageSquare,
   BarChart3, Zap, Plug, Radio,
 } from '@lucide/vue'
@@ -338,6 +339,7 @@ const providerModalVisible = ref(false)
 const editingProvider = ref<BackendProvider | null>(null)
 const providerForm = ref({ name: '', url: '', apiKey: '' })
 const providerSubmitting = ref(false)
+const showApiKey = ref(false)
 
 async function loadProviders() {
   providersLoading.value = true
@@ -380,6 +382,7 @@ function openProviderModal(provider?: BackendProvider) {
 function closeProviderModal() {
   providerModalVisible.value = false
   editingProvider.value = null
+  showApiKey.value = false
 }
 
 async function submitProviderForm() {
@@ -389,6 +392,7 @@ async function submitProviderForm() {
       llm_provider_title: providerForm.value.name,
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
+      api_key: providerForm.value.apiKey || undefined,
     }}
     if (editingProvider.value) {
       await fetchApi(`/config/provider/${editingProvider.value.id}`, {
@@ -1507,7 +1511,17 @@ watch(activeSubSection, async (val) => {
             </div>
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">API Key</label>
-              <input v-model="providerForm.apiKey" type="password" :class="inputClass" placeholder="sk-..." />
+              <div class="relative">
+                <input v-model="providerForm.apiKey" :type="showApiKey ? 'text' : 'password'" :class="inputClass + ' pr-10'" placeholder="sk-..." />
+                <button
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-apple-gray-400 hover:text-apple-gray-600 dark:hover:text-apple-gray-200 transition-colors"
+                  @click="showApiKey = !showApiKey"
+                >
+                  <EyeOff v-if="showApiKey" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
             </div>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">

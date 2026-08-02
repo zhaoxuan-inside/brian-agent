@@ -52,6 +52,13 @@ export class LLMSchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_TABLE}_llm_provider_title" ON "${LLM_PROVIDER_TABLE}" ("llm_provider_title")`,
     );
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "api_key" TEXT`,
+      );
+    } catch {
+      /* column already exists */
+    }
 
     // llm_model 表（从提供商 API 获取的模型列表）
     this.relationDb.executeRaw(`

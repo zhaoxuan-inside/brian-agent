@@ -34,6 +34,8 @@ export interface LLMProviderData {
   llm_provider_brief?: string;
   /** 是否启用，默认 true；资源级启用/禁用通过 updateLLMProvider 修改该字段实现 */
   enable?: boolean;
+  /** API 密钥 */
+  api_key?: string;
 }
 
 /**
@@ -73,6 +75,8 @@ export interface LLMProviderRecord {
   llm_provider_brief: string | null;
   /** 是否启用 */
   enable: boolean;
+  /** API 密钥 */
+  api_key: string | null;
 }
 
 /**

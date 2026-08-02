@@ -259,6 +259,7 @@ export class LLMService {
       { field: 'llm_provider_title', value: data.llm_provider_title },
       { field: 'llm_provider_brief', value: data.llm_provider_brief ?? null },
       { field: 'enable', value: data.enable === false ? 0 : 1 },
+      { field: 'api_key', value: data.api_key ?? null },
     ];
     await this.relationDb.insert(LLM_PROVIDER_TABLE, dataObjects);
     output.id = id;
@@ -304,6 +305,9 @@ export class LLMService {
     }
     if (patch.enable !== undefined) {
       data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
+    }
+    if (patch.api_key !== undefined) {
+      data.push({ field: 'api_key', value: patch.api_key });
     }
 
     output.affected_rows = await this.relationDb.update(
