@@ -353,11 +353,11 @@ const providerSubmitting = ref(false)
 const showApiKey = ref(false)
 const fetchingModels = ref(false)
 const fetchedModels = ref<Array<{ id: string; name: string; brief: string; features?: Record<string, unknown> }>>([])
-const cachedModels = ref<Array<{ id: string; name: string; brief: string; features?: Record<string, unknown> }>>([])
+interface FetchedModel { id: string; name: string; brief: string; features?: Record<string, unknown>; enabled?: boolean }
+
+const cachedModels = ref<FetchedModel[]>([])
 const modelSearchQuery = ref('')
 const selectedModelIds = ref<Set<string>>(new Set())
-
-interface FetchedModel { id: string; name: string; brief: string; features?: Record<string, unknown>; enabled?: boolean }
 
 const filteredCachedModels = computed(() => {
   const q = modelSearchQuery.value.toLowerCase()
@@ -590,11 +590,22 @@ interface BackendModel {
   supportsTools?: boolean
   isDefault?: boolean
   status?: string
+  enable?: boolean | number
 }
 
 const models = ref<BackendModel[]>([])
 const modelsLoading = ref(false)
+const modelSearch = ref('')
 const modelModalVisible = ref(false)
+
+const filteredModels = computed(() => {
+  const q = modelSearch.value.toLowerCase()
+  if (!q) return models.value
+  return models.value.filter(m =>
+    (m.modelName || '').toLowerCase().includes(q) ||
+    (m.providerName || m.providerId || '').toLowerCase().includes(q),
+  )
+})
 const editingModel = ref<BackendModel | null>(null)
 const modelForm = ref({
   title: '', brief: '', usage: 'text',
@@ -607,7 +618,14 @@ const modelSubmitting = ref(false)
 async function loadModels() {
   modelsLoading.value = true
   try {
-    models.value = await configApi.model.list()
+    const raw = await configApi.model.list()
+    const list = (Array.isArray(raw) ? raw : []) as BackendModel[]
+    for (const m of list) {
+      m.id = m.modelName || m.id
+      const p = providers.value.find(pr => pr.id === m.providerId)
+      if (p) m.providerName = p._displayName || p.llm_provider_title || m.providerId
+    }
+    models.value = list
   } catch {
     models.value = []
   } finally {
@@ -1350,55 +1368,58 @@ watch(activeSubSection, async (val) => {
 
         <!-- ========================== 实体管理视图 - Model ========================== -->
         <div v-if="isEntityView && currentEntityType === 'model'" class="px-5 pb-6">
-          <div class="flex justify-between items-center mb-4">
-            <span class="text-xs text-apple-gray-400">{{ models.length }} 个模型</span>
+          <div class="flex items-center gap-3 mb-4">
+            <div class="relative flex-1 max-w-sm">
+              <Search :size="14" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+              <input v-model="modelSearch" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索模型名或提供商..." />
+            </div>
+            <span class="text-xs text-apple-gray-400">{{ filteredModels.length }} / {{ models.length }} 个模型</span>
             <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openModelModal()">
-              <Plus :size="13" /> 添加模型
+              <Plus :size="13" /> 手动添加
             </button>
           </div>
           <div v-if="modelsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
           <div v-else-if="models.length === 0" class="flex flex-col items-center justify-center py-16">
             <Boxes :size="28" class="text-apple-gray-400 mb-3" />
-            <p class="text-sm text-apple-gray-500">暂无模型配置</p>
+            <p class="text-sm text-apple-gray-500">暂无可用模型，请在编辑提供商中获取并添加模型</p>
           </div>
-          <div v-else class="overflow-x-auto rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-800/50">
-                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">模型名称</th>
-                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">Provider</th>
-                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">Max Tokens</th>
-                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">状态</th>
-                  <th class="text-right px-4 py-3 text-xs font-semibold text-apple-gray-500">操作</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700">
-                <tr v-for="m in models" :key="m.id" class="hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors">
-                  <td class="px-4 py-3 font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ m.modelName || '' }}</td>
-                  <td class="px-4 py-3 text-apple-gray-500">{{ m.providerName || m.providerId || '' }}</td>
-                  <td class="px-4 py-3 font-mono text-apple-gray-500">{{ (m.maxTokens || 0).toLocaleString() }}</td>
-                  <td class="px-4 py-3">
-                    <span class="flex items-center gap-1.5">
-                      <span class="w-2 h-2 rounded-full" :class="m.status === 'active' ? 'bg-success-green' : 'bg-apple-gray-300'" />
-                      <span class="text-xs">{{ m.status === 'active' ? '启用' : '停用' }}</span>
-                      <span v-if="m.isDefault" class="text-[10px] px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue ml-1">默认</span>
-                    </span>
-                  </td>
-                  <td class="px-4 py-3">
-                    <div class="flex items-center justify-end gap-1">
-                      <button class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openModelModal(m)"><Pencil :size="11" /></button>
-                      <button class="px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestModel(m.id)"><FlaskConical :size="11" /></button>
-                      <button
-                        v-if="!m.isDefault"
-                        class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors"
-                        @click="handleSetDefault(m.id)"
-                      ><Star :size="11" /></button>
-                      <button class="px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteModel(m.id)"><Trash2 :size="11" /></button>
+          <div v-else-if="filteredModels.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Search :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">没有匹配的模型</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="m in filteredModels" :key="m.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Boxes :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.modelName || '' }}</h3>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-[11px] text-apple-gray-400">{{ m.providerName || m.providerId || '' }}</span>
+                      <span class="w-1.5 h-1.5 rounded-full" :class="m.status === 'active' ? 'bg-success-green' : 'bg-apple-gray-300'" />
                     </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                  </div>
+                </div>
+                <span v-if="m.isDefault" class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full bg-brian-blue/10 text-brian-blue flex-shrink-0"><Star :size="11" /> 默认</span>
+              </div>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button
+                  class="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg transition-colors"
+                  :class="m.isDefault ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20'"
+                  :disabled="!!m.isDefault"
+                  @click="handleSetDefault(m.id)"
+                >
+                  <Star :size="12" /> {{ m.isDefault ? '已是默认' : '设为默认' }}
+                </button>
+                <button class="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="openModelModal(m)">
+                  <Pencil :size="12" /> 编辑
+                </button>
+                <button class="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteModel(m.id)"><Trash2 :size="12" /> 删除</button>
+              </div>
+            </div>
           </div>
         </div>
 

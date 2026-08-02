@@ -298,8 +298,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
-        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number }>(
-          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
+        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number; is_default: number }>(
+          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable", COALESCE(e."is_default", 0) as "is_default" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
           [],
         );
         const models = (rows || []).map(r => ({
@@ -311,17 +311,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           maxTokens: 4096,
           supportsVision: false,
           supportsTools: true,
-          isDefault: false,
+          isDefault: !!r.is_default,
           status: r.enable ? 'active' : 'inactive',
         }));
         sendJson(res, 200, models);
 
       } else if (method === 'GET' && pathname.startsWith('/api/config/model/') && !pathname.includes('/test') && !pathname.includes('/default')) {
-        const id = pathname.split('/api/config/model/')[1].split('/')[0];
+        const title = pathname.split('/api/config/model/')[1].split('/')[0];
         const row = ctx.relationDb.queryRaw<{ id: string; llm_title: string; llm_provider_id: string; enable: number }>(
-          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_enable" WHERE "id" = ?', [id],
+          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_enable" WHERE "llm_title" = ?', [title],
         )[0];
-        sendJson(res, 200, row ? { id: row.id, modelName: row.llm_title, providerId: row.llm_provider_id, status: row.enable ? 'active' : 'inactive' } : { id, name: 'unknown' });
+        sendJson(res, 200, row ? { id: row.id, modelName: row.llm_title, providerId: row.llm_provider_id, status: row.enable ? 'active' : 'inactive' } : { id: title, name: 'unknown' });
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
@@ -347,23 +347,21 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/default$/.test(pathname)) {
-        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        const input = Object.assign(new UpdateLLMInput(), { llm_id: id, data: { is_default: true } });
-        const output = new UpdateLLMOutput();
-        const context = new LLMContext();
-        await ctx.configAccess.updateLLM(input, context, output);
+        const title = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "is_default" = 0', []);
+        ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "is_default" = 1 WHERE "llm_title" = ?', [title]);
         sendJson(res, 200, { success: true });
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
-        const id = pathname.split('/api/config/model/')[1];
+        const title = pathname.split('/api/config/model/')[1];
         const data = (body as Record<string, unknown>).data || body;
-        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_title" = ?, "llm_brief" = ?, "enable" = ? WHERE "id" = ?',
-          [data.llm_title || data.modelName || '', data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, id]); } catch {}
-        sendJson(res, 200, { success: true, id });
+        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_brief" = ?, "enable" = ? WHERE "llm_title" = ?',
+          [data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, title]); } catch {}
+        sendJson(res, 200, { success: true, id: title });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
-        const id = pathname.split('/api/config/model/')[1];
-        try { ctx.relationDb.executeRaw('DELETE FROM "llm_enable" WHERE "id" = ?', [id]); } catch {}
+        const title = pathname.split('/api/config/model/')[1];
+        try { ctx.relationDb.executeRaw('DELETE FROM "llm_enable" WHERE "llm_title" = ?', [title]); } catch {}
         sendJson(res, 200, { success: true });
 
       // ---- Provider ----
