@@ -365,6 +365,12 @@ async function loadProviders() {
       enable: (r.enable ?? r.enabled) as boolean | number | undefined,
       _displayName: (r.llm_provider_title || r.providerName || r.id || '') as string,
       _displayUrl: (r.llm_provider_url || r.baseURL || '') as string,
+      quota_tokens_per_day: r.quota_tokens_per_day as number | undefined,
+      quota_tokens_per_week: r.quota_tokens_per_week as number | undefined,
+      quota_tokens_per_month: r.quota_tokens_per_month as number | undefined,
+      quota_calls_per_day: r.quota_calls_per_day as number | undefined,
+      quota_calls_per_week: r.quota_calls_per_week as number | undefined,
+      quota_calls_per_month: r.quota_calls_per_month as number | undefined,
     }))
   } catch {
     providers.value = []
@@ -411,12 +417,12 @@ async function submitProviderForm() {
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
       api_key: providerForm.value.apiKey || null,
-      quota_tokens_per_day: providerForm.value.quotaTokensPerDay,
-      quota_tokens_per_week: providerForm.value.quotaTokensPerWeek,
-      quota_tokens_per_month: providerForm.value.quotaTokensPerMonth,
-      quota_calls_per_day: providerForm.value.quotaCallsPerDay,
-      quota_calls_per_week: providerForm.value.quotaCallsPerWeek,
-      quota_calls_per_month: providerForm.value.quotaCallsPerMonth,
+      quota_tokens_per_day: providerForm.value.quotaTokensPerDay || 0,
+      quota_tokens_per_week: providerForm.value.quotaTokensPerWeek || 0,
+      quota_tokens_per_month: providerForm.value.quotaTokensPerMonth || 0,
+      quota_calls_per_day: providerForm.value.quotaCallsPerDay || 0,
+      quota_calls_per_week: providerForm.value.quotaCallsPerWeek || 0,
+      quota_calls_per_month: providerForm.value.quotaCallsPerMonth || 0,
     }}
     if (editingProvider.value) {
       await fetchApi(`/config/provider/${editingProvider.value.id}`, {
