@@ -260,6 +260,12 @@ export class LLMService {
       { field: 'llm_provider_brief', value: data.llm_provider_brief ?? null },
       { field: 'enable', value: data.enable === true ? 1 : 0 },
       { field: 'api_key', value: data.api_key ?? null },
+      { field: 'quota_tokens_per_day', value: data.quota_tokens_per_day ?? 0 },
+      { field: 'quota_tokens_per_week', value: data.quota_tokens_per_week ?? 0 },
+      { field: 'quota_tokens_per_month', value: data.quota_tokens_per_month ?? 0 },
+      { field: 'quota_calls_per_day', value: data.quota_calls_per_day ?? 0 },
+      { field: 'quota_calls_per_week', value: data.quota_calls_per_week ?? 0 },
+      { field: 'quota_calls_per_month', value: data.quota_calls_per_month ?? 0 },
     ];
     await this.relationDb.insert(LLM_PROVIDER_TABLE, dataObjects);
     output.id = id;
@@ -308,6 +314,12 @@ export class LLMService {
     }
     if (patch.api_key !== undefined) {
       data.push({ field: 'api_key', value: patch.api_key });
+    }
+    for (const qf of ['quota_tokens_per_day', 'quota_tokens_per_week', 'quota_tokens_per_month',
+      'quota_calls_per_day', 'quota_calls_per_week', 'quota_calls_per_month'] as const) {
+      if (patch[qf] !== undefined) {
+        data.push({ field: qf, value: patch[qf] });
+      }
     }
 
     output.affected_rows = await this.relationDb.update(

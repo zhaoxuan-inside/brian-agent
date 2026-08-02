@@ -36,6 +36,18 @@ export interface LLMProviderData {
   enable?: boolean;
   /** API 密钥 */
   api_key?: string;
+  /** 每日 Token 限额（0=不限制） */
+  quota_tokens_per_day?: number;
+  /** 每周 Token 限额（0=不限制） */
+  quota_tokens_per_week?: number;
+  /** 每月 Token 限额（0=不限制） */
+  quota_tokens_per_month?: number;
+  /** 每日调用次数限额（0=不限制） */
+  quota_calls_per_day?: number;
+  /** 每周调用次数限额（0=不限制） */
+  quota_calls_per_week?: number;
+  /** 每月调用次数限额（0=不限制） */
+  quota_calls_per_month?: number;
 }
 
 /**
@@ -77,6 +89,18 @@ export interface LLMProviderRecord {
   enable: boolean;
   /** API 密钥 */
   api_key: string | null;
+  /** 每日 Token 限额 */
+  quota_tokens_per_day: number | null;
+  /** 每周 Token 限额 */
+  quota_tokens_per_week: number | null;
+  /** 每月 Token 限额 */
+  quota_tokens_per_month: number | null;
+  /** 每日调用次数限额 */
+  quota_calls_per_day: number | null;
+  /** 每周调用次数限额 */
+  quota_calls_per_week: number | null;
+  /** 每月调用次数限额 */
+  quota_calls_per_month: number | null;
 }
 
 /**

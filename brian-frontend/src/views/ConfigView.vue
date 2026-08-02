@@ -45,7 +45,7 @@ const navSections: NavSection[] = [
     subsections: [
       { key: 'llm-provider', label: '模型提供商管理', icon: Globe, type: 'entity', entityType: 'provider' },
       { key: 'llm-model', label: 'Model 管理', icon: Boxes, type: 'entity', entityType: 'model' },
-      { key: 'llm-params', label: '运行参数', icon: Settings, type: 'params', configModule: 'llm_core', configCategories: ['basic', 'quota'] },
+      { key: 'llm-params', label: '运行参数', icon: Settings, type: 'params', configModule: 'llm_core', configCategories: ['basic'] },
     ],
   },
   {
@@ -329,6 +329,12 @@ interface BackendProvider {
   llm_provider_brief?: string
   api_key?: string
   enable?: boolean | number
+  quota_tokens_per_day?: number
+  quota_tokens_per_week?: number
+  quota_tokens_per_month?: number
+  quota_calls_per_day?: number
+  quota_calls_per_week?: number
+  quota_calls_per_month?: number
   _displayName?: string
   _displayUrl?: string
 }
@@ -337,7 +343,10 @@ const providers = ref<BackendProvider[]>([])
 const providersLoading = ref(false)
 const providerModalVisible = ref(false)
 const editingProvider = ref<BackendProvider | null>(null)
-const providerForm = ref({ name: '', url: '', apiKey: '' })
+const providerForm = ref({ name: '', url: '', apiKey: '',
+  quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
+  quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+})
 const providerSubmitting = ref(false)
 const showApiKey = ref(false)
 
@@ -371,10 +380,19 @@ function openProviderModal(provider?: BackendProvider) {
       name: provider.llm_provider_title || provider._displayName || '',
       url: provider.llm_provider_url || provider._displayUrl || '',
       apiKey: (provider.api_key as string) || '',
+      quotaTokensPerDay: provider.quota_tokens_per_day || 0,
+      quotaTokensPerWeek: provider.quota_tokens_per_week || 0,
+      quotaTokensPerMonth: provider.quota_tokens_per_month || 0,
+      quotaCallsPerDay: provider.quota_calls_per_day || 0,
+      quotaCallsPerWeek: provider.quota_calls_per_week || 0,
+      quotaCallsPerMonth: provider.quota_calls_per_month || 0,
     }
   } else {
     editingProvider.value = null
-    providerForm.value = { name: '', url: '', apiKey: '' }
+    providerForm.value = { name: '', url: '', apiKey: '',
+      quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
+      quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+    }
   }
   providerModalVisible.value = true
 }
@@ -393,6 +411,12 @@ async function submitProviderForm() {
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
       api_key: providerForm.value.apiKey || null,
+      quota_tokens_per_day: providerForm.value.quotaTokensPerDay,
+      quota_tokens_per_week: providerForm.value.quotaTokensPerWeek,
+      quota_tokens_per_month: providerForm.value.quotaTokensPerMonth,
+      quota_calls_per_day: providerForm.value.quotaCallsPerDay,
+      quota_calls_per_week: providerForm.value.quotaCallsPerWeek,
+      quota_calls_per_month: providerForm.value.quotaCallsPerMonth,
     }}
     if (editingProvider.value) {
       await fetchApi(`/config/provider/${editingProvider.value.id}`, {
@@ -1523,6 +1547,19 @@ watch(activeSubSection, async (val) => {
                 </button>
               </div>
             </div>
+            <fieldset class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg p-3">
+              <legend class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400 px-1">配额设置（0 = 不限制）</legend>
+              <div class="grid grid-cols-3 gap-2">
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日 Token</label><input v-model.number="providerForm.quotaTokensPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周 Token</label><input v-model.number="providerForm.quotaTokensPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月 Token</label><input v-model.number="providerForm.quotaTokensPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+              </div>
+              <div class="grid grid-cols-3 gap-2 mt-2">
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日调用</label><input v-model.number="providerForm.quotaCallsPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周调用</label><input v-model.number="providerForm.quotaCallsPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="providerForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+              </div>
+            </fieldset>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeProviderModal">取消</button>

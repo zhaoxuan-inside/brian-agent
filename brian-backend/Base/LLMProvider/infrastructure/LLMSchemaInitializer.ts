@@ -59,6 +59,18 @@ export class LLMSchemaInitializer {
     } catch {
       /* column already exists */
     }
+    // quota columns
+    const quotaCols = ['quota_tokens_per_day', 'quota_tokens_per_week', 'quota_tokens_per_month',
+      'quota_calls_per_day', 'quota_calls_per_week', 'quota_calls_per_month'];
+    for (const col of quotaCols) {
+      try {
+        this.relationDb.executeRaw(
+          `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "${col}" INTEGER DEFAULT 0`,
+        );
+      } catch {
+        /* column already exists */
+      }
+    }
 
     // llm_model 表（从提供商 API 获取的模型列表）
     this.relationDb.executeRaw(`
