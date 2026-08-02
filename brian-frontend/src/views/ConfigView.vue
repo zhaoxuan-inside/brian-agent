@@ -1660,31 +1660,38 @@ watch(activeSubSection, async (val) => {
                   <Download v-else :size="13" /> 获取模型列表
                 </button>
                 <span v-if="cachedModels.length > 0" class="text-[11px] text-apple-gray-400">
-                  共 {{ cachedModels.length }} 个模型，已选 {{ selectedModelIds.size }} 个
+                  共 {{ cachedModels.length }} 个，已选 {{ selectedModelIds.size }}
                 </span>
               </div>
-              <div v-if="cachedModels.length > 0" class="space-y-1">
-                <div class="relative">
-                  <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
-                  <input v-model="modelSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索模型名称..." />
+              <div class="h-52 flex flex-col">
+                <div v-if="cachedModels.length === 0 && !fetchingModels" class="flex-1 flex items-center justify-center">
+                  <span class="text-[11px] text-apple-gray-400">暂无模型缓存，请点击「获取模型列表」</span>
                 </div>
-                <label class="flex items-center gap-2 px-2 py-1 text-[11px] text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
-                  <input type="checkbox" :checked="selectedModelIds.size === cachedModels.length" @change="selectAllModels" class="rounded" />
-                  全选 / 取消全选
-                </label>
-                <div class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg divide-y divide-apple-gray-100 dark:divide-apple-gray-700 max-h-64 overflow-y-auto">
-                  <label
-                    v-for="m in filteredCachedModels"
-                    :key="m.id"
-                    class="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
-                  >
-                    <input type="checkbox" :checked="selectedModelIds.has(m.id)" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
-                    <div class="min-w-0">
-                      <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
-                      <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
+                <template v-else>
+                  <div class="space-y-1 mb-2">
+                    <div class="relative">
+                      <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+                      <input v-model="modelSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索..." />
                     </div>
-                  </label>
-                </div>
+                    <label class="flex items-center gap-2 px-2 text-[11px] text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
+                      <input type="checkbox" :checked="selectedModelIds.size === cachedModels.length" @change="selectAllModels" class="rounded" />
+                      全选
+                    </label>
+                  </div>
+                  <div class="flex-1 border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg divide-y divide-apple-gray-100 dark:divide-apple-gray-700 overflow-y-auto">
+                    <label
+                      v-for="m in filteredCachedModels"
+                      :key="m.id"
+                      class="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+                    >
+                      <input type="checkbox" :checked="selectedModelIds.has(m.id)" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
+                      <div class="min-w-0">
+                        <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
+                        <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
+                      </div>
+                    </label>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
