@@ -258,7 +258,7 @@ export class LLMService {
       { field: 'llm_provider_url', value: data.llm_provider_url },
       { field: 'llm_provider_title', value: data.llm_provider_title },
       { field: 'llm_provider_brief', value: data.llm_provider_brief ?? null },
-      { field: 'enable', value: data.enable === false ? 0 : 1 },
+      { field: 'enable', value: data.enable === true ? 1 : 0 },
       { field: 'api_key', value: data.api_key ?? null },
     ];
     await this.relationDb.insert(LLM_PROVIDER_TABLE, dataObjects);

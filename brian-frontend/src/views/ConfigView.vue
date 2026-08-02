@@ -392,7 +392,7 @@ async function submitProviderForm() {
       llm_provider_title: providerForm.value.name,
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
-      api_key: providerForm.value.apiKey || undefined,
+      api_key: providerForm.value.apiKey || null,
     }}
     if (editingProvider.value) {
       await fetchApi(`/config/provider/${editingProvider.value.id}`, {
@@ -425,7 +425,7 @@ async function handleDeleteProvider(providerId: string) {
 async function handleToggleProvider(providerId: string) {
   const p = providers.value.find(pr => pr.id === providerId)
   if (!p) return
-  const currentEnabled = p.enable === 1 || p.enable === true
+  const currentEnabled = !!p.enable
   const newEnabled = !currentEnabled
   try {
     await fetchApi(`/config/provider/${providerId}`, {
@@ -1200,7 +1200,7 @@ watch(activeSubSection, async (val) => {
                     <p class="text-[11px] text-apple-gray-400 truncate">{{ p.llm_provider_brief || '' }}</p>
                   </div>
                 </div>
-                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(p.api_key as string) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="(p.api_key as string) ? `已配置密钥 (…${String(p.api_key).slice(-4)})` : '未配置密钥'" />
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(p.api_key as string) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="(p.api_key as string) ? '已配置密钥' : '未配置密钥'" />
               </div>
               <p class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 font-mono bg-apple-gray-100 dark:bg-apple-gray-900/60 rounded px-2 py-1 truncate mb-3">
                 {{ p._displayUrl || '' }}
@@ -1210,11 +1210,11 @@ watch(activeSubSection, async (val) => {
                 <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestProvider(p.id)"><FlaskConical :size="11" /> 测试</button>
                 <button
                   class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0"
-                  :class="(p.enable === 1 || p.enable === true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                  :class="p.enable ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
                   title="启用/停用"
                   @click="handleToggleProvider(p.id)"
                 >
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(p.enable === 1 || p.enable === true) ? 'translate-x-4' : ''" />
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="p.enable ? 'translate-x-4' : ''" />
                 </button>
                 <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteProvider(p.id)"><Trash2 :size="11" /> 删除</button>
               </div>

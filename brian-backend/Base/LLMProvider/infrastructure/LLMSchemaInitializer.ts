@@ -40,7 +40,7 @@ export class LLMSchemaInitializer {
         "llm_provider_url"    TEXT    NOT NULL,
         "llm_provider_title"  TEXT    NOT NULL,
         "llm_provider_brief"  TEXT,
-        "enable"              INTEGER NOT NULL DEFAULT 1
+        "enable"              INTEGER NOT NULL DEFAULT 0
       )
     `);
     this.relationDb.executeRaw(
