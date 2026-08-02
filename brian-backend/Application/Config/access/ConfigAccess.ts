@@ -85,6 +85,10 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  CreateConfigItemInput,
+  CreateConfigItemOutput,
+  DeleteConfigItemInput,
+  DeleteConfigItemOutput,
 } from '../domain/types';
 
 export class ConfigAccess {
@@ -209,6 +213,22 @@ export class ConfigAccess {
     output: ConfigConfigOutput,
   ): Promise<boolean> {
     return this.service.configConfig(input, context, output);
+  }
+
+  async createConfigItem(
+    input: CreateConfigItemInput,
+    context: ConfigContext,
+    output: CreateConfigItemOutput,
+  ): Promise<boolean> {
+    return this.service.createConfigItem(input, context, output);
+  }
+
+  async deleteConfigItem(
+    input: DeleteConfigItemInput,
+    context: ConfigContext,
+    output: DeleteConfigItemOutput,
+  ): Promise<boolean> {
+    return this.service.deleteConfigItem(input, context, output);
   }
 
   // -------------------------------------------------------------------------

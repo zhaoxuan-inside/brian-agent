@@ -23,6 +23,73 @@ function app(mod: string, cat: string, key: string, name: string, type: string, 
   return { layer: 'APPLICATION', module: mod, category: cat, config_key: `${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals };
 }
 
+// ===========================================================================
+// 层级 / 模块 / 分类 的显示元数据
+// ===========================================================================
+
+export const LAYER_LABELS: Record<string, { label: string; desc: string }> = {
+  BASE: { label: '基础设施层', desc: '提供底层资源与基础配置：模型、MCP、存储、Soul、Skill 等' },
+  CORE: { label: '核心层', desc: '核心服务编排：LLM、信息、学习、MCP、技能、灵魂等核心模块' },
+  AGENT: { label: 'Agent层', desc: 'Agent 框架：构建、库、生命周期与各类 Agent' },
+  ORCHESTRATION: { label: '编排层', desc: '任务与流程编排' },
+  APPLICATION: { label: '应用层', desc: '面向用户的应用入口：对话、文档、网关、画像等' },
+};
+
+export const MODULE_LABELS: Record<string, { label: string; desc: string }> = {
+  llm_provider: { label: 'LLM Provider', desc: 'LLM 提供商管理与模型配置' },
+  soul_provider: { label: 'Soul Provider', desc: '灵魂角色管理' },
+  skill_provider: { label: 'Skill Provider', desc: '技能管理' },
+  mcp_provider: { label: 'MCP Provider', desc: 'MCP 服务提供商管理' },
+  prompts_provider: { label: 'Prompts Provider', desc: '提示词模板配置' },
+  log_provider: { label: 'Log Provider', desc: '日志组件配置' },
+  mq_provider: { label: 'MQ Provider', desc: '消息队列配置' },
+  graphdb_provider: { label: 'GraphDB Provider', desc: '图数据库后端配置' },
+  vectordb_provider: { label: 'VectorDB Provider', desc: '向量数据库配置' },
+  relationdb_provider: { label: 'RelationDB Provider', desc: '关系型数据库配置' },
+  llm_core: { label: 'LLM Core', desc: 'LLM 调用核心' },
+  info_core: { label: 'Info Core', desc: '信息/记忆核心' },
+  mcp_core: { label: 'MCP Core', desc: 'MCP 调用核心' },
+  skill_core: { label: 'Skill Core', desc: '技能调用核心' },
+  soul_core: { label: 'Soul Core', desc: '灵魂调用核心' },
+  agent_builder: { label: 'AgentBuilder', desc: 'Agent 构建器' },
+  agent_library: { label: 'AgentLibrary', desc: 'Agent 库' },
+  agent_execution: { label: 'AgentExecution', desc: 'Agent 执行引擎' },
+  agent_strategy: { label: 'AgentStrategy', desc: 'Agent 策略管理' },
+  agent_context: { label: 'AgentContext', desc: 'Agent 上下文管理' },
+  writer_agent: { label: 'WriterAgent', desc: '写作 Agent' },
+  evolutor_agent: { label: 'EvolutorAgent', desc: '进化 Agent' },
+  entry: { label: 'Entry', desc: '编排入口（复杂度分解、策略选择）' },
+  strategy: { label: 'Strategy', desc: '编排策略配置' },
+  execution: { label: 'Execution', desc: '编排执行引擎' },
+  visualization: { label: 'Visualization', desc: '可视化配置' },
+  jsonnode: { label: 'JSON Node', desc: 'JSON 节点执行配置' },
+  chat: { label: 'Chat', desc: '对话应用' },
+  self_learning: { label: 'SelfLearning', desc: '自学习' },
+  user_profile: { label: 'UserProfile', desc: '用户画像' },
+  config: { label: 'Config', desc: '配置应用自配置' },
+};
+
+export const CATEGORY_LABELS: Record<string, { label: string; desc: string }> = {
+  basic: { label: '基础设置', desc: '基础运行配置' },
+  quota: { label: '配额设置', desc: '调用配额与限额' },
+  aging: { label: '老化策略', desc: '数据老化与清理策略' },
+  config: { label: '配置参数', desc: '核心配置参数' },
+  tag_config: { label: '标签配置', desc: '标签生成相关配置' },
+  summary_config: { label: '摘要配置', desc: '摘要生成相关配置' },
+  vector_config: { label: '向量化配置', desc: '向量化相关配置' },
+  context_config: { label: '上下文配置', desc: '上下文构建相关配置' },
+  opt_rule: { label: '优化规则', desc: '优化规则配置' },
+  interval: { label: '调度间隔', desc: '定时调度间隔配置' },
+  weight: { label: '权重设置', desc: '权重系数配置' },
+};
+
+export const MODULE_ENTITY_TYPES: Record<string, string[]> = {
+  llm_provider: ['provider', 'model'],
+  soul_provider: ['soul'],
+  skill_provider: ['skill'],
+  mcp_provider: ['mcp'],
+};
+
 export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // =========================================================================

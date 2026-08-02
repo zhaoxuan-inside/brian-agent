@@ -153,6 +153,10 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  CreateConfigItemInput,
+  CreateConfigItemOutput,
+  DeleteConfigItemInput,
+  DeleteConfigItemOutput,
   CONFIG_REGISTRY_TABLE,
   CONFIG_LAYER_PRIVILEGE_TABLE,
   CONFIG_MODULE_PRIVILEGE_TABLE,
@@ -160,7 +164,7 @@ import {
   VALID_LAYERS,
   type ConfigRegistration,
 } from '../domain/types';
-import { ALL_CONFIG_REGISTRATIONS } from '../domain/configRegistrations';
+import { ALL_CONFIG_REGISTRATIONS, LAYER_LABELS, MODULE_LABELS, CATEGORY_LABELS, MODULE_ENTITY_TYPES } from '../domain/configRegistrations';
 
 export class ConfigService {
   private readonly relationDb: RelationDBAccess;
@@ -621,8 +625,11 @@ export class ConfigService {
     for (const lr of layerRows) {
       const layerName = lr.layer as string;
       if (input.layer && input.layer !== layerName) continue;
+      const layerInfo = LAYER_LABELS[layerName];
       layerMap.set(layerName, {
         layer: layerName,
+        label: layerInfo?.label ?? layerName,
+        desc: layerInfo?.desc ?? '',
         readable: (lr.readable as number) === 1,
         writable: (lr.writable as number) === 1,
         modules: [] as Array<Record<string, unknown>>,
@@ -640,10 +647,13 @@ export class ConfigService {
       const layerWritable = layerNode ? (layerNode.writable as boolean) : true;
       const modNode = {
         module: moduleName,
+        label: (MODULE_LABELS[moduleName]?.label) ?? moduleName,
+        desc: (MODULE_LABELS[moduleName]?.desc) ?? '',
         readable: (mr.readable as number) === 1,
         writable: (mr.writable as number) === 1,
         effective_readable: layerReadable && ((mr.readable as number) === 1),
         effective_writable: layerWritable && ((mr.writable as number) === 1),
+        entity_types: (MODULE_ENTITY_TYPES[moduleName]) ?? [],
         categories: [] as Array<Record<string, unknown>>,
       };
       moduleMap.set(moduleName, { module: modNode, layerName });
@@ -680,7 +690,13 @@ export class ConfigService {
       const catList = modNode.categories as Array<Record<string, unknown>>;
       let catNode = catList.find((c) => c.category === category);
       if (!catNode) {
-        catNode = { category, items: [] as Array<Record<string, unknown>> };
+        const catInfo = CATEGORY_LABELS[category];
+        catNode = {
+          category,
+          label: catInfo?.label ?? category,
+          desc: catInfo?.desc ?? '',
+          items: [] as Array<Record<string, unknown>>,
+        };
         catList.push(catNode);
       }
 
@@ -766,6 +782,96 @@ export class ConfigService {
       effective_writable: effectiveWritable,
       current_value: currentValue,
     };
+    return true;
+  }
+
+  // =========================================================================
+  // createConfigItem
+  // =========================================================================
+
+  async createConfigItem(
+    input: CreateConfigItemInput,
+    _context: ConfigContext,
+    output: CreateConfigItemOutput,
+  ): Promise<boolean> {
+    if (!input.layer || !VALID_LAYERS.includes(input.layer as any)) {
+      throw new ValidationError(`layer 必须是 ${VALID_LAYERS.join('/')} 之一`);
+    }
+    if (!input.module || !input.category || !input.config_key || !input.config_type) {
+      throw new ValidationError('module/category/config_key/config_type 不能为空');
+    }
+
+    const existing = await this.relationDb.selectOne(CONFIG_REGISTRY_TABLE, [
+      { field: 'config_key', operator: Operator.EQ, value: input.config_key },
+    ]);
+    if (existing) {
+      throw new ValidationError(`config_key '${input.config_key}' 已存在`);
+    }
+
+    const now = Date.now();
+    const id = this.generateId();
+    await this.relationDb.insert(CONFIG_REGISTRY_TABLE, [
+      { field: 'id', value: id },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'config_key', value: input.config_key },
+      { field: 'layer', value: input.layer },
+      { field: 'module', value: input.module },
+      { field: 'category', value: input.category },
+      { field: 'config_name', value: input.config_name },
+      { field: 'config_description', value: input.config_description ?? null },
+      { field: 'config_type', value: input.config_type },
+      { field: 'config_default', value: input.config_default !== undefined ? JSON.stringify(input.config_default) : null },
+      { field: 'config_enum_values', value: input.config_enum_values ? JSON.stringify(input.config_enum_values) : null },
+      { field: 'readable', value: 1 },
+      { field: 'writable', value: 1 },
+    ]);
+
+    await this.ensureLayerPrivilege(input.layer);
+    await this.ensureModulePrivilege(input.module, input.layer);
+
+    output.config_item = {
+      config_key: input.config_key,
+      config_name: input.config_name,
+      config_description: input.config_description,
+      config_type: input.config_type,
+      config_default: input.config_default,
+      config_enum_values: input.config_enum_values ?? null,
+      layer: input.layer,
+      module: input.module,
+      category: input.category,
+      readable: true,
+      writable: true,
+      effective_readable: true,
+      effective_writable: true,
+      current_value: null,
+    };
+    return true;
+  }
+
+  // =========================================================================
+  // deleteConfigItem
+  // =========================================================================
+
+  async deleteConfigItem(
+    input: DeleteConfigItemInput,
+    _context: ConfigContext,
+    output: DeleteConfigItemOutput,
+  ): Promise<boolean> {
+    if (!input.config_key) {
+      throw new ValidationError('config_key 不能为空');
+    }
+
+    const existing = await this.relationDb.selectOne(CONFIG_REGISTRY_TABLE, [
+      { field: 'config_key', operator: Operator.EQ, value: input.config_key },
+    ]);
+    if (!existing) {
+      throw new NotFoundError('config_key', input.config_key);
+    }
+
+    await this.relationDb.delete(CONFIG_REGISTRY_TABLE, [
+      { field: 'config_key', operator: Operator.EQ, value: input.config_key },
+    ]);
     return true;
   }
 

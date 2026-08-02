@@ -148,3 +148,33 @@ export const CONFIG_MODULE_PRIVILEGE_TABLE = 'config_module_privilege';
 export const CONFIG_CONFIG_TABLE = 'config_config';
 
 export const VALID_LAYERS = ['BASE', 'CORE', 'AGENT', 'ORCHESTRATION', 'APPLICATION'] as const;
+
+// ---------------------------------------------------------------------------
+// CreateConfigItem
+// ---------------------------------------------------------------------------
+
+export class CreateConfigItemInput extends Input {
+  layer!: string;
+  module!: string;
+  category!: string;
+  config_key!: string;
+  config_name!: string;
+  config_description?: string;
+  config_type!: string;
+  config_default!: unknown;
+  config_enum_values?: unknown[];
+}
+
+export class CreateConfigItemOutput extends Output {
+  config_item: Record<string, unknown> = {};
+}
+
+// ---------------------------------------------------------------------------
+// DeleteConfigItem
+// ---------------------------------------------------------------------------
+
+export class DeleteConfigItemInput extends Input {
+  config_key!: string;
+}
+
+export class DeleteConfigItemOutput extends Output {}

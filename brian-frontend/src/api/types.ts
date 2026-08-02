@@ -240,3 +240,49 @@ export interface UserProfile {
   interests: string[]
   updatedAt: number
 }
+
+// ============================================================
+// Config tree types
+// ============================================================
+
+export interface ConfigTreeLayer {
+  layer: string
+  label: string
+  desc: string
+  readable: boolean
+  writable: boolean
+  modules: ConfigTreeModule[]
+}
+
+export interface ConfigTreeModule {
+  module: string
+  label: string
+  desc: string
+  readable: boolean
+  writable: boolean
+  effective_readable: boolean
+  effective_writable: boolean
+  entity_types: string[]
+  categories: ConfigTreeCategory[]
+}
+
+export interface ConfigTreeCategory {
+  category: string
+  label: string
+  desc: string
+  items: ConfigTreeItem[]
+}
+
+export interface ConfigTreeItem {
+  config_key: string
+  config_name: string
+  config_description?: string
+  config_type: string
+  config_default: unknown
+  config_enum_values: unknown[] | null
+  readable: boolean
+  writable: boolean
+  effective_readable: boolean
+  effective_writable: boolean
+  current_value: unknown
+}

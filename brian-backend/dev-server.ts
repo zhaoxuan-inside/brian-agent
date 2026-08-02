@@ -51,6 +51,8 @@ import {
   GetConfigDetailInput, GetConfigDetailOutput,
   GetConfigItemInput, GetConfigItemOutput,
   UpdateConfigInput, UpdateConfigOutput,
+  CreateConfigItemInput, CreateConfigItemOutput,
+  DeleteConfigItemInput, DeleteConfigItemOutput,
 } from './Application/Config/domain/types';
 
 // Provider value types (need runtime instantiation)
@@ -282,6 +284,21 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const context = new ConfigContext();
         await ctx.configAccess.getConfigItem(input, context, output);
         sendJson(res, 200, { config_item: output.config_item });
+
+      } else if (method === 'POST' && pathname === '/api/config/item') {
+        const input = Object.assign(new CreateConfigItemInput(), body);
+        const output = new CreateConfigItemOutput();
+        const context = new ConfigContext();
+        await ctx.configAccess.createConfigItem(input, context, output);
+        sendJson(res, 201, { config_item: output.config_item });
+
+      } else if (method === 'DELETE' && pathname.startsWith('/api/config/item/')) {
+        const configKey = pathname.split('/api/config/item/')[1];
+        const input = Object.assign(new DeleteConfigItemInput(), { config_key: configKey });
+        const output = new DeleteConfigItemOutput();
+        const context = new ConfigContext();
+        await ctx.configAccess.deleteConfigItem(input, context, output);
+        sendJson(res, 200, { success: true });
 
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {

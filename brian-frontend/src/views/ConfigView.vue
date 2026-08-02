@@ -1,688 +1,1750 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
-  Server, Cpu, Bot, Workflow, AppWindow,
-  Plug, Database, Boxes, Table2, Send, MessageSquare,
-  Heart, Wand2, Brain, GraduationCap, HardDrive,
-  Lightbulb, Library, RefreshCw, Briefcase,
-  Settings, User, MessageCircle, Sparkles,
-  ChevronRight, ArrowLeft, Trash2, Loader2, AlertCircle,
-  Star, FlaskConical, X, Save, Layers, FileText,
-  Play, Eye, Code2, GitBranch,
+  Cpu, Bot, Workflow, AppWindow, Server, Database, Boxes, Table2,
+  Heart, Wand2, GitBranch, Brain, GraduationCap, HardDrive,
+  Lightbulb, Library, RefreshCw, ClipboardList, Briefcase, PenLine,
+  Settings, FileText, Network, User, MessageCircle, Sparkles,
+  ChevronRight, Trash2, Loader2, Check, AlertCircle,
+  Star, FlaskConical, X, Save, Layers,
+  Globe, Key, Plus, Pencil,
+  Search, Monitor, Terminal, MessageSquare,
+  BarChart3, Zap, Plug, Radio,
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
-import { configApi, agentApi, skillApi, mcpApi } from '@/api'
+import { configApi, agentApi, skillApi, mcpApi, fetchApi } from '@/api'
+import type { ConfigTreeLayer, ConfigTreeCategory, ConfigTreeItem } from '@/api/types'
 
 // ============================================================
-// Types
+// 导航定义（PRD §11）
 // ============================================================
 
-type ModuleKey = 'model' | 'soul' | 'work' | 'skill' | 'mcp' | 'agent'
-type FieldType = 'text' | 'number' | 'enum' | 'boolean' | 'json'
-
-interface RawItem { id: string; enabled?: boolean; isDefault?: boolean; [key: string]: unknown }
-
-interface ConfigTreeItem {
-  config_key: string; config_name: string; config_description: string | null
-  config_type: string; config_default: unknown; config_enum_values: unknown[] | null
-  readable: boolean; writable: boolean
-  effective_readable: boolean; effective_writable: boolean
-  current_value: unknown
+interface NavSubSection {
+  key: string
+  label: string
+  icon: typeof Cpu
+  type: 'entity' | 'params'
+  entityType?: string
+  configModule?: string
+  configCategories?: string[]
+}
+interface NavSection {
+  key: string
+  label: string
+  icon: typeof Cpu
+  desc: string
+  subsections: NavSubSection[]
 }
 
-interface ConfigTreeCategory {
-  category: string; items: ConfigTreeItem[]
-}
-
-interface ConfigTreeModule {
-  module: string; readable: boolean; writable: boolean
-  effective_readable: boolean; effective_writable: boolean
-  categories: ConfigTreeCategory[]
-}
-
-interface ConfigTreeLayer {
-  layer: string; readable: boolean; writable: boolean
-  modules: ConfigTreeModule[]
-}
-
-interface DisplayModule {
-  key: string; name: string; desc: string
-  icon: typeof Cpu; configurable: boolean
-  apiModule?: ModuleKey; categoryCount: number
-  categories: DisplayCategory[]
-}
-
-interface DisplayCategory {
-  key: string; name: string; desc: string
-  configurable: boolean; itemCount: number
-  items: DisplayItem[]; isEntityCategory?: boolean
-}
-
-interface DisplayItem {
-  key: string; name: string; desc: string
-  valueSummary: string; configurable: boolean
-  raw?: RawItem; configItem?: ConfigTreeItem
-  isEntityItem?: boolean
-}
-
-interface ConfigField {
-  key: string; label: string; type: FieldType
-  value: string | number | boolean
-  options?: { label: string; value: string | number | boolean }[]
-}
+const navSections: NavSection[] = [
+  {
+    key: 'llm', label: 'LLM 配置', icon: Cpu,
+    desc: 'LLM 提供商、模型管理与运行参数',
+    subsections: [
+      { key: 'llm-provider', label: '模型提供商管理', icon: Globe, type: 'entity', entityType: 'provider' },
+      { key: 'llm-model', label: 'Model 管理', icon: Boxes, type: 'entity', entityType: 'model' },
+      { key: 'llm-params', label: '运行参数', icon: Settings, type: 'params', configModule: 'llm_core', configCategories: ['basic', 'quota'] },
+    ],
+  },
+  {
+    key: 'agent', label: 'Agent 配置', icon: Bot,
+    desc: 'Agent 实例、策略、构建、执行与进化',
+    subsections: [
+      { key: 'agent-instance', label: 'Agent 实例', icon: Library, type: 'entity', entityType: 'agent' },
+      { key: 'agent-strategy', label: '执行策略', icon: GitBranch, type: 'entity', entityType: 'strategy' },
+      { key: 'agent-builder', label: '构建参数', icon: Briefcase, type: 'params', configModule: 'agent_builder', configCategories: ['basic'] },
+      { key: 'agent-execution', label: '执行参数', icon: Zap, type: 'params', configModule: 'agent_execution', configCategories: ['basic'] },
+      { key: 'agent-context', label: '上下文参数', icon: Brain, type: 'params', configModule: 'agent_context', configCategories: ['basic'] },
+      { key: 'agent-planner', label: 'Planner 参数', icon: ClipboardList, type: 'params', configModule: 'writer_agent', configCategories: ['basic'] },
+      { key: 'agent-writer', label: 'Writer 参数', icon: PenLine, type: 'params', configModule: 'writer_agent', configCategories: ['basic'] },
+      { key: 'agent-evolutor', label: 'Evolutor 参数', icon: Sparkles, type: 'params', configModule: 'evolutor_agent', configCategories: ['basic'] },
+    ],
+  },
+  {
+    key: 'memory', label: '记忆与信息', icon: Brain,
+    desc: '信息存储、标签、摘要、向量化与上下文构建',
+    subsections: [
+      { key: 'memory-storage', label: '存储参数', icon: HardDrive, type: 'params', configModule: 'info_core', configCategories: ['config'] },
+      { key: 'memory-tag', label: '标签生成', icon: Lightbulb, type: 'params', configModule: 'info_core', configCategories: ['tag_config'] },
+      { key: 'memory-summary', label: '摘要生成', icon: FileText, type: 'params', configModule: 'info_core', configCategories: ['summary_config'] },
+      { key: 'memory-vector', label: '向量化', icon: Layers, type: 'params', configModule: 'info_core', configCategories: ['vector_config'] },
+      { key: 'memory-context', label: '上下文构建', icon: Network, type: 'params', configModule: 'info_core', configCategories: ['context_config'] },
+    ],
+  },
+  {
+    key: 'tools', label: '工具与技能', icon: Wand2,
+    desc: 'Skill 管理、MCP 管理与匹配优化',
+    subsections: [
+      { key: 'tools-skill', label: 'Skill 管理', icon: Wand2, type: 'entity', entityType: 'skill' },
+      { key: 'tools-mcp', label: 'MCP 管理', icon: Plug, type: 'entity', entityType: 'mcp' },
+      { key: 'tools-match', label: '匹配与优化', icon: Zap, type: 'params', configModule: 'skill_core', configCategories: ['basic', 'opt_rule'] },
+    ],
+  },
+  {
+    key: 'roles', label: '角色与提示词', icon: Heart,
+    desc: 'Soul 人格管理与 Prompt 模板',
+    subsections: [
+      { key: 'roles-soul', label: 'Soul 管理', icon: Heart, type: 'entity', entityType: 'soul' },
+      { key: 'roles-prompt', label: 'Prompt 模板', icon: MessageSquare, type: 'entity', entityType: 'prompt' },
+    ],
+  },
+  {
+    key: 'orchestration', label: '编排配置', icon: Workflow,
+    desc: '任务编排的策略、执行与可视化',
+    subsections: [
+      { key: 'orch-strategy', label: '策略管理', icon: GitBranch, type: 'entity', entityType: 'orch-strategy' },
+      { key: 'orch-execution', label: '执行参数', icon: Zap, type: 'params', configModule: 'execution', configCategories: ['basic'] },
+      { key: 'orch-visual', label: '可视化', icon: Monitor, type: 'params', configModule: 'visualization', configCategories: ['basic'] },
+    ],
+  },
+  {
+    key: 'infra', label: '基础设施', icon: Server,
+    desc: '底层运行时参数：日志、消息队列、存储后端',
+    subsections: [
+      { key: 'infra-log', label: '日志', icon: Terminal, type: 'params', configModule: 'log_provider', configCategories: ['basic'] },
+      { key: 'infra-mq', label: '消息队列', icon: Radio, type: 'params', configModule: 'mq_provider', configCategories: ['basic'] },
+      { key: 'infra-graphdb', label: '图数据库', icon: Database, type: 'params', configModule: 'graphdb_provider', configCategories: ['basic', 'aging'] },
+      { key: 'infra-vectordb', label: '向量数据库', icon: Table2, type: 'params', configModule: 'vectordb_provider', configCategories: ['basic'] },
+    ],
+  },
+  {
+    key: 'application', label: '应用配置', icon: AppWindow,
+    desc: '对话、自学习、用户画像、可视化',
+    subsections: [
+      { key: 'app-chat', label: '对话', icon: MessageCircle, type: 'params', configModule: 'chat', configCategories: ['basic'] },
+      { key: 'app-selflearning', label: '自学习', icon: GraduationCap, type: 'params', configModule: 'self_learning', configCategories: ['basic', 'weight', 'interval'] },
+      { key: 'app-profile', label: '用户画像', icon: User, type: 'params', configModule: 'user_profile', configCategories: ['basic'] },
+      { key: 'app-visualization', label: '可视化', icon: BarChart3, type: 'params', configModule: 'visualization', configCategories: ['basic'] },
+    ],
+  },
+]
 
 // ============================================================
-// Display name mappings
+// 导航状态
 // ============================================================
 
-const LAYER_NAMES: Record<string, string> = {
-  BASE: '基础设施层', CORE: '核心层', AGENT: 'Agent层',
-  ORCHESTRATION: '编排层', APPLICATION: '应用层',
-}
-const LAYER_DESCS: Record<string, string> = {
-  BASE: '提供底层资源与基础配置：LLM、MCP、存储、Soul、Skill 等',
-  CORE: '核心服务编排：LLM、信息、学习、MCP、技能、灵魂等核心模块',
-  AGENT: 'Agent 框架：构建、库、生命周期与各类 Agent',
-  ORCHESTRATION: '任务与流程编排',
-  APPLICATION: '面向用户的应用入口：对话、文档、画像等',
-}
-const LAYER_ICONS: Record<string, typeof Server> = {
-  BASE: Server, CORE: Cpu, AGENT: Bot, ORCHESTRATION: Workflow, APPLICATION: AppWindow,
+const expandedSections = ref<Record<string, boolean>>({})
+const activeSection = ref('llm')
+const activeSubSection = ref('llm-provider')
+const sidebarCollapsed = ref(false)
+
+function toggleSection(key: string) {
+  expandedSections.value = { ...expandedSections.value, [key]: !expandedSections.value[key] }
+  activeSection.value = key
 }
 
-const MODULE_NAMES: Record<string, string> = {
-  llm_provider: 'LLM Provider', soul_provider: 'Soul Provider', skill_provider: 'Skill Provider',
-  mcp_provider: 'MCP Provider', prompts_provider: 'Prompts Provider', log_provider: 'Log Provider',
-  mq_provider: 'MQ Provider', graphdb_provider: 'GraphDB Provider', vectordb_provider: 'VectorDB Provider',
-  relationdb_provider: 'RelationDB Provider',
-  llm_core: 'LLM Core', info_core: 'Info Core', mcp_core: 'MCP Core',
-  skill_core: 'Skill Core', soul_core: 'Soul Core',
-  agent_library: 'Agent Library', agent_builder: 'Agent Builder', agent_execution: 'Agent Execution',
-  agent_strategy: 'Agent Strategy', agent_context: 'Agent Context',
-  entry: 'Entry', strategy: 'Strategy', execution: 'Execution',
-  visualization: 'Visualization', jsonnode: 'JSON Node',
-  chat: 'Chat', self_learning: 'Self Learning', user_profile: 'User Profile', config: 'Config',
+function selectSub(sectionKey: string, subKey: string) {
+  expandedSections.value = { ...expandedSections.value, [sectionKey]: true }
+  activeSection.value = sectionKey
+  activeSubSection.value = subKey
 }
 
-const MODULE_ICONS: Record<string, typeof Cpu> = {
-  llm_provider: Cpu, mcp_provider: Plug, soul_provider: Heart, skill_provider: Wand2,
-  prompts_provider: MessageSquare, log_provider: FileText, mq_provider: Send,
-  graphdb_provider: Database, vectordb_provider: Boxes, relationdb_provider: Table2,
-  llm_core: Cpu, info_core: Brain, mcp_core: Plug, skill_core: Wand2, soul_core: Heart,
-  agent_library: Library, agent_builder: Bot, agent_execution: Play,
-  agent_strategy: GitBranch, agent_context: Layers,
-  entry: Workflow, strategy: GitBranch, execution: Play, visualization: Eye, jsonnode: Code2,
-  chat: MessageCircle, self_learning: GraduationCap, user_profile: User, config: Settings,
-}
-
-const CATEGORY_NAMES: Record<string, string> = {
-  basic: '基础设置', quota: '配额设置', aging: '老化设置', config: '配置', tag_config: '标签配置',
-  summary_config: '摘要配置', vector_config: '向量配置', context_config: '上下文配置',
-  opt_rule: '优化规则', weight: '权重设置', interval: '间隔设置',
-}
-
-const ENTITY_MODULES: Record<string, { apiModule: ModuleKey; label: string }> = {
-  llm_provider: { apiModule: 'model', label: '模型管理' },
-  soul_provider: { apiModule: 'soul', label: 'Soul 管理' },
-  skill_provider: { apiModule: 'skill', label: 'Skill 管理' },
-  mcp_provider: { apiModule: 'mcp', label: 'MCP 管理' },
-}
-
-const AGENT_ENTITY_MODULE = { moduleKey: 'meta_agent', apiModule: 'agent' as ModuleKey, label: 'Agent 管理' }
-
-// ============================================================
-// State
-// ============================================================
-
-const treeLoading = ref(false)
-const treeError = ref('')
-const configTree = ref<ConfigTreeLayer[]>([])
-
-const currentLevel = ref<1 | 2 | 3 | 4>(1)
-const selectedLayerKey = ref('')
-const selectedModuleKey = ref('')
-const selectedCategory = ref<DisplayCategory | null>(null)
-
-const selectedLayer = computed(() => displayLayers.value.find(l => l.key === selectedLayerKey.value) || null)
-const currentModule = computed(() => selectedLayer.value?.modules.find(m => m.key === selectedModuleKey.value) || null)
-const currentApiModule = computed(() => currentModule.value?.apiModule)
+const currentSection = computed(() => navSections.find(s => s.key === activeSection.value))
+const currentSub = computed(() => currentSection.value?.subsections.find(sub => sub.key === activeSubSection.value))
+const isEntityView = computed(() => currentSub.value?.type === 'entity')
+const isParamsView = computed(() => currentSub.value?.type === 'params')
+const currentEntityType = computed(() => currentSub.value?.entityType)
 
 const breadcrumb = computed(() => {
-  const items: { label: string; level: number }[] = [{ label: '整体框架', level: 1 }]
-  if (currentLevel.value >= 2 && selectedLayer.value) items.push({ label: selectedLayer.value.name, level: 2 })
-  if (currentLevel.value >= 3 && currentModule.value) items.push({ label: currentModule.value.name, level: 3 })
-  if (currentLevel.value >= 4 && selectedCategory.value) items.push({ label: selectedCategory.value.name, level: 4 })
+  const items: { label: string }[] = []
+  if (currentSection.value) items.push({ label: currentSection.value.label })
+  if (currentSub.value) items.push({ label: currentSub.value.label })
   return items
 })
 
-function goToLevel(level: number) {
-  if (level <= 1) { currentLevel.value = 1; selectedLayerKey.value = ''; selectedModuleKey.value = ''; selectedCategory.value = null; closeModal(); return }
-  if (level === 2) { currentLevel.value = 2; selectedModuleKey.value = ''; selectedCategory.value = null }
-  else if (level === 3) { currentLevel.value = 3; selectedCategory.value = null }
-  else if (level === 4) { currentLevel.value = 4 }
-  closeModal()
-}
-
-function selectLayer(layer: DisplayLayer) {
-  selectedLayerKey.value = layer.key; selectedModuleKey.value = ''; selectedCategory.value = null; currentLevel.value = 2
-}
-
-async function selectModule(mod: DisplayModule) {
-  selectedModuleKey.value = mod.key; selectedCategory.value = null; currentLevel.value = 3
-  if (mod.apiModule && !loaded.value[mod.apiModule]) await loaders[mod.apiModule]()
-}
-
-function selectCategory(cat: DisplayCategory) {
-  selectedCategory.value = cat; currentLevel.value = 4
-  if (cat.isEntityCategory && currentApiModule.value && !loaded.value[currentApiModule.value]) {
-    loaders[currentApiModule.value]()
-  }
-}
+const inputClass = 'w-full px-3 py-2 text-sm rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900 text-apple-gray-900 dark:text-apple-gray-50 focus:outline-none focus:ring-2 focus:ring-brian-blue/30 disabled:opacity-60 disabled:cursor-not-allowed transition-shadow'
 
 // ============================================================
-// Build display layers from config tree
+// 全局搜索
 // ============================================================
 
-interface DisplayLayer {
-  key: string; name: string; desc: string
-  icon: typeof Server; hasConfigurable: boolean
-  modules: DisplayModule[]
-}
+const searchVisible = ref(false)
+const searchQuery = ref('')
 
-const displayLayers = computed<DisplayLayer[]>(() => {
-  const layers: DisplayLayer[] = []
-
-  for (const layer of configTree.value) {
-    const modules: DisplayModule[] = []
-
-    for (const mod of layer.modules) {
-      const entityInfo = ENTITY_MODULES[mod.module]
-      const categories: DisplayCategory[] = []
-
-      for (const cat of mod.categories) {
-        const items: DisplayItem[] = cat.items.map(item => ({
-          key: item.config_key,
-          name: item.config_name,
-          desc: item.config_description || '',
-          valueSummary: formatValueSummary(item),
-          configurable: item.effective_writable,
-          configItem: item,
-        }))
-        categories.push({
-          key: cat.category,
-          name: CATEGORY_NAMES[cat.category] || cat.category,
-          desc: `${CATEGORY_NAMES[cat.category] || cat.category}相关配置`,
-          configurable: items.some(i => i.configurable),
-          itemCount: items.length,
-          items,
-        })
-      }
-
-      if (entityInfo) {
-        categories.push({
-          key: 'entity', name: entityInfo.label, desc: `管理 ${entityInfo.label} 实体`,
-          configurable: true, itemCount: itemCountFor(entityInfo.apiModule),
-          items: [], isEntityCategory: true,
-        })
-      }
-
-      const hasConfigurable = categories.some(c => c.configurable)
-      modules.push({
-        key: mod.module,
-        name: MODULE_NAMES[mod.module] || mod.module,
-        desc: MODULE_NAMES[mod.module] ? `${MODULE_NAMES[mod.module]} 配置` : mod.module,
-        icon: MODULE_ICONS[mod.module] || Settings,
-        configurable: hasConfigurable,
-        apiModule: entityInfo?.apiModule,
-        categoryCount: categories.length,
-        categories,
-      })
+const allNavItems = computed(() => {
+  const items: { sectionLabel: string; subLabel: string; sectionKey: string; subKey: string }[] = []
+  for (const s of navSections) {
+    for (const sub of s.subsections) {
+      items.push({ sectionLabel: s.label, subLabel: sub.label, sectionKey: s.key, subKey: sub.key })
     }
-
-    if (layer.layer === 'AGENT' && !modules.some(m => m.key === AGENT_ENTITY_MODULE.moduleKey)) {
-      modules.push({
-        key: AGENT_ENTITY_MODULE.moduleKey,
-        name: 'Meta Agent', desc: 'Agent 实体管理与配置',
-        icon: Bot, configurable: true,
-        apiModule: AGENT_ENTITY_MODULE.apiModule,
-        categoryCount: 1,
-        categories: [{
-          key: 'entity', name: AGENT_ENTITY_MODULE.label, desc: '管理 Agent 实体',
-          configurable: true, itemCount: itemCountFor('agent'),
-          items: [], isEntityCategory: true,
-        }],
-      })
-    }
-
-    layers.push({
-      key: layer.layer,
-      name: LAYER_NAMES[layer.layer] || layer.layer,
-      desc: LAYER_DESCS[layer.layer] || '',
-      icon: LAYER_ICONS[layer.layer] || Layers,
-      hasConfigurable: modules.some(m => m.configurable),
-      modules,
-    })
   }
-
-  return layers
+  return items
 })
 
-function formatValueSummary(item: ConfigTreeItem): string {
-  const val = item.current_value ?? item.config_default
-  if (val === null || val === undefined) return '未设置'
-  if (typeof val === 'boolean') return val ? '启用' : '停用'
-  if (typeof val === 'number') return String(val)
-  return String(val)
+const searchResults = computed(() => {
+  if (!searchQuery.value.trim()) return []
+  const q = searchQuery.value.toLowerCase()
+  return allNavItems.value.filter(
+    item => item.sectionLabel.toLowerCase().includes(q) || item.subLabel.toLowerCase().includes(q),
+  )
+})
+
+function openSearch() { searchVisible.value = true; searchQuery.value = '' }
+function closeSearch() { searchVisible.value = false }
+function navigateFromSearch(sectionKey: string, subKey: string) {
+  selectSub(sectionKey, subKey)
+  closeSearch()
 }
 
 // ============================================================
-// Load config tree
+// 配置树数据（参数配置用）
 // ============================================================
+
+interface ParamItem {
+  config_key: string
+  config_name: string
+  config_type: string
+  config_default: unknown
+  config_value?: unknown
+  current_value?: unknown
+  config_description?: string
+  config_enum_values?: unknown[] | null
+  readable?: boolean
+  writable?: boolean
+  effective_readable?: boolean
+  effective_writable?: boolean
+}
+
+const configLayers = ref<ConfigTreeLayer[]>([])
+const configLoading = ref(false)
+const configError = ref('')
 
 async function loadConfigTree() {
-  treeLoading.value = true; treeError.value = ''
+  configLoading.value = true
+  configError.value = ''
   try {
-    const res = await configApi.configTree()
-    configTree.value = (res.config?.layers as ConfigTreeLayer[]) || []
+    const resp = await configApi.configTree()
+    configLayers.value = resp.config?.layers || []
   } catch (e: unknown) {
-    treeError.value = (e as Error).message
+    configError.value = e instanceof Error ? e.message : '加载配置失败'
   } finally {
-    treeLoading.value = false
+    configLoading.value = false
   }
 }
 
-onMounted(() => { loadConfigTree() })
-
-// ============================================================
-// Entity CRUD data
-// ============================================================
-
-const loading = ref<Record<string, boolean>>({ model: false, soul: false, work: false, skill: false, mcp: false, agent: false })
-const loaded = ref<Record<string, boolean>>({ model: false, soul: false, work: false, skill: false, mcp: false, agent: false })
-const errorMsg = ref<Record<string, string>>({ model: '', soul: '', work: '', skill: '', mcp: '', agent: '' })
-const models = ref<RawItem[]>([])
-const souls = ref<RawItem[]>([])
-const works = ref<RawItem[]>([])
-const skills = ref<RawItem[]>([])
-const mcps = ref<RawItem[]>([])
-const agents = ref<RawItem[]>([])
-
-function itemCountFor(m: ModuleKey): number {
-  const map: Record<ModuleKey, () => unknown[]> = {
-    model: () => models.value, soul: () => souls.value, work: () => works.value,
-    skill: () => skills.value, mcp: () => mcps.value, agent: () => agents.value,
+const currentParams = computed(() => {
+  if (!currentSub.value || currentSub.value.type !== 'params') return [] as ParamItem[]
+  const { configModule, configCategories } = currentSub.value
+  const items: ParamItem[] = []
+  for (const layer of configLayers.value) {
+    for (const mod of layer.modules) {
+      if (mod.module === configModule) {
+        for (const cat of mod.categories) {
+          if (configCategories && !configCategories.includes(cat.category)) continue
+          for (const item of cat.items) {
+            items.push({
+              config_key: item.config_key,
+              config_name: item.config_name,
+              config_type: item.config_type,
+              config_default: item.config_default,
+              config_value: item.current_value,
+              config_description: item.config_description,
+              config_enum_values: item.config_enum_values,
+              writable: item.effective_writable,
+            })
+          }
+        }
+      }
+    }
   }
-  return map[m]?.().length ?? 0
-}
-
-function buildEntityFields(raw: RawItem, m: ModuleKey): ConfigField[] {
-  switch (m) {
-    case 'model': return [
-      { key: 'providerName', label: '提供商', type: 'text', value: String(raw.providerName || '') },
-      { key: 'modelName', label: '模型名称', type: 'text', value: String(raw.modelName || '') },
-      { key: 'maxTokens', label: '最大 Token', type: 'number', value: Number(raw.maxTokens || 0) },
-      { key: 'status', label: '状态', type: 'enum', value: String(raw.status || 'active'), options: [{ label: '启用', value: 'active' }, { label: '停用', value: 'inactive' }] },
-      { key: 'isDefault', label: '设为默认', type: 'boolean', value: !!raw.isDefault },
-    ] as ConfigField[]
-    case 'soul': return [
-      { key: 'name', label: '名称', type: 'text', value: String(raw.name || '') },
-      { key: 'description', label: '描述', type: 'text', value: String(raw.description || '') },
-      { key: 'traits', label: '特性 (JSON)', type: 'json', value: JSON.stringify(raw.traits || [], null, 2) },
-      { key: 'enabled', label: '启用', type: 'boolean', value: !!raw.enabled },
-    ] as ConfigField[]
-    case 'work': return [
-      { key: 'name', label: '名称', type: 'text', value: String(raw.name || '') },
-      { key: 'description', label: '描述', type: 'text', value: String(raw.description || '') },
-      { key: 'steps', label: '步骤 (JSON)', type: 'json', value: JSON.stringify(raw.steps || [], null, 2) },
-      { key: 'enabled', label: '启用', type: 'boolean', value: !!raw.enabled },
-    ] as ConfigField[]
-    case 'skill': return [
-      { key: 'name', label: '名称', type: 'text', value: String(raw.name || '') },
-      { key: 'description', label: '描述', type: 'text', value: String(raw.description || '') },
-      { key: 'category', label: '分类', type: 'text', value: String(raw.category || '') },
-      { key: 'enabled', label: '启用', type: 'boolean', value: !!raw.enabled },
-    ] as ConfigField[]
-    case 'mcp': return [
-      { key: 'displayName', label: '名称', type: 'text', value: String(raw.displayName || raw.name || '') },
-      { key: 'version', label: '版本', type: 'text', value: String(raw.version || '') },
-      { key: 'description', label: '描述', type: 'text', value: String(raw.description || '') },
-      { key: 'enabled', label: '启用', type: 'boolean', value: !!raw.enabled },
-    ] as ConfigField[]
-    case 'agent': return [
-      { key: 'name', label: '名称', type: 'text', value: String(raw.name || '') },
-      { key: 'type', label: '类型', type: 'text', value: String(raw.type || '') },
-      { key: 'description', label: '描述', type: 'text', value: String(raw.description || '') },
-      { key: 'enabled', label: '启用', type: 'boolean', value: !!raw.enabled },
-    ] as ConfigField[]
-  }
-}
-
-function buildEntityItems(m: ModuleKey): DisplayItem[] {
-  const items = m === 'model' ? models.value : m === 'soul' ? souls.value : m === 'work' ? works.value : m === 'skill' ? skills.value : m === 'mcp' ? mcps.value : agents.value
-  return items.map(raw => ({
-    key: raw.id, name: String(raw.name || raw.modelName || raw.displayName || ''),
-    desc: String(raw.description || raw.providerName || ''),
-    valueSummary: raw.enabled !== false ? '启用' : '停用',
-    configurable: true, raw, isEntityItem: true,
-  }))
-}
-
-const currentItems = computed<DisplayItem[]>(() => {
-  if (selectedCategory.value?.isEntityCategory && currentApiModule.value) {
-    return buildEntityItems(currentApiModule.value)
-  }
-  return selectedCategory.value?.items || []
+  return items
 })
+
+const currentParamsByCat = computed(() => {
+  const groups: { cat: string; label: string; items: ParamItem[] }[] = []
+  if (!currentSub.value) return groups
+  const modKey = currentSub.value.configModule || ''
+  for (const layer of configLayers.value) {
+    for (const mod of layer.modules) {
+      if (mod.module !== modKey) continue
+      for (const cat of mod.categories) {
+        const catFilter = currentSub.value.configCategories
+        if (catFilter && !catFilter.includes(cat.category)) continue
+        const catItems = cat.items.map(item => ({
+          config_key: item.config_key,
+          config_name: item.config_name,
+          config_type: item.config_type,
+          config_default: item.config_default,
+          config_value: item.current_value,
+          config_description: item.config_description,
+          config_enum_values: item.config_enum_values,
+          writable: item.effective_writable,
+        }))
+        if (catItems.length > 0) {
+          groups.push({ cat: cat.category, label: cat.label, items: catItems })
+        }
+      }
+    }
+  }
+  return groups
+})
+
+const editingParam = ref<ParamItem | null>(null)
+const editingParamValue = ref<string>('')
+const paramSaving = ref(false)
+
+function startEditParam(item: ParamItem) {
+  editingParam.value = item
+  const val = item.config_value !== undefined && item.config_value !== null
+    ? item.config_value
+    : item.config_default
+  editingParamValue.value = val !== undefined && val !== null ? String(val) : ''
+}
+
+function cancelEditParam() {
+  editingParam.value = null
+  editingParamValue.value = ''
+}
+
+async function saveParam() {
+  if (!editingParam.value) return
+  paramSaving.value = true
+  try {
+    let value: unknown = editingParamValue.value
+    const tp = editingParam.value.config_type
+    if (tp === 'INT') value = parseInt(value as string, 10) || 0
+    else if (tp === 'DOUBLE') value = parseFloat(value as string) || 0
+    else if (tp === 'BOOLEAN') value = value === 'true' || value === true
+    await configApi.configItem.update(editingParam.value.config_key, value)
+    editingParam.value.config_value = value
+    showToast('配置已保存', 'success')
+    cancelEditParam()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    paramSaving.value = false
+  }
+}
+
+// ============================================================
+// Provider 数据 (LLM Providers)
+// ============================================================
+
+interface BackendProvider {
+  id: string
+  llm_provider_title?: string
+  llm_provider_url?: string
+  llm_provider_brief?: string
+  api_key?: string
+  enable?: boolean | number
+  _displayName?: string
+  _displayUrl?: string
+}
+
+const providers = ref<BackendProvider[]>([])
+const providersLoading = ref(false)
+const providerModalVisible = ref(false)
+const editingProvider = ref<BackendProvider | null>(null)
+const providerForm = ref({ name: '', url: '', apiKey: '' })
+const providerSubmitting = ref(false)
+
+async function loadProviders() {
+  providersLoading.value = true
+  try {
+    const raw = await configApi.provider.list()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const arr = (raw as any[]) || []
+    providers.value = arr.map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      llm_provider_title: (r.llm_provider_title || r.providerName || '') as string,
+      llm_provider_url: (r.llm_provider_url || r.baseURL || '') as string,
+      llm_provider_brief: r.llm_provider_brief as string | undefined,
+      api_key: r.api_key as string | undefined,
+      enable: (r.enable ?? r.enabled) as boolean | number | undefined,
+      _displayName: (r.llm_provider_title || r.providerName || r.id || '') as string,
+      _displayUrl: (r.llm_provider_url || r.baseURL || '') as string,
+    }))
+  } catch {
+    providers.value = []
+  } finally {
+    providersLoading.value = false
+  }
+}
+
+function openProviderModal(provider?: BackendProvider) {
+  if (provider) {
+    editingProvider.value = provider
+    providerForm.value = {
+      name: provider.llm_provider_title || provider._displayName || '',
+      url: provider.llm_provider_url || provider._displayUrl || '',
+      apiKey: (provider.api_key as string) || '',
+    }
+  } else {
+    editingProvider.value = null
+    providerForm.value = { name: '', url: '', apiKey: '' }
+  }
+  providerModalVisible.value = true
+}
+
+function closeProviderModal() {
+  providerModalVisible.value = false
+  editingProvider.value = null
+}
+
+async function submitProviderForm() {
+  providerSubmitting.value = true
+  try {
+    const payload = { data: {
+      llm_provider_title: providerForm.value.name,
+      llm_provider_url: providerForm.value.url,
+      llm_provider_brief: '',
+    }}
+    if (editingProvider.value) {
+      await configApi.provider.update(editingProvider.value.id, payload)
+    } else {
+      await fetchApi('/config/provider', { method: 'POST', body: JSON.stringify(payload) })
+    }
+    showToast(editingProvider.value ? '已更新' : '已创建', 'success')
+    closeProviderModal()
+    await loadProviders()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    providerSubmitting.value = false
+  }
+}
+
+async function handleDeleteProvider(providerId: string) {
+  try {
+    await configApi.provider.delete(providerId)
+    providers.value = providers.value.filter(p => p.id !== providerId)
+    showToast('已删除', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+async function handleToggleProvider(providerId: string) {
+  const p = providers.value.find(pr => pr.id === providerId)
+  if (!p) return
+  const currentEnabled = p.enable === 1 || p.enable === true
+  const newEnabled = !currentEnabled
+  try {
+    await configApi.provider.update(providerId, { data: { enable: newEnabled } })
+    p.enable = newEnabled
+    showToast(newEnabled ? '已启用' : '已停用', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+async function handleTestProvider(providerId: string) {
+  try {
+    const res = await fetchApi<{ success: boolean; latency: number; message: string }>(
+      `/config/provider/${providerId}/test`, { method: 'POST' },
+    )
+    showToast(res.success ? `连接成功 · ${res.latency}ms` : res.message, res.success ? 'success' : 'error')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '测试失败')
+  }
+}
+
+// ============================================================
+// Model 数据
+// ============================================================
+
+interface BackendModel {
+  id: string
+  modelName?: string
+  providerName?: string
+  providerId?: string
+  maxTokens?: number
+  supportsVision?: boolean
+  supportsTools?: boolean
+  isDefault?: boolean
+  status?: string
+}
+
+const models = ref<BackendModel[]>([])
+const modelsLoading = ref(false)
+const modelModalVisible = ref(false)
+const editingModel = ref<BackendModel | null>(null)
+const modelForm = ref({
+  title: '', brief: '', usage: 'text',
+  providerId: '', maxTokens: 4096,
+  quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
+  quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+})
+const modelSubmitting = ref(false)
+
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    models.value = await configApi.model.list()
+  } catch {
+    models.value = []
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
+function openModelModal(model?: BackendModel) {
+  if (model) {
+    editingModel.value = model
+    modelForm.value = {
+      title: model.modelName || '',
+      brief: '',
+      usage: 'text',
+      providerId: model.providerId || providers.value[0]?.id || '',
+      maxTokens: model.maxTokens || 4096,
+      quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
+      quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+    }
+  } else {
+    editingModel.value = null
+    modelForm.value = {
+      title: '', brief: '', usage: 'text',
+      providerId: providers.value[0]?.id || '',
+      maxTokens: 4096,
+      quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
+      quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+    }
+  }
+  modelModalVisible.value = true
+}
+
+function closeModelModal() { modelModalVisible.value = false; editingModel.value = null }
+
+async function submitModelForm() {
+  modelSubmitting.value = true
+  try {
+    const data: Record<string, unknown> = {
+      llm_title: modelForm.value.title,
+      llm_brief: modelForm.value.brief,
+      llm_usage: modelForm.value.usage,
+      llm_provider_id: modelForm.value.providerId,
+      maxTokens: modelForm.value.maxTokens,
+      quotaTokensPerDay: modelForm.value.quotaTokensPerDay,
+      quotaTokensPerWeek: modelForm.value.quotaTokensPerWeek,
+      quotaTokensPerMonth: modelForm.value.quotaTokensPerMonth,
+      quotaCallsPerDay: modelForm.value.quotaCallsPerDay,
+      quotaCallsPerWeek: modelForm.value.quotaCallsPerWeek,
+      quotaCallsPerMonth: modelForm.value.quotaCallsPerMonth,
+    }
+    if (editingModel.value) {
+      await configApi.model.update(editingModel.value.id, data)
+    } else {
+      await fetchApi('/config/model', { method: 'POST', body: JSON.stringify(data) })
+    }
+    showToast(editingModel.value ? '已更新' : '已创建', 'success')
+    closeModelModal()
+    await loadModels()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    modelSubmitting.value = false
+  }
+}
+
+async function handleDeleteModel(modelId: string) {
+  try {
+    await configApi.model.delete(modelId)
+    models.value = models.value.filter(m => m.id !== modelId)
+    showToast('已删除', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+async function handleSetDefault(modelId: string) {
+  try {
+    await configApi.model.setDefault(modelId)
+    showToast('已设为默认', 'success')
+    await loadModels()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '设置失败')
+  }
+}
+
+async function handleTestModel(modelId: string) {
+  try {
+    const res = await configApi.model.test(modelId)
+    showToast(res.success ? `连接成功 · ${res.latency}ms` : res.message, res.success ? 'success' : 'error')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '测试失败')
+  }
+}
+
+// ============================================================
+// Soul 数据
+// ============================================================
+
+interface BackendSoul {
+  id: string
+  name?: string
+  description?: string
+  traits?: string[]
+  enabled?: boolean
+}
+
+const souls = ref<BackendSoul[]>([])
+const soulsLoading = ref(false)
+const soulModalVisible = ref(false)
+const editingSoul = ref<BackendSoul | null>(null)
+const soulForm = ref({ name: '', description: '', traits: '' })
+const soulSubmitting = ref(false)
+
+async function loadSouls() {
+  soulsLoading.value = true
+  try {
+    souls.value = await configApi.soul.list()
+  } catch {
+    souls.value = []
+  } finally {
+    soulsLoading.value = false
+  }
+}
+
+function openSoulModal(soul?: BackendSoul) {
+  if (soul) {
+    editingSoul.value = soul
+    soulForm.value = {
+      name: soul.name || '',
+      description: soul.description || '',
+      traits: (soul.traits || []).join(', '),
+    }
+  } else {
+    editingSoul.value = null
+    soulForm.value = { name: '', description: '', traits: '' }
+  }
+  soulModalVisible.value = true
+}
+
+function closeSoulModal() { soulModalVisible.value = false; editingSoul.value = null }
+
+async function submitSoulForm() {
+  soulSubmitting.value = true
+  try {
+    const traits = soulForm.value.traits.split(',').map(t => t.trim()).filter(Boolean)
+    const data = { soul_brief: soulForm.value.name, soul_content: soulForm.value.description, traits }
+    if (editingSoul.value) {
+      await configApi.soul.update(editingSoul.value.id, data)
+    } else {
+      await fetchApi('/config/soul', { method: 'POST', body: JSON.stringify(data) })
+    }
+    showToast(editingSoul.value ? '已更新' : '已创建', 'success')
+    closeSoulModal()
+    await loadSouls()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    soulSubmitting.value = false
+  }
+}
+
+async function handleDeleteSoul(soulId: string) {
+  try {
+    await configApi.soul.delete(soulId)
+    souls.value = souls.value.filter(s => s.id !== soulId)
+    showToast('已删除', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+async function handleToggleSoul(soulId: string) {
+  const s = souls.value.find(st => st.id === soulId)
+  if (!s) return
+  const newVal = !(s.enabled ?? true)
+  try {
+    await configApi.soul.update(soulId, { enable: newVal })
+    s.enabled = newVal
+    showToast(newVal ? '已启用' : '已停用', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+// ============================================================
+// Skill 数据
+// ============================================================
+
+interface BackendSkill {
+  id: string
+  name?: string
+  description?: string
+  work?: string
+  enabled?: boolean
+}
+
+const skills = ref<BackendSkill[]>([])
+const skillsLoading = ref(false)
+const skillModalVisible = ref(false)
+const editingSkill = ref<BackendSkill | null>(null)
+const skillForm = ref({ name: '', description: '', work: '' })
+const skillSubmitting = ref(false)
+
+async function loadSkills() {
+  skillsLoading.value = true
+  try {
+    const res = await skillApi.list()
+    skills.value = (res.skills || []) as BackendSkill[]
+  } catch {
+    skills.value = []
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+function openSkillModal(skill?: BackendSkill) {
+  if (skill) {
+    editingSkill.value = skill
+    skillForm.value = { name: skill.name || '', description: skill.description || '', work: skill.work || '' }
+  } else {
+    editingSkill.value = null
+    skillForm.value = { name: '', description: '', work: '' }
+  }
+  skillModalVisible.value = true
+}
+
+function closeSkillModal() { skillModalVisible.value = false; editingSkill.value = null }
+
+async function submitSkillForm() {
+  skillSubmitting.value = true
+  try {
+    const data = { skill_brief: skillForm.value.name, description: skillForm.value.description, work: skillForm.value.work }
+    if (editingSkill.value) {
+      await skillApi.update(editingSkill.value.id, data)
+    } else {
+      await skillApi.create(data)
+    }
+    showToast(editingSkill.value ? '已更新' : '已创建', 'success')
+    closeSkillModal()
+    await loadSkills()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    skillSubmitting.value = false
+  }
+}
+
+async function handleDeleteSkill(skillId: string) {
+  try {
+    await skillApi.delete(skillId)
+    skills.value = skills.value.filter(s => s.id !== skillId)
+    showToast('已删除', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+async function handleToggleSkill(skillId: string) {
+  try {
+    await skillApi.toggle(skillId)
+    await loadSkills()
+    showToast('状态已切换', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+// ============================================================
+// MCP 数据
+// ============================================================
+
+interface BackendMcp {
+  id: string
+  displayName?: string
+  name?: string
+  description?: string
+  version?: string
+  enabled?: boolean
+}
+
+const mcps = ref<BackendMcp[]>([])
+const mcpsLoading = ref(false)
+
+async function loadMcps() {
+  mcpsLoading.value = true
+  try {
+    const res = await mcpApi.installed()
+    mcps.value = (res.installed || []) as BackendMcp[]
+  } catch {
+    mcps.value = []
+  } finally {
+    mcpsLoading.value = false
+  }
+}
+
+async function handleDeleteMcp(mcpId: string) {
+  try {
+    await fetchApi(`/mcp/${mcpId}`, { method: 'DELETE' })
+    mcps.value = mcps.value.filter(m => m.id !== mcpId)
+    showToast('已卸载', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '卸载失败')
+  }
+}
+
+async function handleToggleMcp(mcpId: string) {
+  try {
+    await fetchApi(`/mcp/${mcpId}/toggle`, { method: 'POST' })
+    await loadMcps()
+    showToast('状态已切换', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+// ============================================================
+// Agent 数据
+// ============================================================
+
+interface BackendAgent {
+  id: string
+  agent_name?: string
+  name?: string
+  agent_type?: string
+  type?: string
+  description?: string
+  strategy_id?: string
+  llm_id?: string
+  soul_id?: string
+  task_signature?: string
+  enable?: boolean
+  enabled?: boolean
+  eval_score?: number
+  usage_count?: number
+}
+
+const agents = ref<BackendAgent[]>([])
+const agentsLoading = ref(false)
+const agentModalVisible = ref(false)
+const editingAgent = ref<BackendAgent | null>(null)
+const agentForm = ref({
+  name: '', type: 'WORKER', description: '',
+  strategyId: '', llmId: '', soulId: '', taskSignature: '',
+})
+const agentSubmitting = ref(false)
+
+async function loadAgents() {
+  agentsLoading.value = true
+  try {
+    const res = await agentApi.list()
+    agents.value = (res.agents || []) as BackendAgent[]
+  } catch {
+    agents.value = []
+  } finally {
+    agentsLoading.value = false
+  }
+}
+
+function openAgentModal(agent?: BackendAgent) {
+  if (agent) {
+    editingAgent.value = agent
+    agentForm.value = {
+      name: agent.agent_name || agent.name || '',
+      type: agent.agent_type || agent.type || 'WORKER',
+      description: agent.description || '',
+      strategyId: agent.strategy_id || '',
+      llmId: agent.llm_id || '',
+      soulId: agent.soul_id || '',
+      taskSignature: agent.task_signature || '',
+    }
+  } else {
+    editingAgent.value = null
+    agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', llmId: '', soulId: '', taskSignature: '' }
+  }
+  agentModalVisible.value = true
+}
+
+function closeAgentModal() { agentModalVisible.value = false; editingAgent.value = null }
+
+async function submitAgentForm() {
+  agentSubmitting.value = true
+  try {
+    const data: Record<string, unknown> = {
+      agent_name: agentForm.value.name,
+      agent_type: agentForm.value.type,
+      description: agentForm.value.description,
+      strategy_id: agentForm.value.strategyId,
+      llm_id: agentForm.value.llmId,
+      soul_id: agentForm.value.soulId,
+      task_signature: agentForm.value.taskSignature,
+    }
+    if (editingAgent.value) {
+      await agentApi.update(editingAgent.value.id, data)
+    } else {
+      await agentApi.create(data)
+    }
+    showToast(editingAgent.value ? '已更新' : '已创建', 'success')
+    closeAgentModal()
+    await loadAgents()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    agentSubmitting.value = false
+  }
+}
+
+async function handleDeleteAgent(agentId: string) {
+  try {
+    await agentApi.delete(agentId)
+    agents.value = agents.value.filter(a => a.id !== agentId)
+    showToast('已删除', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+async function handleToggleAgent(agentId: string) {
+  try {
+    await agentApi.toggle(agentId)
+    await loadAgents()
+    showToast('状态已切换', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+  }
+}
 
 // ============================================================
 // Toast
 // ============================================================
 
-const toastVisible = ref(false); const toastMsg = ref(''); const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(msg: string, type: 'success' | 'error' = 'error') {
-  toastMsg.value = msg; toastType.value = type; toastVisible.value = true
+
+function showToast(message: string, type: 'success' | 'error' = 'error') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastVisible.value = false }, 3000)
 }
 
 // ============================================================
-// Entity loaders
+// 初始化
 // ============================================================
 
-async function loadModels() {
-  loading.value.model = true
-  try { models.value = await configApi.model.list() as unknown as RawItem[]; loaded.value.model = true }
-  catch (e: unknown) { errorMsg.value.model = (e as Error).message } finally { loading.value.model = false }
-}
-async function loadSouls() {
-  loading.value.soul = true
-  try { souls.value = await configApi.soul.list() as unknown as RawItem[]; loaded.value.soul = true }
-  catch (e: unknown) { errorMsg.value.soul = (e as Error).message } finally { loading.value.soul = false }
-}
-async function loadWorks() {
-  loading.value.work = true
-  try { works.value = await configApi.work.list() as unknown as RawItem[]; loaded.value.work = true }
-  catch (e: unknown) { errorMsg.value.work = (e as Error).message } finally { loading.value.work = false }
-}
-async function loadSkills() {
-  loading.value.skill = true
-  try { const r = await skillApi.list() as { skills: unknown[] }; skills.value = r.skills as RawItem[]; loaded.value.skill = true }
-  catch (e: unknown) { errorMsg.value.skill = (e as Error).message } finally { loading.value.skill = false }
-}
-async function loadMcps() {
-  loading.value.mcp = true
-  try { const r = await mcpApi.installed() as { installed: unknown[] }; mcps.value = r.installed as RawItem[]; loaded.value.mcp = true }
-  catch (e: unknown) { errorMsg.value.mcp = (e as Error).message } finally { loading.value.mcp = false }
-}
-async function loadAgents() {
-  loading.value.agent = true
-  try { const r = await agentApi.list() as { agents: unknown[] }; agents.value = r.agents as RawItem[]; loaded.value.agent = true }
-  catch (e: unknown) { errorMsg.value.agent = (e as Error).message } finally { loading.value.agent = false }
-}
+onMounted(() => {
+  loadConfigTree()
+})
 
-const loaders: Record<ModuleKey, () => Promise<void>> = { model: loadModels, soul: loadSouls, work: loadWorks, skill: loadSkills, mcp: loadMcps, agent: loadAgents }
-async function refreshCurrent() {
-  const m = currentApiModule.value
-  if (m) await loaders[m]()
-  await loadConfigTree()
-}
-
-// ============================================================
-// Modal - shared for config items and entity items
-// ============================================================
-
-const modalVisible = ref(false); const readOnly = ref(false); const submitting = ref(false)
-const selectedConfig = ref<DisplayItem | null>(null); const formFields = ref<ConfigField[]>([]); const jsonErrors = ref<Record<string, string>>({})
-const isConfigModal = ref(false)
-const inputClass = 'w-full px-3 py-2 text-sm rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900 text-apple-gray-900 dark:text-apple-gray-50 focus:outline-none focus:ring-2 focus:ring-brian-blue/30 disabled:opacity-60 disabled:cursor-not-allowed'
-
-function buildConfigFields(item: ConfigTreeItem): ConfigField[] {
-  const val = item.current_value ?? item.config_default
-  const type = item.config_type.toUpperCase()
-  if (type === 'BOOLEAN' || type === 'BOOL') {
-    return [{ key: 'value', label: item.config_name, type: 'boolean', value: !!val }]
+function handleKeydown(e: KeyboardEvent) {
+  if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault()
+    openSearch()
   }
-  if (type === 'ENUM' && item.config_enum_values) {
-    const enumVals = item.config_enum_values as string[]
-    return [{ key: 'value', label: item.config_name, type: 'enum', value: String(val ?? ''), options: enumVals.map(v => ({ label: v, value: v })) }]
+  if (e.key === 'Escape') {
+    closeSearch()
   }
-  if (type === 'INT' || type === 'INTEGER') {
-    return [{ key: 'value', label: item.config_name, type: 'number', value: Number(val ?? 0) }]
-  }
-  if (type === 'DOUBLE' || type === 'FLOAT' || type === 'NUMBER') {
-    return [{ key: 'value', label: item.config_name, type: 'number', value: Number(val ?? 0) }]
-  }
-  return [{ key: 'value', label: item.config_name, type: 'text', value: String(val ?? '') }]
 }
 
-function openEditModal(item: DisplayItem) {
-  selectedConfig.value = item; jsonErrors.value = {}
-  if (item.isEntityItem) {
-    isConfigModal.value = false
-    formFields.value = (currentApiModule.value ? buildEntityFields(item.raw!, currentApiModule.value) : []).map(f => ({ ...f }))
-    readOnly.value = !item.configurable
-  } else if (item.configItem) {
-    isConfigModal.value = true
-    formFields.value = buildConfigFields(item.configItem).map(f => ({ ...f }))
-    readOnly.value = !item.configItem.effective_writable
-  } else {
-    readOnly.value = true; formFields.value = []
-  }
-  modalVisible.value = true
-}
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
 
-function closeModal() { modalVisible.value = false; selectedConfig.value = null; formFields.value = []; jsonErrors.value = {}; readOnly.value = false; isConfigModal.value = false }
-
-function buildSubmitData() {
-  const data: Record<string, unknown> = {}; jsonErrors.value = {}
-  for (const f of formFields.value) {
-    if (f.type === 'json') { try { data[f.key] = JSON.parse(String(f.value)) } catch { jsonErrors.value[f.key] = 'JSON 格式错误'; return null } }
-    else if (f.type === 'number') data[f.key] = Number(f.value)
-    else data[f.key] = f.value
-  }
-  return data
-}
-
-async function submitForm() {
-  if (!selectedConfig.value) return
-  const data = buildSubmitData(); if (!data) { showToast('请修正表单错误'); return }
-  submitting.value = true
-  try {
-    if (isConfigModal.value && selectedConfig.value.configItem) {
-      await configApi.configItem.update(selectedConfig.value.configItem.config_key, data.value)
-      showToast('配置已保存', 'success')
-      closeModal()
-      await loadConfigTree()
-    } else {
-      const m = currentApiModule.value; if (!m) return
-      const id = selectedConfig.value.key
-      if (m === 'model') await configApi.model.update(id, data)
-      else if (m === 'soul') await configApi.soul.update(id, data)
-      else if (m === 'work') await configApi.work.update(id, data)
-      else if (m === 'skill') await skillApi.update(id, data)
-      else if (m === 'mcp') await configApi.mcp.update(id, data)
-      else if (m === 'agent') await agentApi.update(id, data)
-      showToast('配置已保存', 'success'); closeModal(); await loaders[m]()
+watch(activeSubSection, async (val) => {
+  const sub = currentSection.value?.subsections.find(s => s.key === val)
+  if (sub?.type === 'entity') {
+    switch (sub.entityType) {
+      case 'provider': await loadProviders(); break
+      case 'model': await loadModels(); break
+      case 'soul': await loadSouls(); break
+      case 'skill': await loadSkills(); break
+      case 'mcp': await loadMcps(); break
+      case 'agent': await loadAgents(); break
     }
-  } catch (e) { showToast(e instanceof Error ? e.message : '保存失败') } finally { submitting.value = false }
-}
-
-async function handleToggle(raw: RawItem) {
-  const m = currentApiModule.value; if (!m) return
-  try {
-    if (m === 'soul') await configApi.soul.update(raw.id, { enabled: !raw.enabled })
-    else if (m === 'work') await configApi.work.update(raw.id, { enabled: !raw.enabled })
-    else if (m === 'skill') await skillApi.toggle(raw.id)
-    else if (m === 'mcp') await mcpApi.toggle(raw.id)
-    else if (m === 'agent') await agentApi.toggle(raw.id)
-    showToast('状态已切换', 'success'); await loaders[m]()
-  } catch (e) { showToast(e instanceof Error ? e.message : '操作失败') }
-}
-
-async function handleDelete(raw: RawItem) {
-  const m = currentApiModule.value; if (!m) return
-  try {
-    if (m === 'model') await configApi.model.delete(raw.id)
-    else if (m === 'soul') await configApi.soul.delete(raw.id)
-    else if (m === 'work') await configApi.work.delete(raw.id)
-    else if (m === 'skill') await skillApi.delete(raw.id)
-    else if (m === 'mcp') await mcpApi.uninstall(raw.id)
-    else if (m === 'agent') await agentApi.delete(raw.id)
-    showToast('已删除', 'success'); await loaders[m]()
-  } catch (e) { showToast(e instanceof Error ? e.message : '删除失败') }
-}
-
-async function handleSetDefault(raw: RawItem) {
-  try { await configApi.model.setDefault(raw.id); showToast('已设为默认', 'success'); await loadModels() }
-  catch (e) { showToast(e instanceof Error ? e.message : '设置失败') }
-}
-
-async function handleTestModel(raw: RawItem) {
-  try { const r = await configApi.model.test(raw.id); showToast(r.success ? `连接成功 · ${r.latency}ms` : r.message, r.success ? 'success' : 'error') }
-  catch (e) { showToast(e instanceof Error ? e.message : '测试失败') }
-}
+  } else if (sub?.type === 'params') {
+    await loadConfigTree()
+  }
+}, { immediate: true })
 </script>
 
 <template>
   <div class="h-screen w-screen overflow-hidden relative">
     <NeuralBackground />
     <Header />
-    <div class="pt-16 h-full relative z-10 flex flex-col">
-      <div class="flex items-center gap-1.5 px-6 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
-        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" :class="{ 'opacity-40 pointer-events-none': currentLevel === 1 }" :disabled="currentLevel === 1" @click="goToLevel(currentLevel - 1)"><ArrowLeft :size="16" /></button>
-        <Layers :size="15" class="text-brian-blue flex-shrink-0" />
-        <template v-for="(crumb, idx) in breadcrumb" :key="idx">
-          <ChevronRight v-if="idx > 0" :size="13" class="text-apple-gray-400" />
-          <button class="text-sm font-medium px-1.5 py-0.5 rounded" :class="idx === breadcrumb.length - 1 ? 'cursor-default' : 'text-apple-gray-400 hover:text-brian-blue'" @click="goToLevel(crumb.level)">{{ crumb.label }}</button>
-        </template>
-        <button class="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium btn-secondary" @click="refreshCurrent"><RefreshCw :size="13" /> 刷新</button>
-      </div>
+    <div class="pt-12 h-full relative z-10 flex">
 
-      <main class="flex-1 overflow-y-auto bg-apple-gray-50 dark:bg-apple-gray-900">
-        <!-- Loading -->
-        <div v-if="treeLoading" class="flex justify-center py-20"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
-
-        <!-- Error -->
-        <div v-else-if="treeError" class="flex flex-col items-center py-20">
-          <AlertCircle :size="28" class="text-error-red mb-3" /><p class="text-sm text-apple-gray-500 mb-3">{{ treeError }}</p><button class="btn-primary" @click="loadConfigTree">重试</button>
+      <!-- ═══════════════ 左侧边栏导航 ═══════════════ -->
+      <aside
+        class="flex-shrink-0 flex flex-col border-r border-apple-gray-200 dark:border-apple-gray-700 bg-white/90 dark:bg-apple-gray-800/90 backdrop-blur-md transition-all duration-200"
+        :class="sidebarCollapsed ? 'w-14' : 'w-60'"
+      >
+        <div class="flex items-center justify-between px-3 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+          <div v-if="!sidebarCollapsed" class="flex items-center gap-2">
+            <Settings :size="17" class="text-brian-blue" />
+            <span class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">配置中心</span>
+          </div>
+          <button
+            class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors flex-shrink-0"
+            @click="sidebarCollapsed = !sidebarCollapsed"
+          >
+            <ChevronRight :size="16" :class="{ 'rotate-180': !sidebarCollapsed }" class="transition-transform" />
+          </button>
         </div>
 
-        <!-- L1: Framework layers -->
-        <div v-else-if="currentLevel === 1" class="p-6 max-w-7xl mx-auto">
-          <div class="mb-5"><h2 class="text-xl font-semibold">系统整体框架</h2><p class="text-sm text-apple-gray-400 mt-1"><span class="text-success-green">绿色 = 可配置</span> · <span class="text-apple-gray-400">灰色 = 不可配置</span></p></div>
-          <div class="space-y-3">
-            <div v-for="layer in displayLayers" :key="layer.key" class="group cursor-pointer rounded-2xl border p-4 transition-all hover:shadow-md" :class="layer.hasConfigurable ? 'border-success-green/30 bg-success-green/[0.04] hover:border-success-green/50' : 'border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800'" @click="selectLayer(layer)">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="p-2 rounded-lg" :class="layer.hasConfigurable ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400'"><component :is="layer.icon" :size="18" /></div>
-                <div class="min-w-0"><div class="flex items-center gap-2"><h3 class="font-semibold">{{ layer.name }}</h3><span class="text-[11px] text-apple-gray-400">{{ layer.key }}</span></div><p class="text-xs text-apple-gray-400 truncate">{{ layer.desc }}</p></div>
-                <div class="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full" :class="layer.hasConfigurable ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500'"><span class="w-1.5 h-1.5 rounded-full" :class="layer.hasConfigurable ? 'bg-success-green' : 'bg-apple-gray-400'" />{{ layer.hasConfigurable ? '含可配置模块' : '不可配置' }}</span>
-                  <ChevronRight :size="16" class="text-apple-gray-400 group-hover:text-brian-blue" />
+        <button
+          v-if="!sidebarCollapsed"
+          class="mx-2 mt-2 mb-1 flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 text-apple-gray-400 hover:text-apple-gray-600 dark:hover:text-apple-gray-300 transition-colors"
+          @click="openSearch"
+        >
+          <Search :size="13" />
+          <span class="flex-1 text-left">搜索配置...</span>
+          <kbd class="text-[10px] px-1.5 py-0.5 rounded border border-apple-gray-300 dark:border-apple-gray-600 text-apple-gray-400">⌘K</kbd>
+        </button>
+
+        <nav class="flex-1 overflow-y-auto py-1">
+          <div v-for="section in navSections" :key="section.key">
+            <button
+              class="w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors"
+              :class="activeSection === section.key
+                ? 'bg-brian-blue/10 text-brian-blue font-medium'
+                : 'text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'"
+              @click="toggleSection(section.key)"
+            >
+              <component :is="section.icon" :size="16" class="flex-shrink-0" />
+              <span v-if="!sidebarCollapsed" class="flex-1 text-left truncate">{{ section.label }}</span>
+              <ChevronRight
+                v-if="!sidebarCollapsed"
+                :size="13"
+                :class="{ 'rotate-90': expandedSections[section.key] }"
+                class="flex-shrink-0 transition-transform text-apple-gray-400"
+              />
+            </button>
+
+            <div v-if="expandedSections[section.key] && !sidebarCollapsed" class="ml-2 border-l border-apple-gray-200 dark:border-apple-gray-700 ml-5">
+              <button
+                v-for="sub in section.subsections"
+                :key="sub.key"
+                class="w-full flex items-center gap-2 pl-6 pr-3 py-1.5 text-[13px] transition-colors"
+                :class="activeSubSection === sub.key
+                  ? 'text-brian-blue font-medium bg-brian-blue/[0.06]'
+                  : 'text-apple-gray-500 dark:text-apple-gray-400 hover:text-apple-gray-700 dark:hover:text-apple-gray-200'"
+                @click="selectSub(section.key, sub.key)"
+              >
+                <component :is="sub.icon" :size="13" class="flex-shrink-0" />
+                <span class="truncate">{{ sub.label }}</span>
+                <span
+                  class="ml-auto text-[10px] px-1 py-0.5 rounded-full flex-shrink-0"
+                  :class="sub.type === 'entity' ? 'bg-brian-blue/10 text-brian-blue' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500'"
+                >{{ sub.type === 'entity' ? '实体' : '参数' }}</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      <!-- ═══════════════ 右侧内容区 ═══════════════ -->
+      <main class="flex-1 overflow-y-auto bg-apple-gray-50 dark:bg-apple-gray-900">
+        <div class="flex items-center gap-1.5 px-5 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
+          <Layers :size="15" class="text-brian-blue flex-shrink-0" />
+          <template v-for="(crumb, idx) in breadcrumb" :key="idx">
+            <ChevronRight v-if="idx > 0" :size="12" class="text-apple-gray-400 flex-shrink-0" />
+            <span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ crumb.label }}</span>
+          </template>
+        </div>
+
+        <div v-if="currentSection" class="px-5 py-4">
+          <h2 class="text-lg font-semibold text-apple-gray-900 dark:text-apple-gray-50 flex items-center gap-2">
+            <component :is="currentSub?.icon || currentSection.icon" :size="20" class="text-brian-blue" />
+            {{ currentSub?.label || currentSection.label }}
+          </h2>
+          <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-1">{{ currentSection.desc }}</p>
+        </div>
+
+        <!-- ========================== 参数配置视图 ========================== -->
+        <div v-if="isParamsView" class="px-5 pb-6">
+          <div v-if="configLoading" class="flex items-center justify-center py-16">
+            <Loader2 :size="24" class="animate-spin text-brian-blue" />
+          </div>
+          <div v-else-if="configError" class="flex flex-col items-center justify-center py-16 text-center">
+            <AlertCircle :size="28" class="text-error-red mb-3" />
+            <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300 mb-3">{{ configError }}</p>
+            <button class="px-4 py-2 text-sm bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="loadConfigTree">重试</button>
+          </div>
+          <div v-else-if="currentParams.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
+            <Settings :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无配置参数</p>
+          </div>
+          <div v-else class="space-y-5">
+            <div v-for="group in currentParamsByCat" :key="group.cat" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+              <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ group.label }}</h3>
+              </div>
+              <div class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700">
+                <div
+                  v-for="item in group.items"
+                  :key="item.config_key"
+                  class="px-4 py-3 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+                >
+                  <div class="flex items-start justify-between gap-4">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ item.config_name }}</span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full" :class="
+                          item.config_type === 'BOOLEAN' ? 'bg-brian-blue/10 text-brian-blue' :
+                          item.config_type === 'INT' || item.config_type === 'DOUBLE' ? 'bg-success-green/10 text-success-green' :
+                          item.config_type === 'ENUM' ? 'bg-warning-orange/10 text-warning-orange' :
+                          'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500'
+                        ">{{ item.config_type }}</span>
+                        <span
+                          v-if="item.writable === false"
+                          class="text-[10px] px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400"
+                        >只读</span>
+                      </div>
+                      <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_description }}</p>
+                      <p class="text-[10px] font-mono text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_key }}</p>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                      <template v-if="editingParam?.config_key === item.config_key">
+                        <template v-if="item.config_type === 'BOOLEAN'">
+                          <button
+                            class="relative w-11 h-6 rounded-full transition-colors duration-200"
+                            :class="editingParamValue === 'true' ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                            @click="editingParamValue = editingParamValue === 'true' ? 'false' : 'true'"
+                          >
+                            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200"
+                              :class="editingParamValue === 'true' ? 'translate-x-5' : ''" />
+                          </button>
+                        </template>
+                        <template v-else-if="item.config_type === 'ENUM' && item.config_enum_values">
+                          <select v-model="editingParamValue" :class="inputClass + ' !w-32 !py-1.5'">
+                            <option v-for="v in item.config_enum_values" :key="String(v)" :value="String(v)">{{ v }}</option>
+                          </select>
+                        </template>
+                        <template v-else>
+                          <input
+                            v-model="editingParamValue"
+                            :type="item.config_type === 'STRING' ? 'text' : 'number'"
+                            :class="inputClass + ' !w-32 !py-1.5'"
+                          />
+                        </template>
+                        <button
+                          class="p-1.5 rounded-lg bg-success-green text-white hover:bg-success-green/90 transition-colors"
+                          :disabled="paramSaving"
+                          @click="saveParam"
+                        >
+                          <Loader2 v-if="paramSaving" :size="14" class="animate-spin" />
+                          <Check v-else :size="14" />
+                        </button>
+                        <button
+                          class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+                          @click="cancelEditParam"
+                        >
+                          <X :size="14" />
+                        </button>
+                      </template>
+                      <template v-else>
+                        <template v-if="item.config_type === 'BOOLEAN'">
+                          <div class="flex items-center gap-1.5">
+                            <span
+                              class="w-2.5 h-2.5 rounded-full"
+                              :class="item.config_value === true || item.config_value === 'true' ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                            />
+                            <span class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
+                              {{ item.config_value === true || item.config_value === 'true' ? 'true' : 'false' }}
+                            </span>
+                          </div>
+                        </template>
+                        <span v-else class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
+                          {{ item.config_value !== undefined && item.config_value !== null ? String(item.config_value) : '—' }}
+                        </span>
+                        <button
+                          v-if="item.writable !== false"
+                          class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 hover:text-brian-blue transition-colors"
+                          title="编辑"
+                          @click="startEditParam(item)"
+                        >
+                          <Pencil :size="13" />
+                        </button>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="flex flex-wrap gap-2">
-                <div v-for="m in layer.modules" :key="m.key" class="px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1.5" :class="m.configurable ? 'bg-success-green/10 text-success-green border border-success-green/20' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-400'"><component :is="m.icon" :size="12" />{{ m.name }}</div>
-              </div>
             </div>
           </div>
         </div>
 
-        <!-- L2: Layer modules -->
-        <div v-else-if="currentLevel === 2 && selectedLayer" class="p-6 max-w-7xl mx-auto">
-          <div class="mb-5 flex items-center gap-2.5"><div class="p-2 rounded-lg bg-brian-blue/10"><component :is="selectedLayer.icon" :size="18" class="text-brian-blue" /></div><div><h2 class="text-lg font-semibold">{{ selectedLayer.name }}</h2><p class="text-xs text-apple-gray-400">{{ selectedLayer.desc }}</p></div></div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="m in selectedLayer.modules" :key="m.key" class="group cursor-pointer rounded-xl border p-5 transition-all hover:shadow-md" :class="m.configurable ? 'border-success-green/40 bg-success-green/[0.04] hover:border-success-green/60' : 'border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800'" @click="selectModule(m)">
-              <div class="flex items-start justify-between mb-3"><div class="flex items-center gap-2.5"><div class="w-10 h-10 rounded-lg flex items-center justify-center" :class="m.configurable ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400'"><component :is="m.icon" :size="18" /></div><div><h3 class="font-semibold">{{ m.name }}</h3><p class="text-[11px]" :class="m.configurable ? 'text-success-green' : 'text-apple-gray-400'">{{ m.configurable ? '可配置' : '不可配置' }}</p></div></div><span class="w-2.5 h-2.5 rounded-full mt-1.5" :class="m.configurable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" /></div>
-              <p class="text-xs text-apple-gray-400 mb-3 min-h-[32px]">{{ m.desc }}</p>
-              <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700"><span class="text-[11px] text-apple-gray-400">{{ m.categoryCount }} 个配置分类</span><ChevronRight :size="14" class="text-apple-gray-400 group-hover:text-brian-blue" /></div>
-            </div>
+        <!-- ========================== 实体管理视图 - Provider ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'provider'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ providers.length }} 个提供商</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openProviderModal()">
+              <Plus :size="13" /> 添加提供商
+            </button>
           </div>
-        </div>
-
-        <!-- L3: Categories -->
-        <div v-else-if="currentLevel === 3 && currentModule" class="p-6 max-w-7xl mx-auto">
-          <div class="mb-5 flex items-center gap-2.5"><div class="p-2 rounded-lg bg-brian-blue/10"><component :is="currentModule.icon" :size="18" class="text-brian-blue" /></div><div><h2 class="text-lg font-semibold">{{ currentModule.name }}</h2><p class="text-xs text-apple-gray-400">{{ currentModule.desc }}</p></div></div>
-          <div v-if="currentApiModule && loading[currentApiModule]" class="flex justify-center py-20"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
-          <div v-else-if="currentApiModule && errorMsg[currentApiModule]" class="flex flex-col items-center py-20">
-            <AlertCircle :size="28" class="text-error-red mb-3" /><p class="text-sm text-apple-gray-500 mb-3">{{ errorMsg[currentApiModule] }}</p><button class="btn-primary" @click="refreshCurrent">重试</button>
+          <div v-if="providersLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="providers.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Globe :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无提供商配置</p>
           </div>
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="cat in currentModule.categories" :key="cat.key" class="group cursor-pointer rounded-xl border p-5 transition-all hover:shadow-md" :class="cat.configurable ? 'border-success-green/40 bg-success-green/[0.04] hover:border-success-green/60' : 'border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800'" @click="selectCategory(cat)">
-              <div class="flex items-start justify-between mb-3"><div><h3 class="font-semibold">{{ cat.name }}</h3><p class="text-[11px]" :class="cat.configurable ? 'text-success-green' : 'text-apple-gray-400'">{{ cat.configurable ? '可配置' : '不可配置' }}</p></div><span class="w-2.5 h-2.5 rounded-full mt-1.5" :class="cat.configurable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" /></div>
-              <p class="text-xs text-apple-gray-400 mb-3 min-h-[32px]">{{ cat.desc }}</p>
-              <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700"><span class="text-[11px] text-apple-gray-400">{{ cat.itemCount }} 个配置项</span><ChevronRight :size="14" class="text-apple-gray-400 group-hover:text-brian-blue" /></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- L4: Config items -->
-        <div v-else-if="currentLevel === 4 && currentModule && selectedCategory" class="p-6 max-w-7xl mx-auto">
-          <div class="mb-5 flex items-center gap-2.5"><div class="p-2 rounded-lg bg-brian-blue/10"><component :is="currentModule.icon" :size="18" class="text-brian-blue" /></div><div><h2 class="text-lg font-semibold">{{ selectedCategory.name }}</h2><p class="text-xs text-apple-gray-400">{{ selectedCategory.desc }} · {{ currentItems.length }} 个配置项</p></div></div>
-          <div v-if="currentItems.length === 0" class="flex flex-col items-center py-20 text-apple-gray-400"><component :is="currentModule.icon" :size="28" class="text-apple-gray-300 mb-2" /><p>暂无配置项</p></div>
           <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="item in currentItems" :key="item.key" class="rounded-xl border p-5 transition-all" :class="item.configurable ? 'border-success-green/40 bg-success-green/[0.04] hover:shadow-md' : 'border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800'">
-              <div class="cursor-pointer" @click="openEditModal(item)">
-                <div class="flex items-start justify-between mb-3"><div class="flex items-center gap-2.5 min-w-0"><div class="w-10 h-10 rounded-lg flex items-center justify-center" :class="item.configurable ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400'"><component :is="currentModule.icon" :size="18" /></div><div class="min-w-0"><h3 class="font-semibold truncate">{{ item.name }}</h3><p class="text-[11px]" :class="item.configurable ? 'text-success-green' : 'text-apple-gray-400'">{{ item.configurable ? '可配置' : '不可配置' }}</p></div></div><span class="w-2.5 h-2.5 rounded-full mt-1.5" :class="item.configurable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" /></div>
-                <p class="text-xs text-apple-gray-400 mb-2 min-h-[32px] line-clamp-2">{{ item.desc }}</p>
-                <p class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 font-mono bg-apple-gray-100 dark:bg-apple-gray-900/60 rounded px-2 py-1 truncate">{{ item.valueSummary }}</p>
+            <div
+              v-for="p in providers" :key="p.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Globe :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p._displayName || p.id }}</h3>
+                    <p class="text-[11px] text-apple-gray-400 truncate">{{ p.llm_provider_brief || '' }}</p>
+                  </div>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(p.api_key as string) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="(p.api_key as string) ? `已配置密钥 (…${String(p.api_key).slice(-4)})` : '未配置密钥'" />
               </div>
-              <div v-if="item.isEntityItem && currentApiModule" class="flex items-center justify-end gap-1.5 mt-3 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
-                <button v-if="currentApiModule === 'model'" class="flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20" @click.stop="handleSetDefault(item.raw!)"><Star :size="11" /> 默认</button>
-                <button v-if="currentApiModule === 'model'" class="flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 hover:bg-apple-gray-200" @click.stop="handleTestModel(item.raw!)"><FlaskConical :size="11" /> 测试</button>
-                <button v-if="currentApiModule !== 'model' && currentApiModule !== 'mcp' && item.raw && item.raw.enabled !== undefined" class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0" :class="item.raw.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggle(item.raw!)"><span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform" :class="item.raw.enabled ? 'translate-x-4' : ''" /></button>
-                <button class="flex items-center gap-1 px-2 py-1 text-[11px] rounded text-error-red hover:bg-error-red/10" @click.stop="handleDelete(item.raw!)"><Trash2 :size="11" /> 删除</button>
+              <p class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 font-mono bg-apple-gray-100 dark:bg-apple-gray-900/60 rounded px-2 py-1 truncate mb-3">
+                {{ p._displayUrl || '' }}
+              </p>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openProviderModal(p)"><Pencil :size="11" /> 编辑</button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestProvider(p.id)"><FlaskConical :size="11" /> 测试</button>
+                <button
+                  class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0"
+                  :class="(p.enable === 1 || p.enable === true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                  title="启用/停用"
+                  @click="handleToggleProvider(p.id)"
+                >
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(p.enable === 1 || p.enable === true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteProvider(p.id)"><Trash2 :size="11" /> 删除</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - Model ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'model'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ models.length }} 个模型</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openModelModal()">
+              <Plus :size="13" /> 添加模型
+            </button>
+          </div>
+          <div v-if="modelsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="models.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Boxes :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无模型配置</p>
+          </div>
+          <div v-else class="overflow-x-auto rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-800/50">
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">模型名称</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">Provider</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">Max Tokens</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-apple-gray-500">状态</th>
+                  <th class="text-right px-4 py-3 text-xs font-semibold text-apple-gray-500">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700">
+                <tr v-for="m in models" :key="m.id" class="hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors">
+                  <td class="px-4 py-3 font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ m.modelName || '' }}</td>
+                  <td class="px-4 py-3 text-apple-gray-500">{{ m.providerName || m.providerId || '' }}</td>
+                  <td class="px-4 py-3 font-mono text-apple-gray-500">{{ (m.maxTokens || 0).toLocaleString() }}</td>
+                  <td class="px-4 py-3">
+                    <span class="flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-full" :class="m.status === 'active' ? 'bg-success-green' : 'bg-apple-gray-300'" />
+                      <span class="text-xs">{{ m.status === 'active' ? '启用' : '停用' }}</span>
+                      <span v-if="m.isDefault" class="text-[10px] px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue ml-1">默认</span>
+                    </span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="flex items-center justify-end gap-1">
+                      <button class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openModelModal(m)"><Pencil :size="11" /></button>
+                      <button class="px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestModel(m.id)"><FlaskConical :size="11" /></button>
+                      <button
+                        v-if="!m.isDefault"
+                        class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors"
+                        @click="handleSetDefault(m.id)"
+                      ><Star :size="11" /></button>
+                      <button class="px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteModel(m.id)"><Trash2 :size="11" /></button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - Soul ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'soul'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ souls.length }} 个 Soul</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openSoulModal()">
+              <Plus :size="13" /> 添加 Soul
+            </button>
+          </div>
+          <div v-if="soulsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="souls.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Heart :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无 Soul 配置</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="s in souls" :key="s.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Heart :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.name || s.id }}</h3>
+                    <p class="text-[11px] text-apple-gray-400">{{ s.enabled ?? true ? '启用' : '停用' }}</p>
+                  </div>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(s.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              </div>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">
+                {{ (s.description || '').slice(0, 120) || '暂无内容' }}
+              </p>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openSoulModal(s)"><Pencil :size="11" /> 编辑</button>
+                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(s.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleSoul(s.id)">
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(s.enabled ?? true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteSoul(s.id)"><Trash2 :size="11" /> 删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - Skill ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'skill'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ skills.length }} 个技能</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openSkillModal()">
+              <Plus :size="13" /> 添加 Skill
+            </button>
+          </div>
+          <div v-if="skillsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="skills.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Wand2 :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无 Skill 配置</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="sk in skills" :key="sk.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Wand2 :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ sk.name || sk.id }}</h3>
+                    <p class="text-[11px] text-apple-gray-400">{{ sk.enabled ?? true ? '启用' : '停用' }}</p>
+                  </div>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(sk.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              </div>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">{{ sk.description || '暂无描述' }}</p>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openSkillModal(sk)"><Pencil :size="11" /> 编辑</button>
+                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleSkill(sk.id)">
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(sk.enabled ?? true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteSkill(sk.id)"><Trash2 :size="11" /> 删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - MCP ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'mcp'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ mcps.length }} 个 MCP 服务</span>
+          </div>
+          <div v-if="mcpsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="mcps.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Plug :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无已安装的 MCP 服务</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="item in mcps" :key="item.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ item.displayName || item.name || item.id }}</h3>
+                    <p class="text-[11px] text-apple-gray-400">{{ item.enabled ?? true ? '启用' : '停用' }} · v{{ item.version || '1.0' }}</p>
+                  </div>
+                </div>
+              </div>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">{{ item.description || '暂无描述' }}</p>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(item.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleMcp(item.id)">
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(item.enabled ?? true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - Agent ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'agent'" class="px-5 pb-6">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ agents.length }} 个 Agent</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openAgentModal()">
+              <Plus :size="13" /> 创建 Agent
+            </button>
+          </div>
+          <div v-if="agentsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="agents.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Bot :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无 Agent 实例</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="a in agents" :key="a.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Bot :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ a.agent_name || a.name || a.id }}</h3>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.agent_type || a.type || 'WORKER' }}</span>
+                      <span class="text-[11px] text-apple-gray-400">{{ a.enable ?? a.enabled ?? true ? '启用' : '停用' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(a.enable ?? a.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              </div>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 min-h-[32px] line-clamp-2">{{ a.description || a.task_signature || '暂无描述' }}</p>
+              <div class="flex items-center gap-2 text-[10px] text-apple-gray-400 mb-3">
+                <span v-if="a.strategy_id">策略: {{ a.strategy_id }}</span>
+                <span v-if="a.eval_score !== undefined">评分: {{ a.eval_score }}</span>
+                <span v-if="a.usage_count !== undefined">使用: {{ a.usage_count }}次</span>
+              </div>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openAgentModal(a)"><Pencil :size="11" /> 编辑</button>
+                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(a.enable ?? a.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleAgent(a.id)">
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(a.enable ?? a.enabled ?? true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 占位视图：未实现的实体类型 ========================== -->
+        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent'].includes(currentEntityType || '')" class="px-5 pb-6">
+          <div class="flex flex-col items-center justify-center py-16 text-center">
+            <Settings :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">该实体类型（{{ currentEntityType }}）的管理功能正在开发中</p>
           </div>
         </div>
       </main>
     </div>
 
-    <!-- L5: Edit modal -->
+    <!-- ═══════════════ 全局搜索模态 ═══════════════ -->
     <Transition name="modal">
-      <div v-if="modalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeModal" />
-        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col block-card rounded-2xl">
-          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
-            <div class="min-w-0"><div class="flex items-center gap-2"><h3 class="font-semibold truncate">{{ selectedConfig?.name }}</h3><span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full" :class="readOnly ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500' : 'bg-success-green/10 text-success-green'"><span class="w-1.5 h-1.5 rounded-full" :class="readOnly ? 'bg-apple-gray-400' : 'bg-success-green'" />{{ readOnly ? '只读' : '可配置' }}</span></div><p class="text-xs text-apple-gray-400 mt-0.5">{{ selectedConfig?.desc }}</p></div>
-            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="closeModal"><X :size="18" /></button>
+      <div v-if="searchVisible" class="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSearch" />
+        <div class="relative w-full max-w-lg bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <Search :size="16" class="text-apple-gray-400" />
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜索功能域、实体、参数名..."
+              class="flex-1 text-sm bg-transparent border-none outline-none text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400"
+              autofocus
+              @keydown.escape="closeSearch"
+            />
+            <kbd class="text-[10px] px-1.5 py-0.5 rounded border border-apple-gray-200 dark:border-apple-gray-600 text-apple-gray-400">esc</kbd>
           </div>
-          <div class="px-5 py-4 overflow-y-auto space-y-4">
-            <div v-if="readOnly" class="flex items-start gap-2 text-xs text-warning-orange bg-warning-orange/10 rounded-lg p-3"><AlertCircle :size="14" class="flex-shrink-0 mt-0.5" /><span>该配置项当前不可编辑，以下为只读展示。</span></div>
-            <div v-for="field in formFields" :key="field.key">
-              <label class="block text-xs font-medium text-apple-gray-500 mb-1.5">{{ field.label }}</label>
-              <input v-if="field.type === 'text'" v-model="field.value" type="text" :disabled="readOnly" :class="inputClass" />
-              <input v-else-if="field.type === 'number'" v-model.number="field.value" type="number" :disabled="readOnly" :class="inputClass" />
-              <button v-else-if="field.type === 'boolean'" :disabled="readOnly" class="relative w-11 h-6 rounded-full transition-colors disabled:opacity-60" :class="field.value ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="!readOnly && (field.value = !field.value)"><span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform" :class="field.value ? 'translate-x-5' : ''" /></button>
-              <select v-else-if="field.type === 'enum'" :value="String(field.value)" :disabled="readOnly" :class="inputClass" @change="field.value = ($event.target as HTMLSelectElement).value">
-                <option v-for="opt in field.options" :key="String(opt.value)" :value="opt.value">{{ opt.label }}</option>
-              </select>
-              <textarea v-else-if="field.type === 'json'" :value="String(field.value)" :disabled="readOnly" rows="4" :class="`${inputClass} font-mono text-xs`" @input="field.value = ($event.target as HTMLTextAreaElement).value" />
-              <p v-if="jsonErrors[field.key]" class="text-xs text-error-red mt-1">{{ jsonErrors[field.key] }}</p>
-            </div>
+          <div v-if="searchResults.length > 0" class="max-h-64 overflow-y-auto py-1">
+            <button
+              v-for="item in searchResults" :key="`${item.sectionKey}/${item.subKey}`"
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-apple-gray-50 dark:hover:bg-apple-gray-700 transition-colors"
+              @click="navigateFromSearch(item.sectionKey, item.subKey)"
+            >
+              <ChevronRight :size="13" class="text-apple-gray-400" />
+              <div>
+                <span class="text-apple-gray-900 dark:text-apple-gray-50">{{ item.subLabel }}</span>
+                <span class="text-xs text-apple-gray-400 ml-2">{{ item.sectionLabel }}</span>
+              </div>
+            </button>
           </div>
-          <div class="flex items-center justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
-            <button class="btn-secondary" @click="closeModal">取消</button>
-            <button v-if="!readOnly" class="btn-primary flex items-center gap-1.5" :disabled="submitting" @click="submitForm"><Loader2 v-if="submitting" :size="14" class="animate-spin" /><Save v-else :size="14" />{{ submitting ? '保存中...' : '保存' }}</button>
+          <div v-else-if="searchQuery.trim()" class="py-8 text-center text-sm text-apple-gray-400">
+            未找到匹配项
           </div>
         </div>
       </div>
     </Transition>
 
-    <Transition name="fade">
-      <div v-if="toastVisible" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg text-sm font-medium shadow-lg" :class="toastType === 'success' ? 'bg-success-green text-white' : 'bg-error-red text-white'">{{ toastMsg }}</div>
+    <!-- ═══════════════ Provider 模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="providerModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeProviderModal" />
+        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingProvider ? '编辑提供商' : '添加 LLM 提供商' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">配置 API 端点与密钥</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeProviderModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">名称 *</label>
+              <input v-model="providerForm.name" type="text" :class="inputClass" placeholder="OpenAI / DeepSeek" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">API URL *</label>
+              <input v-model="providerForm.url" type="text" :class="inputClass" placeholder="https://api.openai.com/v1" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">API Key</label>
+              <input v-model="providerForm.apiKey" type="password" :class="inputClass" placeholder="sk-..." />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeProviderModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="providerSubmitting || !providerForm.name.trim()" @click="submitProviderForm">
+              <Loader2 v-if="providerSubmitting" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ Model 模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="modelModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeModelModal" />
+        <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingModel ? '编辑模型' : '添加 LLM 模型' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">配置模型名称、用途与配额</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeModelModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模型名称 *</label>
+                <input v-model="modelForm.title" type="text" :class="inputClass" placeholder="gpt-4o" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">用途类型</label>
+                <select v-model="modelForm.usage" :class="inputClass">
+                  <option value="text">文本生成 (text)</option>
+                  <option value="vision">多模态 (vision)</option>
+                  <option value="embedding">向量化 (embedding)</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Provider</label>
+              <select v-model="modelForm.providerId" :class="inputClass">
+                <option v-for="p in providers" :key="p.id" :value="p.id">{{ p._displayName || p.id }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Max Tokens</label>
+              <input v-model.number="modelForm.maxTokens" type="number" :class="inputClass" />
+            </div>
+            <fieldset class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg p-3">
+              <legend class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400 px-1">Token 配额（0 = 不限制）</legend>
+              <div class="grid grid-cols-3 gap-2">
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日 Token</label><input v-model.number="modelForm.quotaTokensPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周 Token</label><input v-model.number="modelForm.quotaTokensPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月 Token</label><input v-model.number="modelForm.quotaTokensPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+              </div>
+              <div class="grid grid-cols-3 gap-2 mt-2">
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日调用</label><input v-model.number="modelForm.quotaCallsPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周调用</label><input v-model.number="modelForm.quotaCallsPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="modelForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+              </div>
+            </fieldset>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeModelModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="modelSubmitting || !modelForm.title.trim()" @click="submitModelForm">
+              <Loader2 v-if="modelSubmitting" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ Soul 模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="soulModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSoulModal" />
+        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingSoul ? '编辑 Soul' : '添加 Soul' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">定义 Agent 的人格角色</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeSoulModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">名称 *</label>
+              <input v-model="soulForm.name" type="text" :class="inputClass" placeholder="例如：专业的编程助手" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">人格描述 *</label>
+              <textarea v-model="soulForm.description" :class="inputClass" rows="5" placeholder="描述角色、语气、行为准则..." />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">特性标签（逗号分隔）</label>
+              <input v-model="soulForm.traits" type="text" :class="inputClass" placeholder="专业,高效,幽默" />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSoulModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="soulSubmitting || !soulForm.name.trim()" @click="submitSoulForm">
+              <Loader2 v-if="soulSubmitting" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ Skill 模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="skillModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSkillModal" />
+        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingSkill ? '编辑 Skill' : '添加 Skill' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">编写技能代码（Node.js 沙箱执行）</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeSkillModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">名称 *</label>
+              <input v-model="skillForm.name" type="text" :class="inputClass" placeholder="技能名称" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">描述</label>
+              <input v-model="skillForm.description" type="text" :class="inputClass" placeholder="技能描述（用于 Agent 匹配）" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">执行代码 *</label>
+              <textarea v-model="skillForm.work" :class="[inputClass, 'font-mono text-xs resize-y']" rows="6" placeholder="module.exports = async function(ctx) { ... }" />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSkillModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="skillSubmitting || !skillForm.name.trim()" @click="submitSkillForm">
+              <Loader2 v-if="skillSubmitting" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ Agent 模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="agentModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeAgentModal" />
+        <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingAgent ? '编辑 Agent' : '创建 Agent' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">配置 Agent 名称、类型与绑定</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeAgentModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Agent 名称 *</label>
+                <input v-model="agentForm.name" type="text" :class="inputClass" placeholder="代码审查Agent" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Agent 类型 *</label>
+                <select v-model="agentForm.type" :class="inputClass">
+                  <option value="WORKER">WORKER</option>
+                  <option value="PLANNER">PLANNER</option>
+                  <option value="WRITER">WRITER</option>
+                  <option value="EVOLUTOR">EVOLUTOR</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">描述</label>
+              <textarea v-model="agentForm.description" :class="inputClass" rows="2" placeholder="Agent 描述" />
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">策略 ID</label>
+                <input v-model="agentForm.strategyId" type="text" :class="inputClass" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">LLM ID</label>
+                <input v-model="agentForm.llmId" type="text" :class="inputClass" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Soul ID</label>
+                <select v-model="agentForm.soulId" :class="inputClass">
+                  <option value="">无</option>
+                  <option v-for="s in souls" :key="s.id" :value="s.id">{{ s.name || s.id }}</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">任务签名</label>
+              <input v-model="agentForm.taskSignature" type="text" :class="inputClass" placeholder="匹配任务复用的签名" />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeAgentModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="agentSubmitting || !agentForm.name.trim()" @click="submitAgentForm">
+              <Loader2 v-if="agentSubmitting" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Toast -->
+    <Transition name="toast">
+      <div
+        v-if="toastVisible"
+        class="fixed top-6 right-6 z-[100] flex items-start gap-3 px-5 py-3.5 rounded-xl shadow-xl border max-w-md"
+        :class="toastType === 'error'
+          ? 'bg-error-red/10 border-error-red/20 text-error-red'
+          : 'bg-success-green/10 border-success-green/20 text-success-green'"
+      >
+        <AlertCircle v-if="toastType === 'error'" :size="18" class="flex-shrink-0 mt-0.5" />
+        <Check v-else :size="18" class="flex-shrink-0 mt-0.5" />
+        <span class="text-sm font-medium leading-snug">{{ toastMessage }}</span>
+      </div>
     </Transition>
   </div>
 </template>
 
 <style scoped>
-.modal-enter-active { transition: all 0.2s ease-out; }
-.modal-leave-active { transition: all 0.15s ease-in; }
-.modal-enter-from { opacity: 0; }
-.modal-enter-from > div:not(.absolute) { transform: scale(0.95); }
-.modal-leave-to { opacity: 0; }
-.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.toast-enter-active { transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
+.toast-leave-active { transition: all 0.2s ease; }
+.toast-enter-from { opacity: 0; transform: translateX(100%) scale(0.95); }
+.toast-leave-to { opacity: 0; transform: translateX(20px) scale(0.95); }
+
+.modal-enter-active { transition: opacity 0.2s ease; }
+.modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
 </style>
