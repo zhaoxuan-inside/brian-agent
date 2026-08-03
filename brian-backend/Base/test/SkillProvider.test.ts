@@ -58,8 +58,10 @@ import { Operator } from '../shared/query';
 function makeSkillData(overrides?: Partial<SkillData>): SkillData {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
+    name: `Skill-${suffix}`.slice(0, 10),
     skill_brief: `测试 Skill ${suffix}`,
-    work: `result = "执行成功: ${suffix}"`,
+    skill_md: `# 测试 Skill ${suffix}\n\n## 操作\nresult = "执行成功: ${suffix}";`,
+    scripts: [{ name: 'test.js', content: `result = "执行成功: ${suffix}";` }],
     ...overrides,
   };
 }
@@ -233,7 +235,7 @@ describe('SkillProvider', () => {
 
       expect(getOut.skill).toBeTruthy();
       expect(getOut.skill!.skill_brief).toBe('天气查询');
-      expect(getOut.skill!.work).toBe(data.work);
+      expect(getOut.skill!.skill_md).toBe(data.skill_md);
     });
 
     it('enable 应默认为 true', async () => {
@@ -267,9 +269,9 @@ describe('SkillProvider', () => {
     it('应支持所有可选字段（scripts/references/assets）', async () => {
       const input = new AddSkillInput();
       input.data = makeSkillData({
-        scripts: '/data/skills/test/scripts',
-        references: '/data/skills/test/references',
-        assets: '/data/skills/test/assets',
+        scripts: [{ name: 'test.sh', content: 'echo test' }],
+        references: [{ name: 'doc.md', content: '# doc' }],
+        assets: [{ name: 'img.png', content: '...' }],
       });
       const out = new AddSkillOutput();
       await skillAccess.addSkill(input, new SkillContext(), out);
@@ -279,9 +281,9 @@ describe('SkillProvider', () => {
       const getOut = new GetSkillOutput();
       await skillAccess.getSkill(getInput, new SkillContext(), getOut);
 
-      expect(getOut.skill!.scripts).toBe('/data/skills/test/scripts');
-      expect(getOut.skill!.references).toBe('/data/skills/test/references');
-      expect(getOut.skill!.assets).toBe('/data/skills/test/assets');
+      expect(getOut.skill!.scripts).toEqual([{ name: 'test.sh', content: 'echo test' }]);
+      expect(getOut.skill!.references).toEqual([{ name: 'doc.md', content: '# doc' }]);
+      expect(getOut.skill!.assets).toEqual([{ name: 'img.png', content: '...' }]);
     });
 
     it('每个 Skill 的 ID 应唯一', async () => {
@@ -325,9 +327,9 @@ describe('SkillProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
 
-    it('work 为空应抛出 ValidationError', async () => {
+    it('skill_md 为空应抛出 ValidationError', async () => {
       const input = new AddSkillInput();
-      input.data = makeSkillData({ work: '' });
+      input.data = makeSkillData({ skill_md: '' });
       const out = new AddSkillOutput();
 
       await expect(
@@ -465,11 +467,11 @@ describe('SkillProvider', () => {
   describe('soSkill', () => {
     beforeEach(async () => {
       const skills = [
-        { skill_brief: '天气查询', work: 'result = params.city' },
-        { skill_brief: '翻译服务', work: 'result = params.text' },
-        { skill_brief: '代码生成', work: 'result = params.prompt' },
-        { skill_brief: '天气分析', work: 'result = params.data' },
-        { skill_brief: '邮件发送', work: 'result = "done"' },
+        { name: '天气查询', skill_brief: '天气查询', skill_md: '# 天气查询\n\n```js\nresult = params.city;\n```' },
+        { name: '翻译服务', skill_brief: '翻译服务', skill_md: '# 翻译服务\n\n```js\nresult = params.text;\n```' },
+        { name: '代码生成', skill_brief: '代码生成', skill_md: '# 代码生成\n\n```js\nresult = params.prompt;\n```' },
+        { name: '天气分析', skill_brief: '天气分析', skill_md: '# 天气分析\n\n```js\nresult = params.data;\n```' },
+        { name: '邮件发送', skill_brief: '邮件发送', skill_md: '# 邮件发送\n\n```js\nresult = "done";\n```' },
       ];
 
       for (const s of skills) {
@@ -704,7 +706,7 @@ describe('SkillProvider', () => {
       updateInput.conditions = [
         { field: 'skill_brief', operator: Operator.EQ, value: '原始 Skill' },
       ];
-      updateInput.data = { work: 'result = "new work"' };
+      updateInput.data = { skill_md: 'result = "new skill_md"' };
       const updateOut = new UpdateSkillOutput();
       const result = await skillAccess.updateSkill(
         updateInput,
@@ -766,9 +768,9 @@ describe('SkillProvider', () => {
       const updateInput = new UpdateSkillInput();
       updateInput.id = skillId;
       updateInput.data = {
-        scripts: '/new/scripts',
-        references: '/new/references',
-        assets: '/new/assets',
+        scripts: [{ name: 'new.sh', content: 'new' }],
+        references: [{ name: 'new.md', content: 'new' }],
+        assets: [{ name: 'new.png', content: 'new' }],
       };
       await skillAccess.updateSkill(
         updateInput,
@@ -780,9 +782,9 @@ describe('SkillProvider', () => {
       getInput.id = skillId;
       const getOut = new GetSkillOutput();
       await skillAccess.getSkill(getInput, new SkillContext(), getOut);
-      expect(getOut.skill!.scripts).toBe('/new/scripts');
-      expect(getOut.skill!.references).toBe('/new/references');
-      expect(getOut.skill!.assets).toBe('/new/assets');
+      expect(getOut.skill!.scripts).toEqual([{ name: 'new.sh', content: 'new' }]);
+      expect(getOut.skill!.references).toEqual([{ name: 'new.md', content: 'new' }]);
+      expect(getOut.skill!.assets).toEqual([{ name: 'new.png', content: 'new' }]);
     });
 
     it('不存在的 ID 应返回 affected_rows=0（不抛错）', async () => {
@@ -838,7 +840,8 @@ describe('SkillProvider', () => {
     beforeEach(async () => {
       const data = makeSkillData({
         skill_brief: '加法运算',
-        work: 'result = Number(params.a) + Number(params.b)',
+        skill_md: '# 加法\nresult = Number(params.a) + Number(params.b)',
+        scripts: [{ name: 'add.js', content: 'result = Number(params.a) + Number(params.b)' }],
       });
       const input = new AddSkillInput();
       input.data = data;
@@ -865,7 +868,8 @@ describe('SkillProvider', () => {
     it('应支持字符串处理', async () => {
       const data = makeSkillData({
         skill_brief: '字符串拼接',
-        work: 'result = "Hello, " + params.name + "!"',
+        skill_md: '# 字符串拼接\nresult = "Hello, " + params.name + "!"',
+        scripts: [{ name: 'str.js', content: 'result = "Hello, " + params.name + "!"' }],
       });
       const addInput = new AddSkillInput();
       addInput.data = data;
@@ -884,7 +888,8 @@ describe('SkillProvider', () => {
     it('应支持复杂表达式', async () => {
       const data = makeSkillData({
         skill_brief: '复杂计算',
-        work: 'result = params.items.reduce((sum, n) => sum + n, 0)',
+        skill_md: '# 复杂计算\nresult = params.items.reduce((sum, n) => sum + n, 0)',
+        scripts: [{ name: 'sum.js', content: 'result = params.items.reduce((sum, n) => sum + n, 0)' }],
       });
       const addInput = new AddSkillInput();
       addInput.data = data;
@@ -903,7 +908,8 @@ describe('SkillProvider', () => {
     it('应支持字符串模板拼接', async () => {
       const data = makeSkillData({
         skill_brief: '天气查询',
-        work: 'result = `城市 ${params.city} 今天天气 ${params.weather}`',
+        skill_md: '# 天气查询\nresult = `城市 ${params.city} 今天天气 ${params.weather}`',
+        scripts: [{ name: 'tmpl.js', content: 'result = `城市 ${params.city} 今天天气 ${params.weather}`' }],
       });
       const addInput = new AddSkillInput();
       addInput.data = data;
@@ -922,7 +928,8 @@ describe('SkillProvider', () => {
     it('console.log 应为空实现（不抛错）', async () => {
       const data = makeSkillData({
         skill_brief: '带日志的 Skill',
-        work: 'console.log("不应输出"); result = "done"',
+        skill_md: '# 带日志\nconsole.log("不应输出"); result = "done"',
+        scripts: [{ name: 'log.js', content: 'console.log("不应输出"); result = "done"' }],
       });
       const addInput = new AddSkillInput();
       addInput.data = data;
@@ -1101,7 +1108,8 @@ describe('SkillProvider', () => {
     it('超时脚本应被终止', async () => {
       const data = makeSkillData({
         skill_brief: '无限循环',
-        work: 'while (true) {}; result = "done"',
+        skill_md: '# 无限循环\nwhile (true) {}; result = "done"',
+        scripts: [{ name: 'loop.js', content: 'while (true) {}; result = "done"' }],
       });
       const addInput = new AddSkillInput();
       addInput.data = data;
@@ -1523,13 +1531,13 @@ describe('SkillProvider', () => {
       expect(skill.created).toBeGreaterThan(0);
       expect(skill.updated).toBeGreaterThan(0);
       expect(typeof skill.skill_brief).toBe('string');
-      expect(typeof skill.work).toBe('string');
+      expect(typeof skill.skill_md).toBe('string');
       expect(typeof skill.enable).toBe('boolean');
     });
 
     it('scripts/references/assets 未传时应为 undefined', async () => {
       const input = new AddSkillInput();
-      input.data = { skill_brief: '最小值测试', work: 'result = 1' };
+      input.data = { name: '最小值', skill_brief: '最小值测试', skill_md: 'result = 1' };
       const out = new AddSkillOutput();
       await skillAccess.addSkill(input, new SkillContext(), out);
 

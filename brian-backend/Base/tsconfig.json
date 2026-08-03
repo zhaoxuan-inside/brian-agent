@@ -19,5 +19,5 @@
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "vitest.config.ts", "MCPProvider/vitest.config.ts", "MCPProvider/tests"]
+  "exclude": ["node_modules", "dist", "vitest.config.ts", "test", "MCPProvider/vitest.config.ts", "MCPProvider/tests"]
 }

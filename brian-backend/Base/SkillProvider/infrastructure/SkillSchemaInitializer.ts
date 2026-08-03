@@ -32,15 +32,16 @@ export class SkillSchemaInitializer {
     // skill 表
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_TABLE}" (
-        "id"          TEXT    NOT NULL PRIMARY KEY,
-        "created"     INTEGER NOT NULL,
-        "updated"     INTEGER NOT NULL,
-        "skill_brief" TEXT    NOT NULL,
-        "work"        TEXT    NOT NULL,
-        "scripts"     TEXT,
-        "references"  TEXT,
-        "assets"      TEXT,
-        "enable"      INTEGER NOT NULL DEFAULT 1
+        "id"            TEXT    NOT NULL PRIMARY KEY,
+        "created"       INTEGER NOT NULL,
+        "updated"       INTEGER NOT NULL,
+        "name"          TEXT    NOT NULL,
+        "skill_brief"   TEXT    NOT NULL,
+        "skill_md"      TEXT    NOT NULL,
+        "scripts"       TEXT,
+        "references"    TEXT,
+        "assets"        TEXT,
+        "enable"        INTEGER NOT NULL DEFAULT 1
       )
     `);
     this.relationDb.executeRaw(

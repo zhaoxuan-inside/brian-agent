@@ -1477,7 +1477,7 @@ describe('ConfigService', () => {
 
   describe('Skill proxy methods', () => {
     it('TC-CFG-130: addSkillProxy delegates to addSkill with params', async () => {
-      const testInput = { data: { skill_brief: 'test-skill', work: 'do something' } };
+      const testInput = { data: { name: 'test-skill', skill_brief: 'test-skill', skill_md: 'do something' } };
       const testCtx = ctx();
       const testOutput = {};
       const result = await (service as any).addSkillProxy(testInput, testCtx, testOutput);

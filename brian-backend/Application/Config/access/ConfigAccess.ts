@@ -41,6 +41,7 @@ import type {
 import type {
   AddSkillInput, AddSkillOutput, UpdateSkillInput, UpdateSkillOutput,
   DelSkillInput, DelSkillOutput, SoSkillInput, SoSkillOutput, GetSkillInput, GetSkillOutput,
+  ExecSkillInput, ExecSkillOutput,
   SkillContext,
 } from '@brian-agent/base';
 import type {
@@ -329,6 +330,10 @@ export class ConfigAccess {
 
   async soSkill(input: SoSkillInput, context: SkillContext, output: SoSkillOutput): Promise<boolean> {
     return this.service.soSkillProxy(input, context, output);
+  }
+
+  async execSkill(input: ExecSkillInput, context: SkillContext, output: ExecSkillOutput): Promise<boolean> {
+    return this.service.execSkillProxy(input, context, output);
   }
 
   async getSkill(input: GetSkillInput, context: SkillContext, output: GetSkillOutput): Promise<boolean> {

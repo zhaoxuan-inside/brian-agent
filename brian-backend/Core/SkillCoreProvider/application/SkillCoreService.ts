@@ -418,9 +418,9 @@ export class SkillCoreService {
     variables: Record<string, unknown>,
   ): Promise<string> {
     if (!templateId) {
-      const skills = variables.skills as Array<{ skill_brief: string; work: string }> | undefined;
+      const skills = variables.skills as Array<{ skill_brief: string; skill_md: string }> | undefined;
       const skillDescriptions = skills
-        ? skills.map((s) => `- ${s.skill_brief}: ${s.work}`).join('\n')
+        ? skills.map((s) => `- ${s.skill_brief}\n${s.skill_md}`).join('\n\n')
         : '(无可用 Skill)';
       return [
         '你是一个 Skill 匹配助手。请根据以下可用 Skill 列表，按照相关性从高到低排序，',

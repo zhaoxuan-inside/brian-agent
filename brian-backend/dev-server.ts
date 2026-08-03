@@ -70,6 +70,7 @@ import {
 import {
   SkillContext, SoSkillInput, SoSkillOutput, AddSkillInput, AddSkillOutput,
   UpdateSkillInput, UpdateSkillOutput, DelSkillInput, DelSkillOutput, GetSkillInput, GetSkillOutput,
+  ExecSkillInput, ExecSkillOutput,
 } from './Base/SkillProvider';
 import {
   McpContext, ListMcpInput, ListMcpOutput,
@@ -645,21 +646,34 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { skills: output.list || [] });
 
       } else if (method === 'POST' && pathname === '/api/skill') {
-        const input = Object.assign(new AddSkillInput(), body);
+        const input = Object.assign(new AddSkillInput(), { data: body });
         const output = new AddSkillOutput();
         const context = new SkillContext();
         await ctx.configAccess.addSkill(input, context, output);
-        sendJson(res, 200, { id: output.skill_id, name: body.skill_brief || 'new-skill' });
+        sendJson(res, 200, { id: output.id, name: body.name || body.skill_brief || 'new-skill' });
+
+      } else if (method === 'POST' && /\/api\/skill\/[^/]+\/exec$/.test(pathname)) {
+        const id = pathname.split('/api/skill/')[1].split('/exec')[0];
+        const input = Object.assign(new ExecSkillInput(), { id, params: (body as Record<string, unknown>).params || body });
+        const output = new ExecSkillOutput();
+        const context = new SkillContext();
+        await ctx.configAccess.execSkill(input, context, output);
+        sendJson(res, 200, { result: output.result });
 
       } else if (method === 'POST' && /\/api\/skill\/[^/]+\/toggle$/.test(pathname)) {
         sendJson(res, 200, { success: true });
 
       } else if (method === 'PUT' && /\/api\/skill\/[^/]+$/.test(pathname)) {
-        sendJson(res, 200, { success: true });
+        const id = pathname.split('/api/skill/')[1];
+        const input = Object.assign(new UpdateSkillInput(), { id, data: body });
+        const output = new UpdateSkillOutput();
+        const context = new SkillContext();
+        await ctx.configAccess.updateSkill(input, context, output);
+        sendJson(res, 200, { success: true, affected_rows: output.affected_rows });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/skill/')) {
         const id = pathname.split('/api/skill/')[1];
-        const input = Object.assign(new DelSkillInput(), { skill_ids: [id] });
+        const input = Object.assign(new DelSkillInput(), { ids: [id] });
         const output = new DelSkillOutput();
         const context = new SkillContext();
         await ctx.configAccess.delSkill(input, context, output);

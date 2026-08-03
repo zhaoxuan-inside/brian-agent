@@ -316,6 +316,18 @@ async function loadPrompts() {
 
 const promptPlaceholder = '请将以下内容翻译为{{target_lang}}：\n\n原文：{{source}}\n\n要求：{{requirement}}'
 
+const toolsSchemaPlaceholder = `{
+  "name": "get_weather",
+  "description": "获取指定城市的天气信息",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "city": { "type": "string", "description": "城市名称" }
+    },
+    "required": ["city"]
+  }
+}`
+
 const promptModalVisible = ref(false)
 const editingPrompt = ref<{ id: string; title: string; brief: string; enabled: boolean } | null>(null)
 const promptForm = ref({ title: '', brief: '', template: '', enabled: true })
@@ -918,23 +930,50 @@ async function handleToggleSoul(soulId: string) {
 interface BackendSkill {
   id: string
   name?: string
-  description?: string
-  work?: string
+  skill_brief?: string
+  skill_md?: string
+  scripts?: { name: string; content: string }[]
+  references?: { name: string; content: string }[]
+  assets?: { name: string; content: string }[]
   enabled?: boolean
+  enable?: boolean
+}
+
+interface SkillFileEntry {
+  name: string
+  content: string
 }
 
 const skills = ref<BackendSkill[]>([])
 const skillsLoading = ref(false)
 const skillModalVisible = ref(false)
 const editingSkill = ref<BackendSkill | null>(null)
-const skillForm = ref({ name: '', description: '', work: '' })
+const skillForm = ref({
+  name: '',
+  skillBrief: '',
+  skillMd: '',
+  scripts: [] as SkillFileEntry[],
+  references: [] as SkillFileEntry[],
+  assets: [] as SkillFileEntry[],
+})
 const skillSubmitting = ref(false)
+
+function addFileEntry(arr: SkillFileEntry[]) {
+  arr.push({ name: '', content: '' })
+}
+function removeFileEntry(arr: SkillFileEntry[], idx: number) {
+  arr.splice(idx, 1)
+}
 
 async function loadSkills() {
   skillsLoading.value = true
   try {
     const res = await skillApi.list()
-    skills.value = (res.skills || []) as BackendSkill[]
+    skills.value = ((res.skills || []) as BackendSkill[]).map(s => ({
+      ...s,
+      name: s.name || s.skill_brief || '',
+      enabled: s.enabled ?? s.enable ?? true,
+    }))
   } catch {
     skills.value = []
   } finally {
@@ -945,10 +984,17 @@ async function loadSkills() {
 function openSkillModal(skill?: BackendSkill) {
   if (skill) {
     editingSkill.value = skill
-    skillForm.value = { name: skill.name || '', description: skill.description || '', work: skill.work || '' }
+    skillForm.value = {
+      name: skill.name || '',
+      skillBrief: skill.skill_brief || '',
+      skillMd: skill.skill_md || '',
+      scripts: (skill.scripts || []).map(f => ({ ...f })),
+      references: (skill.references || []).map(f => ({ ...f })),
+      assets: (skill.assets || []).map(f => ({ ...f })),
+    }
   } else {
     editingSkill.value = null
-    skillForm.value = { name: '', description: '', work: '' }
+    skillForm.value = { name: '', skillBrief: '', skillMd: '', scripts: [], references: [], assets: [] }
   }
   skillModalVisible.value = true
 }
@@ -958,7 +1004,14 @@ function closeSkillModal() { skillModalVisible.value = false; editingSkill.value
 async function submitSkillForm() {
   skillSubmitting.value = true
   try {
-    const data = { skill_brief: skillForm.value.name, description: skillForm.value.description, work: skillForm.value.work }
+    const data: Record<string, unknown> = {
+      name: skillForm.value.name.trim(),
+      skill_brief: skillForm.value.skillBrief.trim() || skillForm.value.name.trim(),
+      skill_md: skillForm.value.skillMd,
+      scripts: skillForm.value.scripts.length > 0 ? skillForm.value.scripts : undefined,
+      references: skillForm.value.references.length > 0 ? skillForm.value.references : undefined,
+      assets: skillForm.value.assets.length > 0 ? skillForm.value.assets : undefined,
+    }
     if (editingSkill.value) {
       await skillApi.update(editingSkill.value.id, data)
     } else {
@@ -1600,7 +1653,7 @@ watch(activeSubSection, async (val) => {
                 </div>
                 <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(sk.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
               </div>
-              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">{{ sk.description || '暂无描述' }}</p>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">{{ sk.skill_brief || sk.name || '暂无描述' }}</p>
               <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
                 <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openSkillModal(sk)"><Pencil :size="11" /> 编辑</button>
                 <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleSkill(sk.id)">
@@ -2025,31 +2078,64 @@ watch(activeSubSection, async (val) => {
     <Transition name="modal">
       <div v-if="skillModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSkillModal" />
-        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+        <div class="relative w-full max-w-2xl max-h-[90vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
               <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingSkill ? '编辑 Skill' : '添加 Skill' }}</h3>
-              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">编写技能代码（Node.js 沙箱执行）</p>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">标准构成: name + skill_brief + SKILL.md + scripts/ + references/ + assets/</p>
             </div>
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeSkillModal"><X :size="18" /></button>
           </div>
-          <div class="px-5 py-4 overflow-y-auto space-y-4">
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">名称 *</label>
-              <input v-model="skillForm.name" type="text" :class="inputClass" placeholder="技能名称" />
+          <div class="px-5 py-4 overflow-y-auto space-y-4 flex-1">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">
+                  Skill 名称 *
+                  <span v-if="skillForm.name.length > 10" class="text-error-red">({{ skillForm.name.length }}/10)</span>
+                </label>
+                <input v-model="skillForm.name" type="text" :class="inputClass" maxlength="20" placeholder="天气预报" />
+                <p class="text-[10px] text-apple-gray-400 mt-0.5">≤10 字符，前端展示用</p>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简述 (skill_brief) *</label>
+                <input v-model="skillForm.skillBrief" type="text" :class="inputClass" placeholder="根据城市名称获取天气信息" />
+                <p class="text-[10px] text-apple-gray-400 mt-0.5">简述用途，与 SKILL.md 一起用于 LLM 匹配</p>
+              </div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">描述</label>
-              <input v-model="skillForm.description" type="text" :class="inputClass" placeholder="技能描述（用于 Agent 匹配）" />
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">SKILL.md 内容 * <span class="font-normal text-apple-gray-400">— 技能的"大脑"，LLM 筛选的核心线索</span></label>
+              <textarea v-model="skillForm.skillMd" :class="[inputClass, 'font-mono text-xs resize-y']" rows="10" placeholder="# 技能名称&#10;&#10;## 何时使用&#10;当用户需要...&#10;&#10;## 如何执行&#10;1. 接收参数...&#10;2. 调用脚本...&#10;3. 返回结果..." />
+              <p class="text-[10px] text-apple-gray-400 mt-0.5">Markdown 格式。智能体据此判断何时调用、如何执行此技能</p>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">执行代码 *</label>
-              <textarea v-model="skillForm.work" :class="[inputClass, 'font-mono text-xs resize-y']" rows="6" placeholder="module.exports = async function(ctx) { ... }" />
-            </div>
+
+            <!-- 文件目录编辑区 -->
+            <template v-for="dir in [{key:'scripts',label:'scripts/',icon:'Terminal'},{key:'references',label:'references/',icon:'FileText'},{key:'assets',label:'assets/',icon:'Image'}]" :key="dir.key">
+              <div class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
+                <div class="flex items-center justify-between mb-2">
+                  <label class="text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300">
+                    <component :is="dir.icon === 'Terminal' ? Terminal : dir.icon === 'FileText' ? FileText : Globe" :size="12" class="inline-block mr-1" />
+                    {{ dir.label }} <span class="font-normal text-apple-gray-400">({{ (skillForm as any)[dir.key].length }} 个文件)</span>
+                  </label>
+                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors" @click="addFileEntry((skillForm as any)[dir.key])">
+                    <Plus :size="11" /> 添加
+                  </button>
+                </div>
+                <div v-if="(skillForm as any)[dir.key].length === 0" class="text-[11px] text-apple-gray-400 py-2">暂无文件</div>
+                <div v-for="(file, fi) in (skillForm as any)[dir.key]" :key="fi" class="mb-2 p-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1'" placeholder="文件名" style="flex:1" />
+                    <button class="p-1 text-error-red hover:bg-error-red/10 rounded transition-colors" title="移除" @click="removeFileEntry((skillForm as any)[dir.key], fi)">
+                      <Trash2 :size="12" />
+                    </button>
+                  </div>
+                  <textarea v-model="file.content" :class="[inputClass, 'font-mono !text-xs resize-y']" rows="3" placeholder="文件内容..." />
+                </div>
+              </div>
+            </template>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSkillModal">取消</button>
-            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="skillSubmitting || !skillForm.name.trim()" @click="submitSkillForm">
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="skillSubmitting || !skillForm.name.trim() || skillForm.name.length > 10 || !skillForm.skillMd.trim()" @click="submitSkillForm">
               <Loader2 v-if="skillSubmitting" :size="14" class="animate-spin" />
               <Save v-else :size="14" />
               保存

@@ -16,29 +16,52 @@ import type { Condition, OrderBy, Page } from '../../shared/query';
 export class SkillContext extends Context {}
 
 /**
+ * 文件条目：scripts / references / assets 目录中的单个文件。
+ */
+export interface FileEntry {
+  /** 文件名（含相对路径，如 "fetch_data.py"、"subdir/parse.sh"） */
+  name: string;
+  /** 文件内容（文本） */
+  content: string;
+}
+
+/**
  * Skill 数据对象（SkillData）。
  *
  * 用于新增 Skill；更新时使用 Partial<SkillData> 仅传入待更新字段。
  * id / created / updated 为系统字段，由 Provider 维护，不通过 Data 对象传入。
  *
- * Skill 由五部分组成：
- * - skill_brief：元数据，表明应用场景（必需）；
- * - work：操作指南，指明如何完成指定应用场景的工作（必需）；
- * - scripts：脚本存放路径（可选）；
- * - references：深度参考资料存放路径（可选）；
- * - assets：静态资源存放路径（可选）。
+ * 标准 Skill 由以下部分构成（参考 Anthropic Claude Code Skills 模式）：
+ *
+ * | 部分           | 必需 | 核心作用 |
+ * |---------------|------|---------|
+ * | SKILL.md      | ✅   | 技能的"大脑"，智能体判断何时使用、以及如何执行任务的完整信息 |
+ * | scripts/ 目录  | ❌   | 可执行脚本（Python/Bash），确定性操作避免 LLM 幻觉 |
+ * | references/ 目录| ❌  | 参考文档，智能体需要时查阅，不预占上下文 |
+ * | assets/ 目录   | ❌   | 模板、图片等静态资源 |
+ *
+ * 此外 Skill 还需要一个简短名称(name)和一个简述(skill_brief)。
+ * skill_md 内容是模型筛选 Skill 能否完成指定工作的核心线索。
  */
 export interface SkillData {
-  /** Skill 元数据（应用场景） */
+  /** Skill 简短名称（≤10 字符，前端展示用标题） */
+  name: string;
+  /** Skill 简述（简短描述，与 skill_md 一起用于 LLM 快速匹配筛选） */
   skill_brief: string;
-  /** Skill 操作指南 */
-  work: string;
-  /** 脚本存放路径 */
-  scripts?: string;
-  /** 深度参考资料存放路径 */
-  references?: string;
-  /** 静态资源存放路径 */
-  assets?: string;
+  /**
+   * SKILL.md 内容（Markdown 格式）。
+   *
+   * 技能的"大脑"——包含智能体判断**何时调用**此技能、
+   * 以及**如何执行**任务的完整信息。
+   * 该字段是 LLM 筛选 Skill 能否完成指定工作的核心线索。
+   */
+  skill_md: string;
+  /** scripts/ 目录中的文件列表（可选） */
+  scripts?: FileEntry[];
+  /** references/ 目录中的文件列表（可选） */
+  references?: FileEntry[];
+  /** assets/ 目录中的文件列表（可选） */
+  assets?: FileEntry[];
   /** 是否启用，默认 true；资源级启用/禁用通过 updateSkill 修改该字段实现 */
   enable?: boolean;
 }
