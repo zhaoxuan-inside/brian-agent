@@ -12,7 +12,7 @@ import { LLMAccess } from './Base/LLMProvider';
 import { MCPAccess } from './Base/MCPProvider';
 import { SoulAccess } from './Base/SoulProvider';
 import { SkillAccess } from './Base/SkillProvider';
-import { PromptsAccess } from './Base/PromptsProvider';
+import { PromptsAccess, AddPromptInput, DelPromptInput, UpdatePromptInput } from './Base/PromptsProvider';
 import { GraphDBAccess } from './Base/GraphDBProvider';
 import { MQAccess } from './Base/MQProvider';
 import { LogAccess } from './Base/LogProvider';
@@ -74,6 +74,10 @@ import {
 import {
   McpContext, ListMcpInput, ListMcpOutput,
   SoMcpProviderInput, SoMcpProviderOutput,
+  InstallMcpInput, InstallMcpOutput,
+  StartMcpInput, StartMcpOutput,
+  StopMcpInput, StopMcpOutput,
+  UninstallMcpInput, UninstallMcpOutput,
 } from './Base/MCPProvider';
 import {
   AgentLibraryContext, GetAgentInput, GetAgentOutput,
@@ -298,8 +302,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
-        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number; is_default: number }>(
-          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable", COALESCE(e."is_default", 0) as "is_default" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
+        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(
+          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable", COALESCE(e."is_default", 0) as "is_default", e."model_usage", COALESCE(e."max_tokens", 0) as "max_tokens" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
           [],
         );
         const models = (rows || []).map(r => ({
@@ -313,6 +317,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           supportsTools: true,
           isDefault: !!r.is_default,
           status: r.enable ? 'active' : 'inactive',
+          model_usage: r.model_usage || '',
+          maxTokens: r.max_tokens || 0,
         }));
         sendJson(res, 200, models);
 
@@ -355,8 +361,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const title = pathname.split('/api/config/model/')[1];
         const data = (body as Record<string, unknown>).data || body;
-        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_brief" = ?, "enable" = ? WHERE "llm_title" = ?',
-          [data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, title]); } catch {}
+        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_brief" = ?, "enable" = ?, "model_usage" = ?, "max_tokens" = ? WHERE "llm_title" = ?',
+          [data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, (data.model_usage || ''), (data.maxTokens || 0), title]); } catch {}
         sendJson(res, 200, { success: true, id: title });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
@@ -439,15 +445,20 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let added = 0;
         for (const title of modelIds) {
           if (!title) continue;
-          const input = Object.assign(new AddLLMInput(), {
-            data: { llm_provider_id: providerId, llm_title: title, llm_usage: 'text', enable: false },
-          });
-          const output = new AddLLMOutput();
-          const llmCtx = new LLMContext();
           try {
-            await ctx.configAccess.addLLM(input, llmCtx, output);
+            const cachedRow = ctx.relationDb.queryRaw<{ max_tokens: number | null }>(
+              'SELECT "max_tokens" FROM "llm_model" WHERE "llm_provider_id" = ? AND "llm_title" = ?', [providerId, title],
+            )[0];
+            const maxTokens = cachedRow?.max_tokens || 0;
+            ctx.relationDb.executeRaw(
+              'INSERT OR IGNORE INTO "llm_enable" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_usage", "enable", "max_tokens") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              [IdGenerator.generate(), IdGenerator.now(), IdGenerator.now(), providerId, title, 'text', 0, maxTokens],
+            );
+            if (maxTokens > 0) {
+              try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {}
+            }
             added++;
-          } catch { /* skip duplicates */ }
+          } catch { /* skip */ }
         }
         sendJson(res, 200, { added });
 
@@ -495,6 +506,67 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           status_code: testOutput.status_code,
           message: testOutput.connected !== false ? 'Connected' : (testOutput.error || 'Connection failed'),
         });
+
+      // ---- Prompts ----
+      } else if (method === 'GET' && pathname.startsWith('/api/prompts/')) {
+        const id = pathname.split('/api/prompts/')[1];
+        const row = ctx.relationDb.queryRaw<{ id: string; prompt_template_title: string; prompt_template_brief: string | null; prompt_template: string; enable: number }>(
+          'SELECT "id", "prompt_template_title", "prompt_template_brief", "prompt_template", "enable" FROM "prompt_template" WHERE "id" = ?',
+          [id],
+        )[0];
+        if (row) {
+          sendJson(res, 200, { id: row.id, title: row.prompt_template_title, brief: row.prompt_template_brief || '', template: row.prompt_template, enabled: !!row.enable });
+        } else {
+          sendJson(res, 404, { error: 'Prompt template not found' });
+        }
+
+      } else if (method === 'GET' && pathname === '/api/prompts') {
+        const rows = ctx.relationDb.queryRaw<{ id: string; prompt_template_title: string; prompt_template_brief: string | null; enable: number }>(
+          'SELECT "id", "prompt_template_title", "prompt_template_brief", "enable" FROM "prompt_template" ORDER BY "prompt_template_title" ASC',
+          [],
+        );
+        const prompts = (rows || []).map(r => ({
+          id: r.id,
+          title: r.prompt_template_title,
+          brief: r.prompt_template_brief || '',
+          enabled: !!r.enable,
+        }));
+        sendJson(res, 200, { prompts });
+
+      } else if (method === 'POST' && pathname === '/api/prompts') {
+        const input = Object.assign(new AddPromptInput(), {
+          data: {
+            prompt_template_title: body.title || '',
+            prompt_template_brief: body.brief || undefined,
+            prompt_template: body.template || '',
+            enable: body.enabled !== undefined ? !!body.enabled : true,
+          },
+        });
+        const output: any = { id: '' };
+        await ctx.promptsAccess.addPrompt(input, {} as any, output as any);
+        sendJson(res, 201, { id: output.id });
+
+      } else if (method === 'PUT' && pathname.startsWith('/api/prompts/')) {
+        const id = pathname.split('/api/prompts/')[1];
+        const input = Object.assign(new UpdatePromptInput(), {
+          id,
+          data: {
+            prompt_template_title: body.title,
+            prompt_template_brief: body.brief,
+            prompt_template: body.template,
+            enable: body.enabled !== undefined ? !!body.enabled : undefined,
+          },
+        });
+        const output: any = { affected_rows: 0 };
+        await ctx.promptsAccess.updatePrompt(input, {} as any, output as any);
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'DELETE' && pathname.startsWith('/api/prompts/')) {
+        const id = pathname.split('/api/prompts/')[1];
+        const input = Object.assign(new DelPromptInput(), { ids: [id] });
+        const output: any = { affected_rows: 0 };
+        await ctx.promptsAccess.delPrompt(input, {} as any, output as any);
+        sendJson(res, 200, { success: true });
 
       // ---- Soul ----
       } else if (method === 'GET' && pathname === '/api/config/soul') {
@@ -595,31 +667,62 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- MCP (Standalone) ----
       } else if (method === 'GET' && pathname === '/api/mcp') {
-        const provInput = Object.assign(new SoMcpProviderInput(), {});
-        const provOutput = new SoMcpProviderOutput();
-        const provContext = new McpContext();
-        await ctx.mcpAccess.soMcpProvider(provInput, provContext, provOutput);
-        const providers = provOutput.list || [];
-        if (providers.length === 0) {
-          sendJson(res, 200, { installed: [] });
-        } else {
-          const input = Object.assign(new ListMcpInput(), { mcp_provider_id: providers[0].id });
-          const output = new ListMcpOutput();
-          const context = new McpContext();
-          await ctx.mcpAccess.listMcp(input, context, output);
-          sendJson(res, 200, { installed: output.list || [] });
-        }
+        const insRows = ctx.relationDb.queryRaw<{ id: string; mcp_title: string; mcp_brief: string | null; enable: number }>(
+          'SELECT "id", "mcp_title", "mcp_brief", "enable" FROM "mcp_install" ORDER BY "mcp_title" ASC',
+          [],
+        );
+        sendJson(res, 200, { installed: (insRows || []).map(r => ({ id: r.id, displayName: r.mcp_title, description: r.mcp_brief || '', enabled: !!r.enable })) });
 
       } else if (method === 'GET' && pathname === '/api/mcp/market') {
-        sendJson(res, 200, { market: [] });
-
-      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/toggle$/.test(pathname)) {
-        sendJson(res, 200, { success: true });
+        const provOut = new SoMcpProviderOutput();
+        await ctx.mcpAccess.soMcpProvider(Object.assign(new SoMcpProviderInput(), {}), new McpContext(), provOut);
+        const market: { id: string; name: string; url: string }[] = [];
+        for (const p of provOut.list || []) {
+          try {
+            const listOut = new ListMcpOutput();
+            await ctx.mcpAccess.listMcp(Object.assign(new ListMcpInput(), { mcp_provider_id: p.id }), new McpContext(), listOut);
+            for (const m of listOut.list || []) {
+              market.push({ id: (m as Record<string,unknown>).id as string, name: (m as Record<string,unknown>).mcp_title as string || '', url: (p as Record<string,unknown>).mcp_provider_url as string || '' });
+            }
+          } catch { /* best-effort */ }
+        }
+        sendJson(res, 200, { market });
 
       } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/install$/.test(pathname)) {
+        const segments = pathname.split('/api/mcp/')[1].split('/');
+        const mcpId = segments[0];
+        const provId = (body as Record<string,unknown>).providerId as string || '';
+        const installIn = Object.assign(new InstallMcpInput(), { mcp_provider_id: provId, mcp_id: mcpId });
+        const installOut = new InstallMcpOutput();
+        const insCtx = new McpContext();
+        await ctx.mcpAccess.installMcp(installIn, insCtx, installOut);
+        sendJson(res, 200, { success: true, id: installOut.id });
+
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/toggle$/.test(pathname)) {
+        const id = pathname.split('/api/mcp/')[1].split('/')[0];
+        const row = ctx.relationDb.queryRaw<{ enable: number }>('SELECT "enable" FROM "mcp_install" WHERE "id"=?', [id])[0];
+        if (!row) { sendJson(res, 404, { error: 'MCP not found' }); return; }
+        const newEn = row.enable ? 0 : 1;
+        ctx.relationDb.executeRaw('UPDATE "mcp_install" SET "enable"=?,"updated"=? WHERE "id"=?', [newEn, Date.now(), id]);
+        sendJson(res, 200, { success: true, enabled: !!newEn });
+
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/start$/.test(pathname)) {
+        const id = pathname.split('/api/mcp/')[1].split('/')[0];
+        const startInput = Object.assign(new StartMcpInput(), { id });
+        await ctx.mcpAccess.startMcp(startInput, new McpContext(), new StartMcpOutput());
         sendJson(res, 200, { success: true });
 
-      } else if (method === 'DELETE' && /\/api\/mcp\/[^/]+$/.test(pathname)) {
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/stop$/.test(pathname)) {
+        const id = pathname.split('/api/mcp/')[1].split('/')[0];
+        const stopInput = Object.assign(new StopMcpInput(), { id });
+        await ctx.mcpAccess.stopMcp(stopInput, new McpContext(), new StopMcpOutput());
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'DELETE' && /\/api\/mcp\/[^/]+$/g.test(pathname) && !pathname.includes('/install') && !pathname.includes('/toggle') && !pathname.includes('/start') && !pathname.includes('/stop')) {
+        const id = pathname.split('/api/mcp/')[1];
+        const unInput = Object.assign(new UninstallMcpInput(), { id });
+        const unOutput = new UninstallMcpOutput();
+        await ctx.mcpAccess.uninstallMcp(unInput, new McpContext(), unOutput);
         sendJson(res, 200, { success: true });
 
       // ===== Chat Routes =====

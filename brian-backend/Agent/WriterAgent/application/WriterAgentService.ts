@@ -144,9 +144,9 @@ export class WriterAgentService {
               id: config.write_prompt_template_id,
               variables: {
                 user_query: input.user_query,
-                preferences,
+                preferences: JSON.stringify(preferences),
                 context: contextExtra,
-                agent_results: input.agent_results,
+                agent_results: JSON.stringify(input.agent_results),
                 soul: system,
               },
             }),

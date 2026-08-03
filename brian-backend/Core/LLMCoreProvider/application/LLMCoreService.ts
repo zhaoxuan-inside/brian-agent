@@ -168,8 +168,8 @@ export class LLMCoreService {
       );
     }
 
-    // 4. 调用 LLM 进行排名：选择第一个可用 LLM 作为排名器
-    const rankerLLM = availableLLMs[0];
+    // 4. 调用 LLM 进行排名：优先使用默认模型，否则使用第一个可用 LLM
+    const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
     const execLLMOutput = new ExecLLMOutput();
     await this.llmAccess.execLLM(
       {

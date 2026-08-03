@@ -1287,7 +1287,9 @@ export class ConfigService {
     const prefix = configKey;
 
     if (prefix.startsWith('llm_core.regen_rate') || prefix.startsWith('llm_core.prompt_template_id')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('llm_core.regen_rate')) input.regen_rate = value;
+      if (prefix.startsWith('llm_core.prompt_template_id')) input.prompt_template_id = value as string;
       const output: any = {};
       await this.llmCore.configLLMCore(input, {} as any, output);
       return;
@@ -1299,13 +1301,17 @@ export class ConfigService {
       return;
     }
     if (prefix.startsWith('mcp_core.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value;
+      if (prefix.startsWith('mcp_core.prompt_template_id')) input.prompt_template_id = value as string;
       const output: any = {};
       await this.mcpCore.configMCPCore(input, {} as any, output);
       return;
     }
     if (prefix.startsWith('skill_core.regen_rate') || prefix.startsWith('skill_core.prompt_template_id')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('skill_core.regen_rate')) input.regen_rate = value;
+      if (prefix.startsWith('skill_core.prompt_template_id')) input.prompt_template_id = value as string;
       const output: any = {};
       await this.skillCore.configSkillCore(input, {} as any, output);
       return;
@@ -1317,7 +1323,9 @@ export class ConfigService {
       return;
     }
     if (prefix.startsWith('soul_core.regen_rate') || prefix.startsWith('soul_core.prompt_template_id')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('soul_core.regen_rate')) input.regen_rate = value;
+      if (prefix.startsWith('soul_core.prompt_template_id')) input.prompt_template_id = value as string;
       const output: any = {};
       await this.soulCore.configSoulCore(input, {} as any, output);
       return;
@@ -1389,7 +1397,12 @@ export class ConfigService {
       return;
     }
     if (prefix.startsWith('agent_execution.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('agent_execution.think_prompt_template_id')) input.think_prompt_template_id = value as string;
+      else if (prefix.startsWith('agent_execution.reflect_prompt_template_id')) input.reflect_prompt_template_id = value as string;
+      else if (prefix.startsWith('agent_execution.answer_prompt_template_id')) input.answer_prompt_template_id = value as string;
+      else if (prefix.startsWith('agent_execution.default_max_iterations')) input.default_max_iterations = value as number;
+      else if (prefix.startsWith('agent_execution.async_worker_interval')) input.async_worker_interval = value as number;
       const output: any = {};
       await this.agentExecution.configAgentExecution(input, {} as any, output);
       return;

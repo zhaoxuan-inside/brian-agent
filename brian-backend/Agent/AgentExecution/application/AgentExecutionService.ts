@@ -185,6 +185,7 @@ export class AgentExecutionService {
         Object.assign(new AnswerInput(), {
           agent_id: input.agent_id, llm_id: agent.llm_id, soul_id: agent.soul_id,
           history, context_data: contextData, task_content: input.task_content,
+          skill_ids: JSON.stringify(skillIds), mcp_ids: JSON.stringify(mcpIds),
         }),
         ctx,
         answerOut,
@@ -216,6 +217,7 @@ export class AgentExecutionService {
         Object.assign(new AnswerInput(), {
           agent_id: input.agent_id, llm_id: agent.llm_id, soul_id: agent.soul_id,
           history, context_data: contextData, task_content: input.task_content,
+          skill_ids: JSON.stringify(skillIds), mcp_ids: JSON.stringify(mcpIds),
         }),
         ctx,
         answerOut,
@@ -392,10 +394,11 @@ export class AgentExecutionService {
         context_data: input.context_data,
         history: input.history,
         iteration: input.iteration,
-        skill_ids: '',
-        mcp_ids: '',
+        skill_ids: input.skill_ids || '',
+        mcp_ids: input.mcp_ids || '',
       },
-      `System: ${system}\nContext: ${input.context_data}\nHistory: ${input.history}\nIteration: ${input.iteration}\n` +
+      `System: ${system}\nContext: ${input.context_data}\nHistory: ${input.history}\n` +
+      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\nIteration: ${input.iteration}\n` +
       'Reason step by step. If external tools are needed, set next_action.tool_type to SKILL or MCP with tool_id and params. ' +
       'Return JSON: {"reasoning":"...","next_action":{"tool_type":"NONE|SKILL|MCP","tool_id":"","params":{},"sub_steps":[]}}',
     );
@@ -494,8 +497,11 @@ export class AgentExecutionService {
         history: input.history,
         iteration: input.iteration,
         max_iterations: input.max_iterations,
+        skill_ids: input.skill_ids || '',
+        mcp_ids: input.mcp_ids || '',
       },
       `System: ${system}\nContext: ${input.context_data}\nHistory: ${input.history}\n` +
+      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\n` +
       `Iteration: ${input.iteration}/${input.max_iterations}\n` +
       'Evaluate progress. Return JSON: {"should_continue":true/false,"reflection":"..."}',
     );
@@ -530,8 +536,11 @@ export class AgentExecutionService {
         task_content: input.task_content,
         context_data: input.context_data,
         history: input.history,
+        skill_ids: input.skill_ids || '',
+        mcp_ids: input.mcp_ids || '',
       },
-      `System: ${system}\nTask: ${input.task_content}\nContext: ${input.context_data}\nHistory: ${input.history}\nGenerate the final answer.`,
+      `System: ${system}\nTask: ${input.task_content}\nContext: ${input.context_data}\n` +
+      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\nHistory: ${input.history}\nGenerate the final answer.`,
     );
 
     const llmOut = new ExecLLMOutput();
@@ -957,6 +966,8 @@ export class AgentExecutionService {
             context_data: contextData,
             history,
             iteration,
+            skill_ids: JSON.stringify(skillIds),
+            mcp_ids: JSON.stringify(mcpIds),
           }),
           ctx,
           thinkOut,
@@ -1009,6 +1020,8 @@ export class AgentExecutionService {
             history,
             iteration,
             max_iterations: maxIter,
+            skill_ids: skillIds.join(', '),
+            mcp_ids: mcpIds.join(', '),
           }),
           ctx,
           reflectOut,
@@ -1039,6 +1052,8 @@ export class AgentExecutionService {
             history,
             context_data: contextData,
             task_content: input.task_content,
+            skill_ids: skillIds.join(', '),
+            mcp_ids: mcpIds.join(', '),
           }),
           ctx,
           answerOut,

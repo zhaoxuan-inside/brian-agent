@@ -151,6 +151,8 @@ export interface LLMEnableRecord {
   llm_usage: string;
   /** 是否启用 */
   enable: boolean;
+  /** 是否为默认模型 */
+  is_default?: boolean;
 }
 
 /**

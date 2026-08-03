@@ -122,7 +122,17 @@ export const configApi = {
       request<void>(`/config/mcp/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<void>(`/config/mcp/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  }
+  },
+  prompts: {
+    list: () => request<{ prompts: { id: string; title: string; brief: string; enabled: boolean }[] }>('/prompts').then(r => r.prompts),
+    get: (id: string) => request<{ id: string; title: string; brief: string; template: string; enabled: boolean }>(`/prompts/${encodeURIComponent(id)}`),
+    create: (data: { title: string; brief?: string; template: string; enabled?: boolean }) =>
+      request<{ id: string }>('/prompts', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { title?: string; brief?: string; template?: string; enabled?: boolean }) =>
+      request<void>(`/prompts/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/prompts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
 }
 
 export const skillApi = {

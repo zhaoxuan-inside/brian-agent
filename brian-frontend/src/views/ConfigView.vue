@@ -285,11 +285,110 @@ const editingParam = ref<ParamItem | null>(null)
 const editingParamValue = ref<string>('')
 const paramSaving = ref(false)
 
-function startEditParam(item: ParamItem) {
-  editingParam.value = item
-  const val = item.config_value !== undefined && item.config_value !== null
+const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
+
+function getPromptTitle(id: string): string {
+  const p = prompts.value.find(p => p.id === id)
+  return p ? p.title : id || '—'
+}
+
+async function loadPrompts() {
+  try {
+    const list = await configApi.prompts.list()
+    prompts.value = list || []
+  } catch { /* ignore */ }
+}
+
+const promptPlaceholder = '请将以下内容翻译为{{target_lang}}：\n\n原文：{{source}}\n\n要求：{{requirement}}'
+
+const promptModalVisible = ref(false)
+const editingPrompt = ref<{ id: string; title: string; brief: string; enabled: boolean } | null>(null)
+const promptForm = ref({ title: '', brief: '', template: '', enabled: true })
+const promptSaving = ref(false)
+
+async function openPromptModal(p?: { id: string; title: string; brief: string; enabled: boolean }) {
+  editingPrompt.value = p || null
+  if (p) {
+    promptForm.value = { title: p.title, brief: p.brief || '', template: '', enabled: p.enabled }
+    try {
+      const full = await configApi.prompts.get(p.id)
+      promptForm.value.template = full.template || ''
+    } catch { /* keep empty */ }
+  } else {
+    promptForm.value = { title: '', brief: '', template: '', enabled: true }
+  }
+  promptModalVisible.value = true
+}
+
+function closePromptModal() {
+  promptModalVisible.value = false
+  editingPrompt.value = null
+}
+
+async function savePrompt() {
+  if (!promptForm.value.title.trim() || !promptForm.value.template.trim()) return
+  promptSaving.value = true
+  try {
+    const data = {
+      title: promptForm.value.title.trim(),
+      brief: promptForm.value.brief.trim() || undefined,
+      template: promptForm.value.template,
+      enabled: promptForm.value.enabled,
+    }
+    if (editingPrompt.value) {
+      await configApi.prompts.update(editingPrompt.value.id, data)
+      showToast('模板已更新', 'success')
+    } else {
+      await configApi.prompts.create(data)
+      showToast('模板已创建', 'success')
+    }
+    closePromptModal()
+    await loadPrompts()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    promptSaving.value = false
+  }
+}
+
+async function handleDeletePrompt(id: string) {
+  if (!confirm('确定删除该 Prompt 模板？')) return
+  try {
+    await configApi.prompts.delete(id)
+    showToast('已删除', 'success')
+    await loadPrompts()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+function getConfigPrimitiveValue(item: ParamItem): unknown {
+  let val = item.config_value !== undefined && item.config_value !== null
     ? item.config_value
     : item.config_default
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const segments = item.config_key.split('.')
+    const lastKey = segments[segments.length - 1]
+    if (lastKey in (val as Record<string, unknown>)) {
+      return (val as Record<string, unknown>)[lastKey]
+    }
+    return null
+  }
+  return val
+}
+
+function getConfigDisplayValue(item: ParamItem): string {
+  const val = getConfigPrimitiveValue(item)
+  if (item.config_key.endsWith('prompt_template_id')) {
+    return val ? getPromptTitle(String(val)) : '—'
+  }
+  if (val !== undefined && val !== null) return String(val)
+  return '—'
+}
+
+function startEditParam(item: ParamItem) {
+  editingParam.value = item
+  const val = getConfigPrimitiveValue(item)
   editingParamValue.value = val !== undefined && val !== null ? String(val) : ''
 }
 
@@ -395,8 +494,8 @@ async function handleAddModels(providerId: string) {
 }
 
 function selectAllModels() {
-  const available = cachedModels.value.filter(m => !m.enabled)
-  if (selectedModelIds.value.size === available.length) {
+  const available = filteredCachedModels.value.filter(m => !m.enabled)
+  if (selectedModelIds.value.size === available.length && available.length > 0) {
     selectedModelIds.value = new Set()
   } else {
     selectedModelIds.value = new Set(available.map(m => m.id))
@@ -586,11 +685,8 @@ interface BackendModel {
   providerName?: string
   providerId?: string
   maxTokens?: number
-  supportsVision?: boolean
-  supportsTools?: boolean
-  isDefault?: boolean
   status?: string
-  enable?: boolean | number
+  isDefault?: boolean
 }
 
 const models = ref<BackendModel[]>([])
@@ -608,10 +704,8 @@ const filteredModels = computed(() => {
 })
 const editingModel = ref<BackendModel | null>(null)
 const modelForm = ref({
-  title: '', brief: '', usage: 'text',
-  providerId: '', maxTokens: 4096,
-  quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
-  quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+  title: '', usage: 'text', providerId: '', maxTokens: 0, usageDesc: '',
+  providerMaxTokens: 0,
 })
 const modelSubmitting = ref(false)
 
@@ -638,21 +732,17 @@ function openModelModal(model?: BackendModel) {
     editingModel.value = model
     modelForm.value = {
       title: model.modelName || '',
-      brief: '',
       usage: 'text',
-      providerId: model.providerId || providers.value[0]?.id || '',
-      maxTokens: model.maxTokens || 4096,
-      quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
-      quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+      providerId: model.providerId || '',
+      maxTokens: model.maxTokens || 0,
+      usageDesc: '',
+      providerMaxTokens: model.maxTokens || 0,
     }
   } else {
     editingModel.value = null
     modelForm.value = {
-      title: '', brief: '', usage: 'text',
-      providerId: providers.value[0]?.id || '',
-      maxTokens: 4096,
-      quotaTokensPerDay: 0, quotaTokensPerWeek: 0, quotaTokensPerMonth: 0,
-      quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
+      title: '', usage: 'text', providerId: providers.value[0]?.id || '',
+      maxTokens: 0, usageDesc: '', providerMaxTokens: 0,
     }
   }
   modelModalVisible.value = true
@@ -663,18 +753,14 @@ function closeModelModal() { modelModalVisible.value = false; editingModel.value
 async function submitModelForm() {
   modelSubmitting.value = true
   try {
+    const tokens = modelForm.value.providerMaxTokens
+      ? Math.min(modelForm.value.maxTokens, modelForm.value.providerMaxTokens)
+      : modelForm.value.maxTokens
     const data: Record<string, unknown> = {
       llm_title: modelForm.value.title,
-      llm_brief: modelForm.value.brief,
       llm_usage: modelForm.value.usage,
-      llm_provider_id: modelForm.value.providerId,
-      maxTokens: modelForm.value.maxTokens,
-      quotaTokensPerDay: modelForm.value.quotaTokensPerDay,
-      quotaTokensPerWeek: modelForm.value.quotaTokensPerWeek,
-      quotaTokensPerMonth: modelForm.value.quotaTokensPerMonth,
-      quotaCallsPerDay: modelForm.value.quotaCallsPerDay,
-      quotaCallsPerWeek: modelForm.value.quotaCallsPerWeek,
-      quotaCallsPerMonth: modelForm.value.quotaCallsPerMonth,
+      maxTokens: tokens,
+      model_usage: modelForm.value.usageDesc,
     }
     if (editingModel.value) {
       await configApi.model.update(editingModel.value.id, data)
@@ -1075,6 +1161,7 @@ function showToast(message: string, type: 'success' | 'error' = 'error') {
 
 onMounted(() => {
   loadConfigTree()
+  loadPrompts()
 })
 
 function handleKeydown(e: KeyboardEvent) {
@@ -1104,6 +1191,7 @@ watch(activeSubSection, async (val) => {
       case 'skill': await loadSkills(); break
       case 'mcp': await loadMcps(); break
       case 'agent': await loadAgents(); break
+      case 'prompt': await loadPrompts(); break
     }
   } else if (sub?.type === 'params') {
     await loadConfigTree()
@@ -1264,6 +1352,12 @@ watch(activeSubSection, async (val) => {
                             <option v-for="v in item.config_enum_values" :key="String(v)" :value="String(v)">{{ v }}</option>
                           </select>
                         </template>
+                        <template v-else-if="item.config_key.endsWith('prompt_template_id')">
+                          <select v-model="editingParamValue" :class="inputClass + ' !w-44 !py-1.5'">
+                            <option value="">—</option>
+                            <option v-for="p in prompts" :key="p.id" :value="p.id">{{ p.title }}</option>
+                          </select>
+                        </template>
                         <template v-else>
                           <input
                             v-model="editingParamValue"
@@ -1299,7 +1393,7 @@ watch(activeSubSection, async (val) => {
                           </div>
                         </template>
                         <span v-else class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
-                          {{ item.config_value !== undefined && item.config_value !== null ? String(item.config_value) : '—' }}
+                          {{ getConfigDisplayValue(item) }}
                         </span>
                         <button
                           v-if="item.writable !== false"
@@ -1374,9 +1468,6 @@ watch(activeSubSection, async (val) => {
               <input v-model="modelSearch" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索模型名或提供商..." />
             </div>
             <span class="text-xs text-apple-gray-400">{{ filteredModels.length }} / {{ models.length }} 个模型</span>
-            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openModelModal()">
-              <Plus :size="13" /> 手动添加
-            </button>
           </div>
           <div v-if="modelsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
           <div v-else-if="models.length === 0" class="flex flex-col items-center justify-center py-16">
@@ -1399,6 +1490,7 @@ watch(activeSubSection, async (val) => {
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.modelName || '' }}</h3>
                     <div class="flex items-center gap-2 mt-0.5">
                       <span class="text-[11px] text-apple-gray-400">{{ m.providerName || m.providerId || '' }}</span>
+                      <span class="text-[10px] font-mono text-apple-gray-400">{{ (m.maxTokens || 0) >= 1000000 ? ((m.maxTokens || 0) / 1000000).toFixed(1) + 'M' : (m.maxTokens || 0) >= 1000 ? ((m.maxTokens || 0) / 1000).toFixed(0) + 'K' : (m.maxTokens || 0) }} tokens</span>
                       <span class="w-1.5 h-1.5 rounded-full" :class="m.status === 'active' ? 'bg-success-green' : 'bg-apple-gray-300'" />
                     </div>
                   </div>
@@ -1589,7 +1681,69 @@ watch(activeSubSection, async (val) => {
         </div>
 
         <!-- ========================== 占位视图：未实现的实体类型 ========================== -->
-        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent'].includes(currentEntityType || '')" class="px-5 pb-6">
+        <!-- ========================== 实体管理视图 - Prompt 模板 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'prompt'" class="px-5 pb-6">
+          <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
+            <h4 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-2 flex items-center gap-1.5">
+              <Lightbulb :size="15" class="text-brian-blue" />
+              Prompt 模板编写说明
+            </h4>
+            <div class="text-xs text-apple-gray-600 dark:text-apple-gray-300 space-y-1.5 leading-relaxed">
+              <p>提示词模板使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{ 变量名 }}</code> 语法嵌入动态变量。后端执行模板时将变量替换为实际值。</p>
+              <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mt-2">
+                <dt class="font-medium text-apple-gray-500">模板内容：</dt>
+                <dd>支持 Markdown 格式，模板内容将原样保留结构，仅替换 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{变量}}</code> 占位符。</dd>
+                <dt class="font-medium text-apple-gray-500">变量语法：</dt>
+                <dd>使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{变量名}}</code> 形式，花括号内首尾空格可省略。同一变量可在模板中多次出现，都会被替换。</dd>
+                <dt class="font-medium text-apple-gray-500">变量处理：</dt>
+                <dd>所有变量值均转为字符串后替换；模板中存在的占位符若无对应变量则保留原文；调用方传入的多余变量会被忽略。</dd>
+              </dl>
+              <div class="mt-2 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 border border-apple-gray-100 dark:border-apple-gray-700">
+                <p class="text-[11px] font-medium text-apple-gray-500 mb-1.5">示例：</p>
+                <pre v-pre class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap">请将以下内容翻译为{{target_lang}}：
+
+原文：{{source}}
+
+要求：{{requirement}}</pre>
+                <p class="text-[11px] text-apple-gray-400 mt-1.5">调用 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">execPrompt</code> 传入 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">{ target_lang: "英文", source: "你好世界", requirement: "保持原意" }</code> 即可得到渲染后的完整提示词。</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs text-apple-gray-400">{{ prompts.length }} 个模板</span>
+            <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openPromptModal()">
+              <Plus :size="13" /> 添加模板
+            </button>
+          </div>
+          <div v-if="prompts.length === 0" class="flex flex-col items-center justify-center py-16">
+            <MessageSquare :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无 Prompt 模板</p>
+          </div>
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              v-for="p in prompts" :key="p.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><MessageSquare :size="18" /></div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p.title }}</h3>
+                    <p class="text-[11px] text-apple-gray-400">{{ p.brief || '暂无简介' }}</p>
+                  </div>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="p.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              </div>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openPromptModal(p)"><Pencil :size="11" /> 编辑</button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeletePrompt(p.id)"><Trash2 :size="11" /> 删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent', 'prompt'].includes(currentEntityType || '')" class="px-5 pb-6">
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <Settings :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">该实体类型（{{ currentEntityType }}）的管理功能正在开发中</p>
@@ -1716,7 +1870,7 @@ watch(activeSubSection, async (val) => {
                       <input v-model="modelSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索..." />
                     </div>
                     <label class="flex items-center gap-2 px-2 text-[11px] text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
-                      <input type="checkbox" :checked="selectedModelIds.size === cachedModels.length" @change="selectAllModels" class="rounded" />
+                      <input type="checkbox" :checked="filteredCachedModels.filter(m => !m.enabled).length > 0 && selectedModelIds.size === filteredCachedModels.filter(m => !m.enabled).length" @change="selectAllModels" class="rounded" />
                       全选
                     </label>
                   </div>
@@ -1767,49 +1921,40 @@ watch(activeSubSection, async (val) => {
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
-              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingModel ? '编辑模型' : '添加 LLM 模型' }}</h3>
-              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">配置模型名称、用途与配额</p>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingModel ? '编辑模型' : '添加模型' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">{{ editingModel ? '模型基本信息（名称和提供商不可修改）' : '添加新的可用模型' }}</p>
             </div>
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeModelModal"><X :size="18" /></button>
           </div>
           <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模型名称</label>
+              <input v-model="modelForm.title" type="text" :class="inputClass" :disabled="!!editingModel" />
+            </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模型名称 *</label>
-                <input v-model="modelForm.title" type="text" :class="inputClass" placeholder="gpt-4o" />
-              </div>
-              <div>
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">用途类型</label>
-                <select v-model="modelForm.usage" :class="inputClass">
+                <select v-model="modelForm.usage" :class="inputClass" :disabled="!!editingModel">
                   <option value="text">文本生成 (text)</option>
                   <option value="vision">多模态 (vision)</option>
                   <option value="embedding">向量化 (embedding)</option>
                 </select>
               </div>
+              <div>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Provider</label>
+                <select v-model="modelForm.providerId" :class="inputClass" :disabled="!!editingModel">
+                  <option v-for="p in providers" :key="p.id" :value="p.id">{{ p._displayName || p.id }}</option>
+                </select>
+              </div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Provider</label>
-              <select v-model="modelForm.providerId" :class="inputClass">
-                <option v-for="p in providers" :key="p.id" :value="p.id">{{ p._displayName || p.id }}</option>
-              </select>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Max Tokens<span v-if="editingModel" class="text-apple-gray-400 ml-1">(≤ {{ modelForm.providerMaxTokens.toLocaleString() }})</span></label>
+              <input v-model.number="modelForm.maxTokens" type="number" :class="inputClass" :max="modelForm.providerMaxTokens || undefined" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Max Tokens</label>
-              <input v-model.number="modelForm.maxTokens" type="number" :class="inputClass" />
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模型用途</label>
+              <textarea v-model="modelForm.usageDesc" :class="inputClass" rows="3" placeholder="描述模型的典型用途，用于模型动态选择（如：代码生成、长文本写作、数学推理）" />
             </div>
-            <fieldset class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg p-3">
-              <legend class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400 px-1">Token 配额（0 = 不限制）</legend>
-              <div class="grid grid-cols-3 gap-2">
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日 Token</label><input v-model.number="modelForm.quotaTokensPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周 Token</label><input v-model.number="modelForm.quotaTokensPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月 Token</label><input v-model.number="modelForm.quotaTokensPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
-              </div>
-              <div class="grid grid-cols-3 gap-2 mt-2">
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日调用</label><input v-model.number="modelForm.quotaCallsPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周调用</label><input v-model.number="modelForm.quotaCallsPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="modelForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
-              </div>
-            </fieldset>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeModelModal">取消</button>
@@ -1959,6 +2104,48 @@ watch(activeSubSection, async (val) => {
               <Loader2 v-if="agentSubmitting" :size="14" class="animate-spin" />
               <Save v-else :size="14" />
               保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ Prompt 模板模态 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="promptModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closePromptModal" />
+        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ editingPrompt ? '编辑 Prompt 模板' : '创建 Prompt 模板' }}</h3>
+              <p v-pre class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">使用 {{变量名}} 语法嵌入动态内容</p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closePromptModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模板名称 *</label>
+              <input v-model="promptForm.title" type="text" :class="inputClass" placeholder="翻译助手 Prompt" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简介</label>
+              <input v-model="promptForm.brief" type="text" :class="inputClass" placeholder="简要说明模板用途" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模板内容 * <span v-pre class="font-normal text-apple-gray-400">（Markdown + {{变量}}）</span></label>
+              <textarea v-model="promptForm.template" :class="inputClass" rows="8" :placeholder="promptPlaceholder" />
+            </div>
+            <div class="flex items-center gap-2">
+              <input v-model="promptForm.enabled" type="checkbox" id="prompt-enabled" class="rounded border-apple-gray-300 text-brian-blue focus:ring-brian-blue/30" />
+              <label for="prompt-enabled" class="text-xs text-apple-gray-600 dark:text-apple-gray-300">启用</label>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closePromptModal">取消</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="promptSaving || !promptForm.title.trim() || !promptForm.template.trim()" @click="savePrompt">
+              <Loader2 v-if="promptSaving" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              {{ editingPrompt ? '保存' : '创建' }}
             </button>
           </div>
         </div>

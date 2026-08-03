@@ -397,11 +397,13 @@ export class SkillCoreService {
 
   /** 记录 skill_usage */
   private async recordSkillUsage(agentSkillId: string): Promise<void> {
+    const now = IdGenerator.now();
     await this.relationDb.insert(SKILL_USAGE_TABLE, [
       { field: 'id', value: IdGenerator.generate() },
-      { field: 'created', value: IdGenerator.now() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
       { field: 'agent_skill_id', value: agentSkillId },
-      { field: 'timestamp', value: IdGenerator.now() },
+      { field: 'timestamp', value: now },
     ]);
   }
 

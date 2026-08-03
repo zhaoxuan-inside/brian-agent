@@ -23,6 +23,10 @@ function app(mod: string, cat: string, key: string, name: string, type: string, 
   return { layer: 'APPLICATION', module: mod, category: cat, config_key: `${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals };
 }
 
+function agent(mod: string, cat: string, key: string, name: string, type: string, def: unknown, desc?: string, enumVals?: unknown[]): ConfigRegistration {
+  return { layer: 'AGENT', module: mod, category: cat, config_key: `${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals };
+}
+
 // ===========================================================================
 // 层级 / 模块 / 分类 的显示元数据
 // ===========================================================================
@@ -155,7 +159,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- LLMCoreProvider ---
   core('llm_core', 'basic', 'regen_rate', 'LLM 重新匹配概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
-  core('llm_core', 'basic', 'prompt_template_id', 'LLM 匹配排名的 Prompt 模板 ID', 'STRING', '', '用于 LLM 匹配排名'),
+  core('llm_core', 'basic', 'prompt_template_id', 'LLM 匹配 Prompt', 'STRING', '', '用于 LLM 匹配排名'),
   core('llm_core', 'quota', 'quota_tokens_per_day', '每日 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_week', '每周 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_month', '每月 Token 限额', 'INT', 0, '0 为不限制'),
@@ -227,6 +231,17 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   orch('jsonnode', 'basic', 'max_execution_depth', '最大执行深度', 'INT', 50),
   orch('jsonnode', 'basic', 'node_timeout_ms', '节点超时（ms）', 'INT', 300000, '5 分钟'),
   orch('jsonnode', 'basic', 'trace_enabled', '追踪启用', 'BOOLEAN', true, '是否记录 JSONNode 执行追踪'),
+
+  // =========================================================================
+  // AGENT layer
+  // =========================================================================
+
+  // --- AgentExecution ---
+  agent('agent_execution', 'basic', 'think_prompt_template_id', 'Think Prompt 模板 ID', 'STRING', '', 'Worker Think 阶段 Prompt 模板'),
+  agent('agent_execution', 'basic', 'reflect_prompt_template_id', 'Reflect Prompt 模板 ID', 'STRING', '', 'Worker Reflect 阶段 Prompt 模板'),
+  agent('agent_execution', 'basic', 'answer_prompt_template_id', 'Answer Prompt 模板 ID', 'STRING', '', 'Worker Answer 阶段 Prompt 模板'),
+  agent('agent_execution', 'basic', 'default_max_iterations', '默认最大迭代次数', 'INT', 10, 'ReAct 循环最大轮数'),
+  agent('agent_execution', 'basic', 'async_worker_interval', '异步工作间隔（ms）', 'INT', 1000),
 
   // =========================================================================
   // APPLICATION layer

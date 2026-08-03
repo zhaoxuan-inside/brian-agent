@@ -64,6 +64,8 @@ export class ThinkInput extends Input {
   context_data!: string;
   history!: string;
   iteration!: number;
+  skill_ids!: string;
+  mcp_ids!: string;
 }
 
 export class ThinkOutput extends Output {
@@ -102,6 +104,8 @@ export class ReflectInput extends Input {
   history!: string;
   iteration!: number;
   max_iterations!: number;
+  skill_ids!: string;
+  mcp_ids!: string;
 }
 
 export class ReflectOutput extends Output {
@@ -121,6 +125,8 @@ export class AnswerInput extends Input {
   history!: string;
   context_data!: string;
   task_content!: string;
+  skill_ids!: string;
+  mcp_ids!: string;
 }
 
 export class AnswerOutput extends Output {

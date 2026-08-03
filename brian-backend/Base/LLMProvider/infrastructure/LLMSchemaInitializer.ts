@@ -121,6 +121,11 @@ export class LLMSchemaInitializer {
         `ALTER TABLE "${LLM_MODEL_TABLE}" ADD COLUMN "features" TEXT`,
       );
     } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_MODEL_TABLE}" ADD COLUMN "max_tokens" INTEGER DEFAULT 0`,
+      );
+    } catch { /* column already exists */ }
 
     // llm_enable 表（启用列表）
     this.relationDb.executeRaw(`
@@ -149,6 +154,9 @@ export class LLMSchemaInitializer {
     );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_llm_usage" ON "${LLM_ENABLE_TABLE}" ("llm_usage")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_provider_title" ON "${LLM_ENABLE_TABLE}" ("llm_provider_id", "llm_title")`,
     );
 
     // llm_usage 表（按天使用次数统计）

@@ -537,12 +537,7 @@ let models: Array<{
           return false;
         }
         const json = (await res.json()) as {
-          data?: Array<{
-            id?: string;
-            owned_by?: string;
-            created?: number;
-            features?: unknown;
-          }>;
+          data?: Array<Record<string, unknown>>;
         };
         models = json.data ?? [];
       } catch (err) {
@@ -555,12 +550,18 @@ let models: Array<{
     // upsert 到 llm_model 表（按 llm_provider_id + llm_title 判重）
     const now = IdGenerator.now();
     for (const m of models) {
-      const modelId = m.id ?? '';
-      if (!modelId) {
-        continue;
-      }
-      const brief = m.owned_by ? `owned_by: ${m.owned_by}` : null;
-      const features = m.features ? JSON.stringify(m.features) : null;
+      const modelId = String(m.id ?? '');
+      if (!modelId) continue;
+      const brief = m.owned_by ? `owned_by: ${String(m.owned_by)}` : null;
+      const modelFeatures = { ...m };
+      delete modelFeatures.id;
+      delete modelFeatures.owned_by;
+      delete modelFeatures.created;
+      const features = JSON.stringify(modelFeatures);
+      const tl = m.token_limits as Record<string, unknown> | undefined;
+      const maxTokens = Number(m.context_length || m.max_tokens || m.max_completion_tokens
+        || (tl && tl.context_window)
+        || (m.top_provider && (m.top_provider as Record<string, unknown>).max_completion_tokens) || 0);
       const existing = await this.relationDb.selectOne(LLM_MODEL_TABLE, [
         {
           field: 'llm_provider_id',
@@ -576,6 +577,7 @@ let models: Array<{
           [
             { field: 'llm_brief', value: brief },
             { field: 'features', value: features },
+            { field: 'max_tokens', value: maxTokens },
             { field: 'updated', value: now },
           ],
           [
@@ -598,6 +600,7 @@ let models: Array<{
             { field: 'llm_title', value: modelId },
             { field: 'llm_brief', value: brief },
             { field: 'features', value: features },
+            { field: 'max_tokens', value: maxTokens },
           ]);
         } catch {
           // skip duplicate insert
@@ -842,7 +845,14 @@ let models: Array<{
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.id) {
-      throw new ValidationError('id 不能为空');
+      const defaultLLM = await this.relationDb.selectOne(LLM_ENABLE_TABLE, [
+        { field: 'is_default', operator: Operator.EQ, value: 1 },
+        { field: 'enable', operator: Operator.EQ, value: 1 },
+      ]);
+      if (!defaultLLM) {
+        throw new ValidationError('id 不能为空，且无可用默认模型');
+      }
+      input.id = (defaultLLM as unknown as LLMEnableRecord).id;
     }
     if (!input.prompt) {
       throw new ValidationError('prompt 不能为空');
@@ -913,12 +923,14 @@ let models: Array<{
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (params.api_key !== undefined && params.api_key !== '') {
-      headers['Authorization'] = `Bearer ${String(params.api_key)}`;
+    const apiKey = (params.api_key !== undefined && params.api_key !== '') ? String(params.api_key) : provider.api_key;
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
     }
 
     // 4. 调用 API
-    const url = this.buildEndpoint(provider.llm_provider_url, CHAT_PATH);
+    const chatPath = provider.chat_path || CHAT_PATH;
+    const url = this.buildEndpoint(provider.llm_provider_url, chatPath);
     try {
       const res = await this.fetchWithTimeout(
         url,
