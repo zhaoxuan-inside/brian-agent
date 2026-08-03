@@ -59,13 +59,14 @@ export class ExecAgentAsyncOutput extends Output {
 
 export class ThinkInput extends Input {
   agent_id!: string;
+  agent_name!: string;
   llm_id!: string;
   soul_id!: string;
   context_data!: string;
   history!: string;
   iteration!: number;
-  skill_ids!: string;
-  mcp_ids!: string;
+  tools_json!: string;
+  domain!: string;
 }
 
 export class ThinkOutput extends Output {
@@ -98,14 +99,15 @@ export class ActOutput extends Output {
 
 export class ReflectInput extends Input {
   agent_id!: string;
+  agent_name!: string;
   llm_id!: string;
   soul_id!: string;
   context_data!: string;
   history!: string;
   iteration!: number;
   max_iterations!: number;
-  skill_ids!: string;
-  mcp_ids!: string;
+  tools_json!: string;
+  domain!: string;
 }
 
 export class ReflectOutput extends Output {
@@ -120,13 +122,14 @@ export class ReflectOutput extends Output {
 
 export class AnswerInput extends Input {
   agent_id!: string;
+  agent_name!: string;
   llm_id!: string;
   soul_id!: string;
   history!: string;
   context_data!: string;
   task_content!: string;
-  skill_ids!: string;
-  mcp_ids!: string;
+  tools_json!: string;
+  domain!: string;
 }
 
 export class AnswerOutput extends Output {

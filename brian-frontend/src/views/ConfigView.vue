@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Cpu, Bot, Workflow, AppWindow, Server, Database, Boxes, Table2,
   Heart, Wand2, GitBranch, Brain, GraduationCap, HardDrive,
@@ -125,20 +126,34 @@ const navSections: NavSection[] = [
 // 导航状态
 // ============================================================
 
+const route = useRoute()
+const router = useRouter()
+
 const expandedSections = ref<Record<string, boolean>>({})
-const activeSection = ref('llm')
-const activeSubSection = ref('llm-provider')
+const activeSection = ref((route.query.section as string) || 'llm')
+const activeSubSection = ref((route.query.sub as string) || 'llm-provider')
 const sidebarCollapsed = ref(false)
+
+function syncQuery() {
+  const query: Record<string, string> = {}
+  if (activeSection.value !== 'llm' || activeSubSection.value !== 'llm-provider') {
+    query.section = activeSection.value
+    query.sub = activeSubSection.value
+  }
+  router.replace({ query })
+}
 
 function toggleSection(key: string) {
   expandedSections.value = { ...expandedSections.value, [key]: !expandedSections.value[key] }
   activeSection.value = key
+  syncQuery()
 }
 
 function selectSub(sectionKey: string, subKey: string) {
   expandedSections.value = { ...expandedSections.value, [sectionKey]: true }
   activeSection.value = sectionKey
   activeSubSection.value = subKey
+  syncQuery()
 }
 
 const currentSection = computed(() => navSections.find(s => s.key === activeSection.value))
@@ -380,7 +395,7 @@ function getConfigPrimitiveValue(item: ParamItem): unknown {
 function getConfigDisplayValue(item: ParamItem): string {
   const val = getConfigPrimitiveValue(item)
   if (item.config_key.endsWith('prompt_template_id')) {
-    return val ? getPromptTitle(String(val)) : '—'
+    return val ? getPromptTitle(String(val)) : 'prompt选择'
   }
   if (val !== undefined && val !== null) return String(val)
   return '—'
@@ -1354,7 +1369,7 @@ watch(activeSubSection, async (val) => {
                         </template>
                         <template v-else-if="item.config_key.endsWith('prompt_template_id')">
                           <select v-model="editingParamValue" :class="inputClass + ' !w-44 !py-1.5'">
-                            <option value="">—</option>
+                            <option value="">prompt选择</option>
                             <option v-for="p in prompts" :key="p.id" :value="p.id">{{ p.title }}</option>
                           </select>
                         </template>

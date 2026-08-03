@@ -132,6 +132,9 @@ export class AgentExecutionService {
     if (!agent.llm_id) {
       throw new ValidationError(`Agent ${input.agent_id} 未绑定 llm_id，请先通过 Core.matchLLM 完成匹配`);
     }
+    const domainMatch = (agent.task_signature || '').match(/^\[(.+?)\]/);
+    const domain = domainMatch ? domainMatch[1] : 'general';
+    const agentName = agent.agent_name || agent.agent_id;
 
     let contextData = input.task_content;
     const sessionId = ctx.session_id;
@@ -158,8 +161,14 @@ export class AgentExecutionService {
       stratOut,
     );
 
-    const skillIds = await this.loadSkillIds(input.agent_id, ctx);
-    const mcpIds = await this.loadMcpIds(input.agent_id, ctx);
+    const skills = await this.loadSkills(input.agent_id, ctx);
+    const mcps = await this.loadMcps(input.agent_id, ctx);
+    const skillIds = skills.map((s) => s.id);
+    const mcpIds = mcps.map((m) => m.id);
+    const toolsJson = JSON.stringify({
+      skills: skills.map((s) => ({ id: s.id, description: s.brief, work: s.work })),
+      mcps: mcps.map((m) => ({ id: m.id, name: m.title, description: m.brief })),
+    });
 
     let history = '';
     let iteration = 0;
@@ -176,16 +185,17 @@ export class AgentExecutionService {
     const maxFromRule = rule?.max_iterations ?? maxIter;
 
     const env = {
-      input, ctx, agent, skillIds, mcpIds, contextData, maxFromRule, config,
+      input, ctx, agent, skillIds, mcpIds, skills, mcps, contextData, toolsJson, maxFromRule, config,
+      agentName, domain,
     };
 
     if (!rule?.steps && !rule?.phases) {
       const answerOut = new AnswerOutput();
       await this.answer(
         Object.assign(new AnswerInput(), {
-          agent_id: input.agent_id, llm_id: agent.llm_id, soul_id: agent.soul_id,
+          agent_id: input.agent_id, agent_name: agentName, domain, llm_id: agent.llm_id, soul_id: agent.soul_id,
           history, context_data: contextData, task_content: input.task_content,
-          skill_ids: JSON.stringify(skillIds), mcp_ids: JSON.stringify(mcpIds),
+          tools_json: toolsJson,
         }),
         ctx,
         answerOut,
@@ -215,9 +225,9 @@ export class AgentExecutionService {
       const answerOut = new AnswerOutput();
       await this.answer(
         Object.assign(new AnswerInput(), {
-          agent_id: input.agent_id, llm_id: agent.llm_id, soul_id: agent.soul_id,
+          agent_id: input.agent_id, agent_name: agentName, domain, llm_id: agent.llm_id, soul_id: agent.soul_id,
           history, context_data: contextData, task_content: input.task_content,
-          skill_ids: JSON.stringify(skillIds), mcp_ids: JSON.stringify(mcpIds),
+          tools_json: toolsJson,
         }),
         ctx,
         answerOut,
@@ -390,15 +400,16 @@ export class AgentExecutionService {
     const prompt = await this.renderOrFallback(
       config?.think_prompt_template_id,
       {
+        agent_name: input.agent_name,
         soul: system,
         context_data: input.context_data,
         history: input.history,
         iteration: input.iteration,
-        skill_ids: input.skill_ids || '',
-        mcp_ids: input.mcp_ids || '',
+        tools_json: input.tools_json || '{}',
+        domain: input.domain || 'general',
       },
       `System: ${system}\nContext: ${input.context_data}\nHistory: ${input.history}\n` +
-      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\nIteration: ${input.iteration}\n` +
+      `Tools: ${input.tools_json}\nIteration: ${input.iteration}\n` +
       'Reason step by step. If external tools are needed, set next_action.tool_type to SKILL or MCP with tool_id and params. ' +
       'Return JSON: {"reasoning":"...","next_action":{"tool_type":"NONE|SKILL|MCP","tool_id":"","params":{},"sub_steps":[]}}',
     );
@@ -492,16 +503,17 @@ export class AgentExecutionService {
     const prompt = await this.renderOrFallback(
       config?.reflect_prompt_template_id,
       {
+        agent_name: input.agent_name,
         soul: system,
         context_data: input.context_data,
         history: input.history,
         iteration: input.iteration,
         max_iterations: input.max_iterations,
-        skill_ids: input.skill_ids || '',
-        mcp_ids: input.mcp_ids || '',
+        tools_json: input.tools_json || '{}',
+        domain: input.domain || 'general',
       },
       `System: ${system}\nContext: ${input.context_data}\nHistory: ${input.history}\n` +
-      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\n` +
+      `Tools: ${input.tools_json}\n` +
       `Iteration: ${input.iteration}/${input.max_iterations}\n` +
       'Evaluate progress. Return JSON: {"should_continue":true/false,"reflection":"..."}',
     );
@@ -532,15 +544,16 @@ export class AgentExecutionService {
     const prompt = await this.renderOrFallback(
       config?.answer_prompt_template_id,
       {
+        agent_name: input.agent_name,
         soul: system,
         task_content: input.task_content,
         context_data: input.context_data,
         history: input.history,
-        skill_ids: input.skill_ids || '',
-        mcp_ids: input.mcp_ids || '',
+        tools_json: input.tools_json || '{}',
+        domain: input.domain || 'general',
       },
       `System: ${system}\nTask: ${input.task_content}\nContext: ${input.context_data}\n` +
-      `Skills: ${input.skill_ids}\nMCPs: ${input.mcp_ids}\nHistory: ${input.history}\nGenerate the final answer.`,
+      `Tools: ${input.tools_json}\nHistory: ${input.history}\nGenerate the final answer.`,
     );
 
     const llmOut = new ExecLLMOutput();
@@ -947,13 +960,18 @@ export class AgentExecutionService {
       agent: { agent_id: string; llm_id: string; soul_id: string };
       skillIds: string[];
       mcpIds: string[];
+      skills: { id: string; brief: string; work: string }[];
+      mcps: { id: string; title: string; brief: string }[];
+      toolsJson: string;
+      agentName: string;
+      domain: string;
       contextData: string;
     },
     history: string,
     iteration: number,
     maxIter: number,
   ): Promise<StepResult & { token_usage?: number; tracePiece: Partial<TraceIteration> }> {
-    const { input, ctx, agent, skillIds, mcpIds, contextData } = env;
+    const { input, ctx, agent, skillIds, mcpIds, contextData, toolsJson, agentName, domain } = env;
 
     try {
       if (step.step === 'Think') {
@@ -961,13 +979,14 @@ export class AgentExecutionService {
         await this.think(
           Object.assign(new ThinkInput(), {
             agent_id: input.agent_id,
+            agent_name: agentName,
             llm_id: agent.llm_id,
             soul_id: agent.soul_id,
             context_data: contextData,
             history,
             iteration,
-            skill_ids: JSON.stringify(skillIds),
-            mcp_ids: JSON.stringify(mcpIds),
+            tools_json: toolsJson,
+            domain,
           }),
           ctx,
           thinkOut,
@@ -1014,14 +1033,15 @@ export class AgentExecutionService {
         await this.reflect(
           Object.assign(new ReflectInput(), {
             agent_id: input.agent_id,
+            agent_name: agentName,
             llm_id: agent.llm_id,
             soul_id: agent.soul_id,
             context_data: contextData,
             history,
             iteration,
             max_iterations: maxIter,
-            skill_ids: skillIds.join(', '),
-            mcp_ids: mcpIds.join(', '),
+            tools_json: toolsJson,
+            domain,
           }),
           ctx,
           reflectOut,
@@ -1047,13 +1067,14 @@ export class AgentExecutionService {
         await this.answer(
           Object.assign(new AnswerInput(), {
             agent_id: input.agent_id,
+            agent_name: agentName,
             llm_id: agent.llm_id,
             soul_id: agent.soul_id,
             history,
             context_data: contextData,
             task_content: input.task_content,
-            skill_ids: skillIds.join(', '),
-            mcp_ids: mcpIds.join(', '),
+            tools_json: toolsJson,
+            domain,
           }),
           ctx,
           answerOut,
@@ -1136,7 +1157,7 @@ export class AgentExecutionService {
    * matchSkill 命中缓存时会直接返回 agent_skill 表中的已绑定记录，
    * Agent 层不直接操作 Core 的 agent_skill 绑定表。
    */
-  private async loadSkillIds(agentId: string, ctx: AgentExecutionContext): Promise<string[]> {
+  private async loadSkills(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; brief: string; work: string }[]> {
     try {
       const out = new MatchSkillOutput();
       await this.skillCore.matchSkill(
@@ -1148,7 +1169,15 @@ export class AgentExecutionService {
         new SkillCoreContext(),
         out,
       );
-      return (out.skills ?? []).map((s) => s.skill_id);
+      const entries = out.skills ?? [];
+      if (entries.length === 0) return [];
+      const ids = entries.map((s) => s.skill_id);
+      const skillRows = this.relationDb.queryRaw<{ id: string; skill_brief: string; work: string }>(
+        `SELECT "id", "skill_brief", "work" FROM "skill" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
+        ids,
+      );
+      const workMap = new Map((skillRows || []).map((r) => [r.id, r.work]));
+      return entries.map((s) => ({ id: s.skill_id, brief: s.skill_brief, work: workMap.get(s.skill_id) || s.skill_brief }));
     } catch {
       return [];
     }
@@ -1159,7 +1188,7 @@ export class AgentExecutionService {
    * matchMCP 命中缓存时会直接返回 agent_mcp 表中的已绑定记录，
    * Agent 层不直接操作 Core 的 agent_mcp 绑定表。
    */
-  private async loadMcpIds(agentId: string, ctx: AgentExecutionContext): Promise<string[]> {
+  private async loadMcps(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; title: string; brief: string }[]> {
     try {
       const out = new MatchMcpOutput();
       await this.mcpCore.matchMCP(
@@ -1171,7 +1200,13 @@ export class AgentExecutionService {
         new McpCoreContext(),
         out,
       );
-      return out.mcp_ids ?? [];
+      const ids = out.mcp_ids ?? [];
+      if (ids.length === 0) return [];
+      const rows = this.relationDb.queryRaw<{ id: string; mcp_title: string; mcp_brief: string | null }>(
+        `SELECT "id", "mcp_title", "mcp_brief" FROM "mcp_install" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
+        ids,
+      );
+      return (rows || []).map((r) => ({ id: r.id, title: r.mcp_title, brief: r.mcp_brief || '' }));
     } catch {
       return [];
     }
