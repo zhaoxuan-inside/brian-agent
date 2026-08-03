@@ -889,6 +889,34 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/config/work') {
         sendJson(res, 200, []);
 
+      // ---- Orchestration Strategies ----
+      } else if (method === 'GET' && pathname === '/api/orchestration/strategies') {
+        const rows = ctx.relationDb.queryRaw<{ id: string; strategy_id: string; strategy_label: string; strategy_description: string; enable: number; jsonnode_definition: string }>(
+          'SELECT "id", "strategy_id", "strategy_label", "strategy_description", "enable", "jsonnode_definition" FROM "orchestration_strategy" ORDER BY "created" ASC',
+          [],
+        );
+        sendJson(res, 200, (rows || []).map(r => {
+          let parsed: { start_node?: string; nodes?: Array<{ node_id: string; node_type: string; params?: Record<string, unknown>; next: string | null; on_error?: string }> } = {};
+          try { parsed = JSON.parse(r.jsonnode_definition); } catch { /* ignore */ }
+          const nodes = (parsed.nodes || []).map(n => ({
+            id: n.node_id,
+            type: n.node_type,
+            params: n.params || {},
+            next: n.next,
+            onError: n.on_error,
+          }));
+          return {
+            id: r.id,
+            strategyId: r.strategy_id,
+            label: r.strategy_label,
+            description: r.strategy_description,
+            enabled: !!r.enable,
+            nodeCount: nodes.length,
+            startNode: parsed.start_node,
+            nodes,
+          };
+        }));
+
       } else {
         sendJson(res, 404, { error: `Route not found: ${method} ${pathname}` });
       }

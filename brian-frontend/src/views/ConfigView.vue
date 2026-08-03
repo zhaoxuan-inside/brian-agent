@@ -1215,6 +1215,55 @@ async function handleToggleAgent(agentId: string) {
 }
 
 // ============================================================
+// 编排策略数据
+// ============================================================
+
+interface OrchStrategyNode {
+  id: string
+  type: string
+  params: Record<string, unknown>
+  next: string | null
+  onError?: string
+}
+
+interface OrchStrategy {
+  id: string
+  strategyId: string
+  label: string
+  description: string
+  enabled: boolean
+  nodeCount: number
+  startNode: string
+  nodes: OrchStrategyNode[]
+}
+
+const orchStrategies = ref<OrchStrategy[]>([])
+const orchStrategiesLoading = ref(false)
+const expandedOrchStrategy = ref<string | null>(null)
+
+function nodeColor(type: string): string {
+  if (type.includes('SAVE') || type.includes('WRITE')) return 'border-brian-blue/30 bg-brian-blue/5 text-brian-blue'
+  if (type.includes('BUILD') || type.includes('CONTEXT') || type.includes('PLAN')) return 'border-success-green/30 bg-success-green/5 text-success-green'
+  if (type.includes('EXEC') || type.includes('DAG')) return 'border-warning-orange/30 bg-warning-orange/5 text-warning-orange'
+  if (type.includes('EVAL')) return 'border-purple-500/30 bg-purple-500/5 text-purple-500'
+  if (type.includes('CONDITION')) return 'border-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800 text-apple-gray-600'
+  if (type.includes('ERROR')) return 'border-error-red/30 bg-error-red/5 text-error-red'
+  return 'border-apple-gray-200'
+}
+
+async function loadOrchStrategies() {
+  orchStrategiesLoading.value = true
+  try {
+    const res = await fetchApi('/orchestration/strategies')
+    orchStrategies.value = (res || []) as OrchStrategy[]
+  } catch {
+    orchStrategies.value = []
+  } finally {
+    orchStrategiesLoading.value = false
+  }
+}
+
+// ============================================================
 // Toast
 // ============================================================
 
@@ -1268,6 +1317,7 @@ watch(activeSubSection, async (val) => {
       case 'mcp': await loadMcps(); break
       case 'agent': await loadAgents(); break
       case 'prompt': await loadPrompts(); break
+      case 'orch-strategy': await loadOrchStrategies(); break
     }
   } else if (sub?.type === 'params') {
     await loadConfigTree()
@@ -1819,7 +1869,149 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent', 'prompt'].includes(currentEntityType || '')" class="px-5 pb-6">
+        <!-- ========================== 实体管理视图 - 编排策略 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'orch-strategy'" class="px-5 pb-6">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="text-xs text-apple-gray-400">{{ orchStrategies.length }} 个策略</span>
+            <span v-if="orchStrategies.every(s => s.label === 'SIMPLE' || s.label === 'PLANNING')" class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue">系统内置</span>
+          </div>
+
+          <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
+            <h4 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-2 flex items-center gap-1.5">
+              <Lightbulb :size="15" class="text-brian-blue" />
+              编排策略说明
+            </h4>
+            <div class="text-xs text-apple-gray-600 dark:text-apple-gray-300 space-y-2 leading-relaxed">
+              <p>编排策略定义了 Agent 处理用户任务的<strong>执行流程</strong>。每个策略由多个 JSONNode 节点组成，按顺序执行，节点间通过 <code class="text-[10px] px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">next</code> 串联，通过 <code class="text-[10px] px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">on_error</code> 定义错误路径。</p>
+
+              <dl class="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1.5 mt-2">
+                <dt class="font-medium text-brian-blue">SIMPLE</dt>
+                <dd>单 Agent 直行模式。构建一个 WorkAgent，直接执行任务并返回结果。适用于<strong>简单问答、单一任务</strong>。</dd>
+                <dt class="font-medium text-brian-blue">PLANNING</dt>
+                <dd>多 Agent 并行模式。通过 PlannerAgent 分解任务，单任务走单 Agent 路径，多任务构建 Agent DAG 并行执行。适用于<strong>复杂分析、多步骤任务</strong>。</dd>
+              </dl>
+
+              <div class="mt-2 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 border border-apple-gray-100 dark:border-apple-gray-700">
+                <p class="text-[11px] font-medium text-apple-gray-500 mb-1.5">策略选择机制</p>
+                <p class="text-[11px]">系统根据 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">complexity_decompose_threshold</code>（默认 50）判断任务复杂度：低于阈值走 SIMPLE，高于阈值走 PLANNING。复杂度由 LLM 分析或规则判断（查询长度 + 疑问词数 + 步骤关键词）。</p>
+              </div>
+
+              <p class="text-[11px] text-apple-gray-400">
+                节点类型: <span class="text-brian-blue font-mono">SAVE_USER_INPUT</span> 保存输入 |
+                <span class="text-success-green font-mono">BUILD_WORK_CONTEXT</span> 构建上下文 |
+                <span class="text-success-green font-mono">PLAN_WORK</span> 任务规划 |
+                <span class="text-success-green font-mono">BUILD_WORK_AGENT</span> 构建Agent |
+                <span class="text-success-green font-mono">BUILD_AGENT_DAG</span> 构建DAG |
+                <span class="text-warning-orange font-mono">EXEC_AGENT</span> 执行Agent |
+                <span class="text-warning-orange font-mono">EXEC_DAG</span> 执行DAG |
+                <span class="text-brian-blue font-mono">WRITE_RESULT</span> 写结果 |
+                <span class="text-purple-500 font-mono">EVAL_RESULT</span> 评估结果 |
+                <span class="text-brian-blue font-mono">SAVE_RESPONSE</span> 保存响应 |
+                <span class="text-apple-gray-500 font-mono">CONDITION</span> 条件分支 |
+                <span class="text-error-red font-mono">HANDLE_ERROR</span> 错误兜底
+              </p>
+            </div>
+          </div>
+          <div v-if="orchStrategiesLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else class="space-y-4">
+            <div
+              v-for="s in orchStrategies" :key="s.id"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow overflow-hidden"
+            >
+              <!-- 策略头部 -->
+              <div class="p-4 cursor-pointer" @click="expandedOrchStrategy = expandedOrchStrategy === s.id ? null : s.id">
+                <div class="flex items-start justify-between mb-2">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="s.label === 'SIMPLE' ? 'bg-success-green/10 text-success-green' : 'bg-brian-blue/10 text-brian-blue'">
+                      <component :is="s.label === 'SIMPLE' ? Zap : Network" :size="18" />
+                    </div>
+                    <div class="min-w-0">
+                      <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ s.label }}</h3>
+                      <p class="text-[11px] text-apple-gray-400">{{ s.enabled ? '启用' : '停用' }} · {{ s.nodeCount }} 个节点</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full" :class="s.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+                    <ChevronRight :size="14" class="text-apple-gray-400 transition-transform" :class="expandedOrchStrategy === s.id ? 'rotate-90' : ''" />
+                  </div>
+                </div>
+                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400">{{ s.description }}</p>
+              </div>
+
+              <!-- 展开：JSONNode 内容 -->
+              <div v-if="expandedOrchStrategy === s.id" class="border-t border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-900/30">
+
+                <!-- DAG 流程图 -->
+                <div class="px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
+                  <p class="text-[10px] text-apple-gray-400 uppercase tracking-wider mb-2">执行流 · {{ s.nodes.length }} 个节点 · 起始节点 {{ s.startNode }}</p>
+                  <div class="flex flex-wrap items-center gap-1">
+                    <template v-for="(node, ni) in s.nodes" :key="node.id">
+                      <span
+                        class="px-1.5 py-0.5 rounded text-[10px] font-mono border"
+                        :class="nodeColor(node.type)"
+                        :title="node.id + ': ' + JSON.stringify(node.params)"
+                      >{{ node.type.replace(/_/g, ' ') }}</span>
+                      <span v-if="ni < s.nodes.length - 1 && node.next" class="text-[9px] text-apple-gray-300">→</span>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- 节点详情表 -->
+                <div class="px-4 py-3">
+                  <p class="text-[10px] text-apple-gray-400 uppercase tracking-wider mb-2">节点详情</p>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-[11px]">
+                      <thead>
+                        <tr class="text-left text-apple-gray-400 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                          <th class="py-1.5 pr-3 font-medium">#</th>
+                          <th class="py-1.5 pr-3 font-medium">节点 ID</th>
+                          <th class="py-1.5 pr-3 font-medium">节点类型</th>
+                          <th class="py-1.5 pr-3 font-medium">参数</th>
+                          <th class="py-1.5 pr-3 font-medium">下一节点</th>
+                          <th class="py-1.5 font-medium">错误处理</th>
+                        </tr>
+                      </thead>
+                      <tbody class="text-apple-gray-600 dark:text-apple-gray-300">
+                        <tr
+                          v-for="(node, ni) in s.nodes" :key="node.id"
+                          class="border-b border-apple-gray-100 dark:border-apple-gray-800"
+                        >
+                          <td class="py-1.5 pr-3 font-mono text-apple-gray-400">{{ ni + 1 }}</td>
+                          <td class="py-1.5 pr-3 font-mono text-apple-gray-500">{{ node.id }}</td>
+                          <td class="py-1.5 pr-3">
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border" :class="nodeColor(node.type)">
+                              {{ node.type.replace(/_/g, ' ') }}
+                            </span>
+                          </td>
+                          <td class="py-1.5 pr-3 font-mono text-[10px] max-w-[200px] truncate">
+                            <code v-if="Object.keys(node.params).length > 0" class="text-apple-gray-500">{{ JSON.stringify(node.params) }}</code>
+                            <span v-else class="text-apple-gray-300">—</span>
+                          </td>
+                          <td class="py-1.5 pr-3 font-mono text-[10px]" :class="node.next ? 'text-apple-gray-500' : 'text-apple-gray-300'">
+                            {{ node.next || '终止' }}
+                          </td>
+                          <td class="py-1.5 font-mono text-[10px]" :class="node.onError ? 'text-error-red/70' : 'text-apple-gray-300'">
+                            {{ node.onError || '—' }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 配置提示 -->
+                <div class="px-4 py-2 border-t border-apple-gray-200 dark:border-apple-gray-700">
+                  <p class="text-[10px] text-apple-gray-400">
+                    配置: 编排配置 → <span class="text-brian-blue">编排入口</span> (complexity_decompose_threshold 控制 SIMPLE/PLANNING 选择) | 
+                    <span class="text-brian-blue">执行参数</span> (max_plan_retries, plan_prompt_template_id)
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent', 'prompt', 'orch-strategy'].includes(currentEntityType || '')" class="px-5 pb-6">
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <Settings :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">该实体类型（{{ currentEntityType }}）的管理功能正在开发中</p>
