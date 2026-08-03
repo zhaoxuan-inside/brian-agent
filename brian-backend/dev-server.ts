@@ -578,11 +578,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, output.list || []);
 
       } else if (method === 'POST' && pathname === '/api/config/soul') {
-        const input = Object.assign(new AddSoulInput(), body);
+        const input = Object.assign(new AddSoulInput(), { data: body });
         const output = new AddSoulOutput();
         const context = new SoulContext();
         await ctx.configAccess.addSoul(input, context, output);
-        sendJson(res, 200, { id: output.soul_id, name: body.soul_brief || 'new-soul' });
+        sendJson(res, 200, { id: output.id, soul_brief: body.soul_brief || 'new-soul' });
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/soul/')) {
         const id = pathname.split('/api/config/soul/')[1];

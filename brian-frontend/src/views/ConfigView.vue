@@ -839,23 +839,28 @@ async function handleTestModel(modelId: string) {
 
 interface BackendSoul {
   id: string
-  name?: string
-  description?: string
-  traits?: string[]
+  soul_brief?: string
+  soul_content?: string
+  soul_usage?: string
   enabled?: boolean
+  enable?: boolean
 }
 
 const souls = ref<BackendSoul[]>([])
 const soulsLoading = ref(false)
 const soulModalVisible = ref(false)
 const editingSoul = ref<BackendSoul | null>(null)
-const soulForm = ref({ name: '', description: '', traits: '' })
+const soulForm = ref({ soulBrief: '', soulContent: '', soulUsage: '' })
 const soulSubmitting = ref(false)
 
 async function loadSouls() {
   soulsLoading.value = true
   try {
-    souls.value = await configApi.soul.list()
+    const list = await configApi.soul.list() as unknown as BackendSoul[]
+    souls.value = (list || []).map(s => ({
+      ...s,
+      enabled: s.enabled ?? s.enable ?? true,
+    }))
   } catch {
     souls.value = []
   } finally {
@@ -867,13 +872,13 @@ function openSoulModal(soul?: BackendSoul) {
   if (soul) {
     editingSoul.value = soul
     soulForm.value = {
-      name: soul.name || '',
-      description: soul.description || '',
-      traits: (soul.traits || []).join(', '),
+      soulBrief: soul.soul_brief || '',
+      soulContent: soul.soul_content || '',
+      soulUsage: soul.soul_usage || '',
     }
   } else {
     editingSoul.value = null
-    soulForm.value = { name: '', description: '', traits: '' }
+    soulForm.value = { soulBrief: '', soulContent: '', soulUsage: '' }
   }
   soulModalVisible.value = true
 }
@@ -883,8 +888,11 @@ function closeSoulModal() { soulModalVisible.value = false; editingSoul.value = 
 async function submitSoulForm() {
   soulSubmitting.value = true
   try {
-    const traits = soulForm.value.traits.split(',').map(t => t.trim()).filter(Boolean)
-    const data = { soul_brief: soulForm.value.name, soul_content: soulForm.value.description, traits }
+    const data = {
+      soul_brief: soulForm.value.soulBrief,
+      soul_content: soulForm.value.soulContent,
+      soul_usage: soulForm.value.soulUsage,
+    }
     if (editingSoul.value) {
       await configApi.soul.update(editingSoul.value.id, data)
     } else {
@@ -1605,14 +1613,14 @@ watch(activeSubSection, async (val) => {
                 <div class="flex items-center gap-2.5 min-w-0">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Heart :size="18" /></div>
                   <div class="min-w-0">
-                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.name || s.id }}</h3>
-                    <p class="text-[11px] text-apple-gray-400">{{ s.enabled ?? true ? '启用' : '停用' }}</p>
+                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.soul_brief || s.id }}</h3>
+                    <p class="text-[11px] text-apple-gray-400">{{ s.soul_usage || '' }}</p>
                   </div>
                 </div>
                 <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(s.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
               </div>
               <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">
-                {{ (s.description || '').slice(0, 120) || '暂无内容' }}
+                {{ (s.soul_content || '').slice(0, 120) || '暂无内容' }}
               </p>
               <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
                 <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openSoulModal(s)"><Pencil :size="11" /> 编辑</button>
@@ -2050,21 +2058,24 @@ watch(activeSubSection, async (val) => {
           </div>
           <div class="px-5 py-4 overflow-y-auto space-y-4">
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">名称 *</label>
-              <input v-model="soulForm.name" type="text" :class="inputClass" placeholder="例如：专业的编程助手" />
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简要名称 (soul_brief) *</label>
+              <input v-model="soulForm.soulBrief" type="text" :class="inputClass" placeholder="例如：严苛导师、幽默伙伴" />
+              <p class="text-[10px] text-apple-gray-400 mt-0.5">简短标签，用于 Agent 匹配时的快速筛选</p>
             </div>
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">人格描述 *</label>
-              <textarea v-model="soulForm.description" :class="inputClass" rows="5" placeholder="描述角色、语气、行为准则..." />
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">人格描述 (soul_content) *</label>
+              <textarea v-model="soulForm.soulContent" :class="inputClass" rows="6" placeholder="描述角色性格、语气风格、行为准则、说话方式...&#10;&#10;例如：&#10;你是一位经验丰富的编程导师，说话简洁有力，&#10;从不绕弯子。对代码质量要求严苛，&#10;但会在学生突破后不吝夸奖。" />
+              <p class="text-[10px] text-apple-gray-400 mt-0.5">这是 Soul 的核心——定义 Agent 的「人格」。会被注入到 LLM 的 System Prompt 中</p>
             </div>
             <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">特性标签（逗号分隔）</label>
-              <input v-model="soulForm.traits" type="text" :class="inputClass" placeholder="专业,高效,幽默" />
+              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">应用场景 (soul_usage)</label>
+              <input v-model="soulForm.soulUsage" type="text" :class="inputClass" placeholder="编程教学、代码审查、技术答疑" />
+              <p class="text-[10px] text-apple-gray-400 mt-0.5">可选，描述此 Soul 最适合的应用场景</p>
             </div>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSoulModal">取消</button>
-            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="soulSubmitting || !soulForm.name.trim()" @click="submitSoulForm">
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="soulSubmitting || !soulForm.soulBrief.trim() || !soulForm.soulContent.trim()" @click="submitSoulForm">
               <Loader2 v-if="soulSubmitting" :size="14" class="animate-spin" />
               <Save v-else :size="14" />
               保存
@@ -2190,7 +2201,7 @@ watch(activeSubSection, async (val) => {
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Soul ID</label>
                 <select v-model="agentForm.soulId" :class="inputClass">
                   <option value="">无</option>
-                  <option v-for="s in souls" :key="s.id" :value="s.id">{{ s.name || s.id }}</option>
+                  <option v-for="s in souls" :key="s.id" :value="s.id">{{ s.soul_brief || s.id }}</option>
                 </select>
               </div>
             </div>

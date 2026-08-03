@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# ============================================================================
+# brian — Brian-Agent 系统管理命令行工具
+#
+# 用法: brian <command> [service]
+#
+# 命令:
+#   start   [backend|frontend|all]  启动服务（默认 all）
+#   stop    [backend|frontend|all]  停止服务（默认 all）
+#   restart [backend|frontend|all]  重启服务
+#   status                          查看服务运行状态
+#   logs    [backend|frontend]      查看日志（默认 backend）
+#
+# 示例:
+#   brian start              # 启动全栈
+#   brian start backend      # 仅启动后端
+#   brian stop frontend      # 仅停止前端
+#   brian restart backend    # 重启后端
+#   brian status             # 查看状态
+#   brian logs               # 查看后端日志
+# ============================================================================
+
+set -e
+
+# 解析脚本的真实路径（处理符号链接）
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+BACKEND_DIR="$ROOT/brian-backend"
+FRONTEND_DIR="$ROOT/brian-frontend"
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
+BACKEND_LOG="/tmp/brian-backend.log"
+FRONTEND_LOG="/tmp/brian-frontend.log"
+BACKEND_PID_FILE="/tmp/brian-backend.pid"
+FRONTEND_PID_FILE="/tmp/brian-frontend.pid"
+
+# ---------------------------------------------------------------------------
+# 颜色
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; NC='\033[0m'; BOLD='\033[1m'
+
+log()  { echo -e "${BLUE}[brian]${NC} $1"; }
+ok()   { echo -e "       ${GREEN}✓${NC} $1"; }
+warn() { echo -e "       ${YELLOW}⚠${NC} $1"; }
+fail() { echo -e "       ${RED}✗${NC} $1"; }
+
+banner() {
+  echo ""
+  echo -e "  ${BOLD}Brian-Agent${NC}"
+  echo -e "  Intelligent Personal Assistant"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# 进程检测
+# ---------------------------------------------------------------------------
+
+# 通过端口检测后端是否存活
+backend_alive() {
+  curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/api/config/soul" 2>/dev/null | grep -q "200"
+  return $?
+}
+
+# 通过端口检测前端是否存活
+frontend_alive() {
+  curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$FRONTEND_PORT" 2>/dev/null | grep -q "200\|302\|304"
+  return $?
+}
+
+# 获取后端 PID（多种方式检测）
+backend_pid() {
+  if [ -f "$BACKEND_PID_FILE" ]; then
+    local pid=$(cat "$BACKEND_PID_FILE" 2>/dev/null)
+    if kill -0 "$pid" 2>/dev/null; then echo "$pid"; return; fi
+  fi
+  pgrep -f "tsx.*dev-server" 2>/dev/null | head -1
+}
+
+# 获取前端 PID
+frontend_pid() {
+  if [ -f "$FRONTEND_PID_FILE" ]; then
+    local pid=$(cat "$FRONTEND_PID_FILE" 2>/dev/null)
+    if kill -0 "$pid" 2>/dev/null; then echo "$pid"; return; fi
+  fi
+  pgrep -f "node.*vite" 2>/dev/null | head -1
+}
+
+# ---------------------------------------------------------------------------
+# start_backend
+# ---------------------------------------------------------------------------
+start_backend() {
+  if backend_alive; then
+    warn "后端已运行 (端口 $BACKEND_PORT, PID $(backend_pid))"
+    return
+  fi
+
+  log "启动后端..."
+  if [ ! -d "$BACKEND_DIR" ]; then
+    fail "后端目录不存在: $BACKEND_DIR"
+    exit 1
+  fi
+
+  cd "$BACKEND_DIR"
+  nohup npx tsx dev-server.ts >> "$BACKEND_LOG" 2>&1 &
+  echo $! > "$BACKEND_PID_FILE"
+
+  # 等待就绪（最多 120 秒）
+  for i in $(seq 1 60); do
+    sleep 2
+    if backend_alive; then
+      ok "后端就绪 (端口 $BACKEND_PORT, PID $(cat $BACKEND_PID_FILE))"
+      return
+    fi
+    if ! kill -0 "$(cat $BACKEND_PID_FILE)" 2>/dev/null; then
+      fail "后端进程启动失败，查看日志: brian logs backend"
+      exit 1
+    fi
+  done
+  warn "后端启动超时，可能仍在初始化中 (PID $(cat $BACKEND_PID_FILE))"
+}
+
+# ---------------------------------------------------------------------------
+# start_frontend
+# ---------------------------------------------------------------------------
+start_frontend() {
+  if frontend_alive; then
+    warn "前端已运行 (端口 $FRONTEND_PORT, PID $(frontend_pid))"
+    return
+  fi
+
+  log "启动前端..."
+  if [ ! -d "$FRONTEND_DIR" ]; then
+    fail "前端目录不存在: $FRONTEND_DIR"
+    exit 1
+  fi
+
+  cd "$FRONTEND_DIR"
+  nohup npx vite --host 0.0.0.0 >> "$FRONTEND_LOG" 2>&1 &
+  echo $! > "$FRONTEND_PID_FILE"
+
+  for i in $(seq 1 15); do
+    sleep 2
+    if frontend_alive; then
+      ok "前端就绪 (端口 $FRONTEND_PORT, PID $(cat $FRONTEND_PID_FILE))"
+      return
+    fi
+  done
+  warn "前端启动超时 (PID $(cat $FRONTEND_PID_FILE))"
+}
+
+# ---------------------------------------------------------------------------
+# stop_backend
+# ---------------------------------------------------------------------------
+stop_backend() {
+  local pid=$(backend_pid)
+  if [ -n "$pid" ]; then
+    log "停止后端 (PID $pid)..."
+    kill "$pid" 2>/dev/null || true
+    sleep 2
+    # 强制杀掉残留
+    kill -9 "$pid" 2>/dev/null || true
+    pkill -f "tsx.*dev-server" 2>/dev/null || true
+    rm -f "$BACKEND_PID_FILE"
+    ok "后端已停止"
+  else
+    warn "后端未运行"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# stop_frontend
+# ---------------------------------------------------------------------------
+stop_frontend() {
+  local pid=$(frontend_pid)
+  if [ -n "$pid" ]; then
+    log "停止前端 (PID $pid)..."
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -9 "$pid" 2>/dev/null || true
+    pgrep -f "esbuild.*service" | xargs kill -9 2>/dev/null || true
+    rm -f "$FRONTEND_PID_FILE"
+    ok "前端已停止"
+  else
+    warn "前端未运行"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+show_status() {
+  banner
+  echo -e "  ${BOLD}后端${NC} (端口 $BACKEND_PORT)"
+  if backend_alive; then
+    local bpid=$(backend_pid)
+    echo -e "    状态: ${GREEN}运行中${NC}   PID: ${bpid:-?}"
+    echo -e "    地址: http://127.0.0.1:$BACKEND_PORT"
+  else
+    echo -e "    状态: ${RED}已停止${NC}"
+  fi
+
+  echo ""
+  echo -e "  ${BOLD}前端${NC} (端口 $FRONTEND_PORT)"
+  if frontend_alive; then
+    local fpid=$(frontend_pid)
+    echo -e "    状态: ${GREEN}运行中${NC}   PID: ${fpid:-?}"
+    echo -e "    地址: http://127.0.0.1:$FRONTEND_PORT"
+  else
+    echo -e "    状态: ${RED}已停止${NC}"
+  fi
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# logs
+# ---------------------------------------------------------------------------
+show_logs() {
+  local service="${1:-backend}"
+  local log_file
+  case "$service" in
+    backend)  log_file="$BACKEND_LOG" ;;
+    frontend) log_file="$FRONTEND_LOG" ;;
+    *) fail "未知服务: $service (backend|frontend)"; exit 1 ;;
+  esac
+
+  if [ ! -f "$log_file" ]; then
+    warn "日志文件不存在: $log_file"
+    exit 1
+  fi
+  tail -f "$log_file"
+}
+
+# ---------------------------------------------------------------------------
+# 主入口
+# ---------------------------------------------------------------------------
+usage() {
+  echo "用法: brian <command> [service]"
+  echo ""
+  echo "命令:"
+  echo "  start   [backend|frontend|all]  启动服务"
+  echo "  stop    [backend|frontend|all]  停止服务"
+  echo "  restart [backend|frontend|all]  重启服务"
+  echo "  status                          查看状态"
+  echo "  logs    [backend|frontend]      查看日志"
+  echo ""
+  echo "示例:"
+  echo "  brian start              # 启动全栈"
+  echo "  brian start backend      # 仅启动后端"
+  echo "  brian restart backend    # 重启后端"
+  echo "  brian logs frontend      # 查看前端日志"
+  exit 1
+}
+
+CMD="${1:-status}"
+SVC="${2:-all}"
+
+case "$CMD" in
+  start)
+    case "$SVC" in
+      backend)  banner; start_backend ;;
+      frontend) banner; start_frontend ;;
+      all)      banner; start_backend; echo ""; start_frontend ;;
+      *) usage ;;
+    esac
+    ;;
+  stop)
+    case "$SVC" in
+      backend)  stop_backend ;;
+      frontend) stop_frontend ;;
+      all)      stop_backend; stop_frontend ;;
+      *) usage ;;
+    esac
+    ;;
+  restart)
+    case "$SVC" in
+      backend)  stop_backend; sleep 1; start_backend ;;
+      frontend) stop_frontend; sleep 1; start_frontend ;;
+      all)      stop_backend; stop_frontend; sleep 1
+                banner; start_backend; echo ""; start_frontend ;;
+      *) usage ;;
+    esac
+    ;;
+  status)
+    show_status
+    ;;
+  logs)
+    show_logs "$SVC"
+    ;;
+  *)
+    usage
+    ;;
+esac
