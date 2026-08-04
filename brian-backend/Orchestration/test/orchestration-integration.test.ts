@@ -231,13 +231,14 @@ describe('Orchestration Integration', () => {
   // 4. 分层解耦验证
   // =========================================================================
   describe('Layer decoupling', () => {
-    it('TC-INT-023: 编排层不直接调用 LLMProvider', async () => {
+    it('TC-INT-023: 编排层策略选择通过 PromptsProvider/LLMProvider 完成', async () => {
       const input = Object.assign(new ReceiveWorkInput(), { session_id: 'int-s10', user_query: '你好' });
       const output = new ReceiveWorkOutput();
       const ctx = new OrchestrationEntryContext();
 
       await entry.receiveWork(input, ctx, output);
-      expect(llmAccess.execLLM).not.toHaveBeenCalled();
+      expect(promptsAccess.execPrompt).toHaveBeenCalled();
+      expect(llmAccess.execLLM).toHaveBeenCalled();
     });
   });
 

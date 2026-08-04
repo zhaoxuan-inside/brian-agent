@@ -550,9 +550,21 @@ export function createMockExecutionAccess(opts?: { failExec?: boolean; failBuild
 
 export function createMockLLMAccess() {
   return {
-    execLLM: vi.fn().mockImplementation(async (_i: any, _c: any, o: any) => {
-      o.response = JSON.stringify({ complexity: 30, strategy: 'SIMPLE', reason: 'Simple query' });
-      o.token_usage = 10;
+    execLLM: vi.fn().mockImplementation(async (i: any, _c: any, o: any) => {
+      const prompt = String((i?.prompt ?? ''));
+
+      const complexIndicators = ['分析', '生成', '报告', '对比', '多步', '分解', '步骤', '数据', '处理'];
+      const isComplex = complexIndicators.some((kw) => prompt.includes(kw));
+      const complexity = isComplex ? 72 : 25;
+      const strategy = complexity >= 50 ? 'PLANNING' : 'SIMPLE';
+
+      o.result = JSON.stringify({
+        complexity,
+        strategy,
+        reason: isComplex ? 'multi_step_task' : 'simple_query',
+        plan: isComplex ? [{ step: 1, description: 'Analyze data' }, { step: 2, description: 'Generate report' }] : undefined,
+      });
+      o.usage = { total_tokens: isComplex ? 15 : 8 };
       return true;
     }),
     execLLMStream: vi.fn().mockResolvedValue(true),
@@ -568,8 +580,9 @@ export function createMockLLMAccess() {
 
 export function createMockPromptsAccess() {
   return {
-    execPrompt: vi.fn().mockImplementation(async (_i: any, _c: any, o: any) => {
-      o.prompt = 'You are a strategy selector. Analyze the complexity of the user query.';
+    execPrompt: vi.fn().mockImplementation(async (i: any, _c: any, o: any) => {
+      const vars = (i?.variables ?? {}) as Record<string, unknown>;
+      o.prompt = `You are a strategy selector. Analyze the complexity of the user query.\nUser query: ${String(vars.user_query ?? '')}\nThreshold: ${String(vars.threshold ?? 50)}`;
       return true;
     }),
     soPrompt: vi.fn().mockImplementation(async (_i: any, _c: any, o: any) => { o.prompts = []; return true; }),

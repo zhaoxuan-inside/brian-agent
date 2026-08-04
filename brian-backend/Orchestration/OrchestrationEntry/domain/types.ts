@@ -29,6 +29,7 @@ export class SelectOrchestrationStrategyOutput extends Output {
   strategy = '';
   complexity = 0;
   reason = '';
+  plan?: Array<{ step: number; description: string }>;
 }
 
 export class ReceiveWorkAsyncInput extends Input {

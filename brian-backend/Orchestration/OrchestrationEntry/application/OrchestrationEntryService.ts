@@ -4,7 +4,8 @@ import {
   SelectOneDBInput, SelectOneDBOutput,
   UpdateDBInput, UpdateDBOutput,
   Operator, DataObject, DBContext, IdGenerator,
-  ValidationError, NotFoundError, type Logger, type Condition,
+  ValidationError, NotFoundError,
+  type PromptsAccess, type LLMAccess, type Logger, type Condition,
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
 import { SaveInfoInput, SaveInfoOutput, ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
@@ -36,8 +37,8 @@ export class OrchestrationEntryService {
     private readonly writerAgent: WriterAgentAccess,
     private readonly orchestrationStrategy: OrchestrationStrategyAccess,
     private readonly orchestrationExecution: OrchestrationExecutionAccess,
-    private readonly llmAccess?: any,
-    private readonly promptsAccess?: any,
+    private readonly llmAccess?: LLMAccess,
+    private readonly promptsAccess?: PromptsAccess,
     private readonly mqAccess?: any,
     private readonly mqCore?: any,
     private readonly logger?: Logger,
@@ -188,17 +189,24 @@ export class OrchestrationEntryService {
     _context: OrchestrationEntryContext,
     output: SelectOrchestrationStrategyOutput,
   ): Promise<boolean> {
+    if (!this.llmAccess || !this.promptsAccess) {
+      output.strategy = 'SIMPLE';
+      output.complexity = 0;
+      output.reason = 'no_llm_or_prompts';
+      return true;
+    }
     const result = await sharedSelectStrategy(
       this.relationDb,
+      this.promptsAccess,
+      this.llmAccess,
       input.user_query,
       input.work_context,
-      this.llmAccess,
-      this.promptsAccess,
       this.logger,
     );
     output.strategy = result.strategy;
     output.complexity = result.complexity;
     output.reason = result.reason;
+    output.plan = result.plan;
     return true;
   }
 

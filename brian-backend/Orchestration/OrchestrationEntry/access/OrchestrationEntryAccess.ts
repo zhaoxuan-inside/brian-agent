@@ -1,4 +1,4 @@
-import type { RelationDBAccess, Logger } from '@brian-agent/base';
+import type { RelationDBAccess, PromptsAccess, LLMAccess, Logger } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
 import type { WriterAgentAccess } from '@brian-agent/agent';
@@ -27,8 +27,8 @@ export class OrchestrationEntryAccess {
     writerAgent: WriterAgentAccess,
     orchestrationStrategy: OrchestrationStrategyAccess,
     orchestrationExecution: OrchestrationExecutionAccess,
-    llmAccess?: any,
-    promptsAccess?: any,
+    llmAccess?: LLMAccess,
+    promptsAccess?: PromptsAccess,
     mqAccess?: any,
     mqCore?: any,
     logger?: Logger,

@@ -220,14 +220,44 @@ describe('OrchestrationEntry', () => {
       expect(result).toBe(true);
     });
 
-    it('TC-SS-005: strategy_prompt_template_id 为空降级为规则判定', async () => {
+    it('TC-SS-005: 无 LLM 配置时自动降级为 SIMPLE', async () => {
       const input = Object.assign(new SelectOrchestrationStrategyInput(), { user_query: '你好' });
       const output = new SelectOrchestrationStrategyOutput();
       const ctx = new OrchestrationEntryContext();
 
       const result = await entry.selectOrchestrationStrategy(input, ctx, output);
       expect(result).toBe(true);
-      expect(output.reason).toContain('rule_based');
+      expect(output.strategy).toBe('SIMPLE');
+      expect(output.reason).toBeTruthy();
+    });
+
+    it('TC-SS-006: 简单任务（"今天天气怎么样"）→ 触发 SIMPLE 策略', async () => {
+      const input = Object.assign(new SelectOrchestrationStrategyInput(), { user_query: '今天天气怎么样' });
+      const output = new SelectOrchestrationStrategyOutput();
+      const ctx = new OrchestrationEntryContext();
+
+      const result = await entry.selectOrchestrationStrategy(input, ctx, output);
+      expect(result).toBe(true);
+      expect(output.strategy).toBe('SIMPLE');
+      expect(output.complexity).toBeLessThan(50);
+      expect(output.reason).toContain('simple');
+      expect(output.plan).toBeUndefined();
+    });
+
+    it('TC-SS-007: 复杂任务（"帮我分析销售数据生成报告"）→ 触发 PLANNING 策略，并返回任务分解计划', async () => {
+      const input = Object.assign(new SelectOrchestrationStrategyInput(), {
+        user_query: '帮我分析今年销售数据，对比去年，生成报告并发送给团队',
+      });
+      const output = new SelectOrchestrationStrategyOutput();
+      const ctx = new OrchestrationEntryContext();
+
+      const result = await entry.selectOrchestrationStrategy(input, ctx, output);
+      expect(result).toBe(true);
+      expect(output.strategy).toBe('PLANNING');
+      expect(output.complexity).toBeGreaterThanOrEqual(50);
+      expect(output.reason).toContain('multi_step');
+      expect(output.plan).toBeDefined();
+      expect(output.plan!.length).toBeGreaterThanOrEqual(1);
     });
   });
 
