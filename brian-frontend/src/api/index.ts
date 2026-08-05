@@ -56,6 +56,19 @@ export const memoryApi = {
     request<{ totalMemories: number; byType: Record<string, number> }>(`/memory/stats/${encodeURIComponent(userId)}`)
 }
 
+export interface GraphSearchNode { id: string; tag: string; info_ids: string[]; depth: number }
+export interface GraphSearchEdge { from_id: string; to_id: string; weight: number; active: boolean; compositeWeight: number }
+export interface GraphSearchPath { root_tag: string; root_id: string; nodes: GraphSearchNode[]; edges: GraphSearchEdge[] }
+
+export const graphDbApi = {
+  tagGraph: () => request<{ nodes: GraphNode[]; edges: Array<{ source: string; target: string; weight: number; isActive?: boolean }> }>('/memory/tag-graph'),
+  search: (query: string, maxDepth = 2, onlyActive = true) =>
+    request<{ root_tags: Array<{ tag: string; info_ids: string[] }>; paths: GraphSearchPath[] }>('/memory/graph-search', {
+      method: 'POST',
+      body: JSON.stringify({ query, max_depth: maxDepth, only_active: onlyActive }),
+    }),
+}
+
 export const configApi = {
   getConfig: () => request<{ config: Record<string, unknown> }>('/config'),
   updateConfig: (data: Record<string, unknown>) =>
@@ -229,6 +242,24 @@ export const vectorDbApi = {
       method: 'POST',
       body: JSON.stringify({ text, top_k: topK, similarity_threshold: threshold }),
     }),
+}
+
+export interface MQMessage { id: string; queue: string; payload: unknown; priority: number; status: string; retry_count: number; max_retries: number; created: number; updated: number; processed_at: number | null }
+export interface MQStats { pending: number; processing: number; completed: number; failed: number; total: number }
+
+export const mqApi = {
+  send: (queue: string, payload: string, priority?: number) =>
+    request<{ success: boolean; id: string }>('/config/mq/send', { method: 'POST', body: JSON.stringify({ queue, payload, priority }) }),
+  consume: (queue: string) =>
+    request<{ message: MQMessage | null }>('/config/mq/consume', { method: 'POST', body: JSON.stringify({ queue }) }),
+  stats: (queue?: string) =>
+    request<MQStats>(`/config/mq/stats${queue ? `?queue=${encodeURIComponent(queue)}` : ''}`),
+  queues: () =>
+    request<{ queues: string[] }>('/config/mq/queues').then(r => r.queues),
+  purge: (queue: string) =>
+    request<{ deleted: number; queue: string }>('/config/mq/purge', { method: 'DELETE', body: JSON.stringify({ queue }) }),
+  reset: (queue: string, fromTime?: number) =>
+    request<{ reset: number; queue: string; from_time?: number }>('/config/mq/reset', { method: 'POST', body: JSON.stringify({ queue, from_time: fromTime }) }),
 }
 
 export interface CDTStatus { running: boolean; pid: number; port: number; endpoint?: string }

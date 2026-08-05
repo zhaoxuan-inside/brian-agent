@@ -35,32 +35,6 @@ import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
  * MQProvider 接入层。
  *
  * 作为消息队列的唯一操作入口，上层通过本类访问消息队列。
- *
- * 用法示例：
- * ```typescript
- * const relationDb = new RelationDBAccess({ dbPath: './data/brian.db' });
- * await relationDb.initialize();
- *
- * const mqAccess = new MQAccess(relationDb);
- * await mqAccess.initialize();
- *
- * const sendOutput = new SendMQOutput();
- * await mqAccess.sendMQ(
- *   { data: { queue: 'task', payload: { action: 'sync' } } },
- *   new MQContext(),
- *   sendOutput,
- * );
- *
- * const consumeOutput = new ConsumeMQOutput();
- * await mqAccess.consumeMQ({ queue: 'task' }, new MQContext(), consumeOutput);
- * if (consumeOutput.message) {
- *   await mqAccess.ackMQ(
- *     { message_id: consumeOutput.message.id },
- *     new MQContext(),
- *     new AckMQOutput(),
- *   );
- * }
- * ```
  */
 export class MQAccess {
   private readonly service: MQService;
@@ -145,5 +119,20 @@ export class MQAccess {
     output: CloseMQOutput,
   ): Promise<boolean> {
     return this.service.closeMQ(input, context, output);
+  }
+
+  /** 清理过期消息（COMPLETED/FAILED 超过 message_ttl） */
+  async cleanupExpiredMessages(): Promise<number> {
+    return this.service.cleanupExpiredMessages();
+  }
+
+  /** 恢复卡住的 PROCESSING 超时消息为 PENDING */
+  async recoverStuckMessages(queue?: string): Promise<number> {
+    return this.service.recoverStuckMessages(queue);
+  }
+
+  /** 重新入队失败消息（死信重放） */
+  async replayMQ(messageId: string): Promise<boolean> {
+    return this.service.replayMQ(messageId);
   }
 }

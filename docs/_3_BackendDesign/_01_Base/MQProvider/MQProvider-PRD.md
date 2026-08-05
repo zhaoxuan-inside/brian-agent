@@ -180,8 +180,113 @@
 | retry_count | 重试次数 | INT | N | | 默认 0 |
 | max_retries | 最大重试次数 | INT | N | | 默认值由配置 `default_max_retries` 决定（默认 3） |
 | processed_at | 处理时间 | INT64 | Y | | 毫秒时间戳 |
+| next_retry_at | 下次重试时间 | INT64 | Y | | 毫秒时间戳，指数退避重试调度用 |
 
 > 注：消息保留时间由配置项 `message_ttl`（默认 86400 秒，即 1 天）控制，超期消息由定时任务清理。
+
+## 5. HTTP API（配置中心 / 消息队列）
+
+> 以下 API 挂载在 `dev-server.ts` 的 `/api/config/mq/*` 路径下，供前端配置中心的消息队列管理页面调用。
+
+### 5.1. 发送消息
+
+`POST /api/config/mq/send`
+
+| 参数 | 类型 | 必填 | 说明 |
+| ------ | ------ | ----- | ----- |
+| queue | STRING | N | 队列名称，默认 `default` |
+| payload | ANY | N | 消息内容 |
+| priority | INT | N | 优先级 0-10，默认 5 |
+
+响应：`{ success: true, id: "uuid" }`
+
+### 5.2. 消费消息
+
+`POST /api/config/mq/consume`
+
+| 参数 | 类型 | 必填 | 说明 |
+| ------ | ------ | ----- | ----- |
+| queue | STRING | N | 队列名称，默认 `default` |
+| auto_ack | BOOLEAN | N | 是否自动确认，默认 `true` |
+
+处理流程：
+1. 调用 `consumeMQ` 按优先级降序获取一条 PENDING 消息，状态变为 PROCESSING；
+2. 若 `auto_ack !== false`，自动调用 `ackMQ` 将消息状态更新为 COMPLETED；
+3. 返回消息对象（含 id/queue/payload/priority/status 等字段）；无可用消息时 `message` 为 `null`。
+
+响应：`{ message: MessageRecord | null }`
+
+### 5.3. 队列统计
+
+`GET /api/config/mq/stats?queue=xxx`
+
+| 参数 | 类型 | 必填 | 说明 |
+| ------ | ------ | ----- | ----- |
+| queue | STRING | N | 队列名称，不传返回全部队列聚合统计 |
+
+### 5.4. 队列列表
+
+`GET /api/config/mq/queues`
+
+返回所有活跃队列名：`{ queues: ["queue1", "queue2"] }`。仅返回 `queue_message` 表中存在消息记录的队列。
+
+### 5.5. 清空队列
+
+`DELETE /api/config/mq/purge`
+
+| 参数 | 类型 | 必填 | 说明 |
+| ------ | ------ | ----- | ----- |
+| queue | STRING | Y | 队列名称 |
+
+删除指定队列中所有消息（前端保留队列在本地列表中的显示）。
+
+响应：`{ deleted: N, queue: "xxx" }`
+
+### 5.6. 重置消费
+
+`POST /api/config/mq/reset`
+
+| 参数 | 类型 | 必填 | 说明 |
+| ------ | ------ | ----- | ----- |
+| queue | STRING | N | 队列名称，默认 `default` |
+| from_time | INT64 | N | 起始时间戳（毫秒），仅重置创建时间 ≥ 该值的 PROCESSING 消息 |
+
+将指定队列中状态为 PROCESSING 的消息重置为 PENDING（`retry_count` 归零，`next_retry_at` 清空），用于重新消费。`from_time` 参数支持只重置指定时间点之后被消费的消息。
+
+响应：`{ reset: N, queue: "xxx", from_time: number | undefined }`
+
+## 6. 前端管理页面
+
+位于"配置中心 > 基础设施 > 消息队列"，提供完整的队列管理功能：
+
+### 6.1. 队列列表（含统计）
+- 每行显示队列名、四色状态点（待消费/处理中/已完成/已失败）及对应数量
+- 复选框多选 + 全选，支持批量删除队列
+- 每行 hover 显示"清空消息"（Eraser 图标）和"删除队列"（Trash2 图标）按钮
+- 搜索框支持按队列名过滤
+- 创建队列输入框 + 按钮，创建后队列在本地列表持久保留
+
+### 6.2. 队列弹窗
+点击队列名弹出固定大小 Modal（85vh / max 800px），包含：
+
+**发送消息区域：**
+- 优先级输入框（0-10）
+- 等宽字体 textarea（Ctrl+Enter 发送）
+- 成功/错误反馈
+
+**消费消息区域：**
+- 消费按钮（自动 ack → COMPLETED）
+- 时间点输入（datetime-local）+ 重新消费按钮（调用 reset 接口）
+- 消费结果以 readonly textarea 显示
+- 内容搜索工具栏（搜索框 + 上一个/下一个按钮）
+- 行跳转功能（显示总行数 + 输入行号跳转）
+
+### 6.3. 队列生命周期管理
+- **创建**：前端本地注册队列名，首次发送消息时自动在 DB 中创建
+- **清空**：删除队列中所有消息，队列保留在列表中
+- **删除**：从本地列表移除队列；若 DB 中仍有消息则下次刷新后重新出现
+
+
 
 ### 4.2. MQProvider 配置表（关系数据库）
 
@@ -208,8 +313,10 @@
 | message_ttl | 86400 | INT | 消息默认保留时间（秒，默认1天） |
 | default_max_retries | 3 | INT | 默认最大重试次数 |
 | default_priority | 5 | INT | 默认消息优先级（0-10） |
+| retry_base_delay | 1 | INT | 重试基础延迟（秒），第 N 次重试延迟 = base × 2^(N-1) |
+| processing_timeout | 300 | INT | 处理超时（秒），超过此时限的 PROCESSING 消息恢复为 PENDING |
 
-## 5. 重要内容
+## 7. 重要内容
 
 1. MQProvider 是消息队列的唯一操作入口，上层不可直接操作消息队列；
 2. MQ 基于 RelationDBProvider 实现，无需引入外部消息队列中间件，通过 Repository 接口封装底层消息队列操作；

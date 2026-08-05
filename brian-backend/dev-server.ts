@@ -14,7 +14,7 @@ import { SoulAccess } from './Base/SoulProvider';
 import { SkillAccess } from './Base/SkillProvider';
 import { PromptsAccess, AddPromptInput, DelPromptInput, UpdatePromptInput } from './Base/PromptsProvider';
 import { GraphDBAccess } from './Base/GraphDBProvider';
-import { MQAccess } from './Base/MQProvider';
+import { MQAccess, SendMQInput, SendMQOutput, ConsumeMQInput, ConsumeMQOutput, GetQueueStatsInput, GetQueueStatsOutput, AckMQInput, AckMQOutput, MQContext } from './Base/MQProvider';
 import { LogAccess } from './Base/LogProvider';
 import { VectorDBAccess } from './Base/VectorDBProvider';
 import { CDTAccess } from './Base/CDTProvider';
@@ -250,6 +250,42 @@ async function buildContext() {
     chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
     logger,
   );
+
+  // Upsert all static registrations
+  try {
+    const { ALL_CONFIG_REGISTRATIONS } = await import('./Application/Config/domain/configRegistrations');
+    const { RegisterConfigInput, RegisterConfigOutput, ConfigContext } = await import('./Application/Config/domain/types');
+    const regInput = new RegisterConfigInput();
+    regInput.registrations = ALL_CONFIG_REGISTRATIONS;
+    await configAccess.registerConfig(regInput, new ConfigContext(), new RegisterConfigOutput());
+  } catch (e) {
+    logger.warn('[startup] Failed to sync config registrations', String(e));
+  }
+
+  // 启动时清理过期 MQ 消息
+  try {
+    const cleaned = await mqAccess.cleanupExpiredMessages();
+    if (cleaned > 0) logger.info('[startup] MQ cleanup', `删除了 ${cleaned} 条过期消息`);
+  } catch (e) {
+    logger.warn('[startup] MQ cleanup failed', String(e));
+  }
+
+  // 每日午夜 0:00 清理过期 MQ 消息
+  function scheduleMidnightCleanup() {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+    setTimeout(() => {
+      try {
+        mqAccess.cleanupExpiredMessages().then((cleaned) => {
+          if (cleaned > 0) logger.info('[cron] MQ cleanup', `删除了 ${cleaned} 条过期消息`);
+        }).catch(() => {});
+      } catch { /* ignore */ }
+      scheduleMidnightCleanup(); // 调度下一天
+    }, msUntilMidnight);
+  }
+  scheduleMidnightCleanup();
 
   return {
     relationDb, llmAccess, mcpAccess, soulAccess, skillAccess, promptsAccess,
@@ -1038,8 +1074,151 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.chatAccess.searchMessage(input, context, output);
         sendJson(res, 200, output.messages || []);
       } else if (method === 'GET' && pathname === '/api/memory/tags') { sendJson(res, 200, { tags: [] });
-      } else if (method === 'GET' && pathname === '/api/memory/tag-graph') { sendJson(res, 200, { nodes: [], edges: [] });
+      } else if (method === 'GET' && pathname === '/api/memory/tag-graph') {
+        try {
+          // Query all edges of type 'similarTo' from GraphDB
+          const edges = ctx.relationDb.queryRaw<{ id: string; from_node_id: string; to_node_id: string; edge_type: string; weight: number; is_active: number }>(
+            'SELECT "id", "from_node_id", "to_node_id", "edge_type", "weight", "is_active" FROM "graph_edge" WHERE "edge_type" = \'similarTo\'',
+            [],
+          );
+          if (!edges || edges.length === 0) {
+            sendJson(res, 200, { nodes: [], edges: [] });
+            return;
+          }
+          const nodeIds = new Set<string>();
+          for (const e of edges) { nodeIds.add(e.from_node_id); nodeIds.add(e.to_node_id); }
+          // Fetch tag names for all involved nodes
+          const tagRows = ctx.relationDb.queryRaw<{ id: string; tag: string }>(
+            `SELECT "id", "tag" FROM "info_tag" WHERE "id" IN (${Array.from(nodeIds).map(() => '?').join(',')})`,
+            Array.from(nodeIds),
+          );
+          const tagMap = new Map<string, string>();
+          for (const t of tagRows) { tagMap.set(t.id, t.tag || t.id); }
+          // Compute node degree and aggregated weight
+          const degreeMap = new Map<string, number>();
+          const weightMap = new Map<string, number>();
+          for (const e of edges) {
+            degreeMap.set(e.from_node_id, (degreeMap.get(e.from_node_id) || 0) + 1);
+            degreeMap.set(e.to_node_id, (degreeMap.get(e.to_node_id) || 0) + 1);
+            weightMap.set(e.from_node_id, (weightMap.get(e.from_node_id) || 0) + e.weight);
+            weightMap.set(e.to_node_id, (weightMap.get(e.to_node_id) || 0) + e.weight);
+          }
+          const activeEdgeSet = new Set<string>();
+          for (const e of edges) { if (e.is_active) { activeEdgeSet.add(e.from_node_id + '|' + e.to_node_id); } }
+          const graphNodes = Array.from(nodeIds).map(id => ({
+            id,
+            name: tagMap.get(id) || id.substring(0, 8),
+            weight: weightMap.get(id) || 0,
+            degree: degreeMap.get(id) || 0,
+          }));
+          const graphEdges = edges.map(e => ({
+            source: e.from_node_id,
+            target: e.to_node_id,
+            weight: e.weight,
+            isActive: !!e.is_active,
+          }));
+          sendJson(res, 200, { nodes: graphNodes, edges: graphEdges });
+        } catch { sendJson(res, 200, { nodes: [], edges: [] }); }
       } else if (method === 'GET' && pathname === '/api/memory/keyword-graph') { sendJson(res, 200, { nodes: [], edges: [] });
+      // ---- Graph Search: text-based tag traversal ----
+      } else if (method === 'POST' && pathname === '/api/memory/graph-search') {
+        const query = typeof body.query === 'string' ? body.query.trim() : '';
+        if (!query) { sendJson(res, 400, { error: 'query is required' }); return; }
+        const maxDepth = typeof body.max_depth === 'number' && body.max_depth > 0 ? Math.min(body.max_depth, 5) : 2;
+        const onlyActive = body.only_active !== false;
+        const fanOutLimit = 500; // θ = 500, PRD 扇出熔断阈值
+        try {
+          // 1. Search tags matching the query text
+          const matchedTags = ctx.relationDb.queryRaw<{ id: string; tag: string; info_id: string }>(
+            'SELECT DISTINCT "id", "tag", "info_id" FROM "info_tag" WHERE "tag" LIKE ? LIMIT 20',
+            [`%${query.replace(/%/g, '').replace(/'/g, '')}%`],
+          );
+          if (!matchedTags || matchedTags.length === 0) {
+            sendJson(res, 200, { root_tags: [], paths: [] });
+            return;
+          }
+          const rootTagMap = new Map<string, { tag: string; info_ids: string[] }>();
+          for (const t of matchedTags) {
+            if (!rootTagMap.has(t.id)) rootTagMap.set(t.id, { tag: t.tag, info_ids: [] });
+            rootTagMap.get(t.id)!.info_ids.push(t.info_id);
+          }
+          // Helper: fetch tag info
+          function getTagData(tagId: string): { tag: string; info_ids: string[] } {
+            const rows = ctx.relationDb.queryRaw<{ tag: string; info_id: string }>(
+              'SELECT "tag", "info_id" FROM "info_tag" WHERE "id" = ?', [tagId],
+            );
+            return {
+              tag: rows.length > 0 ? rows[0].tag : tagId.substring(0, 8),
+              info_ids: rows.map(r => r.info_id),
+            };
+          }
+          // Helper: compute composite weight for an edge
+          interface WeightedEdge { from_id: string; to_id: string; weight: number; active: boolean; compositeWeight: number }
+          async function computeEdgeWeights(edgeRows: Array<{ id: string; from_node_id: string; to_node_id: string; weight: number; is_active: number }>, hopDist: number): Promise<WeightedEdge[]> {
+            const results: WeightedEdge[] = [];
+            for (const e of edgeRows) {
+              try {
+                const cw = await ctx.graphDBAccess.computeEdgeWeight(e.id, hopDist);
+                results.push({ from_id: e.from_node_id, to_id: e.to_node_id, weight: e.weight, active: !!e.is_active, compositeWeight: cw });
+              } catch {
+                results.push({ from_id: e.from_node_id, to_id: e.to_node_id, weight: e.weight, active: !!e.is_active, compositeWeight: e.weight });
+              }
+            }
+            results.sort((a, b) => b.compositeWeight - a.compositeWeight);
+            return results;
+          }
+          // BFS traversal with weight ranking
+          interface TraversalNode { id: string; tag: string; info_ids: string[]; depth: number }
+          interface TraversalEdge { from_id: string; to_id: string; weight: number; active: boolean; compositeWeight: number }
+          const paths: Array<{ root_tag: string; root_id: string; nodes: TraversalNode[]; edges: TraversalEdge[] }> = [];
+          const processedSets: Array<Set<string>> = [];
+          for (const [rootId, rootData] of rootTagMap) {
+            const visited = new Set<string>([rootId]);
+            const allNodes: Map<string, TraversalNode> = new Map();
+            const allEdges: TraversalEdge[] = [];
+            allNodes.set(rootId, { id: rootId, tag: rootData.tag, info_ids: [...rootData.info_ids], depth: 0 });
+            let frontier = [rootId];
+            for (let d = 0; d < maxDepth; d++) {
+              if (frontier.length === 0) break;
+              const placeholders = frontier.map(() => '?').join(',');
+              const activeFilter = onlyActive ? ' AND "is_active" = 1' : '';
+              // Fetch with limit to fan_out_threshold for safety
+              const edgeRows = ctx.relationDb.queryRaw<{ id: string; from_node_id: string; to_node_id: string; weight: number; is_active: number }>(
+                `SELECT "id", "from_node_id", "to_node_id", "weight", "is_active" FROM "graph_edge" WHERE "edge_type" = 'similarTo' AND ("from_node_id" IN (${placeholders}) OR "to_node_id" IN (${placeholders}))${activeFilter} LIMIT ${fanOutLimit}`,
+                [...frontier, ...frontier],
+              );
+              if (!edgeRows || edgeRows.length === 0) break;
+              // Compute composite weights and sort
+              const weighted = await computeEdgeWeights(edgeRows, d + 1);
+              const nextFrontier: string[] = [];
+              for (const we of weighted) {
+                const neighborId = frontier.includes(we.from_id) ? we.to_id : we.from_id;
+                if (!visited.has(neighborId)) {
+                  visited.add(neighborId);
+                  nextFrontier.push(neighborId);
+                  const td = getTagData(neighborId);
+                  allNodes.set(neighborId, { id: neighborId, tag: td.tag, info_ids: td.info_ids, depth: d + 1 });
+                }
+                allEdges.push({
+                  from_id: we.from_id, to_id: we.to_id,
+                  weight: we.weight, active: we.active,
+                  compositeWeight: we.compositeWeight,
+                });
+              }
+              frontier = nextFrontier;
+            }
+            const sig = JSON.stringify([...visited].sort());
+            if (processedSets.some((s) => JSON.stringify([...s].sort()) === sig)) continue;
+            processedSets.push(visited);
+            paths.push({
+              root_tag: rootData.tag,
+              root_id: rootId,
+              nodes: Array.from(allNodes.values()),
+              edges: allEdges,
+            });
+          }
+          sendJson(res, 200, { root_tags: Array.from(rootTagMap.values()), paths });
+        } catch { sendJson(res, 200, { root_tags: [], paths: [] }); }
       } else if (method === 'GET' && /\/api\/memory\/stats\//.test(pathname)) {
         const input = Object.assign(new SearchSessionInput(), {});
         const output = new SearchSessionOutput();
@@ -1057,6 +1236,64 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/learning/queue') { sendJson(res, 200, { tasks: [] });
       } else if (method === 'GET' && pathname === '/api/learning/knowledge') { sendJson(res, 200, { items: [] });
       } else if (method === 'GET' && pathname === '/api/learning/insights') { sendJson(res, 200, { items: [] });
+
+      // ===== MQ Config Routes =====
+      } else if (method === 'POST' && pathname === '/api/config/mq/send') {
+        const queue = typeof body.queue === 'string' && body.queue.trim() ? body.queue.trim() : 'default';
+        const payload = body.payload !== undefined ? body.payload : body.content || '';
+        const priority = typeof body.priority === 'number' ? body.priority : undefined;
+        const sendInput = Object.assign(new SendMQInput(), { data: { queue, payload, priority } });
+        const sendOutput = new SendMQOutput();
+        await ctx.mqAccess.sendMQ(sendInput, new MQContext(), sendOutput);
+        sendJson(res, 200, { success: true, id: sendOutput.id });
+
+      } else if (method === 'POST' && pathname === '/api/config/mq/consume') {
+        const queue = typeof body.queue === 'string' && body.queue.trim() ? body.queue.trim() : 'default';
+        const autoAck = body.auto_ack !== false;
+        const consumeInput = Object.assign(new ConsumeMQInput(), { queue });
+        const consumeOutput = new ConsumeMQOutput();
+        await ctx.mqAccess.consumeMQ(consumeInput, new MQContext(), consumeOutput);
+        if (consumeOutput.message && autoAck) {
+          const ackInput = Object.assign(new AckMQInput(), { message_id: consumeOutput.message.id });
+          const ackOutput = new AckMQOutput();
+          await ctx.mqAccess.ackMQ(ackInput, new MQContext(), ackOutput);
+          consumeOutput.message.status = 'COMPLETED';
+        }
+        sendJson(res, 200, { message: consumeOutput.message });
+
+      } else if (method === 'POST' && pathname === '/api/config/mq/reset') {
+        const queue = typeof body.queue === 'string' && body.queue.trim() ? body.queue.trim() : 'default';
+        const fromTime = typeof body.from_time === 'number' && body.from_time > 0 ? body.from_time : undefined;
+        const sql = fromTime
+          ? 'UPDATE "queue_message" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\' AND "created" >= ?'
+          : 'UPDATE "queue_message" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\'';
+        const params: unknown[] = [Date.now(), queue];
+        if (fromTime) params.push(fromTime);
+        const count = ctx.relationDb.executeRaw(sql, params);
+        sendJson(res, 200, { reset: count, queue, from_time: fromTime });
+
+      } else if (method === 'GET' && pathname === '/api/config/mq/stats') {
+        const queue = params.get('queue') || undefined;
+        const statsInput = Object.assign(new GetQueueStatsInput(), { queue });
+        const statsOutput = new GetQueueStatsOutput();
+        await ctx.mqAccess.getQueueStats(statsInput, new MQContext(), statsOutput);
+        sendJson(res, 200, statsOutput.stats);
+
+      } else if (method === 'GET' && pathname === '/api/config/mq/queues') {
+        const rows = ctx.relationDb.queryRaw<{ queue: string }>(
+          'SELECT DISTINCT "queue" FROM "queue_message" ORDER BY "queue" ASC',
+          [],
+        );
+        sendJson(res, 200, { queues: (rows || []).map(r => r.queue) });
+
+      } else if (method === 'DELETE' && pathname === '/api/config/mq/purge') {
+        const queue = (body as Record<string, unknown>).queue as string || '';
+        if (!queue) { sendJson(res, 400, { error: 'queue is required' }); return; }
+        const deleted = ctx.relationDb.executeRaw(
+          'DELETE FROM "queue_message" WHERE "queue" = ?',
+          [queue],
+        );
+        sendJson(res, 200, { deleted, queue });
 
       // ===== Library Routes =====
       } else if (method === 'GET' && pathname === '/api/library/paths') { sendJson(res, 200, { paths: [] });

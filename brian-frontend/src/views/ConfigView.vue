@@ -7,17 +7,17 @@ import {
   Lightbulb, Library, RefreshCw, ClipboardList, Briefcase, PenLine,
   Settings, FileText, Network, User, MessageCircle, Sparkles,
   ChevronRight, Trash2, Loader2, Check, AlertCircle,
-  Star, FlaskConical, X, Save, Layers,
+  Star, FlaskConical, X, Save, Layers, Eraser,
   Globe, Key, Plus, Pencil, Download,
   Eye, EyeOff,
-  Search, Monitor, Terminal, MessageSquare,
+  Search, Monitor, Terminal, MessageSquare, Send,
   BarChart3, Zap, Plug, Radio,
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
-import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, vectorDbApi } from '@/api'
-import type { ConfigTreeLayer, ConfigTreeCategory, ConfigTreeItem } from '@/api/types'
+import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, vectorDbApi, graphDbApi, mqApi } from '@/api'
+import type { ConfigTreeLayer, ConfigTreeCategory, ConfigTreeItem, MQMessage, MQStats } from '@/api/types'
 
 // ============================================================
 // 导航定义（PRD §11）
@@ -116,7 +116,7 @@ const navSections: NavSection[] = [
     subsections: [
       { key: 'infra-log', label: '日志', icon: Terminal, type: 'params', configModule: 'log_provider', configCategories: ['basic'] },
       { key: 'infra-mq', label: '消息队列', icon: Radio, type: 'params', configModule: 'mq_provider', configCategories: ['basic'] },
-      { key: 'infra-graphdb', label: '图数据库', icon: Database, type: 'params', configModule: 'graphdb_provider', configCategories: ['basic', 'aging'] },
+        { key: 'infra-graphdb', label: '图数据库', icon: Database, type: 'params', configModule: 'graphdb_provider', configCategories: ['basic', 'aging', 'weight'] },
       { key: 'infra-vectordb', label: '向量数据库', icon: Table2, type: 'params', configModule: 'vectordb_provider', configCategories: ['basic'] },
     ],
   },
@@ -349,6 +349,293 @@ async function runVectorDbSearch() {
   } finally {
     vectordbSearching.value = false
   }
+}
+
+// GraphDB 标签图遍历搜索状态
+const graphSearchQuery = ref('')
+const graphSearchMaxDepth = ref(2)
+const graphSearchOnlyActive = ref(true)
+const graphSearching = ref(false)
+const graphSearchError = ref('')
+const graphSearchResult = ref<{ root_tags: Array<{ tag: string; info_ids: string[] }>; paths: Array<{ root_tag: string; root_id: string; nodes: Array<{ id: string; tag: string; info_ids: string[]; depth: number }>; edges: Array<{ from_id: string; to_id: string; weight: number; active: boolean }> }> } | null>(null)
+
+async function runGraphSearch() {
+  const q = graphSearchQuery.value.trim()
+  if (!q) return
+  graphSearching.value = true
+  graphSearchError.value = ''
+  graphSearchResult.value = null
+  try {
+    graphSearchResult.value = await graphDbApi.search(q, graphSearchMaxDepth.value, graphSearchOnlyActive.value)
+  } catch (e: unknown) {
+    graphSearchError.value = e instanceof Error ? e.message : '搜索失败'
+  } finally {
+    graphSearching.value = false
+  }
+}
+
+// MQ 消息发送/消费状态
+const mqSendQueue = ref('default')
+const mqSendPayload = ref('')
+const mqSendPriority = ref<number | undefined>(undefined)
+const mqSending = ref(false)
+const mqSendError = ref('')
+const mqSendResult = ref('')
+
+const mqConsumeQueue = ref('default')
+const mqConsuming = ref(false)
+const mqConsumedMessage = ref<MQMessage | null>(null)
+const mqConsumeError = ref('')
+
+const mqDbQueues = ref<string[]>([])
+const mqLocalQueues = ref<Set<string>>(new Set(['default']))
+const mqDeletedQueues = ref<Set<string>>(new Set())
+const mqSelectedQueues = ref<Set<string>>(new Set())
+const mqQueues = computed(() => {
+  const merged = new Set([...mqDbQueues.value, ...mqLocalQueues.value])
+  for (const d of mqDeletedQueues.value) merged.delete(d)
+  return Array.from(merged).sort()
+})
+
+// Cache total stats per load; individual queue stats fetched on click
+const mqStatsCache = ref<Map<string, MQStats>>(new Map())
+const mqStatsLoading = ref(false)
+const mqSearchQuery = ref('')
+const filteredMqQueues = computed(() => {
+  const q = mqSearchQuery.value.trim().toLowerCase()
+  if (!q) return mqQueues.value
+  return mqQueues.value.filter(name => name.toLowerCase().includes(q))
+})
+
+// Modal state
+const mqModalVisible = ref(false)
+const activeMqQueue = ref('')
+const mqTextSearch = ref('')
+const mqTextLineJump = ref<number | undefined>(undefined)
+const mqOutputRef = ref<HTMLTextAreaElement | null>(null)
+
+function jumpToLine() {
+  const el = mqOutputRef.value
+  if (!el || mqTextLineJump.value === undefined) return
+  const text = el.value
+  const lines = text.split('\n')
+  const line = Math.max(1, Math.min(mqTextLineJump.value, lines.length))
+  let pos = 0
+  for (let i = 0; i < line - 1; i++) pos += lines[i].length + 1
+  el.setSelectionRange(pos, pos)
+  el.focus()
+}
+
+function searchInText(direction: 'next' | 'prev') {
+  const el = mqOutputRef.value
+  if (!el || !mqTextSearch.value.trim()) return
+  const text = el.value
+  const query = mqTextSearch.value.trim()
+  const start = el.selectionEnd
+  const find = direction === 'next'
+    ? text.indexOf(query, start)
+    : text.lastIndexOf(query, start - 1)
+  if (find !== -1) {
+    el.setSelectionRange(find, find + query.length)
+  } else if (direction === 'next') {
+    // wrap around
+    const wrap = text.indexOf(query, 0)
+    if (wrap !== -1) el.setSelectionRange(wrap, wrap + query.length)
+  } else {
+    const wrap = text.lastIndexOf(query, text.length - 1)
+    if (wrap !== -1) el.setSelectionRange(wrap, wrap + query.length)
+  }
+  el.focus()
+}
+
+const mqConsumedContent = computed(() => {
+  if (!mqConsumedMessage.value) return ''
+  const p = mqConsumedMessage.value.payload
+  return typeof p === 'string' ? p : JSON.stringify(p, null, 2)
+})
+
+const mqContentLineCount = computed(() => {
+  return mqConsumedContent.value ? mqConsumedContent.value.split('\n').length : 0
+})
+
+function toggleMqQueueSelection(queue: string) {
+  const next = new Set(mqSelectedQueues.value)
+  if (next.has(queue)) next.delete(queue)
+  else next.add(queue)
+  mqSelectedQueues.value = next
+}
+
+function toggleAllMqQueues() {
+  const all = filteredMqQueues.value
+  if (all.every(q => mqSelectedQueues.value.has(q))) {
+    mqSelectedQueues.value = new Set()
+  } else {
+    mqSelectedQueues.value = new Set(all)
+  }
+}
+
+async function loadMqQueues() {
+  try {
+    mqDbQueues.value = await mqApi.queues()
+    // Preload stats for all known queues
+    const allQueues = mqQueues.value
+    const results = await Promise.allSettled(allQueues.map(q => mqApi.stats(q)))
+    const cache = new Map<string, MQStats>()
+    allQueues.forEach((q, i) => {
+      const r = results[i]
+      if (r.status === 'fulfilled') cache.set(q, r.value)
+    })
+    mqStatsCache.value = cache
+  } catch { /* ignore */ }
+}
+
+async function loadMqStats() {
+  mqStatsLoading.value = true
+  try {
+    const stats = await mqApi.stats()
+    // Update cache for each queue from "all queues" perspective—best effort
+    // We'll reload individual queue stats when user clicks
+  } catch { /* ignore */ }
+  finally { mqStatsLoading.value = false }
+}
+
+async function fetchQueueStats(queue: string): Promise<MQStats> {
+  try {
+    const s = await mqApi.stats(queue)
+    mqStatsCache.value = new Map(mqStatsCache.value).set(queue, s)
+    return s
+  } catch {
+    return { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 }
+  }
+}
+
+function getQueueStats(queue: string): MQStats | undefined {
+  return mqStatsCache.value.get(queue)
+}
+
+async function selectMqQueue(queue: string) {
+  activeMqQueue.value = queue
+  mqConsumeQueue.value = queue
+  mqSendQueue.value = queue
+  mqSendError.value = ''
+  mqSendResult.value = ''
+  mqConsumeError.value = ''
+  mqConsumedMessage.value = null
+  mqResetTime.value = ''
+  await fetchQueueStats(queue)
+  mqModalVisible.value = true
+}
+
+async function sendMqMessage() {
+  const payload = mqSendPayload.value.trim()
+  if (!payload) { mqSendError.value = '请输入消息内容'; return }
+  const queue = mqSendQueue.value.trim() || 'default'
+  mqSending.value = true
+  mqSendError.value = ''
+  mqSendResult.value = ''
+  try {
+    const resp = await mqApi.send(queue, payload, mqSendPriority.value)
+    mqSendResult.value = `发送成功！消息 ID: ${resp.id}`
+    mqSendPayload.value = ''
+    mqSendPriority.value = undefined
+    mqLocalQueues.value = new Set([...mqLocalQueues.value, queue])
+    await loadMqQueues()
+    await fetchQueueStats(queue)
+  } catch (e: unknown) {
+    mqSendError.value = e instanceof Error ? e.message : '发送失败'
+  } finally { mqSending.value = false }
+}
+
+async function consumeMqMessage() {
+  const queue = mqConsumeQueue.value.trim() || 'default'
+  mqConsuming.value = true
+  mqConsumeError.value = ''
+  mqConsumedMessage.value = null
+  try {
+    const resp = await mqApi.consume(queue)
+    mqConsumedMessage.value = resp.message
+    await fetchQueueStats(queue)
+  } catch (e: unknown) {
+    mqConsumeError.value = e instanceof Error ? e.message : '消费失败'
+  } finally { mqConsuming.value = false }
+}
+
+const mqNewQueue = ref('')
+const mqCreating = ref(false)
+const mqCreateError = ref('')
+const mqCreateResult = ref('')
+
+async function createMqQueue() {
+  const name = mqNewQueue.value.trim()
+  if (!name) { mqCreateError.value = '请输入队列名称'; return }
+  if (mqQueues.value.includes(name)) { mqCreateError.value = `队列 "${name}" 已存在`; return }
+  mqCreating.value = true
+  mqCreateError.value = ''
+  mqCreateResult.value = ''
+  try {
+    mqLocalQueues.value = new Set([...mqLocalQueues.value, name])
+    mqDeletedQueues.value = new Set([...mqDeletedQueues.value].filter(d => d !== name))
+    mqCreateResult.value = `队列 "${name}" 已就绪`
+    mqNewQueue.value = ''
+  } catch (e: unknown) {
+    mqCreateError.value = e instanceof Error ? e.message : '创建失败'
+  } finally { mqCreating.value = false }
+}
+
+function deleteMqQueue(queue: string) {
+  mqDeletedQueues.value = new Set([...mqDeletedQueues.value, queue])
+  mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(q => q !== queue))
+  mqSelectedQueues.value = new Set([...mqSelectedQueues.value].filter(q => q !== queue))
+}
+
+function deleteSelectedMqQueues() {
+  for (const q of mqSelectedQueues.value) {
+    mqDeletedQueues.value = new Set([...mqDeletedQueues.value, q])
+    mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(lq => lq !== q))
+  }
+  mqSelectedQueues.value = new Set()
+}
+
+const mqPurging = ref(false)
+const mqPurgeError = ref('')
+const mqPurgeResult = ref('')
+
+async function purgeMqQueue(queue: string) {
+  if (!queue) return
+  mqPurging.value = true
+  mqPurgeError.value = ''
+  mqPurgeResult.value = ''
+  try {
+    const resp = await mqApi.purge(queue)
+    mqPurgeResult.value = `队列 "${queue}" 已清空，删除 ${resp.deleted} 条消息`
+    mqLocalQueues.value = new Set([...mqLocalQueues.value, queue])
+    await fetchQueueStats(queue)
+    await loadMqQueues()
+  } catch (e: unknown) {
+    mqPurgeError.value = e instanceof Error ? e.message : '清空失败'
+  } finally { mqPurging.value = false }
+}
+
+const mqResetting = ref(false)
+const mqResetTime = ref('')
+
+async function resetMqQueue(queue: string) {
+  if (!queue) return
+  mqResetting.value = true
+  try {
+    const fromTime = mqResetTime.value.trim()
+      ? new Date(mqResetTime.value.trim()).getTime()
+      : undefined
+    const resp = await mqApi.reset(queue, fromTime)
+    if (resp.reset > 0) {
+      mqConsumeError.value = ''
+      mqConsumedMessage.value = null
+    }
+    await fetchQueueStats(queue)
+    await loadMqQueues()
+  } catch (e: unknown) {
+    mqConsumeError.value = e instanceof Error ? e.message : '重置失败'
+  } finally { mqResetting.value = false }
 }
 
 const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
@@ -2331,6 +2618,10 @@ watch(activeSubSection, async (val) => {
     }
   } else if (sub?.type === 'params') {
     await loadConfigTree()
+    if (sub.key === 'infra-mq') {
+      await loadMqQueues()
+      await loadMqStats()
+    }
   }
 }, { immediate: true })
 </script>
@@ -2440,6 +2731,237 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">暂无配置参数</p>
           </div>
           <div v-else class="space-y-5">
+            <!-- MQ 消息队列操作面板（仅 mq_provider 模块展示） -->
+            <div v-if="currentSub?.configModule === 'mq_provider'" class="space-y-4">
+              <!-- 搜索 & 创建 -->
+              <div class="flex gap-2 items-end">
+                <div class="flex-1 relative">
+                  <Search :size="14" class="absolute left-3 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+                  <input v-model="mqSearchQuery" type="text" :class="[inputClass, 'pl-9']" placeholder="搜索队列..." />
+                </div>
+                <div class="flex-1">
+                  <input v-model="mqNewQueue" type="text" :class="inputClass" placeholder="输入新队列名称..." @keyup.enter="createMqQueue()" />
+                </div>
+                <button
+                  class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors flex-shrink-0"
+                  :disabled="mqCreating || !mqNewQueue.trim()"
+                  @click="createMqQueue()"
+                >
+                  <Loader2 v-if="mqCreating" :size="14" class="animate-spin" />
+                  <Plus v-else :size="14" />
+                  {{ mqCreating ? '...' : '创建' }}
+                </button>
+              </div>
+              <div v-if="mqCreateError" class="flex items-center gap-2 text-xs text-error-red"><AlertCircle :size="14" /> {{ mqCreateError }}</div>
+              <div v-if="mqCreateResult" class="flex items-center gap-2 text-xs text-success-green"><Check :size="14" /> {{ mqCreateResult }}</div>
+
+              <!-- 队列列表（含每队列统计 + 操作） -->
+              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+                <div class="px-4 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue"
+                        :checked="filteredMqQueues.length > 0 && filteredMqQueues.every(q => mqSelectedQueues.has(q))"
+                        @change="toggleAllMqQueues" />
+                      <span class="text-xs text-apple-gray-500">全选</span>
+                    </label>
+                    <span class="text-xs text-apple-gray-400">{{ mqQueues.length }} 个队列</span>
+                  </div>
+                  <button
+                    v-if="mqSelectedQueues.size > 0"
+                    class="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-error-red bg-error-red/5 border border-error-red/20 rounded-lg hover:bg-error-red/10 transition-colors"
+                    @click="deleteSelectedMqQueues()"
+                  >
+                    <Trash2 :size="12" /> 删除选中 ({{ mqSelectedQueues.size }})
+                  </button>
+                </div>
+                <div v-if="filteredMqQueues.length === 0" class="px-4 py-6 text-xs text-apple-gray-400 text-center">
+                  暂无队列
+                </div>
+                <div v-else class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700 max-h-80 overflow-y-auto">
+                  <div
+                    v-for="q in filteredMqQueues"
+                    :key="q"
+                    class="px-4 py-2.5 flex items-center gap-3 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors group"
+                  >
+                    <input type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue flex-shrink-0"
+                      :checked="mqSelectedQueues.has(q)"
+                      @change="toggleMqQueueSelection(q)" />
+                    <Radio :size="14" class="text-brian-blue flex-shrink-0" />
+                    <button
+                      class="flex-1 text-left text-sm text-apple-gray-700 dark:text-apple-gray-200 truncate hover:text-brian-blue hover:underline cursor-pointer"
+                      @click="selectMqQueue(q)"
+                    >{{ q }}</button>
+                    <!-- Inline stats -->
+                    <div class="flex items-center gap-2 text-[11px] flex-shrink-0">
+                      <template v-if="getQueueStats(q)">
+                        <span class="flex items-center gap-1" title="待消费">
+                          <span class="w-2 h-2 rounded-full bg-warning-orange"></span>
+                          {{ getQueueStats(q)!.pending }}
+                        </span>
+                        <span class="flex items-center gap-1" title="处理中">
+                          <span class="w-2 h-2 rounded-full bg-brian-blue"></span>
+                          {{ getQueueStats(q)!.processing }}
+                        </span>
+                        <span class="flex items-center gap-1" title="已完成">
+                          <span class="w-2 h-2 rounded-full bg-success-green"></span>
+                          {{ getQueueStats(q)!.completed }}
+                        </span>
+                        <span class="flex items-center gap-1" title="已失败">
+                          <span class="w-2 h-2 rounded-full bg-error-red"></span>
+                          {{ getQueueStats(q)!.failed }}
+                        </span>
+                      </template>
+                      <span v-else class="text-apple-gray-300">—</span>
+                    </div>
+                    <button
+                      class="p-1 rounded text-apple-gray-300 hover:text-warning-orange hover:bg-warning-orange/5 opacity-0 group-hover:opacity-100 transition-all"
+                      title="清空消息"
+                      :disabled="mqPurging"
+                      @click.stop="purgeMqQueue(q)"
+                    >
+                      <Loader2 v-if="mqPurging" :size="12" class="animate-spin" />
+                      <Eraser v-else :size="13" />
+                    </button>
+                    <button
+                      class="p-1 rounded text-apple-gray-300 hover:text-error-red hover:bg-error-red/5 opacity-0 group-hover:opacity-100 transition-all"
+                      title="删除队列"
+                      @click.stop="deleteMqQueue(q)"
+                    >
+                      <Trash2 :size="13" />
+                    </button>
+                  </div>
+                </div>
+                <div v-if="mqPurgeError" class="px-4 pb-2 flex items-center gap-2 text-xs text-error-red"><AlertCircle :size="14" /> {{ mqPurgeError }}</div>
+                <div v-if="mqPurgeResult" class="px-4 pb-2 flex items-center gap-2 text-xs text-success-green"><Check :size="14" /> {{ mqPurgeResult }}</div>
+              </div>
+              <div v-if="mqStatsLoading" class="flex items-center justify-center py-4">
+                <Loader2 :size="16" class="animate-spin text-brian-blue" />
+              </div>
+            </div>
+
+            <!-- MQ 队列弹窗（发送 / 消费） -->
+            <Teleport to="body">
+              <div
+                v-if="mqModalVisible"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+                @click.self="mqModalVisible = false"
+              >
+                <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-2xl mx-4 overflow-hidden flex flex-col" style="height: 85vh; max-height: 800px;">
+                  <div class="px-5 py-3.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between flex-shrink-0">
+                    <div class="flex items-center gap-2">
+                      <Radio :size="16" class="text-brian-blue" />
+                      <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ activeMqQueue }}</h3>
+                    </div>
+                    <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="mqModalVisible = false">
+                      <X :size="18" />
+                    </button>
+                  </div>
+                  <div class="px-5 py-4 space-y-4 flex-1 overflow-y-auto" style="min-height: 0;">
+                    <!-- 发送 -->
+                    <div class="flex flex-col" style="flex: 1 1 40%; min-height: 0;">
+                      <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-2 flex-shrink-0">发送消息</h4>
+                      <div class="flex gap-2 mb-2 flex-shrink-0">
+                        <div class="flex-1">
+                          <input v-model.number="mqSendPriority" type="number" min="0" max="10" placeholder="优先级 (默认5)" :class="inputClass" style="padding-top: 4px; padding-bottom: 4px; font-size: 11px;" />
+                        </div>
+                        <button
+                          class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors flex-shrink-0"
+                          :disabled="mqSending || !mqSendPayload.trim()"
+                          @click="sendMqMessage()"
+                        >
+                          <Loader2 v-if="mqSending" :size="13" class="animate-spin" />
+                          <Send v-else :size="13" />
+                          {{ mqSending ? '...' : '发送' }}
+                        </button>
+                      </div>
+                      <textarea
+                        v-model="mqSendPayload"
+                        placeholder="输入消息内容... Ctrl+Enter 发送"
+                        :class="[inputClass, 'resize-none']"
+                        style="flex: 1; min-height: 80px; font-size: 12px; line-height: 1.5; font-family: ui-monospace, monospace;"
+                        @keyup.ctrl.enter="sendMqMessage()"
+                      ></textarea>
+                      <div v-if="mqSendError" class="flex items-center gap-2 text-[11px] text-error-red mt-1 flex-shrink-0"><AlertCircle :size="13" /> {{ mqSendError }}</div>
+                      <div v-if="mqSendResult" class="flex items-center gap-2 text-[11px] text-success-green mt-1 flex-shrink-0"><Check :size="13" /> {{ mqSendResult }}</div>
+                    </div>
+
+                    <!-- 消费 -->
+                    <div class="flex flex-col" style="flex: 1 1 50%; min-height: 0;">
+                      <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                        <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400">消费消息</h4>
+                        <div class="flex items-center gap-1.5" v-if="mqConsumedMessage">
+                          <span class="text-[10px] text-apple-gray-400">{{ mqContentLineCount }} 行</span>
+                          <input
+                            v-model.number="mqTextLineJump"
+                            type="number"
+                            min="1"
+                            placeholder="跳转行"
+                            class="w-16 px-1.5 py-0.5 text-[10px] border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
+                            @keyup.enter="jumpToLine()"
+                          />
+                        </div>
+                      </div>
+                      <div class="flex gap-2 mb-2 flex-shrink-0">
+                        <button
+                          class="flex items-center justify-center gap-1.5 py-2 text-xs font-medium bg-success-green text-white rounded-lg hover:bg-success-green/90 disabled:opacity-50 transition-colors flex-shrink-0"
+                          style="flex: 1 1 auto;"
+                          :disabled="mqConsuming"
+                          @click="consumeMqMessage()"
+                        >
+                          <Loader2 v-if="mqConsuming" :size="13" class="animate-spin" />
+                          <Download v-else :size="13" />
+                          {{ mqConsuming ? '消费中...' : '消费消息' }}
+                        </button>
+                        <div class="flex-1">
+                          <input v-model="mqResetTime" type="datetime-local" :class="inputClass" style="padding-top: 4px; padding-bottom: 4px; font-size: 11px;" />
+                        </div>
+                        <button
+                          class="flex items-center gap-1 px-2.5 py-2 text-[11px] font-medium text-apple-gray-600 dark:text-apple-gray-300 bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-600 rounded-lg hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                          :disabled="mqConsuming || mqResetting"
+                          @click="resetMqQueue(activeMqQueue)"
+                        >
+                          <Loader2 v-if="mqResetting" :size="12" class="animate-spin" />
+                          <RefreshCw v-else :size="12" />
+                          {{ mqResetting ? '...' : '重新消费' }}
+                        </button>
+                      </div>
+                      <div v-if="mqConsumeError" class="flex items-center gap-2 text-[11px] text-error-red mb-2 flex-shrink-0"><AlertCircle :size="13" /> {{ mqConsumeError }}</div>
+                      <div v-if="mqConsumedMessage" class="flex flex-col flex-1 min-h-0 rounded-lg border border-apple-gray-100 dark:border-apple-gray-700 overflow-hidden">
+                        <div class="px-3 py-1.5 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center gap-3 text-[10px] text-apple-gray-400 flex-shrink-0">
+                          <span>ID: {{ mqConsumedMessage.id.substring(0, 8) }}...</span>
+                          <span>状态: <span class="font-medium" :class="mqConsumedMessage.status === 'COMPLETED' ? 'text-success-green' : 'text-warning-orange'">{{ mqConsumedMessage.status }}</span></span>
+                          <span>优先级: {{ mqConsumedMessage.priority }}</span>
+                          <span class="flex-1"></span>
+                          <div class="flex items-center gap-1.5" v-if="mqConsumedMessage">
+                            <Search :size="10" class="text-apple-gray-400" />
+                            <input
+                              v-model="mqTextSearch"
+                              type="text"
+                              class="w-24 px-1.5 py-0.5 text-[10px] border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
+                              placeholder="搜索内容..."
+                              @keyup.enter="searchInText('next')"
+                            />
+                            <button class="px-1 py-0.5 text-[9px] border border-apple-gray-200 dark:border-apple-gray-600 rounded text-apple-gray-500 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="searchInText('prev')" title="上一个">▲</button>
+                            <button class="px-1 py-0.5 text-[9px] border border-apple-gray-200 dark:border-apple-gray-600 rounded text-apple-gray-500 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="searchInText('next')" title="下一个">▼</button>
+                          </div>
+                        </div>
+                        <textarea
+                          ref="mqOutputRef"
+                          :value="mqConsumedContent"
+                          readonly
+                          class="w-full flex-1 min-h-0 px-3 py-2 text-[11px] text-apple-gray-700 dark:text-apple-gray-200 font-mono leading-relaxed bg-transparent resize-none border-0 focus:outline-none"
+                        ></textarea>
+                      </div>
+                      <div v-else-if="!mqConsuming && !mqConsumeError" class="flex-1 flex items-center justify-center text-[11px] text-apple-gray-300 min-h-[60px]">
+                        点击上方按钮消费消息
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Teleport>
+
             <!-- VectorDB 语义搜索（仅 vectordb_provider 模块展示） -->
             <div v-if="currentSub?.configModule === 'vectordb_provider'" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
               <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
@@ -2497,6 +3019,99 @@ watch(activeSubSection, async (val) => {
                       {{ JSON.stringify(hit.metadata) }}
                     </p>
                   </div>
+                </div>
+              </div>
+            </div>
+            <!-- GraphDB 标签图遍历搜索（仅 graphdb_provider 模块展示） -->
+            <div v-if="currentSub?.configModule === 'graphdb_provider'" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+              <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">标签图搜索</h3>
+                <p class="text-xs text-apple-gray-400 mt-0.5">输入关键词搜索标签，并从匹配的标签开始遍历 {{ (currentParams.find(p => p.config_key === 'graphdb_provider.default_depth')?.config_value ?? 1) }} 层相似标签关联图</p>
+              </div>
+              <div class="px-4 py-3 space-y-3">
+                <div class="flex gap-2">
+                  <div class="flex-1">
+                    <input
+                      v-model="graphSearchQuery"
+                      type="text"
+                      placeholder="输入标签关键词..."
+                      :class="inputClass"
+                      @keyup.enter="runGraphSearch"
+                    />
+                  </div>
+                  <button
+                    class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors"
+                    :disabled="graphSearching || !graphSearchQuery.trim()"
+                    @click="runGraphSearch"
+                  >
+                    <Loader2 v-if="graphSearching" :size="14" class="animate-spin" />
+                    <Search v-else :size="14" />
+                    {{ graphSearching ? '遍历中...' : '遍历' }}
+                  </button>
+                </div>
+                <div class="flex gap-3 items-center">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-apple-gray-500">最大深度</label>
+                    <select v-model.number="graphSearchMaxDepth" class="w-16 px-2 py-1 text-xs border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300">
+                      <option :value="1">1</option>
+                      <option :value="2">2</option>
+                      <option :value="3">3</option>
+                      <option :value="4">4</option>
+                      <option :value="5">5</option>
+                    </select>
+                  </div>
+                  <label class="flex items-center gap-1.5 text-xs text-apple-gray-500">
+                    <input v-model="graphSearchOnlyActive" type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue" />
+                    仅激活边
+                  </label>
+                </div>
+                <div v-if="graphSearchError" class="flex items-center gap-2 text-xs text-error-red">
+                  <AlertCircle :size="14" /> {{ graphSearchError }}
+                </div>
+                <div v-if="graphSearchResult && graphSearchResult.paths.length > 0" class="space-y-3 max-h-96 overflow-y-auto">
+                  <p class="text-xs text-apple-gray-400">
+                    匹配 {{ graphSearchResult.root_tags.length }} 个标签，{{ graphSearchResult.paths.length }} 条遍历路径
+                  </p>
+                  <div v-for="(path, pi) in graphSearchResult.paths" :key="path.root_id" class="rounded-lg border border-apple-gray-100 dark:border-apple-gray-700 overflow-hidden">
+                    <div class="px-3 py-2 bg-apple-gray-50 dark:bg-apple-gray-800/50 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center justify-between">
+                      <span class="text-xs font-semibold text-brian-blue">路径 #{{ pi + 1 }}: {{ path.root_tag }}</span>
+                      <span class="text-[10px] text-apple-gray-400">{{ path.nodes.length }} 节点 · {{ path.edges.length }} 边</span>
+                    </div>
+                    <!-- Nodes by depth -->
+                    <div class="px-3 py-2 space-y-1.5">
+                      <template v-for="depth in graphSearchMaxDepth" :key="depth">
+                        <div v-if="path.nodes.filter(n => n.depth === depth).length > 0">
+                          <div class="flex items-center gap-1 mb-1">
+                            <span class="text-[10px] px-1 rounded bg-brian-blue/10 text-brian-blue">深度 {{ depth }}</span>
+                          </div>
+                          <div class="flex flex-wrap gap-1">
+                            <span
+                              v-for="node in path.nodes.filter(n => n.depth === depth)"
+                              :key="node.id"
+                              class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-700 dark:text-apple-gray-200"
+                              :title="`关联 ${node.info_ids.length} 条原始数据`"
+                            >
+                              {{ node.tag }}
+                              <span class="text-[9px] text-apple-gray-400">({{ node.info_ids.length }})</span>
+                            </span>
+                          </div>
+                        </div>
+                      </template>
+                      <!-- Edges -->
+                      <div v-if="path.edges.length > 0">
+                        <span class="text-[10px] text-apple-gray-400 mb-1 block">边详情（按复合权重排序）</span>
+                        <div v-for="edge in path.edges" :key="edge.from_id + '-' + edge.to_id" class="flex items-center gap-1 text-[10px] text-apple-gray-500 py-0.5">
+                          <span :class="edge.active ? 'text-success-green' : 'text-apple-gray-300'">{{ edge.active ? '●' : '○' }}</span>
+                          <span class="font-mono truncate max-w-[100px]">{{ edge.from_id.substring(0, 6) }} → {{ edge.to_id.substring(0, 6) }}</span>
+                          <span class="text-apple-gray-400">raw:{{ edge.weight.toFixed(2) }}</span>
+                          <span class="font-semibold text-brian-blue">cw:{{ edge.compositeWeight.toFixed(3) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="graphSearchResult && graphSearchResult.paths.length === 0 && !graphSearching" class="text-xs text-apple-gray-400 text-center py-4">
+                  未找到匹配的标签或遍历路径
                 </div>
               </div>
             </div>

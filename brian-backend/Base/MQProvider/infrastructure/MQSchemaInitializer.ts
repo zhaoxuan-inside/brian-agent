@@ -53,6 +53,9 @@ export class MQSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS "idx_${QUEUE_MESSAGE_TABLE}_status" ON "${QUEUE_MESSAGE_TABLE}" ("status")`,
     );
 
+    // 增量 schema：next_retry_at 延迟重试列
+    try { this.relationDb.executeRaw(`ALTER TABLE "${QUEUE_MESSAGE_TABLE}" ADD COLUMN "next_retry_at" INTEGER`); } catch { /* exists */ }
+
     // mq_config 配置表
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${MQ_CONFIG_TABLE}" (

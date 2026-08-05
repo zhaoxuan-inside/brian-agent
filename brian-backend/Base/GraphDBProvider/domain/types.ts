@@ -444,4 +444,28 @@ export const GRAPHDB_DEFAULT_CONFIGS = [
     value_type: 'BOOLEAN',
     description: '默认仅遍历激活边',
   },
+  {
+    config_key: 'decay_slope',
+    config_value: '0.06',
+    value_type: 'DOUBLE',
+    description: '逆比例衰减系数 α（A_vw 公式第一项，控制 recency 衰减速度）',
+  },
+  {
+    config_key: 'total_bonus',
+    config_value: '0.4',
+    value_type: 'DOUBLE',
+    description: '对数补偿系数 β（A_vw 公式第二项，对长期低频边的补偿）',
+  },
+  {
+    config_key: 'hop_decay_factor',
+    config_value: '0.8',
+    value_type: 'DOUBLE',
+    description: '跳衰减因子 γ（每多 1 跳权重乘以 γ）',
+  },
+  {
+    config_key: 'fan_out_threshold',
+    config_value: '500',
+    value_type: 'INT',
+    description: '扇出阈值 θ（节点出度超过此值触发熔断截断）',
+  },
 ] as const;

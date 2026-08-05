@@ -829,6 +829,107 @@ export class GraphDBService {
   }
 
   // -------------------------------------------------------------------------
+  // 复合权重计算
+  // -------------------------------------------------------------------------
+
+  /**
+   * 计算边的复合权重，整合静态相似度与动态活跃度。
+   *
+   * 公式（三层）：
+   *   1. A_vw = Σ[c_i / (α·d_i + 1)] + β·ln(1 + Σc_i)  — 动态活跃度
+   *   2. W(e) = similarity × log₂(2 + A_vw)               — 单边权重
+   *   3. 调用方可继续乘以 hopDecay 完成路径权重聚合
+   *
+   * 入参：
+   *   edgeId — 要计算权重的边 ID
+   *   hopDistance — 从起点到该边的跳数 (1 = 直接邻居)
+   *
+   * 返回：
+   *   复合权重值（含跳衰减因子）
+   */
+  async computeEdgeCompositeWeight(edgeId: string, hopDistance: number = 1): Promise<number> {
+    this.ensureEnabled();
+    const edgeIdEsc = this.escape(edgeId);
+
+    const edge = await this.graphDb.queryOne(
+      `MATCH (from:graph_node)-[e:graph_edge {id: '${edgeIdEsc}'}]->(to:graph_node) ` +
+        'RETURN e.weight as weight, e.properties as props',
+    );
+    if (!edge) return 0;
+
+    const staticWeight = Number(edge.weight) || 0;
+    const propsStr = edge.props != null ? String(edge.props) : null;
+    let props: Record<string, unknown> = {};
+    if (propsStr) {
+      try { props = JSON.parse(propsStr); } catch { /* ignore */ }
+    }
+
+    // 提取静态相似度
+    const similarity = typeof props.similarity === 'number' ? props.similarity : staticWeight;
+
+    // 读取权重参数
+    const decaySlope = await this.config.getDouble('decay_slope', 0.06);
+    const totalBonus = await this.config.getDouble('total_bonus', 0.4);
+    const retentionDays = await this.config.getInt('retention_days', 60);
+
+    // 读取每日激活计数
+    const nowMs = IdGenerator.now();
+    const windowStartDate = (() => {
+      const d = new Date(nowMs);
+      d.setDate(d.getDate() - retentionDays);
+      return d.toISOString().slice(0, 10);
+    })();
+
+    const dailyRows = await this.graphDb.queryAll(
+      `MATCH (d:${GRAPH_EDGE_DAILY_ACTIVATION_TABLE}) ` +
+        `WHERE d.graph_edge_id = '${edgeIdEsc}' AND d.stat_date >= '${this.escape(windowStartDate)}' ` +
+        'RETURN d.stat_date AS stat_date, d.activation_count AS cnt',
+    );
+
+    // 计算 A_vw
+    let weightedSum = 0;    // Σ[c_i / (α·d_i + 1)]
+    let totalCount = 0;     // Σ c_i
+    for (const row of dailyRows) {
+      const c_i = Number(row.cnt) || 0;
+      const statDate = String(row.stat_date);
+      const d_i = Math.max(0, Math.floor(
+        (nowMs - new Date(statDate + 'T00:00:00Z').getTime()) / 86400000,
+      ));
+      weightedSum += c_i / (decaySlope * d_i + 1);
+      totalCount += c_i;
+    }
+
+    // 从 actMap 补充（兼容旧存储格式）
+    const actMap = props.actMap as Record<string, number> | undefined;
+    if (actMap && typeof actMap === 'object') {
+      for (const [dateStr, count] of Object.entries(actMap)) {
+        if (!dailyRows.some(r => String(r.stat_date) === dateStr)) {
+          const c_i = Number(count) || 0;
+          const d_i = Math.max(0, Math.floor(
+            (nowMs - new Date(dateStr + 'T00:00:00Z').getTime()) / 86400000,
+          ));
+          if (d_i < retentionDays) {
+            weightedSum += c_i / (decaySlope * d_i + 1);
+            totalCount += c_i;
+          }
+        }
+      }
+    }
+
+    // A_vw = weightedSum + totalBonus * ln(1 + totalCount)
+    const aVw = weightedSum + totalBonus * Math.log(1 + totalCount);
+
+    // W(e) = similarity × log₂(2 + A_vw)
+    const baseWeight = similarity * Math.log2(2 + aVw);
+
+    // 跳衰减
+    const hopDecay = await this.config.getDouble('hop_decay_factor', 0.8);
+    const hopMultiplier = Math.pow(hopDecay, hopDistance - 1);
+
+    return baseWeight * hopMultiplier;
+  }
+
+  // -------------------------------------------------------------------------
   // 图查询
   // -------------------------------------------------------------------------
 

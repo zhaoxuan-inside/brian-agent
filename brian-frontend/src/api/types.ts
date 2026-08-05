@@ -286,3 +286,28 @@ export interface ConfigTreeItem {
   effective_writable: boolean
   current_value: unknown
 }
+
+// ============================================================
+// MQ types (message queue)
+// ============================================================
+
+export interface MQMessage {
+  id: string
+  queue: string
+  payload: unknown
+  priority: number
+  status: string
+  retry_count: number
+  max_retries: number
+  created: number
+  updated: number
+  processed_at: number | null
+}
+
+export interface MQStats {
+  pending: number
+  processing: number
+  completed: number
+  failed: number
+  total: number
+}

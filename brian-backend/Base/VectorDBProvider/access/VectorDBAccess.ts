@@ -95,6 +95,8 @@ export class VectorDBAccess {
 
   private readonly schemaInitializer: VectorDBSchemaInitializer;
 
+  private readonly relationDb: RelationDBAccess;
+
   private readonly dimension: number;
 
   private metric: string;
@@ -107,6 +109,7 @@ export class VectorDBAccess {
     relationDb: RelationDBAccess,
     options: VectorDBAccessOptions,
   ) {
+    this.relationDb = relationDb;
     this.dimension = options.dimension ?? DEFAULT_DIMENSION;
     this.metric = options.metric ?? DEFAULT_METRIC;
 

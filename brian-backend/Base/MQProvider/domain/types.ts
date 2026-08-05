@@ -241,4 +241,16 @@ export const MQ_DEFAULT_CONFIGS = [
     value_type: 'INT',
     description: '默认消息优先级（0-10）',
   },
+  {
+    config_key: 'retry_base_delay',
+    config_value: '1',
+    value_type: 'INT',
+    description: '重试基础延迟（秒），第 N 次重试延迟 = base × 2^(N-1)',
+  },
+  {
+    config_key: 'processing_timeout',
+    config_value: '300',
+    value_type: 'INT',
+    description: '处理超时（秒），超过此时限的 PROCESSING 消息恢复为 PENDING',
+  },
 ] as const;

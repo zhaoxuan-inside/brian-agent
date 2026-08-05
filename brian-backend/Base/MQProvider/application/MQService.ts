@@ -200,18 +200,16 @@ export class MQService {
       throw new ValidationError('queue 不能为空');
     }
 
-    // 按优先级降序、创建时间升序获取一条 PENDING 消息
-    const rows = await this.relationDb.select(QUEUE_MESSAGE_TABLE, {
-      conditions: [
-        { field: 'queue', operator: Operator.EQ, value: input.queue },
-        { field: 'status', operator: Operator.EQ, value: MESSAGE_STATUS_PENDING },
-      ],
-      order_by: [
-        { field: 'priority', direction: Direction.DESC },
-        { field: 'created', direction: Direction.ASC },
-      ],
-      page: { current: 1, size: 1 },
-    });
+    const now = IdGenerator.now();
+
+    // 1. 先恢复卡在 PROCESSING 状态超时的消息
+    await this.recoverStuckMessages(input.queue);
+
+    // 2. 按优先级降序、创建时间升序获取一条 PENDING 消息（排除延迟重试中）
+    const rows = await this.relationDb.queryRaw<Record<string, unknown>>(
+      `SELECT * FROM "${QUEUE_MESSAGE_TABLE}" WHERE "queue" = ? AND "status" = ? AND ("next_retry_at" IS NULL OR "next_retry_at" <= ?) ORDER BY "priority" DESC, "created" ASC LIMIT 1`,
+      [input.queue, MESSAGE_STATUS_PENDING, now],
+    );
 
     if (!rows || rows.length === 0) {
       output.message = null;
@@ -219,7 +217,6 @@ export class MQService {
     }
 
     const row = rows[0];
-    const now = IdGenerator.now();
 
     // 将状态更新为 PROCESSING（附加 status=PENDING 条件，避免并发消费）
     const affected = await this.relationDb.update(
@@ -322,25 +319,42 @@ export class MQService {
     let newRetryCount: number;
 
     if (retryCount < maxRetries) {
-      // 重试次数未达上限，递增 retry_count，状态回退为 PENDING
       newRetryCount = retryCount + 1;
       newStatus = MESSAGE_STATUS_PENDING;
-    } else {
-      // 重试次数已达上限，状态更新为 FAILED
-      newRetryCount = retryCount;
-      newStatus = MESSAGE_STATUS_FAILED;
+
+      // 指数退避延迟: delay = retry_base_delay × 2^(retryCount) 秒（当前即第 N+1 次重试前等待）
+      const baseDelay = await this.config.getInt('retry_base_delay', 1);
+      const delaySeconds = baseDelay * Math.pow(2, retryCount); // retryCount 0→1s, 1→2s, 2→4s, 3→8s
+      const nextRetryAt = now + delaySeconds * 1000;
+
+      await this.relationDb.update(
+        QUEUE_MESSAGE_TABLE,
+        [
+          { field: 'status', value: newStatus },
+          { field: 'retry_count', value: newRetryCount },
+          { field: 'next_retry_at', value: nextRetryAt },
+          { field: 'updated', value: now },
+        ],
+        [{ field: 'id', operator: Operator.EQ, value: input.message_id }],
+      );
+      output.status = newStatus;
+      output.retry_count = newRetryCount;
+      return true;
     }
 
+    // 重试次数已达上限，状态更新为 FAILED
+    newRetryCount = retryCount;
+    newStatus = MESSAGE_STATUS_FAILED;
     await this.relationDb.update(
       QUEUE_MESSAGE_TABLE,
       [
         { field: 'status', value: newStatus },
         { field: 'retry_count', value: newRetryCount },
+        { field: 'next_retry_at', value: null },
         { field: 'updated', value: now },
       ],
       [{ field: 'id', operator: Operator.EQ, value: input.message_id }],
     );
-
     output.status = newStatus;
     output.retry_count = newRetryCount;
     return true;
@@ -411,47 +425,96 @@ export class MQService {
   }
 
   // -------------------------------------------------------------------------
-  // 可视化与运维
+  // 运维与清理
   // -------------------------------------------------------------------------
 
   /**
-   * 启用/禁用 MQ 组件（enableMQ）。
+   * 清理过期消息（cleanupExpiredMessages）。
    *
-   * PRD 3.3.2 条：运行时控制 MQ 组件的可用状态。
-   * 状态持久化到 mq_config，组件初始化时恢复，避免状态丢失。
-   * 禁用时所有消息队列操作将返回失败（MQ 组件未启用）。
+   * 根据 message_ttl（秒）删除 COMPLETED 和 FAILED 状态超期的消息。
+   * 返回删除的数量。
    */
-  async enableMQ(
-    input: EnableMQInput,
-    _context: MQContext,
-    _output: EnableMQOutput,
-  ): Promise<boolean> {
-    if (this.closed) {
-      throw new ComponentDisabledError('MQ');
+  async cleanupExpiredMessages(): Promise<number> {
+    if (this.closed) return 0;
+    const ttl = await this.config.getInt('message_ttl', 86400);
+    const cutoff = IdGenerator.now() - ttl * 1000;
+    try {
+      const countRow = this.relationDb.queryRaw<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM "${QUEUE_MESSAGE_TABLE}" WHERE ("status" = ? OR "status" = ?) AND "updated" < ?`,
+        [MESSAGE_STATUS_COMPLETED, MESSAGE_STATUS_FAILED, cutoff],
+      );
+      const cnt = countRow?.[0]?.cnt ?? 0;
+      if (cnt > 0) {
+        this.relationDb.executeRaw(
+          `DELETE FROM "${QUEUE_MESSAGE_TABLE}" WHERE ("status" = ? OR "status" = ?) AND "updated" < ?`,
+          [MESSAGE_STATUS_COMPLETED, MESSAGE_STATUS_FAILED, cutoff],
+        );
+      }
+      return cnt;
+    } catch {
+      return 0;
     }
-    this.enabled = input.enable;
-    await this.config.set(
-      'enabled',
-      String(input.enable),
-      'BOOLEAN',
-      'MQ组件是否启用（enableMQ 读写）',
-    );
-    return true;
   }
 
   /**
-   * 关闭 MQ 组件（终态释放，不可恢复）。
+   * 恢复卡住的 PROCESSING 消息（recoverStuckMessages）。
    *
-   * PRD 5.7 条：closeMQ 为系统关闭时的终态释放，不可恢复，需重新初始化组件。
-   * 关闭后所有操作（含 enableMQ）将抛出 ComponentDisabledError。
+   * 将超过 processing_timeout 配置值（秒）仍处于 PROCESSING 状态的消息
+   * 恢复为 PENDING。在 consumeMQ 之前自动调用。
    */
-  async closeMQ(
-    _input: CloseMQInput,
-    _context: MQContext,
-    _output: CloseMQOutput,
-  ): Promise<boolean> {
-    this.closed = true;
-    this.enabled = false;
+  async recoverStuckMessages(queue?: string): Promise<number> {
+    if (this.closed) return 0;
+    const timeout = await this.config.getInt('processing_timeout', 300);
+    const cutoff = IdGenerator.now() - timeout * 1000;
+    try {
+      const conditions = `"status" = ? AND "updated" < ?${queue ? ' AND "queue" = ?' : ''}`;
+      const params: unknown[] = [MESSAGE_STATUS_PROCESSING, cutoff];
+      if (queue) params.push(queue);
+      const countRow = this.relationDb.queryRaw<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM "${QUEUE_MESSAGE_TABLE}" WHERE ${conditions}`,
+        params,
+      );
+      const cnt = countRow?.[0]?.cnt ?? 0;
+      if (cnt > 0) {
+        this.relationDb.executeRaw(
+          `UPDATE "${QUEUE_MESSAGE_TABLE}" SET "status" = ?, "next_retry_at" = NULL, "updated" = ? WHERE ${conditions}`,
+          [MESSAGE_STATUS_PENDING, IdGenerator.now(), ...params],
+        );
+      }
+      return cnt;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * 重新入队失败消息（replayMQ）。
+   *
+   * 将 FAILED 状态的消息重置为 PENDING，retry_count 归零，允许重新消费。
+   */
+  async replayMQ(messageId: string): Promise<boolean> {
+    this.ensureEnabled();
+    if (!messageId) throw new ValidationError('message_id 不能为空');
+
+    const row = await this.relationDb.selectOne(QUEUE_MESSAGE_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: messageId },
+    ]);
+    if (!row) throw new NotFoundError('消息', messageId);
+    if (row.status !== MESSAGE_STATUS_FAILED) {
+      throw new ValidationError('只能重新入队失败状态的消息');
+    }
+
+    await this.relationDb.update(
+      QUEUE_MESSAGE_TABLE,
+      [
+        { field: 'status', value: MESSAGE_STATUS_PENDING },
+        { field: 'retry_count', value: 0 },
+        { field: 'next_retry_at', value: null },
+        { field: 'updated', value: IdGenerator.now() },
+      ],
+      [{ field: 'id', operator: Operator.EQ, value: messageId }],
+    );
+
     return true;
   }
 }

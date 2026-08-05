@@ -134,6 +134,8 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   base('mq_provider', 'basic', 'message_ttl', '消息默认保留时间（秒）', 'INT', 86400, '默认 1 天'),
   base('mq_provider', 'basic', 'default_max_retries', '默认最大重试次数', 'INT', 3),
   base('mq_provider', 'basic', 'default_priority', '默认消息优先级（0-10）', 'INT', 5),
+  base('mq_provider', 'basic', 'retry_base_delay', '重试基础延迟（秒）', 'INT', 1, '第 N 次重试延迟 = base × 2^(N-1)'),
+  base('mq_provider', 'basic', 'processing_timeout', '处理超时（秒）', 'INT', 300, '超时 PROCESSING 消息自动恢复为 PENDING'),
 
   // --- GraphDBProvider ---
   base('graphdb_provider', 'basic', 'enabled', '图数据库启用', 'BOOLEAN', true, '图数据库是否启用'),
@@ -143,6 +145,10 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   base('graphdb_provider', 'basic', 'default_weight', '默认边权重', 'DOUBLE', 1.0),
   base('graphdb_provider', 'basic', 'default_depth', '默认遍历深度', 'INT', 1),
   base('graphdb_provider', 'basic', 'default_only_active', '默认仅遍历激活边', 'BOOLEAN', true),
+  base('graphdb_provider', 'weight', 'decay_slope', '逆比例衰减斜率 (α)', 'DOUBLE', 0.06, 'A_vw 第一项控制 recency 衰减速度'),
+  base('graphdb_provider', 'weight', 'total_bonus', '对数累计补偿 (β)', 'DOUBLE', 0.4, 'A_vw 第二项对长期低频边的补偿'),
+  base('graphdb_provider', 'weight', 'hop_decay_factor', '跳衰减因子 (γ)', 'DOUBLE', 0.8, '每多 1 跳权重乘以 γ'),
+  base('graphdb_provider', 'weight', 'fan_out_threshold', '扇出熔断阈值 (θ)', 'INT', 500, '超出度触发截断'),
 
   // --- VectorDBProvider ---
   base('vectordb_provider', 'basic', 'enabled', '向量数据库启用', 'BOOLEAN', true, '向量数据库是否启用'),

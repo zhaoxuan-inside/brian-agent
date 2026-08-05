@@ -195,6 +195,11 @@ export class GraphDBAccess {
     return this.service.getGraphNeighbors(input, context, output);
   }
 
+  /** 计算边的复合权重（静态相似度 + 动态活跃度 + 跳衰减） */
+  async computeEdgeWeight(edgeId: string, hopDistance: number = 1): Promise<number> {
+    return this.service.computeEdgeCompositeWeight(edgeId, hopDistance);
+  }
+
   /** 激活边（记录事件、按天累计、更新边状态） */
   async activateGraphEdge(
     input: ActivateGraphEdgeInput,
