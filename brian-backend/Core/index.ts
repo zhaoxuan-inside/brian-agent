@@ -13,6 +13,7 @@
  * - InfoCoreProvider：信息生命周期管理（存/处理/搜索/老化）
  * - LearningCoreProvider：双模学习（主动/被动）+ 反馈子系统
  * - CognitiveCoreProvider：认知系统（自我意识/动机/反思/意义建构）
+ * - CDTCoreProvider：浏览器拟人化操作、登录与会话管理
  *
  * 使用方式：
  * ```typescript
@@ -45,3 +46,6 @@ export * from './SoulCoreProvider';
 
 // InfoCoreProvider
 export * from './InfoCoreProvider';
+
+// CDTCoreProvider
+export * from './CDTCoreProvider';

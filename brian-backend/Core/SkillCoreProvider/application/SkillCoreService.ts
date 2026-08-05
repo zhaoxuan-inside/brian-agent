@@ -60,7 +60,7 @@ import { AgingEngine } from '../../shared/AgingEngine';
 import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared/MatchCacheHelper';
 
 /** 默认 LLM 模型选择用表名 */
-const LLM_ENABLE_TABLE = 'llm_enable';
+const LLM_AVAILABLE_TABLE = 'llm_available';
 
 /**
  * SkillCoreProvider 应用服务。
@@ -451,7 +451,7 @@ export class SkillCoreService {
     }
     const llmOutput = new ExecLLMOutput();
     const ok = await this.llmAccess.execLLM(
-      { id: llmId, prompt },
+      { id: llmId, params: { prompt } },
       new LLMContext(),
       llmOutput,
     );
@@ -465,7 +465,7 @@ export class SkillCoreService {
 
   /** 选择第一个启用的 LLM */
   private async selectFirstEnabledLLM(): Promise<string | null> {
-    const row = await this.relationDb.selectOne(LLM_ENABLE_TABLE, [
+    const row = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
       { field: 'enable', operator: Operator.EQ, value: 1 },
     ]);
     if (!row) {

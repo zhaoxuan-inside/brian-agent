@@ -52,6 +52,8 @@ export interface LLMProviderData {
   quota_calls_per_week?: number;
   /** 每月调用次数限额（0=不限制） */
   quota_calls_per_month?: number;
+  /** 模型列表最近抓取时间（毫秒时间戳） */
+  models_fetched_at?: number;
 }
 
 /**
@@ -67,10 +69,14 @@ export interface LLMData {
   llm_title: string;
   /** LLM 摘要 */
   llm_brief?: string;
-  /** LLM 适用范围 */
-  llm_usage?: string;
-  /** 是否启用，默认 true；资源级启用/禁用通过 updateLLM 修改该字段实现 */
+  /** LLM 类型：text / vision / embedding */
+  llm_type?: string;
+  /** 是否启用，默认 true */
   enable?: boolean;
+  /** 是否为默认模型 */
+  is_default?: boolean;
+  /** 最大 Token 数，不超过模型提供商上限 */
+  max_tokens?: number;
 }
 
 /**
@@ -114,9 +120,9 @@ export interface LLMProviderRecord {
 }
 
 /**
- * llm_model 表记录（含系统字段）。
+ * llm_cache 表记录（含系统字段）。
  */
-export interface LLMModelRecord {
+export interface LLMCacheRecord {
   /** 数据唯一标识 */
   id: string;
   /** 创建时间（毫秒时间戳） */
@@ -129,12 +135,14 @@ export interface LLMModelRecord {
   llm_title: string;
   /** LLM 摘要 */
   llm_brief: string | null;
+  /** 模型参数（从提供商 API 返回，JSON 字符串） */
+  llm_param: string | null;
 }
 
 /**
- * llm_enable 表记录（含系统字段）。
+ * llm_available 表记录（含系统字段）。
  */
-export interface LLMEnableRecord {
+export interface LLMAvailableRecord {
   /** 数据唯一标识 */
   id: string;
   /** 创建时间（毫秒时间戳） */
@@ -147,12 +155,14 @@ export interface LLMEnableRecord {
   llm_title: string;
   /** LLM 摘要 */
   llm_brief: string | null;
-  /** LLM 适用范围 */
-  llm_usage: string;
+  /** LLM 类型：text / vision / embedding */
+  llm_type: string;
   /** 是否启用 */
   enable: boolean;
   /** 是否为默认模型 */
   is_default?: boolean;
+  /** 最大 Token 数 */
+  max_tokens?: number;
 }
 
 /**
@@ -165,8 +175,8 @@ export interface LLMUsageRecord {
   created: number;
   /** 最后更新时间（毫秒时间戳） */
   updated: number;
-  /** 启用的 LLM ID，关联 llm_enable.id */
-  llm_enable_id: string;
+  /** 可用 LLM ID，关联 llm_available.id */
+  llm_available_id: string;
   /** 使用日期，格式 YYYY-MM-DD */
   usage_date: string;
   /** 当日使用次数 */
@@ -286,13 +296,9 @@ export class ListLLMInput extends Input {
 /** listLLM 出参 */
 export class ListLLMOutput extends Output {
   /** 模型列表 */
-  list: LLMModelRecord[] = [];
+  list: LLMCacheRecord[] = [];
   /** 是否来自缓存 */
   cached = false;
-  /** 错误信息 */
-  error?: string;
-  /** 错误码 */
-  error_code?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,30 +356,25 @@ export class UpdateLLMOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
-// getLLM
+// getLLM（保留类型供外部兼容，内部已合并到 soLLM）
 // ---------------------------------------------------------------------------
 
-/** getLLM 入参 */
 export class GetLLMInput extends Input {
-  /** 按 ID 获取 */
   id?: string;
-  /** 按条件获取第一条 */
   conditions?: Condition[];
 }
 
-/** getLLM 出参 */
 export class GetLLMOutput extends Output {
-  /** LLM 信息，无匹配为 null */
-  llm: LLMEnableRecord | null = null;
+  llm: LLMAvailableRecord | null = null;
 }
 
 // ---------------------------------------------------------------------------
-// soLLM
+// soLLM（查询可用模型，支持关键词搜索名称）
 // ---------------------------------------------------------------------------
 
 /** soLLM 入参 */
 export class SoLLMInput extends Input {
-  /** 关键词搜索（匹配 llm_title、llm_brief） */
+  /** 关键词搜索（匹配 llm_title） */
   keyword?: string;
   /** 条件过滤 */
   conditions?: Condition[];
@@ -386,7 +387,7 @@ export class SoLLMInput extends Input {
 /** soLLM 出参 */
 export class SoLLMOutput extends Output {
   /** LLM 列表 */
-  list: LLMEnableRecord[] = [];
+  list: LLMAvailableRecord[] = [];
   /** 总数 */
   total = 0;
 }
@@ -397,35 +398,35 @@ export class SoLLMOutput extends Output {
 
 /** execLLM 入参 */
 export class ExecLLMInput extends Input {
-  /** LLM ID（llm_enable.id） */
+  /** LLM ID（llm_available.id），为空则使用系统默认模型 */
   id!: string;
-  /** 调用 prompt */
-  prompt!: string;
-  /** 其他调用参数（temperature、max_tokens、api_key、system 等） */
-  params?: Record<string, unknown>;
+  /** 透传参数（prompt、temperature 等） */
+  params!: Record<string, unknown>;
 }
 
 /** execLLM 出参 */
 export class ExecLLMOutput extends Output {
   /** 推理结果（回复内容） */
   result = '';
-  /** Token 使用统计 */
-  usage?: Record<string, unknown>;
+  /** 输入的 prompt 内容 */
+  input_prompt = '';
+  /** 输入 Token 数量 */
+  input_tokens = 0;
+  /** 输出 Token 数量 */
+  output_tokens = 0;
+  /** 调用耗时（毫秒） */
+  duration_ms = 0;
 }
 
 // ---------------------------------------------------------------------------
 // visualizedLLM
 // ---------------------------------------------------------------------------
 
-/** visualizedLLM 入参 */
 export class VisualizedLLMInput extends Input {
-  /** 可视化范围：health / volume / diskUsage */
   scope!: string;
 }
 
-/** visualizedLLM 出参 */
 export class VisualizedLLMOutput extends Output {
-  /** 可视化数据 */
   data: Record<string, unknown> = {};
 }
 
@@ -433,37 +434,24 @@ export class VisualizedLLMOutput extends Output {
 // enableLLM
 // ---------------------------------------------------------------------------
 
-/** enableLLM 入参 */
 export class EnableLLMInput extends Input {
-  /** 是否启用 */
   enable!: boolean;
 }
 
-/** enableLLM 出参 */
 export class EnableLLMOutput extends Output {}
 
 // ---------------------------------------------------------------------------
-// closeLLM
-// ---------------------------------------------------------------------------
-
-/** closeLLM 入参 */
-export class CloseLLMInput extends Input {}
-
-/** closeLLM 出参 */
-export class CloseLLMOutput extends Output {}
-
-// ---------------------------------------------------------------------------
-// 表名与默认配置
+// 表名
 // ---------------------------------------------------------------------------
 
 /** llm_provider 表名 */
 export const LLM_PROVIDER_TABLE = 'llm_provider';
 
-/** llm_model 表名 */
-export const LLM_MODEL_TABLE = 'llm_model';
+/** llm_cache 表名（模型缓存，从提供商 API 拉取） */
+export const LLM_CACHE_TABLE = 'llm_cache';
 
-/** llm_enable 表名 */
-export const LLM_ENABLE_TABLE = 'llm_enable';
+/** llm_available 表名（系统可用模型） */
+export const LLM_AVAILABLE_TABLE = 'llm_available';
 
 /** llm_usage 表名 */
 export const LLM_USAGE_TABLE = 'llm_usage';

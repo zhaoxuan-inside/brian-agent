@@ -307,43 +307,74 @@ Skill 是在沙箱中执行的 JavaScript 代码片段，Agent 可以调用 Skil
 | `assets` | JSON | 否 | 静态资源 |
 | `enable` | Boolean | — | 启用/停用 |
 
-**操作**：新建 Skill、编辑、删除、启停、沙箱测试执行。
+**操作**：新建 Skill、编辑、删除、启停、沙箱测试执行、**按名称搜索**。
+
+**约束**：
+- Skill 名称必须唯一，创建时前端检查同名 Skill 已存在则拒绝创建并提示。更新（编辑）Skill 时不做同名检查。
 
 ### 5.2 MCP（外部工具服务）
 
-两层管理：MCP Provider（工具市场注册源）+ MCP Instance（已安装的工具实例）。
+MCP 配置为顶级配置项，与 LLM 配置平级。四个内置 MCP 市场（不可新增/删除），两层管理：MCP 市场 → MCP 实例。
 
-**MCP Provider 字段**：
+#### 5.2.1 MCP 市场（内置，不可新增/删除）
+
+系统内置四个 MCP 市场，初始化时自动创建：
+
+| 市场 | market_key | 接入方式 | 说明 |
+|------|-----------|---------|------|
+| **阿里云百炼** | `aliyun_bailian` | REST API (DashScope) | 阿里云 AI 平台的 MCP 服务市场，需配置 API Key |
+| **ModelScope** | `modelscope` | REST API | 魔搭社区 MCP 广场，社区贡献的 MCP 服务器 |
+| **Smithery** | `smithery` | REST API + MCP Client | MCP 注册中心，托管 HTTP/SSE 类型的 MCP 服务 |
+| **GitHub** | `github` | npm Registry + stdio MCP | npm 发布的 MCP 服务器，通过 npx/uvx stdio 运行 |
+
+**市场卡片展示**：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `mcp_provider_title` | String | 提供商名称 |
-| `mcp_provider_url` | URL | API 端点 |
-| `mcp_provider_brief` | Text | 描述 |
+| `market_name` | String | 市场名称（阿里云百炼 / ModelScope / Smithery / GitHub） |
+| `market_url` | URL | 市场 API 端点 |
+| `market_brief` | Text | 市场描述 |
 | `enable` | Boolean | 启用/停用 |
+| `auth_type` | Enum | api_key / oauth / env_var |
 
-系统预置 6 个公共 MCP 注册源模板（MCP Registry、MCP Hub、MCP Market 等）。
+**操作**：启用/停用、连接测试、浏览工具列表（展开面板）、刷新工具列表。**不支持新增/编辑/删除**。
 
-**MCP Instance 字段**：
+**工具列表交互**：进入市场后以瀑布流卡片展示 MCP 工具，页面滚动到底部自动加载下一页（无限滚动），无需手动点击"加载更多"按钮。顶部的返回按钮、市场名称和搜索栏固定不动，仅工具列表区域滚动。滚动超过一屏后右下角显示"返回顶部"浮动按钮。
+
+#### 5.2.2 MCP 工具（从市场获取并安装）
+
+从市场浏览并安装的 MCP 工具：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `mcp_provider_id` | Ref | 来源 Provider |
-| `mcp_title` | String | 工具名称 |
-| `mcp_brief` | Text | 工具描述 |
-| `mcp_install_cmd` | String | 安装命令 |
-| `mcp_start_cmd` | String | 启动命令 |
-| `mcp_stop_cmd` | String | 停止命令 |
-| `mcp_uninstall_cmd` | String | 卸载命令 |
+| `tool_name` | String | 工具唯一标识（如 @modelcontextprotocol/server-github） |
+| `tool_title` | String | 工具显示名称 |
+| `tool_brief` | Text | 工具描述 |
+| `tool_schema` | JSON | 输入参数 JSON Schema（调用格式） |
+| `tool_output_schema` | JSON | 输出 JSON Schema（结果解析方式） |
+| `install_type` | Enum | npm / http |
+| `version` | String | 版本号 |
+
+**安装后实例字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `market_id` | Ref | 来源市场 |
+| `tool_id` | Ref | 来源工具 |
+| `install_status` | Enum | installing / installed / error |
+| `transport_type` | Enum | stdio / http |
+| `connected` | Boolean | 连接状态 |
 | `enable` | Boolean | 启用/停用 |
 
-**操作**：Provider 的新建/编辑/删除/启停/连接测试；Instance 的安装/卸载/启动/停止/启停。
+**操作**：安装、启动、停止、卸载、启停。
 
-**MCP 配置参数**：
+#### 5.2.3 MCP 运行参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | MCP 缓存 TTL | INT | 86400 | MCP 列表缓存时间（秒，默认 1 天） |
+| MCP 重新匹配概率 | INT | 75 | 0-100，值越大越倾向于重新评估 MCP 选择 |
+| MCP 匹配 Prompt 模板 | Ref | — | Prompt 模板 |
 
 ### 5.3 工具匹配与优化
 
@@ -637,9 +668,13 @@ Orchestration 层负责将用户请求分解为任务、选择执行策略、调
 │   ├── 摘要生成
 │   ├── 向量化
 │   └── 上下文构建
-├── 工具与技能
+├── MCP 配置              ← 顶级（与 LLM 配置平级）
+│   ├── MCP 市场           ← 内置四个市场（不可新增）
+│   ├── MCP 实例           ← 已安装的 MCP 工具
+│   ├── 运行参数           ← 匹配/缓存/限额参数
+│   └── 调用统计           ← 使用统计可视化
+├── Skill 配置
 │   ├── Skill 管理
-│   ├── MCP 管理
 │   └── 匹配与优化
 ├── 角色与提示词
 │   ├── Soul 管理

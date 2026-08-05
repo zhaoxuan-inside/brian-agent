@@ -15,7 +15,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(err.message || `HTTP ${res.status}`)
+    throw new Error(err.error || err.message || `HTTP ${res.status}`)
   }
   return res.json()
 }
@@ -118,6 +118,7 @@ export const configApi = {
   },
   mcp: {
     list: () => request<unknown[]>('/config/mcp'),
+    market: () => request<unknown[]>('/config/mcp/market'),
     update: (id: string, data: Record<string, unknown>) =>
       request<void>(`/config/mcp/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
@@ -218,6 +219,61 @@ export const profileApi = {
   get: (userId: string) => request<UserProfile>(`/profile/${encodeURIComponent(userId)}`),
   update: (userId: string, data: Partial<UserProfile>) =>
     request<void>(`/profile/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(data) }),
+}
+
+export interface CDTStatus { running: boolean; pid: number; port: number; endpoint?: string }
+
+export const cdtApi = {
+  start: () => request<CDTStatus>('/cdt/start', { method: 'POST' }),
+  stop: () => request<void>('/cdt/stop', { method: 'POST' }),
+  status: () => request<CDTStatus>('/cdt/status'),
+  navigate: (url: string) =>
+    request<{ result?: unknown; error?: string }>('/cdt/navigate', { method: 'POST', body: JSON.stringify({ url }) }),
+  evaluate: (expression: string) =>
+    request<{ result?: unknown; error?: string }>('/cdt/evaluate', { method: 'POST', body: JSON.stringify({ expression }) }),
+  // Remote Browser
+  screencastStart: (w = 1920, h = 1080, q = 80) =>
+    request<{ started: boolean }>(`/cdt/screencast/start?w=${w}&h=${h}&q=${q}`),
+  frame: () => request<{ dataUrl: string; width: number; height: number }>('/cdt/frame'),
+  mouse: (type: string, x: number, y: number, button = 'left', clickCount = 1, deltaX = 0, deltaY = 0, ctrl = false, alt = false, shift = false, meta = false) =>
+    fetch(`${API_BASE}/cdt/mouse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, x, y, button, clickCount, deltaX, deltaY, ctrl, alt, shift, meta }) }),
+  click: (x: number, y: number, ctrl = false, alt = false, shift = false, meta = false) =>
+    fetch(`${API_BASE}/cdt/click`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y, ctrl, alt, shift, meta }) }),
+  rightclick: (x: number, y: number) =>
+    fetch(`${API_BASE}/cdt/rightclick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y }) }),
+  dblclick: (x: number, y: number, ctrl = false, alt = false, shift = false, meta = false) =>
+    fetch(`${API_BASE}/cdt/dblclick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y, ctrl, alt, shift, meta }) }),
+  key: (type: string, text = '', key = '', ctrl = false, alt = false, shift = false, meta = false) =>
+    fetch(`${API_BASE}/cdt/key`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, text, key, ctrl, alt, shift, meta }) }),
+  keyBatch: (events: Array<{ type: string; text?: string; key?: string; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean }>) =>
+    fetch(`${API_BASE}/cdt/key-batch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) }),
+  insertText: (text: string) =>
+    fetch(`${API_BASE}/cdt/insert-text`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }),
+  spoofEnv: (env: Record<string, unknown>) =>
+    fetch(`${API_BASE}/cdt/spoof-env`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(env) }),
+}
+
+export interface BookmarkFolder { id: string; name: string; parent_id: string; sort_order: number; children: BookmarkFolder[]; items: BookmarkItem[] }
+export interface BookmarkItem { id: string; folder_id: string; title: string; url: string; favicon: string; sort_order: number }
+export interface BookmarkFlatFolder { id: string; name: string; parent_id: string; sort_order: number }
+
+export const bookmarkApi = {
+  tree: () => request<{ tree: BookmarkFolder[] }>('/bookmark/tree').then(r => r.tree),
+  flatFolders: () => request<{ folders: BookmarkFlatFolder[] }>('/bookmark/folders').then(r => r.folders),
+  createFolder: (name: string, parentId = '') =>
+    request<BookmarkFolder>('/bookmark/folder', { method: 'POST', body: JSON.stringify({ name, parent_id: parentId }) }),
+  updateFolder: (id: string, name: string) =>
+    request<void>('/bookmark/folder/update', { method: 'PUT', body: JSON.stringify({ id, name }) }),
+  deleteFolder: (id: string) =>
+    request<void>('/bookmark/folder', { method: 'DELETE', body: JSON.stringify({ id }) }),
+  createItem: (folderId: string, title: string, url: string, favicon = '') =>
+    request<BookmarkItem>('/bookmark/item', { method: 'POST', body: JSON.stringify({ folder_id: folderId, title, url, favicon }) }),
+  updateItem: (id: string, title: string, url: string) =>
+    request<void>('/bookmark/item/update', { method: 'PUT', body: JSON.stringify({ id, title, url }) }),
+  moveItem: (id: string, targetFolderId: string) =>
+    request<void>('/bookmark/item/move', { method: 'PUT', body: JSON.stringify({ id, target_folder_id: targetFolderId }) }),
+  deleteItem: (id: string) =>
+    request<void>('/bookmark/item', { method: 'DELETE', body: JSON.stringify({ id }) }),
 }
 
 export { request as fetchApi }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Cpu, Bot, Workflow, AppWindow, Server, Database, Boxes, Table2,
@@ -15,7 +15,8 @@ import {
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
-import { configApi, agentApi, skillApi, mcpApi, fetchApi } from '@/api'
+import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
+import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi } from '@/api'
 import type { ConfigTreeLayer, ConfigTreeCategory, ConfigTreeItem } from '@/api/types'
 
 // ============================================================
@@ -75,12 +76,21 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    key: 'tools', label: '工具与技能', icon: Wand2,
-    desc: 'Skill 管理、MCP 管理与匹配优化',
+    key: 'mcp', label: 'MCP 配置', icon: Plug,
+    desc: 'MCP 市场、实例管理与运行参数',
     subsections: [
-      { key: 'tools-skill', label: 'Skill 管理', icon: Wand2, type: 'entity', entityType: 'skill' },
-      { key: 'tools-mcp', label: 'MCP 管理', icon: Plug, type: 'entity', entityType: 'mcp' },
-      { key: 'tools-match', label: '匹配与优化', icon: Zap, type: 'params', configModule: 'skill_core', configCategories: ['basic', 'opt_rule'] },
+      { key: 'mcp-market', label: 'MCP 市场', icon: Globe, type: 'entity', entityType: 'mcp-provider' },
+      { key: 'mcp-instance', label: 'MCP 实例', icon: Plug, type: 'entity', entityType: 'mcp' },
+      { key: 'mcp-params', label: '运行参数', icon: Settings, type: 'params', configModule: 'mcp_core', configCategories: ['basic'] },
+      { key: 'mcp-stats', label: '调用统计', icon: BarChart3, type: 'entity', entityType: 'mcp-stats' },
+    ],
+  },
+  {
+    key: 'skills', label: 'Skill 配置', icon: Wand2,
+    desc: 'Skill 管理与匹配优化',
+    subsections: [
+      { key: 'skills-list', label: 'Skill 管理', icon: Wand2, type: 'entity', entityType: 'skill' },
+      { key: 'skills-match', label: '匹配与优化', icon: Zap, type: 'params', configModule: 'skill_core', configCategories: ['basic', 'opt_rule'] },
     ],
   },
   {
@@ -118,6 +128,14 @@ const navSections: NavSection[] = [
       { key: 'app-selflearning', label: '自学习', icon: GraduationCap, type: 'params', configModule: 'self_learning', configCategories: ['basic', 'weight', 'interval'] },
       { key: 'app-profile', label: '用户画像', icon: User, type: 'params', configModule: 'user_profile', configCategories: ['basic'] },
       { key: 'app-visualization', label: '可视化', icon: BarChart3, type: 'params', configModule: 'visualization', configCategories: ['basic'] },
+    ],
+  },
+  {
+    key: 'cdt', label: 'CDT / 浏览器', icon: Monitor,
+    desc: 'Chrome 远程浏览器控制与网页访问',
+    subsections: [
+      { key: 'cdt-status', label: '浏览器状态', icon: Radio, type: 'entity', entityType: 'cdt-status' },
+      { key: 'cdt-page', label: '网页访问', icon: Globe, type: 'entity', entityType: 'cdt-page' },
     ],
   },
 ]
@@ -162,10 +180,19 @@ const isEntityView = computed(() => currentSub.value?.type === 'entity')
 const isParamsView = computed(() => currentSub.value?.type === 'params')
 const currentEntityType = computed(() => currentSub.value?.entityType)
 
-const breadcrumb = computed(() => {
-  const items: { label: string }[] = []
-  if (currentSection.value) items.push({ label: currentSection.value.label })
-  if (currentSub.value) items.push({ label: currentSub.value.label })
+// ===== 原始 breadcrumb（保留作为参考）=====
+// const breadcrumb = computed(() => {
+//   const items: { label: string }[] = []
+//   if (currentSection.value) items.push({ label: currentSection.value.label })
+//   if (currentSub.value) items.push({ label: currentSub.value.label })
+//   return items
+// })
+
+// ===== 修改后：增加"配置中心"根路径 =====
+const pagePath = computed(() => {
+  const items: string[] = ['配置中心']
+  if (currentSection.value) items.push(currentSection.value.label)
+  if (currentSub.value) items.push(currentSub.value.label)
   return items
 })
 
@@ -785,7 +812,7 @@ async function submitModelForm() {
       : modelForm.value.maxTokens
     const data: Record<string, unknown> = {
       llm_title: modelForm.value.title,
-      llm_usage: modelForm.value.usage,
+      llm_type: modelForm.value.usage,
       maxTokens: tokens,
       model_usage: modelForm.value.usageDesc,
     }
@@ -965,6 +992,21 @@ const skillForm = ref({
   assets: [] as SkillFileEntry[],
 })
 const skillSubmitting = ref(false)
+const skillSearchQuery = ref('')
+
+// ===== 原始 skills（保留）=====
+// const filteredSkills = computed(() => {
+//   return skills.value
+// })
+
+// ===== 修改后：支持按名称搜索 =====
+const filteredSkills = computed(() => {
+  const q = skillSearchQuery.value.toLowerCase().trim()
+  if (!q) return skills.value
+  return skills.value.filter(sk =>
+    (sk.name || '').toLowerCase().includes(q)
+  )
+})
 
 function addFileEntry(arr: SkillFileEntry[]) {
   arr.push({ name: '', content: '' })
@@ -1009,12 +1051,41 @@ function openSkillModal(skill?: BackendSkill) {
 
 function closeSkillModal() { skillModalVisible.value = false; editingSkill.value = null }
 
+// ===== 原始 submitSkillForm（保留作为参考）=====
+// async function submitSkillForm() {
+//   skillSubmitting.value = true
+//   try {
+//     const data: Record<string, unknown> = {
+//       name: skillForm.value.name.trim(),
+//       skill_brief: skillForm.value.skillBrief.trim() || skillForm.value.name.trim(),
+//       skill_md: skillForm.value.skillMd,
+//       scripts: skillForm.value.scripts.length > 0 ? skillForm.value.scripts : undefined,
+//       references: skillForm.value.references.length > 0 ? skillForm.value.references : undefined,
+//       assets: skillForm.value.assets.length > 0 ? skillForm.value.assets : undefined,
+//     }
+//     if (editingSkill.value) {
+//       await skillApi.update(editingSkill.value.id, data)
+//     } else {
+//       await skillApi.create(data)
+//     }
+//     showToast(editingSkill.value ? '已更新' : '已创建', 'success')
+//     closeSkillModal()
+//     await loadSkills()
+//   } catch (e: unknown) {
+//     showToast(e instanceof Error ? e.message : '保存失败')
+//   } finally {
+//     skillSubmitting.value = false
+//   }
+// }
+
+// ===== 修改后：新增同名检查 =====
 async function submitSkillForm() {
   skillSubmitting.value = true
   try {
+    const newName = skillForm.value.name.trim()
     const data: Record<string, unknown> = {
-      name: skillForm.value.name.trim(),
-      skill_brief: skillForm.value.skillBrief.trim() || skillForm.value.name.trim(),
+      name: newName,
+      skill_brief: skillForm.value.skillBrief.trim() || newName,
       skill_md: skillForm.value.skillMd,
       scripts: skillForm.value.scripts.length > 0 ? skillForm.value.scripts : undefined,
       references: skillForm.value.references.length > 0 ? skillForm.value.references : undefined,
@@ -1023,6 +1094,13 @@ async function submitSkillForm() {
     if (editingSkill.value) {
       await skillApi.update(editingSkill.value.id, data)
     } else {
+      const duplicate = skills.value.find(s =>
+        (s.name || '').toLowerCase() === newName.toLowerCase()
+      )
+      if (duplicate) {
+        showToast(`已存在同名 Skill："${duplicate.name}"`)
+        return
+      }
       await skillApi.create(data)
     }
     showToast(editingSkill.value ? '已更新' : '已创建', 'success')
@@ -1104,6 +1182,351 @@ async function handleToggleMcp(mcpId: string) {
 }
 
 // ============================================================
+// MCP Provider 数据 (MCP 市场)
+// ============================================================
+
+interface BackendMcpProvider {
+  id: string
+  mcp_provider_title?: string
+  mcp_provider_url?: string
+  mcp_provider_brief?: string
+  enable?: boolean | number
+  _displayName?: string
+}
+
+interface McpMarketTool {
+  id: string
+  title: string
+  brief: string
+  install_cmd?: string
+  installed?: boolean
+}
+
+const BUILTIN_MCP_MARKETS: BackendMcpProvider[] = [
+  { id: 'aliyun_bailian', mcp_provider_title: '阿里云百炼', mcp_provider_url: 'https://dashscope.aliyuncs.com', mcp_provider_brief: '阿里云 AI 平台的 MCP 服务市场，需配置 DashScope API Key', enable: true, _displayName: '阿里云百炼' },
+  { id: 'modelscope', mcp_provider_title: 'ModelScope', mcp_provider_url: 'https://modelscope.cn', mcp_provider_brief: '魔搭社区 MCP 广场，社区贡献的优质 MCP 服务器', enable: true, _displayName: 'ModelScope' },
+  { id: 'smithery', mcp_provider_title: 'Smithery', mcp_provider_url: 'https://smithery.ai/api', mcp_provider_brief: '全球 MCP 注册中心，自动 OAuth，支持 HTTP/SSE 连接', enable: true, _displayName: 'Smithery' },
+  { id: 'github', mcp_provider_title: 'GitHub', mcp_provider_url: 'https://registry.npmjs.org', mcp_provider_brief: 'npm 生态的 MCP 服务器，通过 npx/uvx stdio 运行', enable: true, _displayName: 'GitHub' },
+]
+
+const MCP_TOOL_CACHE_TTL = 24 * 60 * 60 * 1000
+const mcpToolCache = new Map<string, { tools: McpMarketTool[]; timestamp: number }>()
+
+const mcpProviders = ref<BackendMcpProvider[]>([])
+const mcpProvidersLoading = ref(false)
+
+const mcpMarketTools = ref<McpMarketTool[]>([])
+const mcpMarketLoading = ref(false)
+const mcpMarketLoadingMore = ref(false)
+const mcpMarketPage = ref(1)
+const mcpMarketHasMore = ref(true)
+const mcpMarketTotal = ref(0)
+const mcpMarketSelectedProvider = ref<string | null>(null)
+const mcpMarketSearchQuery = ref('')
+const installingMcpId = ref<string | null>(null)
+
+const mcpMarketMessage = ref('')
+
+// ===== MCP 市场无限滚动 =====
+const mcpMarketSentinel = ref<HTMLElement | null>(null)
+const mcpMarketScrollContainer = ref<HTMLElement | null>(null)
+const showMcpBackToTop = ref(false)
+let mcpMarketObserver: IntersectionObserver | null = null
+
+function setupMcpMarketObserver() {
+  if (mcpMarketObserver) {
+    mcpMarketObserver.disconnect()
+    mcpMarketObserver = null
+  }
+  if (!mcpMarketSentinel.value) return
+
+  mcpMarketObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries[0]?.isIntersecting && mcpMarketHasMore.value && mcpMarketSelectedProvider.value && !mcpMarketLoadingMore.value) {
+        loadMoreMcpTools()
+      }
+    },
+    { root: mcpMarketScrollContainer.value, rootMargin: '200px' },
+  )
+  mcpMarketObserver.observe(mcpMarketSentinel.value)
+}
+
+function onMcpMarketScroll() {
+  showMcpBackToTop.value = (mcpMarketScrollContainer.value?.scrollTop ?? 0) > 400
+}
+
+function scrollMcpMarketToTop() {
+  mcpMarketScrollContainer.value?.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+// 当工具列表/分页状态/选中市场变化时，重新挂载 observer
+watch(
+  [() => mcpMarketTools.value.length, mcpMarketHasMore, mcpMarketSelectedProvider],
+  () => { nextTick(() => setupMcpMarketObserver()) },
+)
+
+const mcpConfigModalVisible = ref(false)
+const mcpConfigProviderId = ref('')
+const mcpConfigApiKey = ref('')
+const mcpConfigShowKey = ref(false)
+
+const mcpConfigMeta: Record<string, { keyField: string; placeholder: string; hint: string }> = {
+  'aliyun_bailian': { keyField: 'aliyun_bailian_api_key', placeholder: 'sk-...', hint: '请在阿里云百炼控制台获取 DashScope API Key' },
+  'modelscope': { keyField: 'modelscope_api_key', placeholder: '输入 ModelScope API Key', hint: '请在魔搭社区个人设置中获取 API Key' },
+  'smithery': { keyField: 'smithery_api_key', placeholder: 'sk-...', hint: 'API Key 可选，公开浏览无需配置' },
+  'github': { keyField: 'github_api_key', placeholder: 'ghp_...', hint: '可选，用于提升 API 速率限制' },
+}
+
+const mcpConfigKeyPlaceholder = computed(() => mcpConfigMeta[mcpConfigProviderId.value]?.placeholder || '输入 API Key')
+const mcpConfigKeyHint = computed(() => mcpConfigMeta[mcpConfigProviderId.value]?.hint || '')
+
+function openMcpConfigModal(providerId: string) {
+  mcpConfigProviderId.value = providerId
+  mcpConfigApiKey.value = localStorage.getItem(`mcp_api_key_${providerId}`) || ''
+  mcpConfigShowKey.value = false
+  mcpConfigModalVisible.value = true
+}
+
+function closeMcpConfigModal() {
+  mcpConfigModalVisible.value = false
+}
+
+function saveMcpConfig() {
+  const providerId = mcpConfigProviderId.value
+  if (mcpConfigApiKey.value.trim()) {
+    localStorage.setItem(`mcp_api_key_${providerId}`, mcpConfigApiKey.value.trim())
+    showToast('API Key 已保存', 'success')
+  } else {
+    localStorage.removeItem(`mcp_api_key_${providerId}`)
+    showToast('API Key 已清除', 'success')
+  }
+  closeMcpConfigModal()
+}
+
+function handleClearMcpApiKey() {
+  mcpConfigApiKey.value = ''
+}
+
+const filteredMcpMarketTools = computed(() => {
+  const q = mcpMarketSearchQuery.value.toLowerCase().trim()
+  if (!q) return mcpMarketTools.value
+  return mcpMarketTools.value.filter(t =>
+    (t.title || t.id || '').toLowerCase().includes(q) ||
+    (t.brief || '').toLowerCase().includes(q),
+  )
+})
+
+async function loadMcpProviders() {
+  mcpProvidersLoading.value = true
+  try {
+    const list = await configApi.mcp.market()
+    if (list && (list as unknown[]).length > 0) {
+      mcpProviders.value = ((list || []) as BackendMcpProvider[]).map(p => ({
+        ...p,
+        _displayName: p.mcp_provider_title || p.id,
+      }))
+    } else {
+      mcpProviders.value = BUILTIN_MCP_MARKETS
+    }
+  } catch {
+    mcpProviders.value = BUILTIN_MCP_MARKETS
+  } finally {
+    mcpProvidersLoading.value = false
+  }
+}
+
+function toggleMcpMarket(providerId: string) {
+  if (mcpMarketSelectedProvider.value === providerId) {
+    mcpMarketSelectedProvider.value = null
+    mcpMarketSearchQuery.value = ''
+    mcpMarketMessage.value = ''
+    showMcpBackToTop.value = false
+    return
+  }
+  mcpMarketSelectedProvider.value = providerId
+  mcpMarketSearchQuery.value = ''
+  mcpMarketMessage.value = ''
+  showMcpBackToTop.value = false
+  mcpMarketPage.value = 1
+  mcpMarketHasMore.value = true
+  mcpMarketTotal.value = 0
+  loadMcpMarketTools(providerId, true)
+}
+
+async function loadMcpMarketTools(providerId: string, reset = false) {
+  const page = reset ? 1 : mcpMarketPage.value + 1
+  if (!reset && !mcpMarketHasMore.value) return
+  if (reset) {
+    mcpMarketPage.value = 1
+    mcpMarketTools.value = []
+    mcpMarketHasMore.value = true
+  }
+  const isInitial = reset && !mcpMarketSearchQuery.value
+  const cached = mcpToolCache.get(providerId)
+  if (isInitial && cached && (Date.now() - cached.timestamp) < MCP_TOOL_CACHE_TTL) {
+    mcpMarketTools.value = cached.tools
+    return
+  }
+
+  if (page === 1) { mcpMarketLoading.value = true }
+  else { mcpMarketLoadingMore.value = true }
+
+  try {
+    const body: Record<string, unknown> = { pageSize: 30, page }
+    if (mcpMarketSearchQuery.value.trim()) body.keyword = mcpMarketSearchQuery.value.trim()
+    const res = await fetchApi<{ list?: McpMarketTool[]; total?: number; message?: string }>(
+      `/config/mcp/provider/${providerId}/list`, { method: 'POST', body: JSON.stringify(body) },
+    )
+    const tools = res.list || []
+    if (page === 1) {
+      mcpMarketTools.value = tools
+      if (isInitial) mcpToolCache.set(providerId, { tools, timestamp: Date.now() })
+    } else {
+      mcpMarketTools.value = [...mcpMarketTools.value, ...tools]
+    }
+    mcpMarketPage.value = page
+    mcpMarketTotal.value = res.total || 0
+    mcpMarketHasMore.value = tools.length >= 30
+    mcpMarketMessage.value = (res.message && tools.length === 0) ? res.message : ''
+    if (res.message && tools.length === 0 && page === 1) {
+      showToast(res.message)
+    }
+  } catch (e: unknown) {
+    if (page === 1) mcpMarketTools.value = []
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('not found') || msg.includes('404') || msg.includes('Route')) { /* ignore */ }
+    else if (page === 1) showToast(msg || '加载失败')
+  } finally {
+    if (page === 1) { mcpMarketLoading.value = false }
+    else { mcpMarketLoadingMore.value = false }
+  }
+}
+
+function loadMoreMcpTools() {
+  if (!mcpMarketSelectedProvider.value || mcpMarketLoadingMore.value) return
+  loadMcpMarketTools(mcpMarketSelectedProvider.value, false)
+}
+
+const searchMcpMarketDebounced = (() => {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return (providerId: string) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      mcpMarketPage.value = 1
+      mcpMarketHasMore.value = true
+      loadMcpMarketTools(providerId, true)
+    }, 400)
+  }
+})()
+
+function onMcpMarketSearchChange() {
+  if (!mcpMarketSelectedProvider.value) return
+  searchMcpMarketDebounced(mcpMarketSelectedProvider.value)
+}
+
+async function handleRefreshMcpList(providerId: string) {
+  try {
+    const res = await fetchApi<{ total?: number }>(`/config/mcp/provider/${providerId}/list`, { method: 'POST' })
+    const total = res.total ?? (Array.isArray(res) ? res.length : 0)
+    showToast(`获取到 ${total} 个工具`, 'success')
+    mcpToolCache.delete(providerId)
+    mcpMarketPage.value = 1
+    mcpMarketHasMore.value = true
+    await loadMcpMarketTools(providerId, true)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('not found') || msg.includes('404') || msg.includes('Route')) {
+      showToast('市场 API 尚未接入，后端暂未实现该市场的工具列表接口')
+    } else {
+      showToast(msg || '刷新失败')
+    }
+  }
+}
+
+async function handleTestMcpProvider(providerId: string) {
+  try {
+    const res = await fetchApi<{ success?: boolean; connected?: boolean; message?: string; latency?: number }>(
+      `/config/mcp/provider/${providerId}/test`, { method: 'POST' },
+    )
+    const ok = res.success ?? res.connected ?? false
+    const latencyStr = res.latency != null ? ` · ${res.latency}ms` : ''
+    showToast(`${ok ? '✓ ' : '✗ '}${res.message || '测试失败'}${latencyStr}`, ok ? 'success' : 'error')
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('not found') || msg.includes('404') || msg.includes('Route')) {
+      showToast('市场连通性测试后端暂未实现')
+    } else {
+      showToast(`✗ ${msg || '测试失败'}`)
+    }
+  }
+}
+
+async function handleToggleMcpProvider(providerId: string) {
+  const p = mcpProviders.value.find(pr => pr.id === providerId)
+  if (!p) return
+  const newEnabled = !p.enable
+  try {
+    await fetchApi(`/config/mcp/provider/${providerId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ data: { enable: newEnabled }, id: providerId }),
+    })
+    p.enable = newEnabled
+    showToast(newEnabled ? '已启用' : '已停用', 'success')
+  } catch {
+    p.enable = newEnabled
+    showToast(newEnabled ? '已启用（仅本地）' : '已停用（仅本地）', 'success')
+  }
+}
+
+async function handleInstallMcp(providerId: string, toolId: string) {
+  installingMcpId.value = toolId
+  try {
+    await fetchApi('/config/mcp/install', {
+      method: 'POST',
+      body: JSON.stringify({ mcp_provider_id: providerId, mcp_id: toolId }),
+    })
+    showToast('安装成功', 'success')
+    await loadMcps()
+    await loadMcpMarketTools(providerId)
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '安装失败')
+  } finally {
+    installingMcpId.value = null
+  }
+}
+
+async function handleStartMcp(mcpId: string) {
+  try {
+    await fetchApi('/config/mcp/start', { method: 'POST', body: JSON.stringify({ id: mcpId }) })
+    showToast('已启动', 'success')
+    await loadMcps()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '启动失败')
+  }
+}
+
+async function handleStopMcp(mcpId: string) {
+  try {
+    await fetchApi('/config/mcp/stop', { method: 'POST', body: JSON.stringify({ id: mcpId }) })
+    showToast('已停止', 'success')
+    await loadMcps()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '停止失败')
+  }
+}
+
+async function handleUninstallMcp(mcpId: string) {
+  if (!confirm('确定卸载该 MCP？')) return
+  try {
+    await fetchApi('/config/mcp/uninstall', { method: 'POST', body: JSON.stringify({ id: mcpId }) })
+    mcps.value = mcps.value.filter(m => m.id !== mcpId)
+    showToast('已卸载', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '卸载失败')
+  }
+}
+
+// ============================================================
 // Agent 数据
 // ============================================================
 
@@ -1134,6 +1557,25 @@ const agentForm = ref({
 })
 const agentSubmitting = ref(false)
 
+// ===== 原始：无名称查找 =====
+// function getStrategyLabel(strategyId: string): string { return strategyId }
+// function getModelName(modelId: string): string { return modelId }
+// function getSoulName(soulId: string): string { return soulId }
+
+// ===== 修改后：根据 ID 查找名称 =====
+function getStrategyLabel(strategyId: string): string {
+  const s = orchStrategies.value.find(o => o.id === strategyId)
+  return s ? `${s.label} (${s.description || strategyId})` : strategyId || '—'
+}
+function getModelName(modelId: string): string {
+  const m = models.value.find(md => md.id === modelId)
+  return m ? (m.modelName || m.id) : modelId || '—'
+}
+function getSoulName(soulId: string): string {
+  const s = souls.value.find(sl => sl.id === soulId)
+  return s ? (s.soul_brief || s.id) : soulId || '—'
+}
+
 async function loadAgents() {
   agentsLoading.value = true
   try {
@@ -1146,7 +1588,31 @@ async function loadAgents() {
   }
 }
 
-function openAgentModal(agent?: BackendAgent) {
+// ===== 原始 openAgentModal（保留作为参考）=====
+// function openAgentModal(agent?: BackendAgent) {
+//   if (agent) {
+//     editingAgent.value = agent
+//     agentForm.value = {
+//       name: agent.agent_name || agent.name || '',
+//       type: agent.agent_type || agent.type || 'WORKER',
+//       description: agent.description || '',
+//       strategyId: agent.strategy_id || '',
+//       llmId: agent.llm_id || '',
+//       soulId: agent.soul_id || '',
+//       taskSignature: agent.task_signature || '',
+//     }
+//   } else {
+//     editingAgent.value = null
+//     agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', llmId: '', soulId: '', taskSignature: '' }
+//   }
+//   agentModalVisible.value = true
+// }
+
+// ===== 修改后：加载下拉选项数据 =====
+async function openAgentModal(agent?: BackendAgent) {
+  if (orchStrategies.value.length === 0) await loadOrchStrategies()
+  if (models.value.length === 0) await loadModels()
+  if (souls.value.length === 0) await loadSouls()
   if (agent) {
     editingAgent.value = agent
     agentForm.value = {
@@ -1281,6 +1747,519 @@ function showToast(message: string, type: 'success' | 'error' = 'error') {
 }
 
 // ============================================================
+// CDT / 浏览器
+// ============================================================
+
+// ---- 浏览器状态 ----
+const cdtStatus = ref<{ running: boolean; pid: number; port: number; endpoint?: string }>({ running: false, pid: 0, port: 0 })
+const cdtStatusLoading = ref(false)
+
+async function loadCDTStatus() {
+  cdtStatusLoading.value = true
+  try { cdtStatus.value = await cdtApi.status() }
+  catch { cdtStatus.value = { running: false, pid: 0, port: 0 } }
+  finally { cdtStatusLoading.value = false }
+}
+
+async function startCDT() {
+  try { cdtStatus.value = await cdtApi.start(); showToast('CDT 已启动', 'success') }
+  catch (e: unknown) { showToast(`启动失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+  finally { await loadCDTStatus() }
+}
+
+async function stopCDT() {
+  try { await cdtApi.stop(); showToast('CDT 已停止', 'success') }
+  catch (e: unknown) { showToast(`停止失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+  finally { await loadCDTStatus() }
+}
+
+// ---- 网页访问（Remote Browser） ----
+const cdtPageUrl = ref(localStorage.getItem('cdt_last_url') || '')
+const cdtPageLoading = ref(false)
+const cdtPageFrame = ref('')
+const cdtFrameWidth = ref(1920)
+const cdtFrameHeight = ref(1080)
+const cdtFramePollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const cdtBrowserRef = ref<HTMLDivElement | null>(null)
+const cdtScreencastW = ref(Number(localStorage.getItem('cdt_screencast_w') || 1920))
+const cdtScreencastH = ref(Number(localStorage.getItem('cdt_screencast_h') || 1080))
+const cdtScreencastQ = ref(Number(localStorage.getItem('cdt_screencast_q') || 80))
+const cdtScreencastSettingsOpen = ref(false)
+const cdtResolutions = [
+  { w: 1920, h: 1080, label: '1920×1080 (Full HD)' },
+  { w: 1440, h: 900,  label: '1440×900' },
+  { w: 1280, h: 720,  label: '1280×720 (HD)' },
+  { w: 1024, h: 768,  label: '1024×768' },
+  { w: 800,  h: 600,  label: '800×600' },
+]
+const cdtQualities = [30, 50, 70, 80, 100]
+
+function applyCdtScreencastSettings(w: number, h: number, q: number) {
+  cdtScreencastW.value = w; cdtScreencastH.value = h; cdtScreencastQ.value = q
+  localStorage.setItem('cdt_screencast_w', String(w))
+  localStorage.setItem('cdt_screencast_h', String(h))
+  localStorage.setItem('cdt_screencast_q', String(q))
+  cdtScreencastSettingsOpen.value = false
+}
+
+interface CDTStoredSession { cookiesJson: string; url: string; timestamp: number }
+function getSavedCDTSessions(): Record<string, CDTStoredSession> {
+  try { return JSON.parse(localStorage.getItem('cdt_saved_sessions') || '{}') }
+  catch { return {} }
+}
+function saveCDTSession(domain: string, cookiesJson: string, url: string) {
+  const sessions = getSavedCDTSessions()
+  sessions[domain] = { cookiesJson, url, timestamp: Date.now() }
+  localStorage.setItem('cdt_saved_sessions', JSON.stringify(sessions))
+}
+const savedCDTSessions = computed(() => {
+  const sessions = getSavedCDTSessions()
+  return Object.entries(sessions).map(([domain, s]) => ({ domain, ...s }))
+})
+
+async function cdtNavigate() {
+  const url = cdtPageUrl.value.trim()
+  if (!url) { showToast('请输入 URL'); return }
+  cdtPageLoading.value = true
+  try {
+    await spoofBrowserEnv()
+    await cdtApi.navigate(url)
+    localStorage.setItem('cdt_last_url', url)
+    await cdtApi.screencastStart(cdtScreencastW.value, cdtScreencastH.value, cdtScreencastQ.value)
+    startFramePoll()
+    showToast('已打开页面', 'success')
+  } catch (e: unknown) {
+    showToast(`导航失败: ${e instanceof Error ? e.message : '未知错误'}`)
+  } finally { cdtPageLoading.value = false }
+}
+
+/** 检测前端浏览器环境并同步到远程 Chrome */
+async function spoofBrowserEnv() {
+  if (!cdtStatus.value.running) return
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const langStr = (nav.languages || [nav.language || 'zh-CN']).join(',')
+  try {
+    await cdtApi.spoofEnv({
+      platform: nav.platform || 'Win32',
+      userAgent: nav.userAgent,
+      acceptLang: nav.language || 'zh-CN',
+      acceptLangFull: (nav.languages || [nav.language || 'zh-CN']).join(',') + (langStr.includes('en') ? '' : ',en;q=0.8'),
+      hardwareConcurrency: nav.hardwareConcurrency || 8,
+      deviceMemory: nav.deviceMemory || 8,
+      languages: nav.languages || [nav.language || 'zh-CN'],
+    })
+  } catch { /* 非关键操作 */ }
+}
+
+function startFramePoll() {
+  stopFramePoll()
+  ;(async () => {
+    try {
+      const r = await cdtApi.frame()
+      if (r.dataUrl) { cdtPageFrame.value = r.dataUrl; if (r.width) cdtFrameWidth.value = r.width; if (r.height) cdtFrameHeight.value = r.height }
+    } catch { /* */ }
+  })()
+  cdtFramePollTimer.value = setInterval(async () => {
+    try {
+      const r = await cdtApi.frame()
+      if (r.dataUrl) { cdtPageFrame.value = r.dataUrl; if (r.width) cdtFrameWidth.value = r.width; if (r.height) cdtFrameHeight.value = r.height }
+    } catch { /* */ }
+  }, 250)
+}
+
+function stopFramePoll() {
+  if (cdtFramePollTimer.value) { clearInterval(cdtFramePollTimer.value); cdtFramePollTimer.value = null }
+}
+
+function getBrowserCoords(e: MouseEvent): { x: number; y: number } | null {
+  if (!cdtBrowserRef.value || !cdtPageFrame.value) return null
+  const img = cdtBrowserRef.value.querySelector('img')
+  if (!img) return null
+  const rect = img.getBoundingClientRect()
+  if (cdtFrameWidth.value <= 0 || rect.width <= 0) return null
+  const scaleX = cdtFrameWidth.value / rect.width
+  const scaleY = cdtFrameHeight.value / rect.height
+  return {
+    x: Math.round((e.clientX - rect.left) * scaleX),
+    y: Math.round((e.clientY - rect.top) * scaleY),
+  }
+}
+
+const isDragging = ref(false)
+let lastDragX = 0
+let lastDragY = 0
+
+function mods(e: MouseEvent | KeyboardEvent) {
+  return { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey }
+}
+
+async function onBrowserMouseDown(e: MouseEvent) {
+  const coords = getBrowserCoords(e)
+  if (!coords) return
+  if (e.button === 2) {
+    await cdtApi.rightclick(coords.x, coords.y)
+  } else {
+    const m = mods(e)
+    await cdtApi.mouse('mouseMoved', coords.x, coords.y, 'left', 1, 0, 0, m.ctrl, m.alt, m.shift, m.meta)
+    await cdtApi.mouse('mousePressed', coords.x, coords.y, 'left', 1, 0, 0, m.ctrl, m.alt, m.shift, m.meta)
+    isDragging.value = true
+    lastDragX = coords.x
+    lastDragY = coords.y
+  }
+  cdtBrowserRef.value?.focus()
+}
+
+async function onBrowserMouseMove(e: MouseEvent) {
+  if (!isDragging.value) return
+  const coords = getBrowserCoords(e)
+  if (!coords) return
+  if (Math.abs(coords.x - lastDragX) < 1 && Math.abs(coords.y - lastDragY) < 1) return
+  lastDragX = coords.x
+  lastDragY = coords.y
+  const m = mods(e)
+  await cdtApi.mouse('mouseMoved', coords.x, coords.y, 'left', 1, 0, 0, m.ctrl, m.alt, m.shift, m.meta)
+}
+
+async function onBrowserMouseUp(_e: MouseEvent) {
+  cdtBrowserRef.value?.focus()
+  if (isDragging.value) {
+    isDragging.value = false
+    await cdtApi.mouse('mouseReleased', lastDragX, lastDragY, 'left', 1)
+  }
+}
+
+async function onBrowserMouseLeave(e: MouseEvent) {
+  if (isDragging.value) {
+    const coords = getBrowserCoords(e)
+    if (coords) {
+      await cdtApi.mouse('mouseMoved', coords.x, coords.y)
+      await cdtApi.mouse('mouseReleased', coords.x, coords.y)
+    }
+    isDragging.value = false
+  }
+}
+
+async function onBrowserDblClick(e: MouseEvent) {
+  e.preventDefault()
+  const coords = getBrowserCoords(e)
+  if (!coords) return
+  const m = mods(e)
+  await cdtApi.dblclick(coords.x, coords.y, m.ctrl, m.alt, m.shift, m.meta)
+  cdtBrowserRef.value?.focus()
+}
+
+function onBrowserContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  const coords = getBrowserCoords(e)
+  if (!coords) return
+  // 转发右击到远程 Chrome（页内 JS handler 可拦截）
+  cdtApi.rightclick(coords.x, coords.y)
+  // 本地弹出自定义菜单
+  ctxMenuVisible.value = true
+  ctxMenuX.value = e.clientX
+  ctxMenuY.value = e.clientY
+  cdtBrowserRef.value?.focus()
+}
+
+// ---- 自定义右击菜单 ----
+const ctxMenuVisible = ref(false)
+const ctxMenuX = ref(0)
+const ctxMenuY = ref(0)
+
+function hideCtxMenu() { ctxMenuVisible.value = false }
+
+async function ctxCopy() {
+  hideCtxMenu()
+  cdtBrowserRef.value?.focus()
+  await cdtApi.keyBatch([
+    { type: 'rawKeyDown', key: 'c', ctrl: true },
+    { type: 'keyUp', key: 'c', ctrl: true },
+  ])
+}
+
+async function ctxPaste() {
+  hideCtxMenu()
+  cdtBrowserRef.value?.focus()
+  await doRemotePaste()
+}
+
+async function ctxSelectAll() {
+  hideCtxMenu()
+  cdtBrowserRef.value?.focus()
+  await cdtApi.keyBatch([
+    { type: 'rawKeyDown', key: 'a', ctrl: true },
+    { type: 'keyUp', key: 'a', ctrl: true },
+  ])
+}
+
+/** 可靠粘贴：读本地剪贴板 → insertText 到远程 */
+let pasteInProgress = false
+async function doRemotePaste() {
+  if (pasteInProgress) return
+  pasteInProgress = true
+  try {
+    let text = ''
+    try { text = await navigator.clipboard.readText() } catch { /* */ }
+    if (!text) {
+      text = await new Promise<string>((resolve) => {
+        const ta = document.createElement('textarea')
+        ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:9999'
+        document.body.appendChild(ta)
+        ta.focus()
+        const onPaste = (ev: Event) => {
+          const ce = ev as ClipboardEvent
+          const val = ce.clipboardData?.getData('text') || ''
+          ta.removeEventListener('paste', onPaste)
+          document.body.removeChild(ta)
+          cdtBrowserRef.value?.focus()
+          resolve(val)
+        }
+        ta.addEventListener('paste', onPaste)
+        document.execCommand('paste')
+        setTimeout(() => {
+          ta.removeEventListener('paste', onPaste)
+          const val = ta.value
+          document.body.removeChild(ta)
+          cdtBrowserRef.value?.focus()
+          if (!val) resolve('')
+        }, 200)
+      })
+    }
+    if (text) await cdtApi.insertText(text)
+  } finally {
+    pasteInProgress = false
+  }
+}
+
+async function onBrowserKeyDown(e: KeyboardEvent) {
+  const isMod = e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta'
+  if (isMod) {
+    e.preventDefault()
+    await cdtApi.key('rawKeyDown', '', e.key)
+    return
+  }
+
+  // Ctrl+V / Ctrl+Shift+V：直接读剪贴板插入，不依赖浏览器 paste 事件
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+    doRemotePaste()
+    return
+  }
+
+  e.preventDefault()
+
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 'Control' || e.key === 'Meta') return
+    await cdtApi.keyBatch([
+      { type: 'rawKeyDown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey },
+    ])
+    return
+  }
+
+  await cdtApi.keyBatch([
+    { type: 'rawKeyDown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey },
+    ...(e.key.length === 1 ? [{ type: 'char', text: e.key, key: e.key }] : []),
+  ])
+}
+
+// ---- 保底 paste 监听（也处理右键粘贴、Ctrl+C 后再 Ctrl+V 等场景） ----
+let pasteCleanup: (() => void) | null = null
+function setupRemotePasteListener() {
+  if (pasteCleanup) return
+  const handler = async (e: ClipboardEvent) => {
+    if (pasteInProgress) return
+    if (!cdtBrowserRef.value) return
+    const active = document.activeElement
+    if (active !== cdtBrowserRef.value && !cdtBrowserRef.value.contains(active as Node)) return
+    let text = e.clipboardData?.getData('text') || ''
+    if (!text) {
+      try { text = await navigator.clipboard.readText() } catch { /* */ }
+    }
+    if (!text) return
+    e.preventDefault()
+    await cdtApi.insertText(text)
+  }
+  document.addEventListener('paste', handler)
+  pasteCleanup = () => document.removeEventListener('paste', handler)
+}
+
+async function onBrowserKeyUp(e: KeyboardEvent) {
+  e.preventDefault()
+  const isMod = e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta'
+  if (isMod) {
+    await cdtApi.key('keyUp', '', e.key)
+    return
+  }
+
+  await cdtApi.keyBatch([
+    { type: 'keyUp', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey },
+  ])
+}
+
+async function onBrowserPaste(e: ClipboardEvent) {
+  e.preventDefault()
+  await doRemotePaste()
+}
+
+function onBrowserWheel(e: WheelEvent) {
+  e.preventDefault()
+  if (!cdtBrowserRef.value || !cdtPageFrame.value) return
+  const img = cdtBrowserRef.value.querySelector('img')
+  if (!img) return
+  const rect = img.getBoundingClientRect()
+  if (cdtFrameWidth.value <= 0 || rect.width <= 0) return
+  const scaleX = cdtFrameWidth.value / rect.width
+  const scaleY = cdtFrameHeight.value / rect.height
+  const x = (e.clientX - rect.left) * scaleX
+  const y = (e.clientY - rect.top) * scaleY
+  cdtApi.mouse('mouseWheel', x, y, 'left', 0, e.deltaX, e.deltaY)
+}
+
+async function cdtSaveCredential() {
+  try {
+    const url = cdtPageUrl.value.trim()
+    const domain = extractDomain(url)
+    const res = await cdtApi.cookies()
+    saveCDTSession(domain, res.cookiesJson, url)
+    showToast(`已保存 ${domain} 的登录凭证`, 'success')
+  } catch (e: unknown) {
+    showToast(`保存失败: ${e instanceof Error ? e.message : '未知错误'}`)
+  }
+}
+
+async function cdtRestoreCredential(domain: string, cookiesJson: string, url: string) {
+  if (!cdtStatus.value.running) { showToast('请先启动 CDT 浏览器'); return }
+  try {
+    await cdtApi.navigate(url)
+    const cookies: Array<{ name: string; value: string; domain: string }> = JSON.parse(cookiesJson)
+    for (const c of cookies) {
+      if (c.name && c.value) {
+        await cdtApi.evaluate(`document.cookie = '${c.name}=${c.value}; path=/'`)
+      }
+    }
+    await cdtApi.navigate(url)
+    cdtPageUrl.value = url
+    await cdtApi.screencastStart()
+    startFramePoll()
+    showToast(`已恢复 ${domain} 的凭证`, 'success')
+  } catch (e: unknown) {
+    showToast(`恢复失败: ${e instanceof Error ? e.message : '未知错误'}`)
+  }
+}
+
+async function cdtDeleteCredential(domain: string) {
+  const sessions = getSavedCDTSessions()
+  delete sessions[domain]
+  localStorage.setItem('cdt_saved_sessions', JSON.stringify(sessions))
+  showToast(`已删除 ${domain} 的凭证`, 'success')
+}
+
+function extractDomain(url: string): string {
+  try { return new URL(url.startsWith('http') ? url : `https://${url}`).hostname }
+  catch { return url }
+}
+
+// ---- 书签管理 ----
+interface BookmarkFolder { id: string; name: string; parent_id: string; sort_order: number; children: BookmarkFolder[]; items: BookmarkItem[] }
+interface BookmarkItem { id: string; folder_id: string; title: string; url: string; favicon: string; sort_order: number }
+interface FlatFolder { id: string; name: string; parent_id: string; sort_order: number }
+
+const bookmarkTree = ref<BookmarkFolder[]>([])
+const bookmarkFlatFolders = ref<FlatFolder[]>([])
+const bookmarkLoading = ref(false)
+const bookmarkNewFolderName = ref('')
+const bookmarkNewFolderParent = ref('')
+const bookmarkNewItemUrl = ref('')
+const bookmarkNewItemTitle = ref('')
+const bookmarkNewItemFolder = ref('')
+const bookmarkEditingFolder = ref<{ id: string; name: string } | null>(null)
+const bookmarkEditingItem = ref<{ id: string; title: string; url: string } | null>(null)
+const bookmarkMoveItemId = ref('')
+const bookmarkMoveTargetFolder = ref('')
+const expandedFolders = ref<Set<string>>(new Set())
+
+async function loadBookmarks() {
+  bookmarkLoading.value = true
+  try {
+    const [tree, folders] = await Promise.all([bookmarkApi.tree(), bookmarkApi.flatFolders()])
+    bookmarkTree.value = tree
+    bookmarkFlatFolders.value = folders
+    const allFolders = flattenFolders(tree)
+    expandedFolders.value = new Set(allFolders.map((f: BookmarkFolder) => f.id))
+  } catch { bookmarkTree.value = [] }
+  finally { bookmarkLoading.value = false }
+}
+
+function flattenFolders(tree: BookmarkFolder[]): BookmarkFolder[] {
+  return tree.flatMap(f => [f, ...flattenFolders(f.children)])
+}
+
+function toggleFolder(id: string) {
+  const next = new Set(expandedFolders.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedFolders.value = next
+}
+
+async function addBookmarkFolder() {
+  const name = bookmarkNewFolderName.value.trim()
+  if (!name) { showToast('请输入文件夹名称'); return }
+  try { await bookmarkApi.createFolder(name, bookmarkNewFolderParent.value); bookmarkNewFolderName.value = ''; await loadBookmarks(); showToast('文件夹已创建', 'success') }
+  catch (e: unknown) { showToast(`创建失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function addBookmarkItem(url?: string, title?: string) {
+  const finalUrl = (url || bookmarkNewItemUrl.value).trim()
+  const finalTitle = (title || bookmarkNewItemTitle.value).trim() || finalUrl
+  if (!finalUrl) { showToast('请输入 URL'); return }
+  let folderId = bookmarkNewItemFolder.value || bookmarkTree.value[0]?.id || ''
+  if (!folderId) {
+    try { const f = await bookmarkApi.createFolder('书签栏', ''); folderId = f.id; await loadBookmarks() }
+    catch (e: unknown) { showToast(`自动创建文件夹失败: ${e instanceof Error ? e.message : '未知错误'}`); return }
+  }
+  try { await bookmarkApi.createItem(folderId, finalTitle, finalUrl); bookmarkNewItemUrl.value = ''; bookmarkNewItemTitle.value = ''; await loadBookmarks(); showToast('书签已添加', 'success') }
+  catch (e: unknown) { showToast(`添加失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function renameFolder() {
+  const f = bookmarkEditingFolder.value
+  if (!f || !f.name.trim()) return
+  try { await bookmarkApi.updateFolder(f.id, f.name.trim()); bookmarkEditingFolder.value = null; await loadBookmarks() }
+  catch (e: unknown) { showToast(`重命名失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function renameItem() {
+  const item = bookmarkEditingItem.value
+  if (!item || !item.title.trim()) return
+  try { await bookmarkApi.updateItem(item.id, item.title.trim(), item.url.trim()); bookmarkEditingItem.value = null; await loadBookmarks() }
+  catch (e: unknown) { showToast(`更新失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function removeFolder(id: string) {
+  if (!confirm('删除文件夹将同时删除其中的所有书签和子文件夹，确认？')) return
+  try { await bookmarkApi.deleteFolder(id); await loadBookmarks() }
+  catch (e: unknown) { showToast(`删除失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function removeBookmarkItem(id: string) {
+  try { await bookmarkApi.deleteItem(id); await loadBookmarks() }
+  catch (e: unknown) { showToast(`删除失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function moveBookmarkItem() {
+  if (!bookmarkMoveItemId.value || !bookmarkMoveTargetFolder.value) return
+  try { await bookmarkApi.moveItem(bookmarkMoveItemId.value, bookmarkMoveTargetFolder.value); bookmarkMoveItemId.value = ''; bookmarkMoveTargetFolder.value = ''; await loadBookmarks(); showToast('已移动', 'success') }
+  catch (e: unknown) { showToast(`移动失败: ${e instanceof Error ? e.message : '未知错误'}`) }
+}
+
+async function addBookmarkFromCDT() {
+  const url = cdtPageUrl.value.trim()
+  if (!url) { showToast('请先在"网页访问"中输入 URL'); return }
+  bookmarkNewItemUrl.value = url
+  bookmarkNewItemFolder.value = bookmarkTree.value[0]?.id || ''
+  await addBookmarkItem()
+}
+
+// ============================================================
 // 初始化
 // ============================================================
 
@@ -1304,6 +2283,9 @@ onMounted(() => {
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
+  if (mcpMarketObserver) { mcpMarketObserver.disconnect(); mcpMarketObserver = null }
+  stopFramePoll()
+  pasteCleanup?.()
 })
 
 watch(activeSubSection, async (val) => {
@@ -1315,9 +2297,13 @@ watch(activeSubSection, async (val) => {
       case 'soul': await loadSouls(); break
       case 'skill': await loadSkills(); break
       case 'mcp': await loadMcps(); break
+      case 'mcp-provider': await loadMcpProviders(); break
+      case 'mcp-stats': await loadMcps(); break
       case 'agent': await loadAgents(); break
       case 'prompt': await loadPrompts(); break
       case 'orch-strategy': await loadOrchStrategies(); break
+      case 'cdt-status': await loadCDTStatus(); break
+      case 'cdt-page': await loadCDTStatus(); await loadBookmarks(); setupRemotePasteListener(); break
     }
   } else if (sub?.type === 'params') {
     await loadConfigTree()
@@ -1401,13 +2387,10 @@ watch(activeSubSection, async (val) => {
       </aside>
 
       <!-- ═══════════════ 右侧内容区 ═══════════════ -->
-      <main class="flex-1 overflow-y-auto bg-apple-gray-50 dark:bg-apple-gray-900">
+      <main class="flex-1 bg-apple-gray-50 dark:bg-apple-gray-900" :class="mcpMarketSelectedProvider ? 'overflow-hidden' : 'overflow-y-auto'">
         <div class="flex items-center gap-1.5 px-5 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
           <Layers :size="15" class="text-brian-blue flex-shrink-0" />
-          <template v-for="(crumb, idx) in breadcrumb" :key="idx">
-            <ChevronRight v-if="idx > 0" :size="12" class="text-apple-gray-400 flex-shrink-0" />
-            <span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ crumb.label }}</span>
-          </template>
+          <PageBreadcrumb :path="pagePath" />
         </div>
 
         <div v-if="currentSection" class="px-5 py-4">
@@ -1685,8 +2668,12 @@ watch(activeSubSection, async (val) => {
 
         <!-- ========================== 实体管理视图 - Skill ========================== -->
         <div v-if="isEntityView && currentEntityType === 'skill'" class="px-5 pb-6">
-          <div class="flex justify-between items-center mb-4">
-            <span class="text-xs text-apple-gray-400">{{ skills.length }} 个技能</span>
+          <div class="flex items-center gap-3 mb-4">
+            <div class="relative flex-1 max-w-sm">
+              <Search :size="14" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+              <input v-model="skillSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索 Skill 名称..." />
+            </div>
+            <span class="text-xs text-apple-gray-400">{{ filteredSkills.length }} / {{ skills.length }} 个技能</span>
             <button class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 transition-colors" @click="openSkillModal()">
               <Plus :size="13" /> 添加 Skill
             </button>
@@ -1696,9 +2683,13 @@ watch(activeSubSection, async (val) => {
             <Wand2 :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无 Skill 配置</p>
           </div>
+          <div v-else-if="filteredSkills.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Search :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">没有匹配的 Skill</p>
+          </div>
           <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div
-              v-for="sk in skills" :key="sk.id"
+              v-for="sk in filteredSkills" :key="sk.id"
               class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4"
             >
               <div class="flex items-start justify-between mb-3">
@@ -1723,15 +2714,180 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - MCP ========================== -->
+        <!-- ========================== 实体管理视图 - MCP 市场 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'mcp-provider'" :class="mcpMarketSelectedProvider ? 'flex flex-col h-full' : 'px-5 pb-6'">
+          <!-- ═══ 市场详情页：工具浏览器 ═══ -->
+          <template v-if="mcpMarketSelectedProvider">
+            <div class="flex-shrink-0 px-5 pt-5">
+              <div class="flex items-center gap-2 mb-5">
+                <button
+                  class="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors"
+                  @click="mcpMarketSelectedProvider = null; mcpMarketSearchQuery = ''"
+                >
+                  <ChevronRight :size="13" class="rotate-180" />
+                  返回市场列表
+                </button>
+                <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700" />
+                <div class="flex items-center gap-2">
+                  <Globe :size="16" class="text-brian-blue" />
+                  <h2 class="text-base font-semibold text-apple-gray-900 dark:text-apple-gray-50">
+                    {{ mcpProviders.find(p => p.id === mcpMarketSelectedProvider)?._displayName || '' }}
+                  </h2>
+                </div>
+                <div class="flex-1" />
+                <div class="flex items-center gap-1.5">
+                  <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors" title="刷新" @click="handleRefreshMcpList(mcpMarketSelectedProvider)">
+                    <RefreshCw :size="14" :class="mcpMarketLoading ? 'animate-spin' : ''" />
+                  </button>
+                  <div class="relative">
+                    <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+                    <input v-model="mcpMarketSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-7 !pr-3 !w-48 !text-xs'" placeholder="搜索工具..." @input="onMcpMarketSearchChange" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div ref="mcpMarketScrollContainer" class="flex-1 overflow-y-auto px-5 pb-6 relative" @scroll="onMcpMarketScroll">
+              <div v-if="mcpMarketLoading" class="flex justify-center py-20"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+              <div v-else-if="filteredMcpMarketTools.length === 0" class="flex flex-col items-center py-20 text-center">
+                <component :is="mcpMarketMessage ? Key : Download" :size="32" class="mb-4" :class="mcpMarketMessage ? 'text-warning-orange' : 'text-apple-gray-400'" />
+                <p class="text-sm text-apple-gray-500 mb-1" v-if="mcpMarketSearchQuery">未找到匹配的工具</p>
+                <p class="text-sm mb-1" :class="mcpMarketMessage ? 'text-warning-orange' : 'text-apple-gray-500'" v-else>{{ mcpMarketMessage || '暂无可用工具' }}</p>
+                <p class="text-xs text-apple-gray-400" v-if="!mcpMarketSearchQuery && !mcpMarketMessage">请点击右上角刷新按钮从市场获取工具列表</p>
+              </div>
+              <div v-else class="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4 pb-4">
+                <div
+                  v-for="tool in filteredMcpMarketTools" :key="tool.id"
+                  class="break-inside-avoid rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:border-brian-blue/30 hover:shadow-sm transition-all p-4"
+                >
+                  <div class="flex items-start justify-between gap-3 mb-2">
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 leading-snug">{{ tool.title || tool.id }}</p>
+                      <p v-if="tool.brief" class="text-xs text-apple-gray-400 mt-1.5 leading-relaxed">{{ tool.brief }}</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                    <span class="text-[10px] text-apple-gray-400">{{ mcpMarketSelectedProvider === 'github' ? 'npm' : 'http' }}</span>
+                    <button
+                      class="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg transition-colors"
+                      :class="tool.installed ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue text-white hover:bg-brian-blue/90'"
+                      :disabled="!!tool.installed"
+                      @click="handleInstallMcp(mcpMarketSelectedProvider!, tool.id)"
+                    >
+                      <Loader2 v-if="installingMcpId === tool.id" :size="11" class="animate-spin" />
+                      <Download v-else :size="11" />
+                      {{ tool.installed ? '已安装' : '安装' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="mcpMarketLoadingMore" class="flex justify-center py-4">
+                <Loader2 :size="20" class="animate-spin text-brian-blue" />
+                <span class="ml-2 text-sm text-apple-gray-400">加载中...</span>
+              </div>
+              <div ref="mcpMarketSentinel" v-if="mcpMarketHasMore && filteredMcpMarketTools.length > 0 && !mcpMarketLoadingMore" class="h-1" />
+            </div>
+
+            <Transition name="fade">
+              <button
+                v-if="showMcpBackToTop"
+                class="absolute bottom-6 right-8 w-10 h-10 rounded-full bg-brian-blue text-white shadow-lg hover:bg-brian-blue/90 transition-all flex items-center justify-center z-10"
+                @click="scrollMcpMarketToTop"
+                title="返回顶部"
+              >
+                <ChevronRight :size="18" class="-rotate-90" />
+              </button>
+            </Transition>
+          </template>
+
+          <!-- ═══ 市场卡片列表 ═══ -->
+          <template v-else>
+            <div class="flex items-center mb-4">
+              <span class="text-xs text-apple-gray-400">{{ mcpProviders.length }} 个内置 MCP 市场</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue ml-2">系统内置</span>
+            </div>
+            <div v-if="mcpProvidersLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+            <div v-else-if="mcpProviders.length === 0" class="flex flex-col items-center justify-center py-16">
+              <Globe :size="28" class="text-apple-gray-400 mb-3" />
+              <p class="text-sm text-apple-gray-500">暂无 MCP 市场数据</p>
+            </div>
+            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div
+                v-for="p in mcpProviders" :key="p.id"
+                class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-all cursor-pointer p-4 group"
+                @click="toggleMcpMarket(p.id)"
+              >
+                <div class="flex items-start justify-between mb-3">
+                  <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue group-hover:bg-brian-blue/20 transition-colors"><Globe :size="18" /></div>
+                    <div class="min-w-0">
+                      <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p._displayName || p.id }}</h3>
+                      <p class="text-[11px] text-apple-gray-400 line-clamp-2">{{ p.mcp_provider_brief || '' }}</p>
+                    </div>
+                  </div>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 flex-shrink-0 ml-2">内置</span>
+                </div>
+                <p class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 font-mono bg-apple-gray-100 dark:bg-apple-gray-900/60 rounded px-2 py-1 truncate mb-3">
+                  {{ p.mcp_provider_url || '' }}
+                </p>
+                <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700" @click.stop>
+                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestMcpProvider(p.id)"><FlaskConical :size="11" /> 测试</button>
+                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openMcpConfigModal(p.id)"><Key :size="11" /> 配置</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- API Key 配置弹窗 -->
+            <Teleport to="body">
+              <Transition name="modal">
+                <div v-if="mcpConfigModalVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="closeMcpConfigModal">
+                  <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
+                    <h2 class="text-lg font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-1">
+                      {{ mcpProviders.find(p => p.id === mcpConfigProviderId)?._displayName || '' }} 配置
+                    </h2>
+                    <p class="text-xs text-apple-gray-400 mb-4">配置 API Key 以启用该市场的完整功能</p>
+                    <div class="space-y-3">
+                      <div>
+                        <label class="text-xs font-medium text-apple-gray-500 mb-1 block">API Key</label>
+                        <div class="relative">
+                          <input
+                            v-model="mcpConfigApiKey"
+                            :type="mcpConfigShowKey ? 'text' : 'password'"
+                            :class="inputClass"
+                            :placeholder="mcpConfigKeyPlaceholder"
+                          />
+                          <button class="absolute right-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400 hover:text-apple-gray-600 transition-colors" @click="mcpConfigShowKey = !mcpConfigShowKey">
+                            <Eye v-if="!mcpConfigShowKey" :size="14" />
+                            <EyeOff v-else :size="14" />
+                          </button>
+                        </div>
+                        <p class="text-[10px] text-apple-gray-400 mt-1">{{ mcpConfigKeyHint }}</p>
+                      </div>
+                    </div>
+                    <div class="flex justify-between gap-2 mt-6">
+                      <button class="px-3 py-2 text-sm rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleClearMcpApiKey">清除</button>
+                      <div class="flex gap-2">
+                        <button class="px-4 py-2 text-sm rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeMcpConfigModal">取消</button>
+                        <button class="px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors" @click="saveMcpConfig">保存</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Transition>
+            </Teleport>
+          </template>
+        </div>
+
+        <!-- ========================== 实体管理视图 - MCP 实例 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'mcp'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
-            <span class="text-xs text-apple-gray-400">{{ mcps.length }} 个 MCP 服务</span>
+            <span class="text-xs text-apple-gray-400">{{ mcps.length }} 个已安装 MCP</span>
           </div>
           <div v-if="mcpsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
           <div v-else-if="mcps.length === 0" class="flex flex-col items-center justify-center py-16">
             <Plug :size="28" class="text-apple-gray-400 mb-3" />
-            <p class="text-sm text-apple-gray-500">暂无已安装的 MCP 服务</p>
+            <p class="text-sm text-apple-gray-500 mb-2">暂无已安装的 MCP 服务</p>
+            <p class="text-xs text-apple-gray-400">请在"<span class="text-brian-blue">MCP 市场</span>"中浏览并安装 MCP 工具</p>
           </div>
           <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div
@@ -1749,10 +2905,61 @@ watch(activeSubSection, async (val) => {
               </div>
               <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 min-h-[32px] line-clamp-2">{{ item.description || '暂无描述' }}</p>
               <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700">
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click="handleStartMcp(item.id)"><Zap :size="11" /> 启动</button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20 transition-colors" @click="handleStopMcp(item.id)"><span class="inline-block w-1.5 h-1.5 rounded-full bg-current" /> 停止</button>
                 <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(item.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleMcp(item.id)">
                   <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(item.enabled ?? true) ? 'translate-x-4' : ''" />
                 </button>
-                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleDeleteMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
+                <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleUninstallMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 实体管理视图 - MCP 调用统计 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'mcp-stats'" class="px-5 pb-6">
+          <div v-if="mcpsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+          <div v-else-if="mcps.length === 0" class="flex flex-col items-center justify-center py-16">
+            <BarChart3 :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500">暂无已安装的 MCP，无法统计调用数据</p>
+          </div>
+          <div v-else>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
+                <p class="text-xs text-apple-gray-400 mb-1">已安装 MCP</p>
+                <p class="text-2xl font-bold text-apple-gray-900 dark:text-apple-gray-50">{{ mcps.length }}</p>
+              </div>
+              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
+                <p class="text-xs text-apple-gray-400 mb-1">启用的 MCP</p>
+                <p class="text-2xl font-bold text-success-green">{{ mcps.filter(m => m.enabled ?? true).length }}</p>
+              </div>
+              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
+                <p class="text-xs text-apple-gray-400 mb-1">停用的 MCP</p>
+                <p class="text-2xl font-bold text-warning-orange">{{ mcps.filter(m => !(m.enabled ?? true)).length }}</p>
+              </div>
+            </div>
+            <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+              <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">MCP 实例概览</h3>
+                <RefreshCw :size="14" class="text-apple-gray-400 cursor-pointer hover:text-brian-blue transition-colors" @click="loadMcps" />
+              </div>
+              <div class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700">
+                <div
+                  v-for="item in mcps" :key="item.id"
+                  class="px-4 py-3 flex items-center justify-between"
+                >
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="14" /></div>
+                    <div class="min-w-0">
+                      <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ item.displayName || item.name || item.id }}</p>
+                      <p class="text-[10px] text-apple-gray-400">{{ item.description || '' }}</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-xs text-apple-gray-500">v{{ item.version || '1.0' }}</span>
+                    <span class="w-2 h-2 rounded-full" :class="(item.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300'" />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1791,7 +2998,9 @@ watch(activeSubSection, async (val) => {
               </div>
               <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 min-h-[32px] line-clamp-2">{{ a.description || a.task_signature || '暂无描述' }}</p>
               <div class="flex items-center gap-2 text-[10px] text-apple-gray-400 mb-3">
-                <span v-if="a.strategy_id">策略: {{ a.strategy_id }}</span>
+                <span v-if="a.strategy_id">策略: {{ getStrategyLabel(a.strategy_id) }}</span>
+                <span v-if="a.llm_id">模型: {{ getModelName(a.llm_id) }}</span>
+                <span v-if="a.soul_id">Soul: {{ getSoulName(a.soul_id) }}</span>
                 <span v-if="a.eval_score !== undefined">评分: {{ a.eval_score }}</span>
                 <span v-if="a.usage_count !== undefined">使用: {{ a.usage_count }}次</span>
               </div>
@@ -2011,7 +3220,189 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'agent', 'prompt', 'orch-strategy'].includes(currentEntityType || '')" class="px-5 pb-6">
+        <!-- ========================== 实体管理视图 - CDT 浏览器状态 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'cdt-status'" class="px-5 pb-6">
+          <div class="mb-4">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-brian-blue/10 text-brian-blue"><Monitor :size="18" /></div>
+              <div>
+                <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">Chrome DevTools 浏览器</h3>
+                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400">控制 Chrome 浏览器的启动、停止与状态监控</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 mb-4">
+              <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors" :class="cdtStatus.running ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue text-white hover:bg-brian-blue/90'" :disabled="cdtStatus.running" @click="startCDT">
+                <Zap :size="14" /> 启动浏览器
+              </button>
+              <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors" :class="!cdtStatus.running ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-error-red text-white hover:bg-error-red/90'" :disabled="!cdtStatus.running" @click="stopCDT">
+                <X :size="14" /> 停止浏览器
+              </button>
+              <button class="p-2 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors" title="刷新状态" @click="loadCDTStatus">
+                <RefreshCw :size="16" :class="cdtStatusLoading ? 'animate-spin' : ''" />
+              </button>
+            </div>
+            <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-apple-gray-500 dark:text-apple-gray-400">状态</span>
+                <span class="flex items-center gap-1.5 text-sm font-medium" :class="cdtStatus.running ? 'text-success-green' : 'text-apple-gray-400'">
+                  <span class="w-2 h-2 rounded-full" :class="cdtStatus.running ? 'bg-success-green' : 'bg-apple-gray-300'" />
+                  {{ cdtStatus.running ? '运行中' : '已停止' }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between"><span class="text-sm text-apple-gray-500 dark:text-apple-gray-400">进程 PID</span><span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ cdtStatus.pid || '-' }}</span></div>
+              <div class="flex items-center justify-between"><span class="text-sm text-apple-gray-500 dark:text-apple-gray-400">调试端口</span><span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ cdtStatus.port || '-' }}</span></div>
+              <div class="flex items-center justify-between"><span class="text-sm text-apple-gray-500 dark:text-apple-gray-400">WebSocket 端点</span><span class="text-sm font-mono text-apple-gray-900 dark:text-apple-gray-50 truncate max-w-[300px]">{{ cdtStatus.endpoint || '-' }}</span></div>
+            </div>
+          </div>
+          <p class="text-xs text-apple-gray-400">提示：启动浏览器后，Chrome 窗口将打开。请勿手动关闭——通过此页面停止会自动清理进程。</p>
+        </div>
+
+        <!-- ========================== 实体管理视图 - CDT 网页访问 ========================== -->
+        <div v-if="isEntityView && currentEntityType === 'cdt-page'" class="px-5 pb-6">
+          <div class="mb-4">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-brian-blue/10 text-brian-blue"><Globe :size="18" /></div>
+              <div>
+                <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">网页访问</h3>
+              </div>
+            </div>
+
+            <!-- 书签 -->
+            <div class="mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 uppercase tracking-wide">书签</h4>
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 px-2 py-1 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="bookmarkNewItemUrl = cdtPageUrl; addBookmarkItem()" :disabled="!cdtPageUrl.trim()" title="收藏当前页面"><Star :size="10" /> 收藏</button>
+                  <button class="px-2 py-1 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="loadBookmarks()" title="刷新"><RefreshCw :size="10" /></button>
+                </div>
+              </div>
+              <div v-if="bookmarkLoading" class="py-4 flex justify-center"><Loader2 :size="16" class="animate-spin text-brian-blue" /></div>
+              <div v-else-if="bookmarkTree.length === 0" class="text-center py-2">
+                <p class="text-xs text-apple-gray-400">暂无书签</p>
+              </div>
+              <div v-else class="space-y-0.5 max-h-[200px] overflow-y-auto">
+                <template v-for="folder in bookmarkTree" :key="folder.id">
+                  <div>
+                    <div class="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors group cursor-pointer" @click="toggleFolder(folder.id)">
+                      <ChevronRight :size="11" class="text-apple-gray-400 transition-transform flex-shrink-0" :class="expandedFolders.has(folder.id) ? 'rotate-90' : ''" />
+                      <span class="text-xs font-medium text-apple-gray-700 dark:text-apple-gray-300 truncate">{{ folder.name }}</span>
+                      <span class="text-[9px] text-apple-gray-400 flex-shrink-0">{{ folder.items.length + folder.children.length }}</span>
+                      <div class="flex-1" />
+                      <button class="opacity-0 group-hover:opacity-100 p-0.5 text-[9px] text-apple-gray-400 hover:text-error-red flex-shrink-0" @click.stop="removeFolder(folder.id)"><Trash2 :size="10" /></button>
+                    </div>
+                    <div v-if="expandedFolders.has(folder.id)" class="ml-3 pl-2 border-l border-apple-gray-200 dark:border-apple-gray-700">
+                      <div v-for="item in folder.items" :key="item.id" class="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors group">
+                        <span class="text-[9px] text-apple-gray-400 flex-shrink-0">🔖</span>
+                        <span class="text-xs text-apple-gray-700 dark:text-apple-gray-300 truncate flex-1 cursor-pointer" @click="cdtPageUrl = item.url; cdtNavigate()" :title="item.url">{{ item.title || item.url }}</span>
+                        <button class="opacity-0 group-hover:opacity-100 p-0.5 text-[9px] text-apple-gray-400 hover:text-error-red flex-shrink-0" @click.stop="removeBookmarkItem(item.id)"><Trash2 :size="10" /></button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- URL 输入 -->
+            <div class="flex items-center gap-2 mb-4">
+              <div class="flex-1">
+                <input v-model="cdtPageUrl" :class="inputClass + ' !py-1.5 !text-sm'" placeholder="输入网页 URL（如 https://github.com）" @keyup.enter="cdtNavigate" />
+              </div>
+              <div class="relative">
+                <button class="flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:border-brian-blue/30 transition-colors" @click="cdtScreencastSettingsOpen = !cdtScreencastSettingsOpen">
+                  <Settings :size="14" />
+                </button>
+                <!-- 设置弹窗 -->
+                <div v-if="cdtScreencastSettingsOpen" class="absolute right-0 top-full mt-1 z-20 w-64 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 shadow-lg p-3">
+                  <div class="mb-3">
+                    <label class="block text-[11px] font-medium text-apple-gray-500 mb-1.5">分辨率</label>
+                    <div class="grid grid-cols-2 gap-1">
+                      <button v-for="r in cdtResolutions" :key="r.w" class="px-2 py-1.5 text-[11px] rounded-md transition-colors text-left" :class="cdtScreencastW === r.w && cdtScreencastH === r.h ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(r.w, r.h, cdtScreencastQ)">{{ r.label }}</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-[11px] font-medium text-apple-gray-500 mb-1.5">画质</label>
+                    <div class="flex items-center gap-1">
+                      <button v-for="q in cdtQualities" :key="q" class="flex-1 py-1 text-[11px] rounded-md transition-colors" :class="cdtScreencastQ === q ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(cdtScreencastW, cdtScreencastH, q)">{{ q }}%</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="cdtPageLoading || !cdtStatus.running || !cdtPageUrl.trim()" @click="cdtNavigate">
+                <Zap :size="14" />
+                {{ cdtPageLoading ? '加载中...' : '打开页面' }}
+              </button>
+            </div>
+
+            <!-- Remote Browser 内嵌视图 -->
+            <div
+              v-if="cdtPageFrame"
+              ref="cdtBrowserRef"
+              class="rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden bg-apple-gray-100 dark:bg-apple-gray-900 relative cursor-crosshair select-none mb-4"
+              tabindex="0"
+              @mousedown="onBrowserMouseDown"
+              @mouseup="onBrowserMouseUp"
+              @mousemove="onBrowserMouseMove"
+              @mouseleave="onBrowserMouseLeave"
+              @dblclick="onBrowserDblClick"
+              @keydown="onBrowserKeyDown"
+              @keyup="onBrowserKeyUp"
+              @paste="onBrowserPaste"
+              @wheel="onBrowserWheel"
+              @contextmenu="onBrowserContextMenu"
+            >
+              <img :src="cdtPageFrame" alt="Remote Browser" class="w-full pointer-events-none" draggable="false" />
+              <div class="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/40 text-white text-[10px]">
+                <span class="w-1.5 h-1.5 rounded-full bg-success-green animate-pulse" />
+                实时画面（250ms 刷新）
+              </div>
+            </div>
+            <div v-else-if="cdtPageLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
+
+            <!-- 自定义右击菜单（headless Chrome 无原生菜单） -->
+            <Teleport to="body">
+              <div
+                v-if="ctxMenuVisible"
+                class="fixed z-[200] rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 shadow-xl py-1 min-w-[140px]"
+                :style="{ left: ctxMenuX + 'px', top: ctxMenuY + 'px' }"
+                @click.stop
+              >
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-apple-gray-700 dark:text-apple-gray-200 hover:bg-brian-blue/10 transition-colors" @click="ctxCopy">📋 复制</button>
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-apple-gray-700 dark:text-apple-gray-200 hover:bg-brian-blue/10 transition-colors" @click="ctxPaste">📄 粘贴</button>
+                <div class="border-t border-apple-gray-200 dark:border-apple-gray-700 my-1" />
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-apple-gray-700 dark:text-apple-gray-200 hover:bg-brian-blue/10 transition-colors" @click="ctxSelectAll">✅ 全选</button>
+              </div>
+            </Teleport>
+            <!-- 点击任意位置关闭菜单 -->
+            <div v-if="ctxMenuVisible" class="fixed inset-0 z-[199]" @click="hideCtxMenu" @contextmenu.prevent="hideCtxMenu" />
+
+            <!-- 凭证操作 -->
+            <div class="flex items-center gap-2 mb-4">
+              <button class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors disabled:opacity-60" :disabled="!cdtStatus.running || !cdtPageUrl.trim()" @click="cdtSaveCredential">
+                <Save :size="13" /> 保存凭证
+              </button>
+            </div>
+            <span v-if="!cdtStatus.running" class="text-xs text-warning-orange">请先在"浏览器状态"中启动 CDT</span>
+
+            <!-- 已保存凭证列表 -->
+            <div v-if="savedCDTSessions.length > 0" class="mt-5">
+              <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-3 uppercase tracking-wide">已保存的登录凭证</h4>
+              <div class="space-y-2">
+                <div v-for="s in savedCDTSessions" :key="s.domain" class="flex items-center justify-between rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 px-3 py-2">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.domain }}</p>
+                    <p class="text-[10px] text-apple-gray-400 mt-0.5">{{ s.url }} · {{ new Date(s.timestamp).toLocaleString() }}</p>
+                  </div>
+                  <div class="flex items-center gap-1.5 flex-shrink-0 ml-3">
+                    <button class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors disabled:opacity-60" :disabled="!cdtStatus.running" @click="cdtRestoreCredential(s.domain, s.cookiesJson, s.url)">恢复</button>
+                    <button class="px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="cdtDeleteCredential(s.domain)"><Trash2 :size="12" /></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'mcp-provider', 'mcp-stats', 'agent', 'prompt', 'orch-strategy', 'cdt-status', 'cdt-page'].includes(currentEntityType || '')" class="px-5 pb-6">
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <Settings :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">该实体类型（{{ currentEntityType }}）的管理功能正在开发中</p>
@@ -2382,15 +3773,21 @@ watch(activeSubSection, async (val) => {
             </div>
             <div class="grid grid-cols-3 gap-3">
               <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">策略 ID</label>
-                <input v-model="agentForm.strategyId" type="text" :class="inputClass" />
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">执行策略</label>
+                <select v-model="agentForm.strategyId" :class="inputClass">
+                  <option value="">无</option>
+                  <option v-for="s in orchStrategies" :key="s.id" :value="s.id">{{ s.label }}</option>
+                </select>
               </div>
               <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">LLM ID</label>
-                <input v-model="agentForm.llmId" type="text" :class="inputClass" />
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">LLM 模型</label>
+                <select v-model="agentForm.llmId" :class="inputClass">
+                  <option value="">无</option>
+                  <option v-for="m in models" :key="m.id" :value="m.id">{{ m.modelName || m.id }}</option>
+                </select>
               </div>
               <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Soul ID</label>
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Soul 角色</label>
                 <select v-model="agentForm.soulId" :class="inputClass">
                   <option value="">无</option>
                   <option v-for="s in souls" :key="s.id" :value="s.id">{{ s.soul_brief || s.id }}</option>
@@ -2482,4 +3879,7 @@ watch(activeSubSection, async (val) => {
 .modal-enter-active { transition: opacity 0.2s ease; }
 .modal-leave-active { transition: opacity 0.2s ease; }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

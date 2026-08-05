@@ -47,4 +47,16 @@ export class IdGenerator {
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
+
+  /**
+   * 获取当前操作系统类型。
+   *
+   * @returns 'linux' | 'macos' | 'windows'
+   */
+  static platform(): string {
+    const p = process.platform;
+    if (p === 'darwin') return 'macos';
+    if (p === 'win32') return 'windows';
+    return 'linux';
+  }
 }

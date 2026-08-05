@@ -17,15 +17,22 @@ import { GraphDBAccess } from './Base/GraphDBProvider';
 import { MQAccess } from './Base/MQProvider';
 import { LogAccess } from './Base/LogProvider';
 import { VectorDBAccess } from './Base/VectorDBProvider';
+import { CDTAccess } from './Base/CDTProvider';
+import { BookmarkAccess } from './Base/BookmarkProvider';
 import { InfoCoreAccess } from './Core/InfoCoreProvider';
 import { LLMCoreAccess } from './Core/LLMCoreProvider';
 import { MCPCoreAccess } from './Core/MCPCoreProvider';
 import { SkillCoreAccess } from './Core/SkillCoreProvider';
 import { SoulCoreAccess } from './Core/SoulCoreProvider';
 import { MQCoreAccess } from './Core/MQCoreProvider';
+import { CDTCoreAccess } from './Core/CDTCoreProvider';
 import { AgentLibraryAccess } from './Agent/AgentLibrary';
 import { AgentStrategyAccess } from './Agent/AgentStrategy';
 import { AgentBuilderAccess } from './Agent/AgentBuilder';
+import {
+  AgentBuilderContext,
+  BuildSystemAgentInput, BuildSystemAgentOutput,
+} from './Agent/AgentBuilder';
 import { AgentExecutionAccess } from './Agent/AgentExecution';
 import { AgentContextAccess } from './Agent/AgentContext';
 import { PlannerAgentAccess } from './Agent/PlannerAgent';
@@ -153,6 +160,13 @@ async function buildContext() {
   addColIfMissing(relationDb, 'skill_usage', 'timestamp', 'INTEGER');
   addColIfMissing(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
 
+  // CDT
+  const cdtAccess = new CDTAccess(relationDb, DATA_DIR, logger);
+  await cdtAccess.initialize();
+
+  // Bookmark
+  const bookmarkAccess = new BookmarkAccess(relationDb, logger);
+
   // ---- Core Providers ----
   const infoCore = new InfoCoreAccess(relationDb, llmAccess, promptsAccess, vectorDBAccess, graphDBAccess, logger);
   await infoCore.initialize();
@@ -171,6 +185,8 @@ async function buildContext() {
 
   const mqCore = new MQCoreAccess(mqAccess, logger);
 
+  const cdtCore = new CDTCoreAccess(relationDb, cdtAccess, logger);
+
   // ---- Agent Layer ----
   const agentLibrary = new AgentLibraryAccess(relationDb, llmAccess, promptsAccess, logger);
   await agentLibrary.initialize();
@@ -188,6 +204,19 @@ async function buildContext() {
   await plannerAgent.initialize();
   const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, logger);
   await evolutorAgent.initialize();
+
+  // ---- Pre-build system agents (ensure they appear in agent list on first page load) ----
+  try {
+    for (const agentType of ['PLANNER', 'WRITER', 'EVOLUTOR'] as const) {
+      await agentBuilder.buildSystemAgent(
+        Object.assign(new BuildSystemAgentInput(), { agent_type: agentType }),
+        new AgentBuilderContext(),
+        new BuildSystemAgentOutput(),
+      );
+    }
+  } catch (e) {
+    logger.warn('preBuildSystemAgents', 'failed to pre-build some system agents', String(e));
+  }
 
   // ---- Orchestration ----
   const orchestrationExecution = new OrchestrationExecutionAccess(relationDb, agentBuilder, agentExecution, agentLibrary, infoCore, mqAccess, mqCore, logger);
@@ -225,7 +254,9 @@ async function buildContext() {
   return {
     relationDb, llmAccess, mcpAccess, soulAccess, skillAccess, promptsAccess,
     graphDBAccess, mqAccess, logAccess, vectorDBAccess,
+    cdtAccess, bookmarkAccess,
     infoCore, llmCore, mcpCore, skillCore, soulCore, mqCore,
+    cdtCore,
     agentLibrary, agentStrategy, agentContext, agentBuilder,
     agentExecution, plannerAgent, writerAgent, evolutorAgent,
     orchestrationExecution, orchestrationVisualization, jsonNode,
@@ -303,8 +334,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
-        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_usage: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(
-          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_usage", e."enable", COALESCE(e."is_default", 0) as "is_default", e."model_usage", COALESCE(e."max_tokens", 0) as "max_tokens" FROM "llm_enable" e ORDER BY e."llm_title" ASC',
+        const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_type: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(
+          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_type", e."enable", COALESCE(e."is_default", 0) as "is_default", e."model_usage", COALESCE(e."max_tokens", 0) as "max_tokens" FROM "llm_available" e ORDER BY e."llm_title" ASC',
           [],
         );
         const models = (rows || []).map(r => ({
@@ -312,7 +343,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           modelName: r.llm_title,
           providerId: r.llm_provider_id,
           providerName: r.llm_provider_id,
-          llm_usage: r.llm_usage || 'text',
+          llm_type: r.llm_type || 'text',
           maxTokens: 4096,
           supportsVision: false,
           supportsTools: true,
@@ -326,7 +357,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname.startsWith('/api/config/model/') && !pathname.includes('/test') && !pathname.includes('/default')) {
         const title = pathname.split('/api/config/model/')[1].split('/')[0];
         const row = ctx.relationDb.queryRaw<{ id: string; llm_title: string; llm_provider_id: string; enable: number }>(
-          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_enable" WHERE "llm_title" = ?', [title],
+          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_available" WHERE "llm_title" = ?', [title],
         )[0];
         sendJson(res, 200, row ? { id: row.id, modelName: row.llm_title, providerId: row.llm_provider_id, status: row.enable ? 'active' : 'inactive' } : { id: title, name: 'unknown' });
 
@@ -355,20 +386,20 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/default$/.test(pathname)) {
         const title = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "is_default" = 0', []);
-        ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "is_default" = 1 WHERE "llm_title" = ?', [title]);
+        ctx.relationDb.executeRaw('UPDATE "llm_available" SET "is_default" = 0', []);
+        ctx.relationDb.executeRaw('UPDATE "llm_available" SET "is_default" = 1 WHERE "llm_title" = ?', [title]);
         sendJson(res, 200, { success: true });
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const title = pathname.split('/api/config/model/')[1];
         const data = (body as Record<string, unknown>).data || body;
-        try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "llm_brief" = ?, "enable" = ?, "model_usage" = ?, "max_tokens" = ? WHERE "llm_title" = ?',
+        try { ctx.relationDb.executeRaw('UPDATE "llm_available" SET "llm_brief" = ?, "enable" = ?, "model_usage" = ?, "max_tokens" = ? WHERE "llm_title" = ?',
           [data.llm_brief || '', (data.enable ?? data.enabled) ? 1 : 0, (data.model_usage || ''), (data.maxTokens || 0), title]); } catch {}
         sendJson(res, 200, { success: true, id: title });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
         const title = pathname.split('/api/config/model/')[1];
-        try { ctx.relationDb.executeRaw('DELETE FROM "llm_enable" WHERE "llm_title" = ?', [title]); } catch {}
+        try { ctx.relationDb.executeRaw('DELETE FROM "llm_available" WHERE "llm_title" = ?', [title]); } catch {}
         sendJson(res, 200, { success: true });
 
       // ---- Provider ----
@@ -412,7 +443,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           id: m.llm_title || m.id,
           name: m.llm_title || m.name || '',
           brief: m.llm_brief || m.brief || '',
-          features: (m as any).features ? JSON.parse((m as any).features) : {},
+          features: (m as any).llm_param ? JSON.parse((m as any).llm_param) : {},
         }));
         sendJson(res, ok ? 200 : 502, {
           models,
@@ -425,17 +456,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
         const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null }>(
-          'SELECT "llm_title", "llm_brief", "features" FROM "llm_model" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
+          'SELECT "llm_title", "llm_brief", "features" FROM "llm_cache" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
         );
         const enabledRows = ctx.relationDb.queryRaw<{ llm_title: string }>(
-          'SELECT "llm_title" FROM "llm_enable" WHERE "llm_provider_id" = ?', [id],
+          'SELECT "llm_title" FROM "llm_available" WHERE "llm_provider_id" = ?', [id],
         );
         const enabledSet = new Set((enabledRows || []).map(r => r.llm_title));
         const models = (rows || []).map(r => ({
           id: r.llm_title,
           name: r.llm_title,
           brief: r.llm_brief || '',
-          features: r.features ? (() => { try { return JSON.parse(r.features); } catch { return {}; } })() : {},
+          features: r.llm_param ? (() => { try { return JSON.parse(r.llm_param); } catch { return {}; } })() : {},
           enabled: enabledSet.has(r.llm_title),
         }));
         sendJson(res, 200, { models });
@@ -448,15 +479,15 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           if (!title) continue;
           try {
             const cachedRow = ctx.relationDb.queryRaw<{ max_tokens: number | null }>(
-              'SELECT "max_tokens" FROM "llm_model" WHERE "llm_provider_id" = ? AND "llm_title" = ?', [providerId, title],
+              'SELECT "max_tokens" FROM "llm_cache" WHERE "llm_provider_id" = ? AND "llm_title" = ?', [providerId, title],
             )[0];
             const maxTokens = cachedRow?.max_tokens || 0;
             ctx.relationDb.executeRaw(
-              'INSERT OR IGNORE INTO "llm_enable" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_usage", "enable", "max_tokens") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              'INSERT OR IGNORE INTO "llm_available" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "enable", "max_tokens") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
               [IdGenerator.generate(), IdGenerator.now(), IdGenerator.now(), providerId, title, 'text', 0, maxTokens],
             );
             if (maxTokens > 0) {
-              try { ctx.relationDb.executeRaw('UPDATE "llm_enable" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {}
+              try { ctx.relationDb.executeRaw('UPDATE "llm_available" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {}
             }
             added++;
           } catch { /* skip */ }
@@ -616,6 +647,175 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           await ctx.configAccess.listMcp(input, context, output);
           sendJson(res, 200, output.list || []);
         }
+
+      // ---- MCP Market: list built-in markets ----
+      } else if (method === 'GET' && pathname === '/api/config/mcp/market') {
+        sendJson(res, 200, [
+          { id: 'aliyun_bailian', mcp_provider_title: '阿里云百炼', mcp_provider_url: 'https://dashscope.aliyuncs.com', mcp_provider_brief: '阿里云 AI 平台的 MCP 服务市场', enable: true },
+          { id: 'modelscope', mcp_provider_title: 'ModelScope', mcp_provider_url: 'https://modelscope.cn', mcp_provider_brief: '魔搭社区 MCP 广场，社区贡献的优质 MCP 服务器', enable: true },
+          { id: 'smithery', mcp_provider_title: 'Smithery', mcp_provider_url: 'https://api.smithery.ai', mcp_provider_brief: '全球 MCP 注册中心，自动 OAuth，支持 HTTP/SSE 连接', enable: true },
+          { id: 'github', mcp_provider_title: 'GitHub', mcp_provider_url: 'https://registry.npmjs.org', mcp_provider_brief: 'npm 生态的 MCP 服务器，通过 npx/uvx stdio 运行', enable: true },
+        ]);
+
+      // ---- MCP Market: test connectivity ----
+      } else if (method === 'POST' && /\/api\/config\/mcp\/provider\/[^/]+\/test$/.test(pathname)) {
+        const provId = pathname.split('/api/config/mcp/provider/')[1].split('/test')[0];
+        let ok = false;
+        let statusMsg = '';
+        let latency = 0;
+        try {
+          const start = Date.now();
+          if (provId === 'github') {
+            const r = await fetch('https://registry.npmjs.org/-/v1/search?text=keywords:mcp&size=1');
+            latency = Date.now() - start;
+            ok = r.ok;
+            statusMsg = ok ? 'npm registry 可达' : `HTTP ${r.status}`;
+          } else if (provId === 'smithery') {
+            const r = await fetch('https://api.smithery.ai/servers?pageSize=1');
+            latency = Date.now() - start;
+            ok = r.ok;
+            statusMsg = ok ? 'Smithery API 可达' : `HTTP ${r.status}`;
+          } else if (provId === 'aliyun_bailian') {
+            const r = await fetch('https://dashscope.aliyuncs.com', { signal: AbortSignal.timeout(5000) });
+            latency = Date.now() - start;
+            ok = true;
+            statusMsg = 'DashScope API 可达';
+          } else if (provId === 'modelscope') {
+            const r = await fetch('https://modelscope.cn', { signal: AbortSignal.timeout(5000) });
+            latency = Date.now() - start;
+            ok = r.ok;
+            statusMsg = ok ? 'ModelScope 可达' : `HTTP ${r.status}`;
+          } else {
+            ok = false; statusMsg = `未知的市场 ID: ${provId}`;
+          }
+        } catch (e: unknown) {
+          ok = false;
+          statusMsg = (e as Error).message || '网络不可达';
+        }
+        sendJson(res, 200, { success: ok, connected: ok, message: statusMsg, latency });
+
+      // ---- MCP Market: list tools from provider ----
+      } else if (method === 'POST' && /\/api\/config\/mcp\/provider\/[^/]+\/list$/.test(pathname)) {
+        const provId = pathname.split('/api/config/mcp/provider/')[1].split('/list')[0];
+        const q = (body as Record<string, unknown>).keyword as string || '';
+        const page = Number((body as Record<string, unknown>).page) || 1;
+        const pageSize = Number((body as Record<string, unknown>).pageSize) || 50;
+        let tools: { id: string; title: string; brief: string; install_cmd?: string; installed?: boolean }[] = [];
+
+        try {
+          if (provId === 'github') {
+            const searchTerm = q ? `keywords:mcp+${encodeURIComponent(q)}` : 'keywords:mcp+server';
+            const npmRes = await fetch(`https://registry.npmjs.org/-/v1/search?text=${searchTerm}&size=${pageSize}&from=${(page - 1) * pageSize}`);
+            if (!npmRes.ok) throw new Error(`npm 请求失败 HTTP ${npmRes.status}`);
+            const data = await npmRes.json() as { objects: Array<{ package: { name: string; description: string; version: string; links?: { npm?: string } } }>; total: number };
+            tools = (data.objects || []).map(obj => ({
+              id: obj.package.name,
+              title: obj.package.name,
+              brief: obj.package.description || '',
+              install_cmd: `npx ${obj.package.name}`,
+              installed: false,
+            }));
+            // Check which are already installed
+            const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
+              'SELECT "mcp_title" FROM "mcp_install"', [],
+            );
+            const instNames = new Set((instRows || []).map(r => r.mcp_title));
+            for (const t of tools) { if (instNames.has(t.title)) t.installed = true; }
+            sendJson(res, 200, { list: tools, total: data.total });
+
+          } else if (provId === 'smithery') {
+            const params = new URLSearchParams();
+            params.set('pageSize', String(Math.min(pageSize, 100)));
+            params.set('page', String(page));
+            if (q) params.set('q', q);
+            const smRes = await fetch(`https://api.smithery.ai/servers?${params.toString()}`);
+            if (!smRes.ok) throw new Error(`Smithery 请求失败 HTTP ${smRes.status}`);
+            const data = await smRes.json() as { servers: Array<{ id: string; qualifiedName: string; displayName: string; description: string; remote?: boolean }>; pagination: { totalCount: number } };
+            tools = (data.servers || []).map(s => ({
+              id: s.qualifiedName || s.id,
+              title: s.displayName || s.qualifiedName || s.id,
+              brief: s.description || '',
+              installed: false,
+            }));
+            const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
+              'SELECT "mcp_title" FROM "mcp_install"', [],
+            );
+            const instNames = new Set((instRows || []).map(r => r.mcp_title));
+            for (const t of tools) { if (instNames.has(t.title)) t.installed = true; }
+            sendJson(res, 200, { list: tools, total: data.pagination?.totalCount || tools.length });
+
+          } else if (provId === 'aliyun_bailian') {
+            sendJson(res, 200, { list: [], total: 0, message: '阿里云百炼 MCP 市场需配置 DashScope API Key 后接入。请前往 aliyun_bailian_api_key 配置项填入密钥。' });
+          } else if (provId === 'modelscope') {
+            sendJson(res, 200, { list: [], total: 0, message: 'ModelScope MCP 市场需配置 API Key 后接入。请前往 modelscope_api_key 配置项填入密钥。' });
+          } else {
+            sendJson(res, 200, { list: [], total: 0, message: `未知的市场 ID: ${provId}` });
+          }
+        } catch (e: unknown) {
+          sendJson(res, 200, { list: [], total: 0, message: (e as Error).message || '获取工具列表失败' });
+        }
+
+      // ---- MCP Config: install / start / stop / uninstall ----
+      } else if (method === 'POST' && /\/api\/config\/mcp\/install$/.test(pathname)) {
+        const provId = (body as Record<string, unknown>).mcp_provider_id as string || '';
+        const toolId = (body as Record<string, unknown>).mcp_id as string || (body as Record<string, unknown>).tool_id as string || '';
+        if (!provId || !toolId) { sendJson(res, 400, { error: '缺少 mcp_provider_id 或 mcp_id' }); return; }
+        try {
+          // GitHub: fetch npm package info and install directly
+          if (provId === 'github') {
+            const pkgRes = await fetch(`https://registry.npmjs.org/${toolId}/latest`);
+            if (!pkgRes.ok) { sendJson(res, 400, { error: `npm 包 ${toolId} 不存在` }); return; }
+            const pkg = await pkgRes.json() as { name: string; description: string; bin?: Record<string, string>; version?: string };
+            const installCmd = `npm install -g ${toolId}`;
+            const startCmd = `npx ${toolId}`;
+            const stopCmd = `pkill -f ${toolId}`;
+            const uninstallCmd = `npm uninstall -g ${toolId}`;
+            const { execSync } = await import('node:child_process');
+            try { execSync(installCmd, { timeout: 120000, stdio: 'pipe' }); } catch { /* npm install may fail but tool may already be usable */ }
+            const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            ctx.relationDb.executeRaw(
+              `INSERT OR REPLACE INTO "mcp_install" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, provId, toolId, pkg.description || '', installCmd, startCmd, stopCmd, uninstallCmd, 1],
+            );
+            sendJson(res, 200, { success: true, id });
+
+          // Smithery: record as HTTP connection
+          } else if (provId === 'smithery') {
+            const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            ctx.relationDb.executeRaw(
+              `INSERT OR REPLACE INTO "mcp_install" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, provId, toolId, 'Smithery MCP server', 'smithery connect', 'smithery start', 'smithery stop', 'smithery disconnect', 1],
+            );
+            sendJson(res, 200, { success: true, id });
+
+          } else {
+            // Other markets: delegate to existing MCPAccess via ConfigAccess
+            const installIn = Object.assign(new InstallMcpInput(), { mcp_provider_id: provId, mcp_id: toolId });
+            const installOut = new InstallMcpOutput();
+            await ctx.configAccess.installMcp(installIn, new McpContext(), installOut);
+            sendJson(res, 200, { success: true, id: installOut.id });
+          }
+        } catch (e: unknown) {
+          sendJson(res, 500, { error: (e as Error).message || '安装失败' });
+        }
+
+      } else if (method === 'POST' && /\/api\/config\/mcp\/start$/.test(pathname)) {
+        const startIn = Object.assign(new StartMcpInput(), { id: (body as Record<string, unknown>).id || '' });
+        await ctx.configAccess.startMcp(startIn, new McpContext(), new StartMcpOutput());
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && /\/api\/config\/mcp\/stop$/.test(pathname)) {
+        const stopIn = Object.assign(new StopMcpInput(), { id: (body as Record<string, unknown>).id || '' });
+        await ctx.configAccess.stopMcp(stopIn, new McpContext(), new StopMcpOutput());
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && /\/api\/config\/mcp\/uninstall$/.test(pathname)) {
+        const unInput = Object.assign(new UninstallMcpInput(), { id: (body as Record<string, unknown>).id || '' });
+        const unOutput = new UninstallMcpOutput();
+        await ctx.configAccess.uninstallMcp(unInput, new McpContext(), unOutput);
+        sendJson(res, 200, { success: true });
 
       // ---- Agent Routes ----
       } else if (method === 'GET' && pathname === '/api/agent') {
@@ -917,6 +1117,167 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           };
         }));
 
+      // ---- CDT Routes ----
+      } else if (method === 'POST' && pathname === '/api/cdt/start') {
+        const { CDTContext, StartCDTInput, StartCDTOutput } = await import('./Base/CDTProvider/domain/types');
+        const o = new StartCDTOutput();
+        await ctx.cdtAccess.startCDT(new StartCDTInput(), new CDTContext(), o);
+        sendJson(res, o.error ? 500 : 200, o);
+
+      } else if (method === 'POST' && pathname === '/api/cdt/stop') {
+        const { CDTContext, StopCDTInput, StopCDTOutput } = await import('./Base/CDTProvider/domain/types');
+        const o = new StopCDTOutput();
+        await ctx.cdtAccess.stopCDT(new StopCDTInput(), new CDTContext(), o);
+        sendJson(res, 200, o);
+
+      } else if (method === 'GET' && pathname === '/api/cdt/status') {
+        const { CDTContext, IsCDTRunningInput, IsCDTRunningOutput } = await import('./Base/CDTProvider/domain/types');
+        const o = new IsCDTRunningOutput();
+        await ctx.cdtAccess.isCDTRunning(new IsCDTRunningInput(), new CDTContext(), o);
+        sendJson(res, 200, o);
+
+      } else if (method === 'POST' && pathname === '/api/cdt/navigate') {
+        const { CDTCoreContext, CDTCoreNavigateInput, CDTCoreNavigateOutput } = await import('./Core/CDTCoreProvider/domain/types');
+        const i = Object.assign(new CDTCoreNavigateInput(), body);
+        const o = new CDTCoreNavigateOutput();
+        await ctx.cdtCore.navigate(i, new CDTCoreContext(), o);
+        await ctx.cdtAccess.injectAntiDetection();
+        sendJson(res, o.error ? 500 : 200, o);
+
+      } else if (method === 'POST' && pathname === '/api/cdt/spoof-env') {
+        const env: Record<string, unknown> = {};
+        if (typeof body.platform === 'string') env.platform = body.platform;
+        if (typeof body.userAgent === 'string') env.userAgent = body.userAgent;
+        if (typeof body.acceptLang === 'string') env.acceptLang = body.acceptLang;
+        if (typeof body.acceptLangFull === 'string') env.acceptLangFull = body.acceptLangFull;
+        if (typeof body.hardwareConcurrency === 'number') env.hardwareConcurrency = body.hardwareConcurrency;
+        if (typeof body.deviceMemory === 'number') env.deviceMemory = body.deviceMemory;
+        if (Array.isArray(body.languages)) env.languages = body.languages;
+        await ctx.cdtAccess.injectAntiDetection(env as import('./Base/CDTProvider/domain/types').CDTEnv);
+        sendJson(res, 200, { ok: true });
+
+      } else if (method === 'POST' && pathname === '/api/cdt/evaluate') {
+        const { CDTCoreContext, CDTCoreEvaluateInput, CDTCoreEvaluateOutput } = await import('./Core/CDTCoreProvider/domain/types');
+        const i = Object.assign(new CDTCoreEvaluateInput(), body);
+        const o = new CDTCoreEvaluateOutput();
+        await ctx.cdtCore.evaluate(i, new CDTCoreContext(), o);
+        sendJson(res, o.error ? 500 : 200, o);
+
+      } else if (method === 'GET' && pathname === '/api/cdt/screencast/start') {
+        const w = parseInt(params.get('w') || '1920', 10);
+        const h = parseInt(params.get('h') || '1080', 10);
+        const q = parseInt(params.get('q') || '80', 10);
+        const started = await ctx.cdtAccess.startScreencast(w, h, q);
+        sendJson(res, 200, { started });
+
+      } else if (method === 'GET' && pathname === '/api/cdt/frame') {
+        const dataUrl = ctx.cdtAccess.getLatestFrame();
+        const dims = ctx.cdtAccess.getLatestFrameDimensions();
+        sendJson(res, 200, { dataUrl, width: dims.width, height: dims.height });
+
+      } else if (method === 'POST' && pathname === '/api/cdt/mouse') {
+        await ctx.cdtAccess.sendMouseEvent(
+          body.type || 'mousePressed', Number(body.x) || 0, Number(body.y) || 0,
+          body.button || 'left', Number(body.clickCount) || 1,
+          Number(body.deltaX) || 0, Number(body.deltaY) || 0,
+          Number(body.buttons) || 0,
+          !!body.ctrl, !!body.alt, !!body.shift, !!body.meta,
+        );
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/click') {
+        const x = Number(body.x) || 0;
+        const y = Number(body.y) || 0;
+        const c = !!body.ctrl; const a = !!body.alt; const s = !!body.shift; const m = !!body.meta;
+        await ctx.cdtAccess.sendMouseEvent('mouseMoved', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        await new Promise(r => setTimeout(r, 50));
+        await ctx.cdtAccess.sendMouseEvent('mousePressed', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        await new Promise(r => setTimeout(r, 80));
+        await ctx.cdtAccess.sendMouseEvent('mouseReleased', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/rightclick') {
+        const x = Number(body.x) || 0;
+        const y = Number(body.y) || 0;
+        await ctx.cdtAccess.sendMouseEvent('mouseMoved', x, y, 'right', 1);
+        await new Promise(r => setTimeout(r, 50));
+        await ctx.cdtAccess.sendMouseEvent('mousePressed', x, y, 'right', 1);
+        await new Promise(r => setTimeout(r, 80));
+        await ctx.cdtAccess.sendMouseEvent('mouseReleased', x, y, 'right', 1);
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/dblclick') {
+        const x = Number(body.x) || 0;
+        const y = Number(body.y) || 0;
+        const c = !!body.ctrl; const a = !!body.alt; const s = !!body.shift; const m = !!body.meta;
+        // 第一击
+        await ctx.cdtAccess.sendMouseEvent('mouseMoved', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        await ctx.cdtAccess.sendMouseEvent('mousePressed', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        await ctx.cdtAccess.sendMouseEvent('mouseReleased', x, y, 'left', 1, 0, 0, 0, c, a, s, m);
+        await new Promise(r => setTimeout(r, 60));
+        // 第二击（clickCount=2 即双击）
+        await ctx.cdtAccess.sendMouseEvent('mousePressed', x, y, 'left', 2, 0, 0, 0, c, a, s, m);
+        await ctx.cdtAccess.sendMouseEvent('mouseReleased', x, y, 'left', 2, 0, 0, 0, c, a, s, m);
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/key') {
+        await ctx.cdtAccess.sendKeyEvent(
+          body.type || 'char', body.text || '', body.key || '',
+          !!body.ctrl, !!body.alt, !!body.shift, !!body.meta,
+        );
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/key-batch') {
+        const events: Array<{ type: string; text?: string; key?: string; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean }> =
+          Array.isArray(body.events) ? body.events : [];
+        await ctx.cdtAccess.sendKeyBatch(events);
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/cdt/insert-text') {
+        await ctx.cdtAccess.insertText(typeof body.text === 'string' ? body.text : '');
+        sendJson(res, 200, {});
+
+      } else if (method === 'GET' && pathname === '/api/cdt/cookies') {
+        const { CDTCoreContext, CDTCoreGetCookiesInput, CDTCoreGetCookiesOutput } = await import('./Core/CDTCoreProvider/domain/types');
+        const o = new CDTCoreGetCookiesOutput();
+        await ctx.cdtCore.getCookies(new CDTCoreGetCookiesInput(), new CDTCoreContext(), o);
+        sendJson(res, 200, o);
+
+      // ---- Bookmark Routes ----
+      } else if (method === 'GET' && pathname === '/api/bookmark/tree') {
+        sendJson(res, 200, { tree: ctx.bookmarkAccess.getTree() });
+
+      } else if (method === 'GET' && pathname === '/api/bookmark/folders') {
+        sendJson(res, 200, { folders: ctx.bookmarkAccess.getFlatFolders() });
+
+      } else if (method === 'POST' && pathname === '/api/bookmark/folder') {
+        const folder = ctx.bookmarkAccess.createFolder(body.name || '', body.parent_id || '');
+        sendJson(res, 200, folder);
+
+      } else if (method === 'PUT' && pathname === '/api/bookmark/folder/update') {
+        ctx.bookmarkAccess.updateFolder(body.id || '', body.name || '');
+        sendJson(res, 200, {});
+
+      } else if (method === 'DELETE' && pathname === '/api/bookmark/folder') {
+        ctx.bookmarkAccess.deleteFolder(body.id || '');
+        sendJson(res, 200, {});
+
+      } else if (method === 'POST' && pathname === '/api/bookmark/item') {
+        const item = ctx.bookmarkAccess.createItem(body.folder_id || '', body.title || '', body.url || '', body.favicon || '');
+        sendJson(res, 200, item);
+
+      } else if (method === 'PUT' && pathname === '/api/bookmark/item/update') {
+        ctx.bookmarkAccess.updateItem(body.id || '', body.title || '', body.url || '');
+        sendJson(res, 200, {});
+
+      } else if (method === 'PUT' && pathname === '/api/bookmark/item/move') {
+        ctx.bookmarkAccess.moveItem(body.id || '', body.target_folder_id || '');
+        sendJson(res, 200, {});
+
+      } else if (method === 'DELETE' && pathname === '/api/bookmark/item') {
+        ctx.bookmarkAccess.deleteItem(body.id || '');
+        sendJson(res, 200, {});
+
       } else {
         sendJson(res, 404, { error: `Route not found: ${method} ${pathname}` });
       }
@@ -938,10 +1299,37 @@ async function main() {
   server.listen(PORT, HOST, () => {
     console.log(`[dev-server] brian-backend running at http://${HOST}:${PORT}`);
     console.log(`[dev-server] Data directory: ${DATA_DIR}`);
+    // 自动启动 CDT
+    try {
+      import('./Base/CDTProvider/domain/types').then(async (t) => {
+        const { CDTContext, StartCDTInput, StartCDTOutput } = t;
+        const o = new StartCDTOutput();
+        await ctx.cdtAccess.startCDT(new StartCDTInput(), new CDTContext(), o);
+        if (!o.error) {
+          console.log(`[dev-server] CDT started on port ${o.port}, endpoint: ${o.endpoint}`);
+        } else {
+          console.warn(`[dev-server] CDT start failed: ${o.error}`);
+        }
+      });
+    } catch {}
   });
 
-  process.on('SIGINT', () => { console.log('\n[dev-server] Shutting down...'); server.close(() => process.exit(0)); });
-  process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
+  const gracefulShutdown = (signal: string) => {
+    console.log(`\n[dev-server] Shutting down (${signal})...`);
+    try {
+      import('./Base/CDTProvider/domain/types').then(async (t) => {
+        const { CDTContext, StopCDTInput, StopCDTOutput } = t;
+        await ctx.cdtAccess.stopCDT(new StopCDTInput(), new CDTContext(), new StopCDTOutput());
+        console.log('[dev-server] CDT stopped');
+      }).finally(() => {
+        server.close(() => process.exit(0));
+      });
+    } catch {
+      server.close(() => process.exit(0));
+    }
+  };
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }
 
 main().catch((err) => {

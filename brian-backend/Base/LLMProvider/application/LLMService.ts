@@ -5,8 +5,8 @@
  * 依赖 ConfigService 管理 llm_config 配置表。
  *
  * 实现所有用例：addLLMProvider / updateLLMProvider / delLLMProvider / soLLMProvider /
- * testLLMProvider / listLLM / addLLM / delLLM / updateLLM / getLLM / soLLM / execLLM /
- * visualizedLLM / enableLLM / closeLLM。
+ * testLLMProvider / listLLM / addLLM / delLLM / updateLLM / soLLM / execLLM /
+ * visualizedLLM / enableLLM。
  *
  * LLMProvider 是 LLM 的唯一操作入口，上层不可直接调用 LLM 提供商 API。
  * 对外 API 调用采用 OpenAI 兼容协议（/v1/models、/v1/chat/completions），
@@ -29,8 +29,8 @@ import {
   LLMProviderData,
   LLMData,
   LLMProviderRecord,
-  LLMModelRecord,
-  LLMEnableRecord,
+  LLMCacheRecord,
+  LLMAvailableRecord,
   AddLLMProviderInput,
   AddLLMProviderOutput,
   UpdateLLMProviderInput,
@@ -49,8 +49,6 @@ import {
   DelLLMOutput,
   UpdateLLMInput,
   UpdateLLMOutput,
-  GetLLMInput,
-  GetLLMOutput,
   SoLLMInput,
   SoLLMOutput,
   ExecLLMInput,
@@ -59,11 +57,9 @@ import {
   VisualizedLLMOutput,
   EnableLLMInput,
   EnableLLMOutput,
-  CloseLLMInput,
-  CloseLLMOutput,
   LLM_PROVIDER_TABLE,
-  LLM_MODEL_TABLE,
-  LLM_ENABLE_TABLE,
+  LLM_CACHE_TABLE,
+  LLM_AVAILABLE_TABLE,
   LLM_USAGE_TABLE,
   LLM_CONFIG_TABLE,
   LLM_DEFAULT_CONFIGS,
@@ -193,7 +189,7 @@ export class LLMService {
     const now = IdGenerator.now();
 
     const existing = await this.relationDb.selectOne(LLM_USAGE_TABLE, [
-      { field: 'llm_enable_id', operator: Operator.EQ, value: llmEnableId },
+      { field: 'llm_available_id', operator: Operator.EQ, value: llmEnableId },
       { field: 'usage_date', operator: Operator.EQ, value: today },
     ]);
 
@@ -206,7 +202,7 @@ export class LLMService {
           { field: 'updated', value: now },
         ],
         [
-          { field: 'llm_enable_id', operator: Operator.EQ, value: llmEnableId },
+          { field: 'llm_available_id', operator: Operator.EQ, value: llmEnableId },
           { field: 'usage_date', operator: Operator.EQ, value: today },
         ],
       );
@@ -216,7 +212,7 @@ export class LLMService {
         { field: 'id', value: usageId },
         { field: 'created', value: now },
         { field: 'updated', value: now },
-        { field: 'llm_enable_id', value: llmEnableId },
+        { field: 'llm_available_id', value: llmEnableId },
         { field: 'usage_date', value: today },
         { field: 'usage_count', value: 1 },
       ]);
@@ -377,9 +373,24 @@ export class LLMService {
     );
     output.affected_rows = affected;
 
-    // 级联清理 llm_model 表中引用该提供商的记录
+    // 级联清理关联记录
     if (providerIds.length > 0) {
-      await this.relationDb.delete(LLM_MODEL_TABLE, [
+      await this.relationDb.delete(LLM_CACHE_TABLE, [
+        { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
+      ]);
+      const availableRows = await this.relationDb.select(LLM_AVAILABLE_TABLE, {
+        conditions: [
+          { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
+        ],
+        fields: ['id'],
+      });
+      const availableIds = availableRows.map((r) => String(r.id));
+      if (availableIds.length > 0) {
+        await this.relationDb.delete(LLM_USAGE_TABLE, [
+          { field: 'llm_available_id', operator: Operator.IN, value: availableIds },
+        ]);
+      }
+      await this.relationDb.delete(LLM_AVAILABLE_TABLE, [
         { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
       ]);
     }
@@ -501,13 +512,13 @@ export class LLMService {
       ? IdGenerator.now() - provider.models_fetched_at
       : Infinity;
     if (cacheAge < MODELS_CACHE_TTL_MS) {
-      const rows = await this.relationDb.select(LLM_MODEL_TABLE, {
+      const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
         conditions: [
           { field: 'llm_provider_id', operator: Operator.EQ, value: input.llm_provider_id },
         ],
         order_by: [{ field: 'llm_title', direction: Direction.ASC }],
       });
-      output.list = rows as unknown as LLMModelRecord[];
+      output.list = rows as unknown as LLMCacheRecord[];
       output.cached = true;
       return true;
     }
@@ -552,17 +563,14 @@ let models: Array<{
     for (const m of models) {
       const modelId = String(m.id ?? '');
       if (!modelId) continue;
-      const brief = m.owned_by ? `owned_by: ${String(m.owned_by)}` : null;
-      const modelFeatures = { ...m };
-      delete modelFeatures.id;
-      delete modelFeatures.owned_by;
-      delete modelFeatures.created;
-      const features = JSON.stringify(modelFeatures);
-      const tl = m.token_limits as Record<string, unknown> | undefined;
-      const maxTokens = Number(m.context_length || m.max_tokens || m.max_completion_tokens
-        || (tl && tl.context_window)
-        || (m.top_provider && (m.top_provider as Record<string, unknown>).max_completion_tokens) || 0);
-      const existing = await this.relationDb.selectOne(LLM_MODEL_TABLE, [
+      const rawM = m as Record<string, unknown>;
+      const brief = rawM.owned_by ? `owned_by: ${String(rawM.owned_by)}` : null;
+      const tl = rawM.token_limits as Record<string, unknown> | undefined;
+      const topProvider = rawM.top_provider as Record<string, unknown> | undefined;
+      const maxTokens = Number(rawM.context_length || tl?.context_window
+        || rawM.max_tokens || rawM.max_completion_tokens
+        || (topProvider?.max_completion_tokens) || 0);
+      const existing = await this.relationDb.selectOne(LLM_CACHE_TABLE, [
         {
           field: 'llm_provider_id',
           operator: Operator.EQ,
@@ -573,11 +581,12 @@ let models: Array<{
 
       if (existing) {
         await this.relationDb.update(
-          LLM_MODEL_TABLE,
+          LLM_CACHE_TABLE,
           [
             { field: 'llm_brief', value: brief },
-            { field: 'features', value: features },
+            { field: 'llm_param', value: JSON.stringify(m) },
             { field: 'max_tokens', value: maxTokens },
+            { field: 'llm_param', value: JSON.stringify(m) },
             { field: 'updated', value: now },
           ],
           [
@@ -592,15 +601,16 @@ let models: Array<{
       } else {
         const id = IdGenerator.generate();
         try {
-          await this.relationDb.insert(LLM_MODEL_TABLE, [
+          await this.relationDb.insert(LLM_CACHE_TABLE, [
             { field: 'id', value: id },
             { field: 'created', value: now },
             { field: 'updated', value: now },
             { field: 'llm_provider_id', value: input.llm_provider_id },
             { field: 'llm_title', value: modelId },
             { field: 'llm_brief', value: brief },
-            { field: 'features', value: features },
+            { field: 'llm_param', value: JSON.stringify(m) },
             { field: 'max_tokens', value: maxTokens },
+            { field: 'llm_param', value: JSON.stringify(m) },
           ]);
         } catch {
           // skip duplicate insert
@@ -612,7 +622,7 @@ let models: Array<{
     await this.updateModelsCacheTimestamp(input.llm_provider_id);
 
     // 返回该提供商下所有模型
-    const rows = await this.relationDb.select(LLM_MODEL_TABLE, {
+    const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
       conditions: [
         {
           field: 'llm_provider_id',
@@ -622,7 +632,7 @@ let models: Array<{
       ],
       order_by: [{ field: 'llm_title', direction: Direction.ASC }],
     });
-    output.list = rows as unknown as LLMModelRecord[];
+    output.list = rows as unknown as LLMCacheRecord[];
     return true;
   }
 
@@ -667,10 +677,12 @@ let models: Array<{
       { field: 'llm_provider_id', value: data.llm_provider_id },
       { field: 'llm_title', value: data.llm_title },
       { field: 'llm_brief', value: data.llm_brief ?? null },
-      { field: 'llm_usage', value: data.llm_usage ?? '' },
+      { field: 'llm_type', value: data.llm_type || 'text' },
       { field: 'enable', value: data.enable === false ? 0 : 1 },
+      { field: 'is_default', value: data.is_default ? 1 : 0 },
+      { field: 'max_tokens', value: data.max_tokens ?? 0 },
     ];
-    await this.relationDb.insert(LLM_ENABLE_TABLE, dataObjects);
+    await this.relationDb.insert(LLM_AVAILABLE_TABLE, dataObjects);
     output.id = id;
     return true;
   }
@@ -695,7 +707,7 @@ let models: Array<{
       : input.conditions!;
 
     output.affected_rows = await this.relationDb.delete(
-      LLM_ENABLE_TABLE,
+      LLM_AVAILABLE_TABLE,
       conditions,
     );
     return true;
@@ -730,15 +742,18 @@ let models: Array<{
     if (patch.llm_brief !== undefined) {
       data.push({ field: 'llm_brief', value: patch.llm_brief });
     }
-    if (patch.llm_usage !== undefined) {
-      data.push({ field: 'llm_usage', value: patch.llm_usage });
+    if (patch.llm_type !== undefined) {
+      data.push({ field: 'llm_type', value: patch.llm_type });
     }
     if (patch.enable !== undefined) {
       data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
     }
+    if (patch.max_tokens !== undefined) {
+      data.push({ field: 'max_tokens', value: patch.max_tokens });
+    }
 
     output.affected_rows = await this.relationDb.update(
-      LLM_ENABLE_TABLE,
+      LLM_AVAILABLE_TABLE,
       data,
       conditions,
     );
@@ -746,34 +761,10 @@ let models: Array<{
   }
 
   /**
-   * 获取 LLM（getLLM）。
+   * 搜索可用模型（soLLM）。
    *
-   * PRD 3.2.4 条：按 ID 或按条件获取第一条。
-   */
-  async getLLM(
-    input: GetLLMInput,
-    _context: LLMContext,
-    output: GetLLMOutput,
-  ): Promise<boolean> {
-    this.ensureEnabled();
-    if (!input.id && !input.conditions) {
-      throw new ValidationError('id 与 conditions 至少传一个');
-    }
-
-    const conditions: Condition[] = input.id
-      ? [{ field: 'id', operator: Operator.EQ, value: input.id }]
-      : input.conditions!;
-
-    const row = await this.relationDb.selectOne(LLM_ENABLE_TABLE, conditions);
-    output.llm = row ? (row as unknown as LLMEnableRecord) : null;
-    return true;
-  }
-
-  /**
-   * 搜索 LLM（soLLM）。
-   *
-   * PRD 3.2.5 条：支持关键词（名称和摘要）、条件过滤、排序、分页。
-   * 关键词匹配 llm_title 与 llm_brief。
+   * 支持关键词搜索 llm_title、条件过滤、排序、分页。
+   * 合并了原 getLLM 的功能。
    */
   async soLLM(
     input: SoLLMInput,
@@ -792,25 +783,19 @@ let models: Array<{
         operator: Operator.LIKE,
         value: `%${input.keyword}%`,
       });
-      conditions.push({
-        field: 'llm_brief',
-        operator: Operator.LIKE,
-        value: `%${input.keyword}%`,
-        logic: Logic.OR,
-      });
     }
 
-    const rows = await this.relationDb.select(LLM_ENABLE_TABLE, {
+    const rows = await this.relationDb.select(LLM_AVAILABLE_TABLE, {
       conditions: conditions.length > 0 ? conditions : undefined,
       order_by: input.order_by,
       page: input.page,
     });
     const total = await this.relationDb.count(
-      LLM_ENABLE_TABLE,
+      LLM_AVAILABLE_TABLE,
       conditions.length > 0 ? conditions : undefined,
     );
 
-    output.list = rows as unknown as LLMEnableRecord[];
+    output.list = rows as unknown as LLMAvailableRecord[];
     output.total = total;
     return true;
   }
@@ -822,20 +807,17 @@ let models: Array<{
   /**
    * 调用 LLM（execLLM）。
    *
-   * PRD 3.3.1 条：调用指定的 LLM 执行推理。
-   *
    * 处理流程：
-   * 1. 根据 ID 获取 LLM 配置（llm_enable）及提供商信息（llm_provider）；
-   * 2. 构造 OpenAI 兼容请求（POST /v1/chat/completions）调用 LLM 提供商 API；
-   * 3. 调用成功后，通过 RelationDBProvider 更新 llm_usage 表当天的 usage_count + 1；
-   * 4. 推理结果通过 output.result 返回。
+   * 1. 若未传 ID，自动查找 is_default=1 且 enable=1 的默认模型；
+   * 2. 根据 ID 获取可用模型（llm_available）及提供商（llm_provider）；
+   * 3. 构造 OpenAI 兼容 POST 请求，调用提供商 chat API；
+   * 4. 提取 result、input_tokens、output_tokens、duration_ms；
+   * 5. 更新 llm_usage 表当天 usage_count。
    *
-   * params 支持的参数：
-   * - api_key: API 密钥（作为 Bearer Token 传入 Authorization 头）
-   * - model: 覆盖默认模型名（默认取 llm_enable.llm_title）
-   * - messages: 自定义消息列表（默认根据 prompt 构造单条 user 消息）
-   * - system: 系统提示词（追加为 system 消息）
-   * - temperature / max_tokens: 采样参数
+   * params 支持的透传字段：
+   * - prompt: 用户消息内容（必填）
+   * - system: 系统提示词（可选，前置为 system 消息）
+   * - temperature: 采样温度（可选）
    * - 其他参数原样传入请求体
    */
   async execLLM(
@@ -845,32 +827,34 @@ let models: Array<{
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.id) {
-      const defaultLLM = await this.relationDb.selectOne(LLM_ENABLE_TABLE, [
+      const defaultLLM = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
         { field: 'is_default', operator: Operator.EQ, value: 1 },
         { field: 'enable', operator: Operator.EQ, value: 1 },
       ]);
       if (!defaultLLM) {
         throw new ValidationError('id 不能为空，且无可用默认模型');
       }
-      input.id = (defaultLLM as unknown as LLMEnableRecord).id;
+      input.id = (defaultLLM as unknown as LLMAvailableRecord).id;
     }
-    if (!input.prompt) {
-      throw new ValidationError('prompt 不能为空');
+    const params = input.params ?? {};
+    const prompt = String(params.prompt ?? '');
+    if (!prompt) {
+      throw new ValidationError('params.prompt 不能为空');
     }
 
-    // 1. 获取 LLM 配置
-    const llmRow = await this.relationDb.selectOne(LLM_ENABLE_TABLE, [
+    const startTime = Date.now();
+
+    const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.id },
     ]);
     if (!llmRow) {
       throw new NotFoundError('LLM', input.id);
     }
-    const llm = llmRow as unknown as LLMEnableRecord;
+    const llm = llmRow as unknown as LLMAvailableRecord;
     if (!llm.enable) {
       throw new ValidationError(`LLM ${input.id} 已禁用`);
     }
 
-    // 2. 获取提供商信息
     const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
       { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
     ]);
@@ -882,53 +866,35 @@ let models: Array<{
       throw new ValidationError(`LLMProvider ${provider.id} 已禁用`);
     }
 
-    // 3. 构造请求体
-    const params = input.params ?? {};
-    const model = (params.model as string | undefined) ?? llm.llm_title;
-    const hasCustomMessages = Array.isArray(params.messages);
-    const messages = hasCustomMessages
-      ? (params.messages as Array<{ role: string; content: string }>)
-      : [{ role: 'user', content: input.prompt }];
-
-    const body: Record<string, unknown> = { model, messages };
+    const body: Record<string, unknown> = {
+      model: llm.llm_title,
+      messages: [{ role: 'user', content: prompt }],
+    };
+    if (llm.max_tokens) {
+      body.max_tokens = llm.max_tokens;
+    }
     if (params.temperature !== undefined) {
       body.temperature = params.temperature;
     }
-    if (params.max_tokens !== undefined) {
-      body.max_tokens = params.max_tokens;
-    }
-    // 若提供了 system 提示词且未自定义 messages，则前置 system 消息
-    if (params.system !== undefined && !hasCustomMessages) {
-      body.messages = [
+    // 透传其他参数（排除 prompt 和 system，后者用 messages 处理）
+    if (params.system) {
+      (body.messages as Array<Record<string, unknown>>).unshift(
         { role: 'system', content: params.system },
-        ...messages,
-      ];
+      );
     }
-    // 透传其他参数（排除已处理的保留字段）
-    const reservedKeys = [
-      'model',
-      'messages',
-      'temperature',
-      'max_tokens',
-      'system',
-      'api_key',
-    ];
     for (const [k, v] of Object.entries(params)) {
-      if (!reservedKeys.includes(k)) {
+      if (!['prompt', 'system', 'temperature', 'model', 'messages', 'api_key'].includes(k)) {
         body[k] = v;
       }
     }
 
-    // 构造请求头
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const apiKey = (params.api_key !== undefined && params.api_key !== '') ? String(params.api_key) : provider.api_key;
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
+    if (provider.api_key) {
+      headers['Authorization'] = `Bearer ${provider.api_key}`;
     }
 
-    // 4. 调用 API
     const chatPath = provider.chat_path || CHAT_PATH;
     const url = this.buildEndpoint(provider.llm_provider_url, chatPath);
     try {
@@ -945,27 +911,28 @@ let models: Array<{
         const text = await res.text();
         output.error = `LLM 调用失败: HTTP ${res.status} ${text}`;
         output.error_code = 'REMOTE_ERROR';
+        output.duration_ms = Date.now() - startTime;
         return false;
       }
       const json = (await res.json()) as {
         choices?: Array<{
           message?: { content?: string };
-          finish_reason?: string;
         }>;
-        usage?: Record<string, unknown>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
-      const content = json.choices?.[0]?.message?.content ?? '';
-      output.result = content;
-      if (json.usage) {
-        output.usage = json.usage;
-      }
+      output.result = (json.choices?.[0]?.message?.content ?? '') as string;
+      output.input_prompt = prompt;
+      output.input_tokens = json.usage?.prompt_tokens ?? 0;
+      output.output_tokens = json.usage?.completion_tokens ?? 0;
+      output.duration_ms = Date.now() - startTime;
     } catch (err) {
       output.error = err instanceof Error ? err.message : String(err);
       output.error_code = 'CONNECT_ERROR';
+      output.duration_ms = Date.now() - startTime;
       return false;
     }
 
-    // 5. 成功后更新 llm_usage 表当天的 usage_count + 1
+    // 成功后更新 llm_usage 表当天的 usage_count + 1
     await this.upsertUsage(input.id);
     return true;
   }
@@ -998,15 +965,15 @@ let models: Array<{
         response_time_ms: Date.now() - start,
         enabled: this.enabled,
         provider_count: await this.relationDb.count(LLM_PROVIDER_TABLE),
-        enabled_llm_count: await this.relationDb.count(LLM_ENABLE_TABLE, [
+        enabled_llm_count: await this.relationDb.count(LLM_AVAILABLE_TABLE, [
           { field: 'enable', operator: Operator.EQ, value: 1 },
         ]),
       };
     } else if (scope === 'volume') {
       output.data = {
         provider_count: await this.relationDb.count(LLM_PROVIDER_TABLE),
-        model_count: await this.relationDb.count(LLM_MODEL_TABLE),
-        enabled_llm_count: await this.relationDb.count(LLM_ENABLE_TABLE),
+        model_count: await this.relationDb.count(LLM_CACHE_TABLE),
+        enabled_llm_count: await this.relationDb.count(LLM_AVAILABLE_TABLE),
         usage_record_count: await this.relationDb.count(LLM_USAGE_TABLE),
       };
     } else if (scope === 'diskUsage') {
@@ -1061,23 +1028,5 @@ let models: Array<{
     );
     return true;
   }
-
-  /**
-   * 关闭 LLM 组件连接（closeLLM）。
-   *
-   * PRD 3.4.3 条：系统关闭时的终态释放，执行后不可通过 enableLLM 恢复，
-   * 需重新初始化组件。
-   *
-   * LLM 调用采用无状态 HTTP 请求（fetch），无独立连接需释放，
-   * 本方法仅标记终态。
-   */
-  async closeLLM(
-    _input: CloseLLMInput,
-    _context: LLMContext,
-    _output: CloseLLMOutput,
-  ): Promise<boolean> {
-    this.enabled = false;
-    this.closed = true;
-    return true;
-  }
 }
+

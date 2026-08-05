@@ -14,6 +14,7 @@
  * - SkillProvider：Skill 管理与沙箱执行
  * - SoulProvider：Soul 数据管理
  * - LogProvider：日志管理（解耦日志和系统，提供 AOP 日志切面）
+ * - CDTProvider：Chrome DevTools 协议管理（Chrome 启动/停止、CDP 通信）
  *
  * 使用方式：
  * ```typescript
@@ -59,3 +60,9 @@ export * from './SoulProvider';
 
 // LogProvider
 export * from './LogProvider';
+
+// CDTProvider
+export * from './CDTProvider';
+
+// BookmarkProvider
+export * from './BookmarkProvider';

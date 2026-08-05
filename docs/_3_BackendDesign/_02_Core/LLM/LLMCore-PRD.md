@@ -22,11 +22,11 @@
 1. 调用 RelationDBProvider.selectOneDB 根据 `agent_id` 查询 `agent_llm` 表，获取该 Agent 已绑定的 llm_id；
 2. 若存在绑定的 llm_id：生成随机数（0-100），若随机数 >= regen_rate（从 `llm_core_config` 表读取，默认 75），则直接返回该 llm_id（复用已有绑定）；
 3. 若随机数 < regen_rate 或不存在绑定，执行重新匹配流程：
-   a. 根据 Context 参数中的 `interact_id` 和 `agent_id` 获取当前工作内容（由 Context 参数携带，无需显式调用 InfoCore.context）；
-   b. 调用 LLMProvider.soLLM 加载所有已启用的 LLM（conditions: `{ enable: true }`），获取各模型 ID 及其适用场景（从 `llm_usage` 表统计的历史使用场景数据获取）；
-   c. 若可用 LLM 列表为空，返回 false 并记录错误日志："无可用 LLM"；
+   a. 调用 LLMProvider.soLLM 加载所有已启用的 LLM；
+   b. 若可用 LLM 数量为 0，返回 false 并记录错误日志；
+   c. **若可用 LLM 数量为 1，直接返回该 LLM，跳过 LLM 排名调用**；
    d. 调用 RelationDBProvider.selectOneDB 查询 `llm_core_config` 表获取 `prompt_template_id`；
-   e. 将工作内容和模型列表（ID + 场景）与 `prompt_template_id` 调用 PromptsProvider.execPrompt 构建 LLM 匹配 prompt；
+   e. 将工作内容和模型列表与 `prompt_template_id` 调用 PromptsProvider.execPrompt 构建 LLM 匹配 prompt；
    f. 调用 LLMProvider.execLLM 由模型推荐合适的 llm_id（LLM 输出需包含选中的 llm_id，解析提取）；
 4. 返回匹配到的 llm_id；
 

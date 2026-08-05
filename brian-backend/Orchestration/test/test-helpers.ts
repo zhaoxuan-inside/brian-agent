@@ -551,7 +551,7 @@ export function createMockExecutionAccess(opts?: { failExec?: boolean; failBuild
 export function createMockLLMAccess() {
   return {
     execLLM: vi.fn().mockImplementation(async (i: any, _c: any, o: any) => {
-      const prompt = String((i?.prompt ?? ''));
+      const prompt = String((i?.params?.prompt ?? ''));
 
       const complexIndicators = ['分析', '生成', '报告', '对比', '多步', '分解', '步骤', '数据', '处理'];
       const isComplex = complexIndicators.some((kw) => prompt.includes(kw));

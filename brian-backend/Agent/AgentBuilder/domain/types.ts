@@ -47,42 +47,17 @@ export class OptimizeAgentOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
-// System Agent 构建基类（Planner / Writer / Evolutor 共用输出结构）
+// System Agent 构建（统一接口，支持 PLANNER / WRITER / EVOLUTOR）
 // ---------------------------------------------------------------------------
+
+export class BuildSystemAgentInput extends Input {
+  agent_type!: string;
+  force_new?: boolean;
+}
 
 export class BuildSystemAgentOutput extends Output {
   agent_id = '';
 }
-
-// ---------------------------------------------------------------------------
-// buildPlannerAgent
-// ---------------------------------------------------------------------------
-
-export class BuildPlannerAgentInput extends Input {
-  force_new?: boolean;
-}
-
-export class BuildPlannerAgentOutput extends BuildSystemAgentOutput {}
-
-// ---------------------------------------------------------------------------
-// buildWriterAgent
-// ---------------------------------------------------------------------------
-
-export class BuildWriterAgentInput extends Input {
-  force_new?: boolean;
-}
-
-export class BuildWriterAgentOutput extends BuildSystemAgentOutput {}
-
-// ---------------------------------------------------------------------------
-// buildEvolutorAgent
-// ---------------------------------------------------------------------------
-
-export class BuildEvolutorAgentInput extends Input {
-  force_new?: boolean;
-}
-
-export class BuildEvolutorAgentOutput extends BuildSystemAgentOutput {}
 
 // ---------------------------------------------------------------------------
 // configAgentBuilder

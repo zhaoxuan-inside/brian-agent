@@ -27,7 +27,7 @@ import {
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,
 } from '../domain/types';
 import {
-  BuildEvolutorAgentInput, BuildEvolutorAgentOutput,
+  BuildSystemAgentInput, BuildSystemAgentOutput,
   OptimizeAgentInput, OptimizeAgentOutput, AgentBuilderContext,
 } from '../../AgentBuilder/domain/types';
 import {
@@ -85,8 +85,8 @@ export class EvolutorAgentService {
       work_id: input.work_id || ctx.work_id,
       interact_id: input.interact_id || ctx.interact_id,
     });
-    const buildOut = new BuildEvolutorAgentOutput();
-    await this.agentBuilder.buildEvolutorAgent(new BuildEvolutorAgentInput(), builderCtx, buildOut);
+    const buildOut = new BuildSystemAgentOutput();
+    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), builderCtx, buildOut);
 
     const libCtx = Object.assign(new AgentLibraryContext(), builderCtx);
     const getOut = new GetAgentOutput();
@@ -137,7 +137,7 @@ export class EvolutorAgentService {
         if (promptOut.prompt) {
           const llmOut = new ExecLLMOutput();
           await this.llmAccess.execLLM(
-            Object.assign(new ExecLLMInput(), { id: llmId, prompt: promptOut.prompt }),
+            Object.assign(new ExecLLMInput(), { id: llmId, params: { prompt: promptOut.prompt } }),
             new LLMContext(),
             llmOut,
           );
@@ -233,8 +233,8 @@ export class EvolutorAgentService {
       work_id: input.work_id || ctx.work_id,
       interact_id: input.interact_id || ctx.interact_id,
     });
-    const buildOut = new BuildEvolutorAgentOutput();
-    await this.agentBuilder.buildEvolutorAgent(new BuildEvolutorAgentInput(), builderCtx, buildOut);
+    const buildOut = new BuildSystemAgentOutput();
+    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), builderCtx, buildOut);
     const libCtx = Object.assign(new AgentLibraryContext(), builderCtx);
     const getOut = new GetAgentOutput();
     await this.agentLibrary.getAgent(
@@ -269,7 +269,7 @@ export class EvolutorAgentService {
         if (promptOut.prompt) {
           const llmOut = new ExecLLMOutput();
           await this.llmAccess.execLLM(
-            Object.assign(new ExecLLMInput(), { id: llmId, prompt: promptOut.prompt }),
+            Object.assign(new ExecLLMInput(), { id: llmId, params: { prompt: promptOut.prompt } }),
             new LLMContext(),
             llmOut,
           );

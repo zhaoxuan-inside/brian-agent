@@ -345,6 +345,11 @@ export class JSONNodeService {
     await this.relationDb.selectOneDB(selInput, new DBContext(), selOutput);
 
     const current = (selOutput.row ?? {}) as Record<string, unknown>;
+
+    this.config.max_execution_depth = (current.max_execution_depth as number) ?? this.config.max_execution_depth;
+    this.config.node_timeout_ms = (current.node_timeout_ms as number) ?? this.config.node_timeout_ms;
+    this.config.trace_enabled = ((current.trace_enabled as number) ?? this.config.trace_enabled ? 1 : 0) ? true : false;
+
     const data: DataObject[] = [];
 
     if (input.max_execution_depth !== undefined) {

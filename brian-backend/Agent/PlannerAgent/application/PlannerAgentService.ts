@@ -22,7 +22,7 @@ import {
   ConfigPlannerAgentInput, ConfigPlannerAgentOutput,
 } from '../domain/types';
 import {
-  BuildPlannerAgentInput, BuildPlannerAgentOutput, AgentBuilderContext,
+  BuildSystemAgentInput, BuildSystemAgentOutput, AgentBuilderContext,
 } from '../../AgentBuilder/domain/types';
 import {
   GetAgentInput, GetAgentOutput, AgentLibraryContext,
@@ -60,8 +60,8 @@ export class PlannerAgentService {
       work_id: input.work_id || ctx.work_id,
       interact_id: input.interact_id || ctx.interact_id,
     });
-    const buildOut = new BuildPlannerAgentOutput();
-    await this.agentBuilder.buildPlannerAgent(new BuildPlannerAgentInput(), builderCtx, buildOut);
+    const buildOut = new BuildSystemAgentOutput();
+    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), builderCtx, buildOut);
     if (!buildOut.agent_id) throw new ValidationError('buildPlannerAgent failed');
 
     const getOut = new GetAgentOutput();
@@ -274,8 +274,7 @@ export class PlannerAgentService {
       await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
           id: llmId,
-          prompt: promptOut.prompt,
-          params: system ? { system } : undefined,
+          params: { prompt: promptOut.prompt, ...(system ? { system } : {}) },
         }),
         new LLMContext(),
         llmOut,

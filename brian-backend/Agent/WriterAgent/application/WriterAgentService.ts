@@ -25,7 +25,7 @@ import {
   type Block, type BlockMeta,
 } from '../domain/types';
 import {
-  BuildWriterAgentInput, BuildWriterAgentOutput, AgentBuilderContext,
+  BuildSystemAgentInput, BuildSystemAgentOutput, AgentBuilderContext,
 } from '../../AgentBuilder/domain/types';
 import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
@@ -52,8 +52,8 @@ export class WriterAgentService {
       work_id: input.work_id || ctx.work_id,
       interact_id: input.interact_id || ctx.interact_id,
     });
-    const buildOut = new BuildWriterAgentOutput();
-    await this.agentBuilder.buildWriterAgent(new BuildWriterAgentInput(), builderCtx, buildOut);
+    const buildOut = new BuildSystemAgentOutput();
+    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'WRITER' }), builderCtx, buildOut);
     if (!buildOut.agent_id) throw new ValidationError('buildWriterAgent failed');
 
     const libCtx = Object.assign(new AgentLibraryContext(), builderCtx);
@@ -161,8 +161,7 @@ export class WriterAgentService {
       await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
           id: llmId,
-          prompt,
-          params: system ? { system } : undefined,
+          params: { prompt, ...(system ? { system } : {}) },
         }),
         new LLMContext(),
         llmOut,

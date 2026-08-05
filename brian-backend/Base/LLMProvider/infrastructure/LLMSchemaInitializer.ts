@@ -10,8 +10,8 @@
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import {
   LLM_PROVIDER_TABLE,
-  LLM_MODEL_TABLE,
-  LLM_ENABLE_TABLE,
+  LLM_CACHE_TABLE,
+  LLM_AVAILABLE_TABLE,
   LLM_USAGE_TABLE,
   LLM_CONFIG_TABLE,
 } from '../domain/types';
@@ -93,92 +93,122 @@ export class LLMSchemaInitializer {
       /* column already exists */
     }
 
-    // llm_model 表（从提供商 API 获取的模型列表）
+    // llm_cache 表（从提供商 API 获取的模型缓存）
     this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${LLM_MODEL_TABLE}" (
-        "id"              TEXT    NOT NULL PRIMARY KEY,
-        "created"         INTEGER NOT NULL,
-        "updated"         INTEGER NOT NULL,
-        "llm_provider_id" TEXT    NOT NULL,
-        "llm_title"       TEXT    NOT NULL,
-        "llm_brief"       TEXT
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_MODEL_TABLE}_created" ON "${LLM_MODEL_TABLE}" ("created")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_MODEL_TABLE}_updated" ON "${LLM_MODEL_TABLE}" ("updated")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_MODEL_TABLE}_llm_provider_id" ON "${LLM_MODEL_TABLE}" ("llm_provider_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_MODEL_TABLE}_llm_title" ON "${LLM_MODEL_TABLE}" ("llm_title")`,
-    );
-    try {
-      this.relationDb.executeRaw(
-        `ALTER TABLE "${LLM_MODEL_TABLE}" ADD COLUMN "features" TEXT`,
-      );
-    } catch { /* column already exists */ }
-    try {
-      this.relationDb.executeRaw(
-        `ALTER TABLE "${LLM_MODEL_TABLE}" ADD COLUMN "max_tokens" INTEGER DEFAULT 0`,
-      );
-    } catch { /* column already exists */ }
-
-    // llm_enable 表（启用列表）
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${LLM_ENABLE_TABLE}" (
+      CREATE TABLE IF NOT EXISTS "${LLM_CACHE_TABLE}" (
         "id"              TEXT    NOT NULL PRIMARY KEY,
         "created"         INTEGER NOT NULL,
         "updated"         INTEGER NOT NULL,
         "llm_provider_id" TEXT    NOT NULL,
         "llm_title"       TEXT    NOT NULL,
         "llm_brief"       TEXT,
-        "llm_usage"       TEXT    NOT NULL,
-        "enable"          INTEGER NOT NULL DEFAULT 1
+        "llm_param"       TEXT
       )
     `);
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_created" ON "${LLM_ENABLE_TABLE}" ("created")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CACHE_TABLE}_created" ON "${LLM_CACHE_TABLE}" ("created")`,
     );
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_updated" ON "${LLM_ENABLE_TABLE}" ("updated")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CACHE_TABLE}_updated" ON "${LLM_CACHE_TABLE}" ("updated")`,
     );
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_llm_provider_id" ON "${LLM_ENABLE_TABLE}" ("llm_provider_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CACHE_TABLE}_llm_provider_id" ON "${LLM_CACHE_TABLE}" ("llm_provider_id")`,
     );
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_llm_title" ON "${LLM_ENABLE_TABLE}" ("llm_title")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CACHE_TABLE}_llm_title" ON "${LLM_CACHE_TABLE}" ("llm_title")`,
+    );
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_CACHE_TABLE}" ADD COLUMN "features" TEXT`,
+      );
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_CACHE_TABLE}" ADD COLUMN "max_tokens" INTEGER DEFAULT 0`,
+      );
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_CACHE_TABLE}" ADD COLUMN "llm_param" TEXT`,
+      );
+    } catch { /* column already exists */ }
+
+    // llm_available 表（系统可用模型）
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${LLM_AVAILABLE_TABLE}" (
+        "id"              TEXT    NOT NULL PRIMARY KEY,
+        "created"         INTEGER NOT NULL,
+        "updated"         INTEGER NOT NULL,
+        "llm_provider_id" TEXT    NOT NULL,
+        "llm_title"       TEXT    NOT NULL,
+        "llm_brief"       TEXT,
+        "llm_type"        TEXT    NOT NULL DEFAULT 'text',
+        "enable"          INTEGER NOT NULL DEFAULT 1,
+        "is_default"      INTEGER NOT NULL DEFAULT 0,
+        "max_tokens"      INTEGER DEFAULT 0
+      )
+    `);
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_created" ON "${LLM_AVAILABLE_TABLE}" ("created")`,
     );
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_llm_usage" ON "${LLM_ENABLE_TABLE}" ("llm_usage")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_updated" ON "${LLM_AVAILABLE_TABLE}" ("updated")`,
     );
     this.relationDb.executeRaw(
-      `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_ENABLE_TABLE}_provider_title" ON "${LLM_ENABLE_TABLE}" ("llm_provider_id", "llm_title")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_llm_provider_id" ON "${LLM_AVAILABLE_TABLE}" ("llm_provider_id")`,
     );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_llm_title" ON "${LLM_AVAILABLE_TABLE}" ("llm_title")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_llm_type" ON "${LLM_AVAILABLE_TABLE}" ("llm_type")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_AVAILABLE_TABLE}_provider_title" ON "${LLM_AVAILABLE_TABLE}" ("llm_provider_id", "llm_title")`,
+    );
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_AVAILABLE_TABLE}" ADD COLUMN "is_default" INTEGER DEFAULT 0`,
+      );
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_AVAILABLE_TABLE}" RENAME COLUMN "llm_usage" TO "llm_type"`,
+      );
+    } catch { /* already renamed */ }
 
     // llm_usage 表（按天使用次数统计）
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${LLM_USAGE_TABLE}" (
-        "id"            TEXT    NOT NULL PRIMARY KEY,
-        "created"       INTEGER NOT NULL,
-        "updated"       INTEGER NOT NULL,
-        "llm_enable_id" TEXT    NOT NULL,
-        "usage_date"    TEXT    NOT NULL,
-        "usage_count"   INTEGER NOT NULL DEFAULT 0
+        "id"              TEXT    NOT NULL PRIMARY KEY,
+        "created"         INTEGER NOT NULL,
+        "updated"         INTEGER NOT NULL,
+        "llm_available_id" TEXT   NOT NULL,
+        "usage_date"      TEXT    NOT NULL,
+        "usage_count"     INTEGER NOT NULL DEFAULT 0
       )
     `);
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_USAGE_TABLE}" RENAME COLUMN "llm_enable_id" TO "llm_available_id"`,
+      );
+    } catch { /* already renamed */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_created" ON "${LLM_USAGE_TABLE}" ("created")`,
     );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_updated" ON "${LLM_USAGE_TABLE}" ("updated")`,
     );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_llm_enable_id" ON "${LLM_USAGE_TABLE}" ("llm_enable_id")`,
-    );
+    try {
+      this.relationDb.executeRaw(
+        `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_llm_available_id" ON "${LLM_USAGE_TABLE}" ("llm_available_id")`,
+      );
+    } catch { /* column may not exist yet */ }
+    try {
+      this.relationDb.executeRaw(
+        `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_llm_enable_id" ON "${LLM_USAGE_TABLE}" ("llm_enable_id")`,
+      );
+    } catch { /* old column, may not exist */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_usage_date" ON "${LLM_USAGE_TABLE}" ("usage_date")`,
     );

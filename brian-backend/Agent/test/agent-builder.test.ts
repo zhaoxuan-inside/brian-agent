@@ -4,8 +4,8 @@ import { AgentBuilderService } from '../AgentBuilder/application/AgentBuilderSer
 import { AgentLibraryService } from '../AgentLibrary/application/AgentLibraryService';
 import { AgentStrategyService } from '../AgentStrategy/application/AgentStrategyService';
 import {
-  AgentBuilderContext, BuildPlannerAgentInput, BuildPlannerAgentOutput,
-  BuildWriterAgentInput, BuildWriterAgentOutput, BuildEvolutorAgentInput, BuildEvolutorAgentOutput,
+  AgentBuilderContext,
+  BuildSystemAgentInput, BuildSystemAgentOutput,
   ConfigAgentBuilderInput, ConfigAgentBuilderOutput,
 } from '../AgentBuilder/domain/types';
 import {
@@ -32,32 +32,32 @@ describe('AgentBuilder', () => {
 
   describe('buildPlannerAgent', () => {
     it('TC-AB-021: 首次构建 (force_new)', async () => {
-      const out = new BuildPlannerAgentOutput();
-      await builder.buildPlannerAgent(Object.assign(new BuildPlannerAgentInput(), { force_new: true }), new AgentBuilderContext(), out);
+      const out = new BuildSystemAgentOutput();
+      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER', force_new: true }), new AgentBuilderContext(), out);
       expect(out.agent_id).toBeTruthy();
     });
 
     it('TC-AB-022: 复用已有 Planner', async () => {
-      const o1 = new BuildPlannerAgentOutput();
-      await builder.buildPlannerAgent(new BuildPlannerAgentInput(), new AgentBuilderContext(), o1);
-      const o2 = new BuildPlannerAgentOutput();
-      await builder.buildPlannerAgent(new BuildPlannerAgentInput(), new AgentBuilderContext(), o2);
+      const o1 = new BuildSystemAgentOutput();
+      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), new AgentBuilderContext(), o1);
+      const o2 = new BuildSystemAgentOutput();
+      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), new AgentBuilderContext(), o2);
       expect(o2.agent_id).toBe(o1.agent_id);
     });
   });
 
   describe('buildWriterAgent', () => {
     it('TC-AB-025: 首次构建 Writer', async () => {
-      const out = new BuildWriterAgentOutput();
-      await builder.buildWriterAgent(Object.assign(new BuildWriterAgentInput(), { force_new: true }), new AgentBuilderContext(), out);
+      const out = new BuildSystemAgentOutput();
+      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'WRITER', force_new: true }), new AgentBuilderContext(), out);
       expect(out.agent_id).toBeTruthy();
     });
   });
 
   describe('buildEvolutorAgent', () => {
     it('TC-AB-028: 首次构建 Evolutor', async () => {
-      const out = new BuildEvolutorAgentOutput();
-      await builder.buildEvolutorAgent(Object.assign(new BuildEvolutorAgentInput(), { force_new: true }), new AgentBuilderContext(), out);
+      const out = new BuildSystemAgentOutput();
+      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR', force_new: true }), new AgentBuilderContext(), out);
       expect(out.agent_id).toBeTruthy();
     });
   });

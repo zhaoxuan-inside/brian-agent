@@ -1019,6 +1019,12 @@ export class OrchestrationExecutionService {
     await this.relationDb.selectOneDB(selInput, new DBContext(), selOutput);
 
     const current = (selOutput.row ?? {}) as Record<string, unknown>;
+
+    this.config.max_concurrent = (current.max_concurrent as number) ?? this.config.max_concurrent;
+    this.config.default_max_iterations = (current.default_max_iterations as number) ?? this.config.default_max_iterations;
+    this.config.async_worker_interval = (current.async_worker_interval as number) ?? this.config.async_worker_interval;
+    this.config.dag_timeout_ms = (current.dag_timeout_ms as number) ?? this.config.dag_timeout_ms;
+
     const data: DataObject[] = [];
 
     if (input.max_concurrent !== undefined) {

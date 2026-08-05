@@ -498,7 +498,7 @@ export class AgentLibraryService {
 
     const llmOut = new ExecLLMOutput();
     const okLlm = await this.llmAccess.execLLM(
-      Object.assign(new ExecLLMInput(), { id: llmId, prompt: promptOut.prompt }),
+      Object.assign(new ExecLLMInput(), { id: llmId, params: { prompt: promptOut.prompt } }),
       new LLMContext(),
       llmOut,
     );

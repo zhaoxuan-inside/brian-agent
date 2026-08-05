@@ -35,18 +35,16 @@ import {
   DelLLMOutput,
   UpdateLLMInput,
   UpdateLLMOutput,
-  GetLLMInput,
-  GetLLMOutput,
   SoLLMInput,
   SoLLMOutput,
+  GetLLMInput,
+  GetLLMOutput,
   ExecLLMInput,
   ExecLLMOutput,
   VisualizedLLMInput,
   VisualizedLLMOutput,
   EnableLLMInput,
   EnableLLMOutput,
-  CloseLLMInput,
-  CloseLLMOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
@@ -117,7 +115,7 @@ export class LLMAccess {
     return this.service.updateLLMProvider(input, context, output);
   }
 
-  /** 删除 LLM 提供商（级联清理 llm_model） */
+  /** 删除 LLM 提供商（级联删除 llm_cache + llm_available + llm_usage） */
   async delLLMProvider(
     input: DelLLMProviderInput,
     context: LLMContext,
@@ -184,22 +182,30 @@ export class LLMAccess {
     return this.service.updateLLM(input, context, output);
   }
 
-  /** 获取 LLM */
-  async getLLM(
-    input: GetLLMInput,
-    context: LLMContext,
-    output: GetLLMOutput,
-  ): Promise<boolean> {
-    return this.service.getLLM(input, context, output);
-  }
-
-  /** 搜索 LLM */
+  /** 搜索可用模型（支持关键词搜索名称） */
   async soLLM(
     input: SoLLMInput,
     context: LLMContext,
     output: SoLLMOutput,
   ): Promise<boolean> {
     return this.service.soLLM(input, context, output);
+  }
+
+  /** @deprecated 已合并到 soLLM */
+  async getLLM(
+    input: GetLLMInput,
+    context: LLMContext,
+    output: GetLLMOutput,
+  ): Promise<boolean> {
+    const soInput = Object.assign(new SoLLMInput(), {
+      conditions: input.id
+        ? [{ field: 'id', operator: 'EQ' as never, value: input.id }]
+        : input.conditions,
+    });
+    const soOutput = new SoLLMOutput();
+    await this.soLLM(soInput, context, soOutput);
+    output.llm = (soOutput.list[0] as unknown as GetLLMOutput['llm']) || null;
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -231,14 +237,5 @@ export class LLMAccess {
     output: EnableLLMOutput,
   ): Promise<boolean> {
     return this.service.enableLLM(input, context, output);
-  }
-
-  /** 关闭 LLM 组件连接（终态操作） */
-  async closeLLM(
-    input: CloseLLMInput,
-    context: LLMContext,
-    output: CloseLLMOutput,
-  ): Promise<boolean> {
-    return this.service.closeLLM(input, context, output);
   }
 }

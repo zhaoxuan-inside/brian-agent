@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { MessageCircle } from '@lucide/vue'
 import { ref, computed } from 'vue'
 import { Plus, History, Search, Trash2, X, PanelRight, Square, CheckSquare } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
+import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
 import ChatArea from '@/components/chat/ChatArea.vue'
 import { useSessionStore } from '@/stores/session'
 
@@ -91,6 +93,9 @@ function formatTime(ts: number) {
   <div class="h-screen w-screen overflow-hidden flex flex-col">
     <NeuralBackground />
     <Header />
+    <div class="pt-14 px-5 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md relative z-10">
+      <PageBreadcrumb :path="['对话']" />
+    </div>
 
     <button
       v-if="!showSidebar"

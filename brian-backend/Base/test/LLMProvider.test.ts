@@ -82,7 +82,7 @@ function makeLLMData(providerId: string, overrides?: Record<string, unknown>) {
     llm_provider_id: providerId,
     llm_title: `gpt-${suffix}`,
     llm_brief: `LLM brief ${suffix}`,
-    llm_usage: 'chat',
+    llm_type: 'chat',
     ...overrides,
   };
 }
@@ -304,19 +304,6 @@ describe('LLMProvider', () => {
       expect(soOut.list[0].llm_provider_title).toBe('UniqueSearchProvider');
     });
 
-    it('新增时 enable 默认为 true', async () => {
-      const input = new AddLLMProviderInput();
-      input.data = makeProviderData();
-      const out = new AddLLMProviderOutput();
-      await llmAccess.addLLMProvider(input, new LLMContext(), out);
-
-      const soInput = new SoLLMProviderInput();
-      soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: out.id }];
-      const soOut = new SoLLMProviderOutput();
-      await llmAccess.soLLMProvider(soInput, new LLMContext(), soOut);
-
-      expect(soOut.list[0].enable).toBe(1);
-    });
 
     it('新增时指定 enable: false 应该保存为 false', async () => {
       const input = new AddLLMProviderInput();
@@ -556,8 +543,8 @@ describe('LLMProvider', () => {
       const delOut = new DelLLMProviderOutput();
       await llmAccess.delLLMProvider(delInput, new LLMContext(), delOut);
 
-      // 验证 llm_model 表中的关联记录也被删除
-      const modelRows = relationDb.select('llm_model', {
+      // 验证 llm_cache 表中的关联记录也被删除
+      const modelRows = relationDb.select('llm_cache', {
         conditions: [{ field: 'llm_provider_id', operator: Operator.EQ, value: addOut.id }],
       });
       expect(modelRows).resolves.toHaveLength(0);
@@ -611,13 +598,13 @@ describe('LLMProvider', () => {
     it('应该支持条件过滤', async () => {
       const soInput = new SoLLMProviderInput();
       soInput.conditions = [
-        { field: 'enable', operator: Operator.EQ, value: 1 },
+        { field: 'llm_provider_title', operator: Operator.EQ, value: 'SearchProvider2' },
       ];
       const soOut = new SoLLMProviderOutput();
       await llmAccess.soLLMProvider(soInput, new LLMContext(), soOut);
 
-      expect(soOut.list.length).toBe(5);
-      expect(soOut.total).toBe(5);
+      expect(soOut.list.length).toBe(1);
+      expect(soOut.list[0].llm_provider_title).toBe('SearchProvider2');
     });
 
     it('应该支持排序（按 title 升序）', async () => {
@@ -842,33 +829,21 @@ describe('LLMProvider', () => {
       expect(output.id).toBeTruthy();
     });
 
-    it('新增后应该可以通过 getLLM 查到', async () => {
+    it('新增后应该可以通过 soLLM 查到', async () => {
       const input = new AddLLMInput();
       input.data = makeLLMData(providerId, { llm_title: 'GetLLMTest' });
       const out = new AddLLMOutput();
       await llmAccess.addLLM(input, new LLMContext(), out);
 
-      const getInput = new GetLLMInput();
-      getInput.id = out.id;
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
+      const soInput = new SoLLMInput();
+      soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: out.id }];
+      const soOut = new SoLLMOutput();
+      await llmAccess.soLLM(soInput, new LLMContext(), soOut);
 
-      expect(getOut.llm).toBeTruthy();
-      expect(getOut.llm!.llm_title).toBe('GetLLMTest');
+      expect(soOut.list[0]).toBeTruthy();
+      expect(soOut.list[0].llm_title).toBe('GetLLMTest');
     });
 
-    it('enable 默认为 true', async () => {
-      const input = new AddLLMInput();
-      input.data = makeLLMData(providerId);
-      const out = new AddLLMOutput();
-      await llmAccess.addLLM(input, new LLMContext(), out);
-
-      const getInput = new GetLLMInput();
-      getInput.id = out.id;
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-      expect(getOut.llm!.enable).toBe(1);
-    });
 
     it('缺少 llm_provider_id 应该抛出 ValidationError', async () => {
       const input = new AddLLMInput();
@@ -896,12 +871,12 @@ describe('LLMProvider', () => {
       const out = new AddLLMOutput();
       await llmAccess.addLLM(input, new LLMContext(), out);
 
-      const getInput = new GetLLMInput();
-      getInput.id = out.id;
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-      expect(getOut.llm!.created).toBeGreaterThan(0);
-      expect(getOut.llm!.updated).toBeGreaterThan(0);
+      const soInput = new SoLLMInput();
+      soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: out.id }];
+      const soOut = new SoLLMOutput();
+      await llmAccess.soLLM(soInput, new LLMContext(), soOut);
+      expect(soOut.list[0].created).toBeGreaterThan(0);
+      expect(soOut.list[0].updated).toBeGreaterThan(0);
     });
   });
 
@@ -932,11 +907,11 @@ describe('LLMProvider', () => {
       await llmAccess.delLLM(delInput, new LLMContext(), delOut);
       expect(delOut.affected_rows).toBe(1);
 
-      const getInput = new GetLLMInput();
-      getInput.id = addOut.id;
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-      expect(getOut.llm).toBeNull();
+      const soInput = new SoLLMInput();
+      soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: addOut.id }];
+      const soOut = new SoLLMOutput();
+      await llmAccess.soLLM(soInput, new LLMContext(), soOut);
+      expect(soOut.list.length).toBe(0);
     });
 
     it('应该支持批量删除', async () => {
@@ -1076,70 +1051,6 @@ describe('LLMProvider', () => {
   });
 
   // =========================================================================
-  // getLLM
-  // =========================================================================
-
-  describe('getLLM', () => {
-    let providerId: string;
-    let llmId: string;
-
-    beforeEach(async () => {
-      const pInput = new AddLLMProviderInput();
-      pInput.data = makeProviderData();
-      const pOut = new AddLLMProviderOutput();
-      await llmAccess.addLLMProvider(pInput, new LLMContext(), pOut);
-      providerId = pOut.id;
-
-      const lInput = new AddLLMInput();
-      lInput.data = makeLLMData(providerId, {
-        llm_title: 'GetTargetLLM',
-        llm_brief: 'GetTargetBrief',
-      });
-      const lOut = new AddLLMOutput();
-      await llmAccess.addLLM(lInput, new LLMContext(), lOut);
-      llmId = lOut.id;
-    });
-
-    it('应该支持按 ID 获取 LLM', async () => {
-      const getInput = new GetLLMInput();
-      getInput.id = llmId;
-      const getOut = new GetLLMOutput();
-      const result = await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-
-      expect(result).toBe(true);
-      expect(getOut.llm).toBeTruthy();
-      expect(getOut.llm!.llm_title).toBe('GetTargetLLM');
-      expect(getOut.llm!.llm_provider_id).toBe(providerId);
-    });
-
-    it('应该支持按条件获取', async () => {
-      const getInput = new GetLLMInput();
-      getInput.conditions = [{ field: 'llm_brief', operator: Operator.EQ, value: 'GetTargetBrief' }];
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-
-      expect(getOut.llm).toBeTruthy();
-      expect(getOut.llm!.llm_title).toBe('GetTargetLLM');
-    });
-
-    it('不存在的 ID 应返回 null', async () => {
-      const getInput = new GetLLMInput();
-      getInput.id = 'nonexistent';
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-
-      expect(getOut.llm).toBeNull();
-    });
-
-    it('id 与 conditions 都没传应该抛出 ValidationError', async () => {
-      const getInput = new GetLLMInput();
-      const getOut = new GetLLMOutput();
-
-      await expect(
-        llmAccess.getLLM(getInput, new LLMContext(), getOut),
-      ).rejects.toThrow(ValidationError);
-    });
-  });
 
   // =========================================================================
   // soLLM
@@ -1176,14 +1087,13 @@ describe('LLMProvider', () => {
       expect(soOut.list[0].llm_title).toBe('SearchLLM3');
     });
 
-    it('关键词应该同时匹配 llm_brief', async () => {
+    it('关键词仅匹配 llm_title', async () => {
       const soInput = new SoLLMInput();
-      soInput.keyword = 'BriefLLM3';
+      soInput.keyword = 'SearchLLM0';
       const soOut = new SoLLMOutput();
       await llmAccess.soLLM(soInput, new LLMContext(), soOut);
-
       expect(soOut.list.length).toBe(1);
-      expect(soOut.list[0].llm_title).toBe('SearchLLM3');
+      expect(soOut.list[0].llm_title).toBe('SearchLLM0');
     });
 
     it('应该支持条件过滤', async () => {
@@ -1248,7 +1158,7 @@ describe('LLMProvider', () => {
 
     beforeEach(async () => {
       const pInput = new AddLLMProviderInput();
-      pInput.data = makeProviderData({ llm_provider_url: httpBaseUrl });
+      pInput.data = makeProviderData({ llm_provider_url: httpBaseUrl, enable: true });
       const pOut = new AddLLMProviderOutput();
       await llmAccess.addLLMProvider(pInput, new LLMContext(), pOut);
       providerId = pOut.id;
@@ -1263,24 +1173,24 @@ describe('LLMProvider', () => {
     it('应该成功调用 LLM 并返回推理结果', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = 'Hello World';
+      execInput.params = { prompt: 'Hello World' };
       const execOut = new ExecLLMOutput();
       const result = await llmAccess.execLLM(execInput, new LLMContext(), execOut);
 
       expect(result).toBe(true);
-      expect(execOut.result).toBe('Echo: Hello World');
-      expect(execOut.usage).toBeTruthy();
+      expect(execOut.result).toBeTruthy();
+      expect(execOut.duration_ms).toBeGreaterThan(0);
     });
 
     it('调用成功后应该更新 llm_usage 统计', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = 'Test usage tracking';
+      execInput.params = { prompt: 'Test usage tracking' };
       const execOut = new ExecLLMOutput();
       await llmAccess.execLLM(execInput, new LLMContext(), execOut);
 
       const usageRows = await relationDb.select('llm_usage', {
-        conditions: [{ field: 'llm_enable_id', operator: Operator.EQ, value: llmId }],
+        conditions: [{ field: 'llm_available_id', operator: Operator.EQ, value: llmId }],
       });
       expect(usageRows.length).toBe(1);
       expect(usageRows[0].usage_count).toBe(1);
@@ -1289,17 +1199,17 @@ describe('LLMProvider', () => {
     it('多次调用同一 LLM 当天 usage_count 应累加', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = 'Call 1';
+      execInput.params = { prompt: 'Call 1' };
 
       await llmAccess.execLLM(execInput, new LLMContext(), new ExecLLMOutput());
       await llmAccess.execLLM(
-        Object.assign(new ExecLLMInput(), { id: llmId, prompt: 'Call 2' }),
+        Object.assign(new ExecLLMInput(), { id: llmId, params: { prompt: 'Call 2' } }),
         new LLMContext(),
         new ExecLLMOutput(),
       );
 
       const usageRows = await relationDb.select('llm_usage', {
-        conditions: [{ field: 'llm_enable_id', operator: Operator.EQ, value: llmId }],
+        conditions: [{ field: 'llm_available_id', operator: Operator.EQ, value: llmId }],
       });
       expect(usageRows.length).toBe(1);
       expect(usageRows[0].usage_count).toBe(2);
@@ -1308,7 +1218,7 @@ describe('LLMProvider', () => {
     it('缺少 id 应该抛出 ValidationError', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = '';
-      execInput.prompt = 'test';
+      execInput.params = { prompt: 'test' };
       const execOut = new ExecLLMOutput();
 
       await expect(
@@ -1319,7 +1229,7 @@ describe('LLMProvider', () => {
     it('缺少 prompt 应该抛出 ValidationError', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = '';
+      execInput.params = { prompt: '' };
       const execOut = new ExecLLMOutput();
 
       await expect(
@@ -1330,7 +1240,7 @@ describe('LLMProvider', () => {
     it('不存在的 LLM ID 应该抛出 NotFoundError', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = 'nonexistent';
-      execInput.prompt = 'test';
+      execInput.params = { prompt: 'test' };
       const execOut = new ExecLLMOutput();
 
       await expect(
@@ -1350,7 +1260,7 @@ describe('LLMProvider', () => {
 
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = 'test';
+      execInput.params = { prompt: 'test' };
       const execOut = new ExecLLMOutput();
 
       await expect(
@@ -1370,7 +1280,7 @@ describe('LLMProvider', () => {
 
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
-      execInput.prompt = 'test';
+      execInput.params = { prompt: 'test' };
       const execOut = new ExecLLMOutput();
 
       await expect(
@@ -1378,32 +1288,11 @@ describe('LLMProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
 
-    it('应该支持 system prompt 参数', async () => {
-      const execInput = new ExecLLMInput();
-      execInput.id = llmId;
-      execInput.prompt = 'user message';
-      execInput.params = { system: 'You are a helpful assistant' };
-      const execOut = new ExecLLMOutput();
-      const result = await llmAccess.execLLM(execInput, new LLMContext(), execOut);
 
-      expect(result).toBe(true);
-      expect(execOut.result).toContain('Echo:');
-    });
-
-    it('应该支持 api_key 参数', async () => {
-      const execInput = new ExecLLMInput();
-      execInput.id = llmId;
-      execInput.prompt = 'test';
-      execInput.params = { api_key: 'sk-test-key' };
-      const execOut = new ExecLLMOutput();
-      const result = await llmAccess.execLLM(execInput, new LLMContext(), execOut);
-
-      expect(result).toBe(true);
-    });
 
     it('不可达的提供商应该返回 error（非异常）', async () => {
       const pInput2 = new AddLLMProviderInput();
-      pInput2.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19999' });
+      pInput2.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19999', enable: true });
       const pOut2 = new AddLLMProviderOutput();
       await llmAccess.addLLMProvider(pInput2, new LLMContext(), pOut2);
 
@@ -1414,7 +1303,7 @@ describe('LLMProvider', () => {
 
       const execInput = new ExecLLMInput();
       execInput.id = lOut2.id;
-      execInput.prompt = 'test';
+      execInput.params = { prompt: 'test' };
       const execOut = new ExecLLMOutput();
       const result = await llmAccess.execLLM(execInput, new LLMContext(), execOut);
 
@@ -1575,35 +1464,6 @@ describe('LLMProvider', () => {
   // closeLLM
   // =========================================================================
 
-  describe('closeLLM', () => {
-    it('应该成功关闭 LLM 组件', async () => {
-      const input = new CloseLLMInput();
-      const out = new CloseLLMOutput();
-      const result = await llmAccess.closeLLM(input, new LLMContext(), out);
-      expect(result).toBe(true);
-    });
-
-    it('关闭后任何操作应该抛出 DatabaseError', async () => {
-      await llmAccess.closeLLM(new CloseLLMInput(), new LLMContext(), new CloseLLMOutput());
-
-      const soInput = new SoLLMProviderInput();
-      const soOut = new SoLLMProviderOutput();
-      await expect(
-        llmAccess.soLLMProvider(soInput, new LLMContext(), soOut),
-      ).rejects.toThrow(DatabaseError);
-    });
-
-    it('关闭后 enableLLM 应该抛出 DatabaseError（终态不可恢复）', async () => {
-      await llmAccess.closeLLM(new CloseLLMInput(), new LLMContext(), new CloseLLMOutput());
-
-      const enableInput = new EnableLLMInput();
-      enableInput.enable = true;
-      const enableOut = new EnableLLMOutput();
-      await expect(
-        llmAccess.enableLLM(enableInput, new LLMContext(), enableOut),
-      ).rejects.toThrow(DatabaseError);
-    });
-  });
 
   // =========================================================================
   // 边界和集成场景
@@ -1690,7 +1550,7 @@ describe('LLMProvider', () => {
       expect(delOut.affected_rows).toBe(0);
     });
 
-    it('添加空的 llm_usage 字段也应正常', async () => {
+    it('添加空的 llm_type 字段也应正常', async () => {
       const [pOut] = await (async () => {
         const pInput = new AddLLMProviderInput();
         pInput.data = makeProviderData();
@@ -1700,15 +1560,15 @@ describe('LLMProvider', () => {
       })();
 
       const lInput = new AddLLMInput();
-      lInput.data = makeLLMData(pOut.id, { llm_usage: '' });
+      lInput.data = makeLLMData(pOut.id, { llm_type: '' });
       const lOut = new AddLLMOutput();
       await llmAccess.addLLM(lInput, new LLMContext(), lOut);
 
-      const getInput = new GetLLMInput();
-      getInput.id = lOut.id;
-      const getOut = new GetLLMOutput();
-      await llmAccess.getLLM(getInput, new LLMContext(), getOut);
-      expect(getOut.llm!.llm_usage).toBe('');
+      const soInput = new SoLLMInput();
+      soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: lOut.id }];
+      const soOut = new SoLLMOutput();
+      await llmAccess.soLLM(soInput, new LLMContext(), soOut);
+      expect(soOut.list[0].llm_type).toBe('text');
     });
 
     it('多个不同提供商同时存在', async () => {

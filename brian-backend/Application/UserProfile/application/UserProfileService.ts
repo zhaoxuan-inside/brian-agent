@@ -850,8 +850,7 @@ export class UserProfileService {
       await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
           id: llmId,
-          prompt,
-          params: { temperature: 0.3, max_tokens: 512 },
+          params: { prompt, temperature: 0.3, max_tokens: 512 },
         }),
         new LLMContext(),
         llmOut,

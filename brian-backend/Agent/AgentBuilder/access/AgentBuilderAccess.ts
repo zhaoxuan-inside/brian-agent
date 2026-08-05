@@ -9,9 +9,7 @@ import {
   AgentBuilderContext,
   BuildAgentInput, BuildAgentOutput,
   OptimizeAgentInput, OptimizeAgentOutput,
-  BuildPlannerAgentInput, BuildPlannerAgentOutput,
-  BuildWriterAgentInput, BuildWriterAgentOutput,
-  BuildEvolutorAgentInput, BuildEvolutorAgentOutput,
+  BuildSystemAgentInput, BuildSystemAgentOutput,
   ConfigAgentBuilderInput, ConfigAgentBuilderOutput,
 } from '../domain/types';
 
@@ -55,25 +53,11 @@ export class AgentBuilderAccess {
     return this.service.optimizeAgent(i, c, o);
   }
 
-  async buildPlannerAgent(
-    i: BuildPlannerAgentInput, c: AgentBuilderContext, o: BuildPlannerAgentOutput,
+  async buildSystemAgent(
+    i: BuildSystemAgentInput, c: AgentBuilderContext, o: BuildSystemAgentOutput,
   ): Promise<boolean> {
     await this.initPromise;
-    return this.service.buildPlannerAgent(i, c, o);
-  }
-
-  async buildWriterAgent(
-    i: BuildWriterAgentInput, c: AgentBuilderContext, o: BuildWriterAgentOutput,
-  ): Promise<boolean> {
-    await this.initPromise;
-    return this.service.buildWriterAgent(i, c, o);
-  }
-
-  async buildEvolutorAgent(
-    i: BuildEvolutorAgentInput, c: AgentBuilderContext, o: BuildEvolutorAgentOutput,
-  ): Promise<boolean> {
-    await this.initPromise;
-    return this.service.buildEvolutorAgent(i, c, o);
+    return this.service.buildSystemAgent(i, c, o);
   }
 
   async configAgentBuilder(

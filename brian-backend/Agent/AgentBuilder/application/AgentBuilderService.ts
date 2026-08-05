@@ -17,10 +17,7 @@ import {
   AgentBuilderContext,
   BuildAgentInput, BuildAgentOutput,
   OptimizeAgentInput, OptimizeAgentOutput,
-  BuildSystemAgentOutput,
-  BuildPlannerAgentInput, BuildPlannerAgentOutput,
-  BuildWriterAgentInput, BuildWriterAgentOutput,
-  BuildEvolutorAgentInput, BuildEvolutorAgentOutput,
+  BuildSystemAgentInput, BuildSystemAgentOutput,
   ConfigAgentBuilderInput, ConfigAgentBuilderOutput,
 } from '../domain/types';
 import {
@@ -169,7 +166,12 @@ export class AgentBuilderService {
         llm_id: llmId,
         soul_id: soulOut.soul_id || '',
         task_signature: signature,
-        agent_name: `Agent-${agentId.slice(0, 8)}`,
+        agent_name: this.generateAgentName(
+          soulOut.soul,
+          skillOut.skills || [],
+          analysis.domain || analysis.signature,
+          agentId,
+        ),
       }),
       libCtx,
       addOut,
@@ -365,28 +367,82 @@ export class AgentBuilderService {
     return true;
   }
 
-  async buildPlannerAgent(
-    input: BuildPlannerAgentInput,
-    ctx: AgentBuilderContext,
-    output: BuildPlannerAgentOutput,
-  ): Promise<boolean> {
-    return this.buildSystemAgent('PLANNER', 'Plan-and-Solve', 'planner', input.force_new, ctx, output);
-  }
+  // ===== 系统 Agent 配置映射 =====
+  private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string }> = {
+    PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner' },
+    WRITER: { strategyLabel: 'CoT', signatureKey: 'writer' },
+    EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor' },
+  };
 
-  async buildWriterAgent(
-    input: BuildWriterAgentInput,
+  async buildSystemAgent(
+    input: BuildSystemAgentInput,
     ctx: AgentBuilderContext,
-    output: BuildWriterAgentOutput,
+    output: BuildSystemAgentOutput,
   ): Promise<boolean> {
-    return this.buildSystemAgent('WRITER', 'CoT', 'writer', input.force_new, ctx, output);
-  }
+    const agentType = input.agent_type;
+    const config = AgentBuilderService.SYSTEM_AGENT_CONFIG[agentType];
+    if (!config) throw new ValidationError(`unknown system agent type: ${agentType}`);
 
-  async buildEvolutorAgent(
-    input: BuildEvolutorAgentInput,
-    ctx: AgentBuilderContext,
-    output: BuildEvolutorAgentOutput,
-  ): Promise<boolean> {
-    return this.buildSystemAgent('EVOLUTOR', 'ReAct', 'evolutor', input.force_new, ctx, output);
+    const libCtx = this.toLibCtx(ctx, '');
+    if (!input.force_new) {
+      const getOut = new GetAgentOutput();
+      await this.agentLibrary.getAgent(
+        Object.assign(new GetAgentInput(), { agent_type: agentType }),
+        libCtx,
+        getOut,
+      );
+      const found = getOut.agents.find((a) => a.enable);
+      if (found) {
+        output.agent_id = found.agent_id;
+        return true;
+      }
+    }
+
+    const agentId = IdGenerator.generate();
+    const llmId = await this.matchLlmForAgent(agentId, ctx.interact_id || '');
+    const soulOut = new MatchSoulOutput();
+    await this.soulCore.matchSoul(
+      Object.assign(new MatchSoulInput(), {
+        agent_id: agentId,
+        context_id: ctx.session_id || '',
+        interact_id: ctx.interact_id || '',
+      }),
+      new SoulCoreContext(),
+      soulOut,
+    );
+
+    const strategyId = await this.getStrategyIdByLabel(config.strategyLabel);
+    if (!strategyId) throw new ValidationError(`strategy not found: ${config.strategyLabel}`);
+
+    const addOut = new AddAgentOutput();
+    const ok = await this.agentLibrary.addAgent(
+      Object.assign(new AddAgentInput(), {
+        agent_id: agentId,
+        agent_type: agentType,
+        strategy_id: strategyId,
+        llm_id: llmId,
+        soul_id: soulOut.soul_id || '',
+        task_signature: buildTaskSignature(config.signatureKey, agentType.toLowerCase()),
+        agent_name: `系统-${agentType.charAt(0)}${agentType.slice(1).toLowerCase()}`,
+      }),
+      libCtx,
+      addOut,
+    );
+    if (!ok) throw new ValidationError(`addAgent failed for ${agentType}`);
+    if (soulOut.soul_id) {
+      await this.soulCore.optSoul(
+        Object.assign(new OptSoulInput(), {
+          agent_id: agentId,
+          context_id: '',
+          interact_id: '',
+          soul_id: soulOut.soul_id,
+        }),
+        new SoulCoreContext(),
+        new OptSoulOutput(),
+      );
+    }
+    output.agent_id = agentId;
+    return true;
   }
 
   async configAgentBuilder(
@@ -449,76 +505,6 @@ export class AgentBuilderService {
     return true;
   }
 
-  private async buildSystemAgent(
-    agentType: string,
-    strategyLabel: string,
-    signatureKey: string,
-    forceNew: boolean | undefined,
-    ctx: AgentBuilderContext,
-    output: BuildSystemAgentOutput,
-  ): Promise<boolean> {
-    const libCtx = this.toLibCtx(ctx, '');
-    if (!forceNew) {
-      const getOut = new GetAgentOutput();
-      await this.agentLibrary.getAgent(
-        Object.assign(new GetAgentInput(), { agent_type: agentType }),
-        libCtx,
-        getOut,
-      );
-      const found = getOut.agents.find((a) => a.enable);
-      if (found) {
-        output.agent_id = found.agent_id;
-        return true;
-      }
-    }
-
-    const agentId = IdGenerator.generate();
-    const llmId = await this.matchLlmForAgent(agentId, ctx.interact_id || '');
-    const soulOut = new MatchSoulOutput();
-    await this.soulCore.matchSoul(
-      Object.assign(new MatchSoulInput(), {
-        agent_id: agentId,
-        context_id: ctx.session_id || '',
-        interact_id: ctx.interact_id || '',
-      }),
-      new SoulCoreContext(),
-      soulOut,
-    );
-
-    const strategyId = await this.getStrategyIdByLabel(strategyLabel);
-    if (!strategyId) throw new ValidationError(`strategy not found: ${strategyLabel}`);
-
-    const addOut = new AddAgentOutput();
-    const ok = await this.agentLibrary.addAgent(
-      Object.assign(new AddAgentInput(), {
-        agent_id: agentId,
-        agent_type: agentType,
-        strategy_id: strategyId,
-        llm_id: llmId,
-        soul_id: soulOut.soul_id || '',
-        task_signature: buildTaskSignature(signatureKey, agentType.toLowerCase()),
-        agent_name: `${agentType.charAt(0)}${agentType.slice(1).toLowerCase()}Agent`,
-      }),
-      libCtx,
-      addOut,
-    );
-    if (!ok) throw new ValidationError(`addAgent failed for ${agentType}`);
-    if (soulOut.soul_id) {
-      await this.soulCore.optSoul(
-        Object.assign(new OptSoulInput(), {
-          agent_id: agentId,
-          context_id: '',
-          interact_id: '',
-          soul_id: soulOut.soul_id,
-        }),
-        new SoulCoreContext(),
-        new OptSoulOutput(),
-      );
-    }
-    output.agent_id = agentId;
-    return true;
-  }
-
   private async matchLlmForAgent(agentId: string, interactId: string): Promise<string> {
     const llmOut = new MatchLLMOutput();
     try {
@@ -560,7 +546,7 @@ export class AgentBuilderService {
         if (promptOut.prompt) {
           const llmOut = new ExecLLMOutput();
           await this.llmAccess.execLLM(
-            Object.assign(new ExecLLMInput(), { id: llmId, prompt: promptOut.prompt }),
+            Object.assign(new ExecLLMInput(), { id: llmId, params: { prompt: promptOut.prompt } }),
             new LLMContext(),
             llmOut,
           );
@@ -628,5 +614,20 @@ export class AgentBuilderService {
       work_id: ctx.work_id,
       interact_id: interactId || ctx.interact_id,
     });
+  }
+
+  private generateAgentName(
+    soul: Record<string, unknown> | null,
+    skills: Array<{ skill_id: string; skill_brief: string; relevance: number }>,
+    domain: string,
+    agentId: string,
+  ): string {
+    const parts: string[] = []
+    if (domain) parts.push(domain)
+    const soulBrief = (soul as Record<string, string> | null)?.soul_brief || ''
+    if (soulBrief) parts.push(soulBrief)
+    else if (skills.length > 0 && skills[0].skill_brief) parts.push(skills[0].skill_brief)
+    if (parts.length === 0) return `Agent-${agentId.slice(0, 8)}`
+    return parts.join('-')
   }
 }

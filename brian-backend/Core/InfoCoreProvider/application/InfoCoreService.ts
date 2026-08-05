@@ -1534,8 +1534,7 @@ export class InfoCoreService {
       await this.llmAccess.execLLM(
         {
           id: vectorConfig.llm_id,
-          prompt,
-          params: { temperature: 0.1, max_tokens: 4096 },
+          params: { prompt, temperature: 0.1, max_tokens: 4096 },
         } as ExecLLMInput,
         new LLMContext(),
         execOutput,
@@ -1565,8 +1564,7 @@ export class InfoCoreService {
       await this.llmAccess.execLLM(
         {
           id: tagConfig.llm_id,
-          prompt,
-          params: { temperature: 0.1, max_tokens: 256 },
+          params: { prompt, temperature: 0.1, max_tokens: 256 },
         } as ExecLLMInput,
         new LLMContext(),
         execOutput,
@@ -1591,8 +1589,7 @@ export class InfoCoreService {
       await this.llmAccess.execLLM(
         {
           id: summaryConfig.llm_id,
-          prompt,
-          params: { temperature: 0.3, max_tokens: 512 },
+          params: { prompt, temperature: 0.3, max_tokens: 512 },
         } as ExecLLMInput,
         new LLMContext(),
         execOutput,

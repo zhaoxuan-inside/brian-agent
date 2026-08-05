@@ -204,7 +204,7 @@ function handleStreamEvent(event: string, data: Record<string, unknown>, botMsgI
 </script>
 
 <template>
-  <div class="chat-area flex flex-1 pt-14 overflow-hidden" :class="{ 'select-none': isDragging }">
+  <div class="chat-area flex flex-1 overflow-hidden" :class="{ 'select-none': isDragging }">
     <!-- Left: ChatMap -->
     <div class="flex-shrink-0 h-full overflow-hidden" :style="{ width: leftWidth }">
       <ChatMap />

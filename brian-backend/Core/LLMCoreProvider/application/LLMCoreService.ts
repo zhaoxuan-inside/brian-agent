@@ -127,6 +127,14 @@ export class LLMCoreService {
       throw new NotFoundError('可用 LLM', 'any');
     }
 
+    if (availableLLMs.length === 1) {
+      const llmRecord = await this.getLLMById(availableLLMs[0].id);
+      output.llm_id = availableLLMs[0].id;
+      output.llm = llmRecord;
+      output.from_cache = false;
+      return true;
+    }
+
     // 3. 获取 Prompt 模板并渲染
     let selectionPrompt: string;
 
@@ -174,8 +182,7 @@ export class LLMCoreService {
     await this.llmAccess.execLLM(
       {
         id: rankerLLM.id,
-        prompt: selectionPrompt,
-        params: { temperature: 0.1, max_tokens: 256 },
+        params: { prompt: selectionPrompt, temperature: 0.1, max_tokens: 256 },
       } as ExecLLMInput,
       new LLMContext(),
       execLLMOutput,
@@ -447,22 +454,23 @@ export class LLMCoreService {
   // Private helpers — LLM 查询
   // ---------------------------------------------------------------------------
 
-  /** 通过 getLLM 获取 LLM 详情 */
+  /** 通过 soLLM 获取 LLM 详情 */
   private async getLLMById(llmId: string): Promise<Record<string, unknown> | null> {
-    const getOutput = new GetLLMOutput();
-    await this.llmAccess.getLLM(
-      { id: llmId } as GetLLMInput,
+    const soOutput = new SoLLMOutput();
+    await this.llmAccess.soLLM(
+      { conditions: [{ field: 'id', operator: Operator.EQ, value: llmId }] } as SoLLMInput,
       new LLMContext(),
-      getOutput,
+      soOutput,
     );
-    if (!getOutput.llm) return null;
+    const llm = soOutput.list[0];
+    if (!llm) return null;
     return {
-      id: getOutput.llm.id,
-      llm_provider_id: getOutput.llm.llm_provider_id,
-      llm_title: getOutput.llm.llm_title,
-      llm_brief: getOutput.llm.llm_brief,
-      llm_usage: getOutput.llm.llm_usage,
-      enable: getOutput.llm.enable,
+      id: llm.id,
+      llm_provider_id: llm.llm_provider_id,
+      llm_title: llm.llm_title,
+      llm_brief: llm.llm_brief,
+      llm_type: llm.llm_type,
+      enable: llm.enable,
     };
   }
 
