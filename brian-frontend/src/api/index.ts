@@ -221,6 +221,16 @@ export const profileApi = {
     request<void>(`/profile/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(data) }),
 }
 
+export interface VectorSearchResult { id: string; content: string; score: number; user_id: string | null; metadata: Record<string, unknown> | null }
+
+export const vectorDbApi = {
+  searchByText: (text: string, topK?: number, threshold?: number) =>
+    request<{ results: VectorSearchResult[]; count: number }>('/vectordb/search', {
+      method: 'POST',
+      body: JSON.stringify({ text, top_k: topK, similarity_threshold: threshold }),
+    }),
+}
+
 export interface CDTStatus { running: boolean; pid: number; port: number; endpoint?: string }
 
 export const cdtApi = {

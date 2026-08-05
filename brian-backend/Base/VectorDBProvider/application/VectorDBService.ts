@@ -16,7 +16,7 @@
  */
 
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
-import type { VectorDBComponent } from '../../components/VectorDB/VectorDBComponent';
+import { VectorDBComponent } from '../../components/VectorDB/VectorDBComponent';
 import { ConfigService } from '../../shared/config/ConfigService';
 import {
   ComponentDisabledError,
@@ -86,13 +86,39 @@ export class VectorDBService {
   // -------------------------------------------------------------------------
 
   /**
-   * 初始化组件：写入默认配置并恢复 enabled 状态。
+   * 初始化配置表：写入默认配置项（idempotent）并恢复 enabled 状态。
    *
-   * PRD 3.7.2 注：组件初始化时从 vectordb_config 读取 enabled 状态以恢复上次的可用状态。
+   * 与 initialize() 分离，允许在 LanceDB 组件初始化之前完成配置初始化。
+   */
+  async initializeConfig(): Promise<void> {
+    await this.config.initDefaults([...VECTORDB_DEFAULT_CONFIGS]);
+  }
+
+  /**
+   * 初始化：恢复 enabled 状态（在初始化配置表之后调用）。
    */
   async initialize(): Promise<void> {
-    await this.config.initDefaults([...VECTORDB_DEFAULT_CONFIGS]);
     this.enabled = await this.config.getBoolean('enabled', true);
+  }
+
+  /**
+   * 从配置表读取存储的距离度量方式。
+   *
+   * 将枚举值（COSINE / L2 / IP）转换为内部使用的值（cosine / euclidean / dot）。
+   */
+  getStoredMetric(): string | null {
+    try {
+      const val = this.relationDb.queryRaw<{ config_value: string }>(
+        `SELECT "config_value" FROM "${VECTORDB_CONFIG_TABLE}" WHERE "config_key" = 'default_distance_metric'`,
+        [],
+      );
+      if (val.length > 0 && val[0].config_value) {
+        const raw = val[0].config_value.toUpperCase();
+        const map: Record<string, string> = { COSINE: 'cosine', L2: 'euclidean', IP: 'dot' };
+        return map[raw] || raw.toLowerCase();
+      }
+    } catch { /* table may not exist yet */ }
+    return null;
   }
 
   /**
@@ -260,9 +286,16 @@ export class VectorDBService {
     // 读取默认参数（未指定时从配置表读取）
     const topK =
       param.top_k ?? (await this.config.getInt('default_top_k', 10));
-    const threshold =
+    const normalizedThreshold =
       param.similarity_threshold ??
-      (await this.config.getDouble('default_similarity_threshold', 0.0));
+      (await this.config.getDouble('default_similarity_threshold', 0));
+
+    // 将 0-100 归一化阈值转换为当前度量方式的原始阈值
+    const rawThreshold = VectorDBComponent.normalizedThresholdToRaw(
+      normalizedThreshold,
+      this.vectorDb.getMetric(),
+      this.vectorDb.getDimension(),
+    );
 
     // 构建过滤条件列表
     const filters: VectorFilter[] = [];
@@ -277,15 +310,15 @@ export class VectorDBService {
       });
     }
 
-    // 由 VectorDB 组件执行 LanceDB 相似度搜索（含后过滤 + 阈值过滤 + topK 截断）
+    // 由 VectorDB 组件执行 LanceDB 相似度搜索（阈值阈值 rawThreshold 已由归一化值转换，分数已归一化到 0-100）
     const hits = await this.vectorDb.search(
       param.embedding,
       topK,
-      threshold,
+      rawThreshold,
       filters.length > 0 ? filters : undefined,
     );
 
-    // 映射为领域搜索结果（similarity -> score）
+    // 映射为领域搜索结果（分数已在组件层归一化到 0-100）
     const results: VectorSearchResult[] = hits.map((h) => ({
       id: h.id,
       content: h.content,

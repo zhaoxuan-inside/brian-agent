@@ -304,6 +304,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'PUT' && pathname === '/api/config') {
         const input = Object.assign(new UpdateConfigInput(), body);
+        // 距离度量方式写入保护：如果已有向量数据，禁止修改
+        if (body.config_key === 'vectordb_provider.default_distance_metric' && body.value !== undefined) {
+          try {
+            const count = await ctx.vectorDBAccess.getVectorCount();
+            if (count > 0) {
+              sendJson(res, 400, { error: `已存在 ${count} 条向量数据，写入数据后不支持更改距离度量方式。如需更改请先删除所有向量数据。` });
+              return;
+            }
+          } catch { /* allow if count fails */ }
+        }
         const output = new UpdateConfigOutput();
         const context = new ConfigContext();
         await ctx.configAccess.updateConfig(input, context, output);
@@ -1242,6 +1252,80 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const o = new CDTCoreGetCookiesOutput();
         await ctx.cdtCore.getCookies(new CDTCoreGetCookiesInput(), new CDTCoreContext(), o);
         sendJson(res, 200, o);
+
+      // ---- VectorDB Search Routes ----
+      } else if (method === 'POST' && pathname === '/api/vectordb/search') {
+        const searchText = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!searchText) {
+          sendJson(res, 400, { error: 'text is required' });
+          return;
+        }
+        try {
+          // 1. Get embedding model from info_vector_config
+          const vectorConfigRows = ctx.relationDb.queryRaw<{ llm_id: string; dimension: number }>(
+            'SELECT "llm_id", "dimension" FROM "info_vector_config" LIMIT 1',
+            [],
+          );
+          if (vectorConfigRows.length === 0 || !vectorConfigRows[0].llm_id) {
+            sendJson(res, 400, { error: 'No embedding model configured in info_vector_config' });
+            return;
+          }
+          const { llm_id, dimension } = vectorConfigRows[0];
+
+          // 2. Generate embedding via LLM
+          const { ExecLLMInput, ExecLLMOutput, LLMContext } = await import('./Base/LLMProvider/domain/types');
+          const execInput = Object.assign(new ExecLLMInput(), {
+            id: llm_id,
+            params: { prompt: `Generate a ${dimension}-dimensional embedding vector as a JSON array of floats for the following text:\n\n${searchText}\n\nRespond with ONLY the JSON array.`, temperature: 0.1, max_tokens: 4096 },
+          });
+          const execOutput = new ExecLLMOutput();
+          await ctx.llmAccess.execLLM(execInput, new LLMContext(), execOutput);
+
+          const result = execOutput.result;
+          if (!result) {
+            sendJson(res, 500, { error: 'LLM returned empty embedding' });
+            return;
+          }
+
+          const embedding = (() => {
+            try {
+              const arr = JSON.parse(result);
+              return Array.isArray(arr) ? arr.map(Number) : [];
+            } catch {
+              const match = result.match(/\[[\d.,\s\-\+eE]+\]/);
+              if (match) return JSON.parse(match[0]).map(Number);
+              return [];
+            }
+          })();
+
+          if (embedding.length === 0) {
+            sendJson(res, 500, { error: 'Failed to parse embedding from LLM response' });
+            return;
+          }
+
+          // 3. Search vectors
+          const { SoVectorInput, SoVectorOutput, VectorContext } = await import('./Base/VectorDBProvider/domain/types');
+          const topK = typeof body.top_k === 'number' && body.top_k > 0 ? body.top_k : undefined;
+          const threshold = typeof body.similarity_threshold === 'number' ? body.similarity_threshold : undefined;
+          const soInput = Object.assign(new SoVectorInput(), {
+            query_param: { embedding, top_k: topK, similarity_threshold: threshold },
+          });
+          const soOutput = new SoVectorOutput();
+          await ctx.vectorDBAccess.soVector(soInput, new VectorContext(), soOutput);
+
+          sendJson(res, 200, {
+            results: soOutput.list.map(hit => ({
+              id: hit.id,
+              content: hit.content,
+              score: hit.score,
+              user_id: hit.user_id,
+              metadata: hit.metadata,
+            })),
+            count: soOutput.list.length,
+          });
+        } catch (err: any) {
+          sendJson(res, 500, { error: err.message || 'Vector search failed' });
+        }
 
       // ---- Bookmark Routes ----
       } else if (method === 'GET' && pathname === '/api/bookmark/tree') {

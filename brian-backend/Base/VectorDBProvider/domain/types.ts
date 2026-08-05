@@ -282,9 +282,9 @@ export const VECTORDB_DEFAULT_CONFIGS = [
   },
   {
     config_key: 'default_similarity_threshold',
-    config_value: '0.0',
+    config_value: '0',
     value_type: 'DOUBLE',
-    description: '默认相似度阈值（soVector 读取）',
+    description: '归一化相似度阈值 (0-100)，低于此值不返回；0 返回全部结果',
   },
   {
     config_key: 'default_distance_metric',

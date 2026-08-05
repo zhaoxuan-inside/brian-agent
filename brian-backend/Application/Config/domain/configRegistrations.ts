@@ -147,8 +147,8 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   // --- VectorDBProvider ---
   base('vectordb_provider', 'basic', 'enabled', '向量数据库启用', 'BOOLEAN', true, '向量数据库是否启用'),
   base('vectordb_provider', 'basic', 'default_top_k', '默认返回结果数量', 'INT', 10, '相似性搜索返回数量'),
-  base('vectordb_provider', 'basic', 'default_similarity_threshold', '默认相似度阈值', 'DOUBLE', 0.0, '低于此值结果不返回'),
-  base('vectordb_provider', 'basic', 'default_distance_metric', '默认距离度量方式', 'ENUM', 'COSINE', 'COSINE / L2 / IP', ['COSINE', 'L2', 'IP']),
+  base('vectordb_provider', 'basic', 'default_similarity_threshold', '默认相似度阈值', 'DOUBLE', 0, '归一化阈值 0-100（0=返回全部，100=仅完全匹配），低于此值结果不返回'),
+  base('vectordb_provider', 'basic', 'default_distance_metric', '默认距离度量方式', 'ENUM', 'COSINE', '仅写入前可更改（写入数据后锁定）；COSINE 余弦 / L2 欧氏 / IP 内积', ['COSINE', 'L2', 'IP']),
 
   // --- RelationDBProvider ---
   base('relationdb_provider', 'basic', 'enabled', '关系数据库启用', 'BOOLEAN', true, '关系数据库是否启用'),

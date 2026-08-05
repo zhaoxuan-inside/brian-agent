@@ -217,11 +217,62 @@ export class VectorDBComponent {
     return dot;
   }
 
-  private computeSimilarity(a: number[], b: number[]): number {
+  private computeRawSimilarity(a: number[], b: number[]): number {
     if (this.metric === 'cosine') return this.cosineSimilarity(a, b);
     if (this.metric === 'euclidean') return this.euclideanSimilarity(a, b);
     if (this.metric === 'dot') return this.dotSimilarity(a, b);
     return this.cosineSimilarity(a, b);
+  }
+
+  /**
+   * 将不同度量方式的原始相似度统一映射到 0-100 归一化分数。
+   *
+   * - cosine [-1, 1] → (raw + 1) * 50 → [0, 100]
+   * - euclidean (0, 1] → raw * 100 → (0, 100]
+   * - dot (无界) → sigmoid(raw / sqrt(dimension)) * 100 → (0, 100)
+   */
+  static normalizeMetricScore(raw: number, metric: string, dimension: number): number {
+    const m = (metric || '').toLowerCase();
+    if (m === 'cosine') {
+      const score = Math.round((raw + 1) * 50);
+      return Math.max(0, Math.min(100, score));
+    }
+    if (m === 'euclidean' || m === 'l2') {
+      const score = Math.round(raw * 100);
+      return Math.max(0, Math.min(100, score));
+    }
+    if (m === 'dot' || m === 'ip') {
+      const safeDim = dimension > 0 ? dimension : 1536;
+      const score = Math.round(100 / (1 + Math.exp(-raw / Math.sqrt(safeDim))));
+      return Math.max(0, Math.min(100, score));
+    }
+    // fallback: linear map, assume raw in [0, 1]
+    const score = Math.round(raw * 100);
+    return Math.max(0, Math.min(100, score));
+  }
+
+  /**
+   * 将归一化阈值 (0-100) 转换为各度量方式的原始阈值。
+   *
+   * 这是 normalizeMetricScore 的逆向操作。
+   */
+  static normalizedThresholdToRaw(threshold: number, metric: string, dimension: number): number {
+    if (threshold <= 0 || threshold >= 100) return -Infinity;
+    const t = threshold / 100;
+    const m = (metric || '').toLowerCase();
+    if (m === 'cosine') {
+      return t * 2 - 1;
+    }
+    if (m === 'euclidean' || m === 'l2') {
+      return t;
+    }
+    if (m === 'dot' || m === 'ip') {
+      const safeDim = dimension > 0 ? dimension : 1536;
+      if (t <= 0) return -Infinity;
+      if (t >= 1) return Infinity;
+      return -Math.log(1 / t - 1) * Math.sqrt(safeDim);
+    }
+    return t;
   }
 
   private distanceTypeForLanceDB(): LanceDBDistanceType {
@@ -339,12 +390,12 @@ export class VectorDBComponent {
 
       const hits: VectorSearchHit[] = [];
       for (const record of filtered) {
-        const similarity = this.computeSimilarity(queryVector, record.embedding);
-        if (similarity >= threshold) {
+        const rawSimilarity = this.computeRawSimilarity(queryVector, record.embedding);
+        if (rawSimilarity >= threshold) {
           hits.push({
             id: record.id,
             content: record.content,
-            similarity,
+            similarity: VectorDBComponent.normalizeMetricScore(rawSimilarity, this.metric, this.dimension),
             user_id: record.user_id,
             metadata: record.metadata,
           });
@@ -374,15 +425,14 @@ export class VectorDBComponent {
     }
 
     const results = await query.limit(topK).toArray();
-    const isCosine = this.metric === 'cosine';
 
     const hits: VectorSearchHit[] = results.map((row: Record<string, unknown>) => {
       const lanceDistance = Number(row._distance ?? 0);
-      const similarity = isCosine ? 1 - lanceDistance : 1 / (1 + lanceDistance);
+      const rawSimilarity = this.metric === 'cosine' ? 1 - lanceDistance : 1 / (1 + lanceDistance);
       return {
         id: String(row.id ?? ''),
         content: String(row.content ?? ''),
-        similarity,
+        similarity: VectorDBComponent.normalizeMetricScore(rawSimilarity, this.metric, this.dimension),
         user_id: row.user_id != null ? String(row.user_id) : null,
         metadata: this.parseMetadata(row.metadata),
       };

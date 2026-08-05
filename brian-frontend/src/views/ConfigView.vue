@@ -16,7 +16,7 @@ import {
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
-import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi } from '@/api'
+import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, vectorDbApi } from '@/api'
 import type { ConfigTreeLayer, ConfigTreeCategory, ConfigTreeItem } from '@/api/types'
 
 // ============================================================
@@ -326,6 +326,30 @@ const currentParamsByCat = computed(() => {
 const editingParam = ref<ParamItem | null>(null)
 const editingParamValue = ref<string>('')
 const paramSaving = ref(false)
+
+// VectorDB 语义搜索状态
+const vectordbSearchText = ref('')
+const vectordbSearchTopK = ref(10)
+const vectordbSearchThreshold = ref(0)
+const vectordbSearching = ref(false)
+const vectordbSearchResults = ref<{ id: string; content: string; score: number; metadata: Record<string, unknown> | null; user_id: string | null }[]>([])
+const vectordbSearchError = ref('')
+
+async function runVectorDbSearch() {
+  const text = vectordbSearchText.value.trim()
+  if (!text) return
+  vectordbSearching.value = true
+  vectordbSearchError.value = ''
+  vectordbSearchResults.value = []
+  try {
+    const resp = await vectorDbApi.searchByText(text, vectordbSearchTopK.value, vectordbSearchThreshold.value)
+    vectordbSearchResults.value = resp.results || []
+  } catch (e: unknown) {
+    vectordbSearchError.value = e instanceof Error ? e.message : '搜索失败'
+  } finally {
+    vectordbSearching.value = false
+  }
+}
 
 const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
 
@@ -2416,6 +2440,67 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">暂无配置参数</p>
           </div>
           <div v-else class="space-y-5">
+            <!-- VectorDB 语义搜索（仅 vectordb_provider 模块展示） -->
+            <div v-if="currentSub?.configModule === 'vectordb_provider'" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
+              <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+                <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">语义搜索</h3>
+                <p class="text-xs text-apple-gray-400 mt-0.5">输入文本，系统将自动向量化并进行相似度搜索（当前使用 {{ (currentParams.find(p => p.config_key === 'vectordb_provider.default_distance_metric')?.config_value ?? 'COSINE')  }} 距离度量）</p>
+              </div>
+              <div class="px-4 py-3 space-y-3">
+                <div class="flex gap-2">
+                  <div class="flex-1">
+                    <input
+                      v-model="vectordbSearchText"
+                      type="text"
+                      placeholder="输入要搜索的文本..."
+                      :class="inputClass"
+                      @keyup.enter="runVectorDbSearch"
+                    />
+                  </div>
+                  <button
+                    class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors"
+                    :disabled="vectordbSearching || !vectordbSearchText.trim()"
+                    @click="runVectorDbSearch"
+                  >
+                    <Loader2 v-if="vectordbSearching" :size="14" class="animate-spin" />
+                    <Search v-else :size="14" />
+                    {{ vectordbSearching ? '搜索中...' : '搜索' }}
+                  </button>
+                </div>
+                <div class="flex gap-3">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-apple-gray-500">返回数量</label>
+                    <input v-model.number="vectordbSearchTopK" type="number" min="1" max="100" class="w-20 px-2 py-1 text-xs border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300" />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-apple-gray-500">分数阈值 (0-100)</label>
+                    <input v-model.number="vectordbSearchThreshold" type="number" min="0" max="100" step="1" class="w-20 px-2 py-1 text-xs border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300" />
+                  </div>
+                </div>
+                <div v-if="vectordbSearchError" class="flex items-center gap-2 text-xs text-error-red">
+                  <AlertCircle :size="14" /> {{ vectordbSearchError }}
+                </div>
+                <div v-if="vectordbSearchResults.length > 0" class="space-y-1.5 max-h-64 overflow-y-auto">
+                  <p class="text-xs text-apple-gray-400">共 {{ vectordbSearchResults.length }} 条结果</p>
+                  <div
+                    v-for="hit in vectordbSearchResults"
+                    :key="hit.id"
+                    class="px-3 py-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800/50 border border-apple-gray-100 dark:border-apple-gray-700"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-200 line-clamp-1">{{ hit.content }}</p>
+                      <span class="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
+                        :class="hit.score >= 80 ? 'bg-success-green/10 text-success-green' : hit.score >= 50 ? 'bg-warning-orange/10 text-warning-orange' : 'bg-apple-gray-200 dark:bg-apple-gray-700 text-apple-gray-500'"
+                      >{{ hit.score }}</span>
+                    </div>
+                    <p v-if="hit.metadata && Object.keys(hit.metadata).length" class="text-[10px] text-apple-gray-400 mt-1">
+                      {{ JSON.stringify(hit.metadata) }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- 参数列表 -->
             <div v-for="group in currentParamsByCat" :key="group.cat" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
               <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ group.label }}</h3>

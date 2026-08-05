@@ -19,6 +19,7 @@ import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationD
 import { VectorDBComponent } from '../../components/VectorDB/VectorDBComponent';
 import { VectorDBSchemaInitializer } from '../infrastructure/VectorDBSchemaInitializer';
 import { VectorDBService } from '../application/VectorDBService';
+import { VECTORDB_CONFIG_TABLE } from '../domain/types';
 import {
   VectorContext,
   AddVectorInput,
@@ -96,7 +97,7 @@ export class VectorDBAccess {
 
   private readonly dimension: number;
 
-  private readonly metric: string;
+  private metric: string;
 
   /**
    * @param relationDb RelationDBProvider 接入层实例（用于配置表）
@@ -118,13 +119,43 @@ export class VectorDBAccess {
   }
 
   /**
-   * 初始化组件：创建 LanceDB 表、写入默认配置并恢复 enabled 状态。
+   * 初始化组件：先创建配置表、写默认值、恢复存储的 metric，再初始化 LanceDB。
    *
    * 必须在首次使用前调用。
    */
   async initialize(): Promise<void> {
-    await this.schemaInitializer.init(this.dimension, this.metric);
-    await this.service.initialize();
+    // 1. 创建关系数据库配置表（仅创建表结构，不初始化 LanceDB）
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${VECTORDB_CONFIG_TABLE}" (
+        "config_key"   TEXT    NOT NULL PRIMARY KEY,
+        "config_value" TEXT    NOT NULL,
+        "value_type"   TEXT    NOT NULL,
+        "description"  TEXT,
+        "updated"      INTEGER NOT NULL
+      )
+    `);
+
+    // 2. 初始化配置服务（写入默认配置项，包括 default_distance_metric = COSINE）
+    await this.service.initializeConfig();
+
+    // 3. 从配置表读取存储的距离度量方式，优先于构造器参数
+    const storedMetric = this.service.getStoredMetric();
+    if (storedMetric) {
+      this.metric = storedMetric;
+    }
+
+    // 4. 用最终确定的 metric 初始化 LanceDB 表
+    await this.vectorDb.init(this.dimension, this.metric);
+  }
+
+  /** 获取当前向量总数（用于判断是否存在数据） */
+  async getVectorCount(): Promise<number> {
+    return this.vectorDb.count();
+  }
+
+  /** 获取当前度量方式 */
+  getMetric(): string {
+    return this.vectorDb.getMetric();
   }
 
   /** 新增/更新向量（upsert） */
