@@ -49,7 +49,6 @@ import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
  * 用法示例：
  * ```typescript
  * const mcpAccess = new MCPAccess(relationDb);
- * await mcpAccess.initialize();
  * ```
  */
 export class MCPAccess {
@@ -59,11 +58,6 @@ export class MCPAccess {
     new MCPSchemaInitializer(relationDb).init();
     const rawService = new MCPService(relationDb);
     this.service = AopProxy.wrap(rawService, { logger });
-  }
-
-  /** 初始化组件 */
-  async initialize(): Promise<void> {
-    await this.service.initialize();
   }
 
   // --- 提供商管理 ---

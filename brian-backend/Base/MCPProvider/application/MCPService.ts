@@ -53,8 +53,6 @@ import {
   MCP_INSTALL_TABLE,
   MCP_USAGE_TABLE,
   MCP_CONFIG_TABLE,
-  MCP_DEFAULT_CONFIGS,
-  MCP_DEFAULT_PROVIDERS,
 } from '../domain/types';
 
 /**
@@ -69,33 +67,6 @@ export class MCPService {
 
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, MCP_CONFIG_TABLE);
-  }
-
-  /** 初始化：写入默认配置、默认 MCP 市场提供商并恢复 enabled 状态 */
-  async initialize(): Promise<void> {
-    await this.config.initDefaults([...MCP_DEFAULT_CONFIGS]);
-    this.enabled = await this.config.getBoolean('enabled', true);
-    await this.seedDefaultProviders();
-  }
-
-  /** 写入默认 MCP 市场提供商（不覆盖已有记录） */
-  private async seedDefaultProviders(): Promise<void> {
-    for (const provider of MCP_DEFAULT_PROVIDERS) {
-      const existing = await this.relationDb.count(MCP_PROVIDER_TABLE, [
-        { field: 'mcp_provider_url', operator: Operator.EQ, value: provider.mcp_provider_url },
-      ]);
-      if (existing === 0) {
-        await this.relationDb.insert(MCP_PROVIDER_TABLE, [
-          { field: 'id', value: IdGenerator.generate() },
-          { field: 'created', value: IdGenerator.now() },
-          { field: 'updated', value: IdGenerator.now() },
-          { field: 'mcp_provider_url', value: provider.mcp_provider_url },
-          { field: 'mcp_provider_title', value: provider.mcp_provider_title },
-          { field: 'mcp_provider_brief', value: provider.mcp_provider_brief },
-          { field: 'enable', value: provider.enable ? 1 : 0 },
-        ]);
-      }
-    }
   }
 
   /** 校验组件是否启用 */

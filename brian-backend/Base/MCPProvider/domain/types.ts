@@ -259,39 +259,27 @@ export const MCP_DEFAULT_PROVIDERS: Array<{
   enable: boolean;
 }> = [
   {
-    mcp_provider_url: 'https://registry.modelcontextprotocol.io',
-    mcp_provider_title: 'MCP Registry',
-    mcp_provider_brief: 'MCP 社区的权威元数据注册中心',
+    mcp_provider_url: 'https://dashscope.aliyuncs.com',
+    mcp_provider_title: '阿里云百炼',
+    mcp_provider_brief: '阿里云 AI 平台的 MCP 服务市场',
     enable: true,
   },
   {
-    mcp_provider_url: 'https://www.npmjs.com/package/@debuggingmax/mcphub',
-    mcp_provider_title: 'MCP Hub (@debuggingmax/mcphub)',
-    mcp_provider_brief: 'MCP 服务器中央注册中心，提供 CLI 工具搜索、安装和管理 MCP 服务器',
+    mcp_provider_url: 'https://modelscope.cn',
+    mcp_provider_title: 'ModelScope',
+    mcp_provider_brief: '魔搭社区 MCP 广场，社区贡献的优质 MCP 服务器',
     enable: true,
   },
   {
-    mcp_provider_url: 'https://www.npmjs.com/package/@mcpmarket',
-    mcp_provider_title: 'MCP Market (@mcpmarket)',
-    mcp_provider_brief: '以 @mcpmarket 作用域发布在 npm 上的 MCP 服务器市场',
+    mcp_provider_url: 'https://api.smithery.ai',
+    mcp_provider_title: 'Smithery',
+    mcp_provider_brief: '全球 MCP 注册中心，自动 OAuth，支持 HTTP/SSE 连接',
     enable: true,
   },
   {
-    mcp_provider_url: 'https://registry.modelcontextprotocol.io/ui',
-    mcp_provider_title: 'MCP Registry UI (非官方)',
-    mcp_provider_brief: '浏览官方 MCP Registry 中服务器的 Web 应用',
-    enable: true,
-  },
-  {
-    mcp_provider_url: 'https://www.npmjs.com/package/@mazhu/mcp-hub',
-    mcp_provider_title: 'MCP Hub (@mazhu/mcp-hub)',
-    mcp_provider_brief: '支持通过 CLI 工具发现和管理 MCP 服务器的注册中心',
-    enable: true,
-  },
-  {
-    mcp_provider_url: 'https://agenticmarket.com',
-    mcp_provider_title: 'AgenticMarket',
-    mcp_provider_brief: 'MCP 服务器市场平台',
+    mcp_provider_url: 'https://registry.npmjs.org',
+    mcp_provider_title: 'GitHub',
+    mcp_provider_brief: 'npm 生态的 MCP 服务器，通过 npx/uvx stdio 运行',
     enable: true,
   },
 ];

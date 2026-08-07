@@ -5,6 +5,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
+import { WebSocketServer } from 'ws';
 
 import { IdGenerator } from './Base/shared/id/IdGenerator';
 import { RelationDBAccess } from './Base/RelationDBProvider';
@@ -127,7 +128,6 @@ async function buildContext() {
   await llmAccess.initialize();
 
   const mcpAccess = new MCPAccess(relationDb, logger);
-  await mcpAccess.initialize();
 
   const soulAccess = new SoulAccess(relationDb, logger);
   await soulAccess.initialize();
@@ -694,14 +694,19 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           sendJson(res, 200, output.list || []);
         }
 
-      // ---- MCP Market: list built-in markets ----
+      // ---- MCP Market: list from database ----
       } else if (method === 'GET' && pathname === '/api/config/mcp/market') {
-        sendJson(res, 200, [
-          { id: 'aliyun_bailian', mcp_provider_title: '阿里云百炼', mcp_provider_url: 'https://dashscope.aliyuncs.com', mcp_provider_brief: '阿里云 AI 平台的 MCP 服务市场', enable: true },
-          { id: 'modelscope', mcp_provider_title: 'ModelScope', mcp_provider_url: 'https://modelscope.cn', mcp_provider_brief: '魔搭社区 MCP 广场，社区贡献的优质 MCP 服务器', enable: true },
-          { id: 'smithery', mcp_provider_title: 'Smithery', mcp_provider_url: 'https://api.smithery.ai', mcp_provider_brief: '全球 MCP 注册中心，自动 OAuth，支持 HTTP/SSE 连接', enable: true },
-          { id: 'github', mcp_provider_title: 'GitHub', mcp_provider_url: 'https://registry.npmjs.org', mcp_provider_brief: 'npm 生态的 MCP 服务器，通过 npx/uvx stdio 运行', enable: true },
-        ]);
+        const rows = ctx.relationDb.queryRaw<{ id: string; mcp_provider_title: string; mcp_provider_url: string; mcp_provider_brief: string | null; enable: number }>(
+          'SELECT "id", "mcp_provider_title", "mcp_provider_url", "mcp_provider_brief", "enable" FROM "mcp_provider" ORDER BY "mcp_provider_title" ASC',
+          [],
+        );
+        sendJson(res, 200, (rows || []).map(r => ({
+          id: r.id,
+          mcp_provider_title: r.mcp_provider_title,
+          mcp_provider_url: r.mcp_provider_url,
+          mcp_provider_brief: r.mcp_provider_brief || '',
+          enable: !!r.enable,
+        })));
 
       // ---- MCP Market: test connectivity ----
       } else if (method === 'POST' && /\/api\/config\/mcp\/provider\/[^/]+\/test$/.test(pathname)) {
@@ -1613,6 +1618,14 @@ async function main() {
   console.log('[dev-server] Initializing brian-backend (real backends, no mocks)...');
   const ctx = await buildContext();
   const server = createServer(ctx);
+
+  // WebSocket server (Vite HMR proxy / future streaming)
+  const wss = new WebSocketServer({ server, path: '/ws' });
+  wss.on('connection', (ws) => {
+    ws.on('message', (data) => {
+      ws.send(data); // echo
+    });
+  });
 
   const PORT = parseInt(process.env.BRIAN_PORT || '8000', 10);
   const HOST = process.env.BRIAN_HOST || '127.0.0.1';
