@@ -65,7 +65,7 @@ export class SkillAccess {
   constructor(relationDb: RelationDBAccess, logger?: Logger) {
     // 初始化表结构
     new SkillSchemaInitializer(relationDb).init();
-    // 创建沙箱实例（默认使用 isolated-vm）
+    // 创建沙箱实例（自动检测平台，优先使用 isolated-vm，不可用时降级为 vm）
     this.sandbox = new IsolatedVMSandbox();
     // 创建 Service 并通过代理模式增加切面注入能力
     const rawService = new SkillService(relationDb, this.sandbox);

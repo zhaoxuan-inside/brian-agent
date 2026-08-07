@@ -8,6 +8,7 @@
  * - aop：代理模式切面注入（日志记录、耗时统计）
  * - id：UUID 生成器与时间工具
  * - config：配置服务（基于关系数据库配置表的键值对读写）
+ * - native：跨平台原生模块加载器（自动检测 OS/架构/ABI）
  */
 
 // 基类
@@ -52,3 +53,7 @@ export { IdGenerator } from './id/IdGenerator';
 // 配置服务
 export { ConfigService, ValueType } from './config/ConfigService';
 export type { ConfigItem, IConfigStorage } from './config/ConfigService';
+
+// 跨平台原生模块加载器
+export { NativeLoader } from './native/NativeLoader';
+export type { PlatformInfo, LoadResult } from './native/NativeLoader';

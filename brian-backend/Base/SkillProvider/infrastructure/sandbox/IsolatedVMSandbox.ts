@@ -7,8 +7,9 @@
  * - 超时控制：通过 timeout 机制限制脚本执行时间；
  * - console.log 空实现：避免沙箱输出污染主进程。
  *
- * isolated-vm 为 C++ 原生扩展，通过 node-gyp 预编译为 .node 文件，
- * 随离线包一起集成到 SkillProvider 模块中。
+ * isolated-vm 为 C++ 原生扩展，通过预编译的 .node 文件随离线包集成。
+ * 入口文件 isolated-vm.js 自动检测平台（OS + CPU 架构 + Node.js ABI），
+ * 从 prebuilt/ 目录加载匹配的原生模块。
  */
 
 import ivm from 'isolated-vm';

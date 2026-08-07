@@ -13,6 +13,7 @@
     "shared"
   ],
   "scripts": {
+    "postinstall": "node brian-backend/scripts/copy-prebuilt.js",
     "dev": "npm run dev:backend & npm run dev:frontend",
     "dev:backend": "npm run dev --workspace=@brian-agent/application",
     "dev:frontend": "npm run dev --workspace=@brian-agent/frontend",
