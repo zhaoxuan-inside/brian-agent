@@ -6,7 +6,6 @@
  *
  * 覆盖模块：
  * - better-sqlite3
- * - nodejieba
  * - @lancedb/lancedb
  * - isolated-vm (vendor)
  */
@@ -75,13 +74,6 @@ let allOk = true;
   const src = resolvePrebuilt('better-sqlite3', 'better_sqlite3.node');
   const dest = path.join(NODE_MODULES, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
   if (!copyIfNeeded(src, dest, 'better-sqlite3')) allOk = false;
-}
-
-// --- nodejieba ---
-{
-  const src = resolvePrebuilt('nodejieba', 'nodejieba.node');
-  const dest = path.join(NODE_MODULES, 'nodejieba', 'build', 'Release', 'nodejieba.node');
-  if (!copyIfNeeded(src, dest, 'nodejieba')) allOk = false;
 }
 
 // --- @lancedb/lancedb ---

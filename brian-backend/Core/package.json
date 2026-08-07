@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@brian-agent/base": "file:../Base",
+    "@node-rs/jieba": "^2.0.1",
     "magic-string": "^0.30.21",
-    "nodejieba": "^3.5.8",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

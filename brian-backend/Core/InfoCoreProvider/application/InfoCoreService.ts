@@ -23,7 +23,8 @@ import {
   GraphDirection,
 } from '@brian-agent/base';
 import type { Condition } from '@brian-agent/base';
-import nodejieba from 'nodejieba';
+import { Jieba } from '@node-rs/jieba';
+import { dict } from '@node-rs/jieba/dict';
 import {
   ValidationError,
   NotFoundError,
@@ -146,6 +147,8 @@ import {
   GetPromptInput,
   GetPromptOutput,
 } from '@brian-agent/base';
+
+const jieba = Jieba.withDict(dict);
 
 // ---------------------------------------------------------------------------
 // 停用词集合（中英文）
@@ -1610,7 +1613,7 @@ export class InfoCoreService {
    * 分词 → 过滤停用词 → 词频统计 → 取前 10。
    */
   private extractKeywords(text: string): string[] {
-    const words: string[] = nodejieba.cut(text);
+    const words: string[] = jieba.cut(text);
     const filtered = words
       .map((w) => w.trim().toLowerCase())
       .filter((w) => w.length >= 2 && !STOPWORDS.has(w));
