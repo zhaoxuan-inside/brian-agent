@@ -378,6 +378,143 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.configAccess.deleteConfigItem(input, context, output);
         sendJson(res, 200, { success: true });
 
+      // ---- Config Save Defaults ----
+      } else if (method === 'POST' && pathname === '/api/config/save-defaults') {
+        const configTables = ctx.relationDb.queryRaw<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_config' OR name='config_config' OR name='config_registry' OR name LIKE '%_privilege'",
+          [],
+        );
+        const data: Record<string, unknown[]> = {};
+        for (const row of configTables || []) {
+          try { data[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* ok */ }
+        }
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const dataDir = path.resolve('./data');
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        const defaultsPath = path.join(dataDir, 'config-defaults.json');
+        fs.writeFileSync(defaultsPath, JSON.stringify(data, null, 2), 'utf-8');
+        sendJson(res, 200, { success: true, path: defaultsPath });
+        return;
+
+      // ---- Config Reset ----
+      } else if (method === 'POST' && pathname === '/api/config/reset') {
+        // 0. 导出当前配置到本地文件
+        const configTables = ctx.relationDb.queryRaw<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_config' OR name='config_config' OR name='config_registry' OR name LIKE '%_privilege'",
+          [],
+        );
+        const backup: Record<string, unknown[]> = {};
+        for (const row of configTables || []) {
+          try { backup[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* ok */ }
+        }
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const dataDir = path.resolve('./data');
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        const backupPath = path.join(dataDir, 'config-backup.json');
+        fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2), 'utf-8');
+        // 1. 清理配置注册表
+        ctx.relationDb.executeRaw('DELETE FROM "config_registry"', []);
+        ctx.relationDb.executeRaw('DELETE FROM "config_layer_privilege"', []);
+        ctx.relationDb.executeRaw('DELETE FROM "config_module_privilege"', []);
+        // 2. 清理各模块配置表
+        for (const row of configTables || []) {
+          try { ctx.relationDb.executeRaw(`DELETE FROM "${row.name}"`, []); } catch { /* ok */ }
+        }
+        // 3. 重新注册所有配置项
+        const { ALL_CONFIG_REGISTRATIONS } = await import('./Application/Config/domain/configRegistrations');
+        const { RegisterConfigInput, RegisterConfigOutput, ConfigContext } = await import('./Application/Config/domain/types');
+        const regInput = new RegisterConfigInput();
+        regInput.registrations = ALL_CONFIG_REGISTRATIONS;
+        await ctx.configAccess.registerConfig(regInput, new ConfigContext(), new RegisterConfigOutput());
+        // 4. 从默认配置文件恢复配置值
+        const defaultsPath = path.join(dataDir, 'config-defaults.json');
+        let restored = 0;
+        if (fs.existsSync(defaultsPath)) {
+          const defaultsData = JSON.parse(fs.readFileSync(defaultsPath, 'utf-8')) as Record<string, unknown[]>;
+          for (const [table, rows] of Object.entries(defaultsData)) {
+            if (table === 'config_registry' || table.includes('_privilege') || !rows || rows.length === 0) continue;
+            for (const r of rows) {
+              if ((r as Record<string, unknown>).config_key && (r as Record<string, unknown>).config_value !== undefined) {
+                try {
+                  ctx.relationDb.executeRaw(
+                    `INSERT INTO "${table}" ("config_key", "config_value", "value_type", "description", "updated") VALUES (?, ?, ?, ?, ?)`,
+                    [(r as Record<string, unknown>).config_key, (r as Record<string, unknown>).config_value,
+                     (r as Record<string, unknown>).value_type || 'STRING', (r as Record<string, unknown>).description || null,
+                     Date.now()],
+                  );
+                  restored++;
+                } catch { /* skip */ }
+              }
+            }
+          }
+        }
+        sendJson(res, 200, { success: true, registered: ALL_CONFIG_REGISTRATIONS.length, restored, backup: backupPath, defaults: defaultsPath });
+        return;
+
+      // ---- Config Snapshot ----
+      } else if (method === 'POST' && pathname === '/api/config/snapshot') {
+        const { v4: uuidv4 } = await import('uuid');
+        const now = Date.now();
+        const name = (body as Record<string, unknown>).name as string || '';
+        const snapshotName = name || new Date(now).toLocaleString('zh-CN', { hour12: false });
+        const configTables = ctx.relationDb.queryRaw<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config')",
+          [],
+        );
+        const snapshotData: Record<string, unknown[]> = {};
+        for (const row of configTables || []) {
+          try {
+            const data = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []);
+            snapshotData[row.name] = data || [];
+          } catch { /* table may not exist yet */ }
+        }
+        const id = uuidv4();
+        ctx.relationDb.executeRaw(
+          'INSERT INTO config_snapshot (id, created, updated, name, snapshot_data) VALUES (?, ?, ?, ?, ?)',
+          [id, now, now, snapshotName, JSON.stringify(snapshotData)],
+        );
+        sendJson(res, 200, { id, name: snapshotName, created: now });
+
+      } else if (method === 'GET' && pathname === '/api/config/snapshot') {
+        const rows = ctx.relationDb.queryRaw<{ id: string; created: number; name: string }>(
+          'SELECT id, created, name FROM config_snapshot ORDER BY created DESC', [],
+        );
+        sendJson(res, 200, { list: rows || [] });
+
+      } else if (method === 'DELETE' && pathname.startsWith('/api/config/snapshot/')) {
+        const snapshotId = pathname.split('/api/config/snapshot/')[1];
+        ctx.relationDb.executeRaw('DELETE FROM config_snapshot WHERE id = ?', [snapshotId]);
+        sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && /\/api\/config\/snapshot\/[^/]+\/restore$/.test(pathname)) {
+        const snapshotId = pathname.split('/api/config/snapshot/')[1].split('/restore')[0];
+        const row = ctx.relationDb.queryRaw<{ snapshot_data: string }>(
+          'SELECT snapshot_data FROM config_snapshot WHERE id = ?', [snapshotId],
+        )[0];
+        if (!row) { sendJson(res, 404, { error: '快照不存在' }); return; }
+        const data: Record<string, unknown[]> = JSON.parse(row.snapshot_data);
+        // 清空当前配置表
+        const configTables = ctx.relationDb.queryRaw<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config')",
+          [],
+        );
+        for (const t of configTables || []) {
+          try { ctx.relationDb.executeRaw(`DELETE FROM "${t.name}"`, []); } catch { /* ok */ }
+        }
+        // 恢复快照数据
+        for (const [table, rows] of Object.entries(data)) {
+          if (!rows || rows.length === 0) continue;
+          const cols = Object.keys(rows[0]);
+          const placeholders = cols.map(() => '?').join(', ');
+          const sql = `INSERT INTO "${table}" ("${cols.join('", "')}") VALUES (${placeholders})`;
+          for (const r of rows) {
+            try { ctx.relationDb.executeRaw(sql, cols.map(c => r[c])); } catch { /* ok */ }
+          }
+        }
+        sendJson(res, 200, { success: true });
+
       // ---- Model (LLM) ----
       } else if (method === 'GET' && pathname === '/api/config/model') {
         const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_type: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(

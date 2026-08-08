@@ -430,15 +430,17 @@
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `info_context_config` 表获取上下文构建参数：base_timeline_count, base_tag_relative_count, base_similarity_count, base_keyword_count, base_random_count, total；
 2. 调用 RelationDBProvider.selectDB 查询 `info_raw` 表中当前 session 下 pin=true 的消息，按创建时间倒序排列。钉住的消息优先作为上下文的最前端部分，收集数量为 `pinned_count`（上限不超过 total）；
-3. 以 info_id 为起点，通过 BFS 逐层遍历 `info_graph` 表的引用链（cited_info_id → citing_info_id），收集消息到达 base_timeline_count 条或直到没有更多引用（使用 visited 集合去重），按消息的原始创建时间倒序排列；
-4. 以步骤 3 中获取到的时间线消息实际数量 `timeline_actual` 为基准，动态计算剩余配额 `remaining = total - pinned_count - timeline_actual`，按比例分配其他来源的加载数量：
+3. 对钉住的消息，若 info 字段为空（已被老化清理），调用 RelationDBProvider.selectOneDB 查询 `info_summary` 表获取摘要文本，以 `[摘要] {summary}` 格式替代原始内容；若摘要也不存在则跳过该条；
+4. 以 info_id 为起点，通过 BFS 逐层遍历 `info_graph` 表的引用链（cited_info_id → citing_info_id），收集消息到达 base_timeline_count 条或直到没有更多引用（使用 visited 集合去重），按消息的原始创建时间倒序排列；
+5. 以步骤 4 中获取到的时间线消息实际数量 `timeline_actual` 为基准，动态计算剩余配额 `remaining = total - pinned_count - timeline_actual`，按比例分配其他来源的加载数量：
    a. `tag_count = min(base_tag_relative_count, remaining)`，调用 `relationKInfo` 接口获取基于 Tag 相关性的关联信息；
    b. `similarity_count = min(base_similarity_count, remaining - tag_count)`，调用 `similarKInfo` 接口获取基于语义相似度的关联信息；
    c. `keyword_count = min(base_keyword_count, remaining - tag_count - similarity_count)`，调用 `keywordKInfo` 接口获取基于关键词搜索的关联信息；
    d. `random_count = min(base_random_count, remaining - tag_count - similarity_count - keyword_count)`，调用 RelationDBProvider.selectDB 从 `info_raw` 表随机采样（使用 SQLite 的 `ORDER BY RANDOM() LIMIT random_count`）获取随机联想信息；
-5. 将所有来源的信息合并：按来源优先级（pinned > timeline > tag_relative > similarity > keyword > random）和各自内部的相关性/时间排序组装为统一的上下文列表；
-6. 若合并后的总数超过 total，截取前 total 条；
-7. 返回上下文数据列表（info_id, info 内容, source 来源标注），写入 output 返回；
+6. **摘要回退**：对时间线、tag 关联、语义相似、关键词、随机采样等所有来源收集到的每条信息，若 `info` 字段为空（已被老化清理），调用 RelationDBProvider.selectOneDB 查询 `info_summary` 表获取摘要文本，以 `[摘要] {summary}` 格式替代原始内容；若摘要也不存在则跳过该条；
+7. 将所有来源的信息合并：按来源优先级（pinned > timeline > tag_relative > similarity > keyword > random）和各自内部的相关性/时间排序组装为统一的上下文列表；
+8. 若合并后的总数超过 total，截取前 total 条；
+9. 返回上下文数据列表（info_id, info 内容, source 来源标注），写入 output 返回；
 
 ## 2.6. 老化清理
 
@@ -485,7 +487,7 @@
 
 ### 2.6.2. INFO 老化清理（delInfo）
 
-**功能**：按照时间进行正序排序，获取大于某个时间的INFO信息，仅清空 info 字段内容（设为 ""），不删除整条记录。钉住的消息（pin=true）跳过不清理。清理前确保至少有一种索引（向量/标签/摘要）存在；
+**功能**：按照时间进行正序排序，获取大于某个时间的INFO信息，仅清空 info 字段内容（设为 ""），不删除整条记录。钉住的消息（pin=true）跳过不清理。清理前确保至少有一种索引（向量/标签/摘要）存在。**向量数据、标签关联、关键词索引不会被清理，保留用于后续的语义搜索、关键词搜索和标签相关性搜索。**
 **入参**：
 - input：DelInfoInput（继承 Input）
 - context：DelInfoContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
@@ -500,8 +502,10 @@
    a. 调用 `existVectorInfo(info_id)` 检查是否已向量化 → 若未向量化且 `info_vector_config.enable = true`，调用 `vectorInfo(info_id)` 进行补向量化（保留信息的语义索引）；
    b. 调用 `existTagInfo(info_id)` 检查是否已标签化 → 若未标签化且 `info_tag_config.enable = true`，调用 `tagInfo(info_id)` 进行补标签抽取；
    c. 调用 `existSummaryInfo(info_id)` 检查是否已摘要化 → 若未摘要化且 `info_summary_config.enable = true`，调用 `summaryInfo(info_id)` 生成摘要（后续通过摘要可检索到该信息）；
-5. 对于已确保至少有一种索引（向量/标签/摘要）存在的过期记录，调用 RelationDBProvider.updateDB 将该记录的 info 字段置为空字符串（`""`），保留其他字段（id, created, session_id, work_id 等）不变；
+5. 对于已确保至少有一种索引（向量/标签/摘要）存在的过期记录，调用 RelationDBProvider.updateDB 将该记录的 info 字段置为空字符串（`""`），保留其他字段（id, created, session_id, work_id 等）不变。**向量（info_vector）、标签（info_tag）、关键词（info_keyword）数据保持不变；**
 6. 将清理的信息数量（deleted_count）写入 output 返回；
+
+**设计说明**：老化清理仅清空原始内容以节省存储空间，向量、标签、关键词等索引数据全部保留。在构建上下文时，若通过语义相似度、关键词或标签匹配到已老化的信息，系统自动以 `[摘要] {summary}` 格式使用该信息的摘要内容替代原始内容。
 
 ## 重要内容
 

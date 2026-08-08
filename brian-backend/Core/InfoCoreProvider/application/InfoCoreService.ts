@@ -1115,7 +1115,17 @@ export class InfoCoreService {
       } catch { /* 忽略 */ }
     }
 
-    // 5. 排序：钉住 → 时间线 → tag → similarity → keyword → random
+    // 5. 上下文内容回退：已老化信息使用摘要替代
+    for (const [infoId, item] of mergedMap) {
+      if (!item.info || item.info === '') {
+        const summary = await this.getInfoSummaryRow(infoId);
+        if (summary) {
+          item.info = `[摘要] ${summary.summary}`;
+        }
+      }
+    }
+
+    // 6. 排序：钉住 → 时间线 → tag → similarity → keyword → random
     const sorted = [...mergedMap.values()].sort((a, b) => b.created - a.created);
     const result = [...pinnedItems, ...sorted];
     output.list = result.slice(0, contextConfig.total);

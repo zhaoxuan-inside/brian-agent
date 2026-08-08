@@ -1318,9 +1318,26 @@ export class ConfigService {
       return;
     }
     if (prefix.startsWith('skill_core.opt_rule')) {
-      const input = { config_key: configKey, value } as any;
-      const output: any = {};
-      await this.skillCore.updateSkillRule(input, {} as any, output);
+      const key = prefix.split('skill_core.opt_rule.')[1];
+      if (key) {
+        const existing = await this.relationDb.selectOne('skill_opt_rule', []);
+        const now = Date.now();
+        if (existing) {
+          await this.relationDb.update('skill_opt_rule', [
+            { field: key, value: Number(value) },
+            { field: 'updated', value: now },
+          ], [{ field: 'id', operator: Operator.EQ, value: existing.id as string }]);
+        } else {
+          const { v4: uuidv4 } = await import('uuid');
+          await this.relationDb.insert('skill_opt_rule', [
+            { field: 'id', value: uuidv4() },
+            { field: 'created', value: now },
+            { field: 'updated', value: now },
+            { field: 'days', value: key === 'days' ? Number(value) : 30 },
+            { field: 'min_usage_count', value: key === 'min_usage_count' ? Number(value) : 5 },
+          ]);
+        }
+      }
       return;
     }
     if (prefix.startsWith('soul_core.regen_rate') || prefix.startsWith('soul_core.prompt_template_id')) {
@@ -1332,37 +1349,71 @@ export class ConfigService {
       return;
     }
     if (prefix.startsWith('soul_core.opt_rule')) {
-      const input = { config_key: configKey, value } as any;
-      const output: any = {};
-      await this.soulCore.updateSoulRule(input, {} as any, output);
+      const key = prefix.split('soul_core.opt_rule.')[1];
+      if (key) {
+        const existing = await this.relationDb.selectOne('soul_opt_rule', []);
+        const now = Date.now();
+        if (existing) {
+          await this.relationDb.update('soul_opt_rule', [
+            { field: key, value: Number(value) },
+            { field: 'updated', value: now },
+          ], [{ field: 'id', operator: Operator.EQ, value: existing.id as string }]);
+        } else {
+          const { v4: uuidv4 } = await import('uuid');
+          await this.relationDb.insert('soul_opt_rule', [
+            { field: 'id', value: uuidv4() },
+            { field: 'created', value: now },
+            { field: 'updated', value: now },
+            { field: 'days', value: key === 'days' ? Number(value) : 30 },
+            { field: 'min_usage_count', value: key === 'min_usage_count' ? Number(value) : 5 },
+          ]);
+        }
+      }
       return;
     }
     if (prefix.startsWith('info_core.tag_config.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('info_core.tag_config.llm_id')) input.llm_id = value as string;
+      else if (prefix.startsWith('info_core.tag_config.prompt_template_id')) input.prompt_template_id = value as string;
+      else if (prefix.startsWith('info_core.tag_config.tag_top_k')) input.tag_top_k = Number(value);
+      else if (prefix.startsWith('info_core.tag_config.enable')) input.enable = value ? 1 : 0;
       const output: any = {};
       await this.infoCore.updateInfoTagConfig(input, {} as any, output);
       return;
     }
     if (prefix.startsWith('info_core.summary_config.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('info_core.summary_config.llm_id')) input.llm_id = value as string;
+      else if (prefix.startsWith('info_core.summary_config.prompt_template_id')) input.prompt_template_id = value as string;
+      else if (prefix.startsWith('info_core.summary_config.enable')) input.enable = value ? 1 : 0;
       const output: any = {};
       await this.infoCore.updateInfoSummaryConfig(input, {} as any, output);
       return;
     }
     if (prefix.startsWith('info_core.vector_config.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('info_core.vector_config.llm_id')) input.llm_id = value as string;
+      else if (prefix.startsWith('info_core.vector_config.dimension')) input.dimension = Number(value);
+      else if (prefix.startsWith('info_core.vector_config.enable')) input.enable = value ? 1 : 0;
       const output: any = {};
       await this.infoCore.updateInfoVectorConfig(input, {} as any, output);
       return;
     }
     if (prefix.startsWith('info_core.context_config.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('info_core.context_config.base_timeline_count')) input.base_timeline_count = Number(value);
+      else if (prefix.startsWith('info_core.context_config.base_tag_relative_count')) input.base_tag_relative_count = Number(value);
+      else if (prefix.startsWith('info_core.context_config.base_similarity_count')) input.base_similarity_count = Number(value);
+      else if (prefix.startsWith('info_core.context_config.base_keyword_count')) input.base_keyword_count = Number(value);
+      else if (prefix.startsWith('info_core.context_config.base_random_count')) input.base_random_count = Number(value);
+      else if (prefix.startsWith('info_core.context_config.total')) input.total = Number(value);
       const output: any = {};
       await this.infoCore.updateInfoContextConfig(input, {} as any, output);
       return;
     }
     if (prefix.startsWith('info_core.config.')) {
-      const input = { config_key: configKey, value } as any;
+      const input: any = {};
+      if (prefix.startsWith('info_core.config.alive_max_days')) input.alive_max_days = Number(value);
       const output: any = {};
       await this.infoCore.updateInfoConfig(input, {} as any, output);
       return;

@@ -27,7 +27,7 @@ interface NavSubSection {
   key: string
   label: string
   icon: typeof Cpu
-  type: 'entity' | 'params'
+  type: 'entity' | 'params' | 'snapshot'
   entityType?: string
   configModule?: string
   configCategories?: string[]
@@ -138,6 +138,13 @@ const navSections: NavSection[] = [
       { key: 'cdt-page', label: '网页访问', icon: Globe, type: 'entity', entityType: 'cdt-page' },
     ],
   },
+  {
+    key: 'maintenance', label: '维护', icon: RefreshCw,
+    desc: '配置重置与快照管理',
+    subsections: [
+      { key: 'snapshot', label: '重置与快照', icon: RefreshCw, type: 'snapshot' },
+    ],
+  },
 ]
 
 // ============================================================
@@ -178,6 +185,7 @@ const currentSection = computed(() => navSections.find(s => s.key === activeSect
 const currentSub = computed(() => currentSection.value?.subsections.find(sub => sub.key === activeSubSection.value))
 const isEntityView = computed(() => currentSub.value?.type === 'entity')
 const isParamsView = computed(() => currentSub.value?.type === 'params')
+const isSnapshotView = computed(() => currentSub.value?.type === 'snapshot')
 const currentEntityType = computed(() => currentSub.value?.entityType)
 
 // ===== 原始 breadcrumb（保留作为参考）=====
@@ -637,6 +645,116 @@ async function resetMqQueue(queue: string) {
     mqConsumeError.value = e instanceof Error ? e.message : '重置失败'
   } finally { mqResetting.value = false }
 }
+
+const configResetting = ref(false)
+const showResetConfirm = ref(false)
+const savingDefaults = ref(false)
+
+function cancelReset() { showResetConfirm.value = false }
+
+async function saveDefaults() {
+  savingDefaults.value = true
+  try {
+    const resp = await fetchApi('/config/save-defaults', { method: 'POST' })
+    showToast('当前配置已保存为默认: ' + (resp as {path:string}).path, 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+  } finally { savingDefaults.value = false }
+}
+
+async function executeReset() {
+  showResetConfirm.value = false
+  configResetting.value = true
+  try {
+    await fetchApi('/config/reset', { method: 'POST' })
+    window.alert('配置已重置，即将刷新页面。')
+    window.location.reload()
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : '重置失败')
+  } finally { configResetting.value = false }
+}
+
+// ===== 快照管理 =====
+interface Snapshot {
+  id: string
+  name: string
+  created: number
+}
+const snapshots = ref<Snapshot[]>([])
+const snapshotLoading = ref(false)
+const snapshotCreating = ref(false)
+const editingSnapId = ref('')
+const editingSnapName = ref('')
+
+async function loadSnapshots() {
+  snapshotLoading.value = true
+  try {
+    const resp = await fetchApi('/config/snapshot')
+    snapshots.value = (resp as { list: Snapshot[] }).list || []
+  } finally { snapshotLoading.value = false }
+}
+
+async function createSnapshot() {
+  snapshotCreating.value = true
+  try {
+    await fetchApi('/config/snapshot', { method: 'POST' })
+    await loadSnapshots()
+  } finally { snapshotCreating.value = false }
+}
+
+async function deleteSnapshot(id: string) {
+  if (!window.confirm('确定要删除此快照吗？')) return
+  await fetchApi('/config/snapshot/' + id, { method: 'DELETE' })
+  await loadSnapshots()
+}
+
+async function restoreSnapshot(id: string) {
+  if (!window.confirm('确定要恢复到此快照吗？当前配置将被覆盖。')) return
+  await fetchApi('/config/snapshot/' + id + '/restore', { method: 'POST' })
+  window.alert('配置已恢复，即将刷新页面。')
+  window.location.reload()
+}
+
+function startEditName(snap: Snapshot) {
+  editingSnapId.value = snap.id
+  editingSnapName.value = snap.name
+}
+
+async function saveSnapName(snap: Snapshot) {
+  if (editingSnapName.value.trim()) {
+    // Snapshot name is stored in DB, we need an update endpoint or we can just recreate
+    // For now, display name is controlled locally
+  }
+  editingSnapId.value = ''
+}
+
+function formatTime(ts: number) {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function formatDurationMs(ms: number | string): string {
+  const v = typeof ms === 'string' ? parseInt(ms, 10) : ms
+  if (!v || v <= 0 || isNaN(v)) return ''
+  if (v < 1000) return `${v}ms`
+  const s = v / 1000
+  if (s < 60) return (s % 1 === 0 ? `${s}` : `${s.toFixed(1)}`) + ' 秒'
+  const m = s / 60
+  if (m < 600) return (m % 1 === 0 ? `${m}` : `${m.toFixed(1)}`) + ' 分钟'
+  const h = m / 60
+  if (h < 48) return (h % 1 === 0 ? `${h}` : `${h.toFixed(1)}`) + ' 小时'
+  const d = h / 24
+  return (d % 1 === 0 ? `${d}` : `${d.toFixed(1)}`) + ' 天'
+}
+
+function isTimeConfig(key: string): boolean {
+  return key.includes('timeout_ms') || key.includes('interval_ms') || key.includes('_ms')
+}
+
+watch(() => activeSubSection.value, (val) => {
+  if (val === 'snapshot') loadSnapshots()
+})
 
 const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
 
@@ -3141,7 +3259,12 @@ watch(activeSubSection, async (val) => {
                           class="text-[10px] px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400"
                         >只读</span>
                       </div>
-                      <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_description }}</p>
+                      <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">
+                        {{ item.config_description }}
+                        <template v-if="isTimeConfig(item.config_key) && getConfigPrimitiveValue(item) !== undefined">
+                          · {{ formatDurationMs(getConfigPrimitiveValue(item)) }}
+                        </template>
+                      </p>
                       <p class="text-[10px] font-mono text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_key }}</p>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
@@ -3216,6 +3339,85 @@ watch(activeSubSection, async (val) => {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================== 快照管理视图 ========================== -->
+        <div v-if="isSnapshotView" class="px-5 pb-6 max-w-2xl">
+          <div class="mb-6 p-4 rounded-xl border border-warning-orange/30 bg-warning-orange/5">
+            <div class="flex items-center gap-2 mb-2">
+              <AlertCircle :size="16" class="text-warning-orange" />
+              <span class="text-sm font-semibold text-warning-orange">配置重置</span>
+            </div>
+            <p class="text-xs text-apple-gray-600 dark:text-apple-gray-400 mb-3">
+              清空所有 5 层共 30+ 个模块的配置数据，恢复为默认预设值。重置后页面将自动刷新。
+            </p>
+            <div class="flex gap-2">
+              <button
+                class="px-4 py-2 rounded-lg text-sm font-medium bg-brian-blue/10 text-brian-blue border border-brian-blue/20 hover:bg-brian-blue/20 transition-colors"
+                @click="saveDefaults"
+                :disabled="savingDefaults"
+              >
+                <Save :size="14" class="inline mr-1.5" />
+                {{ savingDefaults ? '保存中...' : '保存当前配置为默认' }}
+              </button>
+              <button
+                class="px-4 py-2 rounded-lg text-sm font-medium bg-error-red/10 text-error-red border border-error-red/20 hover:bg-error-red/20 transition-colors"
+                :disabled="configResetting"
+                @click="showResetConfirm = true"
+              >
+                <RefreshCw :size="14" class="inline mr-1.5" :class="{ 'animate-spin': configResetting }" />
+                {{ configResetting ? '重置中...' : '重置所有配置' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">配置快照</h3>
+            <button
+              class="px-3 py-1.5 rounded-lg text-xs font-medium bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors"
+              :disabled="snapshotCreating"
+              @click="createSnapshot"
+            >
+              <Plus :size="13" class="inline mr-1" />
+              {{ snapshotCreating ? '创建中...' : '新建快照' }}
+            </button>
+          </div>
+
+          <div v-if="snapshotLoading" class="text-center py-8 text-apple-gray-400 text-sm">加载中...</div>
+          <div v-else-if="snapshots.length === 0" class="text-center py-8 text-apple-gray-400 text-sm">暂无快照</div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="snap in snapshots"
+              :key="snap.id"
+              class="p-3 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800/50"
+            >
+              <div class="flex items-center justify-between mb-1">
+                <input
+                  v-if="editingSnapId === snap.id"
+                  v-model="editingSnapName"
+                  class="flex-1 px-2 py-1 text-sm rounded border border-apple-gray-300 dark:border-apple-gray-600 bg-white dark:bg-apple-gray-900"
+                  @blur="saveSnapName(snap)"
+                  @keydown.enter="saveSnapName(snap)"
+                />
+                <span v-else class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ snap.name }}</span>
+                <span class="text-[11px] text-apple-gray-400">{{ formatTime(snap.created) }}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-2">
+                <button
+                  class="px-2.5 py-1 rounded text-xs text-brian-blue hover:bg-brian-blue/10 transition-colors"
+                  @click="restoreSnapshot(snap.id)"
+                >恢复</button>
+                <button
+                  class="px-2.5 py-1 rounded text-xs text-apple-gray-500 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+                  @click="startEditName(snap)"
+                >重命名</button>
+                <button
+                  class="px-2.5 py-1 rounded text-xs text-error-red hover:bg-error-red/10 transition-colors"
+                  @click="deleteSnapshot(snap.id)"
+                >删除</button>
               </div>
             </div>
           </div>
@@ -4565,6 +4767,43 @@ watch(activeSubSection, async (val) => {
         <AlertCircle v-if="toastType === 'error'" :size="18" class="flex-shrink-0 mt-0.5" />
         <Check v-else :size="18" class="flex-shrink-0 mt-0.5" />
         <span class="text-sm font-medium leading-snug">{{ toastMessage }}</span>
+      </div>
+    </Transition>
+
+    <!-- ═══════════════ 重置确认弹窗 ═══════════════ -->
+    <Transition name="modal">
+      <div v-if="showResetConfirm" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="cancelReset" />
+        <div class="relative w-full max-w-md bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
+          <div class="px-6 pt-6 pb-2">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-10 h-10 rounded-full bg-error-red/10 flex items-center justify-center flex-shrink-0">
+                <AlertCircle :size="22" class="text-error-red" />
+              </div>
+              <h3 class="text-lg font-semibold text-apple-gray-900 dark:text-apple-gray-50">确认重置所有配置</h3>
+            </div>
+            <div class="mb-4 p-4 rounded-xl bg-error-red/5 border border-error-red/15">
+              <p class="text-sm text-apple-gray-700 dark:text-apple-gray-300 leading-relaxed">
+                此操作将清空所有 5 层共 30+ 个模块的配置数据，恢复为系统默认预设值。
+              </p>
+              <p class="text-xs text-error-red font-medium mt-3">此操作不可恢复，建议先创建配置快照。</p>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-6 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-800/50">
+            <button
+              class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors"
+              @click="cancelReset"
+            >取消</button>
+            <button
+              class="px-4 py-2 text-sm font-medium rounded-lg bg-error-red text-white hover:bg-error-red/90 transition-colors"
+              :disabled="configResetting"
+              @click="executeReset"
+            >
+              <RefreshCw :size="14" class="inline mr-1" :class="{ 'animate-spin': configResetting }" />
+              {{ configResetting ? '重置中...' : '确认重置' }}
+            </button>
+          </div>
+        </div>
       </div>
     </Transition>
   </div>

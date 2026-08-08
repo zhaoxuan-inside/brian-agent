@@ -165,7 +165,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- LLMCoreProvider ---
   core('llm_core', 'basic', 'regen_rate', 'LLM 重新匹配概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
-  core('llm_core', 'basic', 'prompt_template_id', 'LLM 匹配排名的 Prompt', 'STRING', '', '用于 LLM 匹配排名'),
+  core('llm_core', 'basic', 'prompt_template_id', 'LLM 匹配 Prompt', 'STRING', '', '用于 LLM 匹配排名'),
   core('llm_core', 'quota', 'quota_tokens_per_day', '每日 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_week', '每周 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_month', '每月 Token 限额', 'INT', 0, '0 为不限制'),
@@ -175,14 +175,14 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- InfoCoreProvider ---
   core('info_core', 'config', 'config.alive_max_days', '信息保留最大天数', 'INT', 30, '超过自动清理'),
-  core('info_core', 'tag_config', 'tag_config.llm_id', '标签生成 LLM ID', 'STRING', ''),
-  core('info_core', 'tag_config', 'tag_config.prompt_template_id', '标签生成 Prompt 模板 ID', 'STRING', ''),
+  core('info_core', 'tag_config', 'tag_config.llm_id', '标签生成 LLM', 'STRING', ''),
+  core('info_core', 'tag_config', 'tag_config.prompt_template_id', '标签生成 Prompt', 'STRING', ''),
   core('info_core', 'tag_config', 'tag_config.tag_top_k', '标签 Top-K 数量', 'INT', 5),
   core('info_core', 'tag_config', 'tag_config.enable', '标签生成启用', 'BOOLEAN', false),
-  core('info_core', 'summary_config', 'summary_config.llm_id', '摘要生成 LLM ID', 'STRING', ''),
-  core('info_core', 'summary_config', 'summary_config.prompt_template_id', '摘要生成 Prompt 模板 ID', 'STRING', ''),
+  core('info_core', 'summary_config', 'summary_config.llm_id', '摘要生成 LLM', 'STRING', ''),
+  core('info_core', 'summary_config', 'summary_config.prompt_template_id', '摘要生成 Prompt', 'STRING', ''),
   core('info_core', 'summary_config', 'summary_config.enable', '摘要生成启用', 'BOOLEAN', false),
-  core('info_core', 'vector_config', 'vector_config.llm_id', '向量化 LLM ID', 'STRING', ''),
+  core('info_core', 'vector_config', 'vector_config.llm_id', '向量化 LLM', 'STRING', ''),
   core('info_core', 'vector_config', 'vector_config.dimension', '向量维度', 'INT', 1024),
   core('info_core', 'vector_config', 'vector_config.enable', '向量化启用', 'BOOLEAN', false),
   core('info_core', 'context_config', 'context_config.base_timeline_count', '时间线基础数量', 'INT', 500, '上下文构建-时间线'),
@@ -194,11 +194,11 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- MCPCoreProvider ---
   core('mcp_core', 'basic', 'regen_rate', 'MCP 重新匹配概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
-  core('mcp_core', 'basic', 'prompt_template_id', 'MCP 匹配排名的 Prompt 模板 ID', 'STRING', '', '用于 MCP 匹配排名'),
+  core('mcp_core', 'basic', 'prompt_template_id', 'MCP 匹配 Prompt', 'STRING', '', '用于 MCP 匹配排名'),
 
   // --- SkillCoreProvider ---
   core('skill_core', 'basic', 'regen_rate', 'Skill 重新生成概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
-  core('skill_core', 'basic', 'prompt_template_id', 'Skill 匹配排名的 Prompt 模板 ID', 'STRING', '', '用于 Skill 匹配排名'),
+  core('skill_core', 'basic', 'prompt_template_id', 'Skill 匹配 Prompt', 'STRING', '', '用于 Skill 匹配排名'),
   core('skill_core', 'opt_rule', 'opt_rule.days', '优化规则观察天数', 'INT', 30, '技能淘汰/优化规则的观察窗口'),
   core('skill_core', 'opt_rule', 'opt_rule.min_usage_count', '优化规则最小使用次数', 'INT', 5, '低于此次数的技能可能被淘汰'),
 
@@ -228,7 +228,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   orch('execution', 'basic', 'max_concurrent', '最大并发数', 'INT', 1),
   orch('execution', 'basic', 'default_max_iterations', '默认最大迭代次数', 'INT', 10),
   orch('execution', 'basic', 'async_worker_interval', '异步工作间隔（ms）', 'INT', 1000),
-  orch('execution', 'basic', 'dag_timeout_ms', 'DAG 超时（ms）', 'INT', 300000, '5 分钟'),
+  orch('execution', 'basic', 'dag_timeout_ms', 'DAG 超时（ms）', 'INT', 300000, '整个 DAG 执行的最大超时时间'),
 
   // --- OrchestrationVisualization ---
   orch('visualization', 'basic', 'max_nodes_in_graph', '图中最大节点数', 'INT', 50),
