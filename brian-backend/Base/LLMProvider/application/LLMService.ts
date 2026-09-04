@@ -1109,17 +1109,20 @@ export class LLMService {
   }
 
   /**
-   * 准备实际发往模型的 wire 消息（数据处理，与策略侧拼装语义一致）。
+   * 准备实际发往模型的 wire 消息（数据处理，与策略侧拼装语义一致；system 前置/替换首条）。
    */
   private prepareWireMessages(input: ExecLLMEventsInput): LLMMessage[] {
-    if (input.messages?.length) {
-      return input.messages;
-    }
-    const messages: LLMMessage[] = [];
+    const messages: LLMMessage[] = input.messages?.length ? [...input.messages] : [];
     if (input.system) {
-      messages.push({ role: 'system', content: input.system });
+      if (messages[0]?.role === 'system') {
+        messages[0] = { role: 'system', content: input.system };
+      } else {
+        messages.unshift({ role: 'system', content: input.system });
+      }
     }
-    messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    if (!messages.length) {
+      messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    }
     return messages;
   }
 

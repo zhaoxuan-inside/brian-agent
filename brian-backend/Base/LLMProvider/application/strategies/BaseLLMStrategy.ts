@@ -244,6 +244,9 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
 
   /**
    * 准备 execLLMEvents 请求体（数据处理）。
+   *
+   * 注意：events API 面向 SSE 流，body 必须显式 `stream: true`
+   * （旧 execLLM 流式路径是事后向 strategy body 注入 stream，本方法在构造期即固化）。
    */
   protected prepareEventsBody(
     model: LLMAvailableRecord,
@@ -252,6 +255,7 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     const body: Record<string, unknown> = {
       model: model.llm_title,
       messages: this.prepareEventsMessages(input),
+      stream: true,
     };
     if (input.temperature !== undefined) {
       body.temperature = input.temperature;
@@ -272,17 +276,24 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
   }
 
   /**
-   * 准备 execLLMEvents 消息数组（数据处理）：messages 优先，兼容 prompt/system。
+   * 准备 execLLMEvents 消息数组（数据处理）。
+   *
+   * system 语义（修复：messages 路径此前丢失 system，导致编排层系统提示从未到达模型）：
+   * - messages 非空 → 以 input.system **前置/替换首条 system 消息**；
+   * - messages 为空 → 兼容 prompt/system 单轮拼装。
    */
   protected prepareEventsMessages(input: ExecLLMEventsInput): LLMMessage[] {
-    if (input.messages?.length) {
-      return input.messages;
-    }
-    const messages: LLMMessage[] = [];
+    const messages: LLMMessage[] = input.messages?.length ? [...input.messages] : [];
     if (input.system) {
-      messages.push({ role: 'system', content: input.system });
+      if (messages[0]?.role === 'system') {
+        messages[0] = { role: 'system', content: input.system };
+      } else {
+        messages.unshift({ role: 'system', content: input.system });
+      }
     }
-    messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    if (!messages.length) {
+      messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    }
     return messages;
   }
 

@@ -14,7 +14,8 @@
   "dependencies": {
     "@brian-agent/base": "file:../Base",
     "@brian-agent/core": "file:../Core",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@brian-agent/agent": "file:../Agent"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

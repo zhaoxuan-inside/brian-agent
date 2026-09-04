@@ -23,8 +23,8 @@
 | 0 地基 | `Runtime/` 骨架；Base/LLMProvider 增加 LLMEvent 流 + 原生 tool_calls + AbortSignal | ✅ 已完成（2026-09-04，见 CHANGELOG；zod 已就位） |
 | 1 数据模型 | Session/Message/Part/RunState（6 表）；EventBus + SSE v2 投影 | ✅ 核心已完成（2026-09-04：Session 3 表 + runtime_event + durable 投影；runtime_run 表随阶段4 Runs 接入） |
 | 2 单代理循环 | agentLoop + Tool 框架（skill/mcp/cdt）+ IterationBudget | ✅ 已完成（2026-09-04：Loop/Tools 模块落地；DIRECT 端到端验证；见 CHANGELOG） |
-| 3 编排即工具 | update_plan + delegate + ask_user；steering/队列模式；Evolutor → curator | 待开发 |
-| 4 网关切换 | RunGateway 两段式接管 HTTP；前端 v2 协议切换 | 待开发 |
+| 3 编排即工具 | update_plan + delegate + ask_user；steering/队列模式；Evolutor → curator | ✅ 核心已落地（2026-09-04：Runs 两段式 + Agents 确定性匹配/组件重解析 + Loop 真队列）；⬜ 编排工具三件套 + curator |
+| 4 网关切换 | RunGateway 两段式接管 HTTP；前端 v2 协议切换 | ✅ 后端已上线（Chat v2 分流 + 过渡投影，`runtime.v2_enabled` 可回退）；⬜ 前端 v2 原生协议改造 |
 | 5 退役 | Runtime-PRD §10 退役清单全部下线；可视化改为事件投影 | 待开发 |
 
 **状态**：设计定稿，待开发

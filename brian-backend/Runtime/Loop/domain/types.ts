@@ -81,6 +81,14 @@ export class AbortLoopTurnOutput extends Output {
   signalled!: boolean;
 }
 
+/** 会话级队列提供者（RunGateway 注入；鸭子接口，Loop 不反向依赖） */
+export interface LoopQueue {
+  /** 边界抽干 steering 队列（内层每轮开始时调用） */
+  drainSteering(sessionKey: string): string[];
+  /** 外层取 followup 队列（当前 run 结束后调用） */
+  takeFollowup(sessionKey: string): string[];
+}
+
 // ---------------------------------------------------------------------------
 // configLoop
 // ---------------------------------------------------------------------------

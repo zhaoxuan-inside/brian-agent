@@ -45,6 +45,7 @@ import {
   ConfigLoopInput,
   ConfigLoopOutput,
   LoopContext,
+  LoopQueue,
 } from '../domain/types';
 import {
   AddMessageInput,
@@ -132,6 +133,8 @@ export class AgentLoopService {
     private readonly bus: EventBusAccess,
     private readonly tool: ToolAccess,
     private readonly logger?: Logger,
+    /** 会话级队列（steering/followup；RunGateway 注入，鸭子接口不反向依赖） */
+    private readonly queue?: LoopQueue,
   ) {}
 
   /** 初始化组件 */
@@ -256,9 +259,31 @@ export class AgentLoopService {
   // 两级循环
   // -------------------------------------------------------------------------
 
-  /** 外层循环（逻辑控制）：followup 队列阶段3 接 Runs；当前单轮外层 */
+  /** 外层循环（逻辑控制）：followup 队列 + steering 残留兜底（RunGateway 注入；无队列时单轮） */
   private async runOuterLoop(ctx: LoopRunContext): Promise<void> {
     ctx.stopReason = await this.runInnerLoop(ctx);
+    for (;;) {
+      const followup = this.queue?.takeFollowup(ctx.sessionKey) ?? [];
+      const residualSteer = followup.length ? [] : (this.queue?.drainSteering(ctx.sessionKey) ?? []);
+      const injected = [...followup, ...residualSteer];
+      if (!injected.length) {
+        break;
+      }
+      await this.persistInjectedMessages(ctx, injected);
+      ctx.stopReason = await this.runInnerLoop(ctx);
+    }
+  }
+
+  /** 注入排队消息为 user 消息（逻辑控制；下一轮 wire 派生自动包含） */
+  private async persistInjectedMessages(ctx: LoopRunContext, messages: string[]): Promise<void> {
+    for (const message of messages) {
+      const add = new AddMessageInput();
+      add.session_id = ctx.sessionId;
+      add.role = 'user';
+      add.content = message;
+      add.run_id = ctx.runId;
+      await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx());
+    }
   }
 
   /** 内层循环（逻辑控制）：终止条件 = finish reason 无 tool_calls / 预算 / 取消 */
@@ -280,8 +305,12 @@ export class AgentLoopService {
     return { stop: false, finalTurn };
   }
 
-  /** 内层单轮（逻辑控制）：预算 → LLM → 持久化 → 工具消费 */
+  /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费 */
   private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopRunContext['stopReason']> {
+    const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
+    if (steered.length) {
+      await this.persistInjectedMessages(ctx, steered);
+    }
     const gate = this.consumeBudget(ctx);
     if (gate.stop) {
       return gate.reason ?? 'budget';

@@ -49,6 +49,33 @@ import {
   type SSEEvent,
 } from '../domain/types';
 
+import type { RuntimeEvent } from '@brian-agent/runtime';
+import {
+  RunGatewayAccess,
+  SessionAccess,
+  EventBusAccess,
+  RunGatewayContext,
+  SubmitRunInput,
+  SubmitRunOutput,
+  WaitRunInput,
+  WaitRunOutput,
+  RegisterProjectionInput,
+  RegisterProjectionOutput,
+  AddSessionInput,
+  AddSessionOutput,
+  SessionContext,
+  EventBusContext,
+} from '@brian-agent/runtime';
+
+/** Chat v2 运行时依赖（Runtime v2 接线；缺省走旧编排链路） */
+export interface ChatRuntimeV2Deps {
+  gateway: RunGatewayAccess;
+  session: SessionAccess;
+  bus: EventBusAccess;
+  /** v2 开关（缺省 true；由组合根经配置注入） */
+  isV2Enabled: () => Promise<boolean>;
+}
+
 export class ChatService {
   constructor(
     private readonly relationDb: RelationDBAccess,
@@ -58,6 +85,7 @@ export class ChatService {
     private readonly orchestrationEntry: OrchestrationEntryAccess,
     private readonly logger?: Logger,
     private readonly streamAccess?: StreamAccess,
+    private readonly runtime?: ChatRuntimeV2Deps,
   ) {}
 
   // ===== 修改后的 submitWork 与 openChatStream 实现：增加第一条消息自动生成会话名称（50字截断，若已有名称则不覆盖） =====
@@ -170,6 +198,11 @@ export class ChatService {
     const sessionExists = await this.checkSessionExists(input.session_id);
     if (!sessionExists) {
       throw new NotFoundError('Session', input.session_id);
+    }
+
+    // ===== Runtime v2 分流（阶段4 过渡：编排内核走 v2，SSE 出口投影为现有前端协议；开关可回退旧链路） =====
+    if (this.runtime && await this.runtime.isV2Enabled()) {
+      return this.openChatStreamV2(input, output, context, metrics, report, onEvent);
     }
 
     // trace_id 统一由后端经 ToolProvider(IdGenerator) 生成 UUID v4，
@@ -329,6 +362,109 @@ export class ChatService {
 
     output.events = events;
     return true;
+  }
+
+
+  // -------------------------------------------------------------------------
+  // Runtime v2 链路（阶段4 过渡投影：v2 事件 → 现有前端 SSE 协议；前端 v2 原生改造后移除）
+  // -------------------------------------------------------------------------
+
+  /** v2 链路入口（逻辑控制）：生命周期事件 + 投影 + submitRun + waitRun + done */
+  async openChatStreamV2(
+    input: OpenChatStreamInput,
+    output: OpenChatStreamOutput,
+    context: ChatContext,
+    metrics?: Metrics,
+    report?: Report,
+    onEvent?: (event: SSEEvent) => void,
+  ): Promise<boolean> {
+    const traceId = context.trace_id || IdGenerator.generate();
+    context.trace_id = traceId;
+    const events: SSEEvent[] = [];
+    const emit = (event: string, data: Record<string, unknown>) => {
+      const evt: SSEEvent = { event, data };
+      events.push(evt);
+      onEvent?.(evt);
+    };
+    const sessionId = input.session_id;
+    await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
+    emit('connected', { session_id: sessionId, trace_id: traceId });
+    emit('loading', { work_id: sessionId });
+
+    const runtime = this.runtime!;
+    const addIn = new AddSessionInput();
+    addIn.session_key = sessionId;
+    await runtime.session.addSession(addIn, new AddSessionOutput(), new SessionContext());
+    const state = { finalText: '' };
+    const projection = this.prepareV2Projection(sessionId, emit, state);
+    // 投影起点 = 会话最新事件 seq（只尾随本次 run 的新事件，不重放历史 run 的 delta）
+    projection.after_seq = this.soSessionLastSeq(sessionId);
+    await runtime.bus.registerProjection(projection, new RegisterProjectionOutput(), new EventBusContext());
+
+    const submitIn = new SubmitRunInput();
+    submitIn.session_key = sessionId;
+    submitIn.session_id = sessionId;
+    submitIn.user_message = input.msg_content;
+    submitIn.interact_id = traceId;
+    const submitOut = new SubmitRunOutput();
+    await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report);
+    const waitIn = new WaitRunInput();
+    waitIn.run_id = submitOut.run_id;
+    const waitOut = new WaitRunOutput();
+    await runtime.gateway.waitRun(waitIn, waitOut, new RunGatewayContext(), metrics, report);
+    this.logger?.info?.('openChatStreamV2: run settled', { session_id: sessionId, run_id: submitOut.run_id, status: waitOut.status, stop_reason: waitOut.stop_reason });
+    emit('done', { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, final_response: state.finalText, elapsed_ms: 0, token_usage: {}, paused: false });
+    output.events = events;
+    return true;
+  }
+
+  /** 会话最新事件 seq（数据处理；投影起点，避免重放历史 run 事件） */
+  private soSessionLastSeq(sessionKey: string): number {
+    try {
+      const rows = this.relationDb.queryRaw<{ max_seq: number }>(
+        'SELECT COALESCE(MAX("seq"), 0) AS max_seq FROM "runtime_event" WHERE "session_key" = ?', [sessionKey],
+      );
+      return Number(rows[0]?.max_seq ?? 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  /** v2 事件 → 现有前端协议投影（数据处理；text 累积供 done 帧） */
+  private prepareV2Projection(
+    sessionId: string,
+    emit: (event: string, data: Record<string, unknown>) => void,
+    state: { finalText: string },
+  ): RegisterProjectionInput {
+    const deliver = (event: RuntimeEvent): void => {
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      const stream = this.streamAccess;
+      if (event.type === 'part.delta' && payload.field === 'text') {
+        const delta = String(payload.delta ?? '');
+        state.finalText += delta;
+        void stream?.pushText(sessionId, 'text_chunk', delta, { chunk_delay_ms: 0 });
+        return;
+      }
+      if (event.type === 'part.delta' && payload.field === 'reasoning') {
+        void stream?.pushEvent(sessionId, 'agent_thinking', 'TRACE', { output: payload.delta });
+        return;
+      }
+      if (event.type === 'tool.launch') {
+        void stream?.pushEvent(sessionId, 'agent_action', 'TRACE', { action: payload.tool_id, input: payload.input });
+        return;
+      }
+      if (event.type === 'tool.result') {
+        void stream?.pushEvent(sessionId, 'agent_output', 'TRACE', { output: payload.output, status: payload.status });
+        return;
+      }
+      if (event.type === 'error') {
+        emit('error', { error_message: String(payload.message ?? 'run failed'), error_code: 'RUN_FAILED' });
+      }
+    };
+    const projIn = new RegisterProjectionInput();
+    projIn.session_key = sessionId;
+    projIn.deliver = deliver;
+    return projIn;
   }
 
   async createSession(input: CreateSessionInput, output: CreateSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,

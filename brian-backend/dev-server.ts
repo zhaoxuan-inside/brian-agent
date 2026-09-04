@@ -10,6 +10,18 @@ import { WebSocketServer } from 'ws';
 
 import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator } from '@brian-agent/base';
 import { RelationDBAccess } from './Base/RelationDBProvider';
+import {
+  SessionAccess,
+  EventBusAccess,
+  ToolAccess as RuntimeToolAccess,
+  RegisterBuiltinToolsInput,
+  RegisterBuiltinToolsOutput,
+  ToolContext as RuntimeToolContext,
+  LoopAccess,
+  AgentDefAccess,
+  RunGatewayAccess,
+} from './Runtime';
+import type { LoopQueue } from './Runtime';
 import { applySystemSeed } from './seed/systemSeed';
 import { LLMAccess } from './Base/LLMProvider';
 import { MCPAccess } from './Base/MCPProvider';
@@ -499,6 +511,8 @@ async function buildCooccurGraphFromGraphDBCached(
   return data;
 }
 
+let runtimeGatewayRef: RunGatewayAccess;
+
 async function buildContext() {
   // ---- Base Providers ----
   const relationDb = new RelationDBAccess({ dbPath: path.join(DATA_DIR, 'brian.db'), wal: true, autoCreateConfigTable: true });
@@ -687,7 +701,55 @@ async function buildContext() {
 
   // ---- Application Layer ----
   new ChatSchemaInitializer(relationDb).init();
-  const chatAccess = new ChatAccess(relationDb, infoCore, writerAgent, evolutorAgent, orchestrationEntry, logger, streamAccess);
+  // ---- Runtime v2（编排内核；Chat v2 分流依赖）----
+  const runtimeSessionAccess = new SessionAccess(relationDb, logger);
+  await runtimeSessionAccess.initialize();
+  const runtimeBus = new EventBusAccess(relationDb, logger);
+  await runtimeBus.initialize();
+  const runtimeToolAccess = new RuntimeToolAccess(relationDb, { skillAccess, mcpAccess, cdtCore }, logger);
+  await runtimeToolAccess.initialize();
+  const builtinRegIn = new RegisterBuiltinToolsInput();
+  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser'];
+  const builtinRegOut = new RegisterBuiltinToolsOutput();
+  await runtimeToolAccess.registerBuiltinTools(builtinRegIn, builtinRegOut, new RuntimeToolContext());
+  logger.info('[startup] runtime builtin tools', String(builtinRegOut.registered ?? []));
+
+  // RunGateway 与 Loop 的队列互相绑定：Loop 经鸭子接口消费 gateway 的 steering/followup 队列
+  const loopQueueBridge: import('@brian-agent/runtime').LoopQueue = {
+    drainSteering: (sessionKey: string) => runtimeGatewayRef.drainSteeringFor(sessionKey),
+    takeFollowup: (sessionKey: string) => runtimeGatewayRef.takeFollowupFor(sessionKey),
+  };
+  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeBus, runtimeToolAccess, logger, loopQueueBridge);
+  await runtimeLoopAccess.initialize();
+  const runtimeAgentDefAccess = new AgentDefAccess(relationDb, llmAccess, {
+    agentBuilder,
+    llmCore,
+    soulCore,
+    skillCore,
+    mcpCore,
+  }, logger);
+  await runtimeAgentDefAccess.initialize();
+  const runtimeGateway = new RunGatewayAccess(relationDb, runtimeSessionAccess, runtimeBus, runtimeAgentDefAccess, runtimeLoopAccess, logger);
+  await runtimeGateway.initialize();
+  runtimeGatewayRef = runtimeGateway;
+
+  // v2 开关：runtime.v2_enabled 配置（缺省 true；配置中心可回退旧编排链路）
+  relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS "runtime_config" (
+    "config_key"   TEXT    NOT NULL PRIMARY KEY,
+    "config_value" TEXT    NOT NULL,
+    "value_type"   TEXT    NOT NULL,
+    "description"  TEXT,
+    "updated"      INTEGER NOT NULL
+  )`);
+  const runtimeV2Config = new ConfigService(relationDb, 'runtime_config');
+  const isV2Enabled = async (): Promise<boolean> => (await runtimeV2Config.getString('v2_enabled', 'true')) !== 'false';
+
+  const chatAccess = new ChatAccess(relationDb, infoCore, writerAgent, evolutorAgent, orchestrationEntry, logger, streamAccess, {
+    gateway: runtimeGateway,
+    session: runtimeSessionAccess,
+    bus: runtimeBus,
+    isV2Enabled,
+  });
 
   const chunkAccess = new ChunkAccess(logger);
   const selfLearningAccess = new SelfLearningAccess(relationDb, infoCore, mqCore, llmCore, evolutorAgent, writerAgent, orchestrationEntry, graphDBAccess, mqAccess, chunkAccess, llmAccess, promptsAccess, logger);

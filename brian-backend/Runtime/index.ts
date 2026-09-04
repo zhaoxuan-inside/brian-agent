@@ -60,6 +60,55 @@ export type {
 } from './Tools';
 export { zodToJSONSchema } from './Tools';
 
+// Agents：声明式定义 · 确定性匹配 · 组件快照（阶段3 前置）
+export { AgentDefAccess, AgentsSchemaInitializer } from './Agents';
+export {
+  AgentDefContext,
+  MatchAgentDefInput,
+  MatchAgentDefOutput,
+  SoAgentSnapshotInput,
+  SoAgentSnapshotOutput,
+  DeclareAgentInput,
+  DeclareAgentOutput,
+  SoAgentDefsInput,
+  SoAgentDefsOutput,
+  ConfigAgentDefInput,
+  ConfigAgentDefOutput,
+  RUNTIME_AGENT_DEF_TABLE,
+  RUNTIME_AGENTS_CONFIG_TABLE,
+} from './Agents';
+export type {
+  AgentDefRecord,
+  AgentSnapshot,
+  SnapshotToolEntry,
+  AgentDefComponents,
+} from './Agents';
+
+// Runs：运行网关（两段式 · session lane · 队列模式）（阶段3/4 前置）
+export { RunGatewayAccess, RunsSchemaInitializer } from './Runs';
+export {
+  RunGatewayContext,
+  SubmitRunInput,
+  SubmitRunOutput,
+  WaitRunInput,
+  WaitRunOutput,
+  SteerRunInput,
+  SteerRunOutput,
+  AbortRunInput,
+  AbortRunOutput,
+  SoRunStatusInput,
+  SoRunStatusOutput,
+  ConfigRunsInput,
+  ConfigRunsOutput,
+  RUNTIME_RUN_TABLE,
+  RUNTIME_RUNS_CONFIG_TABLE,
+} from './Runs';
+export type {
+  QueueMode,
+  RunStatus,
+  RunRecord,
+} from './Runs';
+
 // Bus：事件总线（持久化事件 · 重放 · durable 投影）（阶段1）
 export { EventBusAccess, BusSchemaInitializer } from './Bus';
 export {
@@ -115,3 +164,4 @@ export type {
   MessageWithParts,
   PartRecord,
 } from './Session';
+export type { LoopQueue } from './Loop';

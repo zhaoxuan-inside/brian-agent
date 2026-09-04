@@ -1,5 +1,34 @@
 # 代码变更记录 (CHANGELOG)
 
+## [2026-09-04] Runtime v2 · 线上切换：Chat v2 分流（编排内核/Agent 选择上线）+ Agents 确定性匹配 + Runs 两段式网关 —— 修复「身份问题套编码人设」错配
+
+**变更原因**：
+- 线上证据（work `a5b6d442`，trace `6a7afdec`）：「你是谁？」命中 `general-通用问答助手`（名/用途匹配正确），但其**历史 Soul 绑定为「专业编码与研究助手」**，LLM 按人设回答「专业编码与研究助理」；且线上编排仍是旧 JSONNode workflow（Runtime v2 未接线）。
+
+**修改的方法与模块**：
+- `Runtime/Agents/`（新增）— **确定性匹配**：`matchAgentDef`（exact 签名 → bigram Jaccard 相似度 ≥0.7 → LLM 打分（builtin.agent_match）→ AgentBuilder.force_new 构建，**无随机重建**，弃用 `shouldReuseByRegenRate`）；`runtime_agent_def` 表（name/agent_ref/task_signature/agent_purpose/model_id/soul_id/tools_json/budget）；`soAgentSnapshot` **组件按当前任务经 Core match 动态重解析**（soul/skills/mcps 不沿用 agent_soul/agent_skill 历史绑定——根治错配）+ `builtin.identity` 身份段模板（PromptCatalog，身份问题由此回答，自称 Brian，禁止罗列内部工具）；
+- `Runtime/Runs/`（新增）— `runtime_run` 表 + `RunGatewayService`：两段式 `submitRun`（立即 ack `{run_id, queued, steered}`）/ session lane（并发 1）/ 队列模式 steer（注入活动 run）/ followup（排队）/ interrupt（中止后排队）/ `waitRun`（结算 waiter，未注册 run 立即兜底）/ `abortRun`（类型化取消）/ `soRunStatus`；
+- `Runtime/Loop/` — 接 steering/followup **真队列**（鸭子接口 `LoopQueue`，RunGateway 后绑定注入；外层 followup + steering 残留兜底，内层边界抽干）；
+- `Application/Chat/ChatService` — `openChatStreamV2`（`runtime.v2_enabled` 开关，缺省 true）：Runtime 会话幂等创建 → **v2 事件 → 现有前端 SSE 协议过渡投影**（part.delta(text)→text_chunk、part.delta(reasoning)→agent_thinking、tool.launch/result→agent_action/agent_output、run.status 结算→done；投影起点=会话最新 seq，**不重放历史 run**）→ submitRun → waitRun → done(final_response)；
+- `dev-server.ts` — 组合根装配 Runtime（Session/EventBus/Tool(内置3工具)/Loop/AgentDef/RunGateway）+ queue bridge + v2 开关（runtime_config 表）；
+- **两处关键 LLM 链路修复**（线上联调定位）：
+  1. `BaseLLMStrategy.prepareEventsBody` — **补 `stream: true`**（旧 execLLM 流式路径是事后注入 strategy body，events API 构造期缺失 → 端点返回非流式 JSON → SSE 解析无帧 → 断流误判 error）；
+  2. `prepareEventsMessages`（Strategy + Service）— **messages 路径丢失 system**：input.messages 非空时直接 return，编排层 system 从未到达模型（自称 Claude/工具清单漂移的根因）→ 修复为 **system 前置/替换首条 system 消息**；
+- `Runtime/Agents` — `agent_purpose` 列（兼容 ALTER）+ 旧行回填（用途用于 LLM 打分展示，签名仅作匹配键）。
+
+**影响的端点**：
+- `POST /api/chat/stream` — **行为切换**：编排内核从 JSONNode SIMPLE workflow → Runtime v2（RunGateway + Loop + 确定性 Agent 匹配 + identity 身份段）；SSE 出口协议不变（前端零改动）；`runtime_config.v2_enabled=false` 可一键回退旧链路；
+- 线上验证：干净会话「你是谁？」→「我是 Brian，你的智能个人助理……」（不再套编码 Soul）；一般问答/技能场景正常；同任务复用同 def（不重复构建）。
+
+**测试**（Runtime 39（+5 网关/匹配）+ Base 799 全过；方法行数零超限）：
+- `Runtime/test/RuntimeGateway.test.ts`：确定性复用（两次提交 buildAgent 仅 1 次）/ 组件动态重解析（system 含 identity + matchSoul 内容）/ session lane steer 语义（steered=true 同 run_id，边界抽干成为第二条 user 消息）/ 事件投影 / waitRun 兜底。
+
+**可能存在的问题/风险点**：
+- 过渡投影保留旧事件名（前端 v2 原生协议改造后删除，TODO 已列）；
+- LLM 打分质量依赖 `agent_purpose`（构建时从 agent 表读取；历史 def 已回填）；
+- 会话历史 assistant 回复会形成模式 prior（历史污染），长会话需阶段3+ compaction；
+- `matchSkill/matchSoul` 当前 Soul 库仅编码类条目，身份/闲聊场景建议补充通用 Soul 资产。
+
 ## [2026-09-04] Runtime v2 · 审计遗留修复：流断流判定 / 降级混合流禁止 / part.delta 合帧 / 事件保留期 / tool_id 命名统一
 
 **变更原因**：

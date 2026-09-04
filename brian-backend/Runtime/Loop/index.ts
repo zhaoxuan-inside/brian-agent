@@ -14,3 +14,4 @@ export {
   ConfigLoopInput,
   ConfigLoopOutput,
 } from './domain/types';
+export type { LoopQueue } from './domain/types';

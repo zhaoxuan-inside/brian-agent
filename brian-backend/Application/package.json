@@ -15,7 +15,8 @@
     "@brian-agent/agent": "file:../Agent",
     "@brian-agent/base": "file:../Base",
     "@brian-agent/core": "file:../Core",
-    "@brian-agent/orchestration": "file:../Orchestration"
+    "@brian-agent/orchestration": "file:../Orchestration",
+    "@brian-agent/runtime": "file:../Runtime"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

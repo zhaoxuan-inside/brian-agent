@@ -138,8 +138,8 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 | **0 地基** ✅（2026-09-04） | `Runtime/` 骨架；Base/LLMProvider 增加 LLMEvent 流 + 原生 tool_calls + AbortSignal | 单测：LLMEvent 流归一化（14 用例）；tool_calls 请求/响应；IterationBudget（6 用例）；zod 依赖就位；见 CHANGELOG 同日记录 |
 | **1 数据模型** | Session/Message/Part/RunState（SQLite 6 表）；EventBus + SSE v2 投影 | soContextDetail 读取正确；事件重放一致 |
 | **2 单代理循环** ✅（2026-09-04） | agentLoop + Tool 框架（skill/mcp/cdt 3 工具）+ Budget | DIRECT 场景端到端验证（`Runtime/test/AgentLoop.test.ts`：多轮 tool_calls 配对回流→stop / 预算→budget / 取消→aborted / 失败→error）；消息中心派生 wire 消息验证；见 CHANGELOG 同日记录 |
-| **3 编排即工具** | update_plan + delegate + ask_user；steering/队列模式；Evolutor → background curator | PLANNING 等价场景（替代 Planning workflow）；澄清/确认挂起-恢复 |
-| **4 网关切换** | RunGateway 两段式接管 HTTP；前端 v2 协议切换（无兼容层） | HTTP 立即 ack；前端 store 由事件投影 |
+| **3 编排即工具**（部分落地 2026-09-04） | ✅ Runs（两段式 submitRun + session lane + steer/followup/interrupt + waitRun）；✅ Agents（确定性匹配 exact→signature→LLM→构建 + 组件按任务动态重解析 + identity 身份段）；✅ Loop 接 steering/followup 真队列；⬜ update_plan/delegate/ask_user 工具、curator | 线上验证：身份问答自称 Brian（不再套编码 Soul）、一般问答正常、确定性复用不重复构建 |
+| **4 网关切换**（过渡投影已上线 2026-09-04） | ✅ Chat v2 分流（`runtime.v2_enabled` 开关，缺省 true）；✅ v2 事件 → 现有前端 SSE 协议过渡投影（part.delta→text_chunk/agent_thinking、tool.*→agent_action/agent_output）；⬜ 前端 v2 原生协议改造（完成后删除过渡投影） | 线上 `/api/chat/stream` 全量走 v2 内核；run 两段式结算 + done 帧 final_response 正确 |
 | **5 退役** | 退役清单 §10 全部下线；可视化改为事件投影 | 退役后全量测试通过 |
 
 ## 10. 退役清单

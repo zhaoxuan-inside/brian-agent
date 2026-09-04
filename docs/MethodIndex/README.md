@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-04T13:57:16.480Z；方法总数：518
+> 生成时间：2026-09-04T14:58:03.473Z；方法总数：554
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -18,13 +18,13 @@
 | Base | [MQProvider](./Base/MQProvider.md) | 11 |
 | Base | [PromptCatalog](./Base/PromptCatalog.md) | 1 |
 | Base | [PromptsProvider](./Base/PromptsProvider.md) | 9 |
-| Base | [RelationDBProvider](./Base/RelationDBProvider.md) | 21 |
+| Base | [RelationDBProvider](./Base/RelationDBProvider.md) | 42 |
 | Base | [SkillProvider](./Base/SkillProvider.md) | 8 |
 | Base | [SoulProvider](./Base/SoulProvider.md) | 9 |
 | Base | [StreamProvider](./Base/StreamProvider.md) | 7 |
 | Base | [ToolProvider](./Base/ToolProvider.md) | 20 |
 | Base | [VectorDBProvider](./Base/VectorDBProvider.md) | 15 |
-| **Base 小计** | | **205** |
+| **Base 小计** | | **226** |
 | Core | [CDTCoreProvider](./Core/CDTCoreProvider.md) | 10 |
 | Core | [InfoCoreProvider](./Core/InfoCoreProvider.md) | 37 |
 | Core | [LLMCoreProvider](./Core/LLMCoreProvider.md) | 6 |
@@ -33,11 +33,13 @@
 | Core | [SkillCoreProvider](./Core/SkillCoreProvider.md) | 6 |
 | Core | [SoulCoreProvider](./Core/SoulCoreProvider.md) | 7 |
 | **Core 小计** | | **72** |
+| Runtime | [Agents](./Runtime/Agents.md) | 6 |
 | Runtime | [Bus](./Runtime/Bus.md) | 6 |
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
+| Runtime | [Runs](./Runtime/Runs.md) | 9 |
 | Runtime | [Session](./Runtime/Session.md) | 10 |
 | Runtime | [Tools](./Runtime/Tools.md) | 6 |
-| **Runtime 小计** | | **26** |
+| **Runtime 小计** | | **41** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |
 | Agent | [AgentExecution](./Agent/AgentExecution.md) | 10 |
@@ -61,4 +63,4 @@
 | Application | [UserProfile](./Application/UserProfile.md) | 13 |
 | Application | [Visualization](./Application/Visualization.md) | 10 |
 | **Application 小计** | | **110** |
-| **总计** | | **518** |
+| **总计** | | **554** |

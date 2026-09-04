@@ -21,6 +21,7 @@ import {
   ConfigLoopInput,
   ConfigLoopOutput,
   LoopContext,
+  type LoopQueue,
 } from '../domain/types';
 
 /**
@@ -36,9 +37,9 @@ import {
 export class LoopAccess {
   private readonly service: AgentLoopService;
 
-  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, bus: EventBusAccess, tool: ToolAccess, logger?: Logger,
+  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, bus: EventBusAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue,
   ) {
-    const rawService = new AgentLoopService(llm, session, bus, tool, logger);
+    const rawService = new AgentLoopService(llm, session, bus, tool, logger, queue);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentLoopService;
   }
 
