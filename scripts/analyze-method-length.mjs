@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const BACKEND = path.join(ROOT, 'brian-backend');
 const THRESHOLD = Number(process.argv[2] || 30);
 const layerArg = process.argv.find((a) => a.startsWith('--layer='));
-const LAYERS = layerArg ? layerArg.split('=')[1].split(',') : ['Base', 'Core', 'Agent', 'Orchestration', 'Application'];
+const LAYERS = layerArg ? layerArg.split('=')[1].split(',') : ['Base', 'Core', 'Runtime', 'Agent', 'Orchestration', 'Application'];
 
 function walk(dir, files = []) {
   for (const f of fs.readdirSync(dir)) {

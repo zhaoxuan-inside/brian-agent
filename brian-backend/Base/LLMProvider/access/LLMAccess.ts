@@ -44,6 +44,8 @@ import {
   GetLLMOutput,
   ExecLLMInput,
   ExecLLMOutput,
+  ExecLLMEventsInput,
+  ExecLLMEventsOutput,
   EmbedLLMInput,
   EmbedLLMOutput,
   GenLLMAttrInput,
@@ -190,6 +192,12 @@ export class LLMAccess {
   async execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.execLLM(input, output, context, metrics, report);
+  }
+
+  /** 调用 LLM 原生消息 + 原生工具调用流（Runtime v2 · Loop-PRD §4） */
+  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.execLLMEvents(input, output, context, metrics, report);
   }
 
   /** 调用 LLM 生成向量 */

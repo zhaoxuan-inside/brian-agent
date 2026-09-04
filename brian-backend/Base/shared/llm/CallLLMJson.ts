@@ -9,8 +9,14 @@
  * - 未提供 `fallback` 时：重试耗尽后抛出 ProviderError（error_code = 'LLM_JSON_ERROR'）。
  */
 
+// ===== 修复（Runtime v2 · 阶段 0）：原为 `import ... from '@brian-agent/base'`（自引用包名）=====
+// 自引用使 tsc 把自身 dist 全部 .d.ts 拉入程序输入，与 outDir=dist 碰撞（TS5055），
+// 导致 Base 重复构建必挂；改为相对导入。
+// ===== 原始导入（保留作为参考）=====
+// import { ExecLLMInput, ExecLLMOutput, LLMContext, ProviderError } from '@brian-agent/base';
 import type { LLMAccess } from '../../LLMProvider/access/LLMAccess';
-import { ExecLLMInput, ExecLLMOutput, LLMContext, ProviderError } from '@brian-agent/base';
+import { ExecLLMInput, ExecLLMOutput, LLMContext } from '../../LLMProvider/domain/types';
+import { ProviderError } from '../../shared/errors';
 
 /** callLLMJson 选项 */
 export interface CallLLMJsonOptions<T> {

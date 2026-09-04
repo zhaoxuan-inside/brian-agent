@@ -11,6 +11,12 @@
 
 import { Input, Context, Output } from '../../shared/base';
 import type { Condition, OrderBy, Page } from '../../shared/query';
+import type {
+  LLMEvent,
+  LLMMessage,
+  LLMToolSpec,
+  ParsedToolCall,
+} from '../../shared/llm/LLMEvent';
 
 /**
  * LLM 上下文（LLMContext）。
@@ -438,6 +444,60 @@ export class ExecLLMOutput extends Output {
   duration_ms = 0;
   /** 模型提供商返回的原始响应正文（未经解析） */
   raw_response = '';
+}
+
+// ---------------------------------------------------------------------------
+// execLLMEvents（Runtime v2 · 阶段 0，Loop-PRD §4）
+// ---------------------------------------------------------------------------
+
+/** execLLMEvents 入参 */
+export class ExecLLMEventsInput extends Input {
+  /** LLM ID（llm_available.id），为空则使用系统默认模型 */
+  id!: string;
+  /** 原生消息数组（优先于 prompt；严格角色交替，tool 仅可连排在 assistant tool_calls 后） */
+  messages?: LLMMessage[];
+  /** 单轮用户消息（messages 为空时的兼容入口） */
+  prompt?: string;
+  /** 系统提示词（messages 为空时前置为 system 消息） */
+  system?: string;
+  /** 采样温度（可选） */
+  temperature?: number;
+  /** 最大 Token 数（可选） */
+  max_tokens?: number;
+  /** 原生工具规格（JSON Schema 形式，经 zod 在上层转换） */
+  tools?: LLMToolSpec[];
+  /** 工具选择策略（默认 auto） */
+  tool_choice?: 'auto' | 'none' | 'required';
+  /** 其他透传参数（原样进入请求体） */
+  extra?: Record<string, unknown>;
+  /** 禁止模型降级回退（true 时仅调用指定模型） */
+  no_fallback?: boolean;
+  /** 外部取消信号（真取消，贯穿请求与流读取全程） */
+  signal?: AbortSignal;
+  /** 流内空闲看门狗毫秒数（连续无 chunk 超时中止，默认 30000） */
+  idle_watchdog_ms?: number;
+  /** 流事件回调：每个归一化 LLMEvent 触发一次 */
+  on_event?: (event: LLMEvent) => void;
+}
+
+/** execLLMEvents 出参 */
+export class ExecLLMEventsOutput extends Output {
+  /** 聚合后的回复内容（text_delta 累计） */
+  result = '';
+  /** 聚合后的思考内容（reasoning_delta 累计） */
+  reasoning = '';
+  /** 聚合完成的完整工具调用（finish_reason=tool-calls 时非空） */
+  tool_calls: ParsedToolCall[] = [];
+  /** 结束原因（tool-calls / stop / aborted / error） */
+  finish_reason = '';
+  /** 输入 Token 数 */
+  input_tokens = 0;
+  /** 输出 Token 数 */
+  output_tokens = 0;
+  /** 调用耗时（毫秒） */
+  duration_ms = 0;
+  /** 聚合后的完整请求消息（实际发往模型的 messages，供调试） */
+  wire_messages: LLMMessage[] = [];
 }
 
 // ---------------------------------------------------------------------------

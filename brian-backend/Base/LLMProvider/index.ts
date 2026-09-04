@@ -5,6 +5,14 @@
 // access 层
 export { LLMAccess } from './access/LLMAccess';
 
+// application 层（Runtime v2 · 阶段 0：归一化事件流解析器/执行器）
+export { LLMEventsParser } from './application/llmevents/LLMEventsParser';
+export {
+  LLMEventsRunner,
+  DEFAULT_IDLE_WATCHDOG_MS,
+} from './application/llmevents/LLMEventsRunner';
+export type { LLMEventsRunResult, LLMEventsRunnerOptions } from './application/llmevents/LLMEventsRunner';
+
 // infrastructure 层
 export { LLMSchemaInitializer } from './infrastructure/LLMSchemaInitializer';
 
@@ -35,6 +43,8 @@ export {
   GetLLMOutput,
   ExecLLMInput,
   ExecLLMOutput,
+  ExecLLMEventsInput,
+  ExecLLMEventsOutput,
   EmbedLLMInput,
   EmbedLLMOutput,
   GenLLMAttrInput,

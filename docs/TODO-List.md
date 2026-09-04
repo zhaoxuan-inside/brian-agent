@@ -2,7 +2,34 @@
 
 ## 待实现功能
 
-### 1. 配置变更历史记录与 Diff 对比
+### 1. Runtime v2 编排内核重构（弃用 workflow，2026-09-04 决策定稿）
+
+| 项目 | 内容 |
+|------|------|
+| **所属模块** | Runtime（新增，替代 `_04_Orchestration` + `Agent/AgentExecution`） |
+| **优先级** | P0 |
+| **设计文档** | `docs/_3_BackendDesign/_07_Runtime/Runtime-PRD.md`（含 Session/Runs/Loop/Tools/Agents/Bus 6 子 PRD） |
+| **需求来源** | OpenCode / Hermes / OpenClaw 2.0 编排与思考过程设计对照分析 |
+
+**决策记录**（2026-09-04）：
+- 不保留 DAG（DagScheduler/TaskDAG/AgentDAG 全部退役）；不引入 Effect-TS；新增依赖 zod；
+- 前端事件协议重构为 v2 原生 Part 流（无旧事件名兼容层）；
+- 新方法一律 5 参签名（Input/Output/Context/Metrics/Report）；所有方法 ≤40 行，逻辑控制与数据处理拆分。
+
+**阶段任务**（详见 Runtime-PRD §9 迁移路线）：
+
+| 阶段 | 任务 | 状态 |
+|------|------|------|
+| 0 地基 | `Runtime/` 骨架；Base/LLMProvider 增加 LLMEvent 流 + 原生 tool_calls + AbortSignal | ✅ 已完成（2026-09-04，见 CHANGELOG；zod 已就位） |
+| 1 数据模型 | Session/Message/Part/RunState（6 表）；EventBus + SSE v2 投影 | ✅ 核心已完成（2026-09-04：Session 3 表 + runtime_event + durable 投影；runtime_run 表随阶段4 Runs 接入） |
+| 2 单代理循环 | agentLoop + Tool 框架（skill/mcp/cdt）+ IterationBudget | ✅ 已完成（2026-09-04：Loop/Tools 模块落地；DIRECT 端到端验证；见 CHANGELOG） |
+| 3 编排即工具 | update_plan + delegate + ask_user；steering/队列模式；Evolutor → curator | 待开发 |
+| 4 网关切换 | RunGateway 两段式接管 HTTP；前端 v2 协议切换 | 待开发 |
+| 5 退役 | Runtime-PRD §10 退役清单全部下线；可视化改为事件投影 | 待开发 |
+
+**状态**：设计定稿，待开发
+
+### 2. 配置变更历史记录与 Diff 对比
 
 | 项目 | 内容 |
 |------|------|

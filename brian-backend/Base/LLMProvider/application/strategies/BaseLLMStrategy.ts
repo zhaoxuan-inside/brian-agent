@@ -10,8 +10,10 @@ import type {
   LLMProviderRecord,
   LLMAvailableRecord,
   ExecLLMInput,
+  ExecLLMEventsInput,
   EmbedLLMInput,
 } from '../../domain/types';
+import type { LLMMessage, LLMToolSpec } from '../../../shared/llm/LLMEvent';
 import type {
   ILLMProviderStrategy,
   HttpRequestOptions,
@@ -24,6 +26,12 @@ import type {
 export const DEFAULT_MODELS_PATH = 'v1/models';
 export const DEFAULT_CHAT_PATH = 'v1/chat/completions';
 export const DEFAULT_EMBED_PATH = 'v1/embeddings';
+
+/** execLLMEvents 请求体透传字段黑名单（与 buildChatRequest 约定一致并扩展工具字段） */
+const EVENTS_EXTRA_BLOCKLIST = [
+  'messages', 'prompt', 'system', 'temperature', 'max_tokens',
+  'model', 'tools', 'tool_choice', 'api_key',
+];
 
 export class BaseLLMStrategy implements ILLMProviderStrategy {
   readonly name: string = 'openai-compatible';
@@ -213,6 +221,99 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     }
 
     return { content, inputTokens, outputTokens };
+  }
+
+  /**
+   * 构造 execLLMEvents（原生消息 + 原生 tool_calls）请求（OpenAI 兼容）。
+   */
+  buildChatEventsRequest(
+    provider: LLMProviderRecord,
+    model: LLMAvailableRecord,
+    input: ExecLLMEventsInput,
+  ): HttpRequestOptions {
+    const chatPath = provider.chat_path || DEFAULT_CHAT_PATH;
+    const url = this.buildEndpoint(provider.llm_provider_url, chatPath);
+    const body = this.prepareEventsBody(model, input);
+    return {
+      url,
+      method: 'POST',
+      headers: this.buildHeaders(provider, 'application/json'),
+      body: JSON.stringify(body),
+    };
+  }
+
+  /**
+   * 准备 execLLMEvents 请求体（数据处理）。
+   */
+  protected prepareEventsBody(
+    model: LLMAvailableRecord,
+    input: ExecLLMEventsInput,
+  ): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: model.llm_title,
+      messages: this.prepareEventsMessages(input),
+    };
+    if (input.temperature !== undefined) {
+      body.temperature = input.temperature;
+    }
+    body.max_tokens = this.prepareEventsMaxTokens(model, input.max_tokens);
+    if (input.tools?.length) {
+      body.tools = input.tools.map((spec: LLMToolSpec) => this.prepareToolSpec(spec));
+      body.tool_choice = input.tool_choice ?? 'auto';
+    }
+    if (input.extra) {
+      for (const [k, v] of Object.entries(input.extra)) {
+        if (!EVENTS_EXTRA_BLOCKLIST.includes(k)) {
+          body[k] = v;
+        }
+      }
+    }
+    return body;
+  }
+
+  /**
+   * 准备 execLLMEvents 消息数组（数据处理）：messages 优先，兼容 prompt/system。
+   */
+  protected prepareEventsMessages(input: ExecLLMEventsInput): LLMMessage[] {
+    if (input.messages?.length) {
+      return input.messages;
+    }
+    const messages: LLMMessage[] = [];
+    if (input.system) {
+      messages.push({ role: 'system', content: input.system });
+    }
+    messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    return messages;
+  }
+
+  /**
+   * 准备 execLLMEvents max_tokens（数据处理）：入参优先，模型默认截断 4096。
+   */
+  protected prepareEventsMaxTokens(
+    model: LLMAvailableRecord,
+    maxTokens?: number,
+  ): number | undefined {
+    if (maxTokens !== undefined) {
+      return maxTokens;
+    }
+    if (model.max_tokens) {
+      return model.max_tokens > 100000 ? 4096 : model.max_tokens;
+    }
+    return undefined;
+  }
+
+  /**
+   * 准备工具规格（数据处理）：内部 tool_id 映射为 wire function.name（边界唯一映射点）。
+   */
+  protected prepareToolSpec(spec: LLMToolSpec): Record<string, unknown> {
+    return {
+      type: 'function',
+      function: {
+        name: spec.tool_id,
+        description: spec.description,
+        parameters: spec.parameters,
+      },
+    };
   }
 
   /**

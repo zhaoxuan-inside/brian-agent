@@ -1,5 +1,15 @@
 # Agent执行框架
 
+> **影响说明（2026-09-04 决策，Runtime v2）**：详见 `docs/_3_BackendDesign/_07_Runtime/Runtime-PRD.md` §10 退役清单。要点：
+> - **AgentExecution（1559 行）退役**：ExecutionRule steps/phases 状态机 + Think/Act/Reflect 模拟工具调用被 Runtime `Loop/`（两级循环 + 原生 tool_calls + LLMEvent 流）替代；
+> - **PlannerAgent**：planHierarchical 的 TaskDAG 输出退役 → Runtime `update_plan` 工具（过程性计划卡）；评估 prompt/`replan` 分析能力并入 curator；
+> - **IntentAgent 暂停语义退役** → Runtime `ask_user` 工具（Deferred 挂起，答复=下一条消息）；
+> - **WriterAgent Block JSON 输出退役** → 主循环 assistant 流 + 块 chunker（`Bus/Bus-PRD.md` §6）；
+> - **EvolutorAgent MQ worker 拓扑退役** → background lane 上的 curator 声明代理（评估 prompt 复用）；
+> - **AgentBuilder/AgentLibrary 组件匹配保留**：收敛为 Runtime `Agents/matchAgentDef`（去随机重建）；
+> - Agent 构成（策略/LLM/Skill/MCP/Soul）与三层匹配思想保留；策略不再可配置为循环 JSON（循环固定，差异=声明数据）。
+> 下文为历史设计文档，供对照与迁移期参考。
+
 ## 1. 设计目标
 
 1. **与上层编排框架分层解耦**：上层编排框架负责接收用户请求，根据编排策略将请求拆解为子任务或直接将任务（简单任务）提交给Agent进行任务完成； 对于复杂任务会调用PlannerAgent将任务进行拆解，根据任务之间的依赖关系建立任务之间依赖关系（DAG），然后上层编排框架将任务DAG图中的每一个节点任务提交给Agent执行框架。**任务具体交由哪个LLM执行、配备哪些Skill和MCP、承载怎样的Soul、采用何种策略——这些决策全部由Agent层自主完成**构建一个可以执行的Agent，这样就会在上层任务编排层从任务DAG图变成Agent DAG图，由上层编排层根据DAG图的依赖关系按照依赖关系调用DAG图中每一个节点对应的Agent，然后将Agent结果传递给下游的Agent，也就是上层编排框架负责处理任务和Agent之间的依赖关系，Agent层的Agent负责具体的任务执行。

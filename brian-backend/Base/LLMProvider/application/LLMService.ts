@@ -28,12 +28,17 @@ import {
   ValidationError,
   NotFoundError,
   DatabaseError,
+  AbortedError,
+  ProviderError,
+  type AbortReasonKind,
 } from '../../shared/errors';
 import { ExecRequestInput, ExecRequestOutput, HttpContext } from '../../ToolProvider/domain/HttpTypes';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator, Direction } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
-import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
+import type { LLMMessage } from '../../shared/llm/LLMEvent';
+import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS } from './llmevents/LLMEventsRunner';
+import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
 import { LLMStrategyFactory } from './strategies';
 import { newPatch, newRecord } from '../../shared/query';
 import {
@@ -45,6 +50,22 @@ import {
 
 /** testLLMProvider 默认连接超时时间（毫秒） */
 const TEST_TIMEOUT_MS = 10000;
+
+/** 单次 execLLMEvents 尝试结果（模块内部） */
+interface EventsSingleResult {
+  ok: boolean;
+  text?: string;
+  reasoning?: string;
+  finish_reason?: string;
+  tool_calls?: Array<{ index: number; id: string; tool_id: string; arguments: string }>;
+  input_tokens?: number;
+  output_tokens?: number;
+  error?: string;
+  error_code?: string;
+  aborted_reason?: AbortReasonKind;
+  /** 本候选是否已向 on_event 产出过事件（修复②：已发事件则禁止降级） */
+  emitted_events?: boolean;
+}
 
 /** listLLM 默认请求超时时间（毫秒） */
 const LIST_TIMEOUT_MS = 30000;
@@ -924,6 +945,182 @@ export class LLMService {
     output.error_code = lastErrorCode || 'ALL_MODELS_FAILED';
     output.duration_ms = Date.now() - startTime;
     return false;
+  }
+
+  /**
+   * 调用 LLM 原生消息 + 原生工具调用流（execLLMEvents，Runtime v2 · 阶段 0）。
+   *
+   * 处理流程（Loop-PRD §4）：
+   * 1. 校验入参（messages 优先，兼容 prompt/system）；
+   * 2. 解析候选模型队列（复用 resolveCandidateModels 故障降级语义）；
+   * 3. 每个候选经 LLMEventsRunner 发起 SSE 流，归一化事件经 input.on_event 回调；
+   * 4. 成功后聚合 result/reasoning/tool_calls/finish_reason/usage 并记 usage；
+   * 5. **真取消**：外部 signal 触发 → AbortedError 立即上抛（不触发降级）；
+   *    空闲看门狗（默认 30s 连续无 chunk）→ AbortedError('timeout') 同样上抛。
+   */
+  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    this.ensureEnabled();
+    this.validateEventsInput(input);
+    const candidateIds = await this.resolveCandidateModels(input.id);
+    if (candidateIds.length === 0) {
+      throw new ValidationError('id 不能为空，且无可用模型');
+    }
+    const startTime = Date.now();
+    const maxAttempts = input.no_fallback ? 1 : candidateIds.length;
+    let lastError = '';
+    let lastErrorCode = '';
+    for (let i = 0; i < maxAttempts; i++) {
+      const single = await this.executeEventsSingle(candidateIds[i], input, input.signal);
+      if (single.ok) {
+        this.fillEventsOutput(output, single, startTime, input);
+        return true;
+      }
+      lastError = single.error || 'Unknown error';
+      lastErrorCode = single.error_code || 'EXEC_FAILED';
+      if (single.aborted_reason) {
+        throw new AbortedError(single.aborted_reason, lastError);
+      }
+      // 修复②：候选已向 on_event 产出过事件 → 禁止降级（避免跨候选混合流，消费方无法区分）
+      if (single.emitted_events) {
+        this.logger?.debug(`LLMEvents candidate ${candidateIds[i]} 已产出流事件，禁止降级`);
+        break;
+      }
+      this.logger?.debug(`LLMEvents candidate ${candidateIds[i]} (${i + 1}/${maxAttempts}) failed: ${lastError}`);
+    }
+    output.error = `所有可用模型均调用失败 (尝试了 ${maxAttempts} 个模型): ${lastError}`;
+    output.error_code = lastErrorCode || 'ALL_MODELS_FAILED';
+    output.duration_ms = Date.now() - startTime;
+    return false;
+  }
+
+  /**
+   * 校验 execLLMEvents 入参（数据处理）。
+   */
+  private validateEventsInput(input: ExecLLMEventsInput): void {
+    const hasMessages = Array.isArray(input.messages) && input.messages.length > 0;
+    const hasPrompt = typeof input.prompt === 'string' && input.prompt.length > 0;
+    if (!hasMessages && !hasPrompt) {
+      throw new ValidationError('messages 与 prompt 至少提供一个');
+    }
+    if (input.tool_choice && input.tool_choice !== 'none' && !(input.tools?.length)) {
+      throw new ValidationError('tool_choice 需与 tools 同时提供');
+    }
+  }
+
+  /**
+   * 执行单候选模型的事件流（逻辑控制）：请求构造 → Runner → usage 记账。
+   */
+  private async executeEventsSingle(
+    llmId: string,
+    input: ExecLLMEventsInput,
+    signal?: AbortSignal,
+  ): Promise<EventsSingleResult> {
+    let emitted = false;
+    // 修复②：包装 on_event 记录产出标志（成功与异常路径均可判定是否禁止降级）
+    const onEvent = input.on_event
+      ? (event: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
+          emitted = true;
+          input.on_event!(event);
+        }
+      : undefined;
+    try {
+      const request = await this.buildEventsRequest(llmId, input);
+      const runner = new LLMEventsRunner({
+        request,
+        signal,
+        idle_watchdog_ms: input.idle_watchdog_ms ?? DEFAULT_IDLE_WATCHDOG_MS,
+        on_event: onEvent,
+        logger: this.logger,
+      });
+      const result = await runner.run();
+      await this.upsertUsage(llmId, result.input_tokens, result.output_tokens);
+      return {
+        ok: true,
+        text: result.text,
+        reasoning: result.reasoning,
+        finish_reason: result.finish_reason,
+        tool_calls: result.tool_calls,
+        input_tokens: result.input_tokens,
+        output_tokens: result.output_tokens,
+        emitted_events: emitted || result.emitted_events,
+      };
+    } catch (err) {
+      if (err instanceof AbortedError) {
+        return { ok: false, error: err.message, error_code: err.error_code, aborted_reason: err.reason, emitted_events: emitted };
+      }
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        error_code: err instanceof ProviderError ? err.error_code : 'CONNECT_ERROR',
+        emitted_events: emitted,
+      };
+    }
+  }
+
+  /**
+   * 构造 execLLMEvents 请求（数据处理）：模型/提供商查库校验 → 策略构造。
+   */
+  private async buildEventsRequest(
+    llmId: string,
+    input: ExecLLMEventsInput,
+  ): Promise<{ url: string; method: string; headers: Record<string, string>; body?: string }> {
+    const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: llmId },
+    ]);
+    const llm = llmRow as unknown as LLMAvailableRecord | null;
+    if (!llm) {
+      throw new NotFoundError('LLM', llmId);
+    }
+    if (!llm.enable || (llm.llm_type ?? 'text') === 'embedding') {
+      throw new ValidationError(`LLM ${llmId} 已禁用或是 ${llm.llm_type ?? '未知'} 模型`);
+    }
+    const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
+    ]);
+    const provider = providerRow as unknown as LLMProviderRecord | null;
+    if (!provider) {
+      throw new NotFoundError('LLMProvider', llm.llm_provider_id);
+    }
+    if (!provider.enable) {
+      throw new ValidationError(`LLMProvider ${provider.id} 已禁用`);
+    }
+    const strategy = LLMStrategyFactory.soStrategyById(provider);
+    return strategy.buildChatEventsRequest(provider, llm, input);
+  }
+
+  /**
+   * 成功路径填充输出（数据处理）。
+   */
+  private fillEventsOutput(
+    output: ExecLLMEventsOutput,
+    single: EventsSingleResult,
+    startTime: number,
+    input?: ExecLLMEventsInput,
+  ): void {
+    output.result = single.text ?? '';
+    output.reasoning = single.reasoning ?? '';
+    output.finish_reason = single.finish_reason ?? 'stop';
+    output.tool_calls = single.tool_calls ?? [];
+    output.input_tokens = single.input_tokens ?? 0;
+    output.output_tokens = single.output_tokens ?? 0;
+    output.duration_ms = Date.now() - startTime;
+    output.wire_messages = input ? this.prepareWireMessages(input) : [];
+  }
+
+  /**
+   * 准备实际发往模型的 wire 消息（数据处理，与策略侧拼装语义一致）。
+   */
+  private prepareWireMessages(input: ExecLLMEventsInput): LLMMessage[] {
+    if (input.messages?.length) {
+      return input.messages;
+    }
+    const messages: LLMMessage[] = [];
+    if (input.system) {
+      messages.push({ role: 'system', content: input.system });
+    }
+    messages.push({ role: 'user', content: String(input.prompt ?? '') });
+    return messages;
   }
 
   /**

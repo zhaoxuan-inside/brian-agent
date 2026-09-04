@@ -1,5 +1,12 @@
 # Orchestra
 
+> **退役计划（2026-09-04 决策）**：本层被 `docs/_3_BackendDesign/_07_Runtime/`（Runtime v2 编排内核）替代，详见 Runtime-PRD §2 决策记录与 §10 退役清单。要点：
+> - **不保留 DAG**：`DagScheduler`、TaskDAG→AgentDAG（`OrchestrationExecution`）、`handleDAGFailure` 重规划全部退役；
+> - **JSONNode workflow 引擎退役**：编排 = Runtime `AgentLoopService` 两级循环 + 编排原语工具（update_plan/delegate/ask_user）；
+> - **SIMPLE/PLANNING 双策略退役**：差异 = 声明式 AgentDef（`main.build`/`main.plan`）；
+> - **OrchestrationVisualization 退役**：timeline/dag 改为 `runtime_event` 事件重放投影；
+> - 下文为历史设计文档，供对照与迁移期参考。
+
 ## 1. 设计目标
 
 1. 将Agent的**编排（Orchestration）**和**执行（Execution）**解耦，使编排策略可独立演进，执行逻辑可复用；Agent的构建和执行由下层的Agent层进行完成；

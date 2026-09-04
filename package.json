@@ -8,6 +8,7 @@
     "brian-backend/Core",
     "brian-backend/Agent",
     "brian-backend/Orchestration",
+    "brian-backend/Runtime",
     "brian-backend/Application",
     "brian-frontend",
     "shared"
@@ -17,15 +18,15 @@
     "dev": "npm run dev:backend & npm run dev:frontend",
     "dev:backend": "npm run dev --workspace=@brian-agent/application",
     "dev:frontend": "npm run dev --workspace=@brian-agent/frontend",
-    "build": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application && npm run build --workspace=@brian-agent/frontend",
-    "build:backend": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application",
+    "build": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/runtime && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application && npm run build --workspace=@brian-agent/frontend",
+    "build:backend": "npm run build --workspace=@brian-agent/base && npm run build --workspace=@brian-agent/core && npm run build --workspace=@brian-agent/runtime && npm run build --workspace=@brian-agent/agent && npm run build --workspace=@brian-agent/orchestration && npm run build --workspace=@brian-agent/application",
     "build:frontend": "npm run build --workspace=@brian-agent/frontend",
     "docs:index": "node scripts/generate-method-index.mjs",
-    "test": "npm run test --workspace=@brian-agent/base && npm run test --workspace=@brian-agent/core && npm run test --workspace=@brian-agent/agent && npm run test --workspace=@brian-agent/orchestration && npm run test --workspace=@brian-agent/application",
+    "test": "npm run test --workspace=@brian-agent/base && npm run test --workspace=@brian-agent/core && npm run test --workspace=@brian-agent/runtime && npm run test --workspace=@brian-agent/agent && npm run test --workspace=@brian-agent/orchestration && npm run test --workspace=@brian-agent/application",
     "lint:backend": "ESLINT_USE_FLAT_CONFIG=true eslint --config eslint.backend.config.mjs brian-backend",
     "lint:backend:fix": "ESLINT_USE_FLAT_CONFIG=true eslint --config eslint.backend.config.mjs --fix brian-backend",
     "lint": "npm run lint --workspace=@brian-agent/frontend",
-    "typecheck": "npm run typecheck --workspace=@brian-agent/base && npm run typecheck --workspace=@brian-agent/core && npm run typecheck --workspace=@brian-agent/agent && npm run typecheck --workspace=@brian-agent/orchestration && npm run typecheck --workspace=@brian-agent/application",
+    "typecheck": "npm run typecheck --workspace=@brian-agent/base && npm run typecheck --workspace=@brian-agent/core && npm run typecheck --workspace=@brian-agent/runtime && npm run typecheck --workspace=@brian-agent/agent && npm run typecheck --workspace=@brian-agent/orchestration && npm run typecheck --workspace=@brian-agent/application",
     "analyze:methods": "node scripts/analyze-method-length.mjs 30"
   },
   "keywords": [

@@ -72,3 +72,24 @@ export class ProcessingError extends ProviderError {
     super(message, 'PROCESSING_ERROR');
   }
 }
+
+/**
+ * 类型化取消原因（Runtime v2 · OpenClaw turn-interruption 范式）。
+ */
+export type AbortReasonKind = 'user' | 'timeout' | 'budget' | 'superseded';
+
+/**
+ * 中止错误。
+ *
+ * AbortSignal 贯穿异步全链路时抛出（真取消，取代 Promise.race 假取消），
+ * 携带类型化原因供上层写规范化失败消息（OpenClaw canonical failure message）。
+ */
+export class AbortedError extends ProviderError {
+  /** 取消原因 */
+  readonly reason: AbortReasonKind;
+
+  constructor(reason: AbortReasonKind, message?: string) {
+    super(message ?? `执行已中止: ${reason}`, 'ABORTED');
+    this.reason = reason;
+  }
+}

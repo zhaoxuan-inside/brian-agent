@@ -1,5 +1,11 @@
 # Block-Native SSE 流式推送架构方案
 
+> **v2 重构说明（2026-09-04 决策）**：本 PRD 的 Block 类型与前端渲染保留，但生产与传输被 Runtime v2 替代，详见 `docs/_3_BackendDesign/_07_Runtime/Bus/Bus-PRD.md` §4/§6。要点：
+> - **生产者改为主循环 assistant 流 + 块 chunker**：markdown 原生输出 + OpenClaw 式 chunker（min/max 字符界 + `paragraph→newline→sentence→whitespace→hard` 断裂链，**永不切断代码围栏**），弃用"WriterAgent prompt 要求 LLM 输出 JSON Block 数组 + parseBlocks 降级"方案；
+> - **传输改为 SSE v2**：`message.block` 事件承载 Block（§6 前端协议），弃用本文件 §6 的事件集（loading/agent_thinking/…）；**不做旧事件名兼容层**；
+> - WriterAgent 角色退役：最终回复 = 主循环 assistant 消息（`main.build` 声明代理）。
+> 下文为历史方案，供对照。
+
 ## 1. 方案选择
 
 **采纳方案 A：后端 WriterAgent 作为 Block 生产者，LLM 决定 Block 类型。**

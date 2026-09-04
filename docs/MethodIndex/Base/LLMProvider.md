@@ -21,6 +21,7 @@
 | `soLLM` | `input: SoLLMInput, output: SoLLMOutput, context: LLMContext, metrics?: Metrics, report?...` | `Promise<boolean>` | 搜索可用模型（支持关键词搜索名称） |
 | `soLLMById` | `input: GetLLMInput, output: GetLLMOutput, context: LLMContext, metrics?: Metrics, repor...` | `Promise<boolean>` | — |
 | `execLLM` | `input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, rep...` | `Promise<boolean>` | 调用 LLM 执行推理 |
+| `execLLMEvents` | `input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: ...` | `Promise<boolean>` | 调用 LLM 原生消息 + 原生工具调用流（Runtime v2 · Loop-PRD §4） |
 | `embedLLM` | `input: EmbedLLMInput, output: EmbedLLMOutput, context: LLMContext, metrics?: Metrics, r...` | `Promise<boolean>` | 调用 LLM 生成向量 |
 | `genLLMAttr` | `input: GenLLMAttrInput, output: GenLLMAttrOutput, context: LLMContext, metrics?: Metric...` | `Promise<boolean>` | 一键补全模型属性（生成简介与模型用途） |
 | `visualizedLLM` | `input: VisualizedLLMInput, output: VisualizedLLMOutput, context: LLMContext, metrics?: ...` | `Promise<boolean>` | 可视化数据 |

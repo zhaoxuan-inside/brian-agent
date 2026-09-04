@@ -14,7 +14,7 @@ import path from 'node:path';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BACKEND = path.join(ROOT, 'brian-backend');
 const OUT = path.join(ROOT, 'docs', 'MethodIndex');
-const LAYERS = ['Base', 'Core', 'Agent', 'Orchestration', 'Application'];
+const LAYERS = ['Base', 'Core', 'Runtime', 'Agent', 'Orchestration', 'Application'];
 
 /** 递归收集目录下的 access/*.ts */
 function collectAccessFiles(dir, out = []) {

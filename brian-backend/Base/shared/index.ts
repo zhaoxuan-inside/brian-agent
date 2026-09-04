@@ -46,6 +46,9 @@ export type {
   Operation,
 } from './query/QueryObjects';
 
+// 记录组装件（newRecord/newPatch 自动填充 id/created/updated）
+export { toDataObject, newRecord, newPatch } from './query/RecordBuilder';
+
 // 错误类型
 export {
   ProviderError,
@@ -53,7 +56,10 @@ export {
   ValidationError,
   NotFoundError,
   DatabaseError,
+  ProcessingError,
+  AbortedError,
 } from './errors';
+export type { AbortReasonKind } from './errors';
 
 // AOP 代理
 export { AopProxy, ConsoleLogger } from './aop/AopProxy';
@@ -75,3 +81,14 @@ export type { PromptSlot } from './prompt/PromptConfigKeys';
 // LLM 调用 + JSON 解析公共封装
 export { callLLMJson } from './llm/CallLLMJson';
 export type { CallLLMJsonOptions } from './llm/CallLLMJson';
+
+// LLMEvent 归一化流事件类型（Runtime v2 · Loop-PRD §2）
+export type {
+  LLMEvent,
+  LLMMessage,
+  LLMMessageRole,
+  LLMToolSpec,
+  LLMToolCallWire,
+  ParsedToolCall,
+  TokenUsage,
+} from './llm/LLMEvent';

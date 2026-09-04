@@ -28,3 +28,4 @@
 | `executeRaw` | `sql: string, params?: unknown[]` | `number` | 执行原生 DDL 语句（建表等）。 |
 | `queryRaw` | `sql: string, params?: unknown[]` | `T[]` | 执行原生查询 SQL。 |
 | `transactionRaw` | `operations: import('../../shared/query').Operation[]` | `boolean` | 在事务中执行多个操作。 |
+| `walCheckpoint` | `mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE'` | `{ busy: boolean; log: number; checkpointed: number }` | 执行 WAL checkpoint 以回收 WAL 文件磁盘空间。 |

@@ -9,6 +9,7 @@ import type {
   LLMProviderRecord,
   LLMAvailableRecord,
   ExecLLMInput,
+  ExecLLMEventsInput,
   EmbedLLMInput,
 } from '../../domain/types';
 
@@ -112,6 +113,23 @@ export interface ILLMProviderStrategy {
    * @param rawText 原始响应文本
    */
   parseChatResponse(json: unknown, rawText: string): ParsedChatResult;
+
+  /**
+   * 构造原生消息 + 原生工具调用（execLLMEvents）请求。
+   *
+   * Runtime v2 · 阶段 0（Loop-PRD §4）：面向 OpenAI 兼容 wire 格式，
+   * tools 经 JSON Schema 直传；本阶段不做 Anthropic/Google 原生格式转换
+   * （与既有流式路径边界一致）。
+   *
+   * @param provider LLM 提供商记录
+   * @param model 可用模型记录
+   * @param input execLLMEvents 入参
+   */
+  buildChatEventsRequest(
+    provider: LLMProviderRecord,
+    model: LLMAvailableRecord,
+    input: ExecLLMEventsInput,
+  ): HttpRequestOptions;
 
   /**
    * 构造向量化（Embedding）请求。
