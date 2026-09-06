@@ -1780,11 +1780,11 @@ export class SelfLearningService {
         new GraphContext(),
       );
       const totalTagNodes = graphNodes.list.length;
-      const totalTagEdges = 0;
-      const activeEdges = 0;
-      const orphanTags = 0;
-      const agedEdgesThisWeek = 0;
-      const newEdgesThisWeek = 0;
+      let totalTagEdges = 0;
+      let activeEdges = 0;
+      let orphanTags = 0;
+      let agedEdgesThisWeek = 0;
+      let newEdgesThisWeek = 0;
       const thisWeekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       const nodeNeighborMap = new Map<string, number>();
