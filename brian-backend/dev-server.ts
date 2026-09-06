@@ -12,13 +12,18 @@ import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaIni
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import {
   SessionAccess,
+  ToolAccess as RuntimeToolAccess,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
   ToolContext as RuntimeToolContext,
   LoopAccess,
   AgentDefAccess,
   RunGatewayAccess,
+  RunGatewayContext,
+  AnswerPermissionInput,
+  AnswerPermissionOutput,
 } from './Runtime';
+import type { LoopQueue } from './Runtime';
 import { applySystemSeed } from './seed/systemSeed';
 import { LLMAccess } from './Base/LLMProvider';
 import { MCPAccess } from './Base/MCPProvider';
@@ -62,6 +67,7 @@ import {
   PushEventToEndpointInput,
   PushEventToEndpointOutput,
 } from './Base/StreamProvider';
+import { Report } from './Base/shared/base/Report';
 import {
   CronContext, ListCronTasksInput, ListCronTasksOutput,
   GetCronTaskInput, GetCronTaskOutput,
@@ -790,11 +796,11 @@ async function buildContext() {
   await userProfileAccess.initialize();
   // 启动用户画像自动生成调度（按 auto_generate_interval_ms 周期触发）
   await userProfileAccess.startAutoGeneration();
-new VisualizationAccess(relationDb, agentExecution, agentLibrary, agentContext, evolutorAgent, plannerAgent, infoCore, llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess, graphDBAccess, logger);
+  const visualizationAccess = new VisualizationAccess(relationDb, agentExecution, agentLibrary, agentContext, evolutorAgent, plannerAgent, infoCore, llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess, graphDBAccess, logger);
   await visualizationAccess.initialize();
 
   // Config
-new ConfigAccess(
+  const configAccess = new ConfigAccess(
     relationDb,
     llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess,
     logAccess,
@@ -2874,15 +2880,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && pathname === '/api/chat/permission/answer') {
         // 权限应答端点：唤醒 permission.asked 挂起的 Loop（Stage B 权限门）
-        const body = await readJsonBody(req);
-        const { AnswerPermissionInput, AnswerPermissionOutput, RunGatewayContext } = await import('./Runtime');
-        const input = Object.assign(new AnswerPermissionInput(), {
+        const permInput = Object.assign(new AnswerPermissionInput(), {
           permission_id: String(body.permission_id ?? ''),
           approved: body.approved === true,
         });
-        const output = new AnswerPermissionOutput();
-        await runtimeGatewayRef.answerPermission(input, output, new RunGatewayContext());
-        sendJson(res, 200, { ok: true, answered: output.answered });
+        const permOutput = new AnswerPermissionOutput();
+        await runtimeGatewayRef.answerPermission(permInput, permOutput, new RunGatewayContext());
+        sendJson(res, 200, { ok: true, answered: permOutput.answered });
       } else if (method === 'POST' && pathname === '/api/chat/stream') {
         // SSE 流式对话端点：通过 chat_config.sse_heartbeat_interval_ms 控制心跳间隔
         const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
