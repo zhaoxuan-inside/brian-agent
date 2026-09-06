@@ -6,6 +6,10 @@ export class SelfLearningSchemaInitializer {
 
   async init(): Promise<void> {
     // chat_session 表由 Chat 模块（ChatSchemaInitializer）统一建表/管列——2026-09-06 修复双 schema 冲突
+    // 存量 Tag 维护记录 source 词表统一（connection/activation/aging/orphan → TAG_MAINTENANCE；2026-09-06）
+    this.relationDb.executeRaw(
+      "UPDATE self_learning_result SET source = 'TAG_MAINTENANCE' WHERE source IN ('connection', 'activation', 'aging', 'orphan')",
+    );
     this.relationDb.executeRaw(
       'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
     );

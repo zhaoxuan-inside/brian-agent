@@ -1161,7 +1161,7 @@ export class SelfLearningService {
       }
 
       if (count > 0) {
-        await this.insertLearningResult('TAG_MAINTENANCE', 'connection', `Connected ${count} recent tags to graph`, null);
+        await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Connected ${count} recent tags to graph`, null);
       }
     } catch (err: unknown) {
       this.logger?.error?.('startTagConnectionEstablishment error', { error: err instanceof Error ? err.message : String(err) });
@@ -1252,7 +1252,7 @@ export class SelfLearningService {
       }
 
       if (activatedCount > 0) {
-        await this.insertLearningResult('TAG_MAINTENANCE', 'activation', `Activated ${activatedCount} graph edges`, null);
+        await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Activated ${activatedCount} graph edges`, null);
       }
     } catch (err: unknown) {
       this.logger?.error?.('startTagActivation error', { error: err instanceof Error ? err.message : String(err) });
@@ -1272,7 +1272,7 @@ export class SelfLearningService {
       await this.graphDBAccess.ageGraphEdge(ageInput, ageOutput, new GraphContext());
 
       if (ageOutput.aged_count > 0) {
-        await this.insertLearningResult('TAG_MAINTENANCE', 'aging', `Aged ${ageOutput.aged_count} graph edges`, null);
+        await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Aged ${ageOutput.aged_count} graph edges`, null);
       }
     } catch (err: unknown) {
       this.logger?.error?.('startTagAging error', { error: err instanceof Error ? err.message : String(err) });
@@ -1322,7 +1322,7 @@ export class SelfLearningService {
       }
 
       if (orphanCount > 0) {
-        await this.insertLearningResult('TAG_MAINTENANCE', 'orphan', `Reconnected ${orphanCount} orphan tags`, null);
+        await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Reconnected ${orphanCount} orphan tags`, null);
       }
     } catch (err: unknown) {
       this.logger?.error?.('startOrphanTagCheck error', { error: err instanceof Error ? err.message : String(err) });
