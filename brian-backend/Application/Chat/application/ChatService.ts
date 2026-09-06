@@ -302,9 +302,8 @@ export class ChatService {
     const finalResponse = rwOutput.final_response || '';
     const paused = rwOutput.paused === true;
 
-    // 需求理解暂停等待确认时，不流式输出任何文本（由 intent_confirmation_required 事件驱动前端弹窗）
     if (!paused && finalResponse) {
-      // 通过 StreamAccess 进行 2-5 字符随机 chunk 打字机流式推送（无延迟，实时推送）
+      this.emitTextChunks(finalResponse, emit);
       if (this.streamAccess && typeof this.streamAccess.pushText === 'function') {
         await this.streamAccess.pushText(input.session_id, 'text_chunk', finalResponse, {
           work_id: workId,
@@ -581,6 +580,7 @@ export class ChatService {
     const countMap = new Map<string, number>();
     const lastMsgMap = new Map<string, { time: number; msg: string }>();
     if (sessionIds.length > 0) {
+      const placeholders = sessionIds.map(() => '?').join(',');
       try {
         const cntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
           `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
@@ -1210,6 +1210,15 @@ export class ChatService {
       return selOutput.row != null;
     } catch {
       return false;
+    }
+  }
+
+  private emitTextChunks(text: string, emit: (event: string, data: Record<string, unknown>) => void): void {
+    let offset = 0;
+    while (offset < text.length) {
+      const size = Math.min(5, text.length - offset);
+      emit('text', { chunk: text.slice(offset, offset + size) });
+      offset += size;
     }
   }
 

@@ -321,8 +321,23 @@ export const monitorApi = {
 }
 
 export const feedbackApi = {
-  submit: (msgId: string, rating: number, type: 'rating' | 'like' | 'dislike') =>
-    request<void>('/feedback', { method: 'POST', body: JSON.stringify({ msg_id: msgId, score: rating, type }) }),
+  submit: (
+    msgId: string,
+    rating: number,
+    type: 'rating' | 'like' | 'dislike',
+    opts?: { work_id?: string; session_id?: string; comment?: string },
+  ) =>
+    request<void>('/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        msg_id: msgId,
+        score: rating,
+        type,
+        work_id: opts?.work_id,
+        session_id: opts?.session_id,
+        comment: opts?.comment,
+      }),
+    }),
 }
 
 export const libraryApi = {

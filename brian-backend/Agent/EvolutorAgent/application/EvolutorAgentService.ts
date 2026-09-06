@@ -122,6 +122,19 @@ export class EvolutorAgentService {
     };
     let suggestions: string[] = [];
 
+    let userFeedbackText = '';
+    if (input.work_id) {
+      try {
+        const fbRows = this.relationDb.queryRaw<{ type: string; score: number }>(
+          'SELECT "type", "score" FROM "user_feedback" WHERE "work_id" = ? ORDER BY "updated" DESC LIMIT 5',
+          [input.work_id],
+        );
+        if (fbRows.length > 0) {
+          userFeedbackText = fbRows.map((r) => `${r.type}:${r.score}`).join('; ');
+        }
+      } catch { /* feedback table may not exist on legacy DB */ }
+    }
+
     const prompt = await this.renderPrompt(
       config?.eval_work_prompt_template_id,
       PROMPT_IDS.evalWork,
@@ -129,6 +142,7 @@ export class EvolutorAgentService {
         task_content: input.task_content,
         agent_output: input.agent_output,
         trace: traceData ? JSON.stringify(traceData) : '',
+        user_feedback: userFeedbackText,
       },
     );
 

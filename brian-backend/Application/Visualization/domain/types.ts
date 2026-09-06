@@ -104,6 +104,23 @@ export class GraphVisualizationConfigOutput extends Output {
   graph_show_labels = true;
 }
 
+export class GetAgentChainInput extends Input {
+  exchange_id!: string;
+}
+export class GetAgentChainOutput extends Output {
+  nodes: Array<{
+    id: string;
+    name: string;
+    type: string;
+    status: 'pending' | 'running' | 'done' | 'error';
+    input?: unknown;
+    output?: unknown;
+    tokenUsage?: number;
+    durationMs?: number;
+    children: string[];
+  }> = [];
+}
+
 export const VISUALIZATION_CONFIG_TABLE = 'visualization_config';
 export const INFO_RAW_TABLE = 'info_raw';
 

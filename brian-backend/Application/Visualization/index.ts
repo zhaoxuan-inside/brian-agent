@@ -17,6 +17,8 @@ export {
   GetResourceOutput,
   ConfigVisualizationInput,
   ConfigVisualizationOutput,
+  GetAgentChainInput,
+  GetAgentChainOutput,
   VISUALIZATION_CONFIG_TABLE,
   DEFAULT_MAX_NODES_PER_GRAPH,
   DEFAULT_MESSAGE_SUMMARY_LENGTH,

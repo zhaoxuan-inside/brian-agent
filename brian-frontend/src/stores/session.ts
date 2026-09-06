@@ -20,6 +20,7 @@ export const useSessionStore = defineStore('session', () => {
   const splitRatio = ref(parseFloat(localStorage.getItem('chat-split-ratio') || '0.65'))
   const isStreaming = ref(false)
   const cancelToken = ref<AbortController | null>(null)
+  const currentWorkId = ref<string | null>(null)
   const selectedMsgIds = ref<Set<string>>(new Set())
   const citingMode = ref(false)
   // ChatMap 与对话列表双向定位：focusInfoId 由 ChatMap 触发滚动列表，centerInfoId 由列表触发平移 ChatMap
@@ -246,20 +247,31 @@ export const useSessionStore = defineStore('session', () => {
     cancelToken.value = ctrl
   }
 
-  function cancelCurrentTask() {
+  function setCurrentWorkId(workId: string | null) {
+    currentWorkId.value = workId
+  }
+
+  async function cancelCurrentTask() {
     cancelToken.value?.abort()
     cancelToken.value = null
     isStreaming.value = false
+    const workId = currentWorkId.value
+    if (workId) {
+      try {
+        await chatApi.cancelTask(workId)
+      } catch { /* best-effort */ }
+      currentWorkId.value = null
+    }
   }
 
   return {
-    currentSessionId, messages, blocks, chatList, chatMapNodes, chatMapEdges,
+    currentSessionId, currentWorkId, messages, blocks, chatList, chatMapNodes, chatMapEdges,
     splitRatio, isStreaming, selectedMsgIds, citingMode,
     focusInfoId, centerInfoId,
     setSplitRatio, loadChatList, ensureSession, loadChatHistory, loadDag,
     deleteSession, clearMessages, addMessage, removeUserMessageByContent, addBlock,
     updateBlock, appendBlockContent, finalizeBlocks, finalizeThinkingBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
     toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter,
-    setStreaming, setCancelController, cancelCurrentTask,
+    setStreaming, setCancelController, setCurrentWorkId, cancelCurrentTask,
   }
 })

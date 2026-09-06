@@ -6,7 +6,10 @@ import { ConfigSchemaInitializer } from '../Config/infrastructure/ConfigSchemaIn
 import { ConfigContext, UpdateLayerPrivilegeInput, UpdateLayerPrivilegeOutput,
   UpdateModulePrivilegeInput, UpdateModulePrivilegeOutput, GetConfigDetailInput, GetConfigDetailOutput,
   GetConfigItemInput, GetConfigItemOutput, UpdateConfigInput, UpdateConfigOutput,
-  ConfigConfigInput, ConfigConfigOutput } from '../Config/domain/types';
+  ConfigConfigInput, ConfigConfigOutput,
+  GetWorkConfigsInput, GetWorkConfigsOutput, UpdateWorkConfigInput, UpdateWorkConfigOutput,
+  DeleteWorkConfigInput, DeleteWorkConfigOutput,
+} from '../Config/domain/types';
 import { setupRealTestEnvironment, cleanupTempDirs, type RealTestContext } from './real-test-helpers';
 
 describe('ConfigService', () => {
@@ -1347,6 +1350,40 @@ describe('ConfigService', () => {
       const getOutput = new GetConfigItemOutput();
       await service.soConfigItem(getInput, getOutput, ctx());
       expect(getOutput.config_item.current_value).toBe(5);
+    });
+  });
+
+  describe('soWork', () => {
+    it('TC-CFG-WORK-001: lists orchestration strategies as work configs', async () => {
+      const out = new GetWorkConfigsOutput();
+      await service.soWork(new GetWorkConfigsInput(), out, ctx());
+      expect(Array.isArray(out.works)).toBe(true);
+      expect(out.works.length).toBeGreaterThan(0);
+      expect(out.works[0]).toHaveProperty('id');
+      expect(out.works[0]).toHaveProperty('name');
+      expect(out.works[0]).toHaveProperty('steps');
+      expect(out.works[0]).toHaveProperty('enabled');
+    });
+
+    it('TC-CFG-WORK-002: update then disable a work config', async () => {
+      const list = new GetWorkConfigsOutput();
+      await service.soWork(new GetWorkConfigsInput(), list, ctx());
+      const target = list.works[0];
+      await service.updateWork(
+        Object.assign(new UpdateWorkConfigInput(), { id: target.id, name: 'Renamed Work', enabled: true }),
+        new UpdateWorkConfigOutput(),
+        ctx(),
+      );
+      await service.deleteWork(
+        Object.assign(new DeleteWorkConfigInput(), { id: target.id }),
+        new DeleteWorkConfigOutput(),
+        ctx(),
+      );
+      const after = new GetWorkConfigsOutput();
+      await service.soWork(new GetWorkConfigsInput(), after, ctx());
+      const updated = after.works.find((w) => w.id === target.id);
+      expect(updated?.name).toBe('Renamed Work');
+      expect(updated?.enabled).toBe(false);
     });
   });
 });

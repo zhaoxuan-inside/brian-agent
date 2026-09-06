@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
-import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator } from '@brian-agent/base';
+import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator, ValidationError, NotFoundError } from '@brian-agent/base';
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import { applySystemSeed } from './seed/systemSeed';
 import { LLMAccess } from './Base/LLMProvider';
@@ -74,7 +74,6 @@ import {
   BuildSystemAgentInput, BuildSystemAgentOutput,
 } from './Agent/AgentBuilder';
 import { AgentExecutionAccess } from './Agent/AgentExecution';
-import { PromptRebuilder } from './Agent/AgentExecution/application/trace/PromptRebuilder';
 import { AgentContextAccess } from './Agent/AgentContext';
 import { PlannerAgentAccess } from './Agent/PlannerAgent';
 import { WriterAgentAccess } from './Agent/WriterAgent';
@@ -136,7 +135,14 @@ import {
   GetResourceInput, GetResourceOutput,
   GraphVisualizationConfigInput, GraphVisualizationConfigOutput,
   ConfigVisualizationInput, ConfigVisualizationOutput,
+  GetAgentChainInput, GetAgentChainOutput,
 } from './Application/Visualization/domain/types';
+import { MonitorAccess } from './Application/Monitor/access/MonitorAccess';
+import { FeedbackAccess } from './Application/Feedback/access/FeedbackAccess';
+import { MemoryAccess } from './Application/Memory/access/MemoryAccess';
+import { buildThinkingBlocksAndDag } from './Application/Chat/application/ThinkingChainBuilder';
+import { jsonBody, sendJson } from './http/response';
+import { dispatchHttpRoutes } from './http/router';
 
 // Config types
 import {
@@ -144,6 +150,9 @@ import {
   GetConfigDetailInput, GetConfigDetailOutput,
   GetConfigItemInput, GetConfigItemOutput,
   UpdateConfigInput, UpdateConfigOutput,
+  GetWorkConfigsInput, GetWorkConfigsOutput,
+  UpdateWorkConfigInput, UpdateWorkConfigOutput,
+  DeleteWorkConfigInput, DeleteWorkConfigOutput,
 } from './Application/Config/domain/types';
 import { ALL_CONFIG_REGISTRATIONS } from './Application/Config/domain/configRegistrations';
 
@@ -321,184 +330,6 @@ function mapRandomFactorField(mode: string): string {
  * info_type（REQUEST/RESPONSE/THINK/REFLECT/ACT/SKILL/MCP）映射到前端展示类型
  * （semantic/episodic/procedural/working），仅用于颜色与分类展示。
  */
-function mapInfoToMemory(row: any, tags: string[] = []): any {
-  const typeMap: Record<string, string> = {
-    [InfoType.REQUEST]: 'episodic',
-    [InfoType.RESPONSE]: 'semantic',
-    [InfoType.THINK]: 'procedural',
-    [InfoType.REFLECT]: 'procedural',
-    [InfoType.ACT]: 'working',
-    [InfoType.SKILL]: 'procedural',
-    [InfoType.MCP]: 'procedural',
-    [InfoType.CDT]: 'procedural',
-    [InfoType.SELF_LEARNING]: 'semantic',
-    [InfoType.AGENT]: 'procedural',
-  };
-  const type = typeMap[row.info_type] || (row.info_creator_role === 'USER' ? 'episodic' : 'semantic');
-  const info = row.info || '';
-  return {
-    id: row.info_id || row.id,
-    type,
-    content: info,
-    tags,
-    confidence: computeMemoryConfidence(row.info_type, tags, info.length, Number(row.pin) || 0),
-    createdAt: Number(row.created) || 0,
-    updatedAt: Number(row.updated) || 0,
-  };
-}
-
-/**
- * 计算单条记忆的置信度（0-1）。
- *
- * 置信度 = 来源可信度（info_type 基础分） + 语义加工增益，取值收敛到 [0.05, 0.95]。
- * - 来源可信度：越接近「用户原话 / 自我学习沉淀」可信度越高，内部思考（THINK/REFLECT）
- *   等中间产物可信度较低。
- * - 语义加工增益：标签越丰富、内容越完整、被用户钉住，说明该记忆经过更多加工/被认可，
- *   可信度相应提升。
- */
-function computeMemoryConfidence(infoType: string, tags: string[], infoLength: number, pin: number): number {
-  const baseReliability: Record<string, number> = {
-    [InfoType.SELF_LEARNING]: 0.6,
-    [InfoType.REQUEST]: 0.55,
-    [InfoType.RESPONSE]: 0.5,
-    [InfoType.SKILL]: 0.45,
-    [InfoType.MCP]: 0.45,
-    [InfoType.CDT]: 0.45,
-    [InfoType.AGENT]: 0.45,
-    [InfoType.ACT]: 0.4,
-    [InfoType.REFLECT]: 0.35,
-    [InfoType.THINK]: 0.3,
-  };
-  const base = baseReliability[infoType] ?? 0.5;
-  const tagBoost = Math.min(tags.length, 5) * 0.04;
-  const lengthBoost = infoLength >= 100 ? 0.05 : 0;
-  const pinBoost = pin === 1 ? 0.1 : 0;
-  const raw = base + tagBoost + lengthBoost + pinBoost;
-  return Math.round(Math.min(0.95, Math.max(0.05, raw)) * 100) / 100;
-}
-
-/** 批量查询 info_tag，返回 info_id → tag[] 映射 */
-function queryInfoTagsByInfoIds(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, infoIds: string[]): Map<string, string[]> {
-  const tagMap = new Map<string, string[]>();
-  if (infoIds.length === 0) return tagMap;
-  const tagRows = relationDb.queryRaw<{ info_id: string; tag: string }>(
-    `SELECT "info_id", "tag" FROM "info_tag" WHERE "info_id" IN (${infoIds.map(() => '?').join(',')})`,
-    infoIds,
-  );
-  for (const t of tagRows) {
-    if (!tagMap.has(t.info_id)) tagMap.set(t.info_id, []);
-    tagMap.get(t.info_id)!.push(t.tag);
-  }
-  return tagMap;
-}
-
-/**
- * 从 SQLite 配置表 info_vector_config 读取向量维度。
- *
- * 向量维度统一由配置系统（info_core.vector_config.dimension）管理，向量表（LanceDB）
- * 按其创建；此处仅在 infoCore 初始化后从 SQLite 读取，作为向量表的维度来源。
- */
-function readVectorDimension(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess): number {
-  try {
-    const rows = relationDb.queryRaw<{ dimension: number }>(
-      'SELECT "dimension" FROM "info_vector_config" LIMIT 1', [],
-    );
-    if (rows.length > 0 && Number(rows[0].dimension) > 0) {
-      return Number(rows[0].dimension);
-    }
-  } catch { /* table may not exist yet */ }
-  return 1536;
-}
-
-/**
- * 从 GraphDB 读取某类文本的共现图（节点 + 共现边），组装为前端所需的
- * `{ nodes, edges }` 结构。节点与边的图结构、节点属性（频次）与共现权重
- * 完全来自 GraphDB，不再依赖关系数据库。
- *
- * 支持 limit（默认 100）：按频次降序取前 limit 个节点，并只返回这些节点之间的边，
- * 避免节点过多导致前端图不可观测。
- */
-async function buildCooccurGraphFromGraphDB(
-  ctx: any,
-  nodeType: string,
-  textField: string,
-  edgeType: string,
-  limit = 100,
-): Promise<{ nodes: Array<{ id: string; name: string; weight: number; degree: number }>; edges: Array<{ source: string; target: string; weight: number }> }> {
-  const { GraphContext, SelectGraphOutput, GraphTarget } = await import('./Base/GraphDBProvider/domain/types');
-
-  // 1. 读节点（GraphDB，含频次属性 freq）
-  const nodeOut = new SelectGraphOutput();
-  await ctx.graphDBAccess.selectGraph(
-    { target: GraphTarget.NODE, node_type: nodeType },
-    nodeOut,
-    new GraphContext(),
-  );
-  const allNodes = (nodeOut.list as Array<{ id: string; content?: Record<string, unknown> }>)
-    .map((n) => ({ id: n.id, text: String(n.content?.[textField] ?? ''), freq: Number(n.content?.['freq'] ?? 0) }))
-    .filter((n) => n.text);
-
-  // 按频次降序取前 limit 个节点
-  const rawNodes = [...allNodes].sort((a, b) => b.freq - a.freq).slice(0, Math.max(1, Math.floor(limit)));
-  const keptIds = new Set(rawNodes.map((n) => n.id));
-
-  // 2. 读共现边（GraphDB），只保留两端都在保留节点集合内的边
-  const edgeOut = new SelectGraphOutput();
-  await ctx.graphDBAccess.selectGraph(
-    { target: GraphTarget.EDGE, edge_type: edgeType },
-    edgeOut,
-    new GraphContext(),
-  );
-  const rawEdges = (edgeOut.list as Array<{ from_node_id: string; to_node_id: string; weight: number }>)
-    .filter((e) => keptIds.has(e.from_node_id) && keptIds.has(e.to_node_id));
-
-  const idToText = new Map(rawNodes.map((n) => [n.id, n.text]));
-
-  // 3. 度数（由保留的 GraphDB 共现边统计）
-  const degreeMap = new Map<string, number>();
-  for (const e of rawEdges) {
-    const s = idToText.get(e.from_node_id);
-    const t = idToText.get(e.to_node_id);
-    if (!s || !t) continue;
-    degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
-    degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
-  }
-
-  const nodes = rawNodes.map((n) => ({
-    id: n.text,
-    name: n.text,
-    weight: n.freq || 1,
-    degree: degreeMap.get(n.text) || 0,
-  }));
-  const edges = rawEdges
-    .map((e) => ({ source: idToText.get(e.from_node_id) ?? '', target: idToText.get(e.to_node_id) ?? '', weight: e.weight }))
-    .filter((e) => e.source && e.target);
-
-  return { nodes, edges };
-}
-
-// 图谱数据内存缓存：避免 GraphDB 同步查询在高并发页面切换时阻塞事件循环
-// （keywordCooccur 边 5288 条，每次 selectGraph 是 3 表 JOIN 同步 SQL，5 并发即超时）
-const graphCache = new Map<string, { data: { nodes: Array<{ id: string; name: string; weight: number; degree: number }>; edges: Array<{ source: string; target: string; weight: number }> }; ts: number }>();
-const GRAPH_CACHE_TTL = 30_000; // 30 秒
-
-async function buildCooccurGraphFromGraphDBCached(
-  ctx: any,
-  nodeType: string,
-  textField: string,
-  edgeType: string,
-  limit = 100,
-): Promise<{ nodes: Array<{ id: string; name: string; weight: number; degree: number }>; edges: Array<{ source: string; target: string; weight: number }> }> {
-  const cacheKey = `${nodeType}:${edgeType}:${limit}`;
-  const cached = graphCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < GRAPH_CACHE_TTL) {
-    return cached.data;
-  }
-  const data = await buildCooccurGraphFromGraphDB(ctx, nodeType, textField, edgeType, limit);
-  graphCache.set(cacheKey, { data, ts: Date.now() });
-  return data;
-}
-
 async function buildContext() {
   // ---- Base Providers ----
   const relationDb = new RelationDBAccess({ dbPath: path.join(DATA_DIR, 'brian.db'), wal: true, autoCreateConfigTable: true });
@@ -734,6 +565,13 @@ async function buildContext() {
   const visualizationAccess = new VisualizationAccess(relationDb, orchestrationVisualization, agentExecution, agentLibrary, agentContext, evolutorAgent, plannerAgent, infoCore, llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess, graphDBAccess, logger);
   await visualizationAccess.initialize();
 
+  const monitorAccess = new MonitorAccess(
+    relationDb, logAccess, llmAccess, graphDBAccess, vectorDBAccess, mqAccess, systemMonitorAccess, logger,
+  );
+  const feedbackAccess = new FeedbackAccess(relationDb, logger);
+  await feedbackAccess.initialize();
+  const memoryAccess = new MemoryAccess(relationDb, infoCore, graphDBAccess, logger);
+
   // Config
   const configAccess = new ConfigAccess(
     relationDb,
@@ -886,39 +724,10 @@ async function buildContext() {
     orchestrationExecution, orchestrationVisualization, jsonNode,
     orchestrationStrategy, orchestrationEntry,
     chatAccess, configAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
+    monitorAccess, feedbackAccess, memoryAccess,
   };
 }
 
-function jsonBody(req: http.IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB 上限
-    let body = '';
-    let size = 0;
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > MAX_BODY_SIZE) {
-        reject(new Error('Request body too large'));
-        req.destroy();
-        return;
-      }
-      body += c;
-    });
-    req.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
-  });
-}
-
-function sendJson(res: http.ServerResponse, status: number, data: any) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Cache-Control': 'no-store',
-  });
-  res.end(JSON.stringify(data));
-}
-
-// ---------------------------------------------------------------------------
 // 前端静态文件 serve（SEA 打包模式下，前端 dist 被内联为 base64 映射）
 // ---------------------------------------------------------------------------
 const FRONTEND_MIME_TYPES: Record<string, string> = {
@@ -965,571 +774,17 @@ function serveFrontend(res: http.ServerResponse, pathname: string): boolean {
   return true;
 }
 
-// ===== 从数据表采集思考过程：根据 work_id 列表重建各 Agent 的 ThinkingChain Blocks =====
-// 数据来源：orchestration_agent_dag_record / agent_plan / orchestration_agent_execution /
-//          agent / agent_execution_trace 五张表；由 /api/chat/history 原始内联逻辑抽取而来。
-async function rebuildPromptFromRef(
-  rebuilder: PromptRebuilder,
-  ref: any,
-  refIndex: number,
-  iters: any[],
-  triples: any,
-): Promise<string> {
-  try {
-    const sourceIdsMap = (triples?.source_ids_map ?? {}) as Record<string, string[]>;
-    const contentMap = (triples?.content_map ?? {}) as Record<string, string>;
-    const contextText = rebuilder.formatContextText(sourceIdsMap, contentMap);
-    const history = rebuilder.rebuildHistory(iters, refIndex);
-    return await rebuilder.rebuildPrompt(ref, contextText, history);
-  } catch {
-    return '';
-  }
-}
-
-async function buildThinkingBlocksAndDag(
-  relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
-  infoCore: any,
-  workIds: string[],
-  promptsAccess?: any,
-  soulAccess?: any,
-): Promise<{ workBlocksMap: Map<string, any[]>; workDagMap: Map<string, any> }> {
-  const workBlocksMap = new Map<string, any[]>();
-  const workDagMap = new Map<string, any>();
-  const rebuilder = promptsAccess && soulAccess
-    ? new PromptRebuilder(promptsAccess, soulAccess)
-    : null;
-
-  if (!workIds || workIds.length === 0) return { workBlocksMap, workDagMap };
-
-  try {
-    const placeholders = workIds.map(() => '?').join(',');
-
-    // 预先查询 Work 对应的 Task/Agent DAG 关系记录
-    const dagRows = relationDb.queryRaw<Record<string, unknown>>(
-      `SELECT r.plan_id, r.agent_dag_json, p.work_id, p.task_dag 
-       FROM orchestration_agent_dag_record r
-       LEFT JOIN agent_plan p ON r.plan_id = p.plan_id
-       WHERE p.work_id IN (${placeholders})`,
-      workIds,
-    );
-
-    const dagNodeInfoMap = new Map<string, { label: string; domain?: string; taskContent?: string }>();
-    const workStrategyMap = new Map<string, string>();
-
-    // 查询 orchestration_work 表获取真实的编排策略
-    try {
-      const strategyRows = relationDb.queryRaw<{ work_id: string; orchestration_strategy: string }>(
-        `SELECT work_id, orchestration_strategy FROM orchestration_work WHERE work_id IN (${placeholders})`,
-        workIds,
-      );
-      for (const sRow of strategyRows) {
-        const wId = String(sRow.work_id ?? '');
-        if (wId) workStrategyMap.set(wId, String(sRow.orchestration_strategy ?? ''));
-      }
-    } catch { /* degrade gracefully */ }
-    
-    for (const dRow of dagRows) {
-      const wId = String(dRow.work_id ?? '');
-      let dagObj: any = undefined;
-      try { if (dRow.agent_dag_json) dagObj = JSON.parse(String(dRow.agent_dag_json)); } catch { /* ignore */ }
-
-      // ===== 修改后：解析 agent_plan.task_dag 得到 Planner 的任务级拆解（Task DAG），
-      //      并随 workDagMap 一起下发供"思考过程"弹窗展示 Planning 策略拆解 =====
-      let taskDagObj: any = undefined;
-      try { if (dRow.task_dag) taskDagObj = JSON.parse(String(dRow.task_dag)); } catch { /* ignore */ }
-
-      const taskDagNodes = (taskDagObj && Array.isArray(taskDagObj.nodes) ? taskDagObj.nodes : [])
-        .map((t: any, i: number) => {
-          const content = String(t.task_content ?? '');
-          const domain = String(t.task_domain ?? '');
-          return {
-            id: String(t.task_id ?? `task-${i}`),
-            label: domain || (content ? content.slice(0, 16) : `任务 #${i + 1}`),
-            domain,
-            content,
-            complexity: Number(t.task_complexity ?? 0),
-            priority: Number(t.priority ?? 0),
-            dependencies: Array.isArray(t.dependencies) ? t.dependencies.map(String) : [],
-          };
-        });
-      const taskDagEdges = (taskDagObj && Array.isArray(taskDagObj.edges) ? taskDagObj.edges : [])
-        .map((e: any) => ({
-          source: String(e.from_task_id ?? ''),
-          target: String(e.to_task_id ?? ''),
-        }));
-
-      if (dagObj && Array.isArray(dagObj.agent_nodes)) {
-        for (let idx = 0; idx < dagObj.agent_nodes.length; idx++) {
-          const node = dagObj.agent_nodes[idx];
-          const agId = String(node.agent_id ?? '');
-          const domain = String(node.task_domain || '');
-          const content = String(node.task_content || '');
-          const shortTitle = domain || (content ? content.slice(0, 16) : `子任务 #${idx + 1}`);
-          const label = `任务 ${idx + 1}: ${shortTitle}`;
-
-          if (agId) {
-            dagNodeInfoMap.set(agId, { label, domain, taskContent: content });
-          }
-        }
-
-        if (wId) {
-          workDagMap.set(wId, {
-            planId: dagObj.plan_id,
-            totalCount: dagObj.total_agent_count || dagObj.agent_nodes.length,
-            taskDag: taskDagNodes.length > 0
-              ? { nodes: taskDagNodes, edges: taskDagEdges }
-              : undefined,
-            nodes: dagObj.agent_nodes.map((n: any, i: number) => {
-              const domain = String(n.task_domain || '');
-              const content = String(n.task_content || '');
-              const title = domain || (content ? content.slice(0, 16) : `任务 #${i + 1}`);
-              return {
-                // 节点主键改用 task_id（唯一），agent_id 仅作展示/执行联动字段：
-                // 同一 Agent 可复用到多个任务（如 30fb48e6 同时承担 task_2 / task_4），
-                // 若以 agent_id 为主键会重复 key 导致画布节点折叠、依赖边形成假环、布局塌陷。
-                id: String(n.task_id || `task-${i}`),
-                agentId: String(n.agent_id || ''),
-                label: `任务 ${i + 1}: ${title}`,
-                domain,
-                content,
-                status: n.status || 'COMPLETED',
-                taskId: String(n.task_id || ''),
-              };
-            }),
-            edges: (dagObj.agent_edges || []).map((e: any) => ({
-              // 依赖边按任务级 id 关联（与节点主键 task_id 一致），避免 agent 复用导致的假环
-              source: String(e.from_task_id || ''),
-              target: String(e.to_task_id || ''),
-              label: String(e.data_dependency || ''),
-            })),
-          });
-        }
-      }
-    }
-
-    const execRows = relationDb.queryRaw<Record<string, unknown>>(
-      `SELECT e.id as exec_id, e.work_id, e.agent_id, e.task_id, e.task_content, e.status, e.answer, e.trace_id, e.elapsed_ms, e.created, e.execution_type,
-              a.agent_name, a.agent_type, a.soul_id,
-              t.iterations_json, t.total_token_usage
-       FROM orchestration_agent_execution e
-       LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
-       LEFT JOIN agent_execution_trace t ON (e.trace_id IS NOT NULL AND e.trace_id != '' AND e.trace_id = t.trace_id)
-       WHERE e.work_id IN (${placeholders})
-       ORDER BY e.created ASC`,
-      workIds,
-    );
-
-    // 预计算每个 work 的 Work Agent 是否产生有效输出：Work Agent 空输出时，
-    // 后续 Writer / Evolutor 等系统 Agent 的展示块应被跳过（不应展示在思考过程里）。
-    const workAgentHasOutput = new Map<string, boolean>();
-    for (const row of execRows) {
-      if (String(row.execution_type ?? '') === 'SINGLE') {
-        const wid = String(row.work_id ?? '');
-        const ans = row.answer ? String(row.answer).trim() : '';
-        if (ans) workAgentHasOutput.set(wid, true);
-      }
-    }
-
-    // 查询 orchestration_work.metadata 获取 IntentAgent 需求理解结果
-    const intentMetaRows = relationDb.queryRaw<{ work_id: string; metadata: string }>(
-      `SELECT work_id, metadata FROM orchestration_work WHERE work_id IN (${placeholders})`,
-      workIds,
-    );
-    const intentMetaMap = new Map<string, any>();
-    for (const imRow of intentMetaRows) {
-      const wId = String(imRow.work_id ?? '');
-      if (wId && imRow.metadata) {
-        try {
-          const meta = JSON.parse(imRow.metadata);
-          if (meta?.intent_agent) {
-            intentMetaMap.set(wId, meta.intent_agent);
-          }
-        } catch { /* ignore */ }
-      }
-    }
-
-    // 为每个 work 创建 IntentAgent 的 ThinkingBlock
-    for (const wid of workIds) {
-      const intentData = intentMetaMap.get(wid);
-      if (intentData) {
-        const intentBlock = {
-          id: `block-think-${wid}-intent-agent`,
-          msgId: '',
-          role: 'assistant',
-          type: 'ThinkingChain',
-          content: String(intentData.reasoning ?? ''),
-          summary: '',
-          durationMs: 0,
-          agentInfo: {
-            id: `intent-agent-${wid}`,
-            name: '需求理解 Agent (Intent)',
-            type: 'INTENT',
-          },
-          context: {
-            strategy: workStrategyMap.get(wid) === 'PLANNING' ? 'Planning 策略 (任务分解)' : 'Simple 策略 (直接推理)',
-            userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
-            citingMessages: [],
-          },
-          input: `需求理解: ${String(intentData.understood_requirement ?? '')}`,
-          prompt: String(intentData.prompt ?? ''),
-          inputTokens: Number(intentData.input_tokens ?? 0) || 0,
-          outputTokens: Number(intentData.output_tokens ?? 0) || 0,
-          output: {
-            understood_requirement: intentData.understood_requirement,
-            match_score: intentData.match_score,
-            threshold_score: intentData.threshold_score,
-            should_modify_query: intentData.should_modify_query,
-          },
-          steps: [],
-          meta: {
-            status: 'done',
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          },
-        };
-        if (!workBlocksMap.has(wid)) {
-          workBlocksMap.set(wid, []);
-        }
-        workBlocksMap.get(wid)!.push(intentBlock);
-      }
-    }
-
-    const agentIndexCounter = new Map<string, number>();
-
-    // 预查询每个 work 的上下文三对象（source_ids_map / content_map / attribute_map），
-    // 由 InfoCoreProvider.soContextByWork 从 info_context_source 表 + info_raw 回查得到。
-    const workContextTriplesMap = new Map<string, any>();
-    if (infoCore && typeof infoCore.soContextByWork === 'function') {
-      for (const wid of workIds) {
-        if (!wid) continue;
-        try {
-          const soOut: any = { source_ids_map: {}, content_map: {}, attribute_map: {} };
-          await infoCore.soContextByWork({ work_id: wid }, soOut, new InfoCoreContext());
-          workContextTriplesMap.set(wid, soOut);
-        } catch { /* ignore */ }
-      }
-    }
-
-    for (const row of execRows) {
-      const wid = String(row.work_id ?? '');
-      if (!wid) continue;
-
-      // 系统 Agent（Writer / Evolutor）在 Work Agent 无有效输出时不应展示
-      if (String(row.execution_type ?? '') === 'SYSTEM' && !workAgentHasOutput.get(wid)) {
-        continue;
-      }
-
-      const agentId = String(row.agent_id ?? '');
-      const rawAgentName = String(row.agent_name ?? '');
-
-      // 优先使用数据库记录的具有业务特性的 agent_name，严格消除 UUID
-      let agentName = rawAgentName;
-      const isUuid = !agentName || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentName) || agentName === agentId;
-
-      if (isUuid) {
-        if (dagNodeInfoMap.has(agentId)) {
-          agentName = dagNodeInfoMap.get(agentId)!.label;
-        } else {
-          const currIdx = (agentIndexCounter.get(wid) ?? 0) + 1;
-          agentIndexCounter.set(wid, currIdx);
-          
-          let domainFromTask = '';
-          if (row.task_content) {
-            try {
-              const p = JSON.parse(String(row.task_content));
-              if (p && p.task_domain) domainFromTask = String(p.task_domain);
-              else if (p && p.user_query) domainFromTask = String(p.user_query).slice(0, 16);
-            } catch { /* ignore */ }
-          }
-
-          agentName = domainFromTask ? `执行 Agent ${currIdx}: ${domainFromTask}` : `执行 Agent #${currIdx}`;
-        }
-      }
-
-      const agentType = String(row.agent_type ?? 'WORKER');
-      const llmId = row.llm_id ? String(row.llm_id) : undefined;
-      const soulId = row.soul_id ? String(row.soul_id) : undefined;
-
-      // 解析 task_content 构造完整的 Input 与 Context 数据
-      let inputQuery: string | undefined = undefined;
-      const realStrategy = workStrategyMap.get(wid) ?? '';
-      const strategyDisplay = realStrategy === 'PLANNING'
-        ? 'Planning 策略 (任务分解)'
-        : (realStrategy === 'SIMPLE' ? 'Simple 策略 (直接推理)' : (realStrategy || 'Simple 策略 (直接推理)'));
-      const contextData: any = {
-        strategy: strategyDisplay,
-        userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
-        citingMessages: [],
-      };
-
-      // ===== 修改后的代码：task_content 为纯任务内容（不再拼 work_context 前缀），
-      //      上下文改经 InfoCoreProvider.soContextByWork(work_id) 从 info_context_source 表 + info_raw 回查 =====
-      if (row.task_content) {
-        const rawContentStr = String(row.task_content);
-        // 兼容历史数据：旧记录 task_content 可能仍携带 work_context JSON 前缀，按 \n---\n 剥离
-        if (rawContentStr.includes('\n---\n')) {
-          const idx = rawContentStr.indexOf('\n---\n');
-          inputQuery = rawContentStr.slice(idx + 5).trim();
-        } else {
-          inputQuery = rawContentStr;
-        }
-      }
-
-      const triples = workContextTriplesMap.get(wid);
-      if (triples) {
-        const sourceIdsMap: Record<string, string[]> = triples.source_ids_map || {};
-        const contentMap: Record<string, string> = triples.content_map || {};
-        const attrMap: Record<string, Record<string, unknown>> = triples.attribute_map || {};
-
-        // 各来源的消息列表（只携带 info_id 与内容，不展示属性）
-        const toMessages = (sourceKey: string): Array<{ info_id: string; content: string }> | undefined => {
-          const ids = sourceIdsMap[sourceKey];
-          if (!Array.isArray(ids) || ids.length === 0) return undefined;
-          const msgs: Array<{ info_id: string; content: string }> = [];
-          for (const id of ids) {
-            const content = contentMap[id];
-            if (content) msgs.push({ info_id: id, content });
-          }
-          return msgs.length > 0 ? msgs : undefined;
-        };
-
-        contextData.source_ids_map = sourceIdsMap;
-        contextData.content_map = contentMap;
-        contextData.attribute_map = attrMap;
-        contextData.selectedMessages = toMessages('CUSTOM');
-        contextData.citingMessages = toMessages('CITING');
-        contextData.timelineMessages = toMessages('TIMELINE');
-        contextData.pinnedMessages = toMessages('PINNED');
-        contextData.similarityMessages = toMessages('SIMILARITY');
-        contextData.tagRelativeMessages = toMessages('TAG_RELATIVE');
-        contextData.keywordMessages = toMessages('KEYWORD');
-        contextData.randomMessages = toMessages('RANDOM');
-        contextData.categoryIds = {
-          selected: sourceIdsMap.CUSTOM ?? sourceIdsMap.SELECTED ?? [],
-          citing: sourceIdsMap.CITING ?? [],
-          timeline: sourceIdsMap.TIMELINE ?? [],
-          pinned: sourceIdsMap.PINNED ?? [],
-          similarity: sourceIdsMap.SIMILARITY ?? [],
-          tag_relative: sourceIdsMap.TAG_RELATIVE ?? [],
-          keyword: sourceIdsMap.KEYWORD ?? [],
-          random: sourceIdsMap.RANDOM ?? [],
-        };
-      }
-
-      // 如果精确匹配 trace_id 没有找到 iterations_json，再次尝试使用 agent_id + created 拟合获取 trace
-      let iterJson = row.iterations_json;
-      let tokenUsage = row.total_token_usage ? Number(row.total_token_usage) : 0;
-      // 轨迹迭代数组（外层作用域声明，供后续 prompt 重建使用；缺失 trace 时为 [])
-      let iters: any[] = [];
-
-      if (!iterJson && agentId) {
-        try {
-          const fallbackTraceRows = relationDb.queryRaw<Record<string, unknown>>(
-            `SELECT iterations_json, total_token_usage FROM agent_execution_trace 
-             WHERE agent_id = ? ORDER BY ABS(created - ?) ASC LIMIT 1`,
-            [agentId, Number(row.created ?? Date.now())],
-          );
-          if (fallbackTraceRows.length > 0) {
-            if (fallbackTraceRows[0].iterations_json) iterJson = fallbackTraceRows[0].iterations_json;
-            if (fallbackTraceRows[0].total_token_usage) tokenUsage = Number(fallbackTraceRows[0].total_token_usage);
-          }
-        } catch { /* ignore fallback error */ }
-      }
-
-      const steps: any[] = [];
-      let content = '';
-      let outputAnswer = row.answer ? String(row.answer) : undefined;
-      let fullPrompt = '';
-      let fullRawResponse = '';
-      let sumInputTokens = 0;
-      let sumOutputTokens = 0;
-      let hasActTools = false;
-      let firstPromptRef: any = null;
-      let firstRefIndex = -1;
-
-      if (iterJson) {
-        try {
-          iters = JSON.parse(String(iterJson));
-          if (Array.isArray(iters)) {
-            for (const iter of iters) {
-              if (iter.think) {
-                if (!fullPrompt && iter.think.prompt) fullPrompt = String(iter.think.prompt);
-                if (!fullPrompt && iter.think.prompt_ref && !firstPromptRef) {
-                  firstPromptRef = iter.think.prompt_ref;
-                  firstRefIndex = Number(iter.iteration_index ?? 0);
-                }
-                if (iter.think.raw_response && !fullRawResponse) fullRawResponse = String(iter.think.raw_response);
-                if (iter.think.input_tokens) sumInputTokens += Number(iter.think.input_tokens);
-                if (iter.think.output_tokens) sumOutputTokens += Number(iter.think.output_tokens);
-
-                const reasoning = String(iter.think.reasoning ?? '');
-                if (reasoning) {
-                  content += (content ? '\n' : '') + reasoning;
-                  steps.push({
-                    phase: 'THINK',
-                    iteration: iter.iteration_index ?? (steps.length + 1),
-                    content: reasoning,
-                    tokenUsage: iter.think.token_usage,
-                    elapsedMs: iter.iteration_elapsed_ms,
-                  });
-                }
-              }
-              if (iter.act) {
-                const toolName = String(iter.act.tool_type || iter.act.tool_id || 'Tool');
-                if (toolName !== 'NONE') {
-                  hasActTools = true;
-                  steps.push({
-                    phase: 'ACT',
-                    iteration: iter.iteration_index ?? (steps.length + 1),
-                    toolCalls: [{
-                      toolName: toolName,
-                      toolType: String(iter.act.tool_type || 'Tool'),
-                      params: iter.act.params,
-                      result: iter.act.result,
-                    }],
-                    elapsedMs: iter.iteration_elapsed_ms,
-                  });
-                }
-              }
-              if (iter.reflect) {
-                if (!fullPrompt && iter.reflect.prompt) fullPrompt = String(iter.reflect.prompt);
-                if (!fullPrompt && iter.reflect.prompt_ref && !firstPromptRef) {
-                  firstPromptRef = iter.reflect.prompt_ref;
-                  firstRefIndex = Number(iter.iteration_index ?? 0);
-                }
-                if (iter.reflect.raw_response && !fullRawResponse) fullRawResponse = String(iter.reflect.raw_response);
-                if (iter.reflect.input_tokens) sumInputTokens += Number(iter.reflect.input_tokens);
-                if (iter.reflect.output_tokens) sumOutputTokens += Number(iter.reflect.output_tokens);
-
-                steps.push({
-                  phase: 'REFLECT',
-                  iteration: iter.iteration_index ?? (steps.length + 1),
-                  reflection: String(iter.reflect.reflection ?? ''),
-                  passed: iter.reflect.should_continue === false,
-                  elapsedMs: iter.iteration_elapsed_ms,
-                });
-              }
-              if (iter.answer) {
-                if (!fullPrompt && iter.answer.prompt) fullPrompt = String(iter.answer.prompt);
-                if (!fullPrompt && iter.answer.prompt_ref && !firstPromptRef) {
-                  firstPromptRef = iter.answer.prompt_ref;
-                  firstRefIndex = Number(iter.iteration_index ?? 0);
-                }
-                if (iter.answer.raw_response) fullRawResponse = String(iter.answer.raw_response);
-                if (iter.answer.input_tokens) sumInputTokens += Number(iter.answer.input_tokens);
-                if (iter.answer.output_tokens) sumOutputTokens += Number(iter.answer.output_tokens);
-                if (iter.answer.answer && !outputAnswer) {
-                  outputAnswer = String(iter.answer.answer);
-                }
-              }
-            }
-          }
-        } catch { /* ignore */ }
-      }
-
-      if (!content && inputQuery) {
-        content = inputQuery;
-      }
-      // 新格式：无完整 prompt，按 prompt_ref 经 PromptProvider 重建（补 context 与 history）
-      if (!fullPrompt && firstPromptRef && rebuilder) {
-        fullPrompt = await rebuildPromptFromRef(rebuilder, firstPromptRef, firstRefIndex, iters, triples);
-      }
-      if (!fullPrompt && inputQuery) {
-        fullPrompt = inputQuery;
-      }
-      // 模型的完整回复只允许回退到最终答案，禁止回退到 content/inputQuery（用户输入），
-      // 否则“模型的完整回复 (LLM Response)”会误显示成用户本次发送的内容。
-      if (!fullRawResponse) {
-        fullRawResponse = outputAnswer || '';
-      }
-      // ===== 修改后的代码：精准/估算 Token 用量，防止非零 Token 显示为 0 =====
-      if (sumInputTokens === 0 && sumOutputTokens === 0) {
-        if (tokenUsage > 0) {
-          sumInputTokens = Math.round(tokenUsage * 0.7);
-          sumOutputTokens = Math.max(0, tokenUsage - sumInputTokens);
-        } else {
-          const pTokens = Math.ceil((fullPrompt.length || 0) / 4);
-          const rTokens = Math.ceil((fullRawResponse.length || 0) / 4);
-          if (pTokens > 0 || rTokens > 0) {
-            sumInputTokens = pTokens;
-            sumOutputTokens = rTokens;
-          }
-        }
-      }
-
-      const thinkingStrategy = hasActTools ? 'ReACT' : 'CoT';
-
-      const block = {
-        id: `block-think-${wid}-${agentId}`,
-        msgId: '',
-        role: 'assistant',
-        type: 'ThinkingChain',
-        content,
-        summary: '',
-        durationMs: Number(row.elapsed_ms ?? 0),
-        tokenUsage: tokenUsage || (sumInputTokens + sumOutputTokens),
-        inputTokens: sumInputTokens,
-        outputTokens: sumOutputTokens,
-        thinkingStrategy,
-        prompt: fullPrompt,
-        rawResponse: fullRawResponse,
-        agentInfo: {
-          id: agentId,
-          name: agentName,
-          type: agentType,
-          llmId,
-          soulId,
-        },
-        context: contextData,
-        input: inputQuery,
-        output: outputAnswer || fullRawResponse,
-        steps,
-        meta: {
-          status: 'done',
-          createdAt: Number(row.created ?? Date.now()),
-          updatedAt: Number(row.created ?? Date.now()),
-        },
-      };
-
-      if (!workBlocksMap.has(wid)) {
-        workBlocksMap.set(wid, []);
-      }
-      workBlocksMap.get(wid)!.push(block);
-
-      // 同步补全 workDagMap 中节点的输入输出、执行状态和 token 统计
-      // （执行状态由 orchestration_agent_execution.status 决定：COMPLETED 成功 / EXEC_FAILED 失败 / CANCELLED·PENDING 未执行）
-      if (workDagMap.has(wid)) {
-        const dagData = workDagMap.get(wid);
-        // 按 task_id 精确定位节点：同一 Agent 复用多个任务时，每条执行记录对应唯一 task，
-        // 避免 find(agentId) 只命中第一个任务节点导致复用任务的节点信息缺失。
-        const taskIdOfRow = String(row.task_id ?? '');
-        const nodeInDag = taskIdOfRow
-          ? dagData.nodes.find((n: any) => n.taskId === taskIdOfRow)
-          : dagData.nodes.find((n: any) => n.agentId === agentId);
-        if (nodeInDag) {
-          nodeInDag.agentName = agentName;
-          nodeInDag.input = inputQuery;
-          nodeInDag.output = outputAnswer;
-          nodeInDag.elapsedMs = Number(row.elapsed_ms ?? 0);
-          nodeInDag.tokenUsage = tokenUsage;
-          const execStatus = String(row.status ?? '').toUpperCase();
-          if (execStatus.includes('COMPLET') || execStatus.includes('SUCCESS')) {
-            nodeInDag.status = 'COMPLETED';
-          } else if (execStatus.includes('FAIL') || execStatus.includes('ERROR')) {
-            nodeInDag.status = 'EXEC_FAILED';
-          } else if (execStatus.includes('CANCEL')) {
-            nodeInDag.status = 'CANCELLED';
-          } else if (execStatus.includes('RUN') || execStatus.includes('PROCESS')) {
-            nodeInDag.status = 'RUNNING';
-          } else {
-            nodeInDag.status = 'PENDING';
-          }
-        }
-      }
-    }
-  } catch { /* degrade gracefully */ }
-
-  return { workBlocksMap, workDagMap };
+function cancelActiveWork(
+  ctx: Awaited<ReturnType<typeof buildContext>>,
+  workId: string | undefined,
+  reason: string,
+): void {
+  if (!workId) return;
+  ctx.chatAccess.cancelWork(
+    Object.assign(new CancelWorkInput(), { work_id: workId, reason }),
+    new CancelWorkOutput(),
+    new ChatContext(),
+  ).catch(() => {});
 }
 
 function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Server {
@@ -1542,6 +797,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       const method = req.method || 'GET';
       const params = u.searchParams;
       const body = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? await jsonBody(req) : {};
+
+      if (await dispatchHttpRoutes(ctx, { method, pathname, params, body }, res)) {
+        return;
+      }
 
       // ===== Health Routes =====
       // Kubernetes 风格健康检查：存活检查返回 200，就绪检查验证 RelationDB 连通性。
@@ -2852,8 +2111,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         });
 
         let clientClosed = false;
+        let activeWorkId: string | undefined;
         req.on('close', () => {
           clientClosed = true;
+          cancelActiveWork(ctx, activeWorkId, 'Client disconnected');
           ctx.streamAccess.closeStream(
             Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Client disconnected' }),
             new CloseStreamOutput(),
@@ -2866,7 +2127,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           try { res.write(str); } catch { /* ignore */ }
         };
 
-        // 注册到 Base 层 StreamProvider（由 StreamProvider 统一管理心跳与结构化数据分发）
         await ctx.streamAccess.registerStream(
           Object.assign(new RegisterStreamInput(), {
             session_id: sessionId,
@@ -2883,7 +2143,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         );
 
         const onEvent = (evt: { event: string; data: Record<string, unknown> }) => {
-          // 兼容旧格式（若有监听器直接调用）
+          if (evt.event === 'loading' && evt.data.work_id) {
+            activeWorkId = String(evt.data.work_id);
+          }
           write(`data: ${JSON.stringify({ event: evt.event, ...evt.data })}\n\n`);
         };
 
@@ -2955,7 +2217,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new CancelWorkOutput();
         const context = new ChatContext();
         await ctx.chatAccess.cancelWork(input, output, context);
-        sendJson(res, 200, { cancelled: true });
+        sendJson(res, 200, { cancelled: output.cancelled });
 
       } else if (method === 'POST' && pathname === '/api/chat/confirm-intent') {
         const sessionId = typeof body.session_id === 'string' ? body.session_id : (params.get('sessionId') || '');
@@ -2978,6 +2240,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let clientClosed = false;
         req.on('close', () => {
           clientClosed = true;
+          cancelActiveWork(ctx, workId, 'Client disconnected');
           ctx.streamAccess.closeStream(
             Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Client disconnected' }),
             new CloseStreamOutput(),
@@ -3045,6 +2308,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let clientClosed = false;
         req.on('close', () => {
           clientClosed = true;
+          cancelActiveWork(ctx, workId, 'Client disconnected');
           ctx.streamAccess.closeStream(
             Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Client disconnected' }),
             new CloseStreamOutput(),
@@ -3157,295 +2421,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { work_id: workId, nodes, edges });
 
       } else if (method === 'GET' && pathname.startsWith('/api/chat/agent-chain/')) {
-        sendJson(res, 200, { nodes: [] });
-
-      // ===== Memory Routes =====
-      } else if (method === 'GET' && pathname === '/api/memory/list') {
-        const limit = Math.min(Math.max(parseInt(params.get('limit') || '50', 10) || 50, 1), 200);
-        const cursor = (params.get('cursor') || '').trim();
-        const conds: string[] = [];
-        const args: any[] = [];
-        if (cursor) {
-          const idx = cursor.indexOf(':');
-          const cCreated = idx > 0 ? Number(cursor.slice(0, idx)) : NaN;
-          const cId = idx > 0 ? cursor.slice(idx + 1) : '';
-          if (!isNaN(cCreated)) {
-            conds.push('("created" < ? OR ("created" = ? AND "id" < ?))');
-            args.push(cCreated, cCreated, cId);
-          }
-        }
-        const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
-        const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
-          args,
+        const exchangeId = decodeURIComponent(pathname.split('/api/chat/agent-chain/')[1] || '');
+        const out = new GetAgentChainOutput();
+        await ctx.visualizationAccess.soAgentChain(
+          Object.assign(new GetAgentChainInput(), { exchange_id: exchangeId }),
+          out,
+          new VisualizationContext(),
         );
-        const hasMore = rows.length > limit;
-        const pageRows = hasMore ? rows.slice(0, limit) : rows;
-        const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, pageRows.map((r: any) => r.info_id));
-        const last = pageRows[pageRows.length - 1];
-        sendJson(res, 200, {
-          memories: pageRows.map((r: any) => mapInfoToMemory(r, tagMap.get(r.info_id) || [])),
-          has_more: hasMore,
-          next_cursor: hasMore && last ? `${last.created}:${last.id}` : null,
-        });
-
-      } else if (method === 'GET' && /\/api\/memory\/tag\//.test(pathname)) {
-        const parts = pathname.split('/');
-        const tag = decodeURIComponent(parts[parts.length - 1] || '');
-        const rows = ctx.relationDb.queryRaw<any>(
-          'SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? ORDER BY r."created" DESC LIMIT 200',
-          [tag],
-        );
-        const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, rows.map((r: any) => r.info_id));
-        sendJson(res, 200, rows.map((r: any) => mapInfoToMemory(r, tagMap.get(r.info_id) || [])));
-
-      } else if (method === 'GET' && pathname === '/api/memory/search') {
-        const kw = (params.get('keyword') || '').trim();
-        const type = (params.get('type') || '').trim();
-        const tag = (params.get('tag') || '').trim();
-        const startTime = params.get('start_time') ? parseInt(params.get('start_time')!, 10) : undefined;
-        const endTime = params.get('end_time') ? parseInt(params.get('end_time')!, 10) : undefined;
-        const cursor = (params.get('cursor') || '').trim();
-        const limit = Math.min(Math.max(parseInt(params.get('limit') || '50', 10) || 50, 1), 200);
-        const conds: string[] = [];
-        const args: any[] = [];
-        if (kw) {
-          conds.push('("info" LIKE ? OR "info_id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" LIKE ?))');
-          args.push(`%${kw}%`, `%${kw}%`);
-        }
-        if (type) {
-          const typeToInfo: Record<string, string[]> = {
-            semantic: ['RESPONSE'],
-            episodic: ['REQUEST'],
-            procedural: ['THINK', 'REFLECT', 'SKILL', 'MCP'],
-            working: ['ACT'],
-          };
-          const infoTypes = typeToInfo[type] || [];
-          if (infoTypes.length > 0) {
-            conds.push(`"info_type" IN (${infoTypes.map(() => '?').join(',')})`);
-            args.push(...infoTypes);
-          }
-        }
-        if (tag) {
-          conds.push('"info_id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" = ?)');
-          args.push(tag);
-        }
-        if (startTime !== undefined) {
-          conds.push('"created" >= ?');
-          args.push(startTime);
-        }
-        if (endTime !== undefined) {
-          conds.push('"created" < ?');
-          args.push(endTime);
-        }
-        if (cursor) {
-          const idx = cursor.indexOf(':');
-          const cCreated = idx > 0 ? Number(cursor.slice(0, idx)) : NaN;
-          const cId = idx > 0 ? cursor.slice(idx + 1) : '';
-          if (!isNaN(cCreated)) {
-            conds.push('("created" < ? OR ("created" = ? AND "id" < ?))');
-            args.push(cCreated, cCreated, cId);
-          }
-        }
-        const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
-        const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
-          args,
-        );
-        const hasMore = rows.length > limit;
-        const pageRows = hasMore ? rows.slice(0, limit) : rows;
-        const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, pageRows.map((r: any) => r.info_id));
-        const last = pageRows[pageRows.length - 1];
-        sendJson(res, 200, {
-          memories: pageRows.map((r: any) => mapInfoToMemory(r, tagMap.get(r.info_id) || [])),
-          has_more: hasMore,
-          next_cursor: hasMore && last ? `${last.created}:${last.id}` : null,
-        });
-
-      } else if (method === 'DELETE' && pathname === '/api/memory') {
-        const rawIds = (body as Record<string, unknown>).info_ids;
-        const infoIds = Array.isArray(rawIds)
-          ? (rawIds as unknown[]).map((x) => String(x)).filter(Boolean)
-          : [];
-        if (infoIds.length === 0) {
-          sendJson(res, 400, { error: 'info_ids 必须为非空数组' });
-          return;
-        }
-        // 级联删除派生表（info_tag_vector 为全局标签向量，交由 orphan_tag_check 定时任务清理）
-        await ctx.relationDb.delete('info_tag', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-        await ctx.relationDb.delete('info_summary', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-        await ctx.relationDb.delete('info_keyword', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-        await ctx.relationDb.delete('info_vector', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-        await ctx.infoCore.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), new InfoCoreContext());
-        const affected = await ctx.relationDb.delete('info_raw', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-        sendJson(res, 200, { deleted_count: affected });
-
-      } else if (method === 'GET' && pathname === '/api/memory/tags') {
-        const tagRows = ctx.relationDb.queryRaw<{ tag: string; cnt: number }>(
-          'SELECT "tag", COUNT(*) AS "cnt" FROM "info_tag" GROUP BY "tag" ORDER BY "cnt" DESC',
-        );
-        sendJson(res, 200, { tags: tagRows.map((r) => r.tag) });
-
-      } else if (method === 'GET' && pathname === '/api/memory/tag-graph') {
-        try {
-          const limit = Math.min(500, Math.max(1, parseInt(params.get('limit') || '100', 10) || 100));
-          const g = await buildCooccurGraphFromGraphDBCached(ctx, 'Tag', 'tag', 'cooccur', limit);
-          sendJson(res, 200, g);
-        } catch { sendJson(res, 200, { nodes: [], edges: [] }); }
-
-      } else if (method === 'GET' && pathname === '/api/memory/keyword-graph') {
-        try {
-          const limit = Math.min(500, Math.max(1, parseInt(params.get('limit') || '100', 10) || 100));
-          const g = await buildCooccurGraphFromGraphDBCached(ctx, 'keyword', 'keyword', 'keywordCooccur', limit);
-          sendJson(res, 200, g);
-        } catch { sendJson(res, 200, { nodes: [], edges: [] }); }
-
-      } else if (method === 'DELETE' && pathname === '/api/memory/tag-graph') {
-        try {
-          const out = new ClearGraphOutput();
-          await ctx.infoCore.clearGraph(Object.assign(new ClearGraphInput(), { node_type: 'Tag' }), out, new InfoCoreContext());
-          sendJson(res, 200, { deleted_nodes: out.deleted_nodes });
-        } catch (e: any) { sendJson(res, 500, { error: e?.message || '清理失败' }); }
-
-      } else if (method === 'DELETE' && pathname === '/api/memory/keyword-graph') {
-        try {
-          const out = new ClearGraphOutput();
-          await ctx.infoCore.clearGraph(Object.assign(new ClearGraphInput(), { node_type: 'keyword' }), out, new InfoCoreContext());
-          sendJson(res, 200, { deleted_nodes: out.deleted_nodes });
-        } catch (e: any) { sendJson(res, 500, { error: e?.message || '清理失败' }); }
-      // ---- Graph Search: text-based tag traversal ----
-      } else if (method === 'POST' && pathname === '/api/memory/graph-search') {
-        const query = typeof body.query === 'string' ? body.query.trim() : '';
-        if (!query) { sendJson(res, 400, { error: 'query is required' }); return; }
-        const maxDepth = typeof body.max_depth === 'number' && body.max_depth > 0 ? Math.min(body.max_depth, 5) : 2;
-        const onlyActive = body.only_active !== false;
-        const fanOutLimit = 500; // θ = 500, PRD 扇出熔断阈值
-        try {
-          const { GraphContext, SelectGraphOutput, GraphTarget } = await import('./Base/GraphDBProvider/domain/types');
-          // 1. 搜索匹配的标签文本
-          const matchedTags = ctx.relationDb.queryRaw<{ tag: string; info_id: string }>(
-            'SELECT DISTINCT "tag", "info_id" FROM "info_tag" WHERE "tag" LIKE ? LIMIT 20',
-            [`%${query.replace(/%/g, '').replace(/'/g, '')}%`],
-          );
-          if (!matchedTags || matchedTags.length === 0) {
-            sendJson(res, 200, { root_tags: [], paths: [] });
-            return;
-          }
-          const tagInfoMap = new Map<string, string[]>();
-          for (const t of matchedTags) {
-            const list = tagInfoMap.get(t.tag) ?? [];
-            list.push(t.info_id);
-            tagInfoMap.set(t.tag, list);
-          }
-          // 2. 标签文本 → GraphDB 节点 ID（节点以 node_type='Tag' + content.tag 存储）
-          const findTagNodeId = async (tagText: string): Promise<string> => {
-            const out = new SelectGraphOutput();
-            await ctx.graphDBAccess.selectGraph(
-              { target: GraphTarget.NODE, node_type: 'Tag' }, out, new GraphContext(),
-            );
-            for (const node of out.list as Array<{ id: string; content: Record<string, unknown> }>) {
-              if (node.content?.['tag'] === tagText) return node.id;
-            }
-            return '';
-          };
-          // 3. 查询与 frontier 节点相连的 similarTo 边
-          const fetchEdges = async (frontier: string[]): Promise<Array<{ id: string; from_node_id: string; to_node_id: string; weight: number; is_active: boolean }>> => {
-            const out = new SelectGraphOutput();
-            await ctx.graphDBAccess.selectGraph({
-              target: GraphTarget.EDGE,
-              edge_type: 'similarTo',
-              conditions: [
-                { field: 'from_node_id', operator: Operator.IN, value: frontier },
-                { field: 'to_node_id', operator: Operator.IN, value: frontier, logic: 'OR' },
-              ],
-            }, out, new GraphContext());
-            return (out.list as Array<{ id: string; from_node_id: string; to_node_id: string; weight: number; is_active: boolean }>)
-              .filter((e) => !onlyActive || e.is_active)
-              .slice(0, fanOutLimit);
-          };
-          // 4. BFS 遍历
-          interface TraversalNode { id: string; tag: string; info_ids: string[]; depth: number }
-          interface TraversalEdge { from_id: string; to_id: string; weight: number; active: boolean; compositeWeight: number }
-          const paths: Array<{ root_tag: string; root_id: string; nodes: TraversalNode[]; edges: TraversalEdge[] }> = [];
-          for (const [tagText, infoIds] of tagInfoMap) {
-            const rootId = await findTagNodeId(tagText);
-            if (!rootId) continue;
-            const visited = new Set<string>([rootId]);
-            const allNodes = new Map<string, TraversalNode>([[rootId, { id: rootId, tag: tagText, info_ids: [...infoIds], depth: 0 }]]);
-            const allEdges: TraversalEdge[] = [];
-            let frontier = [rootId];
-            for (let d = 0; d < maxDepth && frontier.length > 0; d++) {
-              const edgeRows = await fetchEdges(frontier);
-              if (edgeRows.length === 0) break;
-              const nextFrontier: string[] = [];
-              for (const e of edgeRows) {
-                const neighborId = frontier.includes(e.from_node_id) ? e.to_node_id : e.from_node_id;
-                if (!visited.has(neighborId)) {
-                  visited.add(neighborId);
-                  nextFrontier.push(neighborId);
-                  allNodes.set(neighborId, { id: neighborId, tag: neighborId.substring(0, 8), info_ids: [], depth: d + 1 });
-                }
-                let cw = e.weight;
-                try { cw = await ctx.graphDBAccess.computeEdgeWeight(e.id, d + 1); } catch { /* keep weight */ }
-                allEdges.push({ from_id: e.from_node_id, to_id: e.to_node_id, weight: e.weight, active: !!e.is_active, compositeWeight: cw });
-              }
-              frontier = nextFrontier;
-            }
-            paths.push({ root_tag: tagText, root_id: rootId, nodes: Array.from(allNodes.values()), edges: allEdges });
-          }
-          sendJson(res, 200, { root_tags: Array.from(tagInfoMap, ([tag, info_ids]) => ({ tag, info_ids })), paths });
-        } catch { sendJson(res, 200, { root_tags: [], paths: [] }); }
-      } else if (method === 'GET' && /\/api\/memory\/stats\//.test(pathname)) {
-        const totalRows = ctx.relationDb.queryRaw<{ cnt: number }>(
-          'SELECT COUNT(*) AS "cnt" FROM "info_raw"',
-        );
-        const typeRows = ctx.relationDb.queryRaw<{ info_type: string; cnt: number }>(
-          'SELECT "info_type", COUNT(*) AS "cnt" FROM "info_raw" GROUP BY "info_type"',
-        );
-        const byType: Record<string, number> = {};
-        for (const r of typeRows) { byType[r.info_type || 'unknown'] = r.cnt; }
-        sendJson(res, 200, { totalMemories: totalRows[0]?.cnt || 0, byType });
-
-      } else if (method === 'GET' && pathname === '/api/memory/heatmap') {
-        // 按月返回每日记忆条数（热力图数据）
-        const year = parseInt(params.get('year') || '', 10);
-        const month = parseInt(params.get('month') || '', 10);
-        if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-          sendJson(res, 400, { error: '无效的年份或月份' });
-          return;
-        }
-        const start = new Date(year, month - 1, 1).getTime();
-        const end = new Date(year, month, 1).getTime();
-        const rows = ctx.relationDb.queryRaw<{ created: number }>(
-          'SELECT "created" FROM "info_raw" WHERE "created" >= ? AND "created" < ?',
-          [start, end],
-        );
-        const days: Record<string, number> = {};
-        for (const r of rows) {
-          const d = new Date(Number(r.created)).getDate();
-          days[String(d)] = (days[String(d)] || 0) + 1;
-        }
-        sendJson(res, 200, { year, month, days });
-
-      } else if (method === 'GET' && pathname === '/api/memory/date-counts') {
-        // tz：客户端东偏分钟数（-getTimezoneOffset()），按客户端本地日分桶，避免 UTC 桶把凌晨数据落到前一天
-        const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
-        const rows = ctx.relationDb.queryRaw<{ day_num: number; cnt: number }>(
-          'SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "info_raw" WHERE "created" IS NOT NULL GROUP BY day_num',
-          [tzMs],
-        );
-        const dates: Record<string, number> = {};
-        for (const r of rows) {
-          if (r.day_num == null) continue;
-          const d = new Date(r.day_num * 86400000);
-          const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
-          dates[key] = r.cnt;
-        }
-        sendJson(res, 200, { dates });
+        sendJson(res, 200, { nodes: out.nodes });
 
       } else if (method === 'GET' && pathname === '/api/chat/date-counts') {
-        // 会话历史热力图：每个会话按其最后一条消息时间归入本地日，返回每日会话数
-        // 仅统计 chat_session 表中存在的会话，避免 info_raw 孤儿数据导致热力图与列表不一致
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ last_ts: number }>(
           'SELECT MAX(ir."created") AS "last_ts" FROM "info_raw" ir INNER JOIN "chat_session" cs ON ir."session_id" = cs."session_id" WHERE ir."session_id" IS NOT NULL AND ir."session_id" != \'\' AND ir."created" IS NOT NULL GROUP BY ir."session_id"',
@@ -3837,9 +2822,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           })),
         });
 
-      // ===== Feedback Routes =====
-      } else if (method === 'POST' && pathname === '/api/feedback') { sendJson(res, 200, { success: true });
-
       // ===== Profile Routes =====
       } else if (method === 'GET' && pathname === '/api/profile') {
         const input = Object.assign(new GetUserProfileInput(), {
@@ -3912,204 +2894,44 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new DeleteProfileDirectionOutput();
         await ctx.userProfileAccess.deleteProfileDirection(input, output, new UserProfileContext());
         sendJson(res, 200, { success: true });
-      // ===== Monitor Routes =====
-      } else if (method === 'GET' && pathname === '/api/monitor/health-all') {
-        const components: Array<{ name: string; status: string; message?: string; details?: Record<string, string | number> }> = [];
-
-        // RelationDB
-        try {
-          const start = Date.now();
-          ctx.relationDb.queryRaw('SELECT 1');
-          const tables = ctx.relationDb.queryRaw<{ name: string }>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-          );
-          components.push({
-            name: 'RelationDB', status: 'healthy', message: `${Date.now() - start}ms`,
-            details: { '数据表': tables.length },
-          });
-        } catch (e: any) {
-          components.push({ name: 'RelationDB', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        // GraphDB
-        try {
-          const { GraphContext, VisualizedGraphInput, VisualizedGraphOutput } = await import('./Base/GraphDBProvider/domain/types');
-          const o = new VisualizedGraphOutput();
-          await ctx.graphDBAccess.visualizedGraph(Object.assign(new VisualizedGraphInput(), { scope: 'health' }), o, new GraphContext());
-          const d = o.data || {};
-          const vo = new VisualizedGraphOutput();
-          await ctx.graphDBAccess.visualizedGraph(Object.assign(new VisualizedGraphInput(), { scope: 'volume' }), vo, new GraphContext());
-          const vd = vo.data || {};
-          components.push({
-            name: 'GraphDB',
-            status: d.connected === false ? 'unhealthy' : (d.enabled === false ? 'degraded' : 'healthy'),
-            message: d.connected === false ? '未连接' : `${d.response_time_ms ?? 0}ms`,
-            details: { '节点': Number(vd.total_nodes) || 0, '边': Number(vd.total_edges) || 0 },
-          });
-        } catch (e: any) {
-          components.push({ name: 'GraphDB', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        // VectorDB
-        try {
-          const { VectorContext, VisualizedVectorInput, VisualizedVectorOutput } = await import('./Base/VectorDBProvider/domain/types');
-          const o = new VisualizedVectorOutput();
-          await ctx.vectorDBAccess.visualizedVector(Object.assign(new VisualizedVectorInput(), { scope: 'health' }), o, new VectorContext());
-          const d = o.data || {};
-          const vo = new VisualizedVectorOutput();
-          await ctx.vectorDBAccess.visualizedVector(Object.assign(new VisualizedVectorInput(), { scope: 'volume' }), vo, new VectorContext());
-          const vd = vo.data || {};
-          components.push({
-            name: 'VectorDB',
-            status: d.connected === false ? 'unhealthy' : (d.enabled === false ? 'degraded' : 'healthy'),
-            message: d.connected === false ? '未连接' : `${d.response_time_ms ?? 0}ms`,
-            details: { '向量': Number(vd.total_vectors) || 0, '维度': Number(vd.dimension) || 0 },
-          });
-        } catch (e: any) {
-          components.push({ name: 'VectorDB', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        // LLM Provider
-        try {
-          const { VisualizedLLMInput, VisualizedLLMOutput } = await import('./Base/LLMProvider/domain/types');
-          const o = new VisualizedLLMOutput();
-          await ctx.llmAccess.visualizedLLM(Object.assign(new VisualizedLLMInput(), { scope: 'health' }), o, new LLMContext());
-          const d = o.data || {};
-          const enabledProviderCount = await ctx.relationDb.count('llm_provider', [
-            { field: 'enable', operator: Operator.EQ, value: 1 },
-          ]);
-          components.push({
-            name: 'LLM Provider',
-            status: d.connected === false ? 'unhealthy' : (d.enabled === false ? 'degraded' : 'healthy'),
-            message: d.connected === false ? '未连接' : `${d.response_time_ms ?? 0}ms`,
-            details: { '启用提供商': enabledProviderCount, '启用模型': Number(d.enabled_llm_count) || 0 },
-          });
-        } catch (e: any) {
-          components.push({ name: 'LLM Provider', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        // MCP
-        try {
-          const enabledProviderCount = await ctx.relationDb.count('mcp_provider', [
-            { field: 'enable', operator: Operator.EQ, value: 1 },
-          ]);
-          const enabledMcpCount = await ctx.relationDb.count('mcp_install', [
-            { field: 'enable', operator: Operator.EQ, value: 1 },
-          ]);
-          components.push({
-            name: 'MCP',
-            status: 'healthy',
-            message: `${enabledMcpCount} 个启用 MCP`,
-            details: { '启用提供商': enabledProviderCount, '启用 MCP': enabledMcpCount },
-          });
-        } catch (e: any) {
-          components.push({ name: 'MCP', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        // MQ
-        try {
-          const o = new GetQueueStatsOutput();
-          await ctx.mqAccess.soQueueStats(new GetQueueStatsInput(), o, new MQContext());
-          const s = o.stats || {};
-          components.push({
-            name: 'MQ', status: 'healthy', message: `${s.total ?? 0} 条消息`,
-            details: { '待处理': s.pending ?? 0, '处理中': s.processing ?? 0, '完成': s.completed ?? 0, '失败': s.failed ?? 0 },
-          });
-        } catch (e: any) {
-          components.push({ name: 'MQ', status: 'unhealthy', message: e?.message || '连接失败' });
-        }
-
-        const status = components.some((c) => c.status === 'unhealthy')
-          ? 'unhealthy'
-          : components.some((c) => c.status === 'degraded')
-            ? 'degraded'
-            : 'healthy';
-        sendJson(res, 200, { status, uptime: Math.round(process.uptime()), components });
-
-      } else if (method === 'GET' && pathname === '/api/monitor/resources') {
-        const resMonOut = new SoResourceOutput();
-        await ctx.systemMonitorAccess.soResource(new SoResourceInput(), resMonOut, new SystemMonitorContext());
-        const metrics = resMonOut.metrics;
-        sendJson(res, 200, { cpu: metrics.cpu, memory: metrics.memory, disk: metrics.disk });
-      } else if (method === 'GET' && pathname === '/api/analytics/token-trend') {
-        // 按天聚合 llm_usage 的 token 用量（input_tokens + output_tokens）
-        const rows = ctx.relationDb.queryRaw<{ date: string; tokens: number }>(
-          'SELECT "usage_date" AS "date", SUM(COALESCE("input_tokens",0) + COALESCE("output_tokens",0)) AS "tokens" FROM "llm_usage" GROUP BY "usage_date" ORDER BY "usage_date" ASC',
-          [],
-        );
-        sendJson(res, 200, { points: (rows || []).map(r => ({ date: r.date, tokens: Number(r.tokens) || 0 })) });
-
-      } else if (method === 'GET' && pathname === '/api/analytics/model-distribution') {
-        // 按模型聚合 token 用量（关联 llm_available 取模型名与类型，模型已删除时标记 deleted），分别统计输入/输出 token
-        const rows = ctx.relationDb.queryRaw<{ model: string; tokens: number; input_tokens: number; output_tokens: number; deleted: number; type: string }>(
-          'SELECT COALESCE(e."llm_title", u."llm_available_id") AS "model", COALESCE(e."llm_type", \'deleted\') AS "type", (e."llm_title" IS NULL) AS "deleted", SUM(COALESCE(u."input_tokens",0) + COALESCE(u."output_tokens",0)) AS "tokens", SUM(COALESCE(u."input_tokens",0)) AS "input_tokens", SUM(COALESCE(u."output_tokens",0)) AS "output_tokens" FROM "llm_usage" u LEFT JOIN "llm_available" e ON e."id" = u."llm_available_id" GROUP BY u."llm_available_id" ORDER BY "tokens" DESC',
-          [],
-        );
-        sendJson(res, 200, { models: (rows || []).map(r => ({ model: r.model, type: r.type || 'deleted', tokens: Number(r.tokens) || 0, input_tokens: Number(r.input_tokens) || 0, output_tokens: Number(r.output_tokens) || 0, deleted: !!r.deleted })) });
-
-      } else if (method === 'GET' && pathname === '/api/monitor/logs/sources') {
-        try {
-          const sources = await ctx.logAccess.listSources();
-          sendJson(res, 200, { sources: sources || [] });
-        } catch (e: any) {
-          sendJson(res, 500, { error: e?.message || '日志来源查询失败' });
-        }
-
-      } else if (method === 'GET' && pathname === '/api/monitor/logs/query') {
-        const level = params.get('level') || undefined;
-        const source = params.get('source') || undefined;
-        const keyword = params.get('keyword') || undefined;
-        const traceId = params.get('trace_id') || undefined;
-        const workId = params.get('work_id') || undefined;
-        const interactId = params.get('interact_id') || undefined;
-        const logSource = params.get('log_source') || undefined;
-        const startTime = params.get('start_time') ? Number(params.get('start_time')) : undefined;
-        const endTime = params.get('end_time') ? Number(params.get('end_time')) : undefined;
-        const page = params.get('page') ? Number(params.get('page')) : 1;
-        const pageSize = params.get('pageSize') ? Number(params.get('pageSize')) : (params.get('limit') ? Number(params.get('limit')) : 50);
-        try {
-          const result = await ctx.logAccess.queryLogs({ level, source, keyword, trace_id: traceId, work_id: workId, interact_id: interactId, log_source: logSource, start_time: startTime, end_time: endTime, page, pageSize });
-          sendJson(res, 200, {
-            entries: (result.logs || []).map(l => ({
-              id: l.id,
-              timestamp: l.created,
-              level: String(l.level).toLowerCase(),
-              source: l.source,
-              message: l.message,
-              trace_id: l.trace_id || '',
-              caller: l.caller || '',
-              work_id: l.work_id || '',
-              interact_id: l.interact_id || '',
-            })),
-            total: result.total,
-            page,
-            pageSize,
-          });
-        } catch (e: any) {
-          sendJson(res, 500, { error: e?.message || '日志查询失败' });
-        }
-
-      } else if (method === 'DELETE' && pathname === '/api/monitor/logs') {
-        const rawIds = (body as Record<string, unknown>).ids;
-        const ids = Array.isArray(rawIds)
-          ? (rawIds as unknown[]).map((x) => String(x)).filter(Boolean)
-          : [];
-        if (ids.length === 0) {
-          sendJson(res, 400, { error: 'ids 必须为非空数组' });
-          return;
-        }
-        const output = new DelLogOutput();
-        await ctx.logAccess.delLog(Object.assign(new DelLogInput(), { ids }), output, new LogContext());
-        sendJson(res, 200, { deleted_count: output.affected_rows });
-
-      } else if (method === 'DELETE' && pathname === '/api/monitor/logs/all') {
-        const output = new DelLogOutput();
-        // 使用未来时间作为 before_time，删除全部日志
-        await ctx.logAccess.delLog(Object.assign(new DelLogInput(), { before_time: Date.now() + 86400000 }), output, new LogContext());
-        sendJson(res, 200, { deleted_count: output.affected_rows });
-
       } else if (method === 'GET' && pathname === '/api/config/work') {
-        sendJson(res, 200, []);
+        const out = new GetWorkConfigsOutput();
+        await ctx.configAccess.soWork(new GetWorkConfigsInput(), out, new ConfigContext());
+        sendJson(res, 200, out.works);
+
+      } else if (method === 'PUT' && pathname.startsWith('/api/config/work/')) {
+        const id = decodeURIComponent(pathname.split('/api/config/work/')[1] || '');
+        try {
+          const b = (body || {}) as Record<string, unknown>;
+          await ctx.configAccess.updateWork(
+            Object.assign(new UpdateWorkConfigInput(), {
+              id,
+              name: b.name !== undefined ? String(b.name) : undefined,
+              description: b.description !== undefined ? String(b.description) : undefined,
+              enabled: b.enabled !== undefined ? !!b.enabled : (b.enabled === undefined && b.enable !== undefined ? !!b.enable : undefined),
+            }),
+            new UpdateWorkConfigOutput(),
+            new ConfigContext(),
+          );
+          sendJson(res, 200, { success: true });
+        } catch (e: unknown) {
+          const status = e instanceof NotFoundError ? 404 : (e instanceof ValidationError ? 400 : 500);
+          sendJson(res, status, { error: e instanceof Error ? e.message : '更新工作配置失败' });
+        }
+
+      } else if (method === 'DELETE' && pathname.startsWith('/api/config/work/')) {
+        const id = decodeURIComponent(pathname.split('/api/config/work/')[1] || '');
+        try {
+          await ctx.configAccess.deleteWork(
+            Object.assign(new DeleteWorkConfigInput(), { id }),
+            new DeleteWorkConfigOutput(),
+            new ConfigContext(),
+          );
+          sendJson(res, 200, { success: true });
+        } catch (e: unknown) {
+          const status = e instanceof NotFoundError ? 404 : (e instanceof ValidationError ? 400 : 500);
+          sendJson(res, status, { error: e instanceof Error ? e.message : '删除工作配置失败' });
+        }
 
       // ---- Orchestration Strategies ----
       } else if (method === 'GET' && pathname === '/api/orchestration/strategies') {

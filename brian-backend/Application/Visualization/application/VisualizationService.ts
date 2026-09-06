@@ -91,6 +91,8 @@ import {
   FOLLOW_UP_EDGE_TYPE,
   GraphVisualizationConfigInput,
   GraphVisualizationConfigOutput,
+  GetAgentChainInput,
+  GetAgentChainOutput,
   DEFAULT_GRAPH_REPULSION,
   DEFAULT_GRAPH_SPRING_STRENGTH,
 } from '../domain/types';
@@ -329,6 +331,69 @@ export class VisualizationService {
 
     output.dag = enriched;
     return true;
+  }
+
+  async soAgentChain(input: GetAgentChainInput, output: GetAgentChainOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const exchangeId = String(input.exchange_id || '').trim();
+    if (!exchangeId) {
+      output.nodes = [];
+      return true;
+    }
+    let rows: Array<{
+      id: string; work_id: string; agent_id: string; execution_type: string; task_content: string;
+      status: string; answer: string; elapsed_ms: number; plan_id: string;
+    }> = [];
+    try {
+      rows = this.relationDb.queryRaw(
+        `SELECT e."id", e."work_id", e."agent_id", e."execution_type", e."task_content", e."status", e."answer", e."elapsed_ms", e."plan_id"
+         FROM "orchestration_agent_execution" e
+         LEFT JOIN "orchestration_work" w ON w."work_id" = e."work_id"
+         WHERE e."work_id" = ? OR e."id" = ? OR w."interact_id" = ? OR w."session_id" = ?
+         ORDER BY e."created" ASC`,
+        [exchangeId, exchangeId, exchangeId, exchangeId],
+      ) || [];
+    } catch (err) {
+      this.logWarn('soAgentChain query failed', err);
+      output.nodes = [];
+      return true;
+    }
+    const childrenByFrom = new Map<string, string[]>();
+    try {
+      const edges = this.relationDb.queryRaw<{ from_agent_id: string; to_agent_id: string }>(
+        'SELECT "from_agent_id", "to_agent_id" FROM "orchestration_agent_dag"',
+        [],
+      );
+      for (const e of edges || []) {
+        const from = String(e.from_agent_id || '');
+        const to = String(e.to_agent_id || '');
+        if (!from || !to) continue;
+        const list = childrenByFrom.get(from) ?? [];
+        list.push(to);
+        childrenByFrom.set(from, list);
+      }
+    } catch {
+      /* table may be empty */
+    }
+    output.nodes = (rows || []).map((r) => ({
+      id: String(r.agent_id || r.id),
+      name: String(r.agent_id || r.id).slice(0, 16),
+      type: String(r.execution_type || 'AGENT'),
+      status: this.mapExecStatus(String(r.status || '')),
+      input: r.task_content || undefined,
+      output: r.answer || undefined,
+      durationMs: Number(r.elapsed_ms) || 0,
+      children: childrenByFrom.get(String(r.agent_id || '')) || [],
+    }));
+    return true;
+  }
+
+  private mapExecStatus(status: string): 'pending' | 'running' | 'done' | 'error' {
+    const s = status.toUpperCase();
+    if (s === 'COMPLETED' || s === 'DONE' || s === 'SUCCESS') return 'done';
+    if (s === 'EXEC_FAILED' || s === 'FAILED' || s === 'ERROR') return 'error';
+    if (s === 'PENDING' || s === 'CREATED') return 'pending';
+    return 'running';
   }
 
   async soVisualizedWorkFlow(input: GetVisualizedWorkFlowInput, output: GetVisualizedWorkFlowOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,

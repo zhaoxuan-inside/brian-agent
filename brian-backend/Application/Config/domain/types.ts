@@ -179,3 +179,29 @@ export class DeleteConfigItemInput extends Input {
 }
 
 export class DeleteConfigItemOutput extends Output {}
+
+export interface WorkConfigItem {
+  id: string;
+  name: string;
+  description: string;
+  steps: string[];
+  enabled: boolean;
+}
+
+export class GetWorkConfigsInput extends Input {}
+export class GetWorkConfigsOutput extends Output {
+  works: WorkConfigItem[] = [];
+}
+
+export class UpdateWorkConfigInput extends Input {
+  id!: string;
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+}
+export class UpdateWorkConfigOutput extends Output {}
+
+export class DeleteWorkConfigInput extends Input {
+  id!: string;
+}
+export class DeleteWorkConfigOutput extends Output {}

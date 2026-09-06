@@ -25,6 +25,8 @@ import {
   GetResourceOutput,
   ConfigVisualizationInput,
   ConfigVisualizationOutput,
+  GetAgentChainInput,
+  GetAgentChainOutput,
 } from '../Visualization/domain/types';
 import { initVisualizationSchema } from './test-helpers';
 import {
@@ -1618,6 +1620,28 @@ describe('VisualizationService', () => {
 
       await svc.configVisualization(input, out, ctx());
       expect((out.config as any).resolve_content_by_default).toBe(0);
+    });
+  });
+
+  describe('soAgentChain', () => {
+    it('TC-VIS-144: empty exchange_id returns empty nodes', async () => {
+      const out = new GetAgentChainOutput();
+      await svc.soAgentChain(Object.assign(new GetAgentChainInput(), { exchange_id: '' }), out, ctx());
+      expect(out.nodes).toEqual([]);
+    });
+
+    it('TC-VIS-145: work_id maps execution records to chain nodes', async () => {
+      insOrchWork(ctxEnv.db, { work_id: 'work-chain', interact_id: 'ex-1' });
+      insOrchAgentExec(ctxEnv.db, {
+        work_id: 'work-chain', agent_id: 'agent-writer', status: 'COMPLETED',
+        execution_type: 'SYSTEM', task_content: 'write', answer: 'done', elapsed_ms: 12,
+      });
+      const out = new GetAgentChainOutput();
+      await svc.soAgentChain(Object.assign(new GetAgentChainInput(), { exchange_id: 'work-chain' }), out, ctx());
+      expect(out.nodes.length).toBeGreaterThanOrEqual(1);
+      expect(out.nodes[0].id).toBe('agent-writer');
+      expect(out.nodes[0].status).toBe('done');
+      expect(out.nodes[0].children).toEqual([]);
     });
   });
 });

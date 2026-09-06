@@ -553,9 +553,12 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       role: 'assistant',
       type: 'Feedback',
       traceId: String(ctx.payload.trace_id || currentTraceId || ''),
+      workId: String(ctx.payload.work_id || chat.currentWorkId || ''),
+      sessionId: String(chat.currentSessionId || ''),
       meta: { status: 'done', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
     } as Block
     chat.addBlock(feedbackBlock)
+    chat.setCurrentWorkId(null)
     textBlockId = null
   }
 
@@ -607,7 +610,10 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   /** 事件分发表：agent_thinking/thinking、agent_action/agent_status、text_chunk/text 为同义别名 */
   const handlers: Record<string, (ctx: StreamEventCtx) => void> = {
     connected: onConnected,
-    loading: () => { /* 心跳占位帧 */ },
+    loading: (ctx) => {
+      const wid = String(ctx.payload.work_id || '')
+      if (wid) chat.setCurrentWorkId(wid)
+    },
     context_built: onContextBuilt,
     intent_agent_result: onIntentAgentResult,
     intent_confirmation_required: onIntentConfirmationRequired,
@@ -647,7 +653,10 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     },
     reset(clearTrace = false) {
       textBlockId = null
-      if (clearTrace) currentTraceId = ''
+      if (clearTrace) {
+        currentTraceId = ''
+        chat.setCurrentWorkId(null)
+      }
     },
   }
 }

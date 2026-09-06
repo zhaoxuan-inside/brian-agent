@@ -116,6 +116,12 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  GetWorkConfigsInput,
+  GetWorkConfigsOutput,
+  UpdateWorkConfigInput,
+  UpdateWorkConfigOutput,
+  DeleteWorkConfigInput,
+  DeleteWorkConfigOutput,
   CONFIG_LAYER_PRIVILEGE_TABLE,
   CONFIG_MODULE_PRIVILEGE_TABLE,
   CONFIG_CONFIG_TABLE,
@@ -1844,5 +1850,73 @@ export class ConfigService {
 
   async getPromptProxy(input: GetPromptInput, output: GetPromptOutput, context: PromptContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.promptsAccess.soPromptById(input, output, context, metrics, report);
+  }
+
+  async soWork(_input: GetWorkConfigsInput, output: GetWorkConfigsOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const rows = this.relationDb.queryRaw<{
+      id: string; strategy_id: string; strategy_label: string; strategy_description: string; enable: number; jsonnode_definition: string;
+    }>(
+      'SELECT "id", "strategy_id", "strategy_label", "strategy_description", "enable", "jsonnode_definition" FROM "orchestration_strategy" ORDER BY "created" ASC',
+      [],
+    );
+    output.works = (rows || []).map((r) => this.toWorkConfig(r));
+    return true;
+  }
+
+  async updateWork(input: UpdateWorkConfigInput, _output: UpdateWorkConfigOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.id) throw new ValidationError('id 不能为空');
+    const row = this.findWorkRow(input.id);
+    if (!row) throw new NotFoundError('work', input.id);
+    const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
+    if (input.name !== undefined) data.push({ field: 'strategy_label', value: input.name });
+    if (input.description !== undefined) data.push({ field: 'strategy_description', value: input.description });
+    if (input.enabled !== undefined) data.push({ field: 'enable', value: input.enabled ? 1 : 0 });
+    await this.relationDb.update('orchestration_strategy', data, [
+      { field: 'id', operator: Operator.EQ, value: row.id },
+    ]);
+    return true;
+  }
+
+  async deleteWork(input: DeleteWorkConfigInput, _output: DeleteWorkConfigOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.id) throw new ValidationError('id 不能为空');
+    const row = this.findWorkRow(input.id);
+    if (!row) throw new NotFoundError('work', input.id);
+    await this.relationDb.update('orchestration_strategy', [
+      { field: 'updated', value: IdGenerator.now() },
+      { field: 'enable', value: 0 },
+    ], [
+      { field: 'id', operator: Operator.EQ, value: row.id },
+    ]);
+    return true;
+  }
+
+  private findWorkRow(id: string): { id: string } | undefined {
+    const rows = this.relationDb.queryRaw<{ id: string }>(
+      'SELECT "id" FROM "orchestration_strategy" WHERE "id" = ? OR "strategy_id" = ? LIMIT 1',
+      [id, id],
+    );
+    return rows[0];
+  }
+
+  private toWorkConfig(r: {
+    id: string; strategy_id: string; strategy_label: string; strategy_description: string; enable: number; jsonnode_definition: string;
+  }) {
+    let steps: string[] = [];
+    try {
+      const parsed = JSON.parse(r.jsonnode_definition || '{}') as { nodes?: Array<{ node_type?: string; node_id?: string }> };
+      steps = (parsed.nodes || []).map((n) => String(n.node_type || n.node_id || '')).filter(Boolean);
+    } catch {
+      steps = [];
+    }
+    return {
+      id: r.strategy_id || r.id,
+      name: r.strategy_label || r.strategy_id,
+      description: r.strategy_description || '',
+      steps,
+      enabled: !!r.enable,
+    };
   }
 }

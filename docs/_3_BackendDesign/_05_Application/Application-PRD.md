@@ -24,6 +24,9 @@ Application 层可依赖 Orchestration、Agent、Core、Base 层的能力，通�
 | **SelfLearning** | 自主学习引擎，管理资料库和文档学习、对话学习、Tag 图维护 | `/api/learning` |
 | **UserProfile** | 用户画像管理和展示，聚合多维度画像数据 | `/api/profile` |
 | **Visualization** | 系统可视化数据的统一封装层，提供 Agent DAG、消息图、资源查询等可视化数据 | `/api/visualization` |
+| **Monitor** | 运行时健康检查、资源监控、日志查询、Token 分析 | `/api/monitor`、`/api/analytics` |
+| **Feedback** | 用户对消息/会话的评分与反馈收集 | `/api/feedback` |
+| **Memory** | 信息页记忆条目、标签图谱、热力图与图搜索 | `/api/memory` |
 
 ## 3. 模块间协作规则
 

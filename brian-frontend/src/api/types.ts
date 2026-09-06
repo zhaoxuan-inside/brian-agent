@@ -222,6 +222,8 @@ export interface FeedbackBlock extends BlockBase {
   rating?: number
   liked?: boolean
   traceId?: string
+  workId?: string
+  sessionId?: string
 }
 
 export type Block =

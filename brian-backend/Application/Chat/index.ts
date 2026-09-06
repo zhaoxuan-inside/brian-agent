@@ -19,3 +19,4 @@ export {
   OpenChatStreamInput, OpenChatStreamOutput,
 } from './domain/types';
 export type { SSEEvent } from './domain/types';
+export { buildThinkingBlocksAndDag } from './application/ThinkingChainBuilder';

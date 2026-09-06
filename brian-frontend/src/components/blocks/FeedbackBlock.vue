@@ -4,18 +4,27 @@ import { ThumbsUp, ThumbsDown, Star, Copy, Check } from '@lucide/vue'
 import { feedbackApi } from '@/api'
 import type { FeedbackBlock } from '@/api/types'
 import { copyToClipboard } from '@/utils/clipboard'
+import { useSessionStore } from '@/stores/session'
 
 const props = defineProps<{ block: FeedbackBlock }>()
+const sessionStore = useSessionStore()
 const rating = ref(0)
 const hoveredRating = ref(0)
 const submitted = ref(false)
 const copied = ref(false)
 
+function feedbackContext() {
+  return {
+    work_id: props.block.workId || undefined,
+    session_id: props.block.sessionId || sessionStore.currentSessionId || undefined,
+  }
+}
+
 async function submitRating(score: number) {
   if (submitted.value) return
   rating.value = score
   try {
-    await feedbackApi.submit(props.block.msgId, score, 'rating')
+    await feedbackApi.submit(props.block.msgId, score, 'rating', feedbackContext())
     submitted.value = true
   } catch { /* ignore */ }
 }
@@ -23,7 +32,7 @@ async function submitRating(score: number) {
 async function submitLike(type: 'like' | 'dislike') {
   if (submitted.value) return
   try {
-    await feedbackApi.submit(props.block.msgId, type === 'like' ? 1 : 0, type)
+    await feedbackApi.submit(props.block.msgId, type === 'like' ? 1 : 0, type, feedbackContext())
     submitted.value = true
   } catch { /* ignore */ }
 }

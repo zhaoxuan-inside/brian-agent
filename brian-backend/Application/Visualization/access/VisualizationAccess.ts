@@ -41,6 +41,8 @@ import {
   ConfigVisualizationOutput,
   GraphVisualizationConfigInput,
   GraphVisualizationConfigOutput,
+  GetAgentChainInput,
+  GetAgentChainOutput,
 } from '../domain/types';
 
 export class VisualizationAccess {
@@ -141,5 +143,11 @@ export class VisualizationAccess {
   ): Promise<boolean> {
     await this.initPromise;
     return this.service.soGraphVisualizationConfig(i, o, c, metrics, report);
+  }
+
+  async soAgentChain(i: GetAgentChainInput, o: GetAgentChainOutput, c: VisualizationContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.soAgentChain(i, o, c, metrics, report);
   }
 }

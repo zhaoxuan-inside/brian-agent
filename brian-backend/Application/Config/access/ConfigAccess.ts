@@ -84,6 +84,12 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  GetWorkConfigsInput,
+  GetWorkConfigsOutput,
+  UpdateWorkConfigInput,
+  UpdateWorkConfigOutput,
+  DeleteWorkConfigInput,
+  DeleteWorkConfigOutput,
 } from '../domain/types';
 
 export class ConfigAccess {
@@ -370,5 +376,20 @@ export class ConfigAccess {
 
   async soPromptById(input: GetPromptInput, output: GetPromptOutput, context: PromptContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.getPromptProxy(input, output, context, metrics, report);
+  }
+
+  async soWork(input: GetWorkConfigsInput, output: GetWorkConfigsOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.soWork(input, output, context, metrics, report);
+  }
+
+  async updateWork(input: UpdateWorkConfigInput, output: UpdateWorkConfigOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.updateWork(input, output, context, metrics, report);
+  }
+
+  async deleteWork(input: DeleteWorkConfigInput, output: DeleteWorkConfigOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.deleteWork(input, output, context, metrics, report);
   }
 }
