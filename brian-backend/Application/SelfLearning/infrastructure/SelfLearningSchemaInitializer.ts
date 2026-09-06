@@ -5,17 +5,7 @@ export class SelfLearningSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   async init(): Promise<void> {
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS chat_session (
-        id TEXT PRIMARY KEY NOT NULL,
-        created INTEGER NOT NULL,
-        updated INTEGER NOT NULL,
-        session_id TEXT UNIQUE NOT NULL,
-        session_name TEXT,
-        session_type TEXT DEFAULT 'user',
-        is_active INTEGER DEFAULT 1
-      )
-    `);
+    // chat_session 表由 Chat 模块（ChatSchemaInitializer）统一建表/管列——2026-09-06 修复双 schema 冲突
     this.relationDb.executeRaw(
       'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
     );

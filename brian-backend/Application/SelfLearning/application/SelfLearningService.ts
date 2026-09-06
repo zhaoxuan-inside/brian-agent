@@ -1,3 +1,4 @@
+import { callLLMJson } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -917,7 +918,15 @@ export class SelfLearningService {
         const trimmed = chunk.trim();
         if (!trimmed) continue;
 
-        // V1 编排已移除：学习内容经 chunk 拆分后直接记录结果（不再注入编排 workflow）
+        // LLM 抽取知识点（从文档学习）：产出 KNOWLEDGE 记录 → 学习页「知识」列表可见
+        const extracted = await this.extractKnowledgeFromChunk(trimmed, fileName);
+        for (const point of extracted) {
+          await this.insertLearningResult('KNOWLEDGE', 'DOCUMENT', point.content, point.tags ?? null);
+        }
+        if (extracted.length === 0) {
+          // LLM 抽取失败时兜底：将 chunk 原文记录为知识条目，保证触发有可见产出
+          await this.insertLearningResult('KNOWLEDGE', 'DOCUMENT', trimmed.slice(0, 2000), null);
+        }
       }
 
       await this.updateFileStatus(fileId, 'COMPLETED', null);
@@ -951,9 +960,7 @@ export class SelfLearningService {
         { field: 'created', value: now },
         { field: 'updated', value: now },
         { field: 'session_id', value: sessionId },
-        { field: 'session_name', value: 'Self Learning' },
-        { field: 'session_type', value: 'self_learning' },
-        { field: 'is_active', value: 1 },
+        { field: 'session_title', value: 'Self Learning' },
       ]);
     }
 
@@ -1015,6 +1022,42 @@ export class SelfLearningService {
       ] as Condition[],
     });
     await this.relationDb.updateDB(updInput, Object.assign(new UpdateDBOutput(), {}), new DBContext());
+  }
+
+  /**
+   * LLM 抽取文档 chunk 中的知识点（从文档学习的核心步骤）。
+   * 返回 {content, tags?} 列表；LLM 失败或解析失败返回空数组（调用方兜底记录原文）。
+   */
+  private async extractKnowledgeFromChunk(chunk: string, fileName: string): Promise<Array<{ content: string; tags?: string[] | null }>> {
+    if (!this.llmAccess) return [];
+    const prompt = [
+      '从以下文档片段中抽取 1-5 条知识点，输出 JSON 数组，每条形如 {"content": "知识点描述（60字内）", "tags": ["标签1", "标签2"]。',
+      '只输出 JSON 数组，不要任何其他文本。',
+      `来源文件：${fileName}`,
+      '文档片段：',
+      chunk.slice(0, 3000),
+    ].join('\n');
+    try {
+      const parsed = await callLLMJson<Array<{ content?: string; tags?: string[] }>>(this.llmAccess, {
+        prompt,
+        llmId: '',
+        parse: (text) => {
+          try {
+            const j = JSON.parse(text);
+            return Array.isArray(j) ? j : null;
+          } catch {
+            return null;
+          }
+        },
+        retries: 1,
+      });
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((p) => p && typeof p.content === 'string' && p.content.trim())
+        .map((p) => ({ content: p.content!.trim().slice(0, 300), tags: Array.isArray(p.tags) ? p.tags : null }));
+    } catch {
+      return [];
+    }
   }
 
   private async insertLearningResult(
