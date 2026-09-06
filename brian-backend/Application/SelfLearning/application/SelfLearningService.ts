@@ -643,7 +643,8 @@ export class SelfLearningService {
     }
 
     if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
-      await this.startTagMaintenance(config);
+      // Tag 维护后台化：立即返回，维护（连接/激活）异步执行完成（避免路由同步等待 O(图) 扫描）
+      void this.startTagMaintenanceGuarded(config);
     }
 
     if (mode === 'ALL' || mode === 'RANDOM') {
@@ -788,6 +789,19 @@ export class SelfLearningService {
     const scheduleOutput = Object.assign(new StartEvalScheduleOutput(), {});
     await this.evolutorAgent.startEvalSchedule(scheduleInput, scheduleOutput, new EvolutorAgentContext());
     this.evalScheduleRunning = true;
+  }
+
+  /** Tag 维护守护壳：防重入，维护异常不外溢 */
+  private async startTagMaintenanceGuarded(config: Record<string, unknown>): Promise<void> {
+    if (this.tagMaintenanceRunning) return;
+    this.tagMaintenanceRunning = true;
+    try {
+      await this.startTagMaintenance(config);
+    } catch (err: unknown) {
+      this.logger?.error?.('Tag maintenance error', { error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      this.tagMaintenanceRunning = false;
+    }
   }
 
   private async startTagMaintenance(config: Record<string, unknown>): Promise<void> {
@@ -1048,6 +1062,9 @@ export class SelfLearningService {
   private static readonly TAG_MAINTENANCE_BATCH = 20;
   /** 标签维护重入守卫：启动 / 30min timer / 随机 tick 三路都可能触发全量计算，禁止叠加执行 */
   private tagMaintenanceRunning = false;
+  /** 全局图统计缓存（60s TTL；避免每次统计全量扫描图数据库） */
+  private graphStatsCache: { at: number; data: Record<string, unknown> } | null = null;
+  private graphStatsComputing = false;
 
   private async yieldToEventLoop(): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve));
@@ -1684,64 +1701,18 @@ export class SelfLearningService {
     let agedEdgesThisWeek = 0;
     let newEdgesThisWeek = 0;
 
-    // ===== 修改后：仅在全局统计（无 source 过滤）时扫描图数据库 ====
-    // 图数据库统计（Tag 节点/边数量、孤立标签等）是全局数据，不随 source 变化。
-    // 按 source 过滤的场景（如学习页面 3 个模式卡片并发请求）跳过此扫描，
-    // 避免 O(节点数) 的图数据库全量扫描被重复执行 3 次导致事件循环阻塞。
+    // 图统计读取（2026-09-06）：请求路径绝不执行 O(节点数) 扫描——
+    // 60s TTL 内命中缓存；过期返回旧值并后台重算；无缓存返回零值并后台首算
     if (!input.source) {
-      try {
-        const graphNodes = Object.assign(new SelectGraphOutput(), {});
-        await this.graphDBAccess.selectGraph(
-          Object.assign(new SelectGraphInput(), {
-            target: GraphTarget.NODE,
-            node_type: 'Tag',
-          }),
-          graphNodes,
-          new GraphContext(),
-        );
-        totalTagNodes = graphNodes.list.length;
-
-        const nodeNeighborMap = new Map<string, number>();
-        for (const node of graphNodes.list) {
-          if (!('node_type' in node)) continue;
-          const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
-          await this.graphDBAccess.soGraphNeighbors(
-            Object.assign(new GetGraphNeighborsInput(), {
-              node_id: node.id,
-              direction: GraphDirection.BOTH,
-            }),
-            neighbors,
-            new GraphContext(),
-          );
-          nodeNeighborMap.set(node.id, neighbors.list.length);
-        }
-        orphanTags = Array.from(nodeNeighborMap.values()).filter((c) => c === 0).length;
-
-        const graphEdges = Object.assign(new SelectGraphOutput(), {});
-        await this.graphDBAccess.selectGraph(
-          Object.assign(new SelectGraphInput(), {
-            target: GraphTarget.EDGE,
-          }),
-          graphEdges,
-          new GraphContext(),
-        );
-        totalTagEdges = graphEdges.list.length;
-
-        for (const edge of graphEdges.list) {
-          if (!('node_type' in edge)) continue;
-          const e = (edge as any);
-          if (e.is_active === true || e.is_active === 1) {
-            activeEdges++;
-          }
-          if (e.last_aged_at && (e.last_aged_at as number) >= thisWeekStart) {
-            agedEdgesThisWeek++;
-          }
-          if (e.created && (e.created as number) >= thisWeekStart) {
-            newEdgesThisWeek++;
-          }
-        }
-      } catch {
-        /* graph DB might not have Tag nodes yet */
+      const cached = this.graphStatsCache;
+      if (cached) {
+        Object.assign(output.stats, cached.data);
+      }
+      if (!this.graphStatsComputing && (!cached || Date.now() - cached.at >= 60000)) {
+        this.graphStatsComputing = true;
+        void this.computeGraphStatsInBackground().finally(() => {
+          this.graphStatsComputing = false;
+        });
       }
     }
 
@@ -1787,7 +1758,91 @@ export class SelfLearningService {
       },
       learning_trend: trend,
     };
+    // 图统计写入 60s TTL 缓存（仅全局统计含图数据；学习触发后的页面刷新直接命中缓存，不再全量扫描）
+    if (!input.source) {
+      this.graphStatsCache = { at: Date.now(), data: JSON.parse(JSON.stringify(output.stats)) };
+    }
     return true;
+  }
+
+
+  /** 后台计算全局图统计（逻辑控制；批处理让出事件循环；写 60s TTL 缓存，请求路径不扫描） */
+  /** 后台计算全局图统计（逻辑控制；批处理让出事件循环；写 60s TTL 缓存，请求路径不扫描） */
+  private async computeGraphStatsInBackground(): Promise<void> {
+    try {
+      const graphNodes = Object.assign(new SelectGraphOutput(), {});
+      await this.graphDBAccess.selectGraph(
+        Object.assign(new SelectGraphInput(), {
+          target: GraphTarget.NODE,
+          node_type: 'Tag',
+        }),
+        graphNodes,
+        new GraphContext(),
+      );
+      let totalTagNodes = graphNodes.list.length;
+      let totalTagEdges = 0;
+      let activeEdges = 0;
+      let orphanTags = 0;
+      let agedEdgesThisWeek = 0;
+      let newEdgesThisWeek = 0;
+      const thisWeekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+      const nodeNeighborMap = new Map<string, number>();
+      let scanned = 0;
+      for (const node of graphNodes.list) {
+        if (!('node_type' in node)) continue;
+        const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
+        await this.graphDBAccess.soGraphNeighbors(
+          Object.assign(new GetGraphNeighborsInput(), {
+            node_id: node.id,
+            direction: GraphDirection.BOTH,
+          }),
+          neighbors,
+          new GraphContext(),
+        );
+        nodeNeighborMap.set(node.id, neighbors.list.length);
+        scanned++;
+        if (scanned % SelfLearningService.TAG_MAINTENANCE_BATCH === 0) {
+          await this.yieldToEventLoop();
+        }
+      }
+      orphanTags = Array.from(nodeNeighborMap.values()).filter((c) => c === 0).length;
+
+      const graphEdges = Object.assign(new SelectGraphOutput(), {});
+      await this.graphDBAccess.selectGraph(
+        Object.assign(new SelectGraphInput(), { target: GraphTarget.EDGE }),
+        graphEdges,
+        new GraphContext(),
+      );
+      for (const edge of graphEdges.list) {
+        if (!('edge_type' in edge)) continue;
+        totalTagEdges++;
+        const e = edge as unknown as { is_active?: unknown; last_aged_at?: unknown; created?: unknown };
+        if (e.is_active === true || e.is_active === 1) activeEdges++;
+        if (e.last_aged_at && Number(e.last_aged_at) >= thisWeekStart) agedEdgesThisWeek++;
+        if (e.created && Number(e.created) >= thisWeekStart) newEdgesThisWeek++;
+      }
+
+      this.graphStatsCache = {
+        at: Date.now(),
+        data: {
+          tag_graph: {
+            total_tags: totalTagNodes,
+            total_edges: totalTagEdges,
+            active_edges: activeEdges,
+            orphan_tags: orphanTags,
+            aged_edges_this_week: agedEdgesThisWeek,
+            new_edges_this_week: newEdgesThisWeek,
+          },
+        },
+      };
+      this.logger?.debug?.('computeGraphStatsInBackground done', {
+        total_tags: totalTagNodes,
+        total_edges: totalTagEdges,
+      });
+    } catch (err: unknown) {
+      this.logger?.error?.('computeGraphStatsInBackground failed', { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
