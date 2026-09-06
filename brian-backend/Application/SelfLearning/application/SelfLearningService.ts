@@ -51,6 +51,7 @@ import {
   GetLearningProgressInput, GetLearningProgressOutput,
   GetLearningResultsInput, GetLearningResultsOutput,
   GetLearningStatsInput, GetLearningStatsOutput,
+  LearningTaskRecord, LearningTaskStatus, ListLearningTasksInput, ListLearningTasksOutput,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,
 } from '../domain/types';
 
@@ -635,17 +636,24 @@ export class SelfLearningService {
     const interval = (config.learning_interval_ms as number) ?? 600000;
     const mode = input.learning_mode ?? 'ALL';
 
+    // 手动触发任务化：注册任务 → 后台执行（fire-and-forget）→ 任务列表可见（running→completed/failed）
     if (!mode || mode === 'ALL' || mode.includes('DOCUMENT')) {
-      await this.startDocumentLearning(input.library_id, learningRate, interval);
+      const taskId = this.registerLearningTask('DOCUMENT', '从文档学习');
+      void this.startDocumentLearning(input.library_id, learningRate, interval)
+        .then(() => this.finishLearningTask(taskId))
+        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
     }
-
     if (mode === 'ALL' || mode.includes('CONVERSATION')) {
-      await this.startConversationLearning();
+      const taskId = this.registerLearningTask('CONVERSATION', '从对话学习');
+      void this.startConversationLearning()
+        .then(() => this.finishLearningTask(taskId))
+        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
     }
-
     if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
-      // Tag 维护后台化：立即返回，维护（连接/激活）异步执行完成（避免路由同步等待 O(图) 扫描）
-      void this.startTagMaintenanceGuarded(config);
+      const taskId = this.registerLearningTask('TAG_MAINTENANCE', 'Tag图维护');
+      void this.startTagMaintenanceGuarded(config)
+        .then(() => this.finishLearningTask(taskId))
+        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
     }
 
     if (mode === 'ALL' || mode === 'RANDOM') {
@@ -1702,6 +1710,45 @@ export class SelfLearningService {
   // ─────────────────────────────────────────────────────────────────────────
   // soLearningStats
   // ─────────────────────────────────────────────────────────────────────────
+
+  /** 学习任务注册表（实例内存；手动触发的后台任务可视化） */
+  private readonly learningTasks = new Map<string, LearningTaskRecord>();
+  private learningTaskOrder: string[] = [];
+
+  /** 注册学习任务（数据处理） */
+  private registerLearningTask(mode: LearningTaskRecord['mode'], label: string): string {
+    const taskId = IdGenerator.generate();
+    this.learningTasks.set(taskId, {
+      task_id: taskId, mode, label, status: LearningTaskStatus.Running, started_at: Date.now(),
+    });
+    this.learningTaskOrder.unshift(taskId);
+    if (this.learningTaskOrder.length > 50) {
+      for (const old of this.learningTaskOrder.splice(50)) this.learningTasks.delete(old);
+    }
+    return taskId;
+  }
+
+  /** 完成学习任务（数据处理；error 非空即失败） */
+  private finishLearningTask(taskId: string, error?: string): void {
+    const t = this.learningTasks.get(taskId);
+    if (!t || t.status !== LearningTaskStatus.Running) return;
+    t.status = error ? LearningTaskStatus.Failed : LearningTaskStatus.Completed;
+    t.finished_at = Date.now();
+    t.error = error;
+  }
+
+  /** 查询学习任务列表（逻辑控制；running 优先，其余按开始时间倒序） */
+  async soLearningTasks(input: ListLearningTasksInput, output: ListLearningTasksOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const limit = input.limit ?? 20;
+    const rank = (t: LearningTaskRecord) => (t.status === LearningTaskStatus.Running ? 0 : 1);
+    output.tasks = this.learningTaskOrder
+      .map((id) => this.learningTasks.get(id))
+      .filter((t): t is LearningTaskRecord => !!t)
+      .sort((a, b) => rank(a) - rank(b) || b.started_at - a.started_at)
+      .slice(0, input.limit ?? 20);
+    return true;
+  }
 
   async soLearningStats(input: GetLearningStatsInput, output: GetLearningStatsOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {

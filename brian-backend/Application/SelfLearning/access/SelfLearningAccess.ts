@@ -24,7 +24,10 @@ import {
   GetLearningProgressInput, GetLearningProgressOutput,
   GetLearningResultsInput, GetLearningResultsOutput,
   GetLearningStatsInput, GetLearningStatsOutput,
-  ConfigSelfLearningInput, ConfigSelfLearningOutput,
+  ConfigSelfLearningInput, ConfigSelfLearningOutput,  ListLearningTasksInput,
+  ListLearningTasksOutput,
+  LearningTaskStatus,
+
 } from '../domain/types';
 
 export class SelfLearningAccess {
@@ -158,6 +161,12 @@ export class SelfLearningAccess {
   ): Promise<boolean> {
     await this.initPromise;
     return this.service.soLearningStats(i, o, c, metrics, report);
+  }
+
+  /** 查询学习任务列表（手动触发后台任务可视化） */
+  async soLearningTasks(i: ListLearningTasksInput, o: ListLearningTasksOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.soLearningTasks(i, o, c, metrics, report);
   }
 
   async configSelfLearning(i: ConfigSelfLearningInput, o: ConfigSelfLearningOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,

@@ -106,6 +106,7 @@ import { ConfigAccess } from './Application/Config/access/ConfigAccess';
 import { SelfLearningAccess } from './Application/SelfLearning/access/SelfLearningAccess';
 import {
   SelfLearningContext,
+  ListLearningTasksInput, ListLearningTasksOutput,
   AddLibraryInput, AddLibraryOutput,
   DeleteLibraryInput, DeleteLibraryOutput,
   SearchLibraryInput, SearchLibraryOutput,
@@ -3416,6 +3417,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         );
         sendJson(res, 200, { success: true });
 
+      } else if (method === 'GET' && pathname === '/api/learning/tasks') {
+        // 学习任务列表：手动触发的后台任务可视化（running 优先）
+        const output = new ListLearningTasksOutput();
+        await ctx.selfLearningAccess.soLearningTasks(new ListLearningTasksInput(), output, new SelfLearningContext());
+        sendJson(res, 200, { tasks: output.tasks });
       } else if (method === 'GET' && pathname === '/api/learning/stats') {
         const srcParam = params.get('source') || undefined;
         const backendSource = srcParam ? mapLearningMode(srcParam) : undefined;

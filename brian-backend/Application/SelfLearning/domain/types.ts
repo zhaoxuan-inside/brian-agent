@@ -300,3 +300,36 @@ export class ConfigSelfLearningInput extends Input {
 export class ConfigSelfLearningOutput extends Output {
   config: Record<string, unknown> = {};
 }
+
+// ---------------------------------------------------------------------------
+// 学习任务（手动触发的后台任务可视化）
+// ---------------------------------------------------------------------------
+
+/** 学习任务状态 */
+export enum LearningTaskStatus {
+  Running = 'running',
+  Completed = 'completed',
+  Failed = 'failed',
+}
+
+/** 学习任务记录 */
+export interface LearningTaskRecord {
+  task_id: string;
+  mode: 'DOCUMENT' | 'CONVERSATION' | 'TAG_MAINTENANCE' | 'ALL';
+  label: string;
+  status: LearningTaskStatus;
+  started_at: number;
+  finished_at?: number;
+  error?: string;
+}
+
+/** soLearningTasks 入参 */
+export class ListLearningTasksInput extends Input {
+  /** 最多返回条数（缺省 20） */
+  limit?: number;
+}
+
+/** soLearningTasks 出参 */
+export class ListLearningTasksOutput extends Output {
+  tasks: LearningTaskRecord[] = [];
+}

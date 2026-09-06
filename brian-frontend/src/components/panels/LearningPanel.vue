@@ -6,6 +6,7 @@ import type { LearningStats, LearningProgress } from '@/api/types'
 
 const progress = ref<LearningProgress>({ mode: 'from-conversation', running: false, randomFactor: 50, queueSize: 0, completedToday: 0 })
 const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const tasksTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const triggering = ref('')
 
 const MODE_CARDS = [
@@ -65,6 +66,7 @@ async function triggerMode(mode: string) {
   } catch { /* */ }
   finally {
     triggering.value = ''
+    await fetchTasks()
     await fetchAll()
   }
 }
@@ -135,12 +137,22 @@ function trendColor(mode: string, count: number): string {
   return 'bg-brian-blue'
 }
 
+// 学习任务（后端 fire-and-forget 任务可视化：running 优先展示）
+const tasks = ref<Array<{ task_id: string; mode: string; label: string; status: string; started_at: number; error?: string }>>([])
+
+async function fetchTasks() {
+  try { tasks.value = (await learningApi.getTasks()).tasks ?? [] } catch { /* */ }
+}
+
 onMounted(() => {
   fetchAll()
+  fetchTasks()
   pollTimer.value = setInterval(fetchAll, 30000)
+  tasksTimer.value = setInterval(fetchTasks, 2000)
 })
 onUnmounted(() => {
   if (pollTimer.value) clearInterval(pollTimer.value)
+  if (tasksTimer.value) clearInterval(tasksTimer.value)
   heatmapObserver?.disconnect()
   heatmapObserver = null
 })

@@ -282,6 +282,7 @@ export const learningApi = {
     request<void>('/learning/random-factor', { method: 'PUT', body: JSON.stringify({ mode, value }) }),
   setDriverWeights: (randomFactor: number) =>
     request<void>('/learning/driver-weights', { method: 'PUT', body: JSON.stringify({ randomFactor }) }),
+  getTasks: () => request<{ tasks: Array<{ task_id: string; mode: string; label: string; status: string; started_at: number; error?: string }> }>('/learning/tasks'),
   getStats: (source?: string) => request<LearningStats>(`/learning/stats${source ? `?source=${encodeURIComponent(source)}` : ''}`),
   getProgress: () => request<LearningProgress>('/learning/progress-enhanced'),
   getQueue: (source?: string) => request<{ tasks: unknown[] }>(`/learning/queue${source ? `?source=${encodeURIComponent(source)}` : ''}`).then(r => r.tasks),

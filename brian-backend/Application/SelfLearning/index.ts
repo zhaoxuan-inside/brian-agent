@@ -20,4 +20,5 @@ export {
   GetLearningResultsInput, GetLearningResultsOutput,
   GetLearningStatsInput, GetLearningStatsOutput,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,
+  ListLearningTasksInput, ListLearningTasksOutput, LearningTaskStatus,
 } from './domain/types';
