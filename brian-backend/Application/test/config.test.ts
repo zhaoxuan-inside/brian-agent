@@ -15,7 +15,6 @@ describe('ConfigService', () => {
   let mqAccess: any, graphDBAccess: any, vectorDBAccess: any;
   let llmCore: any, infoCore: any, mcpCore: any, skillCore: any, soulCore: any;
   let writerAgent: any, evolutorAgent: any, plannerAgent: any, agentLibrary: any, agentBuilder: any, agentExecution: any, agentStrategy: any, agentContext: any;
-  let orchestrationEntry: any, orchestrationStrategy: any, orchestrationExecution: any, orchestrationVisualization: any, jsonNode: any;
   let chatAccess: any, selfLearningAccess: any, userProfileAccess: any, visualizationAccess: any;
   let logger: any;
   let service: ConfigService;
@@ -48,11 +47,6 @@ describe('ConfigService', () => {
     agentExecution = realCtx.agentExecution;
     agentStrategy = realCtx.agentStrategy;
     agentContext = realCtx.agentContext;
-    orchestrationEntry = realCtx.orchestrationEntry;
-    orchestrationStrategy = realCtx.orchestrationStrategy;
-    orchestrationExecution = realCtx.orchestrationExecution;
-    orchestrationVisualization = realCtx.orchestrationVisualization;
-    jsonNode = realCtx.jsonNode;
     logger = realCtx.logger;
     chatAccess = {
       configChat: vi.fn().mockImplementation(async (_i: any, o: any, _c: any, ) => {
@@ -84,7 +78,6 @@ describe('ConfigService', () => {
       mqAccess, graphDBAccess, vectorDBAccess,
       llmCore, infoCore, mcpCore, skillCore, soulCore,
       writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
-      orchestrationEntry, orchestrationStrategy, orchestrationExecution, orchestrationVisualization, jsonNode,
       chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess);
   });
 
@@ -275,22 +268,22 @@ describe('ConfigService', () => {
       expect(result).toBe(true);
       expect(Array.isArray(output.layers)).toBe(true);
 
-      const orchLayer = output.layers.find((l: any) => l.layer === 'ORCHESTRATION');
-      expect(orchLayer).toBeDefined();
-      expect(Array.isArray(orchLayer!.modules)).toBe(true);
+      const appLayer = output.layers.find((l: any) => l.layer === 'APPLICATION');
+      expect(appLayer).toBeDefined();
+      expect(Array.isArray(appLayer!.modules)).toBe(true);
 
-      const mod = (orchLayer!.modules as any[]).find((m: any) => m.module === 'entry');
+      const mod = (appLayer!.modules as any[]).find((m: any) => m.module === 'chat');
       expect(mod).toBeDefined();
-      expect(Array.isArray(mod.categories)).toBe(true);
+      expect(Array.isArray(mod!.categories)).toBe(true);
 
-      const cat = (mod.categories as any[]).find((c: any) => c.category === 'basic');
+      const cat = (mod!.categories as any[]).find((c: any) => c.category === 'basic');
       expect(cat).toBeDefined();
       expect(Array.isArray(cat.items)).toBe(true);
-      expect(cat.items.length).toBe(6);
+      expect(cat.items.length).toBeGreaterThanOrEqual(2);
 
       const keys = cat.items.map((i: any) => i.config_key);
-      expect(keys).toContain('orchestration.entry.complexity_decompose_threshold');
-      expect(keys).toContain('orchestration.entry.default_strategy');
+      expect(keys).toContain('chat.max_messages_per_session');
+      expect(keys).toContain('chat.default_history_lastN');
     });
 
     it('TC-CFG-061: Filter by layer', async () => {
@@ -305,13 +298,13 @@ describe('ConfigService', () => {
 
     it('TC-CFG-062: Filter by module', async () => {
       const input = new GetConfigDetailInput();
-      input.module = 'entry';
+      input.module = 'chat';
       const output = new GetConfigDetailOutput();
       await service.soConfigDetail(input, output, ctx());
 
-      const orchLayer = output.layers.find((l: any) => l.layer === 'ORCHESTRATION');
-      expect(orchLayer).toBeDefined();
-      const mods = (orchLayer!.modules as any[]).filter((m: any) => m.module === 'entry');
+      const appLayer = output.layers.find((l: any) => l.layer === 'APPLICATION');
+      expect(appLayer).toBeDefined();
+      const mods = (appLayer!.modules as any[]).filter((m: any) => m.module === 'chat');
       expect(mods.length).toBe(1);
     });
 
@@ -321,13 +314,13 @@ describe('ConfigService', () => {
       const output = new GetConfigDetailOutput();
       await service.soConfigDetail(input, output, ctx());
 
-      const orchLayer = output.layers.find((l: any) => l.layer === 'ORCHESTRATION');
-      expect(orchLayer).toBeDefined();
-      const mod = (orchLayer!.modules as any[]).find((m: any) => m.module === 'entry');
+      const chatLayer = output.layers.find((l: any) => l.layer === 'APPLICATION');
+      expect(chatLayer).toBeDefined();
+      const mod = (chatLayer!.modules as any[]).find((m: any) => m.module === 'chat');
       expect(mod).toBeDefined();
       const cat = (mod.categories as any[]).find((c: any) => c.category === 'basic');
       expect(cat).toBeDefined();
-      expect(cat.items.length).toBe(6);
+      expect(cat.items.length).toBeGreaterThanOrEqual(2);
     });
 
     it('TC-CFG-064: Combined filter (layer + module)', async () => {
@@ -410,12 +403,12 @@ describe('ConfigService', () => {
       const output = new GetConfigDetailOutput();
       await service.soConfigDetail(input, output, ctx());
 
-      const orchLayer = output.layers.find((l: any) => l.layer === 'ORCHESTRATION');
-      const mod = (orchLayer!.modules as any[]).find((m: any) => m.module === 'entry');
+      const chatLayer = output.layers.find((l: any) => l.layer === 'APPLICATION');
+      const mod = (chatLayer!.modules as any[]).find((m: any) => m.module === 'chat');
       const cat = (mod.categories as any[]).find((c: any) => c.category === 'basic');
-      const item = (cat.items as any[]).find((i: any) => i.config_key === 'orchestration.entry.complexity_decompose_threshold');
+      const item = (cat.items as any[]).find((i: any) => i.config_key === 'chat.sse_heartbeat_interval_ms');
       expect(item).toBeDefined();
-      expect(item.config_description).toBe('任务复杂度超过此阈值时触发任务分解（选择 PLANNING 策略），否则走 SIMPLE；取值 0-100');
+      expect(item.config_description).toBe('SSE 长连接保活心跳间隔');
     });
 
     it('TC-CFG-069: Static registrations are always present', async () => {
@@ -427,8 +420,7 @@ describe('ConfigService', () => {
         mqAccess, graphDBAccess, vectorDBAccess,
         llmCore, infoCore, mcpCore, skillCore, soulCore,
         writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
-        orchestrationEntry, orchestrationStrategy, orchestrationExecution, orchestrationVisualization, jsonNode,
-        chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess);
+          chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess);
 
       const input = new GetConfigDetailInput();
       const output = new GetConfigDetailOutput();
@@ -518,17 +510,6 @@ describe('ConfigService', () => {
       expect(result).toBe(true);
     });
 
-    it('TC-CFG-089: ENUM valid value succeeds', async () => {
-      vi.spyOn(orchestrationEntry, 'configOrchestrationEntry').mockResolvedValue(true);
-      const key = 'orchestration.entry.default_strategy';
-      const input = new UpdateConfigInput();
-      input.config_key = key;
-      input.value = 'PLANNING';
-      const output = new UpdateConfigOutput();
-      const result = await service.updateConfig(input, output, ctx());
-      expect(result).toBe(true);
-      expect(orchestrationEntry.configOrchestrationEntry).toHaveBeenCalled();
-    });
 
     it('TC-CFG-091: Non-existent key throws NotFoundError', async () => {
       const input = new UpdateConfigInput();

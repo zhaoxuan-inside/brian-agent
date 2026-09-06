@@ -68,6 +68,8 @@ export class MatchSkillInput extends Input {
   context_id!: string;
   /** 交互记录 ID */
   interact_id!: string;
+  /** 调用方传入的既有绑定（agent 表为唯一绑定事实源，Agent 模块评估后写入）；传入时确定性水合，不再按任务重选 */
+  bound_skill_ids?: string[];
 }
 
 /** 匹配到的 Skill 条目 */
@@ -101,7 +103,7 @@ export class OptSkillInput extends Input {
 
 /** optSkill 出参 */
 export class OptSkillOutput extends Output {
-  /** 绑定记录 */
+  /** 兼容保留：绑定已收敛至 Agent 表（agent.skill_ids_json），此处 id 恒为空串，仅回传 agent_id/skill_id */
   binding: AgentSkillRecord | null = null;
 }
 
@@ -114,8 +116,10 @@ export class AgeSkillInput extends Input {}
 
 /** ageSkill 出参 */
 export class AgeSkillOutput extends Output {
-  /** 老化 Skill 数量 */
+  /** 老化候选数量（兼容保留，恒等于 stale_skills.length；删除动作由 Agent 模块评估后执行） */
   aged_count = 0;
+  /** 解绑候选（按 opt 规则统计最近 days 天使用不足 min_usage_count 的 agent+skill 对；不落库） */
+  stale_skills: Array<{ agent_id: string; skill_id: string; usage_count: number }> = [];
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +186,7 @@ export class ConfigSkillCoreOutput extends Output {
 /** skill_core_config 表名 */
 export const SKILL_CORE_CONFIG_TABLE = 'skill_core_config';
 
+/** @deprecated 绑定已收敛至 Agent 表（agent.skill_ids_json），表停止创建；常量仅为兼容保留 */
 /** agent_skill 表名 */
 export const AGENT_SKILL_TABLE = 'agent_skill';
 
@@ -189,4 +194,6 @@ export const AGENT_SKILL_TABLE = 'agent_skill';
 export const SKILL_OPT_RULE_TABLE = 'skill_opt_rule';
 
 /** skill_usage 表名 */
-export const SKILL_USAGE_TABLE = 'skill_usage';
+/** skill_core_usage 表名（Core 层评估依据；键 (agent_id, skill_id)。
+ * 2026-09-05 由 'skill_usage' 更名 —— 该表名让给 Base SkillProvider 的全局按天统计，消除双 schema 共表冲突 */
+export const SKILL_USAGE_TABLE = 'skill_core_usage';

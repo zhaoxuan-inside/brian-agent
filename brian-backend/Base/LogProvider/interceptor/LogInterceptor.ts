@@ -1,16 +1,17 @@
 /**
- * @fileoverview 日志拦截器（LogInterceptor）。
+ * @fileoverview 日志拦截器（LogInterceptor）—— AOP 切面日志的 DB 直写实现。
  *
- * 实现 {@link Interceptor} 接口，在方法执行失败时调用 LogProvider 记录 ERROR 日志。
+ * 实现 {@link Interceptor} 接口：在方法**返回或抛异常**时（切入点 4）调用 LogProvider
+ * 保存调用记录——采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，
+ * 以 JSON 格式写入 log_record.metadata（invocation_json）。
  *
  * 设计要点：
  * - 使用原始 LogService（未经 AOP 包装），避免与 AOP 代理产生递归调用；
  * - 日志写入采用 fire-and-forget 模式（不 await），不阻塞业务方法执行；
- * - 通过 shouldLog(targetName, methodName) 检查日志规则，仅记录被启用的模块/方法；
- * - **方法进入（invoke）/完成（done）日志已默认关闭**：这两类日志随每次 AOP 方法调用
- *   产生 2 条记录（此前曾达 30 条/秒），是 brian_log.db 膨胀与内存压力的主因，
- *   且监控价值远低于失败日志。业务代码需要过程可观测时，应显式调用 logProvider
- *   记录带业务语义的 INFO/WARN 日志，而非依赖 AOP 自动埋点。
+ * - 通过 shouldLog(targetName, methodName) 检查日志规则，仅记录被启用的模块/方法
+ *   （每次方法调用产生 1 条记录，体量由 log_rule 白名单与日志老化共同约束）；
+ * - 有 Metrics 实例时优先经 Metrics.saveInvocation 保存（与内置日志切面同语义），
+ *   旧式 3 参签名退化为仅错误日志。
  */
 
 import type { Interceptor, InterceptContext } from '../../shared/aop/Interceptor';
@@ -50,22 +51,35 @@ export class LogInterceptor implements Interceptor {
   constructor(private readonly logService: LogService) {}
 
   /**
-   * 切入点 4（方法执行后）：仅记录失败（ERROR）。
+   * 切入点 4（方法执行后）：方法**返回或抛异常**时保存调用记录。
    *
-   * 消息格式 "{methodName} failed: {error.message}"，附 elapsed_ms / trace_id / caller /
-   * work_id / interact_id。成功路径不产生任何日志。
+   * 经 Metrics.saveInvocation（或直接 addLog）以 JSON 采集全部参数内容；
    * 通过 shouldLog 检查日志规则，未启用的模块/方法跳过记录。
    */
   afterExecute(ctx: InterceptContext, error?: Error): void {
-    if (!error) {
-      return;
-    }
-
     // 检查日志规则
     if (!this.logService.shouldLog(ctx.targetName, ctx.methodName)) {
       return;
     }
 
+    // 有 Metrics 实例（新式 5 参）时经 Metrics 保存（JSON 调用记录，与内置切面同语义）
+    const metrics = ctx.metrics as { saveInvocation?: (r: unknown) => void; elapsed_ms?: number } | undefined;
+    if (metrics && typeof metrics.saveInvocation === 'function') {
+      metrics.elapsed_ms = ctx.elapsedMs;
+      metrics.saveInvocation({
+        targetName: ctx.targetName,
+        methodName: ctx.methodName,
+        status: error ? 'error' : 'ok',
+        error: error?.message,
+        args: { input: ctx.input, output: ctx.output, context: ctx.context, metrics: ctx.metrics, report: ctx.report },
+      });
+      return;
+    }
+
+    // 旧式 3 参签名兜底:仅错误日志(保持旧行为)
+    if (!error) {
+      return;
+    }
     const data: LogData = {
       level: LogLevel.ERROR,
       source: ctx.targetName,

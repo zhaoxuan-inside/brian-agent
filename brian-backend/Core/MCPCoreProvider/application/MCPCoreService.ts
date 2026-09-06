@@ -20,7 +20,6 @@ import {
   McpInstallRecord,
   PROMPT_IDS, getBuiltinTemplate, renderTemplate,
 } from '@brian-agent/base';
-import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared';
 import {
   McpCoreContext,
   McpCoreConfigRecord,
@@ -31,7 +30,6 @@ import {
   ConfigMcpCoreInput,
   ConfigMcpCoreOutput,
   MCP_CORE_CONFIG_TABLE,
-  AGENT_MCP_TABLE,
   AGENT_MCP_USAGE_TABLE,
   DEFAULT_REGENERATE_RATE,
 } from '../domain/types';
@@ -66,23 +64,18 @@ export class MCPCoreService {
   async matchMCP(input: MatchMcpInput, output: MatchMcpOutput, _context: McpCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
-    const regenRate = config.regen_rate;
 
     const availableMcps = await this.getAvailableMcps();
 
-    // ===== 第 1 层：simpleSimilarity 匹配历史/已有绑定与关联特征 =====
-    const cacheResult = await checkMatchCache(
-      this.relationDb, AGENT_MCP_TABLE, input.agent_id,
-      regenRate, 'random', 'mcp_id',
-    );
-    if (cacheResult.hit && cacheResult.entries && cacheResult.entries.length > 0) {
-      const boundIds = cacheResult.entries.map((e) => e.entity_id);
-      output.mcp_ids = boundIds;
-      output.mcp_details = availableMcps.length > 0 ? await this.getMcpDetails(boundIds) : [];
+    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    // 绑定的写入/解除由 Agent 模块评估后执行（AgentLibrary.bindAgentComponent），Core 只做选择与水合
+    if (input.bound_mcp_ids && input.bound_mcp_ids.length > 0) {
+      output.mcp_ids = input.bound_mcp_ids;
+      output.mcp_details = availableMcps.length > 0 ? await this.getMcpDetails(input.bound_mcp_ids) : [];
       return true;
     }
 
-    // ===== 第 2 层：LLM 打分推荐 =====
+    // ===== 第 2 层：LLM 打分推荐（纯选择，不落库） =====
     let rankedIds: string[] = [];
     if (availableMcps.length > 0) {
       rankedIds = await this.rankMcpsWithLLM(
@@ -92,12 +85,6 @@ export class MCPCoreService {
       );
     }
 
-    // ===== 第 3 层：MCP 除外，没有匹配到可用的在线 MCP 则置空不可用 =====
-    await clearMatchCache(this.relationDb, AGENT_MCP_TABLE, input.agent_id);
-    for (const mcpId of rankedIds) {
-      await persistMatchBinding(this.relationDb, AGENT_MCP_TABLE, input.agent_id, mcpId, 'mcp_id');
-    }
-
     output.mcp_ids = rankedIds;
     output.mcp_details = rankedIds
       .map((id) => availableMcps.find((r) => r.id === id))
@@ -105,32 +92,27 @@ export class MCPCoreService {
     return true;
   }
 
+  /** 记录 MCP 使用（usage 是评估依据，非绑定；绑定由 Agent 模块评估后经 bindAgentComponent 写入） */
   async optMCP(input: OptMcpInput, output: OptMcpOutput, _context: McpCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const existing = await this.relationDb.selectOne(AGENT_MCP_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
-      { field: 'mcp_id', operator: Operator.EQ, value: input.mcp_id },
-    ]);
-
-    if (!existing) {
-      await persistMatchBinding(this.relationDb, AGENT_MCP_TABLE, input.agent_id, input.mcp_id, 'mcp_id');
+    if (!input.agent_id) {
+      throw new ValidationError('agent_id 为必填');
     }
-
-    const binding = await this.relationDb.selectOne(AGENT_MCP_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
-      { field: 'mcp_id', operator: Operator.EQ, value: input.mcp_id },
-    ]);
-    const agentMcpId = String(binding!.id);
-
+    if (!input.mcp_id) {
+      throw new ValidationError('mcp_id 为必填');
+    }
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_MCP_USAGE_TABLE, [
       { field: 'id', value: IdGenerator.generate() },
       { field: 'created', value: now },
-      { field: 'agent_mcp_id', value: agentMcpId },
-      { field: 'timestamp', value: now },
+      { field: 'updated', value: now },
+      { field: 'agent_id', value: input.agent_id },
+      { field: 'mcp_id', value: input.mcp_id },
+      { field: 'usage_date', value: new Date().toISOString().slice(0, 10) },
+      { field: 'usage_count', value: 1 },
     ]);
 
-    output.id = agentMcpId;
+    output.id = '';
     return true;
   }
 

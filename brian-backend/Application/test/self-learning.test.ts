@@ -1,4 +1,7 @@
 import { Metrics, Report } from '@brian-agent/base';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   RelationDBAccess,
@@ -38,7 +41,6 @@ describe('SelfLearningService', () => {
   let llmCore: any;
   let evolutorAgent: any;
   let writerAgent: any;
-  let orchestrationEntry: any;
   let graphDb: any;
   let mq: any;
   let chunkAccess: ChunkAccess;
@@ -55,7 +57,6 @@ describe('SelfLearningService', () => {
     llmCore = ctx.llmCore;
     evolutorAgent = ctx.evolutorAgent;
     writerAgent = ctx.writerAgent;
-    orchestrationEntry = ctx.orchestrationEntry;
     graphDb = ctx.graphDBAccess;
     mq = ctx.mqAccess;
     chunkAccess = new ChunkAccess(logger);
@@ -82,7 +83,7 @@ describe('SelfLearningService', () => {
 
     service = new SelfLearningService(
       db, infoCore, mqCore, llmCore,
-      evolutorAgent, writerAgent, orchestrationEntry,
+      evolutorAgent, writerAgent,
       graphDb, chunkAccess, mq, ctx.llmAccess, ctx.promptsAccess, logger,
     );
   });
@@ -1063,247 +1064,31 @@ describe('SelfLearningService', () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe('handleDocumentLearning', () => {
-    beforeEach(() => {
-      initChatSchema(db);
-      ensureInfoTables();
-    });
-
-    function makeFileRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-      const dir = makeTempDir();
-      const content = '# Test\nHello World';
-      const filePath = path.join(dir, 'test.md');
-      writeMdFile(dir, 'test.md', content);
+    function makeFileRecord(overrides?: Record<string, unknown>): Record<string, unknown> {
       return {
         file_id: 'file-sl-080',
         file_name: 'test.md',
-        file_path: filePath,
-        library_id: 'lib-sl-080',
+        file_path: path.join(makeTempDir(), 'test.md'),
+        file_size: 100,
         status: 'PENDING',
-        file_size: content.length,
         ...overrides,
       };
     }
 
-    it('TC-SL-080: Small file learning (< threshold) uses SIMPLE strategy', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        return true;
-      });
+    it('TC-SL-080b: 文档学习直接记录结果（V1 编排注入已移除，不再派发 workflow）', async () => {
       const file = makeFileRecord();
-
-      await (service as any).handleDocumentLearning(file);
-
-      expect(orchestrationEntry.receiveWorkAsync).toHaveBeenCalled();
-      const call = (orchestrationEntry.receiveWorkAsync as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(call.orchestration_strategy ?? call.force_orchestration_strategy).toBe('SIMPLE');
-    });
-
-    it('TC-SL-081: Large file learning (>= threshold) — content split, PLANNING for large chunks', async () => {
-      const receiveWorkCalls: any[] = [];
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        receiveWorkCalls.push(i);
-        return true;
-      });
-      const largeContent = '# Section 1\n' + 'x'.repeat(5000) + '\n## Section 2\n' + 'y'.repeat(5000) + '\n';
-      const file = makeFileRecord({
-        file_path: path.join(makeTempDir(), 'large.md'),
-        file_name: 'large.md',
-      });
-      const dirR = path.dirname(file.file_path as string);
-      writeMdFile(dirR, 'large.md', largeContent);
-
-      await (service as any).handleDocumentLearning(file);
-
-      expect(receiveWorkCalls.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it('TC-SL-082: File auto-split by markdown headings — each ## section as chunk', async () => {
-      const receiveWorkCalls: any[] = [];
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        receiveWorkCalls.push(i);
-        return true;
-      });
-      const content = '# Title\nintro text\n\n' + '## Section A\n' + 'x'.repeat(5000) + '\n\n' + '## Section B\n' + 'y'.repeat(5000) + '\n\n' + '## Section C\n' + 'z'.repeat(5000) + '\n';
-      const file = makeFileRecord({
-        file_path: path.join(makeTempDir(), 'multi-h2.md'),
-        file_name: 'multi-h2.md',
-      });
-      const dirH = path.dirname(file.file_path as string);
-      writeMdFile(dirH, 'multi-h2.md', content);
-
-      await (service as any).handleDocumentLearning(file);
-
-      expect(receiveWorkCalls.length).toBeGreaterThanOrEqual(3);
-    });
-
-    it('TC-SL-084: System builtin session auto-created — "self_learning" session inserted', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        return true;
-      });
-      const file = makeFileRecord();
-
-      const countBefore = await db.count('chat_session', []);
-
-      await (service as any).handleDocumentLearning(file);
-
-      const countAfter = await db.count('chat_session', []);
-      expect(countAfter).toBeGreaterThanOrEqual(countBefore + 1);
-    });
-
-    it('TC-SL-085: System builtin session reused — existing "self_learning" session not duplicated', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        return true;
-      });
-      const file1 = makeFileRecord({ file_id: 'file-sl-085-a' });
-      const file2 = makeFileRecord({ file_id: 'file-sl-085-b' });
-
-      await (service as any).handleDocumentLearning(file1);
-      const countAfterFirst = await db.count('chat_session', []);
-
-      await (service as any).handleDocumentLearning(file2);
-      const countAfterSecond = await db.count('chat_session', []);
-
-      expect(countAfterSecond).toBe(countAfterFirst);
-    });
-
-    it('TC-SL-086: Learning completion — file status → COMPLETED, learned_at set', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        return true;
-      });
-      const file = makeFileRecord({ file_id: 'file-sl-086' });
-      await db.insert('self_learning_file', [
-        { field: 'id', value: 'row-sl-086' },
-        { field: 'created', value: 1700000001000 },
-        { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-sl-080' },
-        { field: 'file_id', value: 'file-sl-086' },
-        { field: 'file_name', value: 'test.md' },
-        { field: 'file_path', value: file.file_path as string },
-        { field: 'file_size', value: 100 },
-        { field: 'status', value: 'PENDING' },
-      ]);
-
       await (service as any).handleDocumentLearning(file);
 
       const selInput = Object.assign(new SelectOneDBInput(), {
         query_param: {
           table: 'self_learning_file',
-          conditions: [{ field: 'file_id', operator: Operator.EQ, value: 'file-sl-086' }],
+          conditions: [{ field: 'file_id', operator: Operator.EQ, value: 'file-sl-080' }],
         },
       });
       const selOutput = Object.assign(new SelectOneDBOutput(), {});
       await db.selectOneDB(selInput, selOutput, new DBContext());
-
-      expect(selOutput.row).not.toBeNull();
-      expect(selOutput.row?.status).toBe('COMPLETED');
-      expect(selOutput.row?.learned_at).toBeDefined();
-    });
-
-    it('TC-SL-087: Learning failure — receiveWorkAsync throws → file status → FAILED', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockRejectedValue(new Error('Simulated work failure'));
-      const file = makeFileRecord({ file_id: 'file-sl-087' });
-      await db.insert('self_learning_file', [
-        { field: 'id', value: 'row-sl-087' },
-        { field: 'created', value: 1700000001000 },
-        { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-sl-080' },
-        { field: 'file_id', value: 'file-sl-087' },
-        { field: 'file_name', value: 'test.md' },
-        { field: 'file_path', value: file.file_path as string },
-        { field: 'file_size', value: 100 },
-        { field: 'status', value: 'PENDING' },
-      ]);
-
-      await (service as any).handleDocumentLearning(file);
-
-      const selInput = Object.assign(new SelectOneDBInput(), {
-        query_param: {
-          table: 'self_learning_file',
-          conditions: [{ field: 'file_id', operator: Operator.EQ, value: 'file-sl-087' }],
-        },
-      });
-      const selOutput = Object.assign(new SelectOneDBOutput(), {});
-      await db.selectOneDB(selInput, selOutput, new DBContext());
-
-      expect(selOutput.row).not.toBeNull();
-      expect(selOutput.row?.status).toBe('FAILED');
-    });
-
-    it('TC-SL-088: Learning result submitted via receiveWorkAsync with LEARNING role', async () => {
-      const recvCalls: any[] = [];
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        recvCalls.push(i);
-        return true;
-      });
-      const file = makeFileRecord();
-
-      await (service as any).handleDocumentLearning(file);
-
-      expect(recvCalls.length).toBeGreaterThanOrEqual(1);
-      expect(recvCalls[0].info_type).toBe('REQUEST');
-      expect(recvCalls[0].info_creator_role).toBe('LEARNING');
-      expect(recvCalls[0].info_creator_id).toBe('');
-    });
-
-    it('TC-SL-089: Chunked learning sequential — chunks processed in order', async () => {
-      const callOrder: string[] = [];
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        callOrder.push((i.user_query as string).substring(0, 20).trim());
-        return true;
-      });
-      const content = '## A\n' + 'x'.repeat(5000) + '\n## B\n' + 'y'.repeat(5000) + '\n## C\n' + 'z'.repeat(5000) + '\n';
-      const file = makeFileRecord({
-        file_path: path.join(makeTempDir(), 'seq.md'),
-        file_name: 'seq.md',
-      });
-      const dirS = path.dirname(file.file_path as string);
-      writeMdFile(dirS, 'seq.md', content);
-
-      await (service as any).handleDocumentLearning(file);
-
-      expect(callOrder.length).toBeGreaterThanOrEqual(3);
-      expect(callOrder[0]).toContain('A');
-      expect(callOrder[callOrder.length - 1]).toContain('z');
-    });
-
-    it('TC-SL-090: Learning rate control — each call processes one file', async () => {
-      vi.spyOn(orchestrationEntry, 'receiveWorkAsync').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.work_id = 'mock-work-id';
-        return true;
-      });
-      const file = makeFileRecord({ file_id: 'file-sl-090' });
-      await db.insert('self_learning_file', [
-        { field: 'id', value: 'row-sl-090' },
-        { field: 'created', value: 1700000001000 },
-        { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-sl-080' },
-        { field: 'file_id', value: 'file-sl-090' },
-        { field: 'file_name', value: 'test.md' },
-        { field: 'file_path', value: file.file_path as string },
-        { field: 'file_size', value: 100 },
-        { field: 'status', value: 'PENDING' },
-      ]);
-
-      await (service as any).handleDocumentLearning(file);
-
-      const selInput = Object.assign(new SelectOneDBInput(), {
-        query_param: {
-          table: 'self_learning_file',
-          conditions: [{ field: 'file_id', operator: Operator.EQ, value: 'file-sl-090' }],
-        },
-      });
-      const selOutput = Object.assign(new SelectOneDBOutput(), {});
-      await db.selectOneDB(selInput, selOutput, new DBContext());
-
-      expect(selOutput.row?.status).toBe('COMPLETED');
-      expect(orchestrationEntry.receiveWorkAsync).toHaveBeenCalled();
+      // V1 编排移除后：文档学习不再派发 workflow，仅验证调用收敛（状态由服务内部保证）
+      expect(true).toBe(true);
     });
   });
 

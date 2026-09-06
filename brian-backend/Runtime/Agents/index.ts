@@ -8,7 +8,7 @@ export { AgentDefAccess } from './access/AgentDefAccess';
 // infrastructure 层
 export { AgentsSchemaInitializer } from './infrastructure/AgentsSchemaInitializer';
 
-// domain 层类型
+// domain 层
 export {
   AgentDefContext,
   MatchAgentDefInput,
@@ -21,6 +21,9 @@ export {
   SoAgentDefsOutput,
   ConfigAgentDefInput,
   ConfigAgentDefOutput,
+  AgentMode,
+  AgentDefStatus,
+  AgentMatchLayer,
   RUNTIME_AGENT_DEF_TABLE,
   RUNTIME_AGENTS_CONFIG_TABLE,
 } from './domain/types';

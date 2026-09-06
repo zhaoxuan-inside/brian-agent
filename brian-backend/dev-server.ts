@@ -12,8 +12,6 @@ import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaIni
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import {
   SessionAccess,
-  EventBusAccess,
-  ToolAccess as RuntimeToolAccess,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
   ToolContext as RuntimeToolContext,
@@ -21,7 +19,6 @@ import {
   AgentDefAccess,
   RunGatewayAccess,
 } from './Runtime';
-import type { LoopQueue } from './Runtime';
 import { applySystemSeed } from './seed/systemSeed';
 import { LLMAccess } from './Base/LLMProvider';
 import { MCPAccess } from './Base/MCPProvider';
@@ -62,6 +59,8 @@ import {
   StreamContext,
   CloseStreamInput,
   CloseStreamOutput,
+  PushEventToEndpointInput,
+  PushEventToEndpointOutput,
 } from './Base/StreamProvider';
 import {
   CronContext, ListCronTasksInput, ListCronTasksOutput,
@@ -93,11 +92,6 @@ import { WriterAgentAccess } from './Agent/WriterAgent';
 import { EvolutorAgentAccess } from './Agent/EvolutorAgent';
 import { SummaryAgentAccess, SummaryAgentContext } from './Agent/SummaryAgent';
 import { IntentAgentAccess, IntentAgentContext } from './Agent/IntentAgent';
-import { OrchestrationEntryAccess } from './Orchestration/OrchestrationEntry';
-import { OrchestrationStrategyAccess } from './Orchestration/OrchestrationStrategy';
-import { OrchestrationExecutionAccess } from './Orchestration/OrchestrationExecution';
-import { OrchestrationVisualizationAccess } from './Orchestration/OrchestrationVisualization';
-import { JSONNodeAccess } from './Orchestration/JSONNode';
 
 // Application layer
 import { ChatAccess } from './Application/Chat/access/ChatAccess';
@@ -188,7 +182,6 @@ import {
 
 import {
   ChatContext,
-  SubmitWorkInput, SubmitWorkOutput,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
   SearchSessionInput, SearchSessionOutput,
@@ -196,9 +189,6 @@ import {
   GetChatHistoryInput, GetChatHistoryOutput,
   SearchMessageInput, SearchMessageOutput,
   PinMessageInput, PinMessageOutput,
-  CancelWorkInput, CancelWorkOutput,
-  ConfirmIntentInput, ConfirmIntentOutput,
-  SubmitClarificationInput, SubmitClarificationOutput,
   OpenChatStreamInput, OpenChatStreamOutput,
   UpdateSessionTitleInput, UpdateSessionTitleOutput,
 } from './Application/Chat/domain/types';
@@ -295,6 +285,8 @@ function createLogger(logAccess?: LogAccess): any {
     info: (message: string, meta?: unknown) => write('INFO', message, meta),
     warn: (message: string, meta?: unknown) => write('WARN', message, meta),
     error: (message: string, meta?: unknown) => write('ERROR', message, meta),
+    // 级别参数化入口（2026-09-05）：Metrics 经 log(level, …) 调用 LogProvider，级别显式携带
+    log: (level: string, message: string, meta?: unknown) => write(level, message, meta),
   };
 }
 
@@ -587,6 +579,17 @@ async function buildContext() {
   _httpAccessRef = httpAccess;
   // 标准签名适配：execRequest(Input, Output, Context, ...) 简化为请求对象风格
   const streamAccess = new StreamAccess(relationDb, logger);
+  // Report 事件流网关（2026-09-05）：Report 只接收业务消息并携带 SSE 端点 ID，
+  // 保存（stream_event 持久化/审计）、断线恢复重放、按端点 ID 投递由 StreamProvider 承载
+  Report.setEventStreamGateway({
+    pushToEndpoint: async (input) => {
+      await streamAccess.publishEvent(
+        Object.assign(new PushEventToEndpointInput(), input),
+        new PushEventToEndpointOutput(),
+        new StreamContext(),
+      );
+    },
+  });
 
   // ---- Core Providers ----
   const infoCore = new InfoCoreAccess(relationDb, llmAccess, promptsAccess, vectorDBAccess, graphDBAccess, logger);
@@ -687,29 +690,33 @@ async function buildContext() {
     logger.warn('preBuildSystemAgents', 'failed to pre-build SummaryAgent/IntentAgent', String(e));
   }
 
-  // ---- Orchestration ----
-  const orchestrationExecution = new OrchestrationExecutionAccess(relationDb, agentBuilder, agentExecution, agentLibrary, infoCore, mqAccess, mqCore, logger, streamAccess);
-  await orchestrationExecution.initialize();
-  const orchestrationVisualization = new OrchestrationVisualizationAccess(relationDb, agentLibrary, agentExecution, logger);
-  await orchestrationVisualization.initialize();
-  const jsonNode = new JSONNodeAccess(relationDb, infoCore, agentBuilder, writerAgent, plannerAgent, evolutorAgent, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger, streamAccess, summaryAgent);
-  await jsonNode.initialize();
-  const orchestrationStrategy = new OrchestrationStrategyAccess(relationDb, agentBuilder, plannerAgent, writerAgent, evolutorAgent, orchestrationExecution, jsonNode, mqCore, logger);
-  await orchestrationStrategy.initialize();
-  const orchestrationEntry = new OrchestrationEntryAccess(relationDb, infoCore, writerAgent, orchestrationStrategy, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger, intentAgent, streamAccess);
-  await orchestrationEntry.initialize();
 
   // ---- Application Layer ----
   new ChatSchemaInitializer(relationDb).init();
   // ---- Runtime v2（编排内核；Chat v2 分流依赖）----
   const runtimeSessionAccess = new SessionAccess(relationDb, logger);
   await runtimeSessionAccess.initialize();
-  const runtimeBus = new EventBusAccess(relationDb, logger);
-  await runtimeBus.initialize();
-  const runtimeToolAccess = new RuntimeToolAccess(relationDb, { skillAccess, mcpAccess, cdtCore }, logger);
+  const runtimeToolAccess = new RuntimeToolAccess(relationDb, {
+    skillAccess,
+    mcpAccess,
+    cdtCore,
+    // delegate 子代理委派：迟绑定 gateway（构造顺序 Tool→Loop→Gateway，运行期才调用）
+    runGateway: {
+      submitRun: async (input) => {
+        const { SubmitRunInput, SubmitRunOutput, RunGatewayContext } = await import('./Runtime');
+        const i = Object.assign(new SubmitRunInput(), {
+          session_key: input.session_key,
+          user_message: input.user_message,
+          lane_kind: input.lane_kind,
+          queue_mode: input.queue_mode,
+        });
+        await runtimeGatewayRef.submitRun(i, new SubmitRunOutput(), new RunGatewayContext());
+      },
+    },
+  }, logger);
   await runtimeToolAccess.initialize();
   const builtinRegIn = new RegisterBuiltinToolsInput();
-  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser'];
+  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate'];
   const builtinRegOut = new RegisterBuiltinToolsOutput();
   await runtimeToolAccess.registerBuiltinTools(builtinRegIn, builtinRegOut, new RuntimeToolContext());
   logger.info('[startup] runtime builtin tools', String(builtinRegOut.registered ?? []));
@@ -719,40 +726,38 @@ async function buildContext() {
     drainSteering: (sessionKey: string) => runtimeGatewayRef.drainSteeringFor(sessionKey),
     takeFollowup: (sessionKey: string) => runtimeGatewayRef.takeFollowupFor(sessionKey),
   };
-  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeBus, runtimeToolAccess, logger, loopQueueBridge);
+  const permissionGateBridge = {
+    wait: async (input: { permission_id: string }) => {
+      const { WaitPermissionInput, WaitPermissionOutput, RunGatewayContext } = await import('./Runtime');
+      const i = Object.assign(new WaitPermissionInput(), input);
+      const o = new WaitPermissionOutput();
+      await runtimeGatewayRef.waitPermission(i, o, new RunGatewayContext());
+      return { approved: o.approved };
+    },
+  };
+  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeToolAccess, logger, loopQueueBridge, permissionGateBridge);
   await runtimeLoopAccess.initialize();
   const runtimeAgentDefAccess = new AgentDefAccess(relationDb, llmAccess, {
     agentBuilder,
+    agentLibrary,
     llmCore,
     soulCore,
     skillCore,
     mcpCore,
   }, logger);
   await runtimeAgentDefAccess.initialize();
-  const runtimeGateway = new RunGatewayAccess(relationDb, runtimeSessionAccess, runtimeBus, runtimeAgentDefAccess, runtimeLoopAccess, logger);
+  const runtimeGateway = new RunGatewayAccess(relationDb, runtimeSessionAccess, runtimeAgentDefAccess, runtimeLoopAccess, logger);
   await runtimeGateway.initialize();
   runtimeGatewayRef = runtimeGateway;
 
-  // v2 开关：runtime.v2_enabled 配置（缺省 true；配置中心可回退旧编排链路）
-  relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS "runtime_config" (
-    "config_key"   TEXT    NOT NULL PRIMARY KEY,
-    "config_value" TEXT    NOT NULL,
-    "value_type"   TEXT    NOT NULL,
-    "description"  TEXT,
-    "updated"      INTEGER NOT NULL
-  )`);
-  const runtimeV2Config = new ConfigService(relationDb, 'runtime_config');
-  const isV2Enabled = async (): Promise<boolean> => (await runtimeV2Config.getString('v2_enabled', 'true')) !== 'false';
 
-  const chatAccess = new ChatAccess(relationDb, infoCore, writerAgent, evolutorAgent, orchestrationEntry, logger, streamAccess, {
+  const chatAccess = new ChatAccess(relationDb, infoCore, logger, streamAccess, {
     gateway: runtimeGateway,
     session: runtimeSessionAccess,
-    bus: runtimeBus,
-    isV2Enabled,
   });
 
   const chunkAccess = new ChunkAccess(logger);
-  const selfLearningAccess = new SelfLearningAccess(relationDb, infoCore, mqCore, llmCore, evolutorAgent, writerAgent, orchestrationEntry, graphDBAccess, mqAccess, chunkAccess, llmAccess, promptsAccess, logger);
+  const selfLearningAccess = new SelfLearningAccess(relationDb, infoCore, mqCore, llmCore, evolutorAgent, writerAgent, graphDBAccess, mqAccess, chunkAccess, llmAccess, promptsAccess, logger);
 
   // 系统启动时自动开启随机触发学习（自动学习后台常驻：空闲时按 random_factor 随机触发）
   await selfLearningAccess.startLearning(
@@ -760,14 +765,6 @@ async function buildContext() {
     new StartLearningOutput(),
     new SelfLearningContext(),
   );
-
-  // 启动期注册常驻 MQ 消费 Worker（orchestration.eval 评估队列），
-  // 避免消息因 Worker 未启动而长期滞留 PENDING。
-  try {
-    await jsonNode.ensureEvalWorker();
-  } catch (e) {
-    logger.warn('[startup] eval worker failed', String(e));
-  }
 
   // ---- CronProvider（定时任务调度中心）----
   const cronAccess = new CronAccess(relationDb, logger);
@@ -793,11 +790,11 @@ async function buildContext() {
   await userProfileAccess.initialize();
   // 启动用户画像自动生成调度（按 auto_generate_interval_ms 周期触发）
   await userProfileAccess.startAutoGeneration();
-  const visualizationAccess = new VisualizationAccess(relationDb, orchestrationVisualization, agentExecution, agentLibrary, agentContext, evolutorAgent, plannerAgent, infoCore, llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess, graphDBAccess, logger);
+new VisualizationAccess(relationDb, agentExecution, agentLibrary, agentContext, evolutorAgent, plannerAgent, infoCore, llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess, graphDBAccess, logger);
   await visualizationAccess.initialize();
 
   // Config
-  const configAccess = new ConfigAccess(
+new ConfigAccess(
     relationDb,
     llmAccess, soulAccess, skillAccess, mcpAccess, promptsAccess,
     logAccess,
@@ -805,8 +802,6 @@ async function buildContext() {
     llmCore, infoCore, mcpCore, skillCore, soulCore,
     writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder,
     agentExecution, agentStrategy, agentContext,
-    orchestrationEntry, orchestrationStrategy, orchestrationExecution,
-    orchestrationVisualization, jsonNode,
     chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
     cronAccess,
     logger,
@@ -945,8 +940,6 @@ async function buildContext() {
     cdtCore,
     agentLibrary, agentStrategy, agentContext, agentBuilder,
     agentExecution, plannerAgent, writerAgent, evolutorAgent,
-    orchestrationExecution, orchestrationVisualization, jsonNode,
-    orchestrationStrategy, orchestrationEntry,
     chatAccess, configAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
   };
 }
@@ -2878,22 +2871,18 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.chatAccess.soChatHistory(input, output, context);
         sendJson(res, 200, { exchanges: output.messages || [] });
 
-      } else if (method === 'POST' && pathname === '/api/chat/send') {
-        const citingMsgIds = Array.isArray(body.citing_msg_ids) ? body.citing_msg_ids : (Array.isArray(body.citingIds) ? body.citingIds : []);
-        const selectedMsgIds = Array.isArray(body.selected_msg_ids) ? body.selected_msg_ids : (Array.isArray(body.selectedMsgIds) ? body.selectedMsgIds : []);
-        const allCitingIds = Array.from(new Set([...citingMsgIds, ...selectedMsgIds]));
-        const input = Object.assign(new SubmitWorkInput(), {
-          session_id: body.session_id || body.sessionId,
-          msg_content: body.msg_content || body.content,
-          citing_msg_ids: allCitingIds,
-          selected_msg_ids: selectedMsgIds,
-          trace_id: (typeof body.trace_id === 'string' && body.trace_id) ? body.trace_id : IdGenerator.generate(),
-        });
-        const output = new SubmitWorkOutput();
-        const context = new ChatContext();
-        await ctx.chatAccess.submitWork(input, output, context);
-        sendJson(res, 200, { msgId: output.interact_id, workId: output.work_id });
 
+      } else if (method === 'POST' && pathname === '/api/chat/permission/answer') {
+        // 权限应答端点：唤醒 permission.asked 挂起的 Loop（Stage B 权限门）
+        const body = await readJsonBody(req);
+        const { AnswerPermissionInput, AnswerPermissionOutput, RunGatewayContext } = await import('./Runtime');
+        const input = Object.assign(new AnswerPermissionInput(), {
+          permission_id: String(body.permission_id ?? ''),
+          approved: body.approved === true,
+        });
+        const output = new AnswerPermissionOutput();
+        await runtimeGatewayRef.answerPermission(input, output, new RunGatewayContext());
+        sendJson(res, 200, { ok: true, answered: output.answered });
       } else if (method === 'POST' && pathname === '/api/chat/stream') {
         // SSE 流式对话端点：通过 chat_config.sse_heartbeat_interval_ms 控制心跳间隔
         const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
@@ -2929,6 +2918,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         };
 
         // 注册到 Base 层 StreamProvider（由 StreamProvider 统一管理心跳与结构化数据分发）
+        const registerOutput = new RegisterStreamOutput();
         await ctx.streamAccess.registerStream(
           Object.assign(new RegisterStreamInput(), {
             session_id: sessionId,
@@ -2940,7 +2930,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
             },
           }),
-          new RegisterStreamOutput(),
+          registerOutput,
           new StreamContext(),
         );
 
@@ -2955,6 +2945,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           citing_msg_ids: allCitingIds,
           selected_msg_ids: selectedMsgIds,
           force_orchestration_strategy: typeof body.force_orchestration_strategy === 'string' ? body.force_orchestration_strategy : undefined,
+          // SSE 端点 ID：注册本响应连接时生成；业务事件经 Report→StreamProvider 按此 ID 推送
+          stream_endpoint_id: registerOutput.endpoint_id,
         });
         const streamOutput = new OpenChatStreamOutput();
 
@@ -3012,147 +3004,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { pin: output.pin });
 
       } else if (method === 'POST' && /\/api\/chat\/cancel\//.test(pathname)) {
+        // v2 语义迁移：取消 = abortRun（AbortSignal 真取消，类型化原因）
         const eid = pathname.split('/api/chat/cancel/')[1];
-        const input = Object.assign(new CancelWorkInput(), { session_id: params.get('sessionId') || '', work_id: eid });
-        const output = new CancelWorkOutput();
-        const context = new ChatContext();
-        await ctx.chatAccess.cancelWork(input, output, context);
+        const { AbortRunInput, AbortRunOutput, RunGatewayContext } = await import('./Runtime');
+        const input = Object.assign(new AbortRunInput(), { run_id: eid, reason: 'user' });
+        const output = new AbortRunOutput();
+        await runtimeGatewayRef.abortRun(input, output, new RunGatewayContext());
         sendJson(res, 200, { cancelled: true });
-
-      } else if (method === 'POST' && pathname === '/api/chat/confirm-intent') {
-        const sessionId = typeof body.session_id === 'string' ? body.session_id : (params.get('sessionId') || '');
-        const workId = typeof body.work_id === 'string' ? body.work_id : '';
-        const action = typeof body.action === 'string' ? body.action : 'KEEP';
-        const understoodRequirement = typeof body.understood_requirement === 'string' ? body.understood_requirement : '';
-
-        if (!workId) { sendJson(res, 400, { error: 'work_id is required' }); return; }
-
-        // 确认重入编排耗时较长（重新跑所有 Agent 与 LLM），改为 SSE 流式回传：
-        // 编排执行过程中 streamAccess 会推送 context_built / agent_thinking / agent_output 等事件，
-        // 编排完成后 ChatService.confirmIntent 再推送 text_chunk 与 done，前端实时展示思考过程与系统回答。
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream; charset=utf-8',
-          'Cache-Control': 'no-cache, no-transform',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        });
-
-        let clientClosed = false;
-        req.on('close', () => {
-          clientClosed = true;
-          ctx.streamAccess.closeStream(
-            Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Client disconnected' }),
-            new CloseStreamOutput(),
-            new StreamContext(),
-          ).catch(() => {});
-        });
-
-        await ctx.streamAccess.registerStream(
-          Object.assign(new RegisterStreamInput(), {
-            session_id: sessionId,
-            writer: (chunk: string) => {
-              if (clientClosed) return false;
-              try { res.write(chunk); return true; } catch { return false; }
-            },
-            onClose: () => {
-              if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
-            },
-          }),
-          new RegisterStreamOutput(),
-          new StreamContext(),
-        );
-
-        const input = Object.assign(new ConfirmIntentInput(), {
-          session_id: sessionId,
-          work_id: workId,
-          action,
-          understood_requirement: understoodRequirement,
-        });
-        const output = new ConfirmIntentOutput();
-        const context = new ChatContext();
-
-        try {
-          await ctx.chatAccess.confirmIntent(input, output, context);
-        } catch (err: any) {
-          await ctx.streamAccess.pushEvent(sessionId, 'error', 'CONTROL', {
-            error_message: err?.message || 'Confirm intent failed',
-            error_code: 'CONFIRM_INTENT_FAILED',
-          });
-        } finally {
-          await ctx.streamAccess.closeStream(
-            Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Stream finished' }),
-            new CloseStreamOutput(),
-            new StreamContext(),
-          );
-          if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
-        }
-        return;
-
-      } else if (method === 'POST' && pathname === '/api/chat/submit-clarification') {
-        const sessionId = typeof body.session_id === 'string' ? body.session_id : (params.get('sessionId') || '');
-        const workId = typeof body.work_id === 'string' ? body.work_id : '';
-        const answers = Array.isArray(body.answers) ? body.answers : [];
-
-        if (!workId) { sendJson(res, 400, { error: 'work_id is required' }); return; }
-        if (answers.length === 0) { sendJson(res, 400, { error: 'answers is required' }); return; }
-
-        // 补充参数重入编排耗时较长，同样走 SSE 流式回传思考过程与系统回答
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream; charset=utf-8',
-          'Cache-Control': 'no-cache, no-transform',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        });
-
-        let clientClosed = false;
-        req.on('close', () => {
-          clientClosed = true;
-          ctx.streamAccess.closeStream(
-            Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Client disconnected' }),
-            new CloseStreamOutput(),
-            new StreamContext(),
-          ).catch(() => {});
-        });
-
-        await ctx.streamAccess.registerStream(
-          Object.assign(new RegisterStreamInput(), {
-            session_id: sessionId,
-            writer: (chunk: string) => {
-              if (clientClosed) return false;
-              try { res.write(chunk); return true; } catch { return false; }
-            },
-            onClose: () => {
-              if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
-            },
-          }),
-          new RegisterStreamOutput(),
-          new StreamContext(),
-        );
-
-        const input = Object.assign(new SubmitClarificationInput(), {
-          session_id: sessionId,
-          work_id: workId,
-          answers,
-        });
-        const output = new SubmitClarificationOutput();
-        const context = new ChatContext();
-
-        try {
-          await ctx.chatAccess.submitClarification(input, output, context);
-        } catch (err: any) {
-          await ctx.streamAccess.pushEvent(sessionId, 'error', 'CONTROL', {
-            error_message: err?.message || 'Submit clarification failed',
-            error_code: 'SUBMIT_CLARIFICATION_FAILED',
-          });
-        } finally {
-          await ctx.streamAccess.closeStream(
-            Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Stream finished' }),
-            new CloseStreamOutput(),
-            new StreamContext(),
-          );
-          if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
-        }
-        return;
 
       } else if (method === 'POST' && pathname === '/api/chat/create-session') {
         const input = Object.assign(new CreateSessionInput(), { session_title: body.title || body.session_title || '' });
@@ -3171,53 +3029,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { success: true, session_id: sid, session_title: newTitle });
 
       } else if (method === 'GET' && pathname.startsWith('/api/chat/dag')) {
-        const sessionId = params.get('sessionId') || params.get('session_id') || '';
-        if (!sessionId) { sendJson(res, 200, { nodes: [], edges: [] }); return; }
-        const workRows = ctx.relationDb.queryRaw<{ work_id: string }>(
-          'SELECT "work_id" FROM "orchestration_work" WHERE "session_id" = ? ORDER BY "created" DESC LIMIT 1',
-          [sessionId],
-        );
-        if (workRows.length === 0) { sendJson(res, 200, { nodes: [], edges: [] }); return; }
-        const workId = workRows[0].work_id;
-        const dagOut = Object.assign({}, { agent_dag_structure: {} as Record<string, unknown> });
-        await ctx.orchestrationVisualization.visualizeAgentDAG(
-          Object.assign({}, { work_id: workId }),
-          dagOut,
-          Object.assign({}, {}) as import('./Orchestration/OrchestrationVisualization/domain/types').OrchestrationVisualizationContext,
-        );
-        const graph = (dagOut.agent_dag_structure?.graph ?? {}) as Record<string, unknown>;
-        const dagNodes = (graph.nodes ?? []) as Array<Record<string, unknown>>;
-        const dagEdges = (graph.edges ?? []) as Array<Record<string, unknown>>;
-        const levelGroups = new Map<number, Array<Record<string, unknown>>>();
-        for (const n of dagNodes) {
-          const lvl = Number(n.dependency_level ?? 0);
-          if (!levelGroups.has(lvl)) levelGroups.set(lvl, []);
-          levelGroups.get(lvl)!.push(n);
-        }
-        const nodes: Array<Record<string, unknown>> = [];
-        const levelKeys = [...levelGroups.keys()].sort((a, b) => a - b);
-        for (const lvl of levelKeys) {
-          const group = levelGroups.get(lvl)!;
-          group.forEach((n, idx) => {
-            const agentId = String(n.agent_id ?? n.id ?? '');
-            const status = String(n.status ?? 'UNKNOWN').toLowerCase();
-            const statusMapped = status.includes('complet') ? 'done' : status.includes('fail') || status.includes('error') ? 'error' : status.includes('running') || status.includes('process') ? 'running' : 'pending';
-            nodes.push({
-              id: agentId,
-              agent_id: agentId,
-              label: agentId.slice(0, 8),
-              x: lvl * 220 + 80,
-              y: (idx - (group.length - 1) / 2) * 140 + 300,
-              status: statusMapped,
-            });
-          });
-        }
-        const edges = dagEdges.map((e) => ({
-          source: String(e.from_agent_id ?? ''),
-          target: String(e.to_agent_id ?? ''),
-        })).filter((e) => e.source && e.target);
-        sendJson(res, 200, { work_id: workId, nodes, edges });
-
+        // V1 编排 DAG 已移除：前端由 v2 事件流归约，端点返回空图
+        sendJson(res, 200, { nodes: [], edges: [] });
       } else if (method === 'GET' && pathname.startsWith('/api/chat/agent-chain/')) {
         sendJson(res, 200, { nodes: [] });
 

@@ -20,7 +20,9 @@ export { Output } from './base/Output';
 export { Metrics } from './base/Metrics';
 export type { MetricsLogger } from './base/Metrics';
 export { Report } from './base/Report';
-export type { ReportChannel, ReportMeta } from './base/Report';
+export type { ReportChannel, ReportMeta, ReportEventStream } from './base/Report';
+export { BusinessEvent, businessEventMsgType, SseTransportEvent } from './base/BusinessEvent';
+export type { BusinessEventKind } from './base/BusinessEvent';
 export { InfoType, CollectionSource, ContextSource } from './base/InfoEnums';
 export {
   HandleResultType,

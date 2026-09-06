@@ -8,6 +8,7 @@
 import { ref } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
+import { answerPermission } from '@/api'
 import type { Block, ChatMessage } from '@/api/types'
 import { readSSE } from './useSSE'
 import { createChatStreamEventHandler } from './chatStreamEvents'
@@ -32,7 +33,6 @@ export function useChatStream() {
 
   // 需求确认 / 需求补充的提交中状态（防重复提交）
   const confirmingIntent = ref(false)
-  const submittingClarification = ref(false)
 
   function addErrorBlock(botMsgId: string, message: string, errorCode: string, retryAvailable: boolean) {
     const errBlock: Block = {
@@ -144,6 +144,17 @@ export function useChatStream() {
   async function handleIntentConfirm(action: 'APPROVE' | 'KEEP' | 'CANCEL') {
     const conf = chatUi.intentConfirmation
     if (!conf || confirmingIntent.value) return
+    // 权限门分流：permission.asked 的应答走 answerPermission（v2 权限门）
+    if ((conf as unknown as { kind?: string }).kind === 'permission') {
+      confirmingIntent.value = true
+      chatUi.clearIntentConfirmation()
+      try {
+        await answerPermission((conf as unknown as { permission_id: string }).permission_id, action === 'APPROVE')
+      } finally {
+        confirmingIntent.value = false
+      }
+      return
+    }
     confirmingIntent.value = true
     // 立即关闭确认弹窗，避免后端同步重入编排（APPROVE/KEEP 会重新执行完整编排、耗时较长）期间弹窗长期停留
     chatUi.clearIntentConfirmation()
@@ -171,40 +182,9 @@ export function useChatStream() {
   }
 
   /** 需求补充提交：收集各澄清项答案并发起流式执行 */
-  async function handleClarificationSubmit() {
-    const req = chatUi.clarificationRequest
-    if (!req || submittingClarification.value) return
-    submittingClarification.value = true
-    chatUi.clearClarificationRequest()
-    streamHandler.reset()
-
-    const answers = req.clarifications.map((c) => ({
-      question: c.question,
-      answer: (c.answer ?? '').trim(),
-    }))
-
-    try {
-      await runSseInteraction({
-        url: '/api/chat/submit-clarification',
-        body: {
-          session_id: req.session_id,
-          work_id: req.work_id,
-          answers,
-        },
-        botMsgId: `msg-${Date.now()}-clarify`,
-        errorCode: 'SUBMIT_CLARIFICATION_FAILED',
-        retryAvailable: false,
-      })
-    } finally {
-      submittingClarification.value = false
-    }
-  }
-
   return {
     confirmingIntent,
-    submittingClarification,
     handleSend,
     handleIntentConfirm,
-    handleClarificationSubmit,
   }
 }

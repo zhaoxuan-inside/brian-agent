@@ -27,7 +27,7 @@ export class AgentDefAccess {
   private readonly service: AgentDefService;
 
   constructor(relationDb: RelationDBAccess, llm: LLMAccess, components: AgentDefComponents, logger?: Logger) {
-    void new AgentsSchemaInitializer(relationDb).init();
+    new AgentsSchemaInitializer(relationDb).init();
     const rawService = new AgentDefService(relationDb, llm, components, logger);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentDefService;
   }

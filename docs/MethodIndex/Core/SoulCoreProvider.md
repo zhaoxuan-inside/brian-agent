@@ -14,4 +14,5 @@
 | `ageSoul` | `input: AgeSoulInput, output: AgeSoulOutput, context: SoulCoreContext, metrics?: Metrics...` | `Promise<boolean>` | 依据 soul_opt_rule 规则老化不活跃的 Soul（禁用）。 |
 | `soSoulRule` | `input: SoSoulRuleInput, output: SoSoulRuleOutput, context: SoulCoreContext, metrics?: M...` | `Promise<boolean>` | 查询 Soul 优化规则。 |
 | `updateSoulRule` | `input: UpdateSoulRuleInput, output: UpdateSoulRuleOutput, context: SoulCoreContext, met...` | `Promise<boolean>` | 批量更新 Soul 优化规则（事务）。 |
+| `soSoulContent` | `input: SoSoulContentInput, output: SoSoulContentOutput, context: SoulCoreContext, metri...` | `Promise<boolean>` | 按 id 读取 Soul 内容（聚合查询；供声明式 Agent 快照等场景，替代跨模块直查 soul 表）。 |
 | `configSoulCore` | `input: ConfigSoulCoreInput, output: ConfigSoulCoreOutput, context: SoulCoreContext, met...` | `Promise<boolean>` | 获取当前 SoulCore 配置。 |

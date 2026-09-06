@@ -16,6 +16,31 @@ import { Input, Context, Output } from '@brian-agent/base';
 export class AgentDefContext extends Context {}
 
 // ---------------------------------------------------------------------------
+// 枚举（有限值域唯一注册点）
+// ---------------------------------------------------------------------------
+
+/** 声明式 Agent 模式 */
+export enum AgentMode {
+  Primary = 'primary',
+  Subagent = 'subagent',
+  All = 'all',
+}
+
+/** 声明式 Agent 定义状态 */
+export enum AgentDefStatus {
+  Active = 'active',
+  Disabled = 'disabled',
+}
+
+/** matchAgentDef 命中层（确定性：exact → signature → llm → built，无随机重建） */
+export enum AgentMatchLayer {
+  Exact = 'exact',
+  Signature = 'signature',
+  LLM = 'llm',
+  Built = 'built',
+}
+
+// ---------------------------------------------------------------------------
 // 数据对象
 // ---------------------------------------------------------------------------
 
@@ -23,7 +48,7 @@ export class AgentDefContext extends Context {}
 export interface AgentDefRecord {
   id: string;
   name: string;
-  mode: 'primary' | 'subagent' | 'all';
+  mode: AgentMode;
   /** 旧 agent 表引用（组件构建/老化复用既有资产；空串=纯声明） */
   agent_ref: string;
   /** 任务签名（`[domain] 前256字`，exact/相似匹配依据） */
@@ -43,7 +68,7 @@ export interface AgentDefRecord {
   /** 默认预算 total */
   budget_total: number;
   /** 状态 */
-  status: 'active' | 'disabled';
+  status: AgentDefStatus;
   created: number;
   updated: number;
 }
@@ -93,8 +118,8 @@ export class MatchAgentDefInput extends Input {
 export class MatchAgentDefOutput extends Output {
   /** 命中的声明定义 ID */
   def_id!: string;
-  /** 命中层：exact | signature | llm | built */
-  matched_by!: 'exact' | 'signature' | 'llm' | 'built';
+  /** 命中层 */
+  matched_by!: AgentMatchLayer;
   /** 定义记录 */
   def!: AgentDefRecord;
 }
@@ -134,7 +159,7 @@ export class DeclareAgentInput extends Input {
   /** 唯一引用名 */
   name!: string;
   /** 模式 */
-  mode!: 'primary' | 'subagent' | 'all';
+  mode?: AgentMode;
   /** 旧 agent 表引用（可选） */
   agent_ref?: string;
   /** 任务签名（可选；声明型代理可空） */
@@ -154,7 +179,7 @@ export class DeclareAgentInput extends Input {
   /** 默认预算 total */
   budget_total?: number;
   /** 状态 */
-  status?: 'active' | 'disabled';
+  status?: AgentDefStatus;
 }
 
 /** declareAgent 出参 */

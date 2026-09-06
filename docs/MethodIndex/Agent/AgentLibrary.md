@@ -16,6 +16,8 @@
 | `toggleAgent` | `i: ToggleAgentInput, o: ToggleAgentOutput, c: AgentLibraryContext, metrics?: Metrics, r...` | `Promise<boolean>` | — |
 | `recordAgentUsage` | `i: RecordAgentUsageInput, o: RecordAgentUsageOutput, c: AgentLibraryContext, metrics?: ...` | `Promise<boolean>` | — |
 | `soAgent` | `i: GetAgentInput, o: GetAgentOutput, c: AgentLibraryContext, metrics?: Metrics, report?...` | `Promise<boolean>` | — |
+| `bindAgentComponent` | `i: BindAgentComponentInput, o: BindAgentComponentOutput, c: AgentLibraryContext, metric...` | `Promise<boolean>` | 绑定组件到 Agent（绑定唯一事实源：agent 表；评估链路调用） |
+| `unbindAgentComponent` | `i: UnbindAgentComponentInput, o: UnbindAgentComponentOutput, c: AgentLibraryContext, me...` | `Promise<boolean>` | 解绑 Agent 组件（幂等；评估链路调用） |
 | `ageAgent` | `i: AgeAgentInput, o: AgeAgentOutput, c: AgentLibraryContext, metrics?: Metrics, report?...` | `Promise<boolean>` | — |
 | `soAgentRule` | `i: GetAgentRuleInput, o: GetAgentRuleOutput, c: AgentLibraryContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `updateAgentRule` | `i: UpdateAgentRuleInput, o: UpdateAgentRuleOutput, c: AgentLibraryContext, metrics?: Me...` | `Promise<boolean>` | — |

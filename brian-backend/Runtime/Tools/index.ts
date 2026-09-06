@@ -8,6 +8,7 @@ export { ToolAccess } from './access/ToolAccess';
 // domain 层
 export {
   ToolContext,
+  ToolResultStatus,
   RegisterToolInput,
   RegisterToolOutput,
   ExecToolInput,
@@ -34,4 +35,6 @@ export {
   mcpExecTool,
   cdtBrowserTool,
 } from './application/builtinTools';
+export { updatePlanTool, preparePlanSteps, PlanStepStatus } from './application/planTool';
+export { delegateTool } from './application/delegateTool';
 export type { BuiltinToolDeps } from './application/builtinTools';

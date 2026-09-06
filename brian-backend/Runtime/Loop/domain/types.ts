@@ -11,11 +11,28 @@
 
 import { Input, Context, Output } from '@brian-agent/base';
 import type { BudgetSpec } from '../../shared/IterationBudget';
+import { AbortReason } from '../../shared/types';
 
 /**
  * Loop 上下文（LoopContext）。
  */
 export class LoopContext extends Context {}
+
+// ---------------------------------------------------------------------------
+// 枚举（有限值域唯一注册点）
+// ---------------------------------------------------------------------------
+
+/** 内层循环终止原因（输出协议；'continue' 为内层私有推进信号，不对外） */
+export enum LoopStopReason {
+  /** finish reason 无 tool_calls，正常收敛 */
+  Stop = 'stop',
+  /** 类型化取消（AbortSignal 真取消） */
+  Aborted = 'aborted',
+  /** LLM/流异常 */
+  Error = 'error',
+  /** 预算耗尽且无宽限 */
+  Budget = 'budget',
+}
 
 // ---------------------------------------------------------------------------
 // execAgentLoop
@@ -51,8 +68,8 @@ export class ExecAgentLoopInput extends Input {
 
 /** execAgentLoop 出参 */
 export class ExecAgentLoopOutput extends Output {
-  /** 终止原因：stop | aborted | error | budget */
-  stop_reason!: 'stop' | 'aborted' | 'error' | 'budget';
+  /** 终止原因 */
+  stop_reason!: LoopStopReason;
   /** 最终回复文本（finish_reason=stop 的 text 聚合） */
   result!: string;
   /** Token 用量 */
@@ -72,7 +89,7 @@ export class AbortLoopTurnInput extends Input {
   /** 目标 run ID */
   run_id!: string;
   /** 取消原因 */
-  reason!: 'user' | 'timeout' | 'budget' | 'superseded';
+  reason!: AbortReason;
 }
 
 /** abortLoopTurn 出参 */

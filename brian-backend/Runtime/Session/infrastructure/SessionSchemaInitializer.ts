@@ -25,6 +25,21 @@ export class SessionSchemaInitializer {
     this.initMessageTable();
     this.initPartTable();
     this.initConfigTable();
+    this.migrateTokenCountColumn();
+  }
+
+  /**
+   * 兼容迁移：runtime_message.token_usage → token_count（2026-09-05 统一命名，
+   * 与 Part 表 token_count 同义同名；旧列不存在或已迁移时静默跳过）。
+   */
+  private migrateTokenCountColumn(): void {
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${RUNTIME_MESSAGE_TABLE}" RENAME COLUMN "token_usage" TO "token_count"`,
+      );
+    } catch {
+      /* 全新库或已迁移 */
+    }
   }
 
   /** runtime_session 表 */
@@ -58,7 +73,7 @@ export class SessionSchemaInitializer {
         "role"        TEXT    NOT NULL,
         "content"     TEXT    NOT NULL DEFAULT '',
         "seq"         INTEGER NOT NULL,
-        "token_usage" INTEGER NOT NULL DEFAULT 0
+        "token_count" INTEGER NOT NULL DEFAULT 0
       )
     `);
     this.relationDb.executeRaw(

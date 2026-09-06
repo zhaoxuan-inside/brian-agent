@@ -226,3 +226,7 @@
 
 **可能存在的问题**：
 - `ageSkill` 依赖 `skill_opt_rule` 表存在规则才生效（默认无规则，需用户在配置页配置 days/min_usage_count）。
+
+## 落地差异（2026-09-05 · 绑定收权）
+
+Agent↔本模块组件的绑定关系收敛至 **Agent 模块 agent 表**（唯一事实源）：Core 的 agent_* 绑定表停止创建与读写；`match*` 为纯选择（Input 增 `bound_*` 传入既有绑定做确定性水合，不传则按任务选择，零持久化）；`opt*` 仅记 usage（键 (agent_id, component_id)，usage 表检测旧键自动重建）；`age*` 输出解绑候选（不删除）；绑定/解绑由 Agent 模块 `AgentLibrary.bindAgentComponent/unbindAgentComponent` 经评估链路（EvolutorAgent 评估 → AgentBuilder.optimizeAgent）执行。

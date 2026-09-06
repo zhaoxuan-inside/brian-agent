@@ -20,17 +20,8 @@ import {
   PinInfoInput, PinInfoOutput,
   InfoCoreContext,
 } from '@brian-agent/core';
-import type { WriterAgentAccess, EvolutorAgentAccess } from '@brian-agent/agent';
-import type { OrchestrationEntryAccess } from '@brian-agent/orchestration';
-import {
-  OrchestrationEntryContext, ReceiveWorkInput, ReceiveWorkOutput,
-  CancelWorkInput as OrchCancelWorkInput, CancelWorkOutput as OrchCancelWorkOutput,
-  ConfirmIntentInput as OrchConfirmIntentInput, ConfirmIntentOutput as OrchConfirmIntentOutput,
-  SubmitClarificationInput as OrchSubmitClarificationInput, SubmitClarificationOutput as OrchSubmitClarificationOutput,
-} from '@brian-agent/orchestration';
 import {
   ChatContext,
-  SubmitWorkInput, SubmitWorkOutput,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
   SearchSessionInput, SearchSessionOutput,
@@ -41,144 +32,39 @@ import {
   SearchMessageInput, SearchMessageOutput,
   PinMessageInput, PinMessageOutput,
   GetMessageGraphInput, GetMessageGraphOutput,
-  CancelWorkInput, CancelWorkOutput,
-  ConfirmIntentInput, ConfirmIntentOutput,
-  SubmitClarificationInput, SubmitClarificationOutput,
   ConfigChatInput, ConfigChatOutput,
   OpenChatStreamInput, OpenChatStreamOutput,
   type SSEEvent,
 } from '../domain/types';
 
-import type { RuntimeEvent } from '@brian-agent/runtime';
 import {
   RunGatewayAccess,
+  SseTransportEvent,
   SessionAccess,
-  EventBusAccess,
   RunGatewayContext,
   SubmitRunInput,
   SubmitRunOutput,
   WaitRunInput,
   WaitRunOutput,
-  RegisterProjectionInput,
-  RegisterProjectionOutput,
   AddSessionInput,
   AddSessionOutput,
   SessionContext,
-  EventBusContext,
 } from '@brian-agent/runtime';
 
 /** Chat v2 运行时依赖（Runtime v2 接线；缺省走旧编排链路） */
 export interface ChatRuntimeV2Deps {
   gateway: RunGatewayAccess;
   session: SessionAccess;
-  bus: EventBusAccess;
-  /** v2 开关（缺省 true；由组合根经配置注入） */
-  isV2Enabled: () => Promise<boolean>;
 }
 
 export class ChatService {
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly infoCore: InfoCoreAccess,
-    private readonly writerAgent: WriterAgentAccess,
-    private readonly evolutorAgent: EvolutorAgentAccess,
-    private readonly orchestrationEntry: OrchestrationEntryAccess,
     private readonly logger?: Logger,
     private readonly streamAccess?: StreamAccess,
     private readonly runtime?: ChatRuntimeV2Deps,
   ) {}
-
-  // ===== 修改后的 submitWork 与 openChatStream 实现：增加第一条消息自动生成会话名称（50字截断，若已有名称则不覆盖） =====
-  async submitWork(input: SubmitWorkInput, output: SubmitWorkOutput, context: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    if (!input.session_id) {
-      throw new ValidationError('session_id is required');
-    }
-    if (!input.msg_content || input.msg_content.trim() === '') {
-      throw new ValidationError('msg_content cannot be empty');
-    }
-
-    const overflowInput = Object.assign(new CheckSessionOverflowInput(), {
-      session_id: input.session_id,
-    });
-    const overflowOutput = new CheckSessionOverflowOutput();
-    await this.checkSessionOverflow(overflowInput, overflowOutput, context, metrics, report);
-    if (overflowOutput.is_overflowed) {
-      throw new ValidationError(`Session ${input.session_id} has exceeded message limit`);
-    }
-
-    // 自动判断并生成会话名称（若尚未有特定名称，以第一条消息做50字符截断）
-    await this.autoGenerateSessionTitleIfEmpty(input.session_id, input.msg_content);
-
-    const workId = IdGenerator.generate();
-    const interactId = IdGenerator.generate();
-
-    let userProfile: Record<string, unknown> | undefined;
-    try {
-      const profileOut = Object.assign(new (await this.getWriterProfileOutputClass())(), {});
-      await this.writerAgent.soUserProfile(
-        Object.assign(new (await this.getWriterProfileInputClass())(), {
-          session_id: input.session_id,
-        }),
-        new (await this.getWriterAgentContextClass())(),
-        profileOut,
-      );
-      userProfile = profileOut.user_profile;
-    } catch {
-      /* best-effort */
-    }
-
-    const citingMsgIds = Array.from(new Set([
-      ...(input.citing_msg_ids ?? []),
-      ...(input.selected_msg_ids ?? []),
-    ]));
-
-    const rwInput = Object.assign(new ReceiveWorkInput(), {
-      session_id: input.session_id,
-      user_query: input.msg_content,
-      force_orchestration_strategy: input.force_orchestration_strategy,
-      user_profile: userProfile,
-      citing_msg_ids: citingMsgIds,
-      selected_msg_ids: input.selected_msg_ids ?? [],
-    });
-    const rwOutput = new ReceiveWorkOutput();
-    const rwContext = Object.assign(new OrchestrationEntryContext(), {
-      session_id: input.session_id,
-      work_id: workId,
-      interact_id: interactId,
-    });
-
-    let workOk = false;
-    try {
-      workOk = await this.orchestrationEntry.receiveWork(rwInput, rwOutput, rwContext, metrics, report);
-    } catch (err: unknown) {
-      this.logger?.error?.('submitWork: orchestration failed', {
-        session_id: input.session_id,
-        work_id: workId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      output.work_id = workId;
-      output.interact_id = interactId;
-      return false;
-    }
-
-    try {
-      const evalOut = Object.assign(new (await this.getEvalOutputClass())(), {});
-      await this.evolutorAgent.soEvaluation(
-        Object.assign(new (await this.getEvalInputClass())(), {
-          conditions: [{ field: 'work_id', operator: 'EQ', value: workId }],
-        }),
-        new (await this.getEvolutorAgentContextClass())(),
-        evalOut,
-      );
-    } catch {
-      /* best-effort */
-    }
-
-    output.work_id = workId;
-    output.interact_id = interactId;
-    return workOk;
-  }
 
   async openChatStream(
     input: OpenChatStreamInput,
@@ -200,173 +86,18 @@ export class ChatService {
       throw new NotFoundError('Session', input.session_id);
     }
 
-    // ===== Runtime v2 分流（阶段4 过渡：编排内核走 v2，SSE 出口投影为现有前端协议；开关可回退旧链路） =====
-    if (this.runtime && await this.runtime.isV2Enabled()) {
-      return this.openChatStreamV2(input, output, context, metrics, report, onEvent);
+    if (!this.runtime) {
+      throw new ValidationError('Runtime v2 未装配（编排内核必需）');
     }
-
-    // trace_id 统一由后端经 ToolProvider(IdGenerator) 生成 UUID v4，
-    // 作为本次问答的链路追踪 ID 贯穿整条处理链路与日志，不再依赖前端透传。
-    // 优先复用 AOP 层已生成并回填到 Context 的 trace_id，保证日志与 SSE 事件口径一致。
-    const traceId = context.trace_id || IdGenerator.generate();
-    context.trace_id = traceId;
-
-    const overflowInput = Object.assign(new CheckSessionOverflowInput(), {
-      session_id: input.session_id,
-    });
-    const overflowOutput = new CheckSessionOverflowOutput();
-    await this.checkSessionOverflow(overflowInput, overflowOutput, context, metrics, report);
-    if (overflowOutput.is_overflowed) {
-      const errEvent: SSEEvent = {
-        event: 'error',
-        data: { error_message: `Session ${input.session_id} has exceeded message limit`, error_code: 'OVERFLOW' },
-      };
-      output.events = [errEvent];
-      return true;
-    }
-
-    // 自动判断并生成会话名称（若尚未有特定名称，以第一条消息做50字符截断）
-    await this.autoGenerateSessionTitleIfEmpty(input.session_id, input.msg_content);
-
-    const events: SSEEvent[] = [];
-    const emit = (event: string, data: Record<string, unknown>) => {
-      const evt: SSEEvent = { event, data };
-      events.push(evt);
-      onEvent?.(evt);
-    };
-
-    emit('connected', { session_id: input.session_id, trace_id: traceId });
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-      await this.streamAccess.pushEvent(input.session_id, 'connected', 'CONTROL', {
-        session_id: input.session_id,
-        trace_id: traceId,
-      });
-    }
-
-    const workId = IdGenerator.generate();
-    const interactId = IdGenerator.generate();
-
-    let userProfile: Record<string, unknown> | undefined;
-    try {
-      const profileOut = Object.assign(new (await this.getWriterProfileOutputClass())(), {});
-      await this.writerAgent.soUserProfile(
-        Object.assign(new (await this.getWriterProfileInputClass())(), {
-          session_id: input.session_id,
-        }),
-        new (await this.getWriterAgentContextClass())(),
-        profileOut,
-      );
-      userProfile = profileOut.user_profile;
-    } catch {
-      /* best-effort */
-    }
-
-    emit('loading', { work_id: workId });
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-      await this.streamAccess.pushEvent(input.session_id, 'loading', 'CONTROL', {
-        work_id: workId,
-      }, { work_id: workId, interact_id: interactId });
-    }
-
-    const citingMsgIds = Array.from(new Set([
-      ...(input.citing_msg_ids ?? []),
-      ...(input.selected_msg_ids ?? []),
-    ]));
-
-    const rwInput = Object.assign(new ReceiveWorkInput(), {
-      session_id: input.session_id,
-      user_query: input.msg_content,
-      trace_id: traceId,
-      force_orchestration_strategy: input.force_orchestration_strategy,
-      user_profile: userProfile,
-      citing_msg_ids: citingMsgIds,
-      selected_msg_ids: input.selected_msg_ids ?? [],
-    });
-    const rwOutput = new ReceiveWorkOutput();
-    const rwContext = Object.assign(new OrchestrationEntryContext(), {
-      session_id: input.session_id,
-      work_id: workId,
-      interact_id: interactId,
-    });
-
-    const startedAt = Date.now();
-    const tokenUsage: Record<string, unknown> = {};
-    let workOk = false;
-    try {
-      workOk = await this.orchestrationEntry.receiveWork(rwInput, rwOutput, rwContext, metrics, report);
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logger?.error?.('openChatStream: orchestration failed', {
-        session_id: input.session_id,
-        work_id: workId,
-        trace_id: traceId,
-        error: errorMsg,
-      });
-      emit('error', { work_id: workId, trace_id: traceId, error_message: errorMsg, error_code: 'ORCHESTRATION_FAILED' });
-      if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-        await this.streamAccess.pushEvent(input.session_id, 'error', 'CONTROL', {
-          work_id: workId,
-          trace_id: traceId,
-          error_message: errorMsg,
-          error_code: 'ORCHESTRATION_FAILED',
-        }, { work_id: workId, interact_id: interactId });
-      }
-      output.events = events;
-      return true;
-    }
-
-    if (!workOk || rwOutput.error) {
-      const errorMsg = rwOutput.error || '处理失败';
-      const errorCode = rwOutput.error_code || 'ORCHESTRATION_FAILED';
-      emit('error', { work_id: workId, trace_id: traceId, error_message: errorMsg, error_code: errorCode });
-      if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-        await this.streamAccess.pushEvent(input.session_id, 'error', 'CONTROL', {
-          work_id: workId,
-          trace_id: traceId,
-          error_message: errorMsg,
-          error_code: errorCode,
-        }, { work_id: workId, interact_id: interactId });
-      }
-      output.events = events;
-      return true;
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    const finalResponse = rwOutput.final_response || '';
-    const paused = rwOutput.paused === true;
-
-    // 需求理解暂停等待确认时，不流式输出任何文本（由 intent_confirmation_required 事件驱动前端弹窗）
-    if (!paused && finalResponse) {
-      // 通过 StreamAccess 进行 2-5 字符随机 chunk 打字机流式推送（无延迟，实时推送）
-      if (this.streamAccess && typeof this.streamAccess.pushText === 'function') {
-        await this.streamAccess.pushText(input.session_id, 'text_chunk', finalResponse, {
-          work_id: workId,
-          interact_id: interactId,
-          chunk_delay_ms: 0,
-        });
-      }
-    }
-
-    emit('done', { work_id: workId, interact_id: interactId, trace_id: traceId, final_response: paused ? '' : finalResponse, elapsed_ms: elapsedMs, token_usage: tokenUsage, paused });
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-      await this.streamAccess.pushEvent(input.session_id, 'done', 'CONTROL', {
-        work_id: workId,
-        interact_id: interactId,
-        trace_id: traceId,
-        final_response: paused ? '' : finalResponse,
-        elapsed_ms: elapsedMs,
-        token_usage: tokenUsage,
-        paused,
-      }, { work_id: workId, interact_id: interactId });
-    }
-
-    output.events = events;
-    return true;
+    // V1 编排链路已移除（2026-09-05）：openChatStream 即 v2 链路
+    return this.openChatStreamV2(input, output, context, metrics, report, onEvent);
   }
 
+  /** V1 旧链路已删除（v1 编排回退与 SSE 旧协议层已随 V1 移除） */
+  private async legacyOpenChatStreamRemoved(): Promise<void> {}
 
   // -------------------------------------------------------------------------
-  // Runtime v2 链路（阶段4 过渡投影：v2 事件 → 现有前端 SSE 协议；前端 v2 原生改造后移除）
+  // Runtime v2 链路（业务事件经 Report→StreamProvider 推送到端点；保存/审计/断线恢复在 StreamProvider）
   // -------------------------------------------------------------------------
 
   /** v2 链路入口（逻辑控制）：生命周期事件 + 投影 + submitRun + waitRun + done */
@@ -388,18 +119,32 @@ export class ChatService {
     };
     const sessionId = input.session_id;
     await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
-    emit('connected', { session_id: sessionId, trace_id: traceId });
-    emit('loading', { work_id: sessionId });
+    emit(SseTransportEvent.Connected, { session_id: sessionId, trace_id: traceId });
+    emit(SseTransportEvent.Loading, { work_id: sessionId });
 
     const runtime = this.runtime!;
+    await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
+    const overflowInput = Object.assign(new CheckSessionOverflowInput(), { session_id: sessionId });
+    const overflowOutput = new CheckSessionOverflowOutput();
+    await this.checkSessionOverflow(overflowInput, overflowOutput, context, metrics, report);
+    if (overflowOutput.is_overflowed) {
+      emit('error.occurred', { error_message: `Session ${sessionId} has exceeded message limit`, error_code: 'OVERFLOW' });
+      output.events = events;
+      return true;
+    }
     const addIn = new AddSessionInput();
     addIn.session_key = sessionId;
     await runtime.session.addSession(addIn, new AddSessionOutput(), new SessionContext());
-    const state = { finalText: '' };
-    const projection = this.prepareV2Projection(sessionId, emit, state);
-    // 投影起点 = 会话最新事件 seq（只尾随本次 run 的新事件，不重放历史 run 的 delta）
-    projection.after_seq = this.soSessionLastSeq(sessionId);
-    await runtime.bus.registerProjection(projection, new RegisterProjectionOutput(), new EventBusContext());
+
+    // ===== Report 只负责接收业务的消息：携带 SSE 端点 ID，上报经 StreamProvider =====
+    // 保存（stream_event 持久化/审计）、断线恢复重放、按端点 ID 定位 SSE 连接投递，
+    // 全部由 StreamProvider 承载（v1 兼容事件名格式化亦在 StreamProvider 内）。
+    const report2 = new Report({
+      session_id: sessionId,
+      session_key: sessionId,
+      trace_id: traceId,
+      stream_endpoint_id: input.stream_endpoint_id,
+    });
 
     const submitIn = new SubmitRunInput();
     submitIn.session_key = sessionId;
@@ -407,65 +152,30 @@ export class ChatService {
     submitIn.user_message = input.msg_content;
     submitIn.interact_id = traceId;
     const submitOut = new SubmitRunOutput();
-    await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report);
+    await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report2);
     const waitIn = new WaitRunInput();
     waitIn.run_id = submitOut.run_id;
     const waitOut = new WaitRunOutput();
-    await runtime.gateway.waitRun(waitIn, waitOut, new RunGatewayContext(), metrics, report);
+    await runtime.gateway.waitRun(waitIn, waitOut, new RunGatewayContext(), metrics, report2);
     this.logger?.info?.('openChatStreamV2: run settled', { session_id: sessionId, run_id: submitOut.run_id, status: waitOut.status, stop_reason: waitOut.stop_reason });
-    emit('done', { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, final_response: state.finalText, elapsed_ms: 0, token_usage: {}, paused: false });
+    emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: 0, token_usage: {}, paused: false });
     output.events = events;
     return true;
   }
 
-  /** 会话最新事件 seq（数据处理；投影起点，避免重放历史 run 事件） */
-  private soSessionLastSeq(sessionKey: string): number {
-    try {
-      const rows = this.relationDb.queryRaw<{ max_seq: number }>(
-        'SELECT COALESCE(MAX("seq"), 0) AS max_seq FROM "runtime_event" WHERE "session_key" = ?', [sessionKey],
-      );
-      return Number(rows[0]?.max_seq ?? 0);
-    } catch {
-      return 0;
+  /** 最终回复 → transcript text 分块（数据处理；2-5 字符打字机分块，与 StreamProvider 默认口径一致） */
+  private chunkResponseForTranscript(text: string): string[] {
+    const chunks: string[] = [];
+    let offset = 0;
+    while (offset < text.length) {
+      const size = Math.min(text.length - offset, 2 + Math.floor(Math.random() * 4));
+      chunks.push(text.slice(offset, offset + size));
+      offset += size;
     }
+    return chunks;
   }
 
-  /** v2 事件 → 现有前端协议投影（数据处理；text 累积供 done 帧） */
-  private prepareV2Projection(
-    sessionId: string,
-    emit: (event: string, data: Record<string, unknown>) => void,
-    state: { finalText: string },
-  ): RegisterProjectionInput {
-    const deliver = (event: RuntimeEvent): void => {
-      const payload = (event.payload ?? {}) as Record<string, unknown>;
-      const stream = this.streamAccess;
-      if (event.type === 'part.delta' && payload.field === 'text') {
-        const delta = String(payload.delta ?? '');
-        state.finalText += delta;
-        void stream?.pushText(sessionId, 'text_chunk', delta, { chunk_delay_ms: 0 });
-        return;
-      }
-      if (event.type === 'part.delta' && payload.field === 'reasoning') {
-        void stream?.pushEvent(sessionId, 'agent_thinking', 'TRACE', { output: payload.delta });
-        return;
-      }
-      if (event.type === 'tool.launch') {
-        void stream?.pushEvent(sessionId, 'agent_action', 'TRACE', { action: payload.tool_id, input: payload.input });
-        return;
-      }
-      if (event.type === 'tool.result') {
-        void stream?.pushEvent(sessionId, 'agent_output', 'TRACE', { output: payload.output, status: payload.status });
-        return;
-      }
-      if (event.type === 'error') {
-        emit('error', { error_message: String(payload.message ?? 'run failed'), error_code: 'RUN_FAILED' });
-      }
-    };
-    const projIn = new RegisterProjectionInput();
-    projIn.session_key = sessionId;
-    projIn.deliver = deliver;
-    return projIn;
-  }
+
 
   async createSession(input: CreateSessionInput, output: CreateSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -717,6 +427,7 @@ export class ChatService {
     const countMap = new Map<string, number>();
     const lastMsgMap = new Map<string, { time: number; msg: string }>();
     if (sessionIds.length > 0) {
+      const placeholders = sessionIds.map(() => '?').join(',');
       try {
         const cntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
           `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
@@ -1121,120 +832,6 @@ export class ChatService {
     return true;
   }
 
-  async cancelWork(input: CancelWorkInput, output: CancelWorkOutput, _context: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    if (!input.work_id) {
-      throw new ValidationError('work_id is required');
-    }
-
-    const cancelInput = Object.assign(new OrchCancelWorkInput(), {
-      work_id: input.work_id,
-      reason: input.reason,
-    });
-    const cancelOutput = new OrchCancelWorkOutput();
-    const cancelContext = new OrchestrationEntryContext();
-
-    try {
-      const ok = await this.orchestrationEntry.cancelWork(cancelInput, cancelOutput, cancelContext, metrics, report);
-      output.cancelled = cancelOutput.cancelled;
-      return ok;
-    } catch (err: unknown) {
-      this.logger?.error?.('cancelWork: failed to cancel work', {
-        work_id: input.work_id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      output.cancelled = false;
-      return false;
-    }
-  }
-
-  async confirmIntent(input: ConfirmIntentInput, output: ConfirmIntentOutput, _context: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    if (!input.work_id) throw new ValidationError('work_id is required');
-    if (!input.action) throw new ValidationError('action is required');
-
-    const confirmIn = Object.assign(new OrchConfirmIntentInput(), {
-      session_id: input.session_id,
-      work_id: input.work_id,
-      action: input.action,
-      understood_requirement: input.understood_requirement,
-    });
-    const confirmOut = new OrchConfirmIntentOutput();
-    const confirmCtx = new OrchestrationEntryContext();
-
-    const ok = await this.orchestrationEntry.confirmIntent(confirmIn, confirmOut, confirmCtx, metrics, report);
-    output.success = confirmOut.success;
-    output.action_applied = confirmOut.action_applied;
-    output.next_status = confirmOut.next_status;
-    output.final_response = confirmOut.final_response || '';
-    output.interact_id = confirmOut.interact_id || '';
-
-    // 确认重入编排完成（APPROVE/KEEP）后，经 StreamAccess 流式回传最终回复与 done 事件，
-    // 使前端在确认请求内实时展示思考过程与系统回答（此前为同步 JSON 请求，前端无流式进度）。
-    const finalResponse = output.final_response;
-    if (input.action !== 'CANCEL') {
-      if (this.streamAccess && typeof this.streamAccess.pushText === 'function' && finalResponse) {
-        await this.streamAccess.pushText(input.session_id, 'text_chunk', finalResponse, {
-          work_id: input.work_id,
-          interact_id: output.interact_id,
-          chunk_delay_ms: 0,
-        });
-      }
-      if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-        await this.streamAccess.pushEvent(input.session_id, 'done', 'CONTROL', {
-          work_id: input.work_id,
-          interact_id: output.interact_id,
-          final_response: finalResponse,
-          paused: false,
-        }, { work_id: input.work_id, interact_id: output.interact_id });
-      }
-    }
-
-    return ok;
-  }
-
-  async submitClarification(input: SubmitClarificationInput, output: SubmitClarificationOutput, _context: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    if (!input.work_id) throw new ValidationError('work_id is required');
-    if (!input.answers || input.answers.length === 0) throw new ValidationError('answers is required');
-
-    const subIn = Object.assign(new OrchSubmitClarificationInput(), {
-      session_id: input.session_id,
-      work_id: input.work_id,
-      answers: input.answers,
-    });
-    const subOut = new OrchSubmitClarificationOutput();
-    const subCtx = new OrchestrationEntryContext();
-
-    const ok = await this.orchestrationEntry.submitClarification(subIn, subOut, subCtx, metrics, report);
-    output.success = subOut.success;
-    output.final_response = subOut.final_response || '';
-    output.interact_id = subOut.interact_id || '';
-    output.clarifications = subOut.clarifications ?? [];
-
-    // 补充参数重入编排完成后，经 StreamAccess 流式回传最终回复与 done 事件
-    const finalResponse = output.final_response;
-    if (finalResponse) {
-      if (this.streamAccess && typeof this.streamAccess.pushText === 'function') {
-        await this.streamAccess.pushText(input.session_id, 'text_chunk', finalResponse, {
-          work_id: input.work_id,
-          interact_id: output.interact_id,
-          chunk_delay_ms: 0,
-        });
-      }
-      if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
-        await this.streamAccess.pushEvent(input.session_id, 'done', 'CONTROL', {
-          work_id: input.work_id,
-          interact_id: output.interact_id,
-          final_response: finalResponse,
-          paused: false,
-        }, { work_id: input.work_id, interact_id: output.interact_id });
-      }
-    }
-
-    return ok;
-  }
-
   async configChat(input: ConfigChatInput, output: ConfigChatOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
@@ -1349,33 +946,4 @@ export class ChatService {
     }
   }
 
-  private async getWriterProfileOutputClass(): Promise<new () => any> {
-    const { GetUserProfileOutput } = await import('@brian-agent/agent');
-    return GetUserProfileOutput;
-  }
-
-  private async getWriterProfileInputClass(): Promise<new () => any> {
-    const { GetUserProfileInput } = await import('@brian-agent/agent');
-    return GetUserProfileInput;
-  }
-
-  private async getWriterAgentContextClass(): Promise<new () => any> {
-    const { WriterAgentContext } = await import('@brian-agent/agent');
-    return WriterAgentContext;
-  }
-
-  private async getEvalOutputClass(): Promise<new () => any> {
-    const { GetEvaluationOutput } = await import('@brian-agent/agent');
-    return GetEvaluationOutput;
-  }
-
-  private async getEvalInputClass(): Promise<new () => any> {
-    const { GetEvaluationInput } = await import('@brian-agent/agent');
-    return GetEvaluationInput;
-  }
-
-  private async getEvolutorAgentContextClass(): Promise<new () => any> {
-    const { EvolutorAgentContext } = await import('@brian-agent/agent');
-    return EvolutorAgentContext;
-  }
 }

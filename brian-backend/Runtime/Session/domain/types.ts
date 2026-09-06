@@ -5,6 +5,9 @@
  * 会话（session）→ 消息（message）→ Part（message_part）三级模型，
  * 循环控制状态全部从持久化 Part 派生（OpenCode 消息中心范式）。
  *
+ * 有限值域一律以 Enum 注册（DevStandards §1）；会话并发控制由 Runs 模块
+ * session lane 统一承担（去重优先），Session 不再提供忙锁方法。
+ *
  * 所有 Input 继承 {@link Input}，所有 Context 继承 {@link Context}，
  * 所有 Output 继承 {@link Output}（`@brian-agent/base`）。
  */
@@ -17,8 +20,19 @@ import { Input, Context, Output } from '@brian-agent/base';
 export class SessionContext extends Context {}
 
 // ---------------------------------------------------------------------------
-// Part 类型枚举与状态机
+// 枚举（有限值域唯一注册点）
 // ---------------------------------------------------------------------------
+
+/** 消息角色 */
+export enum MessageRole {
+  User = 'user',
+  Assistant = 'assistant',
+}
+
+/** 会话状态 */
+export enum SessionStatus {
+  Active = 'active',
+}
 
 /**
  * Part 类型（Session-PRD §1.2）：
@@ -28,33 +42,33 @@ export class SessionContext extends Context {}
  * - steering：边界抽干注入的排队消息
  * - subtask：delegate 子任务引用
  */
-export type PartType = 'reasoning' | 'text' | 'tool' | 'steering' | 'subtask';
+export enum PartType {
+  Reasoning = 'reasoning',
+  Text = 'text',
+  Tool = 'tool',
+  Steering = 'steering',
+  Subtask = 'subtask',
+}
 
-/**
- * Part 状态机（tool Part）：pending → running → completed/error/aborted。
- * aborted 必带类型化 abort 原因（写入 output_json，规范化失败消息）。
- */
-export type PartStatus = 'pending' | 'running' | 'completed' | 'error' | 'aborted';
+/** Part 状态机（tool Part）：pending → running → completed/error/aborted；aborted 必带类型化取消原因 */
+export enum PartStatus {
+  Pending = 'pending',
+  Running = 'running',
+  Completed = 'completed',
+  Error = 'error',
+  Aborted = 'aborted',
+}
 
 // ---------------------------------------------------------------------------
 // 数据对象
 // ---------------------------------------------------------------------------
 
 /**
- * 消息数据对象（MessageData）。
- */
-export interface MessageData {
-  role: 'user' | 'assistant';
-  content: string;
-  token_usage?: number;
-}
-
-/**
  * 消息含 Parts 的复合对象（soMessages 返回）。
  */
 export interface MessageWithParts {
   id: string;
-  role: 'user' | 'assistant';
+  role: MessageRole;
   content: string;
   seq: number;
   run_id?: string;
@@ -117,11 +131,11 @@ export class AddMessageInput extends Input {
   /** 引用 runtime_run.id（user 消息为空） */
   run_id?: string;
   /** 消息角色 */
-  role!: 'user' | 'assistant';
+  role!: MessageRole;
   /** 消息正文 */
   content!: string;
-  /** Token 用量（可选） */
-  token_usage?: number;
+  /** Token 数（可选） */
+  token_count?: number;
 }
 
 /** addMessage 出参 */
@@ -187,7 +201,7 @@ export class UpdatePartOutput extends Output {}
 // soMessages
 // ---------------------------------------------------------------------------
 
-/** soMessages 入参（seq 倒序分页） */
+/** soMessages 入参（seq 倒序取页，升序返回） */
 export class SoMessagesInput extends Input {
   /** 引用 runtime_session.id */
   session_id!: string;
@@ -204,45 +218,13 @@ export class SoMessagesOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
-// ensureRunState / releaseRunState（每会话忙锁）
-// ---------------------------------------------------------------------------
-
-/** ensureRunState 入参 */
-export class EnsureRunStateInput extends Input {
-  /** 外部会话标识 */
-  session_key!: string;
-  /** 申请执行的 run ID */
-  run_id!: string;
-}
-
-/** ensureRunState 出参 */
-export class EnsureRunStateOutput extends Output {
-  /** 是否获取成功（false = 忙，返回活动 run） */
-  acquired!: boolean;
-  /** 活动运行 ID（忙时非空） */
-  active_run_id?: string;
-}
-
-/** releaseRunState 入参（幂等） */
-export class ReleaseRunStateInput extends Input {
-  /** 外部会话标识 */
-  session_key!: string;
-  /** 释放的 run ID */
-  run_id!: string;
-}
-
-/** releaseRunState 出参 */
-export class ReleaseRunStateOutput extends Output {
-  /** 是否实际释放（false = 无活动锁或 run 不匹配） */
-  released!: boolean;
-}
-
-// ---------------------------------------------------------------------------
 // configSession
 // ---------------------------------------------------------------------------
 
 /** configSession 入参 */
 export class ConfigSessionInput extends Input {
+  /** 启用/禁用 Session 组件（缺省 true） */
+  enabled?: boolean;
   /** soMessages 默认页大小（默认 50） */
   default_message_limit?: number;
 }
@@ -263,5 +245,5 @@ export const RUNTIME_MESSAGE_TABLE = 'runtime_message';
 /** runtime_message_part 表名 */
 export const RUNTIME_MESSAGE_PART_TABLE = 'runtime_message_part';
 
-/** runtime_config 配置表名 */
+/** runtime_session_config 配置表名 */
 export const RUNTIME_SESSION_CONFIG_TABLE = 'runtime_session_config';

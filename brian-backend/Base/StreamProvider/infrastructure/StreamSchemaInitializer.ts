@@ -4,7 +4,7 @@
 
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
-import { STREAM_CONFIG_TABLE } from '../domain/types';
+import { STREAM_CONFIG_TABLE, STREAM_EVENT_TABLE } from '../domain/types';
 
 export class StreamSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
@@ -20,6 +20,25 @@ export class StreamSchemaInitializer {
         "updated"                   INTEGER NOT NULL
       )
     `);
+
+    // stream_event 表（事件事实源：持久化/审计/断线恢复重放；2026-09-05 起由 StreamProvider 承载，
+    // 取代 Runtime/Bus 的 runtime_event）
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${STREAM_EVENT_TABLE}" (
+        "id"           TEXT    NOT NULL PRIMARY KEY,
+        "created"      INTEGER NOT NULL,
+        "updated"      INTEGER NOT NULL,
+        "session_key"  TEXT    NOT NULL,
+        "run_id"       TEXT    NOT NULL DEFAULT '',
+        "seq"          INTEGER NOT NULL,
+        "event_type"   TEXT    NOT NULL,
+        "payload_json" TEXT    NOT NULL DEFAULT '{}',
+        "ts"           INTEGER NOT NULL
+      )
+    `);
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${STREAM_EVENT_TABLE}_session" ON "${STREAM_EVENT_TABLE}" ("session_key", "seq")`,
+    );
 
     // 初始化默认单行配置
     const rows = this.relationDb.queryRaw(`SELECT "id" FROM "${STREAM_CONFIG_TABLE}" LIMIT 1`);

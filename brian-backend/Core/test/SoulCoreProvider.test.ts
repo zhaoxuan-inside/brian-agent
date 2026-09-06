@@ -31,7 +31,6 @@ import {
   UpdateSoulRuleOutput,
   ConfigSoulCoreInput,
   ConfigSoulCoreOutput,
-  AGENT_SOUL_TABLE,
   SOUL_CORE_CONFIG_TABLE,
   SOUL_OPT_RULE_TABLE,
   SOUL_CORE_USAGE_TABLE,
@@ -156,13 +155,6 @@ describe('SoulCoreProvider', () => {
         { field: 'soul_usage', value: 'Soul usage' },
         { field: 'enable', value: 1 },
       ]);
-      await relationDb.insert(AGENT_SOUL_TABLE, [
-        { field: 'id', value: 'cache-soul-1' },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'agent_id', value: 'agent-sc' },
-        { field: 'soul_id', value: 'soul-cached' },
-      ]);
       await relationDb.delete(SOUL_CORE_CONFIG_TABLE, []);
       await relationDb.insert(SOUL_CORE_CONFIG_TABLE, [
         { field: 'id', value: IdGenerator.generate() },
@@ -173,13 +165,16 @@ describe('SoulCoreProvider', () => {
         { field: 'prompt_template_id', value: null },
       ]);
 
+      // 绑定唯一事实源 = agent 表：既有绑定经 bound_soul_id 传入，确定性水合（不再读 agent_soul 绑定表）
       const input = new MatchSoulInput();
       input.agent_id = 'agent-sc';
       input.context_id = 'c1';
       input.interact_id = 'i1';
+      input.bound_soul_id = 'soul-cached';
       const output = new MatchSoulOutput();
       await soulCore.matchSoul(input, output, new SoulCoreContext());
       expect(output.from_cache).toBe(true);
+      expect(output.soul_id).toBe('soul-cached');
     });
   });
 
@@ -362,10 +357,12 @@ describe('SoulCoreProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
 
-    it('should throw NotFoundError when no binding exists', async () => {
+    it('should throw NotFoundError when current/candidate soul missing (A/B 路径)', async () => {
       const input = new OptSoulInput();
       input.agent_id = 'agent-no-binding';
       input.soul_id = 'soul-1';
+      // 绑定已收敛至 Agent 表：current_soul_id 由调用方传入；缺资源时 fail-loud
+      input.current_soul_id = 'soul-missing-current';
 
       await expect(
         soulCore.optSoul(input, new OptSoulOutput(), new SoulCoreContext()),
@@ -378,22 +375,19 @@ describe('SoulCoreProvider', () => {
       const soulId = IdGenerator.generate();
 
       await relationDb.insert(SOUL_CORE_USAGE_TABLE, []);
-      await relationDb.delete(AGENT_SOUL_TABLE, []);
-      await relationDb.insert(AGENT_SOUL_TABLE, [
-        { field: 'id', value: IdGenerator.generate() },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'agent_id', value: agentId },
-        { field: 'soul_id', value: soulId },
-      ]);
 
       const input = new OptSoulInput();
       input.agent_id = agentId;
       input.soul_id = soulId;
-
-      await expect(
-        soulCore.optSoul(input, new OptSoulOutput(), new SoulCoreContext()),
-      ).rejects.toThrow();
+      // 无 current_soul_id → 仅记 usage，不抛错
+      const output = new OptSoulOutput();
+      const result = await soulCore.optSoul(input, output, new SoulCoreContext());
+      expect(result).toBe(true);
+      expect(output.current_soul_id).toBe(soulId);
+      const usageRows = relationDb.queryRaw(
+        'SELECT * FROM "soul_core_usage" WHERE "agent_id" = ? AND "soul_id" = ?', [agentId, soulId],
+      );
+      expect((usageRows ?? []).length).toBeGreaterThan(0);
     });
   });
 

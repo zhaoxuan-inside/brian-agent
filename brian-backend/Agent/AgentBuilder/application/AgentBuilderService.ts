@@ -15,6 +15,12 @@ import type {
   LLMCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess, InfoCoreAccess,
 } from '@brian-agent/core';
 import {
+  simpleSimilarity,
+} from '@brian-agent/core';
+import {
+  AgeSkillInput, AgeSkillOutput, AgeSoulInput, AgeSoulOutput,
+} from '@brian-agent/core';
+import {
   SaveInfoInput, SaveInfoOutput, InfoCoreContext,
 } from '@brian-agent/core';
 import {
@@ -30,6 +36,11 @@ import {
   AddAgentInput, AddAgentOutput, GetAgentInput, GetAgentOutput,
   UpdateAgentInput, UpdateAgentOutput, MatchAgentInput, MatchAgentOutput,
   RecordAgentUsageInput, RecordAgentUsageOutput, AgentLibraryContext,
+  BindAgentComponentInput,
+  BindAgentComponentOutput,
+  ComponentKind,
+  UnbindAgentComponentInput,
+  UnbindAgentComponentOutput,
 } from '../../AgentLibrary/domain/types';
 import {
   MatchStrategyInput, MatchStrategyOutput,
@@ -100,7 +111,7 @@ export class AgentBuilderService {
         matchOut,
         libCtx,
       );
-      if (matchOut.agent_id) {
+      if (matchOut.matched && !matchOut.regenerate && matchOut.agent_id) {
         await this.agentLibrary.recordAgentUsage(
           Object.assign(new RecordAgentUsageInput(), {
             agent_id: matchOut.agent_id,
@@ -193,9 +204,19 @@ export class AgentBuilderService {
       agentId,
     );
 
-    const agentPurpose = input.task_content
-      ? `负责 ${analysis.domain || '通用'} 领域任务处理: ${input.task_content.slice(0, 120)}`
-      : `负责 ${analysis.domain || '通用'} 领域相关工作`;
+    // Prompt 选择：经 PromptsAccess 资源选择（纯选择，无绑定持久化；绑定落 agent 表）
+    const promptTemplateId = await this.matchPromptForAgent(
+      input.task_content || analysis.signature, analysis.domain,
+    );
+
+    // 为新 Agent 生成说明（LLM 基于任务与选定组件生成；该说明是后续 matchAgent 的匹配依据）
+    const agentPurpose = await this.generateAgentPurpose(
+      input.task_content || analysis.signature,
+      analysis.domain || '通用',
+      String(soulOut.soul?.soul_brief ?? ''),
+      (skillOut.skills ?? []).map((s) => s.skill_brief),
+      mcpOut.mcp_ids ?? [],
+    );
 
     const addOut = new AddAgentOutput();
     const ok = await this.agentLibrary.addAgent(
@@ -207,6 +228,10 @@ export class AgentBuilderService {
         task_signature: signature,
         agent_name: agentName,
         agent_purpose: agentPurpose,
+        // 绑定唯一事实源 = agent 表：构建时的选择结果直接落账
+        skill_ids: (skillOut.skills ?? []).map((s) => s.skill_id),
+        mcp_ids: mcpOut.mcp_ids ?? [],
+        prompt_template_id: promptTemplateId,
       }),
       addOut,
       libCtx,
@@ -351,6 +376,42 @@ export class AgentBuilderService {
       );
     }
 
+    // ===== 评估驱动的解绑：Core ageSkill/ageSoul 输出低使用候选（评估依据），Agent 模块执行解绑 =====
+    const skillAgeOut = new AgeSkillOutput();
+    await this.skillCore.ageSkill(new AgeSkillInput(), skillAgeOut, new SkillCoreContext());
+    const staleSkillIds = skillAgeOut.stale_skills
+      .filter((s) => s.agent_id === input.agent_id && (agent.skill_ids ?? []).includes(s.skill_id))
+      .map((s) => s.skill_id);
+    if (staleSkillIds.length > 0) {
+      await this.agentLibrary.unbindAgentComponent(
+        Object.assign(new UnbindAgentComponentInput(), {
+          agent_id: input.agent_id,
+          component_kind: ComponentKind.Skill,
+          component_ids: staleSkillIds,
+        }),
+        new UnbindAgentComponentOutput(),
+        libCtx,
+      );
+      for (const id of staleSkillIds) output.changes.push({ component: 'skill', from: id, to: '' });
+    }
+    const soulAgeOut = new AgeSoulOutput();
+    await this.soulCore.ageSoul(new AgeSoulInput(), soulAgeOut, new SoulCoreContext());
+    const staleSoulIds = soulAgeOut.stale_souls
+      .filter((s) => s.agent_id === input.agent_id && s.soul_id === agent.soul_id)
+      .map((s) => s.soul_id);
+    if (staleSoulIds.length > 0 && agent.soul_id) {
+      await this.agentLibrary.unbindAgentComponent(
+        Object.assign(new UnbindAgentComponentInput(), {
+          agent_id: input.agent_id,
+          component_kind: ComponentKind.Soul,
+          component_ids: staleSoulIds,
+        }),
+        new UnbindAgentComponentOutput(),
+        libCtx,
+      );
+      output.changes.push({ component: 'soul', from: agent.soul_id, to: '' });
+    }
+
     // LLM 重新匹配：绑定只写入 LLMProvider 的 agent_llm，不再回写 agent 表 llm_id
     const llmOut = new MatchLLMOutput();
     await this.llmCore.matchLLM(
@@ -377,17 +438,19 @@ export class AgentBuilderService {
       soulOut,
       new SoulCoreContext(),
     );
+    // Soul：optSoul 输出裁决与生效 soul（不落绑定），重绑由 Agent 模块写 agent 表
     const newSoul = soulOut.current_soul_id || '';
     if (newSoul && newSoul !== agent.soul_id) {
-      output.changes.push({ component: 'soul', from: agent.soul_id, to: newSoul });
-      await this.agentLibrary.updateAgent(
-        Object.assign(new UpdateAgentInput(), {
+      await this.agentLibrary.bindAgentComponent(
+        Object.assign(new BindAgentComponentInput(), {
           agent_id: input.agent_id,
-          soul_id: newSoul,
+          component_kind: ComponentKind.Soul,
+          component_ids: [newSoul],
         }),
-        new UpdateAgentOutput(),
+        new BindAgentComponentOutput(),
         libCtx,
       );
+      output.changes.push({ component: 'soul', from: agent.soul_id, to: newSoul });
     }
 
     const skillMatchOut = new MatchSkillOutput();
@@ -400,21 +463,35 @@ export class AgentBuilderService {
       skillMatchOut,
       new SkillCoreContext(),
     );
-    // Skill/MCP 绑定变更维护在 Core 的 agent_skill / agent_mcp 表，Agent 层不直接访问；
-    // 通过 SkillCore.matchSkill 触发重新评估并持久化绑定，optSkill 记录使用，
-    // 单条变更的 "from"/"to" 不在 Agent 层 surface（Core 闭环负责）。
-    for (const s of skillMatchOut.skills ?? []) {
+    // Skill：matchSkill 已改纯选择（绑定唯一事实源 = agent 表）；此处评估后整组重绑 + usage 记录
+    const matchedSkillIds = (skillMatchOut.skills ?? []).map((s) => s.skill_id);
+    const boundSkillIds = agent.skill_ids ?? [];
+    const addedSkills = matchedSkillIds.filter((id) => !boundSkillIds.includes(id));
+    const removedSkills = boundSkillIds.filter((id) => !matchedSkillIds.includes(id));
+    if (addedSkills.length > 0 || removedSkills.length > 0) {
+      await this.agentLibrary.bindAgentComponent(
+        Object.assign(new BindAgentComponentInput(), {
+          agent_id: input.agent_id,
+          component_kind: ComponentKind.Skill,
+          component_ids: matchedSkillIds,
+        }),
+        new BindAgentComponentOutput(),
+        libCtx,
+      );
+      for (const id of addedSkills) output.changes.push({ component: 'skill', from: '', to: id });
+      for (const id of removedSkills) output.changes.push({ component: 'skill', from: id, to: '' });
+    }
+    for (const skillId of matchedSkillIds) {
       await this.skillCore.optSkill(
         Object.assign(new OptSkillInput(), {
           agent_id: input.agent_id,
           context_id: ctx.session_id || '',
           interact_id: input.interact_id || '',
-          skill_id: s.skill_id,
+          skill_id: skillId,
         }),
         new OptSkillOutput(),
         new SkillCoreContext(),
       );
-      output.changes.push({ component: 'skill', from: '', to: s.skill_id });
     }
 
     const mcpMatchOut = new MatchMcpOutput();
@@ -427,7 +504,25 @@ export class AgentBuilderService {
       mcpMatchOut,
       new McpCoreContext(),
     );
-    for (const mcpId of mcpMatchOut.mcp_ids ?? []) {
+    // MCP：同 Skill，评估后整组重绑（agent 表）+ usage 记录
+    const matchedMcpIds = mcpMatchOut.mcp_ids ?? [];
+    const boundMcpIds = agent.mcp_ids ?? [];
+    const addedMcps = matchedMcpIds.filter((id) => !boundMcpIds.includes(id));
+    const removedMcps = boundMcpIds.filter((id) => !matchedMcpIds.includes(id));
+    if (addedMcps.length > 0 || removedMcps.length > 0) {
+      await this.agentLibrary.bindAgentComponent(
+        Object.assign(new BindAgentComponentInput(), {
+          agent_id: input.agent_id,
+          component_kind: ComponentKind.Mcp,
+          component_ids: matchedMcpIds,
+        }),
+        new BindAgentComponentOutput(),
+        libCtx,
+      );
+      for (const id of addedMcps) output.changes.push({ component: 'mcp', from: '', to: id });
+      for (const id of removedMcps) output.changes.push({ component: 'mcp', from: id, to: '' });
+    }
+    for (const mcpId of matchedMcpIds) {
       await this.mcpCore.optMCP(
         Object.assign(new OptMcpInput(), {
           agent_id: input.agent_id,
@@ -438,7 +533,6 @@ export class AgentBuilderService {
         new OptMcpOutput(),
         new McpCoreContext(),
       );
-      output.changes.push({ component: 'mcp', from: '', to: mcpId });
     }
 
     output.optimized = output.changes.length > 0;
@@ -679,6 +773,67 @@ export class AgentBuilderService {
       work_id: ctx.work_id,
       interact_id: interactId || ctx.interact_id,
     });
+  }
+
+  /**
+   * Prompt 选择（纯选择，无绑定持久化）：经 PromptsAccess 取启用模板，
+   * simpleSimilarity 对任务文本与 模板名+摘要 打分取最优；无候选或低分回退空串（执行侧内置兜底）。
+   */
+  private async matchPromptForAgent(taskText: string, domain: string): Promise<string> {
+    try {
+      const out = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext());
+      let bestId = '';
+      let bestScore = 0;
+      for (const t of out.list ?? []) {
+        if (t.enable === false) continue;
+        const haystack = `${t.prompt_template_title ?? ''} ${t.prompt_template_brief ?? ''}`;
+        const score = Math.max(
+          simpleSimilarity(taskText, haystack),
+          simpleSimilarity(domain, haystack),
+        );
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = t.id;
+        }
+      }
+      return bestScore > 0 ? bestId : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 为新 Agent 生成说明（LLM；说明是后续 matchAgent 的匹配依据，需概括领域/职责/组件能力）。
+   * LLM 失败时回退为任务拼串兜底。
+   */
+  private async generateAgentPurpose(
+    taskText: string,
+    domain: string,
+    soulBrief: string,
+    skillBriefs: string[],
+    mcpIds: string[],
+  ): Promise<string> {
+    const fallback = `负责 ${domain} 领域任务处理: ${taskText.slice(0, 120)}`;
+    try {
+      const execInput = new ExecLLMInput();
+      execInput.prompt = [
+        '为以下新 Agent 生成一句中文说明（50 字以内），概括其负责的任务领域、职责与可用能力。',
+        '说明将用于后续按语义相似度匹配 Agent，请包含关键领域词。',
+        `任务：${taskText.slice(0, 200)}`,
+        `领域：${domain}`,
+        soulBrief ? `人格：${soulBrief.slice(0, 80)}` : '',
+        skillBriefs.length ? `技能：${skillBriefs.slice(0, 5).join('、').slice(0, 120)}` : '',
+        mcpIds.length ? `MCP：${mcpIds.slice(0, 5).join('、')}` : '',
+        '只输出说明文本，不要任何前缀或引号。',
+      ].filter(Boolean).join('\n');
+      const execOutput = new ExecLLMOutput();
+      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
+      const text = (execOutput.result ?? '').trim();
+      return ok && text ? text.slice(0, 200) : fallback;
+    } catch {
+      return fallback;
+    }
   }
 
   private generateAgentName(

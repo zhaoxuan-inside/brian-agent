@@ -16,7 +16,14 @@ export interface AgentRecord {
   agent_purpose?: string;
   agent_type: string;
   strategy_id: string;
+  /** 绑定 Soul ID（绑定唯一事实源：agent 表） */
   soul_id: string;
+  /** 绑定 Skill ID 列表（JSON 数组存储；绑定唯一事实源：agent 表） */
+  skill_ids: string[];
+  /** 绑定 MCP ID 列表（JSON 数组存储；绑定唯一事实源：agent 表） */
+  mcp_ids: string[];
+  /** 绑定 Prompt 模板 ID */
+  prompt_template_id: string;
   task_signature: string;
   usage_count: number;
   eval_score: number;
@@ -69,6 +76,12 @@ export class AddAgentInput extends Input {
   task_signature!: string;
   agent_name!: string;
   agent_purpose?: string;
+  /** 初始绑定 Skill ID 列表（可选；绑定唯一事实源为 agent 表） */
+  skill_ids?: string[];
+  /** 初始绑定 MCP ID 列表（可选） */
+  mcp_ids?: string[];
+  /** 初始绑定 Prompt 模板 ID（可选） */
+  prompt_template_id?: string;
 }
 
 export class AddAgentOutput extends Output {
@@ -83,9 +96,14 @@ export class MatchAgentInput extends Input {
 }
 
 export class MatchAgentOutput extends Output {
+  /** 命中的 Agent ID（未命中或按失效概率需重构时为空串） */
   agent_id = '';
   similarity_score = 0;
   matched_by: 'SIMILARITY' | 'LLM' | '' = 'SIMILARITY';
+  /** 是否找到相似度达标的 Agent（含按失效概率需重构的情形） */
+  matched = false;
+  /** 失效概率判定：即使命中也要求重构（用户流程：匹配不上或以一定失效概率进行 Agent 重构） */
+  regenerate = false;
 }
 
 export class UpdateAgentInput extends Input {
@@ -125,6 +143,50 @@ export class RecordAgentUsageInput extends Input {
 }
 
 export class RecordAgentUsageOutput extends Output {}
+
+// ---------------------------------------------------------------------------
+// bindAgentComponent / unbindAgentComponent（绑定唯一事实源：agent 表）
+// ---------------------------------------------------------------------------
+
+/** 组件类型（有限值域唯一注册点；LLM 绑定仍在 LLMProvider agent_llm，不在本表） */
+export enum ComponentKind {
+  Soul = 'soul',
+  Skill = 'skill',
+  Mcp = 'mcp',
+  Prompt = 'prompt',
+}
+
+/** bindAgentComponent 入参（幂等 upsert：同 kind 全量替换为 component_ids） */
+export class BindAgentComponentInput extends Input {
+  /** Agent 业务 ID（agent_id） */
+  agent_id!: string;
+  /** 组件类型 */
+  component_kind!: ComponentKind;
+  /** 绑定的组件 ID 列表（soul/prompt 单值取首个；空列表=清空该类绑定） */
+  component_ids!: string[];
+}
+
+/** bindAgentComponent 出参 */
+export class BindAgentComponentOutput extends Output {
+  /** 实际生效的绑定列表 */
+  bound: string[] = [];
+}
+
+/** unbindAgentComponent 入参（幂等；component_ids 缺省=解绑该类全部） */
+export class UnbindAgentComponentInput extends Input {
+  /** Agent 业务 ID（agent_id） */
+  agent_id!: string;
+  /** 组件类型 */
+  component_kind!: ComponentKind;
+  /** 要解绑的组件 ID 列表（缺省解绑全部） */
+  component_ids?: string[];
+}
+
+/** unbindAgentComponent 出参 */
+export class UnbindAgentComponentOutput extends Output {
+  /** 是否有变更 */
+  unbound = false;
+}
 
 export class GetAgentInput extends Input {
   agent_id?: string;

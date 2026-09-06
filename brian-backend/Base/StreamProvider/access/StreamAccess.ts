@@ -22,6 +22,8 @@ import {
   ConfigStreamInput,
   ConfigStreamOutput,
   SSEMessageType,
+  PushEventToEndpointInput, PushEventToEndpointOutput,
+  ReplayEndpointEventsInput, ReplayEndpointEventsOutput,
 } from '../domain/types';
 import type { Logger } from '../../shared/aop/AopProxy';
 
@@ -36,6 +38,18 @@ export class StreamAccess {
   async registerStream(input: RegisterStreamInput, output: RegisterStreamOutput, _context: StreamContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     return this.service.registerStream(input, output);
+  }
+
+  /** 按端点 ID 推送业务事件（保存 + 在线投递；Report 携带端点 ID 调用） */
+  async publishEvent(i: PushEventToEndpointInput, o: PushEventToEndpointOutput, _c: StreamContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    return this.service.publishEvent(i, o);
+  }
+
+  /** 端点事件重放（断线恢复） */
+  async replayEvents(i: ReplayEndpointEventsInput, o: ReplayEndpointEventsOutput, _c: StreamContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    return this.service.replayEvents(i, o);
   }
 
   async pushStream<T = unknown>(

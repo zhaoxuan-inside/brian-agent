@@ -177,3 +177,11 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 1. **单测**（vitest）：各模块 Access 公开方法 5 参签名；方法行数 ≤40（脚本 `scripts/analyze-method-length.mjs` 纳入 Runtime）；Loop 的 steering 边界 / 预算超支 / abort 原因；Tool 的 schema 错误回流 / 权限拒绝配对。
 2. **集成**：DIRECT/PLANNING 等价场景；澄清挂起-恢复；子代理 push 回传；事件重放与首播一致（replay=durable 语义）。
 3. **退役验收**：阶段 5 后，`_04_Orchestration`/`AgentExecution` 相关测试与文档索引（MethodIndex）同步清理。
+
+## SSE 事件命名规范（2026-09-06 定稿）
+
+1. **统一 `主体.动作` 点分风格**：主体 = 领域对象（run/reply/think/tool/plan/permission/context/agent/error/message/session），动作 = 祈使语气（accepted/started/finished/failed/delta/updated/asked…）。
+2. **前端视角命名**：回复正文用 `reply.*`、思考过程用 `think.*`（不暴露存储术语 part）；会话传输帧用 `session.*`（connected/loading/done，ChatService 直发，非业务事件）。
+3. **唯一注册点**：后端 `Base/shared/base/BusinessEvent.ts`（`BusinessEvent` 19 成员 + `SseTransportEvent` 3 成员 + `businessEventMsgType`：reply.delta/think.delta → TEXT，其余 TRACE）；前端 `composables/sseEventTypes.ts` 同构 mirror + `EVENT_UI_STYLE` 展示样式映射表（area: text/thinking/action/output/lifecycle/error × tone: default/success/error/muted）。新增事件必须同步登记。
+4. **生产方覆盖**：全部 19 个业务事件中 17 个有生产方（`part.updated`/`message.block` 为阶段4 预留）；问答过程覆盖：上下文构建（context.built，含当轮 wire 消息）、Agent 选择（agent.selected，匹配层）、组件选定（agent.components，Soul/Skill/MCP/Prompt/LLM 清单）、思考/回复增量、工具执行、计划/权限、run 生命周期。
+5. **生产方通路**：业务事件一律经 `report.pushBusinessEvent`（Report 携带端点 ID）→ StreamProvider 持久化/投递；禁止直调 streamAccess 发业务事件。

@@ -11,8 +11,12 @@ import type { RelationDBAccess, Metrics, Report, Logger, LLMAccess } from '@bria
 import { AopProxy } from '@brian-agent/base';
 import { AgentLoopService } from '../application/AgentLoopService';
 import type { SessionAccess } from '../../Session';
-import type { EventBusAccess } from '../../Bus';
 import type { ToolAccess } from '../../Tools';
+/** 权限门鸭子接口（Runs 实现；工具执行前询问，应答后继续/拒绝） */
+export interface PermissionGate {
+  /** 挂起等待应答（permission.asked 已由 Loop 经 Report 下发） */
+  wait(input: { permission_id: string }): Promise<{ approved: boolean }>;
+}
 import {
   ExecAgentLoopInput,
   ExecAgentLoopOutput,
@@ -30,16 +34,15 @@ import {
  * @param relationDb 保留统一 DI 签名（Loop 无直接表）
  * @param llm LLM 接入层（execLLMEvents 事件流）
  * @param session 会话接入层（消息/Part 持久化）
- * @param bus 事件总线（副作用唯一出口）
  * @param tool 工具接入层（编排原语）
  * @param logger 可选日志
  */
 export class LoopAccess {
   private readonly service: AgentLoopService;
 
-  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, bus: EventBusAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue,
+  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate,
   ) {
-    const rawService = new AgentLoopService(llm, session, bus, tool, logger, queue);
+    const rawService = new AgentLoopService(llm, session, tool, logger, queue, permissionGate);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentLoopService;
   }
 

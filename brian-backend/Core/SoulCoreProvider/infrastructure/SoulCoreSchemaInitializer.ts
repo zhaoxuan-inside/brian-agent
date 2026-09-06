@@ -8,7 +8,6 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
   SOUL_CORE_CONFIG_TABLE,
-  AGENT_SOUL_TABLE,
   SOUL_OPT_RULE_TABLE,
   SOUL_CORE_USAGE_TABLE,
 } from '../domain/types';
@@ -46,19 +45,7 @@ export class SoulCoreSchemaInitializer {
       // 字段已存在则忽略
     }
 
-    // agent_soul 表（UNIQUE agent_id，每个 Agent 有且仅有一条 Soul 绑定）
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_SOUL_TABLE}" (
-        "id"        TEXT    NOT NULL PRIMARY KEY,
-        "created"   INTEGER NOT NULL,
-        "updated"   INTEGER NOT NULL,
-        "agent_id"  TEXT    NOT NULL UNIQUE,
-        "soul_id"    TEXT    NOT NULL
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${AGENT_SOUL_TABLE}_agent_id" ON "${AGENT_SOUL_TABLE}" ("agent_id")`,
-    );
+    // agent_soul 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 soul_id 列；旧库残留表不再读写）
 
     // soul_opt_rule 表
     this.relationDb.executeRaw(`
@@ -71,17 +58,43 @@ export class SoulCoreSchemaInitializer {
       )
     `);
 
-    // soul_core_usage 表（SoulCore 用量记录，独立于 Base 层 soul_usage）
+    // soul_core_usage 表（评估依据；键为 (agent_id, soul_id)，与绑定解耦。
+    // 旧键 agent_soul_id 引用已废弃的绑定表，检测到旧结构时重建，usage 历史重置）
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SOUL_CORE_USAGE_TABLE}" (
-        "id"              TEXT    NOT NULL PRIMARY KEY,
-        "created"         INTEGER NOT NULL,
-        "agent_soul_id"   TEXT    NOT NULL,
-        "timestamp"       INTEGER NOT NULL
+        "id"          TEXT    NOT NULL PRIMARY KEY,
+        "created"     INTEGER NOT NULL,
+        "updated"     INTEGER NOT NULL,
+        "agent_id"    TEXT    NOT NULL,
+        "soul_id"     TEXT    NOT NULL,
+        "usage_date"  TEXT    NOT NULL,
+        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
+    this.migrateLegacyUsageTable();
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${SOUL_CORE_USAGE_TABLE}_agent_soul_id" ON "${SOUL_CORE_USAGE_TABLE}" ("agent_soul_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${SOUL_CORE_USAGE_TABLE}_agent_soul" ON "${SOUL_CORE_USAGE_TABLE}" ("agent_id", "soul_id")`,
     );
+  }
+
+  /** 旧结构（agent_soul_id 键）检测 → 重建为新结构 */
+  private migrateLegacyUsageTable(): void {
+    const cols = this.relationDb.queryRaw<{ name: string }>(
+      `PRAGMA table_info("${SOUL_CORE_USAGE_TABLE}")`, [],
+    );
+    if ((cols ?? []).some((c) => c.name === 'agent_soul_id')) {
+      this.relationDb.executeRaw(`DROP TABLE "${SOUL_CORE_USAGE_TABLE}"`);
+      this.relationDb.executeRaw(`
+        CREATE TABLE "${SOUL_CORE_USAGE_TABLE}" (
+          "id"          TEXT    NOT NULL PRIMARY KEY,
+          "created"     INTEGER NOT NULL,
+          "updated"     INTEGER NOT NULL,
+          "agent_id"    TEXT    NOT NULL,
+          "soul_id"     TEXT    NOT NULL,
+          "usage_date"  TEXT    NOT NULL,
+          "usage_count" INTEGER NOT NULL DEFAULT 1
+        )
+      `);
+    }
   }
 }

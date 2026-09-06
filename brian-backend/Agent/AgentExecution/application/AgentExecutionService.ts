@@ -53,7 +53,7 @@ import {
 import { TraceStore } from './trace/TraceStore';
 import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
-  AgentLibraryContext,
+  AgentLibraryContext, ComponentKind,
 } from '../../AgentLibrary/domain/types';
 import {
   GetStrategyInput, GetStrategyOutput, AgentStrategyContext,
@@ -1315,19 +1315,35 @@ export class AgentExecutionService {
     if (!out.list?.length) throw new ValidationError(`prompt_template_id 不存在: ${id}`);
   }
 
+  /** 读取 Agent 当前绑定（逻辑控制；绑定唯一事实源 = agent 表，经 AgentLibrary.soAgent） */
+  private async soBoundComponentIds(agentId: string, kind: ComponentKind): Promise<string[]> {
+    const out = new GetAgentOutput();
+    await this.agentLibrary.soAgent(
+      Object.assign(new GetAgentInput(), { agent_id: agentId }),
+      out,
+      new AgentLibraryContext(),
+    );
+    const record = out.agents[0];
+    if (!record) return [];
+    if (kind === ComponentKind.Skill) return record.skill_ids ?? [];
+    if (kind === ComponentKind.Mcp) return record.mcp_ids ?? [];
+    return record.soul_id ? [record.soul_id] : [];
+  }
+
   /**
-   * 通过 SkillCore 读取 Agent 当前绑定的 Skill 列表。
-   * matchSkill 命中缓存时会直接返回 agent_skill 表中的已绑定记录，
-   * Agent 层不直接操作 Core 的 agent_skill 绑定表。
+   * 读取 Agent 当前绑定的 Skill 列表（绑定唯一事实源 = agent 表 skill_ids_json）。
+   * 绑定经 matchSkill 的 bound_skill_ids 确定性水合（Core 不再持有绑定）。
    */
   private async loadSkills(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; brief: string; work: string }[]> {
     try {
+      const boundSkillIds = await this.soBoundComponentIds(agentId, ComponentKind.Skill);
       const out = new MatchSkillOutput();
       await this.skillCore.matchSkill(
         Object.assign(new MatchSkillInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
           interact_id: ctx.interact_id || '',
+          bound_skill_ids: boundSkillIds,
         }),
         out,
         new SkillCoreContext(),
@@ -1348,18 +1364,19 @@ export class AgentExecutionService {
   }
 
   /**
-   * 通过 MCPCore 读取 Agent 当前绑定的 MCP 列表。
-   * matchMCP 命中缓存时会直接返回 agent_mcp 表中的已绑定记录，
-   * Agent 层不直接操作 Core 的 agent_mcp 绑定表。
+   * 读取 Agent 当前绑定的 MCP 列表（绑定唯一事实源 = agent 表 mcp_ids_json）。
+   * 绑定经 matchMCP 的 bound_mcp_ids 确定性水合。
    */
   private async loadMcps(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; title: string; brief: string }[]> {
     try {
+      const boundMcpIds = await this.soBoundComponentIds(agentId, ComponentKind.Mcp);
       const out = new MatchMcpOutput();
       await this.mcpCore.matchMCP(
         Object.assign(new MatchMcpInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
           interact_id: ctx.interact_id || '',
+          bound_mcp_ids: boundMcpIds,
         }),
         out,
         new McpCoreContext(),

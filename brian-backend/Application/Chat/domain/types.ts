@@ -207,6 +207,8 @@ export interface SSEEvent {
 }
 
 export class OpenChatStreamInput extends Input {
+  /** SSE 端点 ID（前端创建 SSE 端点时生成；本请求的业务事件经 Report→StreamProvider 推到该端点） */
+  stream_endpoint_id?: string;
   session_id!: string;
   msg_content!: string;
   citing_msg_ids?: string[];

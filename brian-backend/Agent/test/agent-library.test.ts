@@ -296,3 +296,57 @@ describe('AgentLibrary', () => {
     });
   });
 });
+
+
+describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概率重构）', () => {
+  let service: AgentLibraryService;
+
+  beforeAll(async () => {
+    await setupAgentTestMocks();
+    const db = await createTestDb();
+    try {
+      db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
+    } catch { /* 已存在 */ }
+    service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
+  });
+
+  async function seed(agentId: string, purpose: string, signature: string) {
+    await service.addAgent(Object.assign(new AddAgentInput(), {
+      agent_id: agentId, agent_type: 'WORKER', strategy_id: 'strategy-1',
+      soul_id: '', task_signature: signature, agent_name: agentId, agent_purpose: purpose,
+    }), new AddAgentOutput(), new AgentLibraryContext());
+  }
+
+  it('说明（agent_purpose）应参与匹配：签名不匹配但说明语义相近可命中', async () => {
+    // regen_rate=0 → 恒复用（排除失效概率干扰，验证匹配面）
+    await service.configAgentLibrary(Object.assign(new ConfigAgentLibraryInput(), { regen_rate: 0 }), new ConfigAgentLibraryOutput(), new AgentLibraryContext());
+    // 说明与任务文本高重叠，而 task_signature 刻意不同：命中只能来自说明参与匹配
+    await seed('flow-purpose', '负责天气查询与城市天气预报', '[general] other');
+    const out = new MatchAgentOutput();
+    await service.matchAgent(Object.assign(new MatchAgentInput(), {
+      task_signature: '[general] totally-different',
+      task_content: '天气查询与城市天气预报',
+      agent_type: 'WORKER',
+      similarity_threshold: 0.2,
+    }), out, new AgentLibraryContext());
+    expect(out.matched).toBe(true);
+    expect(out.agent_id).toBe('flow-purpose');
+    expect(out.matched_by).toBe('SIMILARITY');
+  });
+
+  it('失效概率命中时应输出 regenerate=true 且不返回 agent_id（触发 Agent 重构）', async () => {
+    // regen_rate=100 → shouldReuseByRegenRate 恒 false：命中也必须重构（确定性）
+    await service.configAgentLibrary(Object.assign(new ConfigAgentLibraryInput(), { regen_rate: 100 }), new ConfigAgentLibraryOutput(), new AgentLibraryContext());
+    await seed('flow-regen', '负责电商订单领域任务处理', '[general] other-2');
+    const out = new MatchAgentOutput();
+    await service.matchAgent(Object.assign(new MatchAgentInput(), {
+      task_signature: '[general] other-2',
+      task_content: '',
+      agent_type: 'WORKER',
+      similarity_threshold: 0.1,
+    }), out, new AgentLibraryContext());
+    expect(out.matched).toBe(true);
+    expect(out.regenerate).toBe(true);
+    expect(out.agent_id).toBe('');
+  });
+});

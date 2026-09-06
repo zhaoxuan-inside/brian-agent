@@ -59,10 +59,6 @@ import type {
   PlannerAgentAccess,
 } from '@brian-agent/agent';
 import type {
-  OrchestrationEntryAccess, OrchestrationStrategyAccess,
-  OrchestrationExecutionAccess, OrchestrationVisualizationAccess, JSONNodeAccess,
-} from '@brian-agent/orchestration';
-import type {
   LLMAccess, SoulAccess, SkillAccess, MCPAccess, PromptsAccess, LogAccess,
   MQAccess, GraphDBAccess, VectorDBAccess,
 } from '@brian-agent/base';
@@ -148,11 +144,6 @@ export class ConfigService {
   private readonly agentExecution: AgentExecutionAccess;
   private readonly agentStrategy: AgentStrategyAccess;
   private readonly agentContext: AgentContextAccess;
-  private readonly orchestrationEntry: OrchestrationEntryAccess;
-  private readonly orchestrationStrategy: OrchestrationStrategyAccess;
-  private readonly orchestrationExecution: OrchestrationExecutionAccess;
-  private readonly orchestrationVisualization: OrchestrationVisualizationAccess;
-  private readonly jsonNode: JSONNodeAccess;
   private readonly chatAccess: any;
   private readonly selfLearningAccess: any;
   private readonly userProfileAccess: any;
@@ -202,11 +193,6 @@ export class ConfigService {
     agentExecution: AgentExecutionAccess,
     agentStrategy: AgentStrategyAccess,
     agentContext: AgentContextAccess,
-    orchestrationEntry: OrchestrationEntryAccess,
-    orchestrationStrategy: OrchestrationStrategyAccess,
-    orchestrationExecution: OrchestrationExecutionAccess,
-    orchestrationVisualization: OrchestrationVisualizationAccess,
-    jsonNode: JSONNodeAccess,
     chatAccess: any,
     selfLearningAccess: any,
     userProfileAccess: any,
@@ -236,11 +222,6 @@ export class ConfigService {
     this.agentExecution = agentExecution;
     this.agentStrategy = agentStrategy;
     this.agentContext = agentContext;
-    this.orchestrationEntry = orchestrationEntry;
-    this.orchestrationStrategy = orchestrationStrategy;
-    this.orchestrationExecution = orchestrationExecution;
-    this.orchestrationVisualization = orchestrationVisualization;
-    this.jsonNode = jsonNode;
     this.chatAccess = chatAccess;
     this.selfLearningAccess = selfLearningAccess;
     this.userProfileAccess = userProfileAccess;
@@ -897,27 +878,7 @@ export class ConfigService {
         (i: any, c: any, o: any) => this.agentStrategy.configAgentStrategy(i, o, c),
       );
     }
-    if (configKey.startsWith('orchestration.')) {
-      const out: any = {};
-      if (configKey.startsWith('orchestration.visualization')) {
-        await this.orchestrationVisualization.configOrchestrationVisualization({}, {} as any, out);
-      } else if (configKey.startsWith('orchestration.execution')) {
-        await this.orchestrationExecution.configOrchestrationExecution({}, {} as any, out);
-      } else if (configKey.startsWith('orchestration.strategy')) {
-        await this.orchestrationStrategy.configOrchestrationStrategy({}, {} as any, out);
-      } else if (configKey.startsWith('orchestration.entry')) {
-        await this.orchestrationEntry.configOrchestrationEntry({}, {} as any, out);
-      } else if (configKey.startsWith('orchestration.jsonnode')) {
-        await this.jsonNode.configJSONNode({}, {} as any, out);
-      }
-      const cfg = (out.config ?? {}) as Record<string, unknown>;
-      const field = configKey.split('.').pop() ?? '';
-      // BOOLEAN 配置项从 INTEGER 存储值（0/1）还原为布尔
-      if (field === 'enable_planner') {
-        return Number(cfg[field] ?? 1) !== 0;
-      }
-      return field ? (cfg[field] ?? null) : null;
-    }
+    // V1 编排配置分支已移除（Orchestration 模块删除）
     if (configKey.startsWith('chat.')) {
       return this.getConfigFromAccess(
         configKey, 'chat',
@@ -1077,11 +1038,6 @@ export class ConfigService {
     [(prefix) => prefix.startsWith('agent_builder.'), (prefix, value) => this.writeAgentBuilderConfig(prefix, value)],
     [(prefix) => prefix.startsWith('agent_execution.'), (prefix, value) => this.writeAgentExecutionConfig(prefix, value)],
     [(prefix) => prefix.startsWith('agent_strategy.'), (prefix, value) => this.writeAgentStrategyConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('orchestration.entry'), (prefix, value) => this.writeOrchestrationEntryConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('orchestration.strategy'), (prefix, value) => this.writeOrchestrationStrategyConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('orchestration.execution'), (prefix, value) => this.writeOrchestrationExecutionConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('orchestration.visualization'), (prefix, value) => this.writeOrchestrationVisualizationConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('orchestration.jsonnode'), (prefix, value) => this.writeOrchestrationJsonnodeConfig(prefix, value)],
     [(prefix) => prefix.startsWith('chat.'), (prefix, value) => this.writeChatConfig(prefix, value)],
     [(prefix) => prefix.startsWith('self_learning.'), (prefix, value) => this.writeSelfLearningConfig(prefix, value)],
     [(prefix) => prefix.startsWith('user_profile.'), (prefix, value) => this.writeUserProfileConfig(prefix, value)],
@@ -1493,80 +1449,30 @@ export class ConfigService {
    * @param prefix 配置键
    * @param value 配置值
    */
-  private async writeOrchestrationEntryConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('orchestration.entry.complexity_decompose_threshold')) input.complexity_decompose_threshold = value as number;
-      else if (prefix.startsWith(PROMPT_SLOTS.STRATEGY_SELECTOR)) input.strategy_prompt_template_id = value as string;
-      else if (prefix.startsWith('orchestration.entry.default_strategy')) input.default_strategy = value as string;
-      else if (prefix.startsWith('orchestration.entry.enable_planner')) input.enable_planner = Boolean(value);
-      else if (prefix.startsWith('orchestration.entry.max_recent_works')) input.max_recent_works = value as number;
-      else if (prefix.startsWith('orchestration.entry.async_worker_interval')) input.async_worker_interval = value as number;
-      const output: any = {};
-      await this.orchestrationEntry.configOrchestrationEntry(input, {} as any, output);
-      return;
-  }
-
   /**
    * 写入 `orchestration.strategy*` 配置分组（由 routeUpdateConfig 路由表调用）。
    *
    * @param prefix 配置键
    * @param value 配置值
    */
-  private async writeOrchestrationStrategyConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('orchestration.strategy.default_strategy_id')) input.default_strategy_id = value as string;
-      else if (prefix.startsWith('orchestration.strategy.max_plan_retries')) input.max_plan_retries = value as number;
-      const output: any = {};
-      await this.orchestrationStrategy.configOrchestrationStrategy(input, {} as any, output);
-      return;
-  }
-
   /**
    * 写入 `orchestration.execution*` 配置分组（由 routeUpdateConfig 路由表调用）。
    *
    * @param prefix 配置键
    * @param value 配置值
    */
-  private async writeOrchestrationExecutionConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('orchestration.execution.max_concurrent')) input.max_concurrent = value as number;
-      else if (prefix.startsWith('orchestration.execution.dag_timeout_ms')) input.dag_timeout_ms = value as number;
-      else if (prefix.startsWith('orchestration.execution.agent_timeout_ms')) input.agent_timeout_ms = value as number;
-      const output: any = {};
-      await this.orchestrationExecution.configOrchestrationExecution(input, {} as any, output);
-      return;
-  }
-
   /**
    * 写入 `orchestration.visualization*` 配置分组（由 routeUpdateConfig 路由表调用）。
    *
    * @param prefix 配置键
    * @param value 配置值
    */
-  private async writeOrchestrationVisualizationConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('orchestration.visualization.max_nodes_in_graph')) input.max_nodes_in_graph = value as number;
-      const output: any = {};
-      await this.orchestrationVisualization.configOrchestrationVisualization(input, {} as any, output);
-      return;
-  }
-
   /**
    * 写入 `orchestration.jsonnode*` 配置分组（由 routeUpdateConfig 路由表调用）。
    *
    * @param prefix 配置键
    * @param value 配置值
    */
-  private async writeOrchestrationJsonnodeConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('orchestration.jsonnode.max_execution_depth')) input.max_execution_depth = value as number;
-      else if (prefix.startsWith('orchestration.jsonnode.node_timeout_ms')) input.node_timeout_ms = value as number;
-      else if (prefix.startsWith('orchestration.jsonnode.trace_enabled')) input.trace_enabled = value as number;
-      const output: any = {};
-      await this.jsonNode.configJSONNode(input, {} as any, output);
-      return;
-  }
-
   /**
    * 写入 `chat.*` 配置分组（由 routeUpdateConfig 路由表调用）。
    *

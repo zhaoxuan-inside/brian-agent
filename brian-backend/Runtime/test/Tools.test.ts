@@ -68,6 +68,37 @@ describe('zodToJSONSchema', () => {
 });
 
 describe('ToolService', () => {
+  describe('update_plan（编排原语）', () => {
+    it('应该持久化计划并发出 plan.updated 事件；违反至多一个 in_progress 不变量时拒绝', async () => {
+      const { updatePlanTool } = await import('../Tools/application/planTool');
+      const tool = updatePlanTool();
+      const emitted: Array<{ type: string; payload: unknown }> = [];
+      const ok = await tool.execute(
+        { plan: [
+          { step: '分析任务', status: 'completed' },
+          { step: '执行查询', status: 'in_progress' },
+          { step: '汇总答复' },
+        ] },
+        { run_id: 'run-plan-1', emitEvent: (type, payload) => emitted.push({ type, payload }) } as never,
+      );
+      expect(ok.status).toBe('ok');
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0].type).toBe('plan.updated');
+      const steps = (emitted[0].payload as { steps: Array<{ status: string }> }).steps;
+      expect(steps.filter((s) => s.status === 'in_progress')).toHaveLength(1);
+
+      await expect(
+        tool.execute(
+          { plan: [
+            { step: 'A', status: 'in_progress' },
+            { step: 'B', status: 'in_progress' },
+          ] },
+          { run_id: 'run-plan-1', emitEvent: () => undefined } as never,
+        ),
+      ).rejects.toThrow('至多一个');
+    });
+  });
+
   let relationDb: RelationDBAccess;
   let toolAccess: ToolAccess;
   let mockSkill: { execSkill: ReturnType<typeof vi.fn> };

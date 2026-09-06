@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { IterationBudget, BUDGET_GRACE_MARKER } from '../shared/IterationBudget';
+import { IterationBudget } from '../shared/IterationBudget';
 
 describe('IterationBudget', () => {
   it('应该按 total 顺序消费并在耗尽时返回 false', () => {
@@ -49,7 +49,4 @@ describe('IterationBudget', () => {
     expect(budget.toolCallLimit).toBe(2);
   });
 
-  it('宽限标记常量应该导出', () => {
-    expect(BUDGET_GRACE_MARKER).toBe('budget_grace');
-  });
 });

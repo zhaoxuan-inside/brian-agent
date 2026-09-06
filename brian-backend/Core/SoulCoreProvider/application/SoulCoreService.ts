@@ -13,12 +13,11 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SoulAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, UpdateSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
+import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SoulCoreContext,
   SoulCoreConfigRecord,
-  AgentSoulRecord,
   SoulOptRuleRecord,
   SoulVerdict,
   MatchSoulInput,
@@ -27,6 +26,8 @@ import {
   OptSoulOutput,
   AgeSoulInput,
   AgeSoulOutput,
+  SoSoulContentInput,
+  SoSoulContentOutput,
   SoSoulRuleInput,
   SoSoulRuleOutput,
   UpdateSoulRuleInput,
@@ -34,15 +35,12 @@ import {
   ConfigSoulCoreInput,
   ConfigSoulCoreOutput,
   SOUL_CORE_CONFIG_TABLE,
-  AGENT_SOUL_TABLE,
   SOUL_OPT_RULE_TABLE,
   SOUL_CORE_USAGE_TABLE,
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
 import { ensureDefaultConfig } from '../../shared/ConfigHelper';
-import { AgingEngine } from '../../shared/AgingEngine';
-import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared';
 
 /**
  * SoulCoreProvider 应用服务。
@@ -98,8 +96,6 @@ export class SoulCoreService {
     }
 
     const config = await this.getCoreConfig();
-    const regenRate = config?.regen_rate ?? 75;
-
     // 获取可用 Soul 列表
     const soOutput = new SoSoulOutput();
     await this.soulAccess.soSoul(
@@ -108,15 +104,11 @@ export class SoulCoreService {
     );
     const availableSouls = soOutput.list;
 
-    // ===== 第 1 层：simpleSimilarity 匹配历史/已有绑定与关联特征 =====
-    const cacheResult = await checkMatchCache(
-      this.relationDb, AGENT_SOUL_TABLE, agent_id,
-      regenRate, 'random', 'soul_id',
-    );
-    if (cacheResult.hit && cacheResult.entries?.[0]) {
-      const boundId = cacheResult.entries[0].entity_id;
-      const soulRecord = await this.getSoulById(boundId);
-      output.soul_id = boundId;
+    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    // 绑定的写入/解除由 Agent 模块评估后执行（AgentLibrary.bindAgentComponent），Core 只做选择与水合
+    if (input.bound_soul_id) {
+      const soulRecord = await this.getSoulById(input.bound_soul_id);
+      output.soul_id = input.bound_soul_id;
       output.soul = soulRecord;
       output.from_cache = true;
       return true;
@@ -135,9 +127,7 @@ export class SoulCoreService {
       selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, interact_id, task_content, task_domain);
     }
 
-    await clearMatchCache(this.relationDb, AGENT_SOUL_TABLE, agent_id);
-    await persistMatchBinding(this.relationDb, AGENT_SOUL_TABLE, agent_id, selectedSoulId, 'soul_id');
-
+    // 纯选择：不持久化任何绑定（绑定事实源为 Agent 表，由 Agent 模块评估后写入）
     const soulRecord = await this.getSoulById(selectedSoulId);
     output.soul_id = selectedSoulId;
     output.soul = soulRecord;
@@ -150,13 +140,11 @@ export class SoulCoreService {
   // ---------------------------------------------------------------------------
 
   /**
-   * 比较优化：候选 Soul vs 当前 Agent 绑定的 Soul。
+   * Soul 比较裁决 + 使用记录（评估依据；重绑由 Agent 模块按裁决执行）。
    *
-   * 1. 获取 Agent 当前 Soul；
-   * 2. 获取候选 Soul；
-   * 3. 调用 LLM 进行 A vs B 比较裁决；
-   * 4. 若候选更好则更新 agent_soul；
-   * 5. 记录使用到 soul_core_usage。
+   * 1. current_soul_id 缺省时仅记录 usage；
+   * 2. 传入时获取当前/候选 Soul，调用 LLM 做 A vs B 比较裁决；
+   * 3. 输出 verdict 与裁决后生效的 soul_id（不落任何绑定——绑定事实源为 Agent 表）。
    */
   async optSoul(input: OptSoulInput, output: OptSoulOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -168,53 +156,29 @@ export class SoulCoreService {
       throw new ValidationError('optSoul 需要提供 soul_id');
     }
 
-    // 1. 获取当前绑定
-    const currentBinding = await this.getAgentSoulBinding(agent_id);
-    if (!currentBinding) {
-      throw new NotFoundError('Agent Soul 绑定', agent_id);
+    let effectiveSoulId = soul_id;
+    if (input.current_soul_id && input.current_soul_id !== soul_id) {
+      const currentSoul = await this.getSoulById(input.current_soul_id);
+      const candidateSoul = await this.getSoulById(soul_id);
+      if (!currentSoul) {
+        throw new NotFoundError('Soul', input.current_soul_id);
+      }
+      if (!candidateSoul) {
+        throw new NotFoundError('Soul', soul_id);
+      }
+      const verdict = await this.compareSoulsByLLM(currentSoul, candidateSoul);
+      effectiveSoulId = verdict.better ? soul_id : input.current_soul_id;
+      output.verdict = verdict;
     }
 
-    // 2. 获取当前 Soul 和候选 Soul
-    const currentSoul = await this.getSoulById(currentBinding.soul_id);
-    const candidateSoul = await this.getSoulById(soul_id);
-    if (!currentSoul) {
-      throw new NotFoundError('Soul', currentBinding.soul_id);
-    }
-    if (!candidateSoul) {
-      throw new NotFoundError('Soul', soul_id);
-    }
-
-    // 3. LLM 比较
-    const verdict = await this.compareSoulsByLLM(
-      currentSoul, candidateSoul,
-    );
-
-    // 4. 若候选更好则更新绑定
-    if (verdict.better) {
-      const now = IdGenerator.now();
-      await this.relationDb.update(
-        AGENT_SOUL_TABLE,
-        [
-          { field: 'soul_id', value: soul_id },
-          { field: 'updated', value: now },
-        ],
-        [{ field: 'id', operator: Operator.EQ, value: currentBinding.id }],
-      );
-      output.current_soul_id = soul_id;
-    } else {
-      output.current_soul_id = currentBinding.soul_id;
-    }
-
-    // 5. 记录使用到 Soul Provider（Base 层）
+    // 记录使用到 Soul Provider（Base 层）与 soul_core_usage（评估依据，与绑定解耦）
     await this.soulAccess.recordSoulUsage(
       { soul_id } as RecordSoulUsageInput,
       new RecordSoulUsageOutput(), new SoulContext(),
     );
+    await this.recordSoulCoreUsage(agent_id, effectiveSoulId);
 
-    // 6. 记录使用到 soul_core_usage
-    await this.recordSoulCoreUsage(currentBinding.id);
-
-    output.verdict = verdict;
+    output.current_soul_id = effectiveSoulId;
     return true;
   }
 
@@ -223,27 +187,35 @@ export class SoulCoreService {
   // ---------------------------------------------------------------------------
 
   /**
-   * 依据 soul_opt_rule 规则老化不活跃的 Soul。
+   * 按 soul_opt_rule 规则评估解绑候选（不删除；解绑由 Agent 模块评估后执行）。
    */
   async ageSoul(_input: AgeSoulInput, output: AgeSoulOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const engine = new AgingEngine(this.relationDb);
-    const count = await engine.age({
-      ruleTable: SOUL_OPT_RULE_TABLE,
-      bindingTable: AGENT_SOUL_TABLE,
-      bindingEntityIdColumn: 'soul_id',
-      usageBindingIdColumn: 'agent_soul_id',
-      usageTable: SOUL_CORE_USAGE_TABLE,
-      disabler: async (entityId) => {
-        const updateOutput = new UpdateSoulOutput();
-        await this.soulAccess.updateSoul(
-          { conditions: [{ field: 'id', operator: Operator.EQ, value: entityId }], data: { enable: false } },
-          updateOutput, new SoulContext(),
-        );
-      },
-    });
-    output.aged_count = count;
+    output.stale_souls = await this.soStaleSoulUsages();
+    output.aged_count = output.stale_souls.length;
     return true;
+  }
+
+  /** 统计解绑候选（数据处理；按规则窗口内 (agent_id, soul_id) 使用计数） */
+  private async soStaleSoulUsages(): Promise<Array<{ agent_id: string; soul_id: string; usage_count: number }>> {
+    const rules = await this.relationDb.select(SOUL_OPT_RULE_TABLE, {});
+    if (rules.length === 0) {
+      return [];
+    }
+    const stale: Array<{ agent_id: string; soul_id: string; usage_count: number }> = [];
+    for (const rule of rules) {
+      const since = IdGenerator.now() - Number(rule.days) * 24 * 60 * 60 * 1000;
+      const minUsage = Number(rule.min_usage_count);
+      const rows = this.relationDb.queryRaw<{ agent_id: string; soul_id: string; total: number }>(
+        `SELECT "agent_id", "soul_id", SUM("usage_count") AS total FROM "${SOUL_CORE_USAGE_TABLE}"
+         WHERE "created" >= ? GROUP BY "agent_id", "soul_id" HAVING SUM("usage_count") < ?`,
+        [since, minUsage],
+      );
+      for (const row of rows ?? []) {
+        stale.push({ agent_id: String(row.agent_id), soul_id: String(row.soul_id), usage_count: Number(row.total ?? 0) });
+      }
+    }
+    return stale;
   }
 
   // ---------------------------------------------------------------------------
@@ -320,6 +292,22 @@ export class SoulCoreService {
   }
 
   // ---------------------------------------------------------------------------
+  // soSoulContent
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 按 id 读取 Soul 内容（数据处理；不存在返回空串，不抛错）。
+   */
+  async soSoulContent(input: SoSoulContentInput, output: SoSoulContentOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.soul_id) {
+      throw new ValidationError('soSoulContent 需要提供 soul_id');
+    }
+    const soul = await this.getSoulById(input.soul_id);
+    output.content = String(soul?.soul_content ?? '');
+    return true;
+  }
+
   // configSoulCore
   // ---------------------------------------------------------------------------
 
@@ -378,17 +366,6 @@ export class SoulCoreService {
   // ---------------------------------------------------------------------------
   // 内部辅助 — agent_soul 绑定
   // ---------------------------------------------------------------------------
-
-  /** 按 agent_id 获取唯一绑定 */
-  private async getAgentSoulBinding(
-    agentId: string,
-  ): Promise<AgentSoulRecord | null> {
-    const rows = await this.relationDb.select(AGENT_SOUL_TABLE, {
-      conditions: [{ field: 'agent_id', operator: Operator.EQ, value: agentId }],
-    });
-    if (rows.length === 0) return null;
-    return this.toAgentSoulRecord(rows[0]);
-  }
 
   // ---------------------------------------------------------------------------
   // 内部辅助 — Soul 查询
@@ -652,13 +629,17 @@ export class SoulCoreService {
   // 内部辅助 — soul_core_usage
   // ---------------------------------------------------------------------------
 
-  /** 记录一次 Soul 核心层使用 */
-  private async recordSoulCoreUsage(agentSoulId: string): Promise<void> {
+  /** 记录一次 Soul 核心层使用（评估依据；键为 (agent_id, soul_id)，与绑定解耦） */
+  private async recordSoulCoreUsage(agentId: string, soulId: string): Promise<void> {
+    const now = IdGenerator.now();
     await this.relationDb.insert(SOUL_CORE_USAGE_TABLE, [
       { field: 'id', value: IdGenerator.generate() },
-      { field: 'created', value: IdGenerator.now() },
-      { field: 'agent_soul_id', value: agentSoulId },
-      { field: 'timestamp', value: IdGenerator.now() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'agent_id', value: agentId },
+      { field: 'soul_id', value: soulId },
+      { field: 'usage_date', value: new Date().toISOString().slice(0, 10) },
+      { field: 'usage_count', value: 1 },
     ]);
   }
 
@@ -678,15 +659,6 @@ export class SoulCoreService {
     };
   }
 
-  private toAgentSoulRecord(raw: Record<string, unknown>): AgentSoulRecord {
-    return {
-      id: raw['id'] as string,
-      created: raw['created'] as number,
-      updated: raw['updated'] as number,
-      agent_id: raw['agent_id'] as string,
-      soul_id: raw['soul_id'] as string,
-    };
-  }
 
   private toSoulOptRuleRecord(raw: Record<string, unknown>): SoulOptRuleRecord {
     return {

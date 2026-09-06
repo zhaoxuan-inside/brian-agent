@@ -35,6 +35,11 @@ export interface Logger {
   warn?(message: string, meta?: Record<string, unknown>): void;
   /** 记录错误日志 */
   error(message: string, meta?: Record<string, unknown>): void;
+  /**
+   * 带日志级别参数的保存入口（可选；2026-09-05 起 Metrics 经此调用 LogProvider）。
+   * level 取值 DEBUG/INFO/WARN/ERROR；未实现时调用方按级别回退到 debug/info/warn/error。
+   */
+  log?(level: string, message: string, meta?: Record<string, unknown>): void;
 }
 
 /**
@@ -49,6 +54,17 @@ export class ConsoleLogger implements Logger {
   error(message: string, meta?: Record<string, unknown>): void {
     const suffix = meta ? ' ' + JSON.stringify(meta) : '';
     console.error(`[ERROR] ${message}${suffix}`);
+  }
+
+  /** 级别参数化入口：统一走 log(level, …) 分发到对应级别输出 */
+  log(level: string, message: string, meta?: Record<string, unknown>): void {
+    const suffix = meta ? ' ' + JSON.stringify(meta) : '';
+    const line = `[${level.toUpperCase()}] ${message}${suffix}`;
+    if (level.toUpperCase() === 'ERROR') {
+      console.error(line);
+      return;
+    }
+    console.log(line);
   }
 }
 
@@ -148,6 +164,9 @@ export class AopProxy {
               args[4] = new Report({
                 trace_id: effectiveTraceId,
                 session_id: AopProxy.pickField(args[0], 'session_id'),
+                session_key: AopProxy.pickField(args[0], 'session_key') || AopProxy.pickField(args[0], 'session_id'),
+                run_id: AopProxy.pickField(args[0], 'run_id'),
+                stream_endpoint_id: AopProxy.pickField(args[0], 'stream_endpoint_id'),
                 interact_id: AopProxy.pickField(args[0], 'interact_id'),
                 work_id: AopProxy.pickField(args[0], 'work_id'),
               });
@@ -319,9 +338,39 @@ export class AopProxy {
    * 方法进入（invoke）/完成（done）属于高频噪声日志，默认不再输出；
    * 仅在方法执行失败时输出 ERROR（保留故障定位能力）。
    */
+  /**
+   * 内置日志切面（logger 模式）。
+   *
+   * 在方法**返回或抛异常**时（切入点 4），经本次调用的 Metrics 对象保存调用记录：
+   * 采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，
+   * 以 JSON 格式写入 LogProvider（Metrics.saveInvocation → logger → LogService.addLog）。
+   *
+   * 旧式 3 参签名（无 Metrics 实例）退化为仅错误日志（保持旧行为）。
+   */
   private static createLoggerInterceptor(logger: Logger): Interceptor {
     return {
       afterExecute(ctx: InterceptContext, error?: Error): void {
+        const metrics = ctx.metrics as Metrics | undefined;
+        if (metrics && typeof metrics.saveInvocation === 'function') {
+          if (error && ctx.elapsedMs !== undefined) {
+            metrics.elapsed_ms = ctx.elapsedMs;
+          }
+          metrics.saveInvocation({
+            targetName: ctx.targetName,
+            methodName: ctx.methodName,
+            status: error ? 'error' : 'ok',
+            error: error?.message,
+            args: {
+              input: ctx.input,
+              output: ctx.output,
+              context: ctx.context,
+              metrics: ctx.metrics,
+              report: ctx.report,
+            },
+          });
+          return;
+        }
+        // 旧式签名兜底：仅错误日志
         if (error) {
           logger.error(`${ctx.methodName} failed`, {
             source: ctx.targetName,

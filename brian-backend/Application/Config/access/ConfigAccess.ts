@@ -20,10 +20,6 @@ import type {
   AgentBuilderAccess, AgentExecutionAccess, AgentStrategyAccess, AgentContextAccess,
   PlannerAgentAccess,
 } from '@brian-agent/agent';
-import type {
-  OrchestrationEntryAccess, OrchestrationStrategyAccess,
-  OrchestrationExecutionAccess, OrchestrationVisualizationAccess, JSONNodeAccess,
-} from '@brian-agent/orchestration';
 
 import type {
   LLMAccess, SoulAccess, SkillAccess, MCPAccess, PromptsAccess, LogAccess,
@@ -113,11 +109,6 @@ export class ConfigAccess {
     agentExecution: AgentExecutionAccess,
     agentStrategy: AgentStrategyAccess,
     agentContext: AgentContextAccess,
-    orchestrationEntry: OrchestrationEntryAccess,
-    orchestrationStrategy: OrchestrationStrategyAccess,
-    orchestrationExecution: OrchestrationExecutionAccess,
-    orchestrationVisualization: OrchestrationVisualizationAccess,
-    jsonNode: JSONNodeAccess,
     chatAccess: any,
     selfLearningAccess: any,
     userProfileAccess: any,
@@ -134,8 +125,6 @@ export class ConfigAccess {
       llmCore, infoCore, mcpCore, skillCore, soulCore,
       writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder,
       agentExecution, agentStrategy, agentContext,
-      orchestrationEntry, orchestrationStrategy, orchestrationExecution,
-      orchestrationVisualization, jsonNode,
       chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
       cronAccess,
     );

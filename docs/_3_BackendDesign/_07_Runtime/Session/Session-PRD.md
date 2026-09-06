@@ -75,18 +75,15 @@ export class ConfigSessionInput extends Input { max_context_items?: number; }
 | `addMessage` | 建消息（seq = last_seq+1） | `handleAddMessage` + `prepareMessageRecord` |
 | `addPart` | 建 Part | `handleAddPart` + `preparePartRecord` |
 | `updatePart` | 更新 Part 状态/内容（status 机：pending→running→completed/error/aborted；`content_patch` 为 delta 追加语义） | `handleUpdatePart` + `preparePartPatch` |
-| `appendPartContent` | 追加 Part 内容（updatePart 的 delta 委托入口；阶段1 落地补充） | 委托 `updatePart` |
 | `soMessages` | 查询消息（含 Parts，seq 倒序分页） | `handleSoMessages` + `soMessageRows` + `soPartRows` |
-| `ensureRunState` | 会话忙锁获取（忙则 `acquired=false` 返回活动 run） | `handleEnsureRunState` + `soActiveRun` |
-| `releaseRunState` | 忙锁释放（幂等） | `handleReleaseRunState` |
-| `configSession` | 模块配置 | `handleConfigSession` |
+| `configSession` | 模块配置（enabled · default_message_limit，2026-09-05 起支持启停） | `handleConfigSession` |
 
 ## 5. 内部流程要点
 
 1. **Part 状态机**：`tool` Part 经 `pending→running→completed/error/aborted`；`aborted` 必带类型化 abort 原因（写入 `output_json`），规范化失败消息保证下游重放不错读（OpenClaw turn-interruption 模式）。
 2. **配对不变量**：`tool` Part 的 `status∈{completed,error,aborted}` 才视为配对完成；未配对 Part 在会话恢复时自动标记 `aborted('superseded')`。
 3. **模型消息派生**：`prepareModelMessages`（Loop 模块调用）从 `soMessages` 结果派生 LLM 请求消息：user 消息 + assistant 的 text/reasoning（对 provider 支持 reasoning 时）+ tool Part 的 `input_json/output_json`（严格角色交替，tool 结果仅可连排在 assistant tool_calls 之后）。
-4. **忙锁实现**：实例内 `Map<session_key, run_id>`（2026-09-04 修复⑥：由模块级改为**实例字段**，与 EventBus 一致，同进程多实例互不干扰）+ SQLite `runtime_run.status` 双重校验（阶段4 接入）；无外部依赖。seq 缓存同为实例字段（DB last_seq 为持久事实源）。
+4. ~~**忙锁实现**~~（2026-09-05 移除）：每会话并发 1 统一由 Runs 模块 session lane 承担（去重优先，消除双机制）；`ensureRunState/releaseRunState` 与 `appendPartContent` 已删除，`updatePart` 的 `content_patch` 即 delta 追加语义。seq 缓存为实例字段（DB last_seq 为持久事实源）。
 
 ## 6. 与旧模型的关系
 
@@ -101,3 +98,11 @@ export class ConfigSessionInput extends Input { max_context_items?: number; }
 
 - 单测：幂等 addSession；seq 严格递增；Part 配对不变量；忙锁并发获取互斥。
 - 集成：会话恢复（未配对 tool Part 自动 aborted）；soMessages 派生模型消息角色交替合法。
+
+## 8. 落地差异（2026-09-05）
+
+1. **枚举化**：`MessageRole/SessionStatus/PartType/PartStatus` 以 Enum 注册（有限值域唯一注册点），DB 存储值不变。
+2. **列更名**：`runtime_message.token_usage` → `token_count`（与 Part 表同名同义；SessionSchemaInitializer 内 RENAME COLUMN 兼容迁移）。
+3. **忙锁移除**：见 §5.4；并发控制唯一入口为 Runs `session lane`。
+4. **性能**：`soMessages` 分页下推 SQL（`page: {current,size}`）+ Parts 按 `message_id IN` 批量查询，消除 N+1 与内存分页。
+5. **冗余消除**：`addSession` 落账 id 直接取 `newRecord` 首字段（与 `addMessage` 一致），去掉插入后回查。

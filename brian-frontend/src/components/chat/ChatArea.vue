@@ -17,17 +17,14 @@ import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
 import EvalResultModal from './EvalResultModal.vue'
 import IntentConfirmCard from './IntentConfirmCard.vue'
-import ClarificationCard from './ClarificationCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
 const sessionStore = useSessionStore()
 const chatUi = useChatUiStore()
 const {
   confirmingIntent,
-  submittingClarification,
   handleSend,
   handleIntentConfirm,
-  handleClarificationSubmit,
 } = useChatStream()
 
 const leftWidth = computed(() => `${sessionStore.splitRatio * 100}%`)
@@ -274,14 +271,6 @@ function startResize(e: MouseEvent) {
           @confirm="handleIntentConfirm"
         />
 
-        <!-- 需求补充卡片（对话区内联） -->
-        <ClarificationCard
-          v-if="chatUi.clarificationRequest"
-          :request="chatUi.clarificationRequest"
-          :submitting="submittingClarification"
-          @submit="handleClarificationSubmit"
-          @cancel="chatUi.clearClarificationRequest()"
-        />
       </div>
 
       <div class="flex-shrink-0 border-t border-apple-gray-100 dark:border-apple-gray-800">

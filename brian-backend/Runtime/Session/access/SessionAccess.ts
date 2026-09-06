@@ -2,7 +2,7 @@
  * @fileoverview Session 模块接入层（Runtime v2 · 阶段1）。
  *
  * 职责（Session-PRD §3）：
- * 1. 初始化表结构（SessionSchemaInitializer）；
+ * 1. 初始化表结构（SessionSchemaInitializer，含 token_count 列迁移）；
  * 2. 经 AopProxy.wrap 封装 SessionService，注入日志与耗时切面；
  * 3. 提供 5 参签名（Input, Output, Context, Metrics?, Report?）调用入口。
  */
@@ -23,10 +23,6 @@ import {
   UpdatePartOutput,
   SoMessagesInput,
   SoMessagesOutput,
-  EnsureRunStateInput,
-  EnsureRunStateOutput,
-  ReleaseRunStateInput,
-  ReleaseRunStateOutput,
   ConfigSessionInput,
   ConfigSessionOutput,
 } from '../domain/types';
@@ -66,37 +62,19 @@ export class SessionAccess {
     return this.service.addPart(input, output, context, metrics, report);
   }
 
-  /** 更新 Part */
+  /** 更新 Part（status/output_json/content_patch 等 patch 语义） */
   async updatePart(input: UpdatePartInput, output: UpdatePartOutput, context: SessionContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.updatePart(input, output, context, metrics, report);
   }
 
-  /** 追加 Part 内容（delta 语义） */
-  async appendPartContent(input: UpdatePartInput, output: UpdatePartOutput, context: SessionContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.appendPartContent(input, output, context, metrics, report);
-  }
-
-  /** 查询消息（含 Parts） */
+  /** 查询消息（含 Parts，seq 升序） */
   async soMessages(input: SoMessagesInput, output: SoMessagesOutput, context: SessionContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soMessages(input, output, context, metrics, report);
   }
 
-  /** 会话忙锁获取 */
-  async ensureRunState(input: EnsureRunStateInput, output: EnsureRunStateOutput, context: SessionContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.ensureRunState(input, output, context, metrics, report);
-  }
-
-  /** 会话忙锁释放（幂等） */
-  async releaseRunState(input: ReleaseRunStateInput, output: ReleaseRunStateOutput, context: SessionContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.releaseRunState(input, output, context, metrics, report);
-  }
-
-  /** 模块配置 */
+  /** 模块配置（enabled/default_message_limit） */
   async configSession(input: ConfigSessionInput, output: ConfigSessionOutput, context: SessionContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.configSession(input, output, context, metrics, report);

@@ -233,14 +233,6 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   // ORCHESTRATION layer
   // =========================================================================
 
-  // --- OrchestrationEntry ---
-  orch('entry', 'basic', 'complexity_decompose_threshold', '复杂度分解阈值', 'INT', 50, '任务复杂度超过此阈值时触发任务分解（选择 PLANNING 策略），否则走 SIMPLE；取值 0-100'),
-  orch('entry', 'basic', 'strategy_prompt_template_id', '策略选择 Prompt', 'STRING', '', '用于 LLM 分析任务复杂度并选择编排策略的 Prompt 模板；为空时降级为纯规则判定'),
-  orch('entry', 'basic', 'default_strategy', '默认编排策略', 'ENUM', 'SIMPLE', 'LLM 分析失败或无 LLM 时的兜底编排策略', ['SIMPLE', 'PLANNING']),
-  orch('entry', 'basic', 'enable_planner', '启用 Planner 任务规划', 'BOOLEAN', true, '是否启用 Planner 任务拆解（PLANNING 策略）；关闭后仅使用单 Agent（SIMPLE）直接执行，不进行任务拆解'),
-  orch('entry', 'basic', 'max_recent_works', '最大最近工作数', 'INT', 5, '构建工作上下文时收集的最近工作（work）数量'),
-  orch('entry', 'basic', 'async_worker_interval', '异步工作间隔（ms）', 'INT', 1000, '异步工作 Worker 的轮询间隔'),
-
   // --- OrchestrationStrategy ---
   orch('strategy', 'basic', 'default_strategy_id', '默认策略', 'STRING', '', '默认使用的策略 ID'),
   orch('strategy', 'basic', 'max_plan_retries', '最大计划重试次数', 'INT', 2),

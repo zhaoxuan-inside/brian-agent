@@ -61,3 +61,10 @@ export interface BrianSSEMessage<T = unknown> {
 
 * `pushText(sessionId, event, text, meta)`：快捷推送打字机文本片段；
 * `pushEvent(sessionId, event, msgType, data, meta)`：快捷推送结构化事件帧。
+
+## 落地差异（2026-09-05 · 事件流承载：保存/断线恢复/审计 + 端点 ID 寻址）
+
+1. **事件事实源**：新增 `stream_event 表（session_key/run_id/seq/event_type/payload_json/ts，每 session_key 严格递增 seq）——数据的保存、审计、断线恢复重放由 StreamProvider 承载（取代 Runtime/Bus 的 runtime_event，Bus 模块删除）。
+2. **端点 ID 寻址**：`registerStream 生成 SSE 端点 ID（output.endpoint_id，缺省服务端生成，重连可显式传入接管）；`endpoints 注册表（端点 ID → session）支持按 ID 定位具体 SSE 连接。前端创建 SSE 端点时获得端点 ID，请求时携带，后端放入 Report 对象。
+3. **新方法**：`publishEvent（按端点 ID 推送：持久化 + v1 兼容格式化投递；未映射类型仅持久化）、`replayEvents（after_seq 后按 seq 升序重放到端点）；发布按 session 串行化（fire-and-forget 下 seq 与投递顺序一致）。
+4. **Report 分工**：Report 只负责接收业务的消息并携带端点 ID（`stream_endpoint_id，经 ReportMeta/AopProxy 从 Input 回填）；上报经静态网关 `Report.setEventStreamGateway（组合根注入 StreamAccess 适配）调用 StreamProvider。

@@ -1,7 +1,7 @@
 /**
  * @fileoverview AgentLoop 集成测试（Runtime v2 · 阶段2）。
  *
- * mock LLMAccess（脚本化事件流）+ 真 SQLite + 真 EventBus + 真 ToolService：
+ * mock LLMAccess（脚本化事件流）+ 真 SQLite + 真 StreamProvider + 真 ToolService：
  * 验证「DIRECT 场景端到端」（替代 SIMPLE workflow 的等价路径）：
  * - 多轮 tool_calls → 配对回流 → stop；
  * - 消息中心：第 2 轮 wire 消息从持久化 Part 派生（assistant tool_calls + tool 结果）；
@@ -15,13 +15,14 @@ import path from 'path';
 import os from 'os';
 import {
   RelationDBAccess,
+  Report,
   Context,
   ExecLLMEventsInput,
   ExecLLMEventsOutput,
   AbortedError,
 } from '@brian-agent/base';
+import { RegisterStreamInput, RegisterStreamOutput, StreamContext } from '../../Base/StreamProvider/domain/types';
 import { SessionAccess } from '../Session/access/SessionAccess';
-import { EventBusAccess } from '../Bus/access/EventBusAccess';
 import { ToolAccess } from '../Tools/access/ToolAccess';
 import { LoopAccess } from '../Loop/access/LoopAccess';
 import {
@@ -31,11 +32,6 @@ import {
   SoMessagesOutput,
   SessionContext,
 } from '../Session/domain/types';
-import {
-  SoEventReplayInput,
-  SoEventReplayOutput,
-  EventBusContext,
-} from '../Bus/domain/types';
 import {
   ExecAgentLoopInput,
   ExecAgentLoopOutput,
@@ -51,7 +47,8 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   let tempDir: string;
   let relationDb: RelationDBAccess;
   let sessionAccess: SessionAccess;
-  let busAccess: EventBusAccess;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let streamAccess: any;
   let toolAccess: ToolAccess;
   let loopAccess: LoopAccess;
   let mockLlm: { execLLMEvents: ReturnType<typeof vi.fn> };
@@ -64,8 +61,19 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     await relationDb.initialize();
     sessionAccess = new SessionAccess(relationDb);
     await sessionAccess.initialize();
-    busAccess = new EventBusAccess(relationDb);
-    await busAccess.initialize();
+    const streamMod = await import('../../Base/StreamProvider/access/StreamAccess');
+    streamAccess = new streamMod.StreamAccess(relationDb);
+    Report.setEventStreamGateway({
+      pushToEndpoint: async (input: { endpoint_id: string; session_key?: string; run_id?: string; type: string; payload: unknown }) => {
+        const mod = await import('../../Base/StreamProvider/access/StreamAccess');
+        const modTypes = await import('../../Base/StreamProvider/domain/types');
+        await streamAccess.publishEvent(
+          Object.assign(new modTypes.PushEventToEndpointInput(), input),
+          new modTypes.PushEventToEndpointOutput(),
+          new modTypes.StreamContext(),
+        );
+      },
+    });
     const mockSkill = {
       execSkill: vi.fn(async (_i: unknown, output: { result: unknown }) => {
         output.result = '北京天气：晴，22°C';
@@ -78,7 +86,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     regIn.enabled = ['skill_exec'];
     await toolAccess.registerBuiltinTools(regIn, new RegisterBuiltinToolsOutput(), new ToolContext());
     mockLlm = { execLLMEvents: vi.fn() };
-    loopAccess = new LoopAccess(relationDb, mockLlm as unknown as LLMAccess, sessionAccess, busAccess, toolAccess);
+    loopAccess = new LoopAccess(relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess);
     await loopAccess.initialize();
     const add = new AddSessionInput();
     add.session_key = `sess-${Date.now()}`;
@@ -106,12 +114,33 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     return input;
   }
 
-  async function replayEvents(sessionKey: string): Promise<SoEventReplayOutput> {
-    const so = new SoEventReplayInput();
-    so.session_key = sessionKey;
-    const out = new SoEventReplayOutput();
-    await busAccess.soEventReplay(so, out, new EventBusContext());
-    return out;
+  /** 事件流审计查询（stream_event 表；保存/审计/重放事实源已迁 StreamProvider） */
+
+  /** 注册 SSE 端点并构造携带端点 ID 的 Report（Report→StreamProvider 上报链路） */
+  async function makeStreamReport(sessionKey: string): Promise<Report> {
+    const regOut = new RegisterStreamOutput();
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: sessionKey, writer: () => true }),
+      regOut,
+      new StreamContext(),
+    );
+    return new Report({ session_id: sessionKey, session_key: sessionKey, stream_endpoint_id: regOut.endpoint_id });
+  }
+
+  async function replayEvents(sessionKey: string): Promise<{ events: Array<{ type: string; payload: unknown }> }> {
+    await new Promise((r) => setTimeout(r, 120)); // fire-and-forget 事件链落库
+    const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
+      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
+      [sessionKey],
+    );
+    return {
+      events: (rows ?? []).map((r) => {
+        let payload: unknown = {};
+        try { payload = JSON.parse(String(r.payload_json ?? '{}')); } catch { payload = {}; }
+        if (payload === null) payload = {};
+        return { type: String(r.event_type), payload };
+      }),
+    };
   }
 
   it('多轮 tool_calls 应该配对回流并收敛 stop（消息中心派生第 2 轮 wire 消息）', async () => {
@@ -151,7 +180,8 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     );
     const input = makeLoopInput();
     const output = new ExecAgentLoopOutput();
-    const ok = await loopAccess.execAgentLoop(input, output, new Context());
+    const report = await makeStreamReport(input.session_key);
+    const ok = await loopAccess.execAgentLoop(input, output, new Context(), undefined, report);
     expect(ok).toBe(true);
     expect(output.stop_reason).toBe('stop');
     expect(output.result).toBe('北京今天晴，22°C。');
@@ -178,16 +208,16 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     // 事件投影
     const events = await replayEvents(input.session_key);
     const types = events.events.map((e) => e.type);
-    expect(types[0]).toBe('run.status');
-    expect(types).toContain('part.delta');
-    expect(types).toContain('part.created');
-    expect(types).toContain('tool.launch');
+    expect(types[0]).toBe('run.started');
+    expect(types).toContain('reply.delta');
+    expect(types).toContain('reply.created');
+    expect(types).toContain('tool.started');
     expect(types).toContain('tool.result');
-    expect(types[types.length - 1]).toBe('run.status');
+    expect(types[types.length - 1]).toBe('run.finished');
     const toolResult = events.events.find((e) => e.type === 'tool.result');
     expect((toolResult!.payload as { status: string }).status).toBe('ok');
     const endStatus = events.events[events.events.length - 1];
-    expect((endStatus.payload as { phase: string }).phase).toBe('end');
+    expect((endStatus.payload as { stop_reason: string }).stop_reason).toBe('stop');
   });
 
   it('预算耗尽（无宽限）应该收敛 budget', async () => {
@@ -204,7 +234,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     );
     const input = makeLoopInput({ budget: { total: 1, grace: false } });
     const output = new ExecAgentLoopOutput();
-    await loopAccess.execAgentLoop(input, output, new Context());
+    await loopAccess.execAgentLoop(input, output, new Context(), undefined, await makeStreamReport(input.session_key));
     expect(output.stop_reason).toBe('budget');
     expect(output.iterations).toBe(1);
   });
@@ -219,11 +249,11 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const controller = new AbortController();
     const input = makeLoopInput({ signal: controller.signal });
     const output = new ExecAgentLoopOutput();
-    await loopAccess.execAgentLoop(input, output, new Context());
+    await loopAccess.execAgentLoop(input, output, new Context(), undefined, await makeStreamReport(input.session_key));
     expect(output.stop_reason).toBe('aborted');
     const events = await replayEvents(input.session_key);
     const last = events.events[events.events.length - 1];
-    expect((last.payload as { phase: string }).phase).toBe('error');
+    expect(last.type).toBe('run.failed');
   });
 
   it('LLM 全候选失败应该收敛 error', async () => {
@@ -236,7 +266,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     );
     const input = makeLoopInput();
     const output = new ExecAgentLoopOutput();
-    await loopAccess.execAgentLoop(input, output, new Context());
+    await loopAccess.execAgentLoop(input, output, new Context(), undefined, await makeStreamReport(input.session_key));
     expect(output.stop_reason).toBe('error');
     expect(output.error).toContain('所有可用模型均调用失败');
   });

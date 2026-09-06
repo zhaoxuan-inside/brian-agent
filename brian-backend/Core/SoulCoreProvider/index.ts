@@ -17,6 +17,8 @@ export {
   OptSoulOutput,
   AgeSoulInput,
   AgeSoulOutput,
+  SoSoulContentInput,
+  SoSoulContentOutput,
   SoSoulRuleInput,
   SoSoulRuleOutput,
   UpdateSoulRuleInput,

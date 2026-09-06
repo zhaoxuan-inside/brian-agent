@@ -18,7 +18,6 @@ import type {
   EvolutorAgentAccess,
   PlannerAgentAccess,
 } from '@brian-agent/agent';
-import type { OrchestrationVisualizationAccess } from '@brian-agent/orchestration';
 import { VisualizationSchemaInitializer } from '../infrastructure/VisualizationSchemaInitializer';
 import { VisualizationService } from '../application/VisualizationService';
 import {
@@ -49,7 +48,6 @@ export class VisualizationAccess {
 
   constructor(
     relationDb: RelationDBAccess,
-    orchestrationVisualization: OrchestrationVisualizationAccess,
     agentExecution: AgentExecutionAccess,
     agentLibrary: AgentLibraryAccess,
     agentContext: AgentContextAccess,
@@ -67,7 +65,6 @@ export class VisualizationAccess {
     this.initPromise = new VisualizationSchemaInitializer(relationDb).init();
     const raw = new VisualizationService(
       relationDb,
-      orchestrationVisualization,
       agentExecution,
       agentLibrary,
       agentContext,

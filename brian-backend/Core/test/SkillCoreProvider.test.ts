@@ -30,14 +30,13 @@ import {
   UpdateSkillRuleOutput,
   ConfigSkillCoreInput,
   ConfigSkillCoreOutput,
-  AGENT_SKILL_TABLE,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
   SKILL_USAGE_TABLE,
 } from '../SkillCoreProvider';
 import { ValidationError } from '@brian-agent/base';
 
-const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, AGENT_SKILL_TABLE, SKILL_OPT_RULE_TABLE, SKILL_USAGE_TABLE];
+const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, SKILL_OPT_RULE_TABLE, SKILL_USAGE_TABLE];
 
 describe('SkillCoreProvider', () => {
   let tempDir: string;
@@ -59,16 +58,6 @@ describe('SkillCoreProvider', () => {
       )
     `);
     relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_SKILL_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "skill_id" TEXT NOT NULL,
-        UNIQUE("agent_id", "skill_id")
-      )
-    `);
-    relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_OPT_RULE_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "created" INTEGER NOT NULL,
@@ -77,17 +66,16 @@ describe('SkillCoreProvider', () => {
         "min_usage_count" INTEGER NOT NULL
       )
     `);
-    // Create skill_usage with ALL columns from both Base and Core schemas
+    // skill_core_usage（评估依据；键 (agent_id, skill_id)，2026-09-05 起与 Base 的 skill_usage 解耦）
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL DEFAULT 0,
-        "agent_skill_id" TEXT NOT NULL DEFAULT '',
-        "timestamp" INTEGER NOT NULL DEFAULT 0,
-        "skill_id" TEXT NOT NULL DEFAULT '',
-        "usage_date" TEXT NOT NULL DEFAULT '',
-        "usage_count" INTEGER NOT NULL DEFAULT 0
+        "updated" INTEGER NOT NULL,
+        "agent_id" TEXT NOT NULL,
+        "skill_id" TEXT NOT NULL,
+        "usage_date" TEXT NOT NULL,
+        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
   }
@@ -207,13 +195,6 @@ describe('SkillCoreProvider', () => {
     it('should use cached bindings', async () => {
       const now = IdGenerator.now();
       const agentId = 'agent-cached-skill';
-      await relationDb.insert(AGENT_SKILL_TABLE, [
-        { field: 'id', value: IdGenerator.generate() },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'agent_id', value: agentId },
-        { field: 'skill_id', value: 'skill-c1' },
-      ]);
       await relationDb.delete(SKILL_CORE_CONFIG_TABLE, []);
       await relationDb.insert(SKILL_CORE_CONFIG_TABLE, [
         { field: 'id', value: IdGenerator.generate() },
@@ -223,10 +204,12 @@ describe('SkillCoreProvider', () => {
         { field: 'prompt_template_id', value: '' },
       ]);
 
+      // 绑定唯一事实源 = agent 表：既有绑定经 bound_skill_ids 传入，确定性水合
       const input = new MatchSkillInput();
       input.agent_id = agentId;
       input.context_id = 'c1';
       input.interact_id = 'i1';
+      input.bound_skill_ids = ['skill-c1'];
       const output = new MatchSkillOutput();
       await skillCore.matchSkill(input, output, new SkillCoreContext());
 
@@ -242,7 +225,9 @@ describe('SkillCoreProvider', () => {
       const output = new OptSkillOutput();
 
       await skillCore.optSkill(input, output, new SkillCoreContext());
+      // 绑定已收敛至 Agent 表：binding 兼容保留（id 空串），仅记 usage
       expect(output.binding).not.toBeNull();
+      expect(output.binding!.id).toBe('');
       expect(output.binding!.agent_id).toBe('agent-opt-skill');
       expect(output.binding!.skill_id).toBe('skill-opt-1');
 
@@ -286,7 +271,9 @@ describe('SkillCoreProvider', () => {
         out2, new SkillCoreContext(),
       );
 
-      expect(out1.binding!.id).toBe(out2.binding!.id);
+      // 绑定 id 恒为空串（绑定在 Agent 表）；usage 每次调用各记一条
+      expect(out1.binding!.id).toBe('');
+      expect(out2.binding!.id).toBe('');
 
       const usageCount = await relationDb.count(SKILL_USAGE_TABLE);
       expect(usageCount).toBe(2);

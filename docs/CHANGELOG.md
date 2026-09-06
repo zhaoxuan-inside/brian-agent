@@ -1,5 +1,139 @@
 # 代码变更记录 (CHANGELOG)
 
+## [2026-09-05] 融合架构：Report 参数 = 上报端点的管理对象，Bus 保留事件流的持久化/断线恢复/审计
+
+**变更原因**：用户决策——融合"Report 直推"与"Bus 事件流"两个方案：Report 参数作为**上报端点的管理对象**（端点注册、断线恢复、在线投递），Bus 保留**数据的保存（持久化）、断线恢复、审计**等事件流功能。此前 Report 通道建而未通（全仓无 channel 接线，6 类 Runtime 业务事件上报全部 no-op），SSE 依赖 ChatService 手工 registerProjection 桥接且有订阅泄漏。
+
+**修改的方法与模块**：
+- `Base/shared/base/Report.ts` — 新增 `ReportEventPublisher 接口（publish/registerEndpoint/unregisterEndpoint，Base 定义接口、Runtime 实现注入，不反向依赖）；Report 新增 `session_key/run_id 字段与 **`attachEventPublisher/detachEventPublisher`（端点管理：重复注册先注销旧端点；child 派生共享端点）；`pushBusinessEvent 语义升级：有发布器 → fire-and-forget 落 Bus（持久化+端点扇出）；无发布器 → 退化为 channel 直推（旧行为）；两者皆无 → no-op。
+- `Runtime/Bus/application/BusEndpointManager.ts（新增）— ReportEventPublisher 的 Bus 适配：registerEndpoint = registerProjection（durable：先重放 after_seq 之后事件再尾随）、publish = publishEvent（持久化/审计/seq）、unregisterEndpoint。经 Bus/index 与 Runtime/index 导出。
+- `AopProxy 自动创建 Report 补 session_key/run_id 回填（从 Input 提取，供事件流定位）。
+- `Application/Chat/ChatService.openChatStreamV2 — 接线改造：构造 channel 级 Report（session_key=外部会话 id）+ attachEventPublisher（after_seq=会话最新 seq，deliver=v2 桥接）；report 传入 submitRun → Runs → Loop（此前 no-op 的 run.accepted/run.status/part.created/part.delta/tool.launch/tool.result 全部激活）；**手工 registerProjection 删除（由 attachEventPublisher 取代），请求结束 finally detachEventPublisher（顺带修复投影订阅泄漏）；`ChatRuntimeV2Deps 增加 endpointManager；`dev-server 组合根注入 BusEndpointManager。
+- 文档：Bus-PRD 增补「融合架构」落地差异节；DevStandards §3 更新 Report 上报语义。
+
+**语义核对**：单一投递路径 —— 业务 → report.pushBusinessEvent → Bus（持久化/审计）→ 扇出 → Report 端点（SSE）与其余订阅者；detach 后不再投递；未 attach 的 Report 行为与历史版本一致。
+
+**测试**（全仓 1907 全绿：Base 802 + Core 198 + Runtime 42(+3) + Agent 121 + Orchestration 212 + Application 532；typecheck 0 错）：
+- 新增 `Runtime/test/ReportEndpoint.test.ts（3 用例）：pushBusinessEvent 经发布器落 Bus 且端点收到（持久化可重放=审计）；端点注册先重放历史事件再尾随新事件（断线恢复）；detach 后不再投递、未 attach Report 保持 no-op。
+
+**可能存在的问题/风险点**：
+- pushBusinessEvent 为 fire-and-forget，发布失败静默（Report 无 logger；Bus 写库失败时该事件丢失——与既有 Bus 直调路径的 catch 告警策略不同，后续可统一）；
+- 桥接 deliver（v2 事件→SSE 名）保留在 ChatService，前端 v2 原生归约改造后与 Report 端点一并收敛；
+- 多标签页同会话：每请求各自 attach 端点（Bus 支持多投影订阅者），天然支持。
+
+---
+
+## [2026-09-05] 日志级别参数化：调用 LogProvider 保存日志显式携带级别参数；AOP 切面调用记录定为 DEBUG 级别
+
+**变更原因**：用户设计——调用 LogProvider 保存日志时需要增加日志级别的参数（此前级别隐含在 debug/info/warn/error 方法名中，Metrics.saveInvocation 写 INFO）；AOP 切面的调用记录应为 **DEBUG** 级别（同时解决上一变更引入的"每次方法调用落 1 条记录"的体量问题：默认 min_level=INFO 时 DEBUG 自动过滤）。
+
+**修改的方法与模块**：
+- `Base/shared/aop/AopProxy.ts` — `Logger` 接口新增可选 **`log(level, message, meta?)`**（级别参数化保存入口）；`ConsoleLogger` 实现 `log`（按级别分发输出）。
+- `Base/shared/base/Metrics.ts` — `MetricsLogger` 接口同步新增 `log(level, …)`；新增私有 `logAt(level, …)`：优先 `logger.log(level, …)` 显式携带级别，logger 未实现 `log` 时按级别回退 debug/info/warn/error；`saveInvocation` 改为 **DEBUG 级别**（经 logAt）。
+- `dev-server.ts` — `createLogger` 返回的 logger 补 `log(level, message, meta)` 入口（级别直传既有 write → LogService.addLog，落库仍由 log_config.min_level 统一控制）。
+- `Base/test/MetricsInvocation.test.ts` — 新增用例：logger 实现 `log(level,…)` 时 AOP 调用记录显式携带 DEBUG 级别参数；原用例断言回退路径（无 log 实现 → debug 方法）级别为 DEBUG。
+
+**语义**：AOP 切面调用记录（saveInvocation）= DEBUG 级别 + JSON 全参数内容；默认 `log_config.min_level=INFO` 不落库，排查问题时把 min_level 配置调整为 DEBUG 即开启全量调用记录（级别过滤在 LogService.shouldDropByMinLevel 统一执行）。
+
+**测试**（全仓 1904 全绿：Base 802(+1) + Core 198 + Runtime 39 + Agent 121 + Orchestration 212 + Application 532；typecheck 0 错）。
+
+---
+
+## [2026-09-05] Metrics 日志网关：方法内与 AOP 切面日志统一经 Metrics 保存（JSON 格式），AOP 在返回/抛异常时采集全部参数内容
+
+**变更原因**：用户设计——Metrics 对象封装 LogProvider 调用接口，方法内与 AOP 切面的日志保存都通过 Metrics 对象进行；日志以 JSON 格式保存；AOP 切面的日志保存时机为方法**返回或抛异常**，此时采集方法调用的所有参数及参数内容。此前 AOP 内置切面仅失败时经裸 logger 记录（无参数内容）、LogInterceptor 仅记失败、成功路径无任何调用记录。
+
+**修改的方法与模块**：
+- `Base/shared/base/Metrics.ts` — 新增 `saveInvocation({targetName, methodName, status, error, args})`：以 JSON 采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，经 logger → LogService.addLog 持久化（log_record.metadata.invocation_json）；新增静态 `safeSerialize`（函数/符号→'[fn]'、循环引用→'[circular]'、深度>6/单值超长截断，序列化失败回退摘要）——Report.channel 等不可序列化成员不破坏 JSON。
+- `Base/shared/aop/AopProxy.ts` — 内置日志切面重写：`afterExecute`（切入点 4）在**成功与失败双路径**均经本次调用的 Metrics 实例调用 `saveInvocation`（ctx 已携带全部参数）；旧式 3 参签名（无 Metrics）退化为仅错误日志（旧行为）。
+- `Base/LogProvider/interceptor/LogInterceptor.ts` — 与内置切面对齐：方法返回/抛异常时保存调用记录（有 Metrics 走 saveInvocation，旧式签名退化仅错误日志），保留 shouldLog 白名单闸门与 fire-and-forget；文件头设计说明同步。
+- `Runtime/Loop/AgentLoopService` + `Runtime/Runs/RunGatewayService` — 方法内日志切换 Metrics 试点：LoopRunContext 增加 `metrics`（execAgentLoop 第 4 参贯通），publishPartDelta/settleLoop 的告警与 executeRun 的错误日志改经 `metrics.warn/error`。
+- `docs/_1_DevStandards/DevStandards.md` §7 — 修订为「Metrics 日志网关」：Metrics 是日志唯一保存网关；方法内日志用第 4 参 metrics；AOP 切面在返回/抛异常时经 saveInvocation 以 JSON 采集全部参数内容；体量由 log_rule 白名单 + min_level + 日志老化约束。
+- 新增 `Base/test/MetricsInvocation.test.ts`（2 用例）：saveInvocation JSON 采集（函数/循环引用安全、参数内容可断言）；AopProxy 成功/抛异常双路径均经 Metrics 采集全部参数内容。
+
+**日志保存格式**：log_record 结构化列（level/source/message/trace_id/elapsed_ms…）+ `metadata` JSON 列承载调用记录全文（`invocation_json` = {method, status, error, elapsed_ms, args:{input,output,context,metrics,report 内容}}）。
+
+**可能存在的问题/风险点**：
+- 每次经 AOP 的方法调用现在产生 1 条调用记录（info 级）；体量由 min_level（低于阈值静默丢弃）、log_rule 白名单（LogInterceptor 路径）、日志老化三重约束——上线后建议按模块收敛 log_rule 白名单；
+- 5 参方法体内仍有 ~77 处 `this.logger?.` 调用待按同一模式切换为 `metrics?.`（涉及私有辅助方法的 metrics 透传），本轮完成机制、规范与 Runtime 试点，其余按模块机械迁移；
+- 3 参旧式调用（如各 `initialize()`）无 Metrics 实例，维持仅错误日志的旧行为。
+
+---
+
+## [2026-09-05] Agent 选择流程闭环：matchAgent 匹配最佳 Agent → 失效概率/未命中触发 Agent 重构 → match×4 选组件 → LLM 生成说明沉淀匹配依据
+
+**变更原因**：用户流程定义——`matchAgent` 匹配最佳 Agent；匹配不上、或按一定失效概率时进行 **Agent 重构**；重构调用 Soul/Prompt/MCP/Skill 的 match 结构选择最合适组件，并**为新 Agent 生成说明**（该说明是后续 matchAgent 的匹配依据）。此前说明（agent_purpose）不参与匹配、失效概率语义不完整（概率失效后仍可能被 LLM 层复用）、重构时无 Prompt 选择、说明为拼串而非生成。
+
+**修改的方法与模块**：
+- `Agent/AgentLibrary` — `matchAgent` 语义升级：① **说明参与匹配**（第一层取 `similarity(task_signature)` 与 `similarity(task_content, agent_purpose)` 的最大值——说明即沉淀的匹配依据）；② **失效概率一次判定**（`MatchAgentOutput` 新增 `matched`/`regenerate`：命中但失效概率命中 → `matched=true, regenerate=true, agent_id=''`，不再落入 LLM 层复用，交由调用方重构）；③ 未命中 → `matched=false` 触发重构。
+- `Agent/AgentBuilder` — `buildAgent` 成为流程闭环入口：非 force_new 时先 `matchAgent`，命中且未失效 → 复用（记 usage + `agent_matched` 事件）；未命中/失效 → **Agent 重构**：任务分析 → matchStrategy/matchLLM → **matchSoul/matchSkill/matchMCP（纯选择）+ 新增 Prompt 选择**（`matchPromptForAgent`：经 PromptsAccess 取启用模板，simpleSimilarity 对任务/领域与 模板名+摘要 打分取最优，无候选回退空串由执行侧内置兜底）→ **`generateAgentPurpose` LLM 生成说明**（基于任务+领域+人格/技能/MCP 清单生成 50 字内说明，LLM 失败回退拼串兜底）→ 绑定（含 prompt_template_id）落 agent 表。说明写入 agent_purpose，供下一次 matchAgent 匹配。
+- 约束保持：绑定唯一事实源仍为 agent 表（上一变更）；Runtime v2 声明式链路（matchAgentDef，确定性、无随机）不受影响——本流程作用于 Agent 模块自有链路（buildAgent 由 EvolutorAgent/编排调用）。
+
+**测试**（全仓 1901 全绿：Base 799 + Core 198 + Runtime 39 + Agent 121(+2 流程) + Orchestration 212 + Application 532；typecheck 0 错）：
+- 说明参与匹配（签名刻意不匹配、说明与任务高重叠 → 命中 SIMILARITY）；
+- 失效概率确定性验证（regen_rate=100 → 命中也输出 `regenerate=true, agent_id=''`）。
+
+**可能存在的问题/风险点**：
+- `generateAgentPurpose` 依赖 LLMAccess 质量；LLM 不可用时回退拼串说明（匹配面变窄）；
+- 失效概率重构会创建新 Agent（旧 Agent 保留，由 ageAgent 老化回收）——长期高频重构需关注 agent 数量增长（`max_agent_count` 配置已存在）。
+
+---
+
+## [2026-09-05] 绑定关系收权：Agent↔Soul/Skill/MCP/Prompt 绑定唯一事实源收敛至 agent 表，Core 选择流程纯化
+
+**变更原因**：用户设计决策——Agent 与 Soul/MCP/Skill/Prompt 的绑定关系此前散落在 Core 层绑定表（agent_soul/agent_skill/agent_mcp）+ MatchCacheHelper 缓存，Base 层资源模块与 Agent 模块对绑定状态各持一份认知；按"绑定关系只放 Agent 保存表、由 Agent 模块评估决定绑定/解绑"的原则收敛，同时消除 SkillCore 与 Base SkillProvider 共用 skill_usage 表的双 schema 冲突。
+
+**目标架构**：
+- **绑定唯一事实源 = agent 表**（Agent/AgentLibrary 所有）：新增列 `skill_ids_json` / `mcp_ids_json` / `prompt_template_id`（soul_id 已有；ALTER 兼容迁移）；`AgentLibrary` 新增绑定 API `bindAgentComponent` / `unbindAgentComponent`（5 参，`ComponentKind` 枚举 Soul/Skill/Mcp/Prompt；bind 为同 kind 全量替换的幂等 upsert，unbind 缺省解绑该类全部）；`delAgent` 清理简化（不再删 agent_skill/agent_soul/agent_mcp 行）。
+- **Core 选择流程 = 纯选择（零绑定持久化）**：`matchSoul/matchSkill/matchMCP` 删除 checkMatchCache/clearMatchCache/persistMatchBinding；Input 新增 `bound_soul_id/bound_skill_ids/bound_mcp_ids` —— 调用方传入 agent 表既有绑定时确定性水合（失效 id 自动过滤），不传则按任务纯选择（Runtime v2 语义）；`optSoul/optSkill/optMCP` 只记 usage（评估依据，键换为 (agent_id, component_id)），不再 upsert 绑定；`ageSkill/ageSoul` 改为**输出解绑候选**（stale_skills/stale_souls，按 opt 规则窗口内低使用统计，不删除——解绑动作由 Agent 模块执行）；agent_soul/agent_skill/agent_mcp 表停止创建（旧库残留不读写），soul_core_usage/agent_mcp_usage 检测旧键自动重建，**Core SkillCore usage 表更名 `skill_core_usage`**（skill_usage 表名归还 Base SkillProvider，根治共表冲突，real-test-helpers 的 addColumn hack 移除）。
+- **Agent 模块评估驱动绑定/解绑**：`AgentBuilder.buildAgent` 匹配结果直接落 agent 表（addAgent 初始绑定）；`optimizeAgent`（由 EvolutorAgent 评估后触发）完整承担"评估 → 绑定/解绑"：先 ageSkill/ageSoul 输出低使用候选并解绑（changes 记录 from→''），再重新 match 并整组重绑（skill/mcp diff 增删、soul 经 A/B 裁决 verdict 后重绑）；`AgentExecution.loadSkills/loadMcps` 改为经 `soAgent` 读 agent 表绑定后传 bound ids 水合（Core 不再持有绑定状态）；`OrchestrationVisualization` 组件引用改读 agent 表 JSON 列。MatchCacheHelper 保留（仅 LLMCore 使用——LLM 绑定按既有设计留在 LLMProvider agent_llm，不在本次四组件范围）。
+
+**影响的端点**：无 HTTP 协议变化；skill_core_usage 旧表数据不迁移（usage 历史重置，评估冷启动）。
+
+**测试**（全仓 1899 全绿：Base 799 + Core 198 + Runtime 39 + Agent 119(+3 绑定 API) + Orchestration 212 + Application 532；全链路 typecheck 0 错）：
+- 新增 `Agent/test/agent-library-binding.test.ts`：全量替换 upsert / 单值绑定与缺省全解绑 / 幂等 / 未知 agent fail-loud；
+- Core 3 套件绑定断言改写为"bound 水合 + 纯选择 + usage 记账"语义；Orchestration/Agent 测试夹具 DDL 同步新列。
+
+**可能存在的问题/风险点**：
+- 旧库的 agent_soul/agent_skill/agent_mcp 残留表与其中历史绑定不再迁移（绑定关系由 optimizeAgent 评估重建）；usage 历史重置；
+- MCP 无 ageMCP（无 opt 规则表），其解绑仅由 match-diff 驱动；
+- `optSkill` 输出 `binding.id` 恒为空串（兼容保留字段），下游如依赖绑定 id 需改走 agent 表。
+
+---
+
+## [2026-09-05] Runtime v2 逐方法审查修复：枚举注册 + Report 业务事件通道 + Runs 排队语义修复 + 规范对齐
+
+**变更原因**：Runtime v2 逐方法规范审查（对照 DevStandards/DDDStandards + 六份 Runtime PRD）发现 18 项问题：2 项功能缺陷（排队 run 双记录致 waitRun 永久挂起；interrupt 入队与结算排水竞态）、5 项规范违反（Application 行内 SQL 直查、`as unknown as` 断言、跨模块直查 soul/agent 表、session_id 语义错位、insert 手写样板）、11 项一致性/性能问题；另有两项新规范落地：有限值域一律 Enum 注册、业务事件一律经 Report（StreamProvider）上报且以 Enum 注册。
+
+**修改的方法与模块**：
+- `Base/shared/base/BusinessEvent.ts`（新增）— **业务事件全库唯一注册点**：11 类 v2 事件协议以 Enum 注册 + `businessEventMsgType`（msg_type 映射）；`Report.pushBusinessEvent(event, data, meta)` 新增（底层 StreamProvider，无流会话静默降级 no-op）；
+- `Core/SoulCoreProvider` — 新增 `soSoulContent`（按 id 读 Soul 内容，走 SoulAccess；供声明式 Agent 快照，替代跨模块直查 soul 表）；
+- `Runtime/shared/` — `AbortReason/RunPhase` 枚举 + `DEFAULT_BUDGET_TOTAL` 常量收敛（消除 60 魔数 4 处散落）；删除 `BUDGET_GRACE_MARKER`（宽限收尾由 Loop finalTurn 收工具实现，标记常量为死代码）；`RuntimeConfigTable` 收敛组合根 v2 开关表 DDL；
+- `Runtime/Runs/` — **修复①**：排队 run 结算**复用原 run_id**（queued 行 patch 转 running，消除双记录孤儿行，`waitRun(queued_run_id)` 不再永久挂起）；**修复②**：interrupt **先入队后 abort** + `maybeDrainLane` 双侧兜底复核（PRD §4.3 排水竞态防护落地）；`QueueMode/RunStatus` 枚举化（含 collect 注册，入队显式抛错）；`runtime_run.session_id` 统一落 `runtime_session.id`（submitRun 内幂等解析）；`submitRun` 发布 `run.accepted` 事件；Report 贯通（submitRun→executeRun→execAgentLoop/matchAgentDef/soAgentSnapshot）；`drainSteeringFor/takeFollowupFor` 去掉 `as unknown as` 双断言（service 方法本为 public）；
+- `Runtime/Loop/` — `LoopStopReason` 枚举；Report 贯通（run.status/part.created/part.delta/tool.launch/tool.result 经 `pushBusinessEvent`，Bus 持久化不受影响）；`part_type/role/status` 枚举化；外部 signal reason 白名单归一（未知原因 → user，不再裸 cast）；
+- `Runtime/Session/` — **移除忙锁**（`ensureRunState/releaseRunState` + sessionBusyLock，并发 1 由 Runs lane 唯一承担）与 `appendPartContent`（无调用方，`updatePart.content_patch` 即 delta 语义）与 `MessageData` 死类型；`MessageRole/SessionStatus/PartType/PartStatus` 枚举化；`token_usage` → `token_count` 列更名（RENAME COLUMN 兼容迁移，与 Part 表同名同义）；`configSession` 支持 enabled 启停（修复错误信息引用不存在的 enableSession）；`soMessages` SQL 分页下推 + Parts `IN` 批查（消除 N+1 与内存分页）；`addSession` 落账 id 取 `newRecord` 首字段（去掉插入后回查）；
+- `Runtime/Bus/` — 事件类型改挂 `BusinessEvent` 枚举（Runtime 本地 union 保留别名）；新增 `soEventLastSeq`（投影起点定位，**替代 Chat 直查 runtime_event 的行内 SQL**）；`nextEventSeq` 取 MAX 改 SQL LIMIT 1（不全量载入）；`payload_json` 解析加守卫（坏行回退空对象不阻断重放）；insert 样板改用 `newRecord`（删除误导性 `newPatchEvent`）；
+- `Runtime/Tools/` — `ToolResultStatus` 枚举；zod v3 内省收敛至 `zodDef/zodShape`（12 处 `as unknown as` → 单一逃逸口）；`CDT_CONTENT_MAX` 语义收窄（skill/mcp 走默认截断）；
+- `Runtime/Agents/` — `AgentMode/AgentDefStatus/AgentMatchLayer` 枚举化；构建落账取名/用途经 **AgentLibraryAccess**（删除直查 agent 表）；Soul 内容经 **SoulCoreAccess.soSoulContent**（删除直查 soul 表）；`insertDefFromAgent` 落账 id 取插入记录（消除按 agent_ref 回查取错行风险）；`declareAgent` id 同改；`AgentsSchemaInitializer.init` 与其余模块统一为同步；
+- `Application/Chat/ChatService` — `soSessionLastSeq` 改经 `EventBusAccess.soEventLastSeq`（消除 Application 行内 SQL + 静默吞错）；投影事件比较枚举化；**顺手修复 HEAD 遗留编译错误**（`placeholders` 作用域错位致全量 typecheck 不通过）；
+- `dev-server.ts` — AgentDefAccess 注入 agentLibrary；runtime_config DDL 收敛至 `ensureRuntimeRootConfigTable`；
+- **Base 源码树清理**：删除 97 个就地生成的编译产物（`*.js/*.js.map/*.d.ts/*.d.ts.map`，outDir 已为 dist 的历史遗留）——**根因修复 Base 测试 5 个 instanceof 断言失败**（源码内 `.js` 遮蔽 `.ts` 导致同类双副本）；
+- **文档**：Runs/Session/Tools PRD 增补「落地差异」节（分阶段边界与本轮修复记录）；Session-PRD 移除忙锁/appendPartContent 方法行；DDDStandards 注记 Runtime 模块方法长度按其 PRD ≤40 执行。
+
+**影响的端点**：
+- `POST /api/chat/stream`（v2 链路）— steer 语义不变；新增 `run.accepted` 持久化事件（前端无感）；其余 SSE 协议零改动。
+
+**测试**（Runtime 41（+2 排水回归）+ 全仓 799 全过；全链路 typecheck 0 错；方法行数零超限）：
+- `Runtime/test/RuntimeGateway.test.ts`：**followup 排队复用 run_id**（queued→running→finished 同一记录，无孤儿 queued 行）/**interrupt 入队-结算竞态**（maybeDrainLane 兜底，不留卡死队列）。
+
+**可能存在的问题/风险点**：
+- `runtime_message.token_usage` → `token_count` 靠启动时 RENAME COLUMN 迁移；SQLite 低版本（<3.25）不支持 RENAME COLUMN 时迁移静默跳过（旧库该列名保留，代码读写将报错，需手动迁移）；
+- `waitRun` 未注册 run 仍兜底返回 `running`（测试固化的既有决策，如需语义精确化建议改 output.error，阶段4 评估）；
+- 内置工具执行中不支持中途取消（Base/Core Input 契约暂无 signal 字段，见 Tools-PRD 落地差异 2）；
+- Bus 事件 seq 缓存/会话 seq 缓存为实例 Map 无上限（单进程长周期内存风险低，阶段4 与 compaction 一并评估）。
+
+---
+
 ## [2026-09-04] Runtime v2 · 线上切换：Chat v2 分流（编排内核/Agent 选择上线）+ Agents 确定性匹配 + Runs 两段式网关 —— 修复「身份问题套编码人设」错配
 
 **变更原因**：

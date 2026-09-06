@@ -12,9 +12,6 @@ import {
 import type {
   EvolutorAgentAccess, WriterAgentAccess,
 } from '@brian-agent/agent';
-import type {
-  OrchestrationEntryAccess,
-} from '@brian-agent/orchestration';
 import {
   SelectGraphInput, SelectGraphOutput,
   GetGraphNeighborsInput, GetGraphNeighborsOutput,
@@ -33,10 +30,6 @@ import {
   StartEvalScheduleInput, StartEvalScheduleOutput,
   StopEvalScheduleInput, StopEvalScheduleOutput,
 } from '@brian-agent/agent';
-import {
-  OrchestrationEntryContext,
-  ReceiveWorkAsyncInput, ReceiveWorkAsyncOutput,
-} from '@brian-agent/orchestration';
 import {
   SelfLearningContext,
   AddLibraryInput, AddLibraryOutput,
@@ -76,7 +69,6 @@ export class SelfLearningService {
     private readonly llmCore: LLMCoreAccess,
     private readonly evolutorAgent: EvolutorAgentAccess,
     private readonly writerAgent: WriterAgentAccess,
-    private readonly orchestrationEntry: OrchestrationEntryAccess,
     private readonly graphDBAccess: GraphDBAccess,
     private readonly chunkAccess: ChunkAccess,
     private readonly mqAccess: any,
@@ -885,7 +877,7 @@ export class SelfLearningService {
         return;
       }
 
-      const sessionId = await this.ensureSelfLearningSession();
+      await this.ensureSelfLearningSession();
 
       const config = await this.getConfig();
       const splitThreshold = (config.document_split_threshold as number) ?? 5000;
@@ -911,19 +903,7 @@ export class SelfLearningService {
         const trimmed = chunk.trim();
         if (!trimmed) continue;
 
-        const strategy = trimmed.length >= splitThreshold ? 'PLANNING' : 'SIMPLE';
-
-        const recvInput = Object.assign(new ReceiveWorkAsyncInput(), {
-          session_id: sessionId,
-          session_type: 'self_learning',
-          user_query: trimmed,
-          force_orchestration_strategy: strategy,
-          info_type: InfoType.REQUEST,
-          info_creator_role: 'LEARNING',
-          info_creator_id: '',
-        });
-        const recvOutput = Object.assign(new ReceiveWorkAsyncOutput(), {});
-        await this.orchestrationEntry.receiveWorkAsync(recvInput, recvOutput, new OrchestrationEntryContext());
+        // V1 编排已移除：学习内容经 chunk 拆分后直接记录结果（不再注入编排 workflow）
       }
 
       await this.updateFileStatus(fileId, 'COMPLETED', null);

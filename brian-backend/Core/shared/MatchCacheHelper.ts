@@ -1,8 +1,10 @@
 /**
- * @fileoverview Core 层匹配缓存辅助工具。
+ * @fileoverview Core 层匹配缓存辅助工具（LLMCore 专用）。
  *
- * 提取 LLMCore、MCPCore、SkillCore、SoulCore、ThinkingStrategyCore
- * 五者共用的缓存检查逻辑（查询 agent_* 表 → regen_rate 判定 → 返回缓存或要求重新匹配）。
+ * 历史：LLMCore、MCPCore、SkillCore、SoulCore 五者共用（查询 agent_llm/agent_mcp/
+ * agent_skill/agent_soul 绑定表 → regen_rate 判定）。
+ * 2026-09-05 起组件绑定收敛至 Agent 模块 agent 表（唯一事实源），
+ * Soul/Skill/MCP 的 match 已改纯选择（不再读写绑定表），本工具仅 LLMCore 继续使用。
  */
 
 import type { RelationDBAccess } from '@brian-agent/base';

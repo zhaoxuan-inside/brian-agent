@@ -3,13 +3,10 @@ import type { RelationDBAccess, StreamAccess, Logger } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import type { ChatRuntimeV2Deps } from '../application/ChatService';
 import type { InfoCoreAccess } from '@brian-agent/core';
-import type { WriterAgentAccess, EvolutorAgentAccess } from '@brian-agent/agent';
-import type { OrchestrationEntryAccess } from '@brian-agent/orchestration';
 import { ChatSchemaInitializer } from '../infrastructure/ChatSchemaInitializer';
 import { ChatService } from '../application/ChatService';
 import {
   ChatContext,
-  SubmitWorkInput, SubmitWorkOutput,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
   SearchSessionInput, SearchSessionOutput,
@@ -20,9 +17,6 @@ import {
   SearchMessageInput, SearchMessageOutput,
   PinMessageInput, PinMessageOutput,
   GetMessageGraphInput, GetMessageGraphOutput,
-  CancelWorkInput, CancelWorkOutput,
-  ConfirmIntentInput, ConfirmIntentOutput,
-  SubmitClarificationInput, SubmitClarificationOutput,
   ConfigChatInput, ConfigChatOutput,
   OpenChatStreamInput, OpenChatStreamOutput,
   SSEEvent,
@@ -34,21 +28,13 @@ export class ChatAccess {
   constructor(
     relationDb: RelationDBAccess,
     infoCore: InfoCoreAccess,
-    writerAgent: WriterAgentAccess,
-    evolutorAgent: EvolutorAgentAccess,
-    orchestrationEntry: OrchestrationEntryAccess,
     logger?: Logger,
     streamAccess?: StreamAccess,
     runtime?: ChatRuntimeV2Deps,
   ) {
     new ChatSchemaInitializer(relationDb).init();
-    const raw = new ChatService(relationDb, infoCore, writerAgent, evolutorAgent, orchestrationEntry, logger, streamAccess, runtime);
+    const raw = new ChatService(relationDb, infoCore, logger, streamAccess, runtime);
     this.service = AopProxy.wrap(raw, { logger });
-  }
-
-  async submitWork(i: SubmitWorkInput, o: SubmitWorkOutput, c: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.submitWork(i, o, c, metrics, report);
   }
 
   async createSession(i: CreateSessionInput, o: CreateSessionOutput, c: ChatContext, metrics?: Metrics, report?: Report,
@@ -99,21 +85,6 @@ export class ChatAccess {
   async soMessageGraph(i: GetMessageGraphInput, o: GetMessageGraphOutput, c: ChatContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soMessageGraph(i, o, c, metrics, report);
-  }
-
-  async cancelWork(i: CancelWorkInput, o: CancelWorkOutput, c: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.cancelWork(i, o, c, metrics, report);
-  }
-
-  async confirmIntent(i: ConfirmIntentInput, o: ConfirmIntentOutput, c: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.confirmIntent(i, o, c, metrics, report);
-  }
-
-  async submitClarification(i: SubmitClarificationInput, o: SubmitClarificationOutput, c: ChatContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    return this.service.submitClarification(i, o, c, metrics, report);
   }
 
   async openChatStream(

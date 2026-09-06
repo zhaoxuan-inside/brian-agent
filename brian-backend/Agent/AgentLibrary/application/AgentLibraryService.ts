@@ -1,7 +1,7 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import {
-  IdGenerator, Operator, OperationType, ValidationError, NotFoundError,
+  IdGenerator, Operator, OperationType, ValidationError, NotFoundError, newPatch,
   ExecLLMInput, ExecLLMOutput, LLMContext,
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
@@ -25,6 +25,11 @@ import {
   GetAgentRuleInput, GetAgentRuleOutput,
   UpdateAgentRuleInput, UpdateAgentRuleOutput,
   ConfigAgentLibraryInput, ConfigAgentLibraryOutput,
+  BindAgentComponentInput,
+  BindAgentComponentOutput,
+  UnbindAgentComponentInput,
+  UnbindAgentComponentOutput,
+  ComponentKind,
 } from '../domain/types';
 import {
   simpleSimilarity,
@@ -47,11 +52,25 @@ function mapAgent(row: Record<string, unknown>): AgentRecord {
     agent_type: String(row.agent_type),
     strategy_id: String(row.strategy_id),
     soul_id: String(row.soul_id ?? ''),
+    skill_ids: parseIdList(row.skill_ids_json),
+    mcp_ids: parseIdList(row.mcp_ids_json),
+    prompt_template_id: String(row.prompt_template_id ?? ''),
     task_signature: String(row.task_signature ?? ''),
     usage_count: Number(row.usage_count ?? 0),
     eval_score: Number(row.eval_score ?? 50),
     enable: toBool(row.enable),
   };
+}
+
+/** JSON id 列表列解析（数据处理；坏值回退空数组） */
+function parseIdList(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((v) => String(v)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
 }
 
 export class AgentLibraryService {
@@ -79,6 +98,9 @@ export class AgentLibraryService {
       { field: 'agent_type', value: input.agent_type },
       { field: 'strategy_id', value: input.strategy_id },
       { field: 'soul_id', value: input.soul_id ?? '' },
+      { field: 'skill_ids_json', value: JSON.stringify(input.skill_ids ?? []) },
+      { field: 'mcp_ids_json', value: JSON.stringify(input.mcp_ids ?? []) },
+      { field: 'prompt_template_id', value: input.prompt_template_id ?? '' },
       { field: 'task_signature', value: input.task_signature ?? '' },
       { field: 'usage_count', value: 0 },
       { field: 'eval_score', value: 50 },
@@ -120,10 +142,15 @@ export class AgentLibraryService {
     }
 
     // ===== 1. 第一层匹配：简单算法匹配 (simpleSimilarity) + 概率复用判定 =====
+    // 匹配面 = 任务签名 + agent_purpose（说明）：说明是为后续 matchAgent 沉淀的匹配依据
+    const queryText = input.task_content || input.task_signature;
     let bestScore = 0;
     let bestId = '';
     for (const c of candidates) {
-      const score = simpleSimilarity(input.task_signature, c.task_signature);
+      const score = Math.max(
+        simpleSimilarity(input.task_signature, c.task_signature),
+        simpleSimilarity(queryText, c.agent_purpose ?? ''),
+      );
       if (score > bestScore) {
         bestScore = score;
         bestId = c.agent_id;
@@ -136,8 +163,15 @@ export class AgentLibraryService {
         output.agent_id = bestId;
         output.similarity_score = bestScore;
         output.matched_by = 'SIMILARITY';
+        output.matched = true;
         return true;
       }
+      // 命中但失效概率命中：不再尝试复用，交由调用方重构（Agent 重构会重新 match 四组件并生成新说明）
+      output.matched = true;
+      output.regenerate = true;
+      output.similarity_score = bestScore;
+      output.agent_id = '';
+      return true;
     }
 
     // ===== 2. 第二层匹配：提交给大模型，由 LLM 基于 Agent 列表用途/名称与提问进行评估打分 =====
@@ -154,14 +188,16 @@ export class AgentLibraryService {
         output.agent_id = found.agent_id;
         output.similarity_score = llmMatched.score;
         output.matched_by = 'LLM';
+        output.matched = true;
         return true;
       }
     }
 
-    // ===== 3. 两层匹配得分均低于阈值，返回空 agent_id 触发生成新 Agent =====
+    // ===== 3. 两层匹配均未命中，触发 Agent 重构 =====
     output.agent_id = '';
     output.similarity_score = Math.max(bestScore, llmMatched?.score ?? 0);
     output.matched_by = '';
+    output.matched = false;
     return true;
   }
 
@@ -197,6 +233,85 @@ export class AgentLibraryService {
     return true;
   }
 
+  /**
+   * 绑定组件到 Agent（绑定唯一事实源：agent 表；幂等 upsert，同 kind 全量替换）。
+   *
+   * soul/prompt 单值（取 component_ids 首个），skill/mcp 全量列表；由 Agent 模块评估链路调用。
+   */
+  async bindAgentComponent(input: BindAgentComponentInput, output: BindAgentComponentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const record = await this.soAgentRecordForBinding(input.agent_id);
+    const ids = (input.component_ids ?? []).map((v) => String(v).trim()).filter(Boolean);
+    const patch = this.prepareBindingPatch(input.component_kind, ids, record);
+    await this.relationDb.update(AGENT_TABLE, newPatch(patch), [
+      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+    ]);
+    output.bound = ids;
+    return true;
+  }
+
+  /**
+   * 解绑 Agent 组件（幂等；component_ids 缺省解绑该类全部）。
+   */
+  async unbindAgentComponent(input: UnbindAgentComponentInput, output: UnbindAgentComponentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const record = await this.soAgentRecordForBinding(input.agent_id);
+    const current = this.soCurrentBinding(record, input.component_kind);
+    const removeSet = new Set((input.component_ids ?? current));
+    const remaining = current.filter((id) => !removeSet.has(id));
+    if (remaining.length === current.length) {
+      output.unbound = false;
+      return true;
+    }
+    const patch = this.prepareBindingPatch(input.component_kind, remaining, record);
+    await this.relationDb.update(AGENT_TABLE, newPatch(patch), [
+      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+    ]);
+    output.unbound = true;
+    return true;
+  }
+
+  /** 按 agent_id 查询 agent 行（逻辑控制；绑定 API 内部取数） */
+  private async soAgentRecordForBinding(agentId: string): Promise<AgentRecord> {
+    if (!agentId) {
+      throw new ValidationError('agent_id 为必填');
+    }
+    const row = await this.relationDb.selectOne(AGENT_TABLE, [
+      { field: 'agent_id', operator: Operator.EQ, value: agentId },
+    ]);
+    if (!row) {
+      throw new NotFoundError('agent', agentId);
+    }
+    return mapAgent(row);
+  }
+
+  /** 读取当前绑定列表（数据处理） */
+  private soCurrentBinding(record: AgentRecord, kind: ComponentKind): string[] {
+    if (kind === ComponentKind.Soul) return record.soul_id ? [record.soul_id] : [];
+    if (kind === ComponentKind.Skill) return record.skill_ids;
+    if (kind === ComponentKind.Mcp) return record.mcp_ids;
+    return record.prompt_template_id ? [record.prompt_template_id] : [];
+  }
+
+  /** 绑定补丁组装（数据处理；soul/prompt 单值取首个，skill/mcp JSON 序列化） */
+  private prepareBindingPatch(kind: ComponentKind, ids: string[], record: AgentRecord): Record<string, unknown> {
+    const patch: Record<string, unknown> = {};
+    if (kind === ComponentKind.Soul) {
+      patch.soul_id = ids[0] ?? '';
+      record.soul_id = ids[0] ?? '';
+    } else if (kind === ComponentKind.Skill) {
+      patch.skill_ids_json = JSON.stringify(ids);
+      record.skill_ids = ids;
+    } else if (kind === ComponentKind.Mcp) {
+      patch.mcp_ids_json = JSON.stringify(ids);
+      record.mcp_ids = ids;
+    } else {
+      patch.prompt_template_id = ids[0] ?? '';
+      record.prompt_template_id = ids[0] ?? '';
+    }
+    return patch;
+  }
+
   async delAgent(input: DelAgentInput, output: DelAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.ids || input.ids.length === 0) {
@@ -218,19 +333,15 @@ export class AgentLibraryService {
         { field: 'agent_id', operator: Operator.EQ, value: agentId },
       ]);
 
-      // 删除关联绑定（agent_llm / agent_skill / agent_soul / agent_mcp + mcp 使用统计）
-      for (const table of ['agent_llm', 'agent_skill', 'agent_soul']) {
+      // 删除关联数据：LLM 绑定（仍在 LLMProvider agent_llm）+ 组件 usage（评估依据，按 agent_id 键）
+      try {
+        this.relationDb.executeRaw(`DELETE FROM "agent_llm" WHERE "agent_id" = ?`, [agentId]);
+      } catch { /* 表可能不存在 */ }
+      for (const table of ['skill_usage', 'soul_core_usage', 'agent_mcp_usage']) {
         try {
           this.relationDb.executeRaw(`DELETE FROM "${table}" WHERE "agent_id" = ?`, [agentId]);
         } catch { /* 表可能不存在 */ }
       }
-      try {
-        this.relationDb.executeRaw(
-          'DELETE FROM "agent_mcp_usage" WHERE "agent_mcp_id" IN (SELECT "id" FROM "agent_mcp" WHERE "agent_id" = ?)',
-          [agentId],
-        );
-        this.relationDb.executeRaw('DELETE FROM "agent_mcp" WHERE "agent_id" = ?', [agentId]);
-      } catch { /* 表可能不存在 */ }
 
       // 删除主记录
       const n = await this.relationDb.delete(AGENT_TABLE, [

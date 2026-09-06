@@ -8,7 +8,7 @@ export { RunGatewayAccess } from './access/RunGatewayAccess';
 // infrastructure 层
 export { RunsSchemaInitializer } from './infrastructure/RunsSchemaInitializer';
 
-// domain 层类型
+// domain 层
 export {
   RunGatewayContext,
   SubmitRunInput,
@@ -23,12 +23,16 @@ export {
   SoRunStatusOutput,
   ConfigRunsInput,
   ConfigRunsOutput,
+  WaitPermissionInput,
+  WaitPermissionOutput,
+  AnswerPermissionInput,
+  AnswerPermissionOutput,
+  QueueMode,
+  RunStatus,
   RUNTIME_RUN_TABLE,
   RUNTIME_RUNS_CONFIG_TABLE,
 } from './domain/types';
 export type {
-  QueueMode,
-  RunStatus,
   RunRecord,
   SessionLane,
   Waiter,

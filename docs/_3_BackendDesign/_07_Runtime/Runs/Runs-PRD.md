@@ -89,3 +89,15 @@ submitRun ──ack──► accepted(queued)
 
 - 单测：两段式 ack 即时性；四种队列模式语义；abort 排水竞态（queued 先取消）；防抖与 cap 溢出策略。
 - 集成：interrupt 后最新消息立即执行；steer 注入点严格在工具启动检查点/模型边界；lane 并发上限生效。
+
+## 7. 落地差异（2026-09-05 · 最小可用版 → 本次修复）
+
+**阶段3/4 前置的最小可用版**与 §2/§3/§4 的差距（后续阶段补齐，验收以本节为准）：
+
+1. **未实现（阶段4）**：`collect` 队列模式（入队抛 ValidationError 提示）；steer 500ms 防抖 / cap 20 / 溢出摘要；`Lanes.ts` 多 lane（main/subagent/background，当前仅 `session` lane）；`abortRun` 先取消 queued 再取消活动的完整语义；`soRunsBySession`。
+2. **忙锁归属**：§4.1 的 `ensureRunState/releaseRunState` 接线改为 **session lane 实例内 Map 独立承担**（Session 忙锁已删，去重优先）。
+3. **修复①排队 run 双记录（2026-09-05）**：排队 run 结算后**复用原 run_id**（queued 行 patch 为 running，不新插入），`submitRun` ack 的 run_id 全程有效，`waitRun` 可正常等待排队 run。
+4. **修复②排水竞态（2026-09-05）**：interrupt 模式**先入队后 abort**（§4.3 防护落地），且入队与结算双方经 `maybeDrainLane` 兜底复核（活动位空闲即排水），消除"结算窗口入队卡死"竞态。
+5. **session_id 语义修复**：`runtime_run.session_id` 统一落 `runtime_session.id`（submitRun 内按 session_key 幂等解析；入参 `session_id` 仅为兼容保留）。
+6. **run.accepted 事件**：submitRun 受理时发布（§4 的 11 类事件协议补齐）。
+7. **业务事件双通道**：持久化经 Bus（重放/审计事实源）；客户端可感知的业务事件同步经 `Report.pushBusinessEvent`（BusinessEvent 枚举注册，无流会话静默降级）。

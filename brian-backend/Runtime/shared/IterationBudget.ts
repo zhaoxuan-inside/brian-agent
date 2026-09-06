@@ -6,7 +6,7 @@
  *
  * 语义：
  * - `consume()`：消费 1 个迭代；预算耗尽返回 false，但宽限期内（grace）仍允许
- *   消费 1 次，用于强制收尾调用（无工具收尾 prefill 由 Loop 侧处理）；
+ *   消费 1 次，用于强制收尾调用（无工具收尾由 Loop 侧 finalTurn 收掉工具实现）；
  * - `refund(n)`：退还未实际消耗的迭代（如子代理提前完成退还不适用额）；
  * - 子代理独立预算（delegate 传入 SUBAGENT_BUDGET，不与父共享）。
  */
@@ -20,9 +20,6 @@ export interface BudgetSpec {
   /** 超支宽限期：耗尽后仍允许 1 次收尾消费（默认 true） */
   grace?: boolean;
 }
-
-/** 预算耗尽后宽限收尾的标记事件（Loop 侧据此注入收尾 prefill） */
-export const BUDGET_GRACE_MARKER = 'budget_grace';
 
 /**
  * IterationBudget。

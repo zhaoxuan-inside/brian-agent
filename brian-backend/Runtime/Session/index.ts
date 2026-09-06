@@ -8,7 +8,7 @@ export { SessionAccess } from './access/SessionAccess';
 // infrastructure 层
 export { SessionSchemaInitializer } from './infrastructure/SessionSchemaInitializer';
 
-// domain 层类型
+// domain 层
 export {
   SessionContext,
   AddSessionInput,
@@ -21,12 +21,12 @@ export {
   UpdatePartOutput,
   SoMessagesInput,
   SoMessagesOutput,
-  EnsureRunStateInput,
-  EnsureRunStateOutput,
-  ReleaseRunStateInput,
-  ReleaseRunStateOutput,
   ConfigSessionInput,
   ConfigSessionOutput,
+  MessageRole,
+  SessionStatus,
+  PartType,
+  PartStatus,
   RUNTIME_SESSION_TABLE,
   RUNTIME_MESSAGE_TABLE,
   RUNTIME_MESSAGE_PART_TABLE,
@@ -34,9 +34,6 @@ export {
 } from './domain/types';
 
 export type {
-  PartType,
-  PartStatus,
-  MessageData,
   MessageWithParts,
   PartRecord,
 } from './domain/types';

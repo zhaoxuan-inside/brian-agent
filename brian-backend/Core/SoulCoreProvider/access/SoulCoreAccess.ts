@@ -27,6 +27,8 @@ import {
   OptSoulOutput,
   AgeSoulInput,
   AgeSoulOutput,
+  SoSoulContentInput,
+  SoSoulContentOutput,
   SoSoulRuleInput,
   SoSoulRuleOutput,
   UpdateSoulRuleInput,
@@ -135,6 +137,14 @@ export class SoulCoreAccess {
   async updateSoulRule(input: UpdateSoulRuleInput, output: UpdateSoulRuleOutput, context: SoulCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.updateSoulRule(input, output, context, metrics, report);
+  }
+
+  /**
+   * 按 id 读取 Soul 内容（聚合查询；供声明式 Agent 快照等场景，替代跨模块直查 soul 表）。
+   */
+  async soSoulContent(input: SoSoulContentInput, output: SoSoulContentOutput, context: SoulCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.soSoulContent(input, output, context, metrics, report);
   }
 
   /**

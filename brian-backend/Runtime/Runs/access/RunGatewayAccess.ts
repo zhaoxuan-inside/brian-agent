@@ -7,7 +7,6 @@ import { AopProxy } from '@brian-agent/base';
 import { RunsSchemaInitializer } from '../infrastructure/RunsSchemaInitializer';
 import { RunGatewayService } from '../application/RunGatewayService';
 import type { SessionAccess } from '../../Session';
-import type { EventBusAccess } from '../../Bus';
 import type { LoopAccess } from '../../Loop';
 import type { AgentDefAccess } from '../../Agents';
 import {
@@ -24,6 +23,10 @@ import {
   SoRunStatusOutput,
   ConfigRunsInput,
   ConfigRunsOutput,
+  WaitPermissionInput,
+  WaitPermissionOutput,
+  AnswerPermissionInput,
+  AnswerPermissionOutput,
 } from '../domain/types';
 
 /**
@@ -32,9 +35,9 @@ import {
 export class RunGatewayAccess {
   private readonly service: RunGatewayService;
 
-  constructor(relationDb: RelationDBAccess, session: SessionAccess, bus: EventBusAccess, agents: AgentDefAccess, loop: LoopAccess, logger?: Logger) {
+  constructor(relationDb: RelationDBAccess, session: SessionAccess, agents: AgentDefAccess, loop: LoopAccess, logger?: Logger) {
     new RunsSchemaInitializer(relationDb).init();
-    const rawService = new RunGatewayService(relationDb, session, bus, agents, loop, logger);
+    const rawService = new RunGatewayService(relationDb, session, agents, loop, logger);
     this.service = AopProxy.wrap(rawService, { logger }) as RunGatewayService;
   }
 
@@ -73,6 +76,18 @@ export class RunGatewayAccess {
     return this.service.soRunStatus(input, output, context, metrics, report);
   }
 
+  /** 权限等待挂起（Loop 权限门经组合根注入调用） */
+  async waitPermission(i: WaitPermissionInput, o: WaitPermissionOutput, c: RunGatewayContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.waitPermission(i, o, c, metrics, report);
+  }
+
+  /** 权限应答（HTTP 端点调用） */
+  async answerPermission(i: AnswerPermissionInput, o: AnswerPermissionOutput, c: RunGatewayContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.answerPermission(i, o, c, metrics, report);
+  }
+
   /** 模块配置 */
   async configRuns(input: ConfigRunsInput, output: ConfigRunsOutput, context: RunGatewayContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
@@ -81,11 +96,11 @@ export class RunGatewayAccess {
 
   /** Loop 队列接线：边界抽干 steering（组合根绑定，非业务方法） */
   drainSteeringFor(sessionKey: string): string[] {
-    return (this.service as unknown as { drainSteeringFor(k: string): string[] }).drainSteeringFor(sessionKey);
+    return this.service.drainSteeringFor(sessionKey);
   }
 
   /** Loop 队列接线：外层 followup 取队列（组合根绑定，非业务方法） */
   takeFollowupFor(sessionKey: string): string[] {
-    return (this.service as unknown as { takeFollowupFor(k: string): string[] }).takeFollowupFor(sessionKey);
+    return this.service.takeFollowupFor(sessionKey);
   }
 }

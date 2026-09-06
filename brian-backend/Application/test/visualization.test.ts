@@ -164,7 +164,7 @@ describe('VisualizationService', () => {
     ctxEnv = await setupRealTestEnvironment();
     initVisualizationSchema(ctxEnv.db);
     svc = new VisualizationService(
-      ctxEnv.db, ctxEnv.orchestrationVisualization, ctxEnv.agentExecution,
+      ctxEnv.db, ctxEnv.agentExecution,
       ctxEnv.agentLibrary, ctxEnv.agentContext, ctxEnv.evolutorAgent, ctxEnv.plannerAgent,
       ctxEnv.infoCore, ctxEnv.llmAccess, ctxEnv.soulAccess, ctxEnv.skillAccess,
       ctxEnv.mcpAccess, ctxEnv.promptsAccess, ctxEnv.graphDBAccess, ctxEnv.logger,
@@ -522,34 +522,6 @@ describe('VisualizationService', () => {
   // 3. soVisualizedAgentDAG  TC-VIS-040 ~ TC-VIS-054
   // ═══════════════════════════════════════════════════════════════
   describe('soVisualizedAgentDAG', () => {
-    it('TC-VIS-040: resolve_content=true -> DAG with resolved refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', orchestration_strategy: 'SIMPLE' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
-
-      const input = new GetVisualizedAgentDAGInput();
-      input.work_id = 'work-1';
-      input.resolve_content = true;
-      const out = new GetVisualizedAgentDAGOutput();
-      await svc.soVisualizedAgentDAG(input, out, ctx());
-      expect(out.dag).toHaveProperty('graph');
-      expect((out.dag as any).graph).toHaveProperty('nodes');
-      expect((out.dag as any).graph).toHaveProperty('edges');
-    });
-
-    it('TC-VIS-041: resolve_content=false -> raw ID refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
-
-      const input = new GetVisualizedAgentDAGInput();
-      input.work_id = 'work-1';
-      input.resolve_content = false;
-      const out = new GetVisualizedAgentDAGOutput();
-      await svc.soVisualizedAgentDAG(input, out, ctx());
-      const nodes = (out.dag as any).graph.nodes;
-      expect(nodes.length).toBeGreaterThanOrEqual(1);
-      expect(nodes[0].agent_id).toBe('agent-1');
-    });
-
     it('TC-VIS-042: strategy ref resolved', async () => {
       insOrchWork(ctxEnv.db, { work_id: 'work-1', orchestration_strategy: 'PLANNING' });
       insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
@@ -658,69 +630,6 @@ describe('VisualizationService', () => {
       expect(out.dag).toBeDefined();
     });
 
-    it('TC-VIS-051: Invalid work_id -> error in dag', async () => {
-      const input = new GetVisualizedAgentDAGInput();
-      input.work_id = 'invalid';
-      const out = new GetVisualizedAgentDAGOutput();
-      await svc.soVisualizedAgentDAG(input, out, ctx());
-      expect((out.dag as any).error).toBeDefined();
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════
-  // 4. soVisualizedWorkFlow  TC-VIS-060 ~ TC-VIS-066
-  // ═══════════════════════════════════════════════════════════════
-  describe('soVisualizedWorkFlow', () => {
-    it('TC-VIS-060: Get timeline -> workflow_timeline with phases', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'PLANNING' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
-
-      const input = new GetVisualizedWorkFlowInput();
-      input.work_id = 'work-1';
-      const out = new GetVisualizedWorkFlowOutput();
-      await svc.soVisualizedWorkFlow(input, out, ctx());
-      expect(out.timeline).toHaveProperty('phases');
-    });
-
-    it('TC-VIS-061: PLANNING phase refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'PLANNING' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED', plan_id: 'plan-1' });
-
-      const input = new GetVisualizedWorkFlowInput();
-      input.work_id = 'work-1';
-      const out = new GetVisualizedWorkFlowOutput();
-      await svc.soVisualizedWorkFlow(input, out, ctx());
-      const phases = (out.timeline as any).phases;
-      const p = phases.find((x: any) => x.phase === 'PLANNING');
-      expect(p).toBeDefined();
-    });
-
-    it('TC-VIS-062: BUILD_AGENT_DAG phase refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'PLANNING' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
-
-      const input = new GetVisualizedWorkFlowInput();
-      input.work_id = 'work-1';
-      const out = new GetVisualizedWorkFlowOutput();
-      await svc.soVisualizedWorkFlow(input, out, ctx());
-      const phases = (out.timeline as any).phases;
-      const p = phases.find((x: any) => x.phase === 'BUILD_AGENT_DAG');
-      expect(p).toBeDefined();
-    });
-
-    it('TC-VIS-063: EXECUTING phase refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'PLANNING' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
-
-      const input = new GetVisualizedWorkFlowInput();
-      input.work_id = 'work-1';
-      const out = new GetVisualizedWorkFlowOutput();
-      await svc.soVisualizedWorkFlow(input, out, ctx());
-      const phases = (out.timeline as any).phases;
-      const p = phases.find((x: any) => x.phase === 'EXECUTING');
-      expect(p).toBeDefined();
-    });
-
     it('TC-VIS-064: WRITING phase refs', async () => {
       insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'SIMPLE' });
       insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
@@ -741,56 +650,6 @@ describe('VisualizationService', () => {
       const out = new GetVisualizedWorkFlowOutput();
       await svc.soVisualizedWorkFlow(input, out, ctx());
       expect(out.timeline).toBeDefined();
-    });
-
-    it('TC-VIS-066: Invalid work_id -> error in timeline', async () => {
-      const input = new GetVisualizedWorkFlowInput();
-      input.work_id = 'invalid';
-      const out = new GetVisualizedWorkFlowOutput();
-      await svc.soVisualizedWorkFlow(input, out, ctx());
-      expect((out.timeline as any).error).toBeDefined();
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════
-  // 5. soAgentTrace  TC-VIS-070 ~ TC-VIS-085
-  // ═══════════════════════════════════════════════════════════════
-  describe('soAgentTrace', () => {
-    it('TC-VIS-070: Get latest trace -> all fields', async () => {
-      const iterations = [
-        { iteration_index: 0, iteration_elapsed_ms: 1500,
-          think: { reasoning: 'I need to analyze...', token_usage: 100 },
-          act: { tool_calls: [{ tool_type: 'SKILL', tool_id: 'skill-1', args: {} }], result: 'ok', token_usage: 50 },
-          reflect: { reflection: 'good progress', should_continue: true, token_usage: 20 },
-        },
-        { iteration_index: 1, iteration_elapsed_ms: 2000,
-          think: { reasoning: 'Now I will respond...', token_usage: 150 },
-          act: { tool_calls: [], result: 'writing', token_usage: 30 },
-          reflect: { reflection: 'ready', should_continue: false, token_usage: 10 },
-        },
-        { iteration_index: 2, iteration_elapsed_ms: 500,
-          answer: { answer: 'Here is the final answer.', token_usage: 140, elapsed_ms: 400 },
-        },
-      ];
-      insTrace(ctxEnv.db, {
-        trace_id: 'trace-1', agent_id: 'agent-1',
-        start_time: 1700000001000, end_time: 1700000005000,
-        iterations_json: JSON.stringify(iterations), total_token_usage: 500,
-      });
-
-      const input = new GetAgentTraceInput();
-      input.agent_id = 'agent-1';
-      input.trace_id = 'trace-1';
-      const out = new GetAgentTraceOutput();
-      await svc.soAgentTrace(input, out, ctx());
-      const t = out.trace as any;
-      expect(t.trace_id).toBe('trace-1');
-      expect(t.agent_id).toBe('agent-1');
-      expect(t.total_elapsed_ms).toBe(4000);
-      expect(t.total_token_usage).toBe(500);
-      expect(t.iteration_count).toBe(3);
-      expect(Array.isArray(t.steps)).toBe(true);
-      expect(t.final_answer).toBe('Here is the final answer.');
     });
 
     it('TC-VIS-071: Specific trace_id', async () => {

@@ -13,8 +13,8 @@ import { RUNTIME_AGENT_DEF_TABLE, RUNTIME_AGENTS_CONFIG_TABLE } from '../domain/
 export class AgentsSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  /** 创建所有 Agents 表（IF NOT EXISTS 语义，可安全重复调用） */
-  async init(): Promise<void> {
+  /** 创建所有 Agents 表（IF NOT EXISTS 语义，可安全重复调用；executeRaw 同步） */
+  init(): void {
     this.initDefTable();
     this.initConfigTable();
     this.ensurePurposeColumn();

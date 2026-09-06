@@ -55,14 +55,6 @@ import {
   GetPlanInput,
   GetPlanOutput,
 } from '@brian-agent/agent';
-import type { OrchestrationVisualizationAccess } from '@brian-agent/orchestration';
-import {
-  OrchestrationVisualizationContext,
-  VisualizeAgentDAGInput,
-  VisualizeAgentDAGOutput,
-  VisualizeWorkFlowInput,
-  VisualizeWorkFlowOutput,
-} from '@brian-agent/orchestration';
 import {
   VisualizationContext,
   GetVisualizedMessagesInput,
@@ -118,7 +110,6 @@ interface CitationData {
 export class VisualizationService {
   constructor(
     private readonly relationDb: RelationDBAccess,
-    private readonly orchestrationVisualization: OrchestrationVisualizationAccess,
     private readonly agentExecution: AgentExecutionAccess,
     private readonly agentLibrary: AgentLibraryAccess,
     private readonly agentContext: AgentContextAccess,
@@ -302,75 +293,15 @@ export class VisualizationService {
 
   async soVisualizedAgentDAG(input: GetVisualizedAgentDAGInput, output: GetVisualizedAgentDAGOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const config = await this.getConfig();
-    const resolveContent = input.resolve_content ?? (config.resolve_content_by_default === 1);
-
-    const dagOut = new VisualizeAgentDAGOutput();
-    try {
-      await this.orchestrationVisualization.visualizeAgentDAG(
-        Object.assign(new VisualizeAgentDAGInput(), { work_id: input.work_id }),
-        dagOut,
-        new OrchestrationVisualizationContext(),
-      );
-    } catch (err) {
-      this.logWarn('visualizeAgentDAG failed', err);
-      output.dag = { error: 'visualizeAgentDAG failed', work_id: input.work_id };
-      return true;
-    }
-
-    const dagStructure = dagOut.agent_dag_structure;
-    if (!resolveContent) {
-      output.dag = dagStructure as Record<string, unknown>;
-      return true;
-    }
-
-    const enriched = this.deepClone(dagStructure) as Record<string, unknown>;
-    await this.enrichAgentDAG(enriched, config);
-
-    output.dag = enriched;
+    // V1 编排可视化已移除（Orchestration 模块删除）；agent DAG 数据由前端事件流归约
+    output.dag = { nodes: [], edges: [] };
     return true;
   }
 
   async soVisualizedWorkFlow(input: GetVisualizedWorkFlowInput, output: GetVisualizedWorkFlowOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const wfOut = new VisualizeWorkFlowOutput();
-    try {
-      await this.orchestrationVisualization.visualizeWorkFlow(
-        Object.assign(new VisualizeWorkFlowInput(), { work_id: input.work_id }),
-        wfOut,
-        new OrchestrationVisualizationContext(),
-      );
-    } catch (err) {
-      this.logWarn('visualizeWorkFlow failed', err);
-      output.timeline = { error: 'visualizeWorkFlow failed', work_id: input.work_id };
-      return true;
-    }
-
-    const rawTimeline = wfOut.workflow_timeline as Record<string, unknown>;
-    const enriched = this.deepClone(rawTimeline) as Record<string, unknown>;
-    const phases = (enriched.phases ?? enriched.timeline ?? []) as Array<Record<string, unknown>>;
-
-    for (const phase of phases) {
-      const phaseName = String(phase.phase ?? phase.name ?? '').toUpperCase();
-
-      try {
-        if (phaseName === 'PLANNING' || phaseName === 'PLAN') {
-          await this.enrichPlanningPhase(phase);
-        } else if (phaseName === 'BUILD_AGENT_DAG' || phaseName === 'BUILD') {
-          await this.enrichBuildPhase(phase);
-        } else if (phaseName === 'EXECUTING' || phaseName === 'EXECUTE') {
-          await this.enrichExecutingPhase(phase);
-        } else if (phaseName === 'WRITING' || phaseName === 'WRITE') {
-          await this.enrichWritingPhase(phase);
-        } else if (phaseName === 'EVALUATING' || phaseName === 'EVALUATE') {
-          await this.enrichEvaluatingPhase(phase);
-        }
-      } catch (err) {
-        this.logWarn(`enrich ${phaseName} phase failed`, err);
-      }
-    }
-
-    output.timeline = enriched;
+    // V1 编排可视化已移除；timeline 由前端事件流归约
+    output.timeline = { events: [] } as Record<string, unknown>;
     return true;
   }
 

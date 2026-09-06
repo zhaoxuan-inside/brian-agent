@@ -25,7 +25,7 @@ import type {
   SkillCoreAccess,
   MCPCoreAccess,
 } from '@brian-agent/core';
-import type { AgentBuilderAccess as AgentBuilderAccessA } from '@brian-agent/agent';
+import type { AgentBuilderAccess as AgentBuilderAccessA, AgentLibraryAccess } from '@brian-agent/agent';
 import {
   IdGenerator,
   Operator,
@@ -43,10 +43,14 @@ import {
 } from '@brian-agent/base';
 import {
   AgentBuilderContext,
+  AgentLibraryContext,
+  GetAgentInput,
+  GetAgentOutput,
   BuildAgentInput,
   BuildAgentOutput,
   parseJsonObject,
 } from '@brian-agent/agent';
+import { DEFAULT_BUDGET_TOTAL } from '../../shared/types';
 import {
   SoulCoreContext,
   MatchSoulInput,
@@ -72,10 +76,21 @@ import {
   ConfigAgentDefInput,
   ConfigAgentDefOutput,
   AgentDefRecord,
+  AgentMode,
+  AgentDefStatus,
+  AgentMatchLayer,
   SnapshotToolEntry,
   RUNTIME_AGENT_DEF_TABLE,
   RUNTIME_AGENTS_CONFIG_TABLE,
 } from '../domain/types';
+import { SoSoulContentInput, SoSoulContentOutput } from '@brian-agent/core';
+
+/** 旧 agent 资产字段子集（构建落账取名/用途用） */
+interface AgentRecordLike {
+  agent_id: string;
+  agent_name?: string;
+  agent_purpose?: string;
+}
 
 /** 默认签名相似度阈值 */
 const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
@@ -86,6 +101,8 @@ const LLM_SCORE_THRESHOLD = 0.7;
 /** 组件匹配依赖组合（收敛构造参数） */
 export interface AgentDefComponents {
   agentBuilder: AgentBuilderAccessA;
+  /** 旧 agent 资产查询（构建落账取名/用途用；缺省回退签名） */
+  agentLibrary?: AgentLibraryAccess;
   llmCore?: LLMCoreAccess;
   soulCore?: SoulCoreAccess;
   skillCore?: SkillCoreAccess;
@@ -131,14 +148,14 @@ export class AgentDefService {
     const exact = this.soExactMatch(defs, input.task_content, input.task_domain);
     if (exact) {
       output.def_id = exact.id;
-      output.matched_by = 'exact';
+      output.matched_by = AgentMatchLayer.Exact;
       output.def = exact;
       return true;
     }
     const signatureHit = this.soSignatureMatch(defs, input.task_content, input.task_domain);
     if (signatureHit) {
       output.def_id = signatureHit.id;
-      output.matched_by = 'signature';
+      output.matched_by = AgentMatchLayer.Signature;
       output.def = signatureHit;
       return true;
     }
@@ -146,19 +163,19 @@ export class AgentDefService {
       const llmHit = await this.soLLMRankedDef(defs, input.task_content);
       if (llmHit) {
         output.def_id = llmHit.id;
-        output.matched_by = 'llm';
+        output.matched_by = AgentMatchLayer.LLM;
         output.def = llmHit;
         return true;
       }
     }
     const built = await this.buildNewDef(input);
     output.def_id = built.id;
-    output.matched_by = 'built';
+    output.matched_by = AgentMatchLayer.Built;
     output.def = built;
     return true;
   }
 
-  /** 查询 active 定义（数据处理） */
+  /** 查询 active 定义（逻辑控制） */
   private async soActiveDefs(): Promise<AgentDefRecord[]> {
     const rows = await this.relationDb.select(RUNTIME_AGENT_DEF_TABLE, {
       conditions: [{ field: 'status', operator: Operator.EQ, value: 'active' }],
@@ -171,7 +188,7 @@ export class AgentDefService {
     return {
       id: String(row.id),
       name: String(row.name),
-      mode: String(row.mode ?? 'primary') as AgentDefRecord['mode'],
+      mode: String(row.mode ?? AgentMode.Primary) as AgentDefRecord['mode'],
       agent_ref: String(row.agent_ref ?? ''),
       task_signature: String(row.task_signature ?? ''),
       agent_purpose: String(row.agent_purpose ?? ''),
@@ -180,8 +197,8 @@ export class AgentDefService {
       soul_id: String(row.soul_id ?? ''),
       tools_json: String(row.tools_json ?? ''),
       temperature: row.temperature === null || row.temperature === undefined ? undefined : Number(row.temperature),
-      budget_total: Number(row.budget_total ?? 60),
-      status: String(row.status ?? 'active') as AgentDefRecord['status'],
+      budget_total: Number(row.budget_total ?? DEFAULT_BUDGET_TOTAL),
+      status: String(row.status ?? AgentDefStatus.Active) as AgentDefRecord['status'],
       created: Number(row.created),
       updated: Number(row.updated),
     };
@@ -217,7 +234,7 @@ export class AgentDefService {
     return `[${d}] ${(taskContent ?? '').slice(0, 256)}`;
   }
 
-  /** L3 LLM 打分命中（逻辑控制；builtin.agent_match 渲染 + execLLM） */
+  /** L3 LLM 打分命中（逻辑控制；经 LLMAccess.execLLM，Prompt 为 builtin.agent_match 渲染） */
   private async soLLMRankedDef(defs: AgentDefRecord[], taskContent: string): Promise<AgentDefRecord | null> {
     const template = getBuiltinTemplate(PROMPT_IDS.agentMatch) ?? '';
     const candidates = defs
@@ -274,16 +291,14 @@ export class AgentDefService {
     return ctx;
   }
 
-  /** 从旧 agent 资产写声明定义（数据处理） */
+  /** 从旧 agent 资产写声明定义（逻辑控制；取名/用途经 AgentLibraryAccess，落账 id 取自插入记录） */
   private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord> {
-    const agentRow = await this.relationDb.selectOne('agent', [
-      { field: 'agent_id', operator: Operator.EQ, value: agentId },
-    ]);
-    const name = String(agentRow?.agent_name ?? 'agent');
-    const purpose = String(agentRow?.agent_purpose ?? '') || this.buildSignature(input.task_content, input.task_domain);
+    const asset = await this.soAgentAsset(agentId);
+    const name = asset?.agent_name || 'agent';
+    const purpose = String(asset?.agent_purpose ?? '') || this.buildSignature(input.task_content, input.task_domain);
     const record = newRecord({
       name: `w2-${name}-${IdGenerator.generate().slice(0, 8)}`,
-      mode: 'primary',
+      mode: AgentMode.Primary,
       agent_ref: agentId,
       task_signature: this.buildSignature(input.task_content, input.task_domain),
       agent_purpose: purpose,
@@ -291,17 +306,35 @@ export class AgentDefService {
       model_id: '',
       soul_id: '',
       tools_json: '',
-      budget_total: 60,
-      status: 'active',
+      budget_total: DEFAULT_BUDGET_TOTAL,
+      status: AgentDefStatus.Active,
     });
     await this.relationDb.insert(RUNTIME_AGENT_DEF_TABLE, record);
-    const row = await this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
-      { field: 'agent_ref', operator: Operator.EQ, value: agentId },
-    ]);
+    const defId = String(record[0].value);
+    const row = await this.soDefRowById(defId);
     if (!row) {
-      throw new NotFoundError('runtime_agent_def', agentId);
+      throw new NotFoundError(RUNTIME_AGENT_DEF_TABLE, defId);
     }
     return this.toDefRecord(row);
+  }
+
+  /** 查询旧 agent 资产（逻辑控制；经 AgentLibraryAccess，未注入返回 null） */
+  private async soAgentAsset(agentId: string): Promise<AgentRecordLike | null> {
+    if (!this.components.agentLibrary) {
+      return null;
+    }
+    const input = new GetAgentInput();
+    input.agent_id = agentId;
+    const output = new GetAgentOutput();
+    await this.components.agentLibrary.soAgent(input, output, new AgentLibraryContext());
+    return output.agents.find((agent) => agent.agent_id === agentId) ?? null;
+  }
+
+  /** 按 id 查询定义行（逻辑控制） */
+  private async soDefRowById(defId: string): Promise<Record<string, unknown> | null> {
+    return this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: defId },
+    ]);
   }
 
   // -------------------------------------------------------------------------
@@ -339,13 +372,10 @@ export class AgentDefService {
     return this.toDefRecord(row);
   }
 
-  /** Soul 内容解析（数据处理；**显式配置优先，否则按任务动态 matchSoul，不沿用历史绑定**） */
+  /** Soul 内容解析（逻辑控制；**显式配置优先，否则按任务动态 matchSoul，不沿用历史绑定**；内容统一经 SoulCoreAccess） */
   private async soSoulContent(def: AgentDefRecord, input: SoAgentSnapshotInput): Promise<string> {
     if (def.soul_id) {
-      const row = await this.relationDb.selectOne('soul', [
-        { field: 'id', operator: Operator.EQ, value: def.soul_id },
-      ]);
-      return String(row?.soul_content ?? '');
+      return this.soSoulContentById(def.soul_id);
     }
     if (!this.components.soulCore) {
       return '';
@@ -358,13 +388,22 @@ export class AgentDefService {
     matchInput.task_domain = input.task_domain;
     const matchOutput = new MatchSoulOutput();
     const ok = await this.components.soulCore.matchSoul(matchInput, matchOutput, new SoulCoreContext());
-    if (!ok || !matchOutput.soul_id) {
+    if (!ok) {
       return '';
     }
-    const row = await this.relationDb.selectOne('soul', [
-      { field: 'id', operator: Operator.EQ, value: matchOutput.soul_id },
-    ]);
-    return String(row?.soul_content ?? '');
+    return String(matchOutput.soul?.soul_content ?? '');
+  }
+
+  /** 按 id 读取 Soul 内容（逻辑控制；经 SoulCoreAccess.soSoulContent，禁止直查 soul 表） */
+  private async soSoulContentById(soulId: string): Promise<string> {
+    if (!this.components.soulCore) {
+      return '';
+    }
+    const input = new SoSoulContentInput();
+    input.soul_id = soulId;
+    const output = new SoSoulContentOutput();
+    await this.components.soulCore.soSoulContent(input, output, new SoulCoreContext());
+    return output.content;
   }
 
   /** 工具清单解析（数据处理；显式 tools_json 优先，否则动态 matchSkill/matchMCP） */
@@ -434,7 +473,7 @@ export class AgentDefService {
       tools.length ? `\n可用工具（经 skill_exec / mcp_exec 调用，按 id 传入）：\n${toolLines}` : '',
     ].join('\n');
     const system = renderTemplate(template, { soul: soulContent, task_directive: directive });
-    this.logger?.info?.('soAgentSnapshot.system', { head: system.slice(0, 400), template_id: def.prompt_template_id || 'builtin.identity' });
+    this.logger?.debug?.('soAgentSnapshot.system', { head: system.slice(0, 400), template_id: def.prompt_template_id || 'builtin.identity' });
     return system;
   }
 
@@ -458,20 +497,16 @@ export class AgentDefService {
       output.def_id = String(existing.id);
       return true;
     }
-    const record = newRecord(this.prepareDefPatch(input));
-    record.push({ field: 'name', value: input.name });
+    const record = newRecord({ ...this.prepareDefPatch(input), name: input.name });
     await this.relationDb.insert(RUNTIME_AGENT_DEF_TABLE, record);
-    const row = await this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
-      { field: 'name', operator: Operator.EQ, value: input.name },
-    ]);
-    output.def_id = String(row?.id ?? '');
+    output.def_id = String(record[0].value);
     return true;
   }
 
   /** 定义补丁组装（数据处理） */
   private prepareDefPatch(input: DeclareAgentInput): Record<string, unknown> {
     const patch: Record<string, unknown> = {
-      mode: input.mode ?? 'primary',
+      mode: input.mode ?? AgentMode.Primary,
       agent_ref: input.agent_ref ?? '',
       task_signature: input.task_signature ?? '',
       agent_purpose: input.agent_purpose ?? '',
@@ -480,8 +515,8 @@ export class AgentDefService {
       soul_id: input.soul_id ?? '',
       tools_json: input.tools_json ?? '',
       temperature: input.temperature,
-      budget_total: input.budget_total ?? 60,
-      status: input.status ?? 'active',
+      budget_total: input.budget_total ?? DEFAULT_BUDGET_TOTAL,
+      status: input.status ?? AgentDefStatus.Active,
     };
     return patch;
   }

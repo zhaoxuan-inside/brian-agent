@@ -117,3 +117,7 @@ SET 行为：接受 `regen_rate` 和 `prompt_template_id` 作为可选更新字�
 - `regen_rate`：校验 0-100 范围，越界抛 `ValidationError('regen_rate 必须在 0-100 之间')`。
 - `prompt_template_id`：非空时通过 Base 层 `PromptsAccess.getPrompt` 校验模板存在性，不存在抛 `ValidationError('prompt_template_id xxx 不存在')`（等价于 PRD 要求的「校验 soPrompt 中是否存在」）。
 - 测试用例同步：新增 `regen_rate` 越界/低于 0 拒绝、`prompt_template_id` 不存在拒绝用例；id 不硬编码，来自 SQLite 真实数据或 `IdGenerator.generate()`。
+
+## 落地差异（2026-09-05 · 绑定收权）
+
+Agent↔本模块组件的绑定关系收敛至 **Agent 模块 agent 表**（唯一事实源）：Core 的 agent_* 绑定表停止创建与读写；`match*` 为纯选择（Input 增 `bound_*` 传入既有绑定做确定性水合，不传则按任务选择，零持久化）；`opt*` 仅记 usage（键 (agent_id, component_id)，usage 表检测旧键自动重建）；`age*` 输出解绑候选（不删除）；绑定/解绑由 Agent 模块 `AgentLibrary.bindAgentComponent/unbindAgentComponent` 经评估链路（EvolutorAgent 评估 → AgentBuilder.optimizeAgent）执行。

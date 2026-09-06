@@ -23,6 +23,8 @@ export function initAgentSchema(db: RelationDBAccess): void {
       "agent_id" TEXT NOT NULL, "agent_name" TEXT NOT NULL DEFAULT '', "agent_purpose" TEXT NOT NULL DEFAULT '',
       "agent_type" TEXT NOT NULL DEFAULT 'WORKER', "strategy_id" TEXT NOT NULL DEFAULT '',
       "soul_id" TEXT NOT NULL DEFAULT '',
+      "skill_ids_json" TEXT NOT NULL DEFAULT '[]', "mcp_ids_json" TEXT NOT NULL DEFAULT '[]',
+      "prompt_template_id" TEXT NOT NULL DEFAULT '',
       "task_signature" TEXT NOT NULL DEFAULT '', "usage_count" INTEGER NOT NULL DEFAULT 0,
       "eval_score" INTEGER NOT NULL DEFAULT 50, "enable" INTEGER NOT NULL DEFAULT 1
     )`,

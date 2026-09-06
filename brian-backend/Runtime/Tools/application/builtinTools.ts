@@ -38,9 +38,10 @@ import {
   CDTCoreEvaluateOutput,
   CDTCoreContext,
 } from '@brian-agent/core';
-import type { ToolDef, ToolExecutionContext } from '../domain/types';
+import type { ToolDef, ToolExecutionContext, ToolResult } from '../domain/types';
+import { ToolResultStatus } from '../domain/types';
 
-/** CDT getContent 截断上限（与旧实现一致） */
+/** CDT getContent / evaluate 输出截断上限（与旧 AgentExecution.execCdtAction 语义一致） */
 const CDT_CONTENT_MAX = 8000;
 
 /** 内置工具 Provider 依赖 */
@@ -48,6 +49,8 @@ export interface BuiltinToolDeps {
   skillAccess?: SkillAccess;
   mcpAccess?: MCPAccess;
   cdtCore?: CDTCoreAccess;
+  /** 子代理委派入口（RunGatewayAccess.submitRun 适配；缺省 delegate 工具 fail-loud） */
+  runGateway?: { submitRun(input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string }): Promise<void> };
 }
 
 /** skill_exec 工具 */
@@ -59,7 +62,6 @@ export function skillExecTool(deps: BuiltinToolDeps): ToolDef<{ skill_id: string
       skill_id: z.string(),
       params: z.record(z.unknown()).optional(),
     }),
-    max_output: CDT_CONTENT_MAX,
     async execute(args, _ctx: ToolExecutionContext) {
       if (!deps.skillAccess) {
         throw new ValidationError('Skill Provider 未注入（skillAccess 为空）');
@@ -70,7 +72,7 @@ export function skillExecTool(deps: BuiltinToolDeps): ToolDef<{ skill_id: string
       if (!ok) {
         throw new ValidationError(output.error || 'Skill 执行失败');
       }
-      return { status: 'ok', output: stringifyToolOutput(output.result) };
+      return { status: ToolResultStatus.Ok, output: stringifyToolOutput(output.result) };
     },
   };
 }
@@ -85,7 +87,6 @@ export function mcpExecTool(deps: BuiltinToolDeps): ToolDef<{ mcp_id: string; to
       tool_name: z.string().optional(),
       params: z.record(z.unknown()).optional(),
     }),
-    max_output: CDT_CONTENT_MAX,
     async execute(args, _ctx: ToolExecutionContext) {
       if (!deps.mcpAccess) {
         throw new ValidationError('MCP Provider 未注入（mcpAccess 为空）');
@@ -100,7 +101,7 @@ export function mcpExecTool(deps: BuiltinToolDeps): ToolDef<{ mcp_id: string; to
       if (!ok) {
         throw new ValidationError(output.error || 'MCP 执行失败');
       }
-      return { status: 'ok', output: stringifyToolOutput(output.result) };
+      return { status: ToolResultStatus.Ok, output: stringifyToolOutput(output.result) };
     },
   };
 }
@@ -130,11 +131,11 @@ export function cdtBrowserTool(deps: BuiltinToolDeps): ToolDef<{ operation: stri
   };
 }
 
-/** CDT 操作分派（逻辑控制） */
+/** CDT 操作分派（逻辑控制；经 CDTCoreAccess 接入） */
 async function execCdtOperation(
   cdt: CDTCoreAccess,
   args: { operation: string; url?: string; selector?: string; text?: string; pixels?: number; to_bottom?: boolean; expression?: string; wait_for_load?: boolean },
-): Promise<{ status: 'ok'; output: string }> {
+): Promise<ToolResult> {
   const op = args.operation.trim().toLowerCase();
   switch (op) {
     case 'navigate':
@@ -155,7 +156,7 @@ async function execCdtOperation(
 }
 
 /** navigate（数据处理） */
-async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_load?: boolean }): Promise<{ status: 'ok'; output: string }> {
+async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_load?: boolean }): Promise<ToolResult> {
   if (!args.url) {
     throw new ValidationError('CDT navigate 需要 url 参数');
   }
@@ -168,11 +169,11 @@ async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_lo
   if (!ok) {
     throw new ValidationError(output.error || 'CDT navigate 执行失败');
   }
-  return { status: 'ok', output: `已打开页面：${args.url}` };
+  return { status: ToolResultStatus.Ok, output: `已打开页面：${args.url}` };
 }
 
 /** get_content（数据处理；evaluate body.innerText 截断） */
-async function cdtGetContent(cdt: CDTCoreAccess): Promise<{ status: 'ok'; output: string }> {
+async function cdtGetContent(cdt: CDTCoreAccess): Promise<ToolResult> {
   const output = new CDTCoreEvaluateOutput();
   const ok = await cdt.evaluate(
     Object.assign(new CDTCoreEvaluateInput(), { expression: 'document.body ? document.body.innerText : ""' }),
@@ -182,11 +183,11 @@ async function cdtGetContent(cdt: CDTCoreAccess): Promise<{ status: 'ok'; output
   if (!ok) {
     throw new ValidationError(output.error || 'CDT get_content 执行失败');
   }
-  return { status: 'ok', output: extractCdpText(output.result).slice(0, CDT_CONTENT_MAX) };
+  return { status: ToolResultStatus.Ok, output: extractCdpText(output.result).slice(0, CDT_CONTENT_MAX) };
 }
 
 /** type_text（数据处理） */
-async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?: string }): Promise<{ status: 'ok'; output: string }> {
+async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?: string }): Promise<ToolResult> {
   if (!args.selector || args.text === undefined) {
     throw new ValidationError('CDT type_text 需要 selector 与 text 参数');
   }
@@ -199,11 +200,11 @@ async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?:
   if (!ok) {
     throw new ValidationError(output.error || 'CDT type_text 执行失败');
   }
-  return { status: 'ok', output: `已在 ${args.selector} 输入文本` };
+  return { status: ToolResultStatus.Ok, output: `已在 ${args.selector} 输入文本` };
 }
 
 /** click（数据处理） */
-async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promise<{ status: 'ok'; output: string }> {
+async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promise<ToolResult> {
   if (!args.selector) {
     throw new ValidationError('CDT click 需要 selector 参数');
   }
@@ -216,11 +217,11 @@ async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promis
   if (!ok) {
     throw new ValidationError(output.error || 'CDT click 执行失败');
   }
-  return { status: 'ok', output: `已点击 ${args.selector}` };
+  return { status: ToolResultStatus.Ok, output: `已点击 ${args.selector}` };
 }
 
 /** scroll（数据处理） */
-async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?: boolean }): Promise<{ status: 'ok'; output: string }> {
+async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?: boolean }): Promise<ToolResult> {
   const output = new CDTCoreScrollOutput();
   const ok = await cdt.scroll(
     Object.assign(new CDTCoreScrollInput(), { pixels: args.pixels, toBottom: args.to_bottom }),
@@ -230,11 +231,11 @@ async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?
   if (!ok) {
     throw new ValidationError(output.error || 'CDT scroll 执行失败');
   }
-  return { status: 'ok', output: args.to_bottom ? '已滚动到页面底部' : `已滚动 ${args.pixels ?? 0} 像素` };
+  return { status: ToolResultStatus.Ok, output: args.to_bottom ? '已滚动到页面底部' : `已滚动 ${args.pixels ?? 0} 像素` };
 }
 
 /** evaluate（数据处理） */
-async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }): Promise<{ status: 'ok'; output: string }> {
+async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }): Promise<ToolResult> {
   if (!args.expression) {
     throw new ValidationError('CDT evaluate 需要 expression 参数');
   }
@@ -247,7 +248,7 @@ async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }): P
   if (!ok) {
     throw new ValidationError(output.error || 'CDT evaluate 执行失败');
   }
-  return { status: 'ok', output: extractCdpText(output.result).slice(0, CDT_CONTENT_MAX) };
+  return { status: ToolResultStatus.Ok, output: extractCdpText(output.result).slice(0, CDT_CONTENT_MAX) };
 }
 
 /** CDP evaluate 结果文本提取（数据处理） */

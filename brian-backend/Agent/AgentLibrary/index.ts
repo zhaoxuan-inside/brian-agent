@@ -12,6 +12,9 @@ export {
   GetAgentRuleInput, GetAgentRuleOutput,
   UpdateAgentRuleInput, UpdateAgentRuleOutput,
   ConfigAgentLibraryInput, ConfigAgentLibraryOutput,
+  BindAgentComponentInput, BindAgentComponentOutput,
+  UnbindAgentComponentInput, UnbindAgentComponentOutput,
+  ComponentKind,
   AGENT_TABLE, AGENT_USAGE_TABLE, AGENT_OPT_RULE_TABLE, AGENT_LIBRARY_CONFIG_TABLE,
   VALID_AGENT_TYPES,
 } from './domain/types';

@@ -8,8 +8,7 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
   SKILL_CORE_CONFIG_TABLE,
-  AGENT_SKILL_TABLE,
-  SKILL_OPT_RULE_TABLE,
+    SKILL_OPT_RULE_TABLE,
   SKILL_USAGE_TABLE,
 } from '../domain/types';
 
@@ -40,20 +39,8 @@ export class SkillCoreSchemaInitializer {
       )
     `);
 
-    // agent_skill 表（唯一约束：agent_id + skill_id）
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_SKILL_TABLE}" (
-        "id"          TEXT    NOT NULL PRIMARY KEY,
-        "created"     INTEGER NOT NULL,
-        "updated"     INTEGER NOT NULL,
-        "agent_id"    TEXT    NOT NULL,
-        "skill_id"    TEXT    NOT NULL,
-        UNIQUE("agent_id", "skill_id")
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${AGENT_SKILL_TABLE}_agent_id" ON "${AGENT_SKILL_TABLE}" ("agent_id")`,
-    );
+    // agent_skill 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 skill_ids_json；
+    // 旧库残留表不再读写）
 
     // skill_opt_rule 表
     this.relationDb.executeRaw(`
@@ -66,17 +53,21 @@ export class SkillCoreSchemaInitializer {
       )
     `);
 
-    // skill_usage 表（记录每次 agent_skill 的使用）
+    // skill_core_usage 表（评估依据；键为 (agent_id, skill_id)，与绑定解耦。
+    // 2026-09-05 由 'skill_usage' 更名，该表名归还 Base SkillProvider，消除双 schema 共表冲突）
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id"              TEXT    NOT NULL PRIMARY KEY,
-        "created"         INTEGER NOT NULL,
-        "agent_skill_id"  TEXT    NOT NULL,
-        "timestamp"       INTEGER NOT NULL
+        "id"          TEXT    NOT NULL PRIMARY KEY,
+        "created"     INTEGER NOT NULL,
+        "updated"     INTEGER NOT NULL,
+        "agent_id"    TEXT    NOT NULL,
+        "skill_id"    TEXT    NOT NULL,
+        "usage_date"  TEXT    NOT NULL,
+        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${SKILL_USAGE_TABLE}_agent_skill_id" ON "${SKILL_USAGE_TABLE}" ("agent_skill_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${SKILL_USAGE_TABLE}_agent_skill" ON "${SKILL_USAGE_TABLE}" ("agent_id", "skill_id")`,
     );
   }
 }

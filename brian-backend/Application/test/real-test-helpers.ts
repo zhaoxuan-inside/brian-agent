@@ -12,10 +12,6 @@ import {
   AgentLibraryAccess, AgentStrategyAccess, AgentBuilderAccess, AgentExecutionAccess,
   AgentContextAccess, PlannerAgentAccess, WriterAgentAccess, EvolutorAgentAccess,
 } from '@brian-agent/agent';
-import {
-  OrchestrationEntryAccess, OrchestrationStrategyAccess, OrchestrationExecutionAccess,
-  OrchestrationVisualizationAccess, JSONNodeAccess,
-} from '@brian-agent/orchestration';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -181,11 +177,6 @@ export interface RealTestContext {
   plannerAgent: PlannerAgentAccess;
   writerAgent: WriterAgentAccess;
   evolutorAgent: EvolutorAgentAccess;
-  orchestrationExecution: OrchestrationExecutionAccess;
-  orchestrationVisualization: OrchestrationVisualizationAccess;
-  jsonNode: JSONNodeAccess;
-  orchestrationStrategy: OrchestrationStrategyAccess;
-  orchestrationEntry: OrchestrationEntryAccess;
 }
 
 export async function setupRealTestEnvironment(): Promise<RealTestContext> {
@@ -227,11 +218,8 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const logAccess = new LogAccess(logRelationDb, logger);
   await logAccess.initialize();
 
-  // Handle table name conflict: Base/SkillProvider and Core/SkillCoreProvider both use
-  // 'skill_usage' table with different schemas. Add Core-layer columns to avoid conflict.
-  addColumnIfNotExists(relationDb, 'skill_usage', 'agent_skill_id', 'TEXT');
-  addColumnIfNotExists(relationDb, 'skill_usage', 'timestamp', 'INTEGER');
-  // Similarly handle potential soul table conflicts
+  // 2026-09-05：Core SkillCore usage 表更名 skill_core_usage（键 agent_id+skill_id），
+  // 与 Base SkillProvider 的 skill_usage（全局按天）不再共表，冲突 hack 移除
   addColumnIfNotExists(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
 
   // Use in-memory VectorDB for test isolation
@@ -279,20 +267,10 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, logger);
   await evolutorAgent.initialize();
 
-  const orchestrationExecution = new OrchestrationExecutionAccess(relationDb, agentBuilder, agentExecution, agentLibrary, infoCore, mqAccess, mqCore, logger);
-  await orchestrationExecution.initialize();
 
-  const orchestrationVisualization = new OrchestrationVisualizationAccess(relationDb, agentLibrary, agentExecution, logger);
-  await orchestrationVisualization.initialize();
 
-  const jsonNode = new JSONNodeAccess(relationDb, infoCore, agentBuilder, writerAgent, plannerAgent, evolutorAgent, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger);
-  await jsonNode.initialize();
 
-  const orchestrationStrategy = new OrchestrationStrategyAccess(relationDb, agentBuilder, plannerAgent, writerAgent, evolutorAgent, orchestrationExecution, jsonNode, mqCore, logger);
-  await orchestrationStrategy.initialize();
 
-  const orchestrationEntry = new OrchestrationEntryAccess(relationDb, infoCore, writerAgent, orchestrationStrategy, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger);
-  await orchestrationEntry.initialize();
 
   return {
     db: relationDb,
@@ -322,10 +300,5 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
     plannerAgent,
     writerAgent,
     evolutorAgent,
-    orchestrationExecution,
-    orchestrationVisualization,
-    jsonNode,
-    orchestrationStrategy,
-    orchestrationEntry,
   };
 }

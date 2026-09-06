@@ -82,3 +82,10 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
 
 - 单测：schema 错误回流文本；denied 配对；update_plan 不变量；delegate accepted 语义与子 run lane/预算；ask_user 挂起-恢复（答复=下条消息）。
 - 集成：mock LLM 调 skill_exec → 结果回流 → stop；并行 tool_calls 配对完整；截断生效。
+
+## 7. 落地差异（2026-09-05）
+
+1. **ToolResultStatus 枚举**：`ok/error/denied` 以 Enum 注册（有限值域唯一注册点）。
+2. **signal 贯穿边界（阶段4）**：`ToolExecutionContext.signal` 已随 execTool 入参传递，但 `ExecSkillInput/ExecMcpInput/CDTCore*Input` 暂无 signal 字段，内置工具执行中不支持中途取消（仅取消检查点在 LLM 流侧）；待 Base/Core Input 契约补 signal 后贯穿。
+3. **max_output**：skill_exec/mcp_exec 不再显式设置（走 ToolService 默认 8000）；`CDT_CONTENT_MAX` 仅用于 CDT 内容截断。
+4. **zod 内省收敛**：zod v3 `_def` 访问收敛至 `zodDef/zodShape` 辅助函数（单一逃逸口）。

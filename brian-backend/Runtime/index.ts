@@ -6,13 +6,16 @@
  * 事件总线投影。弃用 JSONNode workflow 与 ExecutionRule 状态机。
  *
  * 阶段 0 骨架：shared（IterationBudget · AbortReason · LLMEvent re-export）。
- * 阶段 1 起：Session / Runs / Loop / Tools / Agents / Bus 六子模块
+ * 子模块：Session / Runs / Loop / Tools / Agents（事件流功能由 StreamProvider 承载，2026-09-05）
  * （见各子 PRD）。
  */
 
-// shared：预算 · 取消 · LLMEvent 再导出
-export { IterationBudget, BUDGET_GRACE_MARKER } from './shared/IterationBudget';
+// shared：预算 · 取消 · run 协议枚举 · LLMEvent/BusinessEvent 再导出
+export { IterationBudget } from './shared/IterationBudget';
 export type { BudgetSpec } from './shared/IterationBudget';
+export { AbortReason, RunPhase, DEFAULT_BUDGET_TOTAL } from './shared/types';
+export { BusinessEvent, businessEventMsgType, SseTransportEvent } from '@brian-agent/base';
+export type { BusinessEventKind } from '@brian-agent/base';
 export type {
   LLMEvent,
   LLMMessage,
@@ -34,6 +37,7 @@ export {
   AbortLoopTurnOutput,
   ConfigLoopInput,
   ConfigLoopOutput,
+  LoopStopReason,
 } from './Loop';
 
 // Tools：工具框架（zod 校验回流 · 编排原语工具化）（阶段2）
@@ -64,6 +68,9 @@ export { zodToJSONSchema } from './Tools';
 export { AgentDefAccess, AgentsSchemaInitializer } from './Agents';
 export {
   AgentDefContext,
+  AgentMode,
+  AgentDefStatus,
+  AgentMatchLayer,
   MatchAgentDefInput,
   MatchAgentDefOutput,
   SoAgentSnapshotInput,
@@ -100,38 +107,15 @@ export {
   SoRunStatusOutput,
   ConfigRunsInput,
   ConfigRunsOutput,
+  QueueMode,
+  RunStatus,
   RUNTIME_RUN_TABLE,
   RUNTIME_RUNS_CONFIG_TABLE,
 } from './Runs';
 export type {
-  QueueMode,
-  RunStatus,
   RunRecord,
 } from './Runs';
 
-// Bus：事件总线（持久化事件 · 重放 · durable 投影）（阶段1）
-export { EventBusAccess, BusSchemaInitializer } from './Bus';
-export {
-  EventBusContext,
-  PublishEventInput,
-  PublishEventOutput,
-  SoEventReplayInput,
-  SoEventReplayOutput,
-  RegisterProjectionInput,
-  RegisterProjectionOutput,
-  UnregisterProjectionInput,
-  UnregisterProjectionOutput,
-  ConfigBusInput,
-  ConfigBusOutput,
-  RUNTIME_EVENT_TABLE,
-  RUNTIME_BUS_CONFIG_TABLE,
-} from './Bus';
-export type {
-  EventType,
-  RuntimeEvent,
-  EventSubscriber,
-  EventSubscription,
-} from './Bus';
 
 // Session：会话 · 消息/Part · 运行忙锁（阶段1）
 export { SessionAccess, SessionSchemaInitializer } from './Session';
@@ -147,20 +131,18 @@ export {
   UpdatePartOutput,
   SoMessagesInput,
   SoMessagesOutput,
-  EnsureRunStateInput,
-  EnsureRunStateOutput,
-  ReleaseRunStateInput,
-  ReleaseRunStateOutput,
   ConfigSessionInput,
   ConfigSessionOutput,
+  MessageRole,
+  SessionStatus,
+  PartType,
+  PartStatus,
   RUNTIME_SESSION_TABLE,
   RUNTIME_MESSAGE_TABLE,
   RUNTIME_MESSAGE_PART_TABLE,
   RUNTIME_SESSION_CONFIG_TABLE,
 } from './Session';
 export type {
-  PartType,
-  PartStatus,
   MessageWithParts,
   PartRecord,
 } from './Session';

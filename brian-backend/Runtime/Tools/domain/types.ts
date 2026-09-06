@@ -15,13 +15,26 @@ import type { z } from 'zod';
 export class ToolContext extends Context {}
 
 // ---------------------------------------------------------------------------
+// 枚举（有限值域唯一注册点）
+// ---------------------------------------------------------------------------
+
+/** 工具执行结果状态（配对语义：每个 toolCall 必有 result） */
+export enum ToolResultStatus {
+  Ok = 'ok',
+  /** 校验失败/执行失败（模型可读回流，不抛错） */
+  Error = 'error',
+  /** 权限拒绝（阶段3 权限门接入） */
+  Denied = 'denied',
+}
+
+// ---------------------------------------------------------------------------
 // 工具定义契约
 // ---------------------------------------------------------------------------
 
 /** 工具执行结果（配对语义：每个 toolCall 必有 result） */
 export interface ToolResult {
-  /** ok | error | denied（denied 为权限拒绝，阶段3 权限门接入） */
-  status: 'ok' | 'error' | 'denied';
+  /** 结果状态 */
+  status: ToolResultStatus;
   /** 结果文本（截断后；模型可见） */
   output: string;
   /** 执行耗时（毫秒） */
@@ -36,6 +49,8 @@ export interface ToolExecutionContext {
   session_key?: string;
   /** 取消信号（真取消贯穿工具执行） */
   signal?: AbortSignal;
+  /** 业务事件出口（工具经此上报业务事件，如 plan.updated；由 Loop 接 Report→StreamProvider） */
+  emitEvent?: (type: string, payload: unknown) => void;
 }
 
 /**
@@ -100,6 +115,8 @@ export class ExecToolInput extends Input {
   session_key?: string;
   /** 取消信号 */
   signal?: AbortSignal;
+  /** 业务事件出口（Loop 接 Report→StreamProvider） */
+  emitEvent?: (type: string, payload: unknown) => void;
 }
 
 /** execTool 出参（配对结果） */
@@ -130,7 +147,7 @@ export class SoToolsOutput extends Output {
 
 /** registerBuiltinTools 入参（幂等；内置工具经注入的 Provider 执行） */
 export class RegisterBuiltinToolsInput extends Input {
-  /** 启用的内置工具（缺省全部：skill_exec/mcp_exec/cdt_browser） */
+  /** 启用的内置工具（缺省全部：skill_exec/mcp_exec/cdt_browser/update_plan/delegate） */
   enabled?: string[];
 }
 

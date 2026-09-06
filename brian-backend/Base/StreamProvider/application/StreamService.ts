@@ -8,6 +8,8 @@
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import type { Logger } from '../../shared/aop/AopProxy';
+import { businessEventMsgType } from '../../shared/base/BusinessEvent';
+import { ValidationError } from '../../shared/errors';
 import {
   BrianSSEMessage,
   RegisterStreamInput,
@@ -22,10 +24,15 @@ import {
   StreamConfigRecord,
   StreamWriter,
   STREAM_CONFIG_TABLE,
+  STREAM_EVENT_TABLE,
+  PushEventToEndpointOutput,
+  ReplayEndpointEventsOutput,
 } from '../domain/types';
 
 interface ActiveSessionStream {
   sessionId: string;
+  /** SSE 端点 ID（registerStream 生成；前端请求时携带，按 ID 定位端点） */
+  endpointId: string;
   writer: StreamWriter;
   heartbeatTimer: NodeJS.Timeout | null;
   seq: number;
@@ -36,6 +43,12 @@ interface ActiveSessionStream {
 
 export class StreamService {
   private readonly sessions = new Map<string, ActiveSessionStream>();
+  /** SSE 端点 ID → session_id（Report 携带端点 ID 上报时按此定位具体连接） */
+  private readonly endpoints = new Map<string, string>();
+  /** 事件 seq 进程内缓存（每 session_key 严格递增；DB MAX 为持久事实源） */
+  private readonly eventSeqCache = new Map<string, number>();
+  /** 每 session_key 发布串行链（保证 fire-and-forget 场景下 seq 与投递顺序一致） */
+  private readonly eventChains = new Map<string, Promise<void>>();
   private configCache: StreamConfigRecord | null = null;
 
   constructor(
@@ -70,6 +83,134 @@ export class StreamService {
   }
 
   /**
+   * 按端点 ID 推送业务事件（事件流的保存 + 在线投递；Report 携带端点 ID 调用）。
+   *
+   * - 持久化：事件写入 stream_event（每 session_key 严格递增 seq，发布按会话串行化保证顺序）；
+   * - 投递：按端点 ID 定位 SSE 连接，经 v1 兼容格式化映射后写帧；端点不存在时仅持久化（供重放）；
+   * - 未映射的事件类型（如 run.accepted/part.created）仅持久化（审计），不产生 SSE 帧。
+   */
+  async publishEvent(
+    input: { endpoint_id: string; session_key: string; run_id?: string; type: string; payload: unknown },
+    output: PushEventToEndpointOutput,
+  ): Promise<boolean> {
+    if (!input.endpoint_id || !input.session_key || !input.type) {
+      throw new ValidationError('endpoint_id/session_key/type 不能为空');
+    }
+    // 每 session_key 串行化：fire-and-forget 调用下保证 seq 分配与帧写入顺序一致
+    const prev = this.eventChains.get(input.session_key) ?? Promise.resolve();
+    const current = prev.then(() => this.publishEventInternal(input, output));
+    this.eventChains.set(input.session_key, current.catch(() => undefined));
+    await current;
+    return true;
+  }
+
+  /** 发布内部实现（逻辑控制）：seq 分配 → 落库 → 端点投递 */
+  private async publishEventInternal(
+    input: { endpoint_id: string; session_key: string; run_id?: string; type: string; payload: unknown },
+    output: PushEventToEndpointOutput,
+  ): Promise<void> {
+    const seq = await this.nextEventSeq(input.session_key);
+    const now = IdGenerator.now();
+    try {
+      await this.relationDb.insert(STREAM_EVENT_TABLE, [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'session_key', value: input.session_key },
+        { field: 'run_id', value: input.run_id ?? '' },
+        { field: 'seq', value: seq },
+        { field: 'event_type', value: input.type },
+        { field: 'payload_json', value: JSON.stringify(input.payload ?? {}) },
+        { field: 'ts', value: now },
+      ]);
+    } catch {
+      // 事件落库失败不影响在线投递（审计缺一条，优先保证流不中断）
+    }
+    output.seq = seq;
+    output.delivered = this.writeEventToEndpoint(input.endpoint_id, input.type, input.payload);
+  }
+
+  /** 分配下一条事件 seq（逻辑控制；进程缓存 + DB MAX 持久事实源） */
+  private async nextEventSeq(sessionKey: string): Promise<number> {
+    const cached = this.eventSeqCache.get(sessionKey);
+    if (cached !== undefined) {
+      this.eventSeqCache.set(sessionKey, cached + 1);
+      return cached + 1;
+    }
+    const rows = this.relationDb.queryRaw<{ max_seq: number }>(
+      `SELECT COALESCE(MAX("seq"), 0) AS max_seq FROM "${STREAM_EVENT_TABLE}" WHERE "session_key" = ?`,
+      [sessionKey],
+    );
+    const next = (rows?.[0]?.max_seq ?? 0) + 1;
+    this.eventSeqCache.set(sessionKey, next);
+    return next;
+  }
+
+  /** 按端点 ID 写帧（逻辑控制；返回是否实际投递） */
+  private writeEventToEndpoint(endpointId: string, type: string, payload: unknown): boolean {
+    const sessionId = this.endpoints.get(endpointId);
+    if (!sessionId) {
+      return false;
+    }
+    const session = this.sessions.get(sessionId);
+    if (!session || session.closed) {
+      return false;
+    }
+    this.writeFrame(session, this.formatEventFrame(type, payload));
+    return true;
+  }
+
+  /** v2 原生帧组装（数据处理）：event = BusinessEvent 协议名，msg_type 按语义映射，data = 协议载荷 */
+  private formatEventFrame(type: string, payload: unknown): BrianSSEMessage {
+    return {
+      msg_id: IdGenerator.generate(),
+      seq: 0,
+      session_id: '',
+      interact_id: '',
+      work_id: '',
+      event: type,
+      msg_type: businessEventMsgType(type as never),
+      chunk_length: 1,
+      accumulated_length: 0,
+      timestamp: Date.now(),
+      data: payload ?? {},
+    };
+  }
+
+  /**
+   * 端点事件重放（断线恢复）：after_seq 之后按 seq 升序重放到端点（保存的事件流）。
+   */
+  async replayEvents(
+    input: { endpoint_id: string; session_key: string; after_seq?: number },
+    output: ReplayEndpointEventsOutput,
+  ): Promise<boolean> {
+    if (!input.endpoint_id || !input.session_key) {
+      throw new ValidationError('endpoint_id/session_key 不能为空');
+    }
+    const after = input.after_seq ?? 0;
+    const rows = this.relationDb.queryRaw<{ seq: number; event_type: string; payload_json: string }>(
+      `SELECT "seq", "event_type", "payload_json" FROM "${STREAM_EVENT_TABLE}"
+       WHERE "session_key" = ? AND "seq" > ? ORDER BY "seq" ASC`,
+      [input.session_key, after],
+    );
+    let lastSeq = after;
+    for (const row of rows ?? []) {
+      const seq = Number(row.seq);
+      let payload: unknown = {};
+      try {
+        payload = JSON.parse(row.payload_json);
+      } catch {
+        payload = {};
+      }
+      this.writeEventToEndpoint(input.endpoint_id, String(row.event_type), payload);
+      lastSeq = seq;
+      output.replayed += 1;
+    }
+    output.last_seq = lastSeq;
+    return true;
+  }
+
+  /**
    * 注册 / 接管某个 session 的 SSE 连接
    */
   async registerStream(
@@ -90,8 +231,10 @@ export class StreamService {
     const cfg = await this.getConfig();
     const heartbeatMs = cfg.sse_heartbeat_interval_ms || 15000;
 
+    const endpointId = input.endpoint_id || IdGenerator.generate();
     const streamItem: ActiveSessionStream = {
       sessionId: session_id,
+      endpointId,
       writer,
       heartbeatTimer: null,
       seq: 0,
@@ -99,6 +242,7 @@ export class StreamService {
       onClose,
       closed: false,
     };
+    this.endpoints.set(endpointId, session_id);
 
     // 启动心跳定时器
     streamItem.heartbeatTimer = setInterval(() => {
@@ -118,6 +262,7 @@ export class StreamService {
 
     this.sessions.set(session_id, streamItem);
     output.client_id = session_id;
+    output.endpoint_id = endpointId;
     output.registered = true;
 
     this.logger?.debug?.(`Registered SSE stream for session ${session_id}`, { source: 'StreamProvider' });

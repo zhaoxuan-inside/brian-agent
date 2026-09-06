@@ -8,10 +8,10 @@
  * - 终止条件 = finish reason 无 tool_calls；预算 = IterationBudget（超支宽限收尾）；
  * - 真取消：run 级 AbortController（abortLoopTurn / 外部 signal），AbortedError
  *   直接收敛 stop_reason='aborted'，不触发任何降级；
- * - 事件经 EventBus（副作用唯一出口）：part.delta / part.created / tool.launch /
- *   tool.result / run.status。
+ * - 双通道副作用：持久化事件经 EventBus（重放/审计事实源）；业务事件经 Report
+ *   （StreamProvider 在线上报，无流会话静默降级 no-op）。
  *
- * 每 5 参方法 ≤40 行；逻辑控制（handleXxx/runXxx）与数据处理（prepareXxx/soXxx）拆分。
+ * 每 5 参方法 ≤40 行；逻辑控制（I/O 编排）与数据处理（纯加工）拆分。
  */
 
 import type {
@@ -22,20 +22,20 @@ import type {
   LLMMessage,
   ParsedToolCall,
   LLMEvent,
-  AbortReasonKind,
 } from '@brian-agent/base';
+
+import { BusinessEvent } from '@brian-agent/base';
 import type { ToolSpecJson } from '../../Tools';
 import {
-  Context,
   LLMContext,
   ExecLLMEventsInput,
   ExecLLMEventsOutput,
   AbortedError,
   ValidationError,
+  IdGenerator,
 } from '@brian-agent/base';
-import { IterationBudget } from '../../shared/IterationBudget';
+import { DEFAULT_BUDGET_TOTAL, IterationBudget, AbortReason, RunPhase } from '../../shared/types';
 import type { SessionAccess } from '../../Session';
-import type { EventBusAccess } from '../../Bus';
 import type { ToolAccess } from '../../Tools';
 import {
   ExecAgentLoopInput,
@@ -45,6 +45,7 @@ import {
   ConfigLoopInput,
   ConfigLoopOutput,
   LoopContext,
+  LoopStopReason,
   LoopQueue,
 } from '../domain/types';
 import {
@@ -58,12 +59,11 @@ import {
   SoMessagesOutput,
   PartRecord,
   MessageWithParts,
+  MessageRole,
+  PartType,
+  PartStatus,
+  SessionContext,
 } from '../../Session';
-import {
-  PublishEventInput,
-  PublishEventOutput,
-  EventBusContext,
-} from '../../Bus';
 import {
   ExecToolInput,
   ExecToolOutput,
@@ -71,9 +71,6 @@ import {
   SoToolsOutput,
   ToolContext,
 } from '../../Tools';
-
-/** 默认预算 total */
-const DEFAULT_BUDGET_TOTAL = 60;
 
 /** 循环内轮读取消息上限（soMessages limit） */
 const LOOP_MESSAGE_LIMIT = 100;
@@ -94,7 +91,7 @@ interface LoopRunContext {
   budget: IterationBudget;
   controller: AbortController;
   specs: ToolSpecJson[];
-  stopReason: 'stop' | 'aborted' | 'error' | 'budget';
+  stopReason: LoopStopReason;
   result: string;
   error?: string;
   iterations: number;
@@ -102,6 +99,12 @@ interface LoopRunContext {
   outputTokens: number;
   lastMessageId?: string;
   finalTurn: boolean;
+  /** 业务事件在线上报通道（无流会话为 undefined，pushBusinessEvent no-op） */
+  report?: Report;
+  /** 衡量对象（方法内日志经 Metrics 保存——Metrics 封装 LogProvider 调用接口） */
+  metrics?: Metrics;
+  /** 权限门（工具执行前询问；Runs 注入） */
+  permissionGate?: { wait(input: { permission_id: string }): Promise<{ approved: boolean }> };
   /** part.delta 合帧缓冲（修复③：50ms 合并降频，delta 拼接语义不变） */
   deltaBuffer: { text: string; reasoning: string; timer?: ReturnType<typeof setTimeout> };
 }
@@ -109,7 +112,7 @@ interface LoopRunContext {
 /** 单轮 LLM 调用结果（内部） */
 interface LLMTurnResult {
   ok: boolean;
-  verdict?: 'stop' | 'aborted' | 'error' | 'budget';
+  verdict?: LoopStopReason;
   text?: string;
   reasoning?: string;
   finishReason?: string;
@@ -130,11 +133,12 @@ export class AgentLoopService {
   constructor(
     private readonly llm: LLMAccess,
     private readonly session: SessionAccess,
-    private readonly bus: EventBusAccess,
     private readonly tool: ToolAccess,
     private readonly logger?: Logger,
     /** 会话级队列（steering/followup；RunGateway 注入，鸭子接口不反向依赖） */
     private readonly queue?: LoopQueue,
+    /** 权限门（Runs 注入；工具执行前询问，permission.asked → 应答 → 继续/拒绝） */
+    private readonly permissionGate?: { wait(input: { permission_id: string }): Promise<{ approved: boolean }> },
   ) {}
 
   /** 初始化组件 */
@@ -154,11 +158,11 @@ export class AgentLoopService {
   // -------------------------------------------------------------------------
 
   /** 执行两级 agent 循环（逻辑控制；5 参公开边界） */
-  async execAgentLoop(input: ExecAgentLoopInput, output: ExecAgentLoopOutput, _context: LoopContext, _metrics?: Metrics, _report?: Report,
+  async execAgentLoop(input: ExecAgentLoopInput, output: ExecAgentLoopOutput, _context: LoopContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     this.validateLoopInput(input);
-    const ctx = await this.prepareLoopContext(input);
+    const ctx = await this.prepareLoopContext(input, metrics, report);
     try {
       await this.runOuterLoop(ctx);
       this.fillLoopOutput(output, ctx);
@@ -176,7 +180,7 @@ export class AgentLoopService {
   }
 
   /** 组装循环运行上下文（逻辑控制）：取消接线 · 预算 · 工具规格 · 用户消息 */
-  private async prepareLoopContext(input: ExecAgentLoopInput): Promise<LoopRunContext> {
+  private async prepareLoopContext(input: ExecAgentLoopInput, metrics?: Metrics, report?: Report): Promise<LoopRunContext> {
     const budget = new IterationBudget(input.budget ?? { total: this.defaultBudgetTotal });
     const controller = new AbortController();
     this.runControllers.set(input.run_id, controller);
@@ -184,8 +188,8 @@ export class AgentLoopService {
       this.wireExternalSignal(input, controller);
       const specs = await this.soLoopToolSpecs(input.tools);
       await this.persistUserMessage(input);
-      await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key }, 'start');
-      return this.prepareContextFields(input, budget, controller, specs);
+      await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key, report }, RunPhase.Start);
+      return this.prepareContextFields(input, budget, controller, specs, metrics, report);
     } catch (err) {
       this.runControllers.delete(input.run_id);
       throw err;
@@ -198,6 +202,8 @@ export class AgentLoopService {
     budget: IterationBudget,
     controller: AbortController,
     specs: ToolSpecJson[],
+    metrics?: Metrics,
+    report?: Report,
   ): LoopRunContext {
     return {
       runId: input.run_id,
@@ -211,28 +217,31 @@ export class AgentLoopService {
       budget,
       controller,
       specs,
-      stopReason: 'stop',
+      stopReason: LoopStopReason.Stop,
       result: '',
       iterations: 0,
       inputTokens: 0,
       outputTokens: 0,
       finalTurn: false,
+      metrics,
+      report,
       deltaBuffer: { text: '', reasoning: '' },
     };
   }
 
-  /** 外部 signal → run controller 接线（逻辑控制） */
+  /** 外部 signal → run controller 接线（逻辑控制；未知原因归一为 user） */
   private wireExternalSignal(input: ExecAgentLoopInput, controller: AbortController): void {
     if (!input.signal) {
       return;
     }
     if (input.signal.aborted) {
-      controller.abort('user');
+      controller.abort(AbortReason.User);
       return;
     }
     input.signal.addEventListener('abort', () => {
-      const reason = typeof input.signal?.reason === 'string' ? input.signal.reason : 'user';
-      controller.abort(reason as AbortReason);
+      const reason = input.signal?.reason as AbortReason | undefined;
+      const known = reason && Object.values(AbortReason).includes(reason) ? reason : AbortReason.User;
+      controller.abort(known);
     }, { once: true });
   }
 
@@ -240,13 +249,13 @@ export class AgentLoopService {
   private async persistUserMessage(input: ExecAgentLoopInput): Promise<void> {
     const add = new AddMessageInput();
     add.session_id = input.session_id;
-    add.role = 'user';
+    add.role = MessageRole.User;
     add.content = input.user_message;
     add.run_id = input.run_id;
     await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx());
   }
 
-  /** 解析本轮可见工具规格（数据处理） */
+  /** 解析本轮可见工具规格（逻辑控制） */
   private async soLoopToolSpecs(toolIds?: string[]): Promise<ToolSpecJson[]> {
     const soIn = new SoToolsInput();
     soIn.tool_ids = toolIds;
@@ -279,7 +288,7 @@ export class AgentLoopService {
     for (const message of messages) {
       const add = new AddMessageInput();
       add.session_id = ctx.sessionId;
-      add.role = 'user';
+      add.role = MessageRole.User;
       add.content = message;
       add.run_id = ctx.runId;
       await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx());
@@ -287,7 +296,7 @@ export class AgentLoopService {
   }
 
   /** 内层循环（逻辑控制）：终止条件 = finish reason 无 tool_calls / 预算 / 取消 */
-  private async runInnerLoop(ctx: LoopRunContext): Promise<LoopRunContext['stopReason']> {
+  private async runInnerLoop(ctx: LoopRunContext): Promise<LoopStopReason> {
     for (;;) {
       const verdict = await this.runInnerTurn(ctx);
       if (verdict !== 'continue') {
@@ -297,29 +306,29 @@ export class AgentLoopService {
   }
 
   /** 预算消费与收尾判定（逻辑控制） */
-  private consumeBudget(ctx: LoopRunContext): { stop: boolean; reason?: LoopRunContext['stopReason']; finalTurn: boolean } {
+  private consumeBudget(ctx: LoopRunContext): { stop: boolean; reason?: LoopStopReason; finalTurn: boolean } {
     if (!ctx.budget.consume()) {
-      return { stop: true, reason: 'budget', finalTurn: false };
+      return { stop: true, reason: LoopStopReason.Budget, finalTurn: false };
     }
     const finalTurn = !ctx.budget.graceAvailable && ctx.budget.remaining === 0;
     return { stop: false, finalTurn };
   }
 
   /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费 */
-  private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopRunContext['stopReason']> {
+  private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopStopReason> {
     const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
     if (steered.length) {
       await this.persistInjectedMessages(ctx, steered);
     }
     const gate = this.consumeBudget(ctx);
     if (gate.stop) {
-      return gate.reason ?? 'budget';
+      return gate.reason ?? LoopStopReason.Budget;
     }
     ctx.finalTurn = gate.finalTurn;
     const turn = await this.callLLMTurn(ctx);
     if (!turn.ok) {
       this.flushDeltaBuffer(ctx);
-      return turn.verdict ?? 'error';
+      return turn.verdict ?? LoopStopReason.Error;
     }
     this.flushDeltaBuffer(ctx);
     await this.persistAssistantTurn(ctx, turn);
@@ -328,9 +337,9 @@ export class AgentLoopService {
       // 修复①消费侧：流中途断开（无 finish_reason 帧）→ finish_reason='error'，规范化失败
       if (turn.finishReason === 'error') {
         ctx.error = ctx.error ?? 'LLM 流异常终止（未收到结束帧）';
-        return 'error';
+        return LoopStopReason.Error;
       }
-      return 'stop';
+      return LoopStopReason.Stop;
     }
     await this.consumeToolCalls(ctx, turn.toolCalls ?? []);
     return 'continue';
@@ -348,12 +357,12 @@ export class AgentLoopService {
       const ok = await this.llm.execLLMEvents(input, output, new LLMCtx());
       if (!ok) {
         ctx.error = output.error;
-        return { ok: false, verdict: 'error', error: output.error };
+        return { ok: false, verdict: LoopStopReason.Error, error: output.error };
       }
       return this.fillTurnResult(output);
     } catch (err) {
       if (err instanceof AbortedError) {
-        return { ok: false, verdict: 'aborted', error: err.message };
+        return { ok: false, verdict: LoopStopReason.Aborted, error: err.message };
       }
       throw err;
     }
@@ -372,7 +381,7 @@ export class AgentLoopService {
     };
   }
 
-  /** LLM 入参组装（数据处理；finalTurn 收掉工具） */
+  /** LLM 入参组装（逻辑控制；finalTurn 收掉工具） */
   private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
     const input = new ExecLLMEventsInput();
     input.id = ctx.llmId ?? '';
@@ -391,6 +400,17 @@ export class AgentLoopService {
     input.idle_watchdog_ms = ctx.idleWatchdogMs;
     input.signal = ctx.controller.signal;
     input.on_event = (event) => this.streamHandler(ctx, event);
+    // 过程可观测：当轮上下文构建完成（wire 消息即当轮 prompt 输入侧）
+    const round = ctx.iterations + 1;
+    ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
+      round,
+      message_count: input.messages.length,
+      messages: input.messages.map((m) => ({
+        role: m.role,
+        content: String(m.content ?? '').slice(0, 4000),
+        tool_calls: m.tool_calls?.map((t) => t.function.name),
+      })),
+    });
     return input;
   }
 
@@ -431,19 +451,8 @@ export class AgentLoopService {
 
   /** part.delta 事件发布（数据处理；投递失败记录告警，不中断流处理） */
   private publishPartDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string): void {
-    const input = new PublishEventInput();
-    input.session_key = ctx.sessionKey;
-    input.run_id = ctx.runId;
-    input.type = 'part.delta';
-    input.payload = { field, delta };
-    this.bus.publishEvent(input, new PublishEventOutput(), new BusCtx())
-      .catch((err: unknown) => {
-        this.logger?.warn?.('part.delta 事件发布失败（不影响循环）', {
-          session_key: ctx.sessionKey,
-          run_id: ctx.runId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+    const event = field === 'text' ? BusinessEvent.ReplyDelta : BusinessEvent.ThinkDelta;
+    ctx.report?.pushBusinessEvent(event, { delta });
   }
 
   // -------------------------------------------------------------------------
@@ -459,7 +468,7 @@ export class AgentLoopService {
     await this.session.soMessages(soIn, soOut, new SessionCtx());
     const wire: LLMMessage[] = [];
     for (const message of soOut.messages) {
-      if (message.role === 'user') {
+      if (message.role === MessageRole.User) {
         wire.push({ role: 'user', content: message.content });
       } else {
         this.assistantToWire(message, wire);
@@ -470,8 +479,8 @@ export class AgentLoopService {
 
   /** assistant 消息 → wire 消息（数据处理；toolCalls + 配对 tool 结果） */
   private assistantToWire(message: MessageWithParts, wire: LLMMessage[]): void {
-    const toolParts = message.parts.filter((p) => p.part_type === 'tool');
-    const text = message.parts.find((p) => p.part_type === 'text')?.content ?? message.content;
+    const toolParts = message.parts.filter((p) => p.part_type === PartType.Tool);
+    const text = message.parts.find((p) => p.part_type === PartType.Text)?.content ?? message.content;
     const toolCalls = toolParts
       .map((p) => this.toWireToolCall(p))
       .filter((c): c is WireToolCall => Boolean(c));
@@ -500,12 +509,7 @@ export class AgentLoopService {
 
   /** tool Part → wire tool 结果消息（数据处理） */
   private toToolResultMessage(part: PartRecord): LLMMessage {
-    let meta: { tool_call_id?: string } = {};
-    try {
-      meta = JSON.parse(part.input_json || '{}');
-    } catch {
-      meta = {};
-    }
+    const meta = this.parseToolMeta(part.input_json);
     return {
       role: 'tool',
       tool_call_id: meta.tool_call_id ?? part.id,
@@ -521,10 +525,10 @@ export class AgentLoopService {
     const messageOut = new AddMessageOutput();
     const add = new AddMessageInput();
     add.session_id = ctx.sessionId;
-    add.role = 'assistant';
+    add.role = MessageRole.Assistant;
     add.content = turn.text ?? '';
     add.run_id = ctx.runId;
-    add.token_usage = turn.outputTokens;
+    add.token_count = turn.outputTokens;
     await this.session.addMessage(add, messageOut, new SessionCtx());
     ctx.lastMessageId = messageOut.message_id;
     await this.persistTurnParts(ctx, messageOut.message_id, turn);
@@ -533,18 +537,18 @@ export class AgentLoopService {
   /** 持久化轮内 Parts（逻辑控制）：reasoning/text 直存；tool pending 待配对 */
   private async persistTurnParts(ctx: LoopRunContext, messageId: string, turn: LLMTurnResult): Promise<void> {
     if (turn.reasoning) {
-      await this.addTurnPart(ctx, messageId, 'reasoning', turn.reasoning);
+      await this.addTurnPart(ctx, messageId, PartType.Reasoning, turn.reasoning);
     }
     if (turn.text) {
-      await this.addTurnPart(ctx, messageId, 'text', turn.text);
+      await this.addTurnPart(ctx, messageId, PartType.Text, turn.text);
     }
     for (const call of turn.toolCalls ?? []) {
       await this.addToolPart(ctx, messageId, call);
     }
   }
 
-  /** 新增 Part 并发布 part.created（数据处理） */
-  private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: 'reasoning' | 'text', content: string): Promise<void> {
+  /** 新增 Part 并发布 part.created（逻辑控制） */
+  private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
     const input = new AddPartInput();
     input.message_id = messageId;
     input.run_id = ctx.runId;
@@ -555,28 +559,36 @@ export class AgentLoopService {
     await this.publishPartCreated(ctx, messageId, output.part_id, partType);
   }
 
-  /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（数据处理） */
+  /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制） */
   private async addToolPart(ctx: LoopRunContext, messageId: string, call: ParsedToolCall): Promise<void> {
     const input = new AddPartInput();
     input.message_id = messageId;
     input.run_id = ctx.runId;
-    input.part_type = 'tool';
+    input.part_type = PartType.Tool;
     input.tool_id = call.tool_id;
     input.input_json = JSON.stringify({ tool_call_id: call.id, arguments: call.arguments });
     const output = new AddPartOutput();
     await this.session.addPart(input, output, new SessionCtx());
-    await this.publishPartCreated(ctx, messageId, output.part_id, 'tool', call.tool_id);
+    await this.publishPartCreated(ctx, messageId, output.part_id, PartType.Tool, call.tool_id);
   }
 
   // -------------------------------------------------------------------------
   // 工具消费
   // -------------------------------------------------------------------------
 
-  /** 顺序执行本轮 tool_calls（逻辑控制；配对结果回流） */
+  /** 顺序执行本轮 tool_calls（逻辑控制；配对结果回流；权限门：执行前询问） */
   private async consumeToolCalls(ctx: LoopRunContext, toolCalls: ParsedToolCall[]): Promise<void> {
     for (const call of toolCalls) {
       const part = await this.soToolPart(ctx, call);
       if (!part) {
+        continue;
+      }
+      const approved = await this.askPermission(ctx, call);
+      if (!approved) {
+        await this.completeToolPart(ctx, part.id, call, {
+          status: 'error',
+          output: `工具 ${call.tool_id} 被用户拒绝执行（permission denied）`,
+        });
         continue;
       }
       await this.markPartRunning(ctx, part.id, call);
@@ -585,18 +597,35 @@ export class AgentLoopService {
     }
   }
 
-  /** 查询本轮 tool Part（数据处理；按 message + tool_call_id 匹配） */
+  /** 权限询问（逻辑控制）：permission.asked 经 Report 下发，挂起等待 answerPermission 应答 */
+  private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
+    if (!this.permissionGate) {
+      return true;
+    }
+    const permissionId = IdGenerator.generate();
+    ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAsked, {
+      permission_id: permissionId,
+      tool_id: call.tool_id,
+      input: call.arguments,
+      run_id: ctx.runId,
+    });
+    const result = await this.permissionGate.wait({ permission_id: permissionId });
+    return result.approved;
+  }
+
+  /** 查询本轮 tool Part（逻辑控制；按 message + tool_call_id 匹配） */
   private async soToolPart(ctx: LoopRunContext, call: ParsedToolCall): Promise<PartRecord | null> {
     if (!ctx.lastMessageId) {
       return null;
     }
     const soIn = new SoMessagesInput();
     soIn.session_id = ctx.sessionId;
+    soIn.limit = LOOP_MESSAGE_LIMIT;
     const soOut = new SoMessagesOutput();
     await this.session.soMessages(soIn, soOut, new SessionCtx());
     const message = soOut.messages.find((m) => m.id === ctx.lastMessageId);
     const found = message?.parts.find((p) => {
-      if (p.part_type !== 'tool' || p.tool_id !== call.tool_id) {
+      if (p.part_type !== PartType.Tool || p.tool_id !== call.tool_id) {
         return false;
       }
       return this.parseToolMeta(p.input_json).tool_call_id === call.id;
@@ -617,17 +646,12 @@ export class AgentLoopService {
   private async markPartRunning(ctx: LoopRunContext, partId: string, call: ParsedToolCall): Promise<void> {
     const upd = new UpdatePartInput();
     upd.part_id = partId;
-    upd.status = 'running';
+    upd.status = PartStatus.Running;
     await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
-    const input = new PublishEventInput();
-    input.session_key = ctx.sessionKey;
-    input.run_id = ctx.runId;
-    input.type = 'tool.launch';
-    input.payload = { part_id: partId, tool_id: call.tool_id, input: call.arguments };
-    await this.bus.publishEvent(input, new PublishEventOutput(), new BusCtx());
+    ctx.report?.pushBusinessEvent(BusinessEvent.ToolStarted, { part_id: partId, tool_id: call.tool_id, input: call.arguments });
   }
 
-  /** 执行工具（数据处理；execTool 配对结果语义） */
+  /** 执行工具（逻辑控制；execTool 配对结果语义） */
   private async execLoopTool(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number }> {
     const input = new ExecToolInput();
     input.tool_id = call.tool_id;
@@ -635,6 +659,10 @@ export class AgentLoopService {
     input.run_id = ctx.runId;
     input.session_key = ctx.sessionKey;
     input.signal = ctx.controller.signal;
+    // 工具的业务事件出口：经 Report→StreamProvider（保存/审计/投递）
+    input.emitEvent = (type: string, payload: unknown) => {
+      ctx.report?.pushBusinessEvent(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });
+    };
     const output = new ExecToolOutput();
     await this.tool.execTool(input, output, new ToolCtx());
     return output.result;
@@ -645,40 +673,34 @@ export class AgentLoopService {
   ): Promise<void> {
     const upd = new UpdatePartInput();
     upd.part_id = partId;
-    upd.status = result.status === 'ok' ? 'completed' : 'error';
+    upd.status = result.status === 'ok' ? PartStatus.Completed : PartStatus.Error;
     upd.output_json = result.output;
     upd.elapsed_ms = result.elapsed_ms;
     await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
-    const input = new PublishEventInput();
-    input.session_key = ctx.sessionKey;
-    input.run_id = ctx.runId;
-    input.type = 'tool.result';
-    input.payload = { part_id: partId, tool_id: call.tool_id, status: result.status, output: result.output, elapsed_ms: result.elapsed_ms };
-    await this.bus.publishEvent(input, new PublishEventOutput(), new BusCtx());
+    ctx.report?.pushBusinessEvent(BusinessEvent.ToolResult, { part_id: partId, tool_id: call.tool_id, status: result.status, output: result.output, elapsed_ms: result.elapsed_ms });
   }
 
   // -------------------------------------------------------------------------
   // 事件与收尾
   // -------------------------------------------------------------------------
 
-  /** 发布 part.created（数据处理） */
-  private async publishPartCreated(ctx: LoopRunContext, messageId: string, partId: string, partType: string, toolId?: string): Promise<void> {
-    const input = new PublishEventInput();
-    input.session_key = ctx.sessionKey;
-    input.run_id = ctx.runId;
-    input.type = 'part.created';
-    input.payload = { message_id: messageId, part_id: partId, part_type: partType, tool_id: toolId };
-    await this.bus.publishEvent(input, new PublishEventOutput(), new BusCtx());
+  /** 发布 part.created（逻辑控制） */
+  private async publishPartCreated(ctx: LoopRunContext, messageId: string, partId: string, partType: PartType, _toolId?: string): Promise<void> {
+    if (partType === PartType.Text) {
+      ctx.report?.pushBusinessEvent(BusinessEvent.ReplyCreated, { message_id: messageId, part_id: partId });
+    } else if (partType === PartType.Reasoning) {
+      ctx.report?.pushBusinessEvent(BusinessEvent.ThinkCreated, { message_id: messageId, part_id: partId });
+    }
+    // tool Part 不发 created（由 tool.started 表达执行生命周期）
   }
 
-  /** 发布 run.status（数据处理） */
-  private async publishRunStatus(target: { runId: string; sessionKey: string }, phase: 'start' | 'end' | 'error', stopReason?: string): Promise<void> {
-    const evt = new PublishEventInput();
-    evt.session_key = target.sessionKey;
-    evt.run_id = target.runId;
-    evt.type = 'run.status';
-    evt.payload = { phase, stop_reason: stopReason };
-    await this.bus.publishEvent(evt, new PublishEventOutput(), new BusCtx());
+  /** 发布 run 生命周期事件（逻辑控制）：started/finished/failed 三态 */
+  private async publishRunStatus(target: { runId: string; sessionKey: string; report?: Report }, phase: RunPhase, stopReason?: LoopStopReason): Promise<void> {
+    const payload = { stop_reason: stopReason };
+    const event = phase === RunPhase.Start ? BusinessEvent.RunStarted
+      : phase === RunPhase.End ? BusinessEvent.RunFinished
+      : BusinessEvent.RunFailed;
+    target.report?.pushBusinessEvent(event, payload);
   }
 
   /** 出参组装（数据处理） */
@@ -695,11 +717,11 @@ export class AgentLoopService {
   private async settleLoop(ctx: LoopRunContext): Promise<void> {
     this.flushDeltaBuffer(ctx);
     this.runControllers.delete(ctx.runId);
-    const phase = ctx.stopReason === 'stop' ? 'end' : 'error';
+    const phase = ctx.stopReason === LoopStopReason.Stop ? RunPhase.End : RunPhase.Error;
     try {
       await this.publishRunStatus(ctx, phase, ctx.stopReason);
     } catch (err) {
-      this.logger?.warn?.('run.status 结算事件发布失败（不掩盖业务结果）', {
+      ctx.metrics?.warn?.('run.status 结算事件发布失败（不掩盖业务结果）', {
         run_id: ctx.runId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -736,13 +758,9 @@ export class AgentLoopService {
   }
 }
 
-/** AbortReason 局部别名（与 base AbortReasonKind 对齐） */
-type AbortReason = AbortReasonKind;
-
 /** 上下文别名简写（避免每处 new 完整类名） */
-class SessionCtx extends Context {}
+class SessionCtx extends SessionContext {}
 class LLMCtx extends LLMContext {}
-class BusCtx extends EventBusContext {}
 class ToolCtx extends ToolContext {}
 
 /** wire 侧工具调用（LLMMessage.tool_calls 元素） */

@@ -13,12 +13,24 @@ export class AgentLibrarySchemaInitializer {
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
         agent_id TEXT NOT NULL UNIQUE, agent_name TEXT NOT NULL, agent_purpose TEXT DEFAULT '', agent_type TEXT NOT NULL,
         strategy_id TEXT NOT NULL, soul_id TEXT NOT NULL,
+        skill_ids_json TEXT NOT NULL DEFAULT '[]', mcp_ids_json TEXT NOT NULL DEFAULT '[]',
+        prompt_template_id TEXT NOT NULL DEFAULT '',
         task_signature TEXT NOT NULL, usage_count INTEGER NOT NULL DEFAULT 0,
         eval_score INTEGER NOT NULL DEFAULT 50, enable INTEGER NOT NULL DEFAULT 1
       )`,
     );
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN agent_purpose TEXT DEFAULT ''`);
+    } catch { /* column already exists */ }
+    // 绑定唯一事实源列（2026-09-05：Agent↔Soul/Skill/MCP/Prompt 绑定从 Core agent_* 表收敛至 agent 表）
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN skill_ids_json TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN mcp_ids_json TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN prompt_template_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
     // LLM 绑定只保留在 LLMProvider 的 agent_llm，agent 表不再存储 llm_id（旧库删除遗留列）
     try {

@@ -55,7 +55,10 @@ export const useChatUiStore = defineStore('chatUi', () => {
       match_score: Number(data.match_score ?? 0),
       threshold_score: Number(data.threshold_score ?? 0),
       reasoning: String(data.reasoning ?? ''),
-    }
+      kind: String(data.kind ?? 'intent'),
+      permission_id: String(data.permission_id ?? ''),
+      tool_id: String(data.tool_id ?? ''),
+    } as IntentConfirmation
   }
 
   function clearIntentConfirmation() {

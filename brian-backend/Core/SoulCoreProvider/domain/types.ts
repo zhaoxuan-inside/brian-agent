@@ -72,6 +72,8 @@ export class MatchSoulInput extends Input {
   task_content?: string;
   /** 当前任务领域（由任务分析得出，如 general / coding / travel，可选） */
   task_domain?: string;
+  /** 调用方传入的既有绑定（agent 表为唯一绑定事实源）；传入时确定性水合，不再按任务重选 */
+  bound_soul_id?: string;
 }
 
 /** matchSoul 出参 */
@@ -98,6 +100,8 @@ export class OptSoulInput extends Input {
   interact_id!: string;
   /** 候选 Soul ID */
   soul_id!: string;
+  /** Agent 当前绑定的 Soul ID（Agent 表读取；传入时做 A/B 比较裁决，缺省只记 usage） */
+  current_soul_id?: string;
 }
 
 /** 比较裁决结果 */
@@ -110,9 +114,9 @@ export interface SoulVerdict {
 
 /** optSoul 出参 */
 export class OptSoulOutput extends Output {
-  /** 比较裁决 */
+  /** 比较裁决（better=true 表示候选优于当前绑定） */
   verdict: SoulVerdict = { better: false, reason: '' };
-  /** 当前使用的 Soul ID */
+  /** 裁决后实际生效的 Soul ID（better ? 候选 : 当前绑定；重绑由 Agent 模块执行） */
   current_soul_id = '';
 }
 
@@ -125,8 +129,10 @@ export class AgeSoulInput extends Input {}
 
 /** ageSoul 出参 */
 export class AgeSoulOutput extends Output {
-  /** 老化 Soul 数量 */
+  /** 老化候选数量（兼容保留，恒等于 stale_souls.length；解绑由 Agent 模块评估后执行） */
   aged_count = 0;
+  /** 解绑候选（按 opt 规则统计最近 days 天使用不足 min_usage_count 的 agent+soul 对；不落库） */
+  stale_souls: Array<{ agent_id: string; soul_id: string; usage_count: number }> = [];
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +190,22 @@ export class ConfigSoulCoreInput extends Input {
 export class ConfigSoulCoreOutput extends Output {
   /** 当前配置 */
   config: SoulCoreConfigRecord | null = null;
+}
+
+// ---------------------------------------------------------------------------
+// soSoulContent（按 id 读取 Soul 内容；供声明式 Agent 快照等聚合场景使用）
+// ---------------------------------------------------------------------------
+
+/** soSoulContent 入参 */
+export class SoSoulContentInput extends Input {
+  /** Soul ID */
+  soul_id!: string;
+}
+
+/** soSoulContent 出参 */
+export class SoSoulContentOutput extends Output {
+  /** Soul 内容（不存在时为空串） */
+  content = '';
 }
 
 // ---------------------------------------------------------------------------

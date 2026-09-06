@@ -3,7 +3,6 @@ import type { RelationDBAccess, GraphDBAccess, Logger, MQAccess, ChunkAccess, LL
 import { AopProxy } from '@brian-agent/base';
 import type { InfoCoreAccess, MQCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import type { EvolutorAgentAccess, WriterAgentAccess } from '@brian-agent/agent';
-import type { OrchestrationEntryAccess } from '@brian-agent/orchestration';
 import { SelfLearningSchemaInitializer } from '../infrastructure/SelfLearningSchemaInitializer';
 import { SelfLearningService } from '../application/SelfLearningService';
 import {
@@ -39,7 +38,6 @@ export class SelfLearningAccess {
     llmCore: LLMCoreAccess,
     evolutorAgent: EvolutorAgentAccess,
     writerAgent: WriterAgentAccess,
-    orchestrationEntry: OrchestrationEntryAccess,
     graphDBAccess: GraphDBAccess,
     mqAccess: MQAccess,
     chunkAccess: ChunkAccess,
@@ -50,7 +48,7 @@ export class SelfLearningAccess {
     this.initPromise = new SelfLearningSchemaInitializer(relationDb).init();
     const raw = new SelfLearningService(
       relationDb, infoCore, mqCore, llmCore,
-      evolutorAgent, writerAgent, orchestrationEntry,
+      evolutorAgent, writerAgent,
       graphDBAccess, chunkAccess, mqAccess, llmAccess, promptsAccess, logger,
     );
     this.service = AopProxy.wrap(raw, { logger });

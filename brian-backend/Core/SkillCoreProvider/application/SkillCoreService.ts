@@ -13,12 +13,11 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SkillContext, SoSkillOutput, UpdateSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
+import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SkillCoreContext,
   SkillCoreConfigRecord,
-  AgentSkillRecord,
   SkillOptRuleRecord,
   MatchedSkillEntry,
   MatchSkillInput,
@@ -34,13 +33,10 @@ import {
   ConfigSkillCoreInput,
   ConfigSkillCoreOutput,
   SKILL_CORE_CONFIG_TABLE,
-  AGENT_SKILL_TABLE,
   SKILL_OPT_RULE_TABLE,
   SKILL_USAGE_TABLE,
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
-import { AgingEngine } from '../../shared/AgingEngine';
-import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared';
 
 /**
  * SkillCoreProvider 应用服务。
@@ -86,7 +82,6 @@ export class SkillCoreService {
     }
 
     const config = await this.getConfig();
-    const regenRate = config.regen_rate ?? 75;
 
     // 获取可用 Skill 列表
     const skillOutput = new SoSkillOutput();
@@ -96,16 +91,14 @@ export class SkillCoreService {
     );
     const availableSkills = skillOutput.list;
 
-    // ===== 第 1 层：simpleSimilarity 匹配历史/已有绑定与关联特征 =====
-    const cacheResult = await checkMatchCache(
-      this.relationDb, AGENT_SKILL_TABLE, agent_id,
-      regenRate, 'random', 'skill_id',
-    );
-    if (cacheResult.hit && cacheResult.entries && cacheResult.entries.length > 0) {
-      const cachedBindings = cacheResult.entries.map(e => ({ id: e.binding_id, created: 0, updated: e.updated, agent_id, skill_id: e.entity_id })) as AgentSkillRecord[];
-      output.skills = await this.enrichMatchedSkills(cachedBindings);
+    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    // 绑定的写入/解除由 Agent 模块评估后执行（AgentLibrary.bindAgentComponent），Core 只做选择与水合
+    if (input.bound_skill_ids && input.bound_skill_ids.length > 0) {
+      output.skills = await this.enrichMatchedSkills(input.bound_skill_ids);
       return true;
     }
+
+    // ===== 第 1.5 层：simpleSimilarity 匹配历史/关联特征（纯打分，不落库） =====
 
     // ===== 第 2 层：LLM 打分推荐 =====
     let ranked: Array<{ skill_id: string; skill_brief: string; relevance: number }> = [];
@@ -150,12 +143,7 @@ export class SkillCoreService {
       }
     }
 
-    // 持久化绑定
-    await clearMatchCache(this.relationDb, AGENT_SKILL_TABLE, agent_id);
-    for (const entry of ranked) {
-      await persistMatchBinding(this.relationDb, AGENT_SKILL_TABLE, agent_id, entry.skill_id, 'skill_id');
-    }
-
+    // 纯选择：不持久化任何绑定（绑定事实源为 Agent 表，由 Agent 模块评估后写入）
     output.skills = ranked;
     return true;
   }
@@ -165,10 +153,9 @@ export class SkillCoreService {
   // ---------------------------------------------------------------------------
 
   /**
-   * 自动绑定 Skill 到 Agent 并记录使用。
+   * 记录 Skill 使用（usage 是评估依据，非绑定；绑定由 Agent 模块评估后经 bindAgentComponent 写入）。
    *
-   * 若 agent_id + skill_id 在 agent_skill 中不存在则新增；
-   * 无论新增或已有，均在 skill_usage 中记录本次使用。
+   * 以 (agent_id, skill_id) 为键写入 skill_usage；output.binding 兼容保留（id 恒为空串）。
    */
   async optSkill(input: OptSkillInput, output: OptSkillOutput, _context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -180,14 +167,10 @@ export class SkillCoreService {
       throw new ValidationError('skill_id 为必填');
     }
 
-    let binding = await this.getAgentSkillBinding(agent_id, skill_id);
-    if (!binding) {
-      binding = await this.insertAgentSkill(agent_id, skill_id);
-    }
+    await this.recordSkillUsage(agent_id, skill_id);
 
-    await this.recordSkillUsage(binding.id);
-
-    output.binding = binding;
+    const now = IdGenerator.now();
+    output.binding = { id: '', created: now, updated: now, agent_id, skill_id };
     return true;
   }
 
@@ -196,30 +179,39 @@ export class SkillCoreService {
   // ---------------------------------------------------------------------------
 
   /**
-   * 依据 skill_opt_rule 规则老化不活跃的 Skill。
+   * 按 skill_opt_rule 规则评估解绑候选（不删除；解绑由 Agent 模块评估后执行）。
    *
-   * 对每条规则，统计在最近 days 天内 usage 次数不足 min_usage_count 的 skill，
-   * 调用 SkillAccess.updateSkill 将其置为禁用（enable=false）。
+   * 对每条规则（days/min_usage_count），统计最近 days 天内使用不足 min_usage_count 的
+   * (agent_id, skill_id) 对，输出 stale_skills 供 Agent 模块 unbindAgentComponent 消费。
    */
   async ageSkill(_input: AgeSkillInput, output: AgeSkillOutput, _context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const engine = new AgingEngine(this.relationDb);
-    const count = await engine.age({
-      ruleTable: SKILL_OPT_RULE_TABLE,
-      bindingTable: AGENT_SKILL_TABLE,
-      bindingEntityIdColumn: 'skill_id',
-      usageBindingIdColumn: 'agent_skill_id',
-      usageTable: SKILL_USAGE_TABLE,
-      disabler: async (entityId) => {
-        const updateOutput = new UpdateSkillOutput();
-        await this.skillAccess.updateSkill(
-          { id: entityId, data: { enable: false } },
-          updateOutput, new SkillContext(),
-        );
-      },
-    });
-    output.aged_count = count;
+    output.stale_skills = await this.soStaleSkillUsages();
+    output.aged_count = output.stale_skills.length;
     return true;
+  }
+
+  /** 统计解绑候选（数据处理；按规则窗口内 (agent_id, skill_id) 使用计数） */
+  private async soStaleSkillUsages(): Promise<Array<{ agent_id: string; skill_id: string; usage_count: number }>> {
+    const rules = await this.relationDb.select(SKILL_OPT_RULE_TABLE, {});
+    if (rules.length === 0) {
+      return [];
+    }
+    const stale: Array<{ agent_id: string; skill_id: string; usage_count: number }> = [];
+    for (const rule of rules) {
+      const days = Number(rule.days);
+      const minUsage = Number(rule.min_usage_count);
+      const since = IdGenerator.now() - days * 24 * 60 * 60 * 1000;
+      const rows = this.relationDb.queryRaw<{ agent_id: string; skill_id: string; total: number }>(
+        `SELECT "agent_id", "skill_id", SUM("usage_count") AS total FROM "${SKILL_USAGE_TABLE}"
+         WHERE "created" >= ? GROUP BY "agent_id", "skill_id" HAVING SUM("usage_count") < ?`,
+        [since, minUsage],
+      );
+      for (const row of rows ?? []) {
+        stale.push({ agent_id: String(row.agent_id), skill_id: String(row.skill_id), usage_count: Number(row.total ?? 0) });
+      }
+    }
+    return stale;
   }
 
   // ---------------------------------------------------------------------------
@@ -356,47 +348,15 @@ export class SkillCoreService {
     };
   }
 
-  /** 获取单条 agent_skill 绑定 */
-  private async getAgentSkillBinding(
-    agentId: string,
-    skillId: string,
-  ): Promise<AgentSkillRecord | null> {
-    const row = await this.relationDb.selectOne(AGENT_SKILL_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: agentId },
-      { field: 'skill_id', operator: Operator.EQ, value: skillId },
-    ]);
-    return row ? this.toAgentSkillRecord(row) : null;
-  }
-
-  /** 新增 agent_skill 绑定 */
-  private async insertAgentSkill(
-    agentId: string,
-    skillId: string,
-  ): Promise<AgentSkillRecord> {
-    const id = IdGenerator.generate();
+  /** 记录 skill_usage（评估依据；键为 (agent_id, skill_id)，与绑定解耦） */
+  private async recordSkillUsage(agentId: string, skillId: string): Promise<void> {
     const now = IdGenerator.now();
-    await this.relationDb.insert(AGENT_SKILL_TABLE, [
-      { field: 'id', value: id },
-      { field: 'created', value: now },
-      { field: 'updated', value: now },
-      { field: 'agent_id', value: agentId },
-      { field: 'skill_id', value: skillId },
-    ]);
-    return { id, created: now, updated: now, agent_id: agentId, skill_id: skillId };
-  }
-
-  /** 记录 skill_usage */
-  private async recordSkillUsage(agentSkillId: string): Promise<void> {
-    const now = IdGenerator.now();
-    const rows = this.relationDb.queryRaw<{ skill_id: string }>(
-      'SELECT "skill_id" FROM "agent_skill" WHERE "id" = ?', [agentSkillId],
-    );
     await this.relationDb.insert(SKILL_USAGE_TABLE, [
       { field: 'id', value: IdGenerator.generate() },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'skill_id', value: rows?.[0]?.skill_id || '' },
-      { field: 'agent_skill_id', value: agentSkillId },
+      { field: 'agent_id', value: agentId },
+      { field: 'skill_id', value: skillId },
       { field: 'usage_date', value: new Date().toISOString().slice(0, 10) },
       { field: 'usage_count', value: 1 },
     ]);
@@ -481,24 +441,24 @@ export class SkillCoreService {
     return result;
   }
 
-  /** 将缓存的绑定扩展为 MatchedSkillEntry 列表（从 Skill 表补充 skill_brief） */
+  /** 将既有绑定（agent 表 skill_ids_json）水合为 MatchedSkillEntry 列表（从 Skill 表补充 brief；失效 id 过滤） */
   private async enrichMatchedSkills(
-    bindings: AgentSkillRecord[],
+    skillIds: string[],
   ): Promise<MatchedSkillEntry[]> {
     const result: MatchedSkillEntry[] = [];
-    for (const b of bindings) {
+    for (const skillId of skillIds) {
       const skillOutput = new SoSkillOutput();
       await this.skillAccess.soSkill(
         {
           conditions: [
-            { field: 'id', operator: Operator.EQ, value: b.skill_id },
+            { field: 'id', operator: Operator.EQ, value: skillId },
           ],
         },
         skillOutput, new SkillContext(),
       );
       if (skillOutput.list.length > 0) {
         result.push({
-          skill_id: b.skill_id,
+          skill_id: skillId,
           skill_brief: skillOutput.list[0].skill_brief,
           relevance: 1,
         });
@@ -519,16 +479,6 @@ export class SkillCoreService {
       regen_rate: Number(row.regen_rate),
       similarity_threshold: Number(row.similarity_threshold ?? 0.7),
       prompt_template_id: String(row.prompt_template_id ?? ''),
-    };
-  }
-
-  private toAgentSkillRecord(row: Record<string, unknown>): AgentSkillRecord {
-    return {
-      id: String(row.id),
-      created: Number(row.created),
-      updated: Number(row.updated),
-      agent_id: String(row.agent_id),
-      skill_id: String(row.skill_id),
     };
   }
 

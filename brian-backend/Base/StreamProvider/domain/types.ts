@@ -65,11 +65,15 @@ export class RegisterStreamInput extends Input {
   session_id!: string;
   writer!: StreamWriter;
   onClose?: () => void;
+  /** SSE 端点 ID（缺省由服务端生成；前端重连接管既有端点时可显式传入） */
+  endpoint_id?: string;
 }
 
 /** 注册 SSE 端点出参 */
 export class RegisterStreamOutput extends Output {
   client_id = '';
+  /** SSE 端点 ID（前端在后续请求中携带；Report 上报时 StreamProvider 按此定位端点） */
+  endpoint_id = '';
   registered = false;
 }
 
@@ -134,6 +138,49 @@ export class ConfigStreamOutput extends Output {
 
 /** 表名与常量定义 */
 export const STREAM_CONFIG_TABLE = 'stream_config';
+
+/** stream_event 表名（事件事实源：持久化/审计/断线恢复重放；2026-09-05 起 StreamProvider 承载） */
+export const STREAM_EVENT_TABLE = 'stream_event';
+
+/** 端点事件推送入参（事件名取 BusinessEvent 枚举；StreamProvider 按端点 ID 定位 SSE 连接） */
+export class PushEventToEndpointInput extends Input {
+  /** SSE 端点 ID（registerStream 生成，前端请求时携带） */
+  endpoint_id!: string;
+  /** 外部会话标识（事件流 session_key，审计/重放定位） */
+  session_key!: string;
+  /** 运行 ID（可选） */
+  run_id?: string;
+  /** 事件类型 */
+  type!: string;
+  /** 事件载荷 */
+  payload!: unknown;
+}
+
+/** 端点事件推送出参 */
+export class PushEventToEndpointOutput extends Output {
+  /** 会话内事件序号（严格递增；随事件持久化） */
+  seq = 0;
+  /** 是否已写入端点（端点不存在时 false——事件仍持久化供重放） */
+  delivered = false;
+}
+
+/** 端点事件重放入参（断线恢复：after_seq 之后按 seq 升序重放到端点） */
+export class ReplayEndpointEventsInput extends Input {
+  /** SSE 端点 ID */
+  endpoint_id!: string;
+  /** 外部会话标识 */
+  session_key!: string;
+  /** 重放起点（仅重放 seq 大于该值的事件） */
+  after_seq?: number;
+}
+
+/** 端点事件重放出参 */
+export class ReplayEndpointEventsOutput extends Output {
+  /** 重放的事件数 */
+  replayed = 0;
+  /** 最后一个事件 seq */
+  last_seq = 0;
+}
 
 export interface StreamConfigRecord {
   id: string;

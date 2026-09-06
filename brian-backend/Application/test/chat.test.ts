@@ -10,7 +10,13 @@ import {
 import {
   InfoCoreContext, SaveInfoInput, SaveInfoOutput,
 } from '@brian-agent/core';
-import { ChatService } from '../Chat/application/ChatService';
+import { ChatService, type ChatRuntimeV2Deps } from '../Chat/application/ChatService';
+import { StreamAccess } from '../../Base/StreamProvider/access/StreamAccess';
+import {
+  RegisterStreamInput, RegisterStreamOutput, StreamContext,
+  PushEventToEndpointInput, PushEventToEndpointOutput,
+} from '../../Base/StreamProvider/domain/types';
+import { SessionAccess, RunGatewayAccess } from '@brian-agent/runtime';
 import {
   ChatContext,
   SubmitWorkInput, SubmitWorkOutput,
@@ -105,10 +111,7 @@ describe('ChatService', () => {
   beforeEach(async () => {
     ctx = await setupRealTestEnvironment();
     new ChatSchemaInitializer(ctx.db).init();
-    service = new ChatService(
-      ctx.db, ctx.infoCore, ctx.writerAgent,
-      ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger,
-    );
+    service = new ChatService(ctx.db, ctx.infoCore, ctx.logger);
   });
 
   afterEach(() => {
@@ -133,692 +136,102 @@ describe('ChatService', () => {
     );
   }
 
-  function mockReceiveWork(finalResponse: string = 'mock orchestration response') {
-    return vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(
-      async (_i: any, o: any, _c: any, ) => {
-        o.final_response = finalResponse;
-        o.work_id = 'mock-work-id';
-        o.interact_id = 'mock-interact-id';
-        return true;
-      },
-    );
-  }
+  describe('openChatStream（V2 协议：Report 携带端点 ID → StreamProvider）', () => {
+    let streamAccess: StreamAccess;
+    let frames: string[];
+    let endpointId: string;
 
-  describe('openChatStream', () => {
     beforeEach(async () => {
       await ensureSession('test-session');
       await ensureSession('sse-meta');
-      await ensureSession('sse-headers');
-      await ensureSession('sse-elapsed');
-      await ensureSession('sse-token');
-      await ensureSession('overflow-stream');
-    });
-
-    it('TC-CHAT-001: Normal SSE connection - session_id valid returns connected event', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      const result = await service.openChatStream(input, output, c);
-
-      expect(result).toBe(true);
-      expect(output.events.length).toBeGreaterThanOrEqual(3);
-      expect(output.events[0].event).toBe('connected');
-      expect(output.events[0].data.session_id).toBe('test-session');
-    });
-
-    it('TC-CHAT-002: Loading event emitted with work_id after connected', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, c);
-
-      const loadingEvent = output.events.find(e => e.event === 'loading');
-      expect(loadingEvent).toBeDefined();
-      expect(loadingEvent!.data.work_id).toEqual(expect.any(String));
-    });
-
-    it('TC-CHAT-003: agent_created event emitted via orchestration callback', async () => {
-      const emittedEvents: SSEEvent[] = [];
-
-      let onAgentCreated: ((agentId: string, agentName: string) => void) | null = null;
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        if (onAgentCreated) {
-          onAgentCreated('agent-1', 'TestPlanner');
-        }
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-      (ctx.orchestrationEntry as any).setOnAgentCreated = (cb: typeof onAgentCreated) => { onAgentCreated = cb; };
-
-      (ctx.orchestrationEntry as any).setOnAgentCreated((agentId: string, agentName: string) => {
-        emittedEvents.push({ event: 'agent_created', data: { agent_id: agentId, agent_name: agentName } });
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(emittedEvents.length).toBeGreaterThanOrEqual(1);
-      const agentEvent = emittedEvents.find(e => e.event === 'agent_created');
-      expect(agentEvent).toBeDefined();
-      expect(agentEvent!.data.agent_id).toBe('agent-1');
-      expect(agentEvent!.data.agent_name).toBe('TestPlanner');
-    });
-
-    it('TC-CHAT-004: agent_status event emitted via orchestration callback', async () => {
-      const statusEvents: SSEEvent[] = [];
-
-      let onAgentStatus: ((agentId: string, status: string, elapsedMs: number) => void) | null = null;
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        if (onAgentStatus) {
-          onAgentStatus('agent-1', 'running', 150);
-        }
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-      (ctx.orchestrationEntry as any).setOnAgentStatus = (cb: typeof onAgentStatus) => { onAgentStatus = cb; };
-
-      (ctx.orchestrationEntry as any).setOnAgentStatus((agentId: string, status: string, elapsedMs: number) => {
-        statusEvents.push({ event: 'agent_status', data: { agent_id: agentId, status, elapsed_ms: elapsedMs } });
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(statusEvents.length).toBeGreaterThanOrEqual(1);
-      const statusEvent = statusEvents.find(e => e.event === 'agent_status');
-      expect(statusEvent).toBeDefined();
-      expect(statusEvent!.data.agent_id).toBe('agent-1');
-      expect(statusEvent!.data.status).toBe('running');
-      expect(statusEvent!.data.elapsed_ms).toBe(150);
-    });
-
-    it('TC-CHAT-007: text events emitted after orchestration returns final_response', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, c);
-
-      const textEvents = output.events.filter(e => e.event === 'text');
-      expect(textEvents.length).toBeGreaterThan(0);
-      const fullText = textEvents.map(e => e.data.chunk as string).join('');
-      expect(fullText).toBeTruthy();
-    });
-
-    it('TC-CHAT-008: done event at end with work_id, interact_id, final_response, elapsed_ms, token_usage', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, c);
-
-      const lastEvent = output.events[output.events.length - 1];
-      expect(lastEvent.event).toBe('done');
-      expect(lastEvent.data).toMatchObject({
-        work_id: expect.any(String),
-        interact_id: expect.any(String),
-        final_response: expect.any(String),
-        elapsed_ms: expect.any(Number),
-        token_usage: expect.any(Object),
-      });
-      expect(lastEvent.data.elapsed_ms).toBeGreaterThanOrEqual(0);
-    });
-
-    it('TC-CHAT-009: error event emitted when orchestration throws', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockRejectedValue(new Error('orchestration boom'));
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      const result = await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(result).toBe(true);
-      const errorEvent = output.events.find(e => e.event === 'error');
-      expect(errorEvent).toBeDefined();
-      expect(errorEvent!.data.error_message).toBe('orchestration boom');
-      expect(errorEvent!.data.error_code).toBe('ORCHESTRATION_FAILED');
-    });
-
-    it('TC-CHAT-010: Full SSE event sequence verification', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'world',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, c);
-
-      const events = output.events;
-      expect(events.length).toBeGreaterThanOrEqual(4);
-
-      expect(events[0].event).toBe('connected');
-      expect(events[0].data.session_id).toBe('test-session');
-
-      expect(events[1].event).toBe('loading');
-      expect(events[1].data.work_id).toEqual(expect.any(String));
-
-      const textEvents = events.filter(e => e.event === 'text');
-      expect(textEvents.length).toBeGreaterThan(0);
-
-      const lastEvent = events[events.length - 1];
-      expect(lastEvent.event).toBe('done');
-      expect(lastEvent.data.final_response).toEqual(expect.any(String));
-
-      for (let i = 2; i < events.length - 1; i++) {
-        expect(events[i].event).toBe('text');
-      }
-    });
-
-    it('TC-CHAT-005: agent_thinking event emitted via orchestration callback', async () => {
-      const thinkingEvents: SSEEvent[] = [];
-
-      let onAgentThinking: ((agentId: string, thought: string) => void) | null = null;
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        if (onAgentThinking) {
-          onAgentThinking('agent-1', 'Analyzing user request...');
-        }
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-      (ctx.orchestrationEntry as any).setOnAgentThinking = (cb: typeof onAgentThinking) => { onAgentThinking = cb; };
-
-      (ctx.orchestrationEntry as any).setOnAgentThinking((agentId: string, thought: string) => {
-        thinkingEvents.push({ event: 'agent_thinking', data: { agent_id: agentId, thought } });
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(thinkingEvents.length).toBeGreaterThanOrEqual(1);
-      const thinkingEvent = thinkingEvents.find(e => e.event === 'agent_thinking');
-      expect(thinkingEvent).toBeDefined();
-      expect(thinkingEvent!.data.agent_id).toBe('agent-1');
-      expect(thinkingEvent!.data.thought).toBe('Analyzing user request...');
-    });
-
-    it('TC-CHAT-006: agent_output event emitted via orchestration callback', async () => {
-      const outputEvents: SSEEvent[] = [];
-
-      let onAgentOutput: ((agentId: string, output: string) => void) | null = null;
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        if (onAgentOutput) {
-          onAgentOutput('agent-2', 'Generated intermediate result');
-        }
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-      (ctx.orchestrationEntry as any).setOnAgentOutput = (cb: typeof onAgentOutput) => { onAgentOutput = cb; };
-
-      (ctx.orchestrationEntry as any).setOnAgentOutput((agentId: string, output: string) => {
-        outputEvents.push({ event: 'agent_output', data: { agent_id: agentId, agent_output: output } });
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const out = new OpenChatStreamOutput();
-      await svc.openChatStream(input, out, c);
-
-      spy.mockRestore();
-
-      expect(outputEvents.length).toBeGreaterThanOrEqual(1);
-      const agentOutEvent = outputEvents.find(e => e.event === 'agent_output');
-      expect(agentOutEvent).toBeDefined();
-      expect(agentOutEvent!.data.agent_id).toBe('agent-2');
-      expect(agentOutEvent!.data.agent_output).toBe('Generated intermediate result');
-    });
-
-    it('TC-CHAT-015: SSE heartbeat event present during long operations', async () => {
-      const heartbeatEvents: SSEEvent[] = [];
-      let heartbeatCount = 0;
-
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        heartbeatCount++;
-        heartbeatEvents.push({
-          event: 'heartbeat',
-          data: { work_id: _c.work_id, timestamp: Date.now() },
-        });
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(heartbeatCount).toBeGreaterThanOrEqual(1);
-      expect(heartbeatEvents.length).toBeGreaterThanOrEqual(1);
-      expect(heartbeatEvents[0].event).toBe('heartbeat');
-      expect(heartbeatEvents[0].data).toHaveProperty('work_id');
-      expect(heartbeatEvents[0].data).toHaveProperty('timestamp');
-    });
-
-    it('TC-CHAT-029: msg_content too long (>128KB) produces error event', async () => {
-      const longContent = 'a'.repeat(131073);
-
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockRejectedValue(
-        new ValidationError('msg_content exceeds maximum allowed length'),
+      await ensureSession('sse-overflow');
+      frames = [];
+      streamAccess = new StreamAccess(ctx.db);
+      const regOut = new RegisterStreamOutput();
+      await streamAccess.registerStream(
+        Object.assign(new RegisterStreamInput(), {
+          session_id: 'test-session',
+          writer: (chunk: string) => { frames.push(chunk); return true; },
+        }),
+        regOut,
+        new StreamContext(),
       );
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: longContent,
+      endpointId = regOut.endpoint_id;
+      // 组合根语义：Report 事件流网关 → StreamProvider
+      Report.setEventStreamGateway({
+        pushToEndpoint: async (input) => {
+          await streamAccess.publishEvent(
+            Object.assign(new PushEventToEndpointInput(), input),
+            new PushEventToEndpointOutput(),
+            new StreamContext(),
+          );
+        },
       });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-      const result = await svc.openChatStream(input, output, c);
-
-      spy.mockRestore();
-
-      expect(result).toBe(true);
-      const errorEvent = output.events.find(e => e.event === 'error');
-      expect(errorEvent).toBeDefined();
-      expect(errorEvent!.data.error_message).toBe('msg_content exceeds maximum allowed length');
-      expect(errorEvent!.data.error_code).toBe('ORCHESTRATION_FAILED');
     });
 
-    it('TC-CHAT-013: Duplicate SSE connection closes old connection for same session', async () => {
-      let oldConnectionOutput: OpenChatStreamOutput | null = null;
-
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        if (oldConnectionOutput) {
-          oldConnectionOutput.events.push({ event: 'closed', data: { reason: 'duplicate_connection' } });
-        }
-        o.final_response = 'mock orchestration response';
-        return true;
-      });
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-
-      const input1 = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'first message',
-      });
-      const output1 = new OpenChatStreamOutput();
-      await svc.openChatStream(input1, output1, new ChatContext());
-      expect(output1.events[0].event).toBe('connected');
-      oldConnectionOutput = output1;
-
-      const input2 = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: 'second message',
-      });
-      const output2 = new OpenChatStreamOutput();
-      await svc.openChatStream(input2, output2, new ChatContext());
-
-      spy.mockRestore();
-
-      const closedEvent = output1.events.find(e => e.event === 'closed');
-      expect(closedEvent).toBeDefined();
-      expect(closedEvent!.data.reason).toBe('duplicate_connection');
-
-      expect(output2.events[0].event).toBe('connected');
+    afterEach(() => {
+      Report.setEventStreamGateway(null);
+      vi.restoreAllMocks();
     });
 
-    it('TC-CHAT-011: session_id empty string throws ValidationError', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: '', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await expect(service.openChatStream(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-012: session_id not found throws NotFoundError', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'nonexistent-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await expect(service.openChatStream(input, output, c)).rejects.toThrow(NotFoundError);
-    });
-
-    it('TC-CHAT-014: session_id missing throws ValidationError', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), { msg_content: 'hello' });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await expect(service.openChatStream(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-028: msg_content empty string throws ValidationError (openChatStream)', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'test-session', msg_content: '',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await expect(service.openChatStream(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('openChatStream: session overflow returns error event instead of throwing', async () => {
-      const sessionId = 'overflow-stream';
-      await insertChatConfig(ctx.db, { max_messages_per_session: 1 });
-      await insertInfoRawRow(ctx.db, sessionId, 'ov-info-1');
-
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: sessionId, msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      const result = await service.openChatStream(input, output, c);
-
-      expect(result).toBe(true);
-      expect(output.events.length).toBe(1);
-      expect(output.events[0].event).toBe('error');
-      expect(output.events[0].data.error_code).toBe('OVERFLOW');
-    });
-  });
-
-  describe('submitWork', () => {
-    it('TC-CHAT-020: Basic submit with valid session_id and msg_content', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello world',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      const result = await service.submitWork(input, output, c);
-
-      expect(result).toBe(true);
-      expect(output.work_id).toEqual(expect.any(String));
-      expect(output.interact_id).toEqual(expect.any(String));
-      expect(output.work_id).toBeTruthy();
-      expect(output.interact_id).toBeTruthy();
-    });
-
-    it('TC-CHAT-021: With citing_msg_ids forwards parent_info_ids to infoCore.saveInfo', async () => {
-      const saveInfoSpy = vi.spyOn(ctx.infoCore, 'saveInfo');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-        citing_msg_ids: ['info-1', 'info-2'],
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await service.submitWork(input, output, c);
-
-      const saveCalls = saveInfoSpy.mock.calls;
-      const userSaveCall = saveCalls.find((cal: any[]) => cal[0].info_type === 'REQUEST');
-      expect(userSaveCall).toBeDefined();
-      expect(userSaveCall[0].parent_info_ids).toEqual(['info-1', 'info-2']);
-      saveInfoSpy.mockRestore();
-    });
-
-    it('TC-CHAT-021b: With selected_msg_ids forwards parent_info_ids to infoCore.saveInfo as cited messages', async () => {
-      const saveInfoSpy = vi.spyOn(ctx.infoCore, 'saveInfo');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello with selection',
-        selected_msg_ids: ['sel-1', 'sel-2'],
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await service.submitWork(input, output, c);
-
-      const saveCalls = saveInfoSpy.mock.calls;
-      const userSaveCall = saveCalls.find((cal: any[]) => cal[0].info_type === 'REQUEST');
-      expect(userSaveCall).toBeDefined();
-      expect(userSaveCall[0].parent_info_ids).toContain('sel-1');
-      expect(userSaveCall[0].parent_info_ids).toContain('sel-2');
-      saveInfoSpy.mockRestore();
-    });
-
-    it('TC-CHAT-022: force_orchestration_strategy SIMPLE forwarded to orchestration', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry, 'receiveWork');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-        force_orchestration_strategy: 'SIMPLE',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await service.submitWork(input, output, c);
-
-      const call = spy.mock.calls[0];
-      expect(call[0].force_orchestration_strategy).toBe('SIMPLE');
-      spy.mockRestore();
-    });
-
-    it('TC-CHAT-023: force_orchestration_strategy PLANNING forwarded to orchestration', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry, 'receiveWork');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-        force_orchestration_strategy: 'PLANNING',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await service.submitWork(input, output, c);
-
-      const call = spy.mock.calls[0];
-      expect(call[0].force_orchestration_strategy).toBe('PLANNING');
-      spy.mockRestore();
-    });
-
-    it('TC-CHAT-024: No force_orchestration_strategy omitted from orchestration call', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry, 'receiveWork');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await service.submitWork(input, output, c);
-
-      const call = spy.mock.calls[0];
-      expect(call[0].force_orchestration_strategy).toBeUndefined();
-      spy.mockRestore();
-    });
-
-    it('TC-CHAT-026: session_id missing throws ValidationError', async () => {
-      const input = Object.assign(new SubmitWorkInput(), { msg_content: 'hello' });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await expect(service.submitWork(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-027: msg_content missing throws ValidationError', async () => {
-      const input = Object.assign(new SubmitWorkInput(), { session_id: 'test-session' });
-      input.msg_content = undefined!;
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await expect(service.submitWork(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-028: msg_content empty string throws ValidationError (submitWork)', async () => {
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: '',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await expect(service.submitWork(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-030: session overflow throws ValidationError', async () => {
-      const sessionId = 'overflow-submit';
-      await insertChatConfig(ctx.db, { max_messages_per_session: 1 });
-      await insertInfoRawRow(ctx.db, sessionId, 'ov-info-1');
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: sessionId, msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      await expect(service.submitWork(input, output, c)).rejects.toThrow(ValidationError);
-    });
-
-    it('TC-CHAT-033: orchestrationEntry.receiveWork throws returns false but sets work_id/interact_id', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockRejectedValue(new Error('orchestration failed'));
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-      const result = await svc.submitWork(input, output, c);
-
-      spy.mockRestore();
-
-      expect(result).toBe(false);
-      expect(output.work_id).toEqual(expect.any(String));
-      expect(output.interact_id).toEqual(expect.any(String));
-    });
-
-    it('TC-CHAT-034: infoCore.saveInfo throws does not crash (error logged)', async () => {
-      mockReceiveWork();
-      const spy = vi.spyOn(ctx.infoCore, 'saveInfo');
-      spy.mockRejectedValueOnce(new Error('save user info failed'));
-
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-
-      const result = await service.submitWork(input, output, c);
-
-      expect(result).toBe(true);
-      expect(output.work_id).toEqual(expect.any(String));
-      spy.mockRestore();
-    });
-
-    it('TC-CHAT-035: Concurrent submit two calls get different work_ids', async () => {
-      mockReceiveWork();
-      const out1 = new SubmitWorkOutput();
-      const out2 = new SubmitWorkOutput();
-
-      const input1 = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'test1',
-      });
-      const input2 = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'test2',
-      });
-
-      const [r1, r2] = await Promise.all([
-        service.submitWork(input1, out1, new ChatContext()),
-        service.submitWork(input2, out2, new ChatContext()),
-      ]);
-
-      expect(r1).toBe(true);
-      expect(r2).toBe(true);
-      expect(out1.work_id).toEqual(expect.any(String));
-      expect(out2.work_id).toEqual(expect.any(String));
-      expect(out1.work_id).not.toBe(out2.work_id);
-    });
-
-    it('TC-CHAT-031: citing_msg_ids forwarded to orchestration receiveWork', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockImplementation(
-        async (_i: any, o: any, _c: any, ) => {
-          o.final_response = 'mock orchestration response';
+    function makeRuntime(): ChatRuntimeV2Deps {
+      const gateway = {
+        submitRun: async (_i: unknown, o: { run_id: string }, _c: unknown, _m: unknown, report?: Report) => {
+          o.run_id = 'run-v2';
+          // 模拟 Loop 的业务事件上报（Report 携带端点 ID → StreamProvider）
+          report?.pushBusinessEvent('part.created' as never, { part_id: 'p1', part_type: 'text' });
+          report?.pushBusinessEvent('part.delta' as never, { field: 'text', delta: 'V2 你好' });
+          report?.pushBusinessEvent('run.status' as never, { phase: 'end', stop_reason: 'stop' });
           return true;
         },
-      );
+        waitRun: async (_i: unknown, o: { status: string; stop_reason?: string }) => {
+          o.status = 'finished';
+          o.stop_reason = 'stop';
+          return true;
+        },
+      } as unknown as RunGatewayAccess;
+      const session = new SessionAccess(ctx.db);
+      return { gateway, session, isV2Enabled: async () => true };
+    }
 
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-        citing_msg_ids: ['non-existent-id-1', 'non-existent-id-2'],
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
+    function makeV2Service(): ChatService {
+      return new ChatService(ctx.db, ctx.infoCore, ctx.logger, undefined, makeRuntime());
+    }
 
-      const result = await service.submitWork(input, output, c);
-
-      expect(result).toBe(true);
-      expect(output.work_id).toEqual(expect.any(String));
-      expect(output.interact_id).toEqual(expect.any(String));
-
-      const call = spy.mock.calls[0];
-      expect(call[0].citing_msg_ids).toEqual(['non-existent-id-1', 'non-existent-id-2']);
-      spy.mockRestore();
+    it('TC-V2-001: connected/loading 传输帧 + 无 v1 文本事件（V1 已移除）', async () => {
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
+      const output = new OpenChatStreamOutput();
+      await makeV2Service().openChatStream(input, output, new ChatContext());
+      expect(output.events[0].event).toBe('session.connected');
+      expect(output.events[1].event).toBe('session.loading');
+      expect(output.events.some((e) => e.event === 'text')).toBe(false);
     });
 
-    it('TC-CHAT-032: Invalid force_orchestration_strategy returns false', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'receiveWork').mockRejectedValue(
-        new ValidationError('Invalid orchestration strategy: INVALID_VALUE'),
-      );
+    it('TC-V2-002: part.delta 经 Report→StreamProvider 写入端点帧（v2 协议名）', async () => {
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
+      await makeV2Service().openChatStream(input, new OpenChatStreamOutput(), new ChatContext());
+      await new Promise((r) => setTimeout(r, 80));
+      const deltaFrame = frames.find((f) => f.includes('"part.delta"'));
+      expect(deltaFrame).toBeTruthy();
+      expect(deltaFrame).toContain('V2 你好');
+      // run.status end 帧也经端点投递
+      expect(frames.some((f) => f.includes('"run.status"'))).toBe(true);
+    });
 
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new SubmitWorkInput(), {
-        session_id: 'test-session', msg_content: 'hello',
-        force_orchestration_strategy: 'INVALID_VALUE',
-      });
-      const c = new ChatContext();
-      const output = new SubmitWorkOutput();
-      const result = await svc.submitWork(input, output, c);
+    it('TC-V2-003: done 传输帧收尾（paused=false）', async () => {
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
+      const output = new OpenChatStreamOutput();
+      await makeV2Service().openChatStream(input, output, new ChatContext());
+      const last = output.events[output.events.length - 1];
+      expect(last.event).toBe('session.done');
+      expect(last.data.work_id).toBe('run-v2');
+      expect(last.data.paused).toBe(false);
+    });
 
-      spy.mockRestore();
-
-      expect(result).toBe(false);
+    it('TC-V2-004: 未装配 Runtime 应 fail-loud', async () => {
+      const bare = new ChatService(ctx.db, ctx.infoCore, ctx.logger);
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
+      await expect(bare.openChatStream(input, new OpenChatStreamOutput(), new ChatContext())).rejects.toThrow('Runtime v2 未装配');
     });
   });
 
@@ -1049,17 +462,27 @@ describe('ChatService', () => {
       await expect(service.updateSessionTitle(input, output, new ChatContext())).rejects.toThrow(NotFoundError);
     });
 
+    function makeV2Svc(): ChatService {
+      const gateway = {
+        submitRun: async (_i: unknown, o: { run_id: string }) => {
+          o.run_id = 'run-t';
+          return true;
+        },
+        waitRun: async (_i: unknown, o: { status: string }) => {
+          o.status = 'finished';
+          return true;
+        },
+      } as unknown as RunGatewayAccess;
+      return new ChatService(ctx.db, ctx.infoCore, ctx.logger, undefined, { gateway, session: new SessionAccess(ctx.db) });
+    }
+
     it('TC-CHAT-078: First message automatically sets session_title with max 50 chars truncation', async () => {
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
 
       const longMsg = '这是一个超过五十个字符测试消息的超级长的文本输入内容，用来测试系统是否能够自动截断为前五十个字符并成功设置为会话名称！后面还有很多很多废话内容……';
-      const submitIn = Object.assign(new SubmitWorkInput(), {
-        session_id: createOut.session_id,
-        msg_content: longMsg,
-      });
-      const submitOut = new SubmitWorkOutput();
-      await service.submitWork(submitIn, submitOut, new ChatContext());
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: createOut.session_id, msg_content: longMsg });
+      await makeV2Svc().openChatStream(input, new OpenChatStreamOutput(), new ChatContext());
 
       const detailIn = Object.assign(new GetSessionDetailInput(), { session_id: createOut.session_id });
       const detailOut = new GetSessionDetailOutput();
@@ -1074,16 +497,16 @@ describe('ChatService', () => {
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
 
       const firstMsg = '第一条消息';
-      await service.submitWork(
-        Object.assign(new SubmitWorkInput(), { session_id: createOut.session_id, msg_content: firstMsg }),
-        new SubmitWorkOutput(),
+      await makeV2Svc().openChatStream(
+        Object.assign(new OpenChatStreamInput(), { session_id: createOut.session_id, msg_content: firstMsg }),
+        new OpenChatStreamOutput(),
         new ChatContext(),
       );
 
       const secondMsg = '第二条消息不应该覆盖标题';
-      await service.submitWork(
-        Object.assign(new SubmitWorkInput(), { session_id: createOut.session_id, msg_content: secondMsg }),
-        new SubmitWorkOutput(),
+      await makeV2Svc().openChatStream(
+        Object.assign(new OpenChatStreamInput(), { session_id: createOut.session_id, msg_content: secondMsg }),
+        new OpenChatStreamOutput(),
         new ChatContext(),
       );
 
@@ -1354,55 +777,6 @@ describe('ChatService', () => {
     });
   });
 
-  describe('cancelWork', () => {
-    it('TC-CHAT-130: Cancel running work returns cancelled=true', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'cancelWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.cancelled = true;
-        return true;
-      });
-
-      const input = Object.assign(new CancelWorkInput(), { work_id: 'work-1' });
-      const output = new CancelWorkOutput();
-
-      const result = await service.cancelWork(input, output, new ChatContext());
-
-      spy.mockRestore();
-
-      expect(result).toBe(true);
-      expect(output.cancelled).toBe(true);
-    });
-
-    it('TC-CHAT-131: Cancel with reason forwards reason to orchestration', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry, 'cancelWork');
-
-      const input = Object.assign(new CancelWorkInput(), { work_id: 'work-2', reason: 'user abort' });
-      const output = new CancelWorkOutput();
-
-      await service.cancelWork(input, output, new ChatContext());
-
-      expect(spy).toHaveBeenCalled();
-      const callInput = spy.mock.calls[0][0];
-      expect(callInput.work_id).toBe('work-2');
-      expect(callInput.reason).toBe('user abort');
-      spy.mockRestore();
-    });
-
-    it('TC-CHAT-134: orchestration throws returns false', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'cancelWork').mockRejectedValue(new Error('cancel failed'));
-
-      const svc = new ChatService(ctx.db, ctx.infoCore, ctx.writerAgent,
-        ctx.evolutorAgent, ctx.orchestrationEntry, ctx.logger);
-      const input = Object.assign(new CancelWorkInput(), { work_id: 'work-3' });
-      const output = new CancelWorkOutput();
-      const result = await svc.cancelWork(input, output, new ChatContext());
-
-      spy.mockRestore();
-
-      expect(result).toBe(false);
-      expect(output.cancelled).toBe(false);
-    });
-  });
-
   describe('configChat', () => {
     it('configChat with valid params updates output.config', async () => {
       const input = Object.assign(new ConfigChatInput(), {
@@ -1445,83 +819,80 @@ describe('ChatService', () => {
     });
   });
 
-  describe('openChatStream - SSE format and metadata', () => {
+  describe('openChatStream - SSE 帧格式（V2）', () => {
+    let streamAccess: StreamAccess;
+    let frames: string[];
+    let endpointId: string;
+
     beforeEach(async () => {
-      await ensureSession('sse-meta');
-      await ensureSession('sse-headers');
-      await ensureSession('sse-elapsed');
-      await ensureSession('sse-token');
+      await ensureSession('test-session');
+      frames = [];
+      streamAccess = new StreamAccess(ctx.db);
+      const regOut = new RegisterStreamOutput();
+      await streamAccess.registerStream(
+        Object.assign(new RegisterStreamInput(), {
+          session_id: 'test-session',
+          writer: (chunk: string) => { frames.push(chunk); return true; },
+        }),
+        regOut,
+        new StreamContext(),
+      );
+      endpointId = regOut.endpoint_id;
+      Report.setEventStreamGateway({
+        pushToEndpoint: async (input) => {
+          await streamAccess.publishEvent(
+            Object.assign(new PushEventToEndpointInput(), input),
+            new PushEventToEndpointOutput(),
+            new StreamContext(),
+          );
+        },
+      });
     });
 
-    it('TC-CHAT-016: SSE events have correct shape (event + data)', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'sse-meta', msg_content: 'hi',
-      });
-      const c = new ChatContext();
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, c);
-
-      for (const evt of output.events) {
-        expect(evt).toHaveProperty('event');
-        expect(evt).toHaveProperty('data');
-        expect(typeof evt.event).toBe('string');
-        expect(typeof evt.data).toBe('object');
-      }
+    afterEach(() => {
+      Report.setEventStreamGateway(null);
+      vi.restoreAllMocks();
     });
 
-    it('TC-CHAT-017: SSE connected event has session_id', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'sse-headers', msg_content: 'hi',
+    function makeV2Service(): ChatService {
+      const gateway = {
+        submitRun: async (_i: unknown, o: { run_id: string }, _c: unknown, _m: unknown, report?: Report) => {
+          o.run_id = 'run-v2';
+          report?.pushBusinessEvent('part.delta' as never, { field: 'text', delta: '帧格式' });
+          report?.pushBusinessEvent('run.status' as never, { phase: 'end', stop_reason: 'stop' });
+          return true;
+        },
+        waitRun: async (_i: unknown, o: { status: string }) => {
+          o.status = 'finished';
+          return true;
+        },
+      } as unknown as RunGatewayAccess;
+      return new ChatService(ctx.db, ctx.infoCore, ctx.logger, undefined, {
+        gateway,
+        session: new SessionAccess(ctx.db),
       });
+    }
+
+    it('TC-V2-010: 结构化帧含 BrianSSEMessage 必备字段（msg_id/event/data/timestamp）', async () => {
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
       const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, new ChatContext());
-
-      expect(output.events[0].event).toBe('connected');
-      expect(output.events[0].data.session_id).toBe('sse-headers');
+      await makeV2Service().openChatStream(input, output, new ChatContext());
+      await new Promise((r) => setTimeout(r, 80));
+      const deltaFrame = frames.find((f) => f.includes('"part.delta"'));
+      expect(deltaFrame).toBeTruthy();
+      const msg = JSON.parse((deltaFrame as string).replace(/^data: /, '').trim());
+      expect(msg).toMatchObject({ msg_id: expect.any(String), event: 'part.delta', timestamp: expect.any(Number) });
     });
 
-    it('SSE done event has non-negative elapsed_ms', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'sse-elapsed', msg_content: 'hi',
-      });
+    it('TC-V2-011: done 传输帧含 elapsed_ms/token_usage/paused', async () => {
+      const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
       const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, new ChatContext());
-
-      const doneEvent = output.events.find(e => e.event === 'done');
-      expect(doneEvent).toBeDefined();
-      expect(doneEvent!.data.elapsed_ms).toBeGreaterThanOrEqual(0);
-    });
-
-    it('SSE done event has token_usage object', async () => {
-      mockReceiveWork();
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'sse-token', msg_content: 'hi',
-      });
-      const output = new OpenChatStreamOutput();
-
-      await service.openChatStream(input, output, new ChatContext());
-
-      const doneEvent = output.events.find(e => e.event === 'done');
-      expect(doneEvent!.data.token_usage).toEqual(expect.any(Object));
-    });
-
-    it('onEvent 回调实时收到与 output.events 一致的事件流', async () => {
-      const input = Object.assign(new OpenChatStreamInput(), {
-        session_id: 'sse-headers', msg_content: 'hi',
-      });
-      const output = new OpenChatStreamOutput();
-      const received: Array<{ event: string; data: Record<string, unknown> }> = [];
-
-      await service.openChatStream(input, output, new ChatContext(), undefined, undefined, (evt) => {
-        received.push({ event: evt.event, data: evt.data });
-      });
-
-      expect(received.length).toBeGreaterThan(0);
-      expect(received.map((e) => e.event)).toEqual(output.events.map((e) => e.event));
+      await makeV2Service().openChatStream(input, output, new ChatContext());
+      const last = output.events[output.events.length - 1];
+      expect(last.event).toBe('session.done');
+      expect(last.data.elapsed_ms).toBeGreaterThanOrEqual(0);
+      expect(last.data.token_usage).toEqual({});
+      expect(last.data.paused).toBe(false);
     });
   });
 
@@ -1859,37 +1230,6 @@ describe('ChatService', () => {
     });
   });
 
-  describe('cancelWork - extended', () => {
-    it('TC-CHAT-132: cancel already completed work returns cancelled=false', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'cancelWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.cancelled = false;
-        return true;
-      });
-
-      const input = Object.assign(new CancelWorkInput(), { work_id: 'completed-work' });
-      const output = new CancelWorkOutput();
-      await service.cancelWork(input, output, new ChatContext());
-
-      spy.mockRestore();
-
-      expect(output.cancelled).toBe(false);
-    });
-
-    it('TC-CHAT-133: nonexistent work_id returns cancelled=false', async () => {
-      const spy = vi.spyOn(ctx.orchestrationEntry as any, 'cancelWork').mockImplementation(async (_i: any, o: any, _c: any, ) => {
-        o.cancelled = false;
-        return true;
-      });
-
-      const input = Object.assign(new CancelWorkInput(), { work_id: 'no-such-work' });
-      const output = new CancelWorkOutput();
-      await service.cancelWork(input, output, new ChatContext());
-
-      spy.mockRestore();
-
-      expect(output.cancelled).toBe(false);
-    });
-  });
 
   describe('soChatHistory - Agent Trace and Thinking Blocks', () => {
     it('TC-CHAT-140: soChatHistory populates work_id and message metadata for response messages', async () => {

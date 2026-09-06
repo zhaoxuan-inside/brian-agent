@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-04T14:58:03.473Z；方法总数：554
+> 生成时间：2026-09-05T09:25:24.885Z；方法总数：529
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -18,39 +18,38 @@
 | Base | [MQProvider](./Base/MQProvider.md) | 11 |
 | Base | [PromptCatalog](./Base/PromptCatalog.md) | 1 |
 | Base | [PromptsProvider](./Base/PromptsProvider.md) | 9 |
-| Base | [RelationDBProvider](./Base/RelationDBProvider.md) | 42 |
+| Base | [RelationDBProvider](./Base/RelationDBProvider.md) | 21 |
 | Base | [SkillProvider](./Base/SkillProvider.md) | 8 |
 | Base | [SoulProvider](./Base/SoulProvider.md) | 9 |
-| Base | [StreamProvider](./Base/StreamProvider.md) | 7 |
+| Base | [StreamProvider](./Base/StreamProvider.md) | 9 |
 | Base | [ToolProvider](./Base/ToolProvider.md) | 20 |
 | Base | [VectorDBProvider](./Base/VectorDBProvider.md) | 15 |
-| **Base 小计** | | **226** |
+| **Base 小计** | | **207** |
 | Core | [CDTCoreProvider](./Core/CDTCoreProvider.md) | 10 |
 | Core | [InfoCoreProvider](./Core/InfoCoreProvider.md) | 37 |
 | Core | [LLMCoreProvider](./Core/LLMCoreProvider.md) | 6 |
 | Core | [MCPCoreProvider](./Core/MCPCoreProvider.md) | 3 |
 | Core | [MQCoreProvider](./Core/MQCoreProvider.md) | 3 |
 | Core | [SkillCoreProvider](./Core/SkillCoreProvider.md) | 6 |
-| Core | [SoulCoreProvider](./Core/SoulCoreProvider.md) | 7 |
-| **Core 小计** | | **72** |
+| Core | [SoulCoreProvider](./Core/SoulCoreProvider.md) | 8 |
+| **Core 小计** | | **73** |
 | Runtime | [Agents](./Runtime/Agents.md) | 6 |
-| Runtime | [Bus](./Runtime/Bus.md) | 6 |
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
 | Runtime | [Runs](./Runtime/Runs.md) | 9 |
-| Runtime | [Session](./Runtime/Session.md) | 10 |
+| Runtime | [Session](./Runtime/Session.md) | 7 |
 | Runtime | [Tools](./Runtime/Tools.md) | 6 |
-| **Runtime 小计** | | **41** |
+| **Runtime 小计** | | **32** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |
 | Agent | [AgentExecution](./Agent/AgentExecution.md) | 10 |
-| Agent | [AgentLibrary](./Agent/AgentLibrary.md) | 12 |
+| Agent | [AgentLibrary](./Agent/AgentLibrary.md) | 14 |
 | Agent | [AgentStrategy](./Agent/AgentStrategy.md) | 8 |
 | Agent | [EvolutorAgent](./Agent/EvolutorAgent.md) | 8 |
 | Agent | [IntentAgent](./Agent/IntentAgent.md) | 2 |
 | Agent | [PlannerAgent](./Agent/PlannerAgent.md) | 6 |
 | Agent | [SummaryAgent](./Agent/SummaryAgent.md) | 3 |
 | Agent | [WriterAgent](./Agent/WriterAgent.md) | 5 |
-| **Agent 小计** | | **62** |
+| **Agent 小计** | | **64** |
 | Orchestration | [JSONNode](./Orchestration/JSONNode.md) | 8 |
 | Orchestration | [OrchestrationEntry](./Orchestration/OrchestrationEntry.md) | 10 |
 | Orchestration | [OrchestrationExecution](./Orchestration/OrchestrationExecution.md) | 10 |
@@ -63,4 +62,4 @@
 | Application | [UserProfile](./Application/UserProfile.md) | 13 |
 | Application | [Visualization](./Application/Visualization.md) | 10 |
 | **Application 小计** | | **110** |
-| **总计** | | **554** |
+| **总计** | | **529** |

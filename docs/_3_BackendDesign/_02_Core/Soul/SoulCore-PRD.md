@@ -209,3 +209,7 @@ Soul 匹配、生成与优化评估调用 LLM 时按以下顺序选择模型：
 - `configSoulCore`：`prompt_template_id` 非空时经 Base 层 `PromptsAccess.getPrompt` 校验存在性。
 - `ConfigService.getCurrentValue`：`soul_core.opt_rule.*` 从 `list[0]` 提取 `days`/`min_usage_count`。
 - `dev-server`：每日午夜 `scheduleDailyAging()` 同步调用 `ageSoul` 老化不活跃 Soul。
+
+## 落地差异（2026-09-05 · 绑定收权）
+
+Agent↔本模块组件的绑定关系收敛至 **Agent 模块 agent 表**（唯一事实源）：Core 的 agent_* 绑定表停止创建与读写；`match*` 为纯选择（Input 增 `bound_*` 传入既有绑定做确定性水合，不传则按任务选择，零持久化）；`opt*` 仅记 usage（键 (agent_id, component_id)，usage 表检测旧键自动重建）；`age*` 输出解绑候选（不删除）；绑定/解绑由 Agent 模块 `AgentLibrary.bindAgentComponent/unbindAgentComponent` 经评估链路（EvolutorAgent 评估 → AgentBuilder.optimizeAgent）执行。

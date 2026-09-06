@@ -24,7 +24,6 @@ import {
   OptMcpOutput,
   ConfigMcpCoreInput,
   ConfigMcpCoreOutput,
-  AGENT_MCP_TABLE,
   MCP_CORE_CONFIG_TABLE,
 } from '../MCPCoreProvider';
 
@@ -159,13 +158,6 @@ describe('MCPCoreProvider', () => {
         { field: 'enable', value: 1 },
         { field: 'status', value: 'running' },
       ]);
-      await relationDb.insert(AGENT_MCP_TABLE, [
-        { field: 'id', value: 'cache-1' },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'agent_id', value: 'agent-cached' },
-        { field: 'mcp_id', value: 'mcp-1' },
-      ]);
       await relationDb.delete(MCP_CORE_CONFIG_TABLE, []);
       await relationDb.insert(MCP_CORE_CONFIG_TABLE, [
         { field: 'id', value: IdGenerator.generate() },
@@ -176,8 +168,10 @@ describe('MCPCoreProvider', () => {
         { field: 'prompt_template_id', value: '' },
       ]);
 
+      // 绑定唯一事实源 = agent 表：既有绑定经 bound_mcp_ids 传入，确定性水合（不再读 agent_mcp 绑定表）
       const input = new MatchMcpInput();
       input.agent_id = 'agent-cached';
+      input.bound_mcp_ids = ['mcp-1'];
       const output = new MatchMcpOutput();
       await mcpCore.matchMCP(input, output, new McpCoreContext());
       expect(output.mcp_ids).toContain('mcp-1');
@@ -192,7 +186,8 @@ describe('MCPCoreProvider', () => {
       const output = new OptMcpOutput();
       const result = await mcpCore.optMCP(input, output, new McpCoreContext());
       expect(result).toBe(true);
-      expect(output.id).toBeTruthy();
+      // 绑定已收敛至 Agent 表：optMCP 只记 usage，不再产出绑定 id
+      expect(output.id).toBe('');
     });
 
     it('should be idempotent for same agent+MCP', async () => {
@@ -206,7 +201,9 @@ describe('MCPCoreProvider', () => {
       const out2 = new OptMcpOutput();
       await mcpCore.optMCP(input, out2, new McpCoreContext());
 
-      expect(out1.id).toBe(out2.id);
+      // 幂等：同一 (agent_id, mcp_id) 均只记 usage，无绑定副作用
+      expect(out1.id).toBe('');
+      expect(out2.id).toBe('');
     });
 
     it('should allow different MCPs for same agent', async () => {
@@ -223,7 +220,9 @@ describe('MCPCoreProvider', () => {
       const out2 = new OptMcpOutput();
       await mcpCore.optMCP(mcp2, out2, new McpCoreContext());
 
-      expect(out1.id).not.toBe(out2.id);
+      // 不同 mcp_id 各自记录 usage，互不影响
+      expect(out1.id).toBe('');
+      expect(out2.id).toBe('');
     });
   });
 });

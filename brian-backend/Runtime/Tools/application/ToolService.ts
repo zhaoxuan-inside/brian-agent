@@ -27,6 +27,7 @@ import {
   AnyToolDef,
   ToolSpecJson,
   ToolExecutionContext,
+  ToolResultStatus,
 } from '../domain/types';
 import { zodToJSONSchema } from '../domain/zodToJsonSchema';
 import {
@@ -35,12 +36,14 @@ import {
   mcpExecTool,
   cdtBrowserTool,
 } from './builtinTools';
+import { updatePlanTool } from './planTool';
+import { delegateTool } from './delegateTool';
 
 /** 默认结果截断上限（字符） */
 const DEFAULT_MAX_OUTPUT = 8000;
 
 /** 内置工具 id（不可被自定义工具覆盖） */
-const BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser']);
+const BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate']);
 
 /**
  * ToolService。
@@ -85,7 +88,7 @@ export class ToolService {
   /** 注册内置工具（逻辑控制；幂等；enabled 缺省全部） */
   async registerBuiltinTools(input: RegisterBuiltinToolsInput, output: RegisterBuiltinToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const enabled = new Set(input.enabled ?? ['skill_exec', 'mcp_exec', 'cdt_browser']);
+    const enabled = new Set(input.enabled ?? ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate']);
     const candidates = this.prepareBuiltinCandidates();
     for (const def of candidates) {
       if (!enabled.has(def.id)) {
@@ -100,7 +103,18 @@ export class ToolService {
 
   /** 组装内置工具候选（数据处理） */
   private prepareBuiltinCandidates(): AnyToolDef[] {
-    return [skillExecTool(this.deps), mcpExecTool(this.deps), cdtBrowserTool(this.deps)];
+    return [
+      skillExecTool(this.deps),
+      mcpExecTool(this.deps),
+      cdtBrowserTool(this.deps),
+      updatePlanTool(),
+      delegateTool({ submitRun: (input) => {
+        if (!this.deps.runGateway) {
+          throw new ValidationError('delegate 未接线（runGateway 未注入）');
+        }
+        return this.deps.runGateway.submitRun(input);
+      } }),
+    ];
   }
 
   /** 组装注册入参（数据处理） */
@@ -131,9 +145,9 @@ export class ToolService {
     return true;
   }
 
-  /** 工具执行上下文组装（数据处理） */
+  /** 工具执行上下文组装（数据处理；emitEvent 为工具→事件流出口） */
   private prepareToolContext(input: ExecToolInput): ToolExecutionContext {
-    return { run_id: input.run_id, session_key: input.session_key, signal: input.signal };
+    return { run_id: input.run_id, session_key: input.session_key, signal: input.signal, emitEvent: input.emitEvent };
   }
 
   /** 参数解析与 zod 校验（数据处理；失败不抛错，转配对回流） */
@@ -166,7 +180,7 @@ export class ToolService {
       return this.truncateResult(result, def.max_output ?? this.defaultMaxOutput);
     } catch (err) {
       return {
-        status: 'error',
+        status: ToolResultStatus.Error,
         output: `工具 ${def.id} 执行失败: ${err instanceof Error ? err.message : String(err)}`,
         elapsed_ms: Date.now() - startedAt,
       };
@@ -185,7 +199,7 @@ export class ToolService {
   /** 校验失败 → 模型反馈错误（数据处理；OpenCode invalid-args 回流语义） */
   private toFeedbackError(toolId: string, error: string): ToolResult {
     return {
-      status: 'error',
+      status: ToolResultStatus.Error,
       output: `The ${toolId} tool was called with invalid arguments: ${error} Please rewrite the input and try again.`,
     };
   }

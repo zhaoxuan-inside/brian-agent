@@ -18,6 +18,8 @@ export class MatchMcpInput extends Input {
   agent_id!: string;
   context_id?: string;
   interact_id?: string;
+  /** 调用方传入的既有绑定（agent 表为唯一绑定事实源）；传入时确定性水合，不再按任务重选 */
+  bound_mcp_ids?: string[];
 }
 export class MatchMcpOutput extends Output {
   mcp_ids: string[] = [];
@@ -47,6 +49,7 @@ export class ConfigMcpCoreOutput extends Output {
 
 // --- Tables ---
 export const MCP_CORE_CONFIG_TABLE = 'mcp_core_config';
+/** @deprecated 绑定已收敛至 Agent 表（agent.mcp_ids_json），表停止创建；常量仅为兼容保留 */
 export const AGENT_MCP_TABLE = 'agent_mcp';
 export const AGENT_MCP_USAGE_TABLE = 'agent_mcp_usage';
 

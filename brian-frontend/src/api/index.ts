@@ -75,11 +75,6 @@ export const chatApi = {
     request<{ nodes: AgentChainNode[] }>(`/chat/agent-chain/${encodeURIComponent(exchangeId)}`).then(r => r.nodes),
   cancelTask: (exchangeId: string) =>
     request<void>(`/chat/cancel/${encodeURIComponent(exchangeId)}`, { method: 'POST' }),
-  confirmIntent: (payload: { session_id: string; work_id: string; action: 'APPROVE' | 'KEEP' | 'CANCEL'; understood_requirement?: string }) =>
-    request<{ success: boolean; action_applied: string; next_status: string }>('/chat/confirm-intent', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    })
 }
 
 export interface MemoryPage {
@@ -608,3 +603,8 @@ export const cronToolApi = {
 }
 
 export { request as fetchApi }
+
+/** 权限应答（v2 权限门：permission.asked → 应答唤醒挂起的 Loop） */
+export function answerPermission(permission_id: string, approved: boolean): Promise<{ ok: boolean; answered: boolean }> {
+  return request('/chat/permission/answer', { method: 'POST', body: JSON.stringify({ permission_id, approved }) })
+}

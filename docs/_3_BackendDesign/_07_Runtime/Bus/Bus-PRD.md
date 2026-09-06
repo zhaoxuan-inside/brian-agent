@@ -100,3 +100,12 @@ export class ConfigBusInput extends Input { heartbeat_ms?: number; retention_day
 
 - 单测：seq 单调与幂等重放；durable 投影重放→直播无缝（mock 抖动）；多投影扇出掉线保底。
 - 集成：前端 v2 store 归约全部事件；断线重连不丢不重；permission 答复恢复后 delta 续流；块 chunker 代码围栏完整性（长 code_block 压测）。
+
+## 落地差异（2026-09-05 · 融合架构：Report = 上报端点管理，Bus = 事件事实源）
+
+1. **职责划分**：Report 参数（Base，`attachEventPublisher/detachEventPublisher/pushBusinessEvent）管理上报端点——端点注册（durable：先重放 after_seq 之后事件再尾随）、断线恢复、注销；Bus 保留事件流的持久化（runtime_event）、每 session 严格递增 seq、审计重放。业务代码只经 `report.pushBusinessEvent 上报 → BusEndpointManager 落 Bus → 扇出到 Report 管理的端点与其余订阅者，单一投递路径无重复。
+2. **适配实现**：`Runtime/Bus/application/BusEndpointManager.ts` 实现 Base 的 `ReportEventPublisher 接口（registerEndpoint=registerProjection 适配、publish=publishEvent、unregisterEndpoint）。Base 不反向依赖 Runtime（接口在 Base，实现在 Runtime，组合根注入）。
+3. **接线**：ChatService.openChatStreamV2 构造 channel 级 Report（session_key=外部会话 id）并 attachEventPublisher（after_seq=会话最新 seq），report 传入 submitRun → Runs → Loop —— 此前 no-op 的 6 类业务事件（run.accepted/run.status/part.created/part.delta/tool.launch/tool.result）经 Report→Bus→端点 激活；手工 registerProjection 由 attachEventPublisher 取代，请求结束 finally detach（顺带修复投影订阅泄漏）。
+4. **兼容语义**：未 attach 发布器的 Report 保持旧行为（channel 直推 / 静默 no-op）；pushBusinessEvent 为 fire-and-forget（发布失败静默，Bus 写库保底语义不变）。
+
+> **⚠ 已吸收（2026-09-05）**：应用户设计决策，事件流功能（持久化/断线恢复/审计/端点寻址投递）自本模块**迁入 Base/StreamProvider**（`stream_event 表 + publishEvent/replayEvents + 端点 ID 寻址）；Report 参数只负责接收业务的消息并携带端点 ID。Runtime/Bus 模块删除，本 PRD 保留为设计沿革记录。
