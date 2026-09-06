@@ -51,6 +51,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   let streamAccess: any;
   let toolAccess: ToolAccess;
   let loopAccess: LoopAccess;
+  let mockSkill: { execSkill: ReturnType<typeof vi.fn> };
   let mockLlm: { execLLMEvents: ReturnType<typeof vi.fn> };
   let sessionId = '';
 
@@ -74,7 +75,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
         );
       },
     });
-    const mockSkill = {
+    mockSkill = {
       execSkill: vi.fn(async (_i: unknown, output: { result: unknown }) => {
         output.result = '北京天气：晴，22°C';
         return true;
@@ -255,6 +256,74 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const last = events.events[events.events.length - 1];
     expect(last.type).toBe('run.failed');
   });
+
+  it('权限门：拒绝时工具配对拒绝回流且不实际执行', async () => {
+    mockSkill.execSkill.mockClear();
+    let asked: Array<Record<string, unknown>> = [];
+    const gated = new LoopAccess(
+      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess,
+      undefined, undefined,
+      { wait: async (i) => { asked.push({ permission_id: i.permission_id }); return { approved: false }; } },
+    );
+    await gated.initialize();
+    mockLlm.execLLMEvents
+      .mockImplementationOnce(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+        input.on_event?.({ type: 'text_delta', delta: '需要调用工具' });
+        output.finish_reason = 'tool-calls';
+        output.result = '需要调用工具';
+        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_exec', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
+        return true;
+      })
+      .mockImplementationOnce(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+        output.finish_reason = 'stop';
+        output.result = '好的，不查了';
+        return true;
+      });
+    const input = makeLoopInput();
+    const output = new ExecAgentLoopOutput();
+    const report = await makeStreamReport(input.session_key);
+    await gated.execAgentLoop(input, output, new Context(), undefined, report);
+
+    expect(asked.length).toBe(1);
+    expect(mockSkill.execSkill).not.toHaveBeenCalled();
+    const events = await replayEvents(input.session_key);
+    const denied = events.events.find((e) => e.type === 'tool.result');
+    expect((denied!.payload as { output: string }).output).toContain('permission denied');
+  });
+
+  it('权限门：批准时工具正常执行', async () => {
+    mockSkill.execSkill.mockClear();
+    const gated = new LoopAccess(
+      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess,
+      undefined, undefined,
+      { wait: async () => ({ approved: true }) },
+    );
+    await gated.initialize();
+    mockLlm.execLLMEvents
+      .mockImplementationOnce(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+        output.finish_reason = 'tool-calls';
+        output.result = '需要调用工具';
+        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_exec', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
+        return true;
+      })
+      .mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+        output.finish_reason = 'stop';
+        output.result = 'done';
+        return true;
+      });
+    const input = makeLoopInput();
+    const output = new ExecAgentLoopOutput();
+    const report = await makeStreamReport(input.session_key);
+    await gated.execAgentLoop(input, output, new Context(), undefined, report);
+
+    console.log('DEBUG stop_reason:', output.stop_reason, 'result:', output.result);
+    console.log('DEBUG events:', JSON.stringify((await replayEvents(input.session_key)).events.map((e) => ({ t: e.type, p: e.payload }))));
+    expect(mockSkill.execSkill).toHaveBeenCalledTimes(1);
+    const events = await replayEvents(input.session_key);
+    const toolResult = events.events.find((e) => e.type === 'tool.result');
+    expect((toolResult!.payload as { status: string }).status).toBe('ok');
+  });
+  
 
   it('LLM 全候选失败应该收敛 error', async () => {
     mockLlm.execLLMEvents.mockImplementationOnce(

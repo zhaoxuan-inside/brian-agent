@@ -1694,12 +1694,12 @@ export class SelfLearningService {
     ]);
     const completionRate = totalFiles > 0 ? Math.round((completedFiles / totalFiles) * 100) / 100 : 0;
 
-    let totalTagNodes = 0;
-    let totalTagEdges = 0;
-    let activeEdges = 0;
-    let orphanTags = 0;
-    let agedEdgesThisWeek = 0;
-    let newEdgesThisWeek = 0;
+    const totalTagNodes = 0;
+    const totalTagEdges = 0;
+    const activeEdges = 0;
+    const orphanTags = 0;
+    const agedEdgesThisWeek = 0;
+    const newEdgesThisWeek = 0;
 
     // 图统计读取（2026-09-06）：请求路径绝不执行 O(节点数) 扫描——
     // 60s TTL 内命中缓存；过期返回旧值并后台重算；无缓存返回零值并后台首算
@@ -1779,12 +1779,12 @@ export class SelfLearningService {
         graphNodes,
         new GraphContext(),
       );
-      let totalTagNodes = graphNodes.list.length;
-      let totalTagEdges = 0;
-      let activeEdges = 0;
-      let orphanTags = 0;
-      let agedEdgesThisWeek = 0;
-      let newEdgesThisWeek = 0;
+      const totalTagNodes = graphNodes.list.length;
+      const totalTagEdges = 0;
+      const activeEdges = 0;
+      const orphanTags = 0;
+      const agedEdgesThisWeek = 0;
+      const newEdgesThisWeek = 0;
       const thisWeekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       const nodeNeighborMap = new Map<string, number>();
