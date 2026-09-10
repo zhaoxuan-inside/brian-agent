@@ -3,7 +3,9 @@
  *
  * 针对 Google Gemini 提供商的特殊路径与鉴权机制：
  * 1. 默认 OpenAI 兼容对话路径为 `openai/chat/completions`，默认模型列表路径为 `models`；
- * 2. 鉴权头部同时提供 `Authorization: Bearer <api_key>` 与 `x-goog-api-key: <api_key>`，并在 URL 附带 `?key=<api_key>` 参数；
+ * 2. 原生 REST（`/models`）只用 `x-goog-api-key` 与 URL `?key=`；
+ *    OpenAI 兼容路径才额外带 `Authorization: Bearer`。
+ *    原生接口若带 Bearer API Key，Google 会按 OAuth2 校验并返回 401；
  * 3. 支持 Google 特有的 `json.models` 模型列表字段及 Token 限制字段解析；
  * 4. 兼容 Google 原生返回与 OpenAI 兼容返回格式。
  */
@@ -25,20 +27,28 @@ export class GoogleStrategy extends BaseLLMStrategy {
     return title.includes('google') || url.includes('googleapis.com') || title.includes('gemini');
   }
 
+  private isOpenAiCompatPath(apiPath: string): boolean {
+    return /(^|\/)openai(\/|$)/i.test(apiPath);
+  }
+
   /**
-   * 构造 Google 专用请求头（同时设置 Bearer 与 x-goog-api-key）。
+   * 构造 Google 专用请求头。
+   * 原生 REST 禁止带 Bearer，否则 /models 会被当成 OAuth 而 401。
    */
   protected override buildHeaders(
     provider: LLMProviderRecord,
     contentType = 'application/json',
+    useBearer = false,
   ): Record<string, string> {
     const headers: Record<string, string> = {};
     if (contentType) {
       headers['Content-Type'] = contentType;
     }
     if (provider.api_key) {
-      headers['Authorization'] = `Bearer ${provider.api_key}`;
       headers['x-goog-api-key'] = provider.api_key;
+      if (useBearer) {
+        headers['Authorization'] = `Bearer ${provider.api_key}`;
+      }
     }
     return headers;
   }
@@ -69,7 +79,7 @@ export class GoogleStrategy extends BaseLLMStrategy {
     return {
       url,
       method: 'GET',
-      headers: this.buildHeaders(provider, ''),
+      headers: this.buildHeaders(provider, '', this.isOpenAiCompatPath(modelsPath)),
     };
   }
 
@@ -117,7 +127,7 @@ export class GoogleStrategy extends BaseLLMStrategy {
     return {
       url,
       method: 'POST',
-      headers: this.buildHeaders(provider, 'application/json'),
+      headers: this.buildHeaders(provider, 'application/json', this.isOpenAiCompatPath(chatPath)),
       body: JSON.stringify(body),
     };
   }

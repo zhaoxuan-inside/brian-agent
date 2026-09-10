@@ -126,13 +126,14 @@ describe('Orchestration Integration', () => {
       expect(plannerAgent.planHierarchical).not.toHaveBeenCalled();
     });
 
-    it('TC-INT-003: Simple 策略经过 WriterAgent 和 EvolutorAgent', async () => {
+    it('TC-INT-003: Simple 单 Agent 直接透传答案，跳过 Writer 二次 LLM', async () => {
       const input = Object.assign(new ReceiveWorkInput(), { session_id: 'int-s3', user_query: '你好' });
       const output = new ReceiveWorkOutput();
       const ctx = new OrchestrationEntryContext();
 
       await entry.receiveWork(input, output, ctx);
-      expect(writerAgent.execWrite).toHaveBeenCalled();
+      expect(output.final_response).toBeTruthy();
+      expect(writerAgent.execWrite).not.toHaveBeenCalled();
     });
 
     it('TC-INT-004: Planning 策略端到端执行', async () => {
@@ -233,7 +234,10 @@ describe('Orchestration Integration', () => {
   // =========================================================================
   describe('Layer decoupling', () => {
     it('TC-INT-023: 编排层策略选择通过 PromptsProvider/LLMProvider 完成', async () => {
-      const input = Object.assign(new ReceiveWorkInput(), { session_id: 'int-s10', user_query: '你好' });
+      const input = Object.assign(new ReceiveWorkInput(), {
+        session_id: 'int-s10',
+        user_query: '帮我分析今年销售数据，对比去年，生成报告并发送给团队',
+      });
       const output = new ReceiveWorkOutput();
       const ctx = new OrchestrationEntryContext();
 

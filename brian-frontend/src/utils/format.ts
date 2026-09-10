@@ -48,3 +48,19 @@ export function formatTokens(n?: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
   return `${(n / 1_000_000).toFixed(1)}M`
 }
+
+/**
+ * 毫秒耗时 → 可读时长。
+ * live 为真时始终按秒显示（含 0.0s），供执行中步骤跳动计时。
+ */
+export function formatDuration(ms?: number | null, live = false): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return live ? '0.0s' : ''
+  if (live) {
+    const s = ms / 1000
+    return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`
+  }
+  if (ms <= 0) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.round(ms / 1000)}s`
+}

@@ -181,6 +181,29 @@ describe('JSONNode', () => {
       expect(output.execution_trace.length).toBe(1);
     });
 
+    it('SAVE_USER_INPUT 优先将 original_user_query 落为 REQUEST 原文', async () => {
+      const singleNodeDef: JSONNodeDefinition = {
+        version: '1.0', orchestration_id: 'orig-q', start_node: 'de43b808-a9b7-48c1-8744-7602a483328f',
+        nodes: [{ node_id: 'de43b808-a9b7-48c1-8744-7602a483328f', node_type: 'SAVE_USER_INPUT', params: { info_creator_role: 'REQUEST', update_work_status: 'CREATED' }, next: null }],
+      };
+      const input = Object.assign(new ExecJSONNodeInput(), {
+        orchestration_id: 'orch-orig-q',
+        jsonnode_definition: singleNodeDef,
+        initial_data: {
+          session_id: 's-orig',
+          work_id: 'w-orig-q',
+          interact_id: 'i-orig',
+          user_query: '理解后的可执行任务',
+          original_user_query: '研究 Agent',
+          work_context: {},
+        },
+      });
+      const output = new ExecJSONNodeOutput();
+      await jsonNode.execJSONNode(input, output, new JSONNodeContext());
+      expect(infoCore.saveInfo).toHaveBeenCalled();
+      expect((infoCore.saveInfo as any).mock.calls[0][0].info).toBe('研究 Agent');
+    });
+
     it('TC-EJN-013: 节点执行成功记录 SUCCESS', async () => {
       const input = Object.assign(new ExecJSONNodeInput(), {
         orchestration_id: 'orch-7',

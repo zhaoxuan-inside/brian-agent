@@ -17,7 +17,7 @@ export const useSessionStore = defineStore('session', () => {
   const chatList = ref<ChatSession[]>([])
   const chatMapNodes = ref<ChatMapNode[]>([])
   const chatMapEdges = ref<ChatMapEdge[]>([])
-  const splitRatio = ref(parseFloat(localStorage.getItem('chat-split-ratio') || '0.65'))
+  const splitRatio = ref(parseFloat(localStorage.getItem('chat-split-ratio') || '0.42'))
   const isStreaming = ref(false)
   const cancelToken = ref<AbortController | null>(null)
   const currentWorkId = ref<string | null>(null)
@@ -59,11 +59,12 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId.value = sessionId
     localStorage.setItem('chat-current-session-id', sessionId)
     const historyMsgs = await chatApi.history(sessionId, userId)
-    messages.value = historyMsgs
+    // lastNInfo 按 created DESC 返回；对话列表需要从旧到新
+    messages.value = [...historyMsgs].reverse()
 
     // 从消息记录的 blocks 数组中恢复 ThinkingBlocks
     const loadedBlocks: Block[] = []
-    for (const msg of historyMsgs) {
+    for (const msg of messages.value) {
       if (Array.isArray(msg.blocks) && msg.blocks.length > 0) {
         for (const b of msg.blocks) {
           loadedBlocks.push(b)

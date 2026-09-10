@@ -20,7 +20,7 @@ defineEmits<{
       <div class="rounded-2xl bg-white dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
           <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-100">确认需求理解</p>
-          <p class="text-xs text-apple-gray-400 mt-0.5">我理解你的需求如下，请确认</p>
+          <p class="text-xs text-apple-gray-400 mt-0.5">这次改写与原文可能不是同一件事，请确认后继续</p>
         </div>
         <div class="px-4 py-3 space-y-3 text-sm">
           <div>

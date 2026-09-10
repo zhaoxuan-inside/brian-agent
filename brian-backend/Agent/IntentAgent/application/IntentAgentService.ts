@@ -81,17 +81,19 @@ export class IntentAgentService {
     const threshold = await this.getMatchThresholdConfig();
     output.threshold_score = threshold;
 
-    // 1. 获取基于时间的历史上下文
-    const historyText = await this.fetchRecentHistory(input.session_id);
-
-    // 2. 获取钉住的固定信息
-    const pinnedText = await this.fetchPinnedInfo(input.session_id, input.work_id);
-
-    // 3. 获取显式引用的消息
-    const citingText = await this.fetchCitingMessages(
-      input.session_id,
-      input.citing_msg_ids ?? [],
-      input.selected_msg_ids ?? [],
+    const [historyText, pinnedText, citingText] = await Promise.all([
+      this.fetchRecentHistory(input.session_id),
+      this.fetchPinnedInfo(input.session_id, input.work_id),
+      this.fetchCitingMessages(
+        input.session_id,
+        input.citing_msg_ids ?? [],
+        input.selected_msg_ids ?? [],
+      ),
+    ]);
+    output.has_context = Boolean(
+      historyText.trim() || pinnedText.trim() || citingText.trim()
+      || (input.citing_msg_ids?.length ?? 0) > 0
+      || (input.selected_msg_ids?.length ?? 0) > 0,
     );
 
     // 4. 执行 Prompt 与 LLM 推理

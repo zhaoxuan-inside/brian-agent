@@ -30,4 +30,6 @@ export class UnderstandRequirementOutput extends Output {
   prompt = '';
   input_tokens = 0;
   output_tokens = 0;
+  /** 本次理解是否用到了历史 / 钉住 / 引用上下文 */
+  has_context = false;
 }
