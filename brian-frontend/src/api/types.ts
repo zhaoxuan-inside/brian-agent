@@ -18,6 +18,10 @@ export interface AgentRuntimeInfo {
   status: AgentExecutionStatus
   agentName?: string
   updatedAt: number
+  /** 进入 RUNNING 的时刻，供执行中步骤实时计时 */
+  startedAt?: number
+  /** 完成后的耗时；执行中可按 now - startedAt 计算 */
+  elapsedMs?: number
 }
 
 export interface BlockBase {
@@ -178,6 +182,7 @@ export interface DagExecutionStep {
   status: 'RUNNING' | 'SUCCESS' | 'ERROR' | string
   elapsed_ms?: number
   error?: string
+  startedAt?: number
 }
 
 export interface PlanningData {

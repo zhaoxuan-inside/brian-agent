@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue'
-import { X, Brain, Loader2 } from '@lucide/vue'
+import { computed, ref, nextTick, watch, onUnmounted } from 'vue'
+import { X, Brain, Loader2, Clock, Layers } from '@lucide/vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
-import type { ThinkingBlock, PlanningData } from '@/api/types'
+import type { ThinkingBlock, PlanningData, DagExecutionStep } from '@/api/types'
 import ThinkingContext from './ThinkingContext.vue'
 import TaskDagFlow from './TaskDagFlow.vue'
 import AgentDagFlow from './AgentDagFlow.vue'
 import ThinkingBlockView from '@/components/blocks/ThinkingBlock.vue'
+import { formatDuration } from '@/utils/format'
 const sessionStore = useSessionStore()
 const chatUi = useChatUiStore()
 
@@ -17,13 +18,70 @@ const thinkingLoading = computed(() => chatUi.thinkingLoading)
 const dagLoading = computed(() => chatUi.dagLoading)
 const blocksLoading = computed(() => chatUi.blocksLoading)
 
-// 指定消息（思考过程按钮）→ 展示后端接口采集的思考块；未指定（流式期间自动弹出）→ 展示当前流式思考块
+const nowMs = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+watch(visible, (v) => {
+  if (v) {
+    nowMs.value = Date.now()
+    tickTimer = setInterval(() => { nowMs.value = Date.now() }, 250)
+  } else if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = null
+  }
+}, { immediate: true })
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer)
+})
+
+const totalElapsedMs = computed(() => {
+  const started = targetMsgId.value ? chatUi.thinkingOpenedAt : (chatUi.thinkingStartedAt || chatUi.thinkingOpenedAt)
+  if (!started) return 0
+  return Math.max(0, nowMs.value - started)
+})
+
+const orchestrationSteps = computed<DagExecutionStep[]>(() => planning.value?.executionSteps ?? [])
+
+function nodeTypeLabel(nodeType: string): string {
+  switch (nodeType) {
+    case 'PLAN_WORK': return '任务拆解'
+    case 'BUILD_AGENT_DAG': return '构建 Agent DAG'
+    case 'BUILD_WORK_AGENT': return '构建执行 Agent'
+    case 'EXEC_AGENT': return '执行 Agent'
+    case 'EXEC_DAG': return '执行 DAG'
+    case 'BUILD_WORK_CONTEXT': return '构建上下文'
+    case 'SAVE_USER_INPUT': return '保存用户输入'
+    case 'WRITE_RESULT': return '汇总回复'
+    case 'SAVE_RESPONSE': return '保存回复'
+    case 'EVAL_RESULT': return '结果评估'
+    case 'HANDLE_ERROR': return '错误处理'
+    case 'CONDITION': return '条件判断'
+    default: return nodeType
+  }
+}
+
+function nodeStatusClass(status: string): string {
+  switch (status) {
+    case 'SUCCESS': return 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300'
+    case 'ERROR': return 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300'
+    case 'RUNNING': return 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+    default: return 'bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300'
+  }
+}
+
+// 指定消息（思考过程按钮）→ 展示后端接口采集的思考块；未指定（流式期间自动弹出）→ 本轮全部思考块（含已完成）
 const thinkingBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
     return chatUi.thinkingBlocks as ThinkingBlock[]
   }
+  const liveMsgIds = new Set(
+    sessionStore.blocks.filter((b) => b.meta.status === 'streaming').map((b) => b.msgId),
+  )
+  if (liveMsgIds.size === 0 && sessionStore.isStreaming) {
+    const last = [...sessionStore.blocks].reverse().find((b) => b.type === 'ThinkingChain')
+    if (last) liveMsgIds.add(last.msgId)
+  }
   return sessionStore.blocks.filter(
-    (b): b is ThinkingBlock => b.type === 'ThinkingChain' && b.meta.status === 'streaming',
+    (b): b is ThinkingBlock => b.type === 'ThinkingChain' && liveMsgIds.has(b.msgId),
   )
 })
 
@@ -214,6 +272,13 @@ function onAfterLeave() {
             <Loader2 v-if="thinkingLoading || overallStreaming" :size="13" class="animate-spin text-purple-500" />
             <span v-if="thinkingLoading" class="text-xs text-purple-600 dark:text-purple-400 font-medium">正在加载思考过程...</span>
             <span v-else-if="overallStreaming" class="text-xs text-purple-600 dark:text-purple-400">思考中...</span>
+            <span
+              v-if="totalElapsedMs > 0"
+              class="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded-md text-[11px] font-mono bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300"
+              title="本轮思考总耗时"
+            >
+              <Clock :size="11" /> {{ formatDuration(totalElapsedMs) }}
+            </span>
           </div>
           <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="close">
             <X :size="18" />
@@ -240,6 +305,30 @@ function onAfterLeave() {
 
           <!-- 3. AgentDAG 模块（Agent 名称 Canvas 图） -->
           <AgentDagFlow v-if="agentDag" :dag="agentDag" @select="focusAgent" />
+
+          <section v-if="orchestrationSteps.length > 0" class="mt-1 p-2.5 rounded-lg border border-emerald-200/70 dark:border-emerald-800/50 bg-white/70 dark:bg-apple-gray-900/50">
+            <div class="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 mb-1.5">
+              <Layers :size="12" class="text-emerald-600 dark:text-emerald-400" />
+              <span>编排步骤耗时</span>
+            </div>
+            <div class="space-y-1">
+              <div
+                v-for="(step, idx) in orchestrationSteps"
+                :key="`${step.node_id}-${step.node_type}-${idx}`"
+                class="flex items-center gap-2 p-1.5 rounded border bg-white dark:bg-apple-gray-800/70 border-apple-gray-200/60 dark:border-apple-gray-700/60"
+              >
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="nodeStatusClass(step.status)">
+                  {{ step.status === 'RUNNING' ? '执行中' : step.status === 'SUCCESS' ? '完成' : step.status === 'ERROR' ? '失败' : step.status }}
+                </span>
+                <span class="text-[11px] text-apple-gray-700 dark:text-apple-gray-200 font-medium flex-1 min-w-0 truncate">
+                  {{ nodeTypeLabel(step.node_type) }}
+                </span>
+                <span class="text-[10px] font-mono text-apple-gray-500 dark:text-apple-gray-400 flex-shrink-0">
+                  {{ step.status === 'RUNNING' ? formatDuration(step.startedAt ? nowMs - step.startedAt : 0, true) : (formatDuration(step.elapsed_ms) || '—') }}
+                </span>
+              </div>
+            </div>
+          </section>
 
           <!-- 各 Agent 节点的独立加载指示 -->
           <div v-if="blocksLoading && thinkingBlocks.length === 0 && (taskDag || agentDag)" class="p-3.5 rounded-xl border border-purple-200/60 dark:border-purple-800/40 bg-purple-50/30 dark:bg-purple-950/20 flex items-center gap-2 text-xs text-purple-700 dark:text-purple-300">

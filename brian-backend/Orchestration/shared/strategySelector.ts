@@ -17,6 +17,15 @@ export interface SelectStrategyResult {
 const DEFAULT_THRESHOLD = 50;
 const DEFAULT_TEMPLATE_ID = PROMPT_IDS.strategySelector;
 
+const COMPLEX_QUERY_RE = /然后|接着|并且|同时|分别|步骤|第一步|第二|再把|以及|分析|报告|生成|对比|发送|规划|总结|邮件|代码|compare|then |and then|step\s*\d|首先.{0,8}再/i;
+
+function looksSimpleQuery(userQuery: string): boolean {
+  const t = userQuery.trim();
+  if (!t || t.length > 48) return false;
+  if (t.includes('\n')) return false;
+  return !COMPLEX_QUERY_RE.test(t);
+}
+
 export async function selectOrchestrationStrategy(
   relationDb: RelationDBAccess,
   promptsAccess: PromptsAccess,
@@ -39,6 +48,10 @@ export async function selectOrchestrationStrategy(
   const enablePlanner = Number(config.enable_planner ?? 1) !== 0;
   if (!enablePlanner) {
     return { strategy: 'SIMPLE', complexity: 0, reason: 'planner_disabled' };
+  }
+
+  if (looksSimpleQuery(userQuery)) {
+    return { strategy: defaultStrategy === 'PLANNING' ? 'SIMPLE' : defaultStrategy, complexity: 10, reason: 'heuristic_simple_query' };
   }
 
   if (!llmAccess) {

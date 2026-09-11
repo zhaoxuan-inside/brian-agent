@@ -78,6 +78,7 @@ export class OrchestrationStrategyService {
         work_id: input.work_id,
         interact_id: input.interact_id,
         user_query: input.user_query,
+        original_user_query: input.original_user_query ?? input.user_query,
         work_context: input.work_context ?? {},
         trace_id: input.trace_id ?? '',
         citing_msg_ids: input.citing_msg_ids ?? [],

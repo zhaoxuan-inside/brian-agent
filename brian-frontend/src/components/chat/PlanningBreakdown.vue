@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { GitBranch, Layers, ArrowDown, Loader2, Network } from '@lucide/vue'
 import type { PlanningData, TaskDagNode } from '@/api/types'
 import AgentDagFlow from './AgentDagFlow.vue'
+import { formatDuration } from '@/utils/format'
 
 const props = defineProps<{
   planning: PlanningData | null
@@ -56,6 +57,10 @@ const nodeTypeLabel = (nodeType: string): string => {
     case 'CONDITION': return '条件判断'
     case 'SUMMARY': return '结果汇总'
     case 'EVALUATE': return '结果评估'
+    case 'WRITE_RESULT': return '汇总回复'
+    case 'SAVE_RESPONSE': return '保存回复'
+    case 'EVAL_RESULT': return '结果评估'
+    case 'HANDLE_ERROR': return '错误处理'
     default: return nodeType
   }
 }
@@ -160,7 +165,7 @@ const nodeTypeLabel = (nodeType: string): string => {
             <span class="text-[11px] text-apple-gray-700 dark:text-apple-gray-200 font-medium flex-1 min-w-0 truncate">
               {{ nodeTypeLabel(step.node_type) }}
             </span>
-            <span v-if="step.elapsed_ms" class="text-[10px] text-apple-gray-400 flex-shrink-0">{{ step.elapsed_ms }}ms</span>
+            <span v-if="step.elapsed_ms" class="text-[10px] text-apple-gray-400 flex-shrink-0">{{ formatDuration(step.elapsed_ms) }}</span>
           </div>
         </div>
       </div>

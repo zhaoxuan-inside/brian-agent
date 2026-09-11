@@ -32,6 +32,8 @@ import type { ThinkingBlock } from '@/api/types'
 import { useChatUiStore } from '@/stores/chatUi'
 import { copyToClipboard } from '@/utils/clipboard'
 import { renderMarkdown } from '@/utils/markdown'
+import { formatDuration } from '@/utils/format'
+import { useNowTick } from '@/composables/useNowTick'
 
 const props = withDefaults(
   defineProps<{
@@ -67,6 +69,17 @@ const runtimeStatus = computed(() => {
 })
 
 const isThinking = computed(() => runtimeStatus.value === 'RUNNING')
+const nowMs = useNowTick(isThinking)
+
+const displayDurationMs = computed(() => {
+  if (isThinking.value) {
+    const id = props.block.agentInfo?.id
+    const rt = id ? chatUi.agentExecutions[id] : undefined
+    const start = rt?.startedAt || props.block.meta.createdAt
+    return Math.max(0, nowMs.value - start)
+  }
+  return props.block.durationMs || 0
+})
 
 const STATUS_CHIP: Record<string, { label: string; cls: string }> = {
   PENDING: { label: '未执行', cls: 'bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-300' },
@@ -212,8 +225,8 @@ function msgContent(val: unknown): string {
             <span>输出: {{ outputTokens }}</span>
             <span class="text-purple-400 font-normal">({{ totalTokens }})</span>
           </span>
-          <span v-if="block.durationMs" class="inline-flex items-center gap-1" title="调用耗时">
-            <Clock :size="11" /> {{ block.durationMs }}ms
+          <span v-if="displayDurationMs" class="inline-flex items-center gap-1" title="调用耗时">
+            <Clock :size="11" /> {{ formatDuration(displayDurationMs, isThinking) }}
           </span>
         </div>
       </button>
@@ -364,7 +377,7 @@ function msgContent(val: unknown): string {
                 </div>
 
                 <span v-if="step.elapsedMs" class="text-[10px] text-apple-gray-400">
-                  {{ step.elapsedMs }}ms
+                  {{ formatDuration(step.elapsedMs) }}
                 </span>
               </div>
 

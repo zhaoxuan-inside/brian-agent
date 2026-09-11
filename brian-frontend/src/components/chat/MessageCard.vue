@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge } from '@lucide/vue'
+import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, MoreHorizontal } from '@lucide/vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import { renderMarkdown } from '@/utils/markdown'
 import { useChatUiStore } from '@/stores/chatUi'
@@ -26,6 +26,9 @@ const props = withDefaults(
     active?: boolean
     nodeMap?: Map<string, { summary?: string; info?: string }>
     isStreaming?: boolean
+    citingMode?: boolean
+    showThinkingAction?: boolean
+    showEvalAction?: boolean
   }>(),
   {
     infoId: '',
@@ -43,6 +46,9 @@ const props = withDefaults(
     active: false,
     nodeMap: undefined,
     isStreaming: false,
+    citingMode: false,
+    showThinkingAction: true,
+    showEvalAction: true,
   },
 )
 
@@ -60,8 +66,8 @@ const chatUi = useChatUiStore()
 const expandedCiting = ref(false)
 const expandedCited = ref(false)
 const copied = ref(false)
+const moreOpen = ref(false)
 
-// 摘要/原文折叠状态：默认态由 mode 决定（Map 展开摘要折叠原文，Timeline 展开原文折叠摘要），用户可手动切换
 const summaryOpen = ref(props.mode === 'map')
 const contentOpen = ref(props.mode === 'timeline')
 
@@ -92,6 +98,9 @@ const renderedSummary = computed(() => {
   return raw.trim() ? renderMarkdown(raw) : '(无内容)'
 })
 
+const showSelect = computed(() => props.citingMode || props.selected)
+const showThinkingBtn = computed(() => !isUser.value && props.showThinkingAction)
+const showEvalBtn = computed(() => !isUser.value && props.showEvalAction)
 const effectiveTraceId = computed(() => props.traceId || '')
 
 const textLength = computed(() => props.content ? props.content.length : 0)
@@ -167,17 +176,17 @@ async function copyTraceId() {
   <div
     class="message-card transition-all duration-200 cursor-pointer select-text"
     :class="[
-      mode === 'map' ? 'rounded-lg border bg-white/95 dark:bg-apple-gray-800/95 shadow-sm text-xs' : 'rounded-2xl px-3 py-2.5',
+      mode === 'map' ? 'rounded-lg border bg-white/95 dark:bg-apple-gray-800/95 shadow-sm text-xs' : '',
       mode === 'map'
         ? (isError
             ? 'border-error-red/50 bg-red-50/50 dark:bg-red-950/30'
             : (isUser ? 'border-brian-blue/40' : 'border-apple-gray-200 dark:border-apple-gray-700'))
-        : (isError ? 'block-card border-error-red/40 bg-error-red/5 text-error-red' : 'block-card'),
+        : (isError ? 'text-error-red' : ''),
       active ? 'ring-2 ring-brian-blue shadow-lg border-brian-blue' : (mode === 'map' ? 'hover:border-brian-blue/60' : '')
     ]"
     @click="handleCardClick"
   >
-    <!-- 顶部栏：时间居左，错误标识 + 复选框 + 钉住按钮居右 -->
+    <!-- 顶部栏 -->
     <div
       class="flex items-center justify-between mb-1 text-[10px]"
       :class="mode === 'map' ? 'px-2 pt-1.5' : ''"
@@ -189,7 +198,7 @@ async function copyTraceId() {
       <div class="flex items-center gap-1.5">
         <AlertCircle v-if="isError" :size="12" class="text-error-red flex-shrink-0" title="执行出错" />
 
-        <label class="flex items-center cursor-pointer" title="勾选以指定本次问答上下文" @click.stop>
+        <label v-if="mode === 'map' || showSelect" class="flex items-center cursor-pointer" title="勾选以指定本次问答上下文" @click.stop>
           <input
             type="checkbox"
             class="rounded cursor-pointer h-3.5 w-3.5 accent-brian-blue"
@@ -209,10 +218,8 @@ async function copyTraceId() {
       </div>
     </div>
 
-    <!-- 内容展示：摘要 + 原文双区（结构统一，均支持折叠/展开，均渲染 Markdown）。
-         Map 模式：默认展开摘要、折叠原文；Timeline 模式：默认展开原文、折叠摘要。差异仅由 mode 样式覆盖区分。 -->
-    <div class="space-y-0.5">
-      <!-- 摘要区 -->
+    <!-- Map：摘要 + 原文；对话区：直接展示正文 -->
+    <div v-if="mode === 'map'" class="space-y-0.5">
       <details
         class="px-2 py-0.5"
         :class="isError ? 'text-error-red' : 'text-apple-gray-500 dark:text-apple-gray-400'"
@@ -225,15 +232,11 @@ async function copyTraceId() {
           摘要
         </summary>
         <div
-          class="markdown-body break-words max-h-[120px] overflow-y-auto"
-          :class="mode === 'map'
-            ? 'text-xs text-apple-gray-700 dark:text-apple-gray-200'
-            : 'text-[11px] text-apple-gray-600 dark:text-apple-gray-300'"
+          class="markdown-body break-words max-h-[120px] overflow-y-auto text-xs text-apple-gray-700 dark:text-apple-gray-200"
           v-html="renderedSummary"
         />
       </details>
 
-      <!-- 原文区 -->
       <details
         class="px-2 py-0.5"
         :open="contentOpen"
@@ -245,19 +248,24 @@ async function copyTraceId() {
           原文
         </summary>
         <div
-          class="markdown-body break-words overflow-y-auto"
-            :class="mode === 'map' ? 'text-[11px] max-h-[120px]' : 'text-sm'"
+          class="markdown-body break-words overflow-y-auto text-[11px] max-h-[120px]"
           v-html="renderedContent"
         />
       </details>
     </div>
+    <div
+      v-else
+      class="markdown-body break-words text-[15px] leading-relaxed text-apple-gray-900 dark:text-apple-gray-100"
+      v-html="renderedContent"
+    />
 
-    <!-- 底部栏：引用/被引用胶囊、复制TraceId与字数统计 -->
+    <!-- 底部：对话区只保留有信息量的操作；图谱模式保持完整工具条 -->
     <div
       class="flex items-center gap-1.5 mt-1.5 flex-wrap"
       :class="mode === 'map' ? 'px-2 pb-1.5' : ''"
     >
       <button
+        v-if="mode === 'map' || effectiveCitedCount > 0"
         class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
         @click.stop="expandedCited = !expandedCited; if (expandedCited) expandedCiting = false"
       >
@@ -266,6 +274,7 @@ async function copyTraceId() {
       </button>
 
       <button
+        v-if="mode === 'map' || effectiveCitingCount > 0"
         class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 hover:bg-apple-gray-200"
         @click.stop="expandedCiting = !expandedCiting; if (expandedCiting) expandedCited = false"
       >
@@ -274,36 +283,67 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-800/60"
+        v-if="mode === 'map' || showThinkingBtn"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-500 hover:bg-apple-gray-200"
         title="查看思考过程"
         :data-thinking-id="targetId"
         @click.stop="handleShowThinking"
       >
         <Brain :size="10" />
-        思考过程
+        思考
       </button>
 
-      <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-800/60"
-        title="查看评估结果"
-        @click.stop="handleShowEval"
-      >
-        <Gauge :size="10" />
-        评估结果
-      </button>
+      <template v-if="mode === 'map'">
+        <button
+          class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-800/60"
+          title="查看评估结果"
+          @click.stop="handleShowEval"
+        >
+          <Gauge :size="10" />
+          评估结果
+        </button>
+        <button
+          class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
+          :title="effectiveTraceId ? `复制 TraceId: ${effectiveTraceId}` : '复制 TraceId'"
+          @click.stop="copyTraceId"
+        >
+          <component :is="copied ? Check : Copy" :size="10" />
+          {{ copied ? '已复制' : '复制 TraceId' }}
+        </button>
+        <span class="ml-auto text-[10px] text-apple-gray-300">
+          {{ textLength }}字
+        </span>
+      </template>
 
-      <button
-        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
-        :title="effectiveTraceId ? `复制 TraceId: ${effectiveTraceId}` : '复制 TraceId'"
-        @click.stop="copyTraceId"
-      >
-        <component :is="copied ? Check : Copy" :size="10" />
-        {{ copied ? '已复制' : '复制 TraceId' }}
-      </button>
-
-      <span class="ml-auto text-[10px] text-apple-gray-300">
-        {{ textLength }}字
-      </span>
+      <div v-else-if="!isUser" class="relative ml-auto">
+        <button
+          class="p-0.5 rounded text-apple-gray-400 hover:text-apple-gray-700 dark:hover:text-apple-gray-200"
+          title="更多"
+          @click.stop="moreOpen = !moreOpen"
+        >
+          <MoreHorizontal :size="14" />
+        </button>
+        <div
+          v-if="moreOpen"
+          class="absolute right-0 top-full mt-1 z-20 min-w-[140px] rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 shadow-lg py-1"
+          @click.stop
+        >
+          <button
+            v-if="showEvalBtn"
+            class="w-full px-3 py-1.5 text-left text-[12px] text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-700 flex items-center gap-1.5"
+            @click="moreOpen = false; handleShowEval()"
+          >
+            <Gauge :size="12" /> 评估结果
+          </button>
+          <button
+            class="w-full px-3 py-1.5 text-left text-[12px] text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-700 flex items-center gap-1.5"
+            @click="copyTraceId()"
+          >
+            <component :is="copied ? Check : Copy" :size="12" />
+            {{ copied ? '已复制 TraceId' : '复制 TraceId' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 展开：引用列表 -->

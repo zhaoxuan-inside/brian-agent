@@ -38,6 +38,19 @@ export interface ChatStreamEventHandler {
   reset: (clearTrace?: boolean) => void
 }
 
+const INTENT_AUTO_ACTION_LABEL: Record<string, string> = {
+  APPROVE: '已自动按理解执行',
+  KEEP: '已自动按原文执行',
+  ASK: '改写与原文可能不是同一件事，等待确认',
+}
+
+function formatIntentAutoAction(payload: Record<string, unknown>): string {
+  const action = typeof payload.auto_action === 'string' ? payload.auto_action : ''
+  const label = INTENT_AUTO_ACTION_LABEL[action]
+  if (label) return label
+  return `是否需要修改查询: ${payload.should_modify_query ? '是' : '否'}`
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // ============================================================
@@ -120,12 +133,23 @@ function normalizeNodeStatus(raw: string): 'SUCCESS' | 'RUNNING' | 'PENDING' {
   return 'PENDING'
 }
 
-/** 按 (node_id, node_type) 定位并替换/追加编排执行步骤 */
+/** 按 (node_id, node_type) 定位并替换/追加编排执行步骤；RUNNING 时保留 startedAt 供实时计时 */
 function upsertExecutionStep(steps: DagExecutionStep[], step: DagExecutionStep): DagExecutionStep[] {
   const idx = steps.findIndex((s) => s.node_id === step.node_id && s.node_type === step.node_type)
   const next = [...steps]
-  if (idx >= 0) next[idx] = step
-  else next.push(step)
+  if (idx >= 0) {
+    const prev = next[idx]
+    next[idx] = {
+      ...prev,
+      ...step,
+      startedAt: step.startedAt ?? prev.startedAt,
+    }
+  } else {
+    next.push({
+      ...step,
+      startedAt: step.startedAt ?? (step.status === 'RUNNING' ? Date.now() : undefined),
+    })
+  }
   return next
 }
 
@@ -176,27 +200,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       chat.updateBlock(existing.id, { agentInfo: existing.agentInfo })
     }
     return existing
-  }
-
-  /** 自动弹出思考弹窗时定位动画原点：取"要展示思考过程的问题"（最近一条用户消息）对应的"思考过程"按钮 */
-  function resolveAutoThinkingOrigin() {
-    const msgs = chat.messages
-    let lastUser
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') {
-        lastUser = msgs[i]
-        break
-      }
-    }
-    if (lastUser) {
-      const btn = document.querySelector(`[data-thinking-id="${lastUser.id}"]`) as HTMLElement | null
-      if (btn) {
-        const r = btn.getBoundingClientRect()
-        ui.setThinkingOrigin({ left: r.left, top: r.top, width: r.width, height: r.height })
-        return
-      }
-    }
-    ui.setThinkingOrigin(null)
   }
 
   /** 最终回复文本：首个文本帧创建 TextParagraph 块，后续帧追加内容（agent_output 与 text_chunk 共用） */
@@ -251,9 +254,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       customContext: typeof payload.custom_context === 'string' ? payload.custom_context : undefined,
     }
     chat.updateBlock(thinkBlock.id, { context: thinkBlock.context })
-    // 上下文构建成功后弹出思考过程弹窗（流式展示），避免过早弹出遮挡后续的「确认需求理解」弹窗
-    resolveAutoThinkingOrigin()
-    ui.openThinkingModal(null)
+    // 思考过程默认内联在对话流中展示，不再自动弹出详情弹窗
   }
 
   /** 需求理解 Agent (IntentAgent) 结果：填充思考块并标记该 Agent 成功 */
@@ -269,6 +270,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       match_score: payload.match_score,
       threshold_score: payload.threshold_score,
       should_modify_query: payload.should_modify_query,
+      auto_action: payload.auto_action,
     }
     if (typeof payload.input_tokens === 'number') intentBlock.inputTokens = payload.input_tokens
     if (typeof payload.output_tokens === 'number') intentBlock.outputTokens = payload.output_tokens
@@ -278,11 +280,12 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       phase: 'THINK',
       iteration: 1,
       content: `需求理解: ${String(payload.understood_requirement ?? '')}\n匹配度: ${payload.match_score ?? 'N/A'} / 阈值: ${payload.threshold_score ?? 'N/A'}`,
+      elapsedMs: typeof payload.elapsed_ms === 'number' ? payload.elapsed_ms : undefined,
     })
     intentBlock.steps.push({
       phase: 'REFLECT',
       iteration: 2,
-      reflection: `是否需要修改查询: ${payload.should_modify_query ? '是' : '否'}`,
+      reflection: formatIntentAutoAction(payload),
       passed: true,
     })
     chat.updateBlock(intentBlock.id, {
@@ -298,7 +301,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     ui.setAgentStatus(intentAgentId, 'SUCCESS', '需求理解 Agent (Intent)')
   }
 
-  /** 需求理解得分低于阈值：弹出「需求确认」卡片，由用户确认按理解执行 / 按原文执行 / 取消 */
+  /** 需求理解无法自动判断：弹出「需求确认」卡片，由用户确认按理解执行 / 按原文执行 / 取消 */
   function onIntentConfirmationRequired(ctx: StreamEventCtx) {
     ui.setIntentConfirmation({
       ...ctx.payload,
@@ -516,6 +519,19 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
         durationMs: thinkBlock.durationMs,
         meta: { ...thinkBlock.meta, status: 'done' },
       })
+      const dag = ui.planning.agentDag
+      if (dag && typeof payload.elapsed_ms === 'number') {
+        ui.updatePlanning({
+          agentDag: {
+            ...dag,
+            nodes: dag.nodes.map((n) => (
+              n.agentId === ctx.agentId || n.id === ctx.agentId
+                ? { ...n, elapsedMs: Number(payload.elapsed_ms), tokenUsage: typeof payload.token_usage === 'number' ? payload.token_usage : n.tokenUsage }
+                : n
+            )),
+          },
+        })
+      }
     }
     // 如果也是向用户展示的文本块
     appendAssistantChunk(ctx, typeof outputVal === 'string' ? outputVal : String(outputVal || ''))
@@ -545,8 +561,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       textBlockId = null
       return
     }
-    // done 事件 → 自动关闭思考弹窗（满足最短展示 5 秒后关闭）
-    ui.requestAutoCloseThinkingModal()
     const feedbackBlock: Block = {
       id: `block-fb-${Date.now()}`,
       msgId: ctx.botMsgId,
@@ -604,7 +618,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       meta: { status: 'error', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
     } as Block
     chat.addBlock(errBlock)
-    ui.requestAutoCloseThinkingModal()
   }
 
   /** 事件分发表：agent_thinking/thinking、agent_action/agent_status、text_chunk/text 为同义别名 */

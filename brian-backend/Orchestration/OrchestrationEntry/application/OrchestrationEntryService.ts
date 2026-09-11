@@ -34,6 +34,7 @@ import {
   ConfigOrchestrationEntryInput, ConfigOrchestrationEntryOutput,
 } from '../domain/types';
 import { selectOrchestrationStrategy as sharedSelectStrategy } from '../../shared/strategySelector';
+import { resolveIntentAction } from '../../shared/intentActionResolver';
 
 export class OrchestrationEntryService {
   constructor(
@@ -89,7 +90,10 @@ export class OrchestrationEntryService {
     }
 
     // --- 需求理解 Agent (IntentAgent) 前置执行 ---
+    // 默认按上下文自动选择按理解执行 / 按原文执行，仅在主题部分重叠且置信极低时暂停询问。
+    let executionQuery = input.user_query;
     if (this.intentAgent && !input.skip_intent_check) {
+      const intentStartedAt = Date.now();
       const intentIn = Object.assign(new UnderstandRequirementInput(), {
         session_id: input.session_id,
         work_id: workId,
@@ -103,6 +107,17 @@ export class OrchestrationEntryService {
       try {
         await this.intentAgent.understandRequirement(intentIn, intentOut, new IntentAgentContext());
 
+        const hasContext = Boolean(intentOut.has_context)
+          || (input.citing_msg_ids?.length ?? 0) > 0
+          || (input.selected_msg_ids?.length ?? 0) > 0;
+        const decision = resolveIntentAction({
+          originalQuery: input.user_query,
+          understoodRequirement: intentOut.understood_requirement,
+          matchScore: intentOut.match_score,
+          threshold: intentOut.threshold_score,
+          hasContext,
+        });
+
         // 推送 IntentAgent 需求理解结果到前端（"思考过程"弹窗展示）
         if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
           await this.streamAccess.pushEvent(input.session_id, 'intent_agent_result', 'AGENT_SPEC', {
@@ -115,25 +130,35 @@ export class OrchestrationEntryService {
             threshold_score: intentOut.threshold_score,
             reasoning: intentOut.reasoning,
             should_modify_query: intentOut.should_modify_query,
+            auto_action: decision.action,
+            auto_action_reason: decision.reason,
             prompt: intentOut.prompt,
             input_tokens: intentOut.input_tokens,
             output_tokens: intentOut.output_tokens,
+            elapsed_ms: Date.now() - intentStartedAt,
           });
         }
+
+        const intentAgentMeta = {
+          understood_requirement: intentOut.understood_requirement,
+          match_score: intentOut.match_score,
+          threshold_score: intentOut.threshold_score,
+          reasoning: intentOut.reasoning,
+          should_modify_query: intentOut.should_modify_query,
+          auto_action: decision.action,
+          auto_action_reason: decision.reason,
+          prompt: intentOut.prompt,
+          input_tokens: intentOut.input_tokens,
+          output_tokens: intentOut.output_tokens,
+        };
 
         // 持久化 IntentAgent 结果到 orchestration_work.metadata 供历史查询
         const intentMeta = {
           trace_id: input.trace_id ?? '',
-          intent_agent: {
-            understood_requirement: intentOut.understood_requirement,
-            match_score: intentOut.match_score,
-            threshold_score: intentOut.threshold_score,
-            reasoning: intentOut.reasoning,
-            should_modify_query: intentOut.should_modify_query,
-            prompt: intentOut.prompt,
-            input_tokens: intentOut.input_tokens,
-            output_tokens: intentOut.output_tokens,
-          },
+          understood_requirement: intentOut.understood_requirement,
+          match_score: intentOut.match_score,
+          threshold_score: intentOut.threshold_score,
+          intent_agent: intentAgentMeta,
         };
         const intentMetaData: DataObject[] = [
           { field: 'metadata', value: JSON.stringify(intentMeta) },
@@ -149,7 +174,7 @@ export class OrchestrationEntryService {
           new DBContext(),
         );
 
-        if (intentOut.should_modify_query) {
+        if (decision.action === 'ASK') {
           if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
             await this.streamAccess.pushEvent(input.session_id, 'intent_confirmation_required', 'CONTROL', {
               work_id: workId,
@@ -190,16 +215,7 @@ export class OrchestrationEntryService {
               understood_requirement: intentOut.understood_requirement,
               match_score: intentOut.match_score,
               threshold_score: intentOut.threshold_score,
-              intent_agent: {
-                understood_requirement: intentOut.understood_requirement,
-                match_score: intentOut.match_score,
-                threshold_score: intentOut.threshold_score,
-                reasoning: intentOut.reasoning,
-                should_modify_query: intentOut.should_modify_query,
-                prompt: intentOut.prompt,
-                input_tokens: intentOut.input_tokens,
-                output_tokens: intentOut.output_tokens,
-              },
+              intent_agent: intentAgentMeta,
             })},
           ];
           await this.relationDb.updateDB(
@@ -217,6 +233,10 @@ export class OrchestrationEntryService {
           output.paused = true;
           return true;
         }
+
+        if (decision.action === 'APPROVE' && intentOut.understood_requirement?.trim()) {
+          executionQuery = intentOut.understood_requirement.trim();
+        }
       } catch (err) {
         this.logger?.error?.('receiveWork: IntentAgent failed, falling back to original user query', { error: String(err) });
       }
@@ -227,7 +247,7 @@ export class OrchestrationEntryService {
       strategy = input.force_orchestration_strategy;
     } else {
       const selInput = Object.assign(new SelectOrchestrationStrategyInput(), {
-        user_query: input.user_query,
+        user_query: executionQuery,
         trace_id: input.trace_id ?? '',
       });
       const selOutput = new SelectOrchestrationStrategyOutput();
@@ -249,24 +269,17 @@ export class OrchestrationEntryService {
     });
     await this.relationDb.updateDB(updInput, Object.assign(new UpdateDBOutput(), {}), new DBContext());
 
-    const buildCtxInput = Object.assign(new BuildWorkContextInput(), {
-      session_id: input.session_id,
-      work_id: workId,
-      user_query: input.user_query,
-      selected_msg_ids: input.selected_msg_ids,
-      trace_id: input.trace_id ?? '',
-    });
-    const buildCtxOutput = new BuildWorkContextOutput();
-    await this.buildWorkContext(buildCtxInput, buildCtxOutput, context, metrics, report);
-
+    // 权威上下文由 JSONNode BUILD_WORK_CONTEXT 在 SAVE_USER_INPUT 之后构建并落盘快照。
+    // 入口处不再预建一遍，避免重复 embedding / 画像 / 召回。
     const startCtx = { session_id: input.session_id, work_id: workId, interact_id: interactId };
     const startInput: StartOrchestrationInput = {
       work_id: workId,
       interact_id: interactId,
       session_id: input.session_id,
-      user_query: input.user_query,
+      user_query: executionQuery,
+      original_user_query: input.user_query,
       strategy,
-      work_context: buildCtxOutput.work_context,
+      work_context: {},
       trace_id: input.trace_id,
       citing_msg_ids: input.citing_msg_ids,
       selected_msg_ids: input.selected_msg_ids,

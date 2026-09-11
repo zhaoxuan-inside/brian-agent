@@ -21,8 +21,7 @@ interface SseInteractionOptions {
   botMsgId: string
   errorCode: string
   retryAvailable: boolean
-  /** 流式失败时是否请求自动关闭思考弹窗（仅正常发送流程需要） */
-  autoCloseThinkingOnError?: boolean
+      autoCloseThinkingOnError?: boolean
 }
 
 export function useChatStream() {
@@ -57,6 +56,7 @@ export function useChatStream() {
     sessionStore.setStreaming(true)
     chatUi.resetPlanning()
     chatUi.resetAgentStatus()
+    chatUi.markThinkingStart()
     try {
       const abortCtrl = new AbortController()
       sessionStore.setCancelController(abortCtrl)
@@ -74,7 +74,6 @@ export function useChatStream() {
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== 'AbortError') {
         addErrorBlock(opts.botMsgId, err.message, opts.errorCode, opts.retryAvailable)
-        if (opts.autoCloseThinkingOnError) chatUi.requestAutoCloseThinkingModal()
       }
     } finally {
       sessionStore.finalizeBlocks(opts.botMsgId)

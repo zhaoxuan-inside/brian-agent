@@ -601,7 +601,9 @@ export class InfoCoreService {
     if (input.info_creator_role) {
       conditions.push({ field: 'info_creator_role', operator: Operator.EQ, value: input.info_creator_role });
     }
-    if (input.info_type) {
+    if (input.info_types && input.info_types.length > 0) {
+      conditions.push({ field: 'info_type', operator: Operator.IN, value: input.info_types });
+    } else if (input.info_type) {
       conditions.push({ field: 'info_type', operator: Operator.EQ, value: input.info_type });
     }
     if (input.info_id) {

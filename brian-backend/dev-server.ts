@@ -324,12 +324,18 @@ function mapRandomFactorField(mode: string): string {
   return '';
 }
 
-/**
- * info_raw 行 → 前端 MemoryItem（记忆条目）。
- *
- * info_type（REQUEST/RESPONSE/THINK/REFLECT/ACT/SKILL/MCP）映射到前端展示类型
- * （semantic/episodic/procedural/working），仅用于颜色与分类展示。
- */
+function readVectorDimension(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess): number {
+  try {
+    const rows = relationDb.queryRaw<{ dimension: number }>(
+      'SELECT "dimension" FROM "info_vector_config" LIMIT 1', [],
+    );
+    if (rows.length > 0 && Number(rows[0].dimension) > 0) {
+      return Number(rows[0].dimension);
+    }
+  } catch { /* table may not exist yet */ }
+  return 1536;
+}
+
 async function buildContext() {
   // ---- Base Providers ----
   const relationDb = new RelationDBAccess({ dbPath: path.join(DATA_DIR, 'brian.db'), wal: true, autoCreateConfigTable: true });

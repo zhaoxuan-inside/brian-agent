@@ -253,6 +253,8 @@ export class LastNInfoInput extends Input {
   work_id?: string;
   interact_id?: string;
   info_type?: string;
+  /** 按多种 info_type 过滤（IN）；与 info_type 同时传入时优先使用本字段 */
+  info_types?: string[];
   info_creator_role?: string;
   info_creator_id?: string;
   info_id?: string;

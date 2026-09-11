@@ -6,7 +6,7 @@ import {
   UpdateDBInput, UpdateDBOutput,
   CountDBInput, CountDBOutput,
   DataObject, DBContext,
-  IdGenerator, ValidationError, NotFoundError, Operator,
+  IdGenerator, ValidationError, NotFoundError, Operator, InfoType,
   type Logger, type Condition,
   type StreamAccess,
 } from '@brian-agent/base';
@@ -85,21 +85,6 @@ export class ChatService {
     const workId = IdGenerator.generate();
     const interactId = IdGenerator.generate();
 
-    let userProfile: Record<string, unknown> | undefined;
-    try {
-      const profileOut = Object.assign(new (await this.getWriterProfileOutputClass())(), {});
-      await this.writerAgent.soUserProfile(
-        Object.assign(new (await this.getWriterProfileInputClass())(), {
-          session_id: input.session_id,
-        }),
-        new (await this.getWriterAgentContextClass())(),
-        profileOut,
-      );
-      userProfile = profileOut.user_profile;
-    } catch {
-      /* best-effort */
-    }
-
     const citingMsgIds = Array.from(new Set([
       ...(input.citing_msg_ids ?? []),
       ...(input.selected_msg_ids ?? []),
@@ -109,7 +94,6 @@ export class ChatService {
       session_id: input.session_id,
       user_query: input.msg_content,
       force_orchestration_strategy: input.force_orchestration_strategy,
-      user_profile: userProfile,
       citing_msg_ids: citingMsgIds,
       selected_msg_ids: input.selected_msg_ids ?? [],
     });
@@ -213,21 +197,6 @@ export class ChatService {
     const workId = IdGenerator.generate();
     const interactId = IdGenerator.generate();
 
-    let userProfile: Record<string, unknown> | undefined;
-    try {
-      const profileOut = Object.assign(new (await this.getWriterProfileOutputClass())(), {});
-      await this.writerAgent.soUserProfile(
-        Object.assign(new (await this.getWriterProfileInputClass())(), {
-          session_id: input.session_id,
-        }),
-        new (await this.getWriterAgentContextClass())(),
-        profileOut,
-      );
-      userProfile = profileOut.user_profile;
-    } catch {
-      /* best-effort */
-    }
-
     emit('loading', { work_id: workId });
     if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function') {
       await this.streamAccess.pushEvent(input.session_id, 'loading', 'CONTROL', {
@@ -245,7 +214,6 @@ export class ChatService {
       user_query: input.msg_content,
       trace_id: traceId,
       force_orchestration_strategy: input.force_orchestration_strategy,
-      user_profile: userProfile,
       citing_msg_ids: citingMsgIds,
       selected_msg_ids: input.selected_msg_ids ?? [],
     });
@@ -783,6 +751,8 @@ export class ChatService {
       work_id: input.work_id,
       interact_id: input.interact_id,
       lastN,
+      // lastN 计的是对话消息，不是 info_raw 里 THINK/ACT 等过程行；否则一轮复杂编排会把更早的问答挤出窗口
+      info_types: [InfoType.REQUEST, InfoType.RESPONSE],
     });
     const lastNOutput = new LastNInfoOutput();
     await this.infoCore.lastNInfo(
@@ -1220,21 +1190,6 @@ export class ChatService {
       emit('text', { chunk: text.slice(offset, offset + size) });
       offset += size;
     }
-  }
-
-  private async getWriterProfileOutputClass(): Promise<new () => any> {
-    const { GetUserProfileOutput } = await import('@brian-agent/agent');
-    return GetUserProfileOutput;
-  }
-
-  private async getWriterProfileInputClass(): Promise<new () => any> {
-    const { GetUserProfileInput } = await import('@brian-agent/agent');
-    return GetUserProfileInput;
-  }
-
-  private async getWriterAgentContextClass(): Promise<new () => any> {
-    const { WriterAgentContext } = await import('@brian-agent/agent');
-    return WriterAgentContext;
   }
 
   private async getEvalOutputClass(): Promise<new () => any> {

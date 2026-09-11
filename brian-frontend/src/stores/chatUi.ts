@@ -24,8 +24,10 @@ export const useChatUiStore = defineStore('chatUi', () => {
   const thinkingDag = ref<AgentDagData | null>(null)
   // 思考过程弹窗动画原点（"思考过程"按钮的视口矩形），供入场/退场 FLIP 动画使用
   const thinkingOrigin = ref<{ left: number; top: number; width: number; height: number } | null>(null)
-  // 弹窗打开时刻（用于自动关闭的 5 秒最小展示时长判定）
+  // 弹窗打开时刻（详情弹窗入场动画）
   const thinkingOpenedAt = ref(0)
+  // 本轮提问开始思考的时刻，供对话内联轨迹的总耗时计时
+  const thinkingStartedAt = ref(0)
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
   // 每个 Agent 独立的执行运行时状态（思考中/成功/失败），key = agent_id
   const agentExecutions = ref<Record<string, AgentRuntimeInfo>>({})
@@ -38,7 +40,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
   const evalResultError = ref('')
   const evalTraceId = ref('')
 
-  // 需求理解确认弹窗：IntentAgent 匹配得分低于阈值时，由 intent_confirmation_required 事件驱动
+  // 需求理解确认弹窗：仅在自动决策无法判断时，由 intent_confirmation_required 事件驱动
   const intentConfirmation = ref<IntentConfirmation | null>(null)
 
   function setIntentConfirmation(data: Record<string, unknown> | null) {
@@ -100,6 +102,10 @@ export const useChatUiStore = defineStore('chatUi', () => {
 
   function clearThinkingOrigin() {
     thinkingOrigin.value = null
+  }
+
+  function markThinkingStart() {
+    thinkingStartedAt.value = Date.now()
   }
 
   function startThinkingLoading(msgId: string | null = null) {
@@ -230,6 +236,27 @@ export const useChatUiStore = defineStore('chatUi', () => {
     ERROR: 2,
   }
 
+  function patchRuntime(
+    prev: AgentRuntimeInfo | undefined,
+    status: AgentExecutionStatus,
+    agentName?: string,
+  ): AgentRuntimeInfo {
+    const now = Date.now()
+    const startedAt = status === 'RUNNING'
+      ? (prev?.startedAt ?? now)
+      : prev?.startedAt
+    const elapsedMs = startedAt
+      ? (status === 'RUNNING' ? now - startedAt : (prev?.elapsedMs ?? now - startedAt))
+      : prev?.elapsedMs
+    return {
+      status,
+      agentName: agentName ?? prev?.agentName,
+      updatedAt: now,
+      startedAt,
+      elapsedMs,
+    }
+  }
+
   function setAgentStatus(agentId: string | undefined, status: AgentExecutionStatus, agentName?: string, taskId?: string) {
     if (!agentId && !taskId) return
 
@@ -241,11 +268,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
       if (!prev || newOrder >= prevOrder) {
         agentExecutions.value = {
           ...agentExecutions.value,
-          [agentId]: {
-            status,
-            agentName: agentName ?? prev?.agentName,
-            updatedAt: Date.now(),
-          },
+          [agentId]: patchRuntime(prev, status, agentName),
         }
       }
     }
@@ -259,7 +282,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
       if (!tPrev || tNewOrder >= tPrevOrder) {
         taskExecutions.value = {
           ...taskExecutions.value,
-          [taskKey]: { status, agentName: agentName ?? tPrev?.agentName, updatedAt: Date.now() },
+          [taskKey]: patchRuntime(tPrev, status, agentName),
         }
       }
     }
@@ -301,8 +324,9 @@ export const useChatUiStore = defineStore('chatUi', () => {
   return {
     thinkingModalVisible, thinkingTargetMsgId, thinkingBlocks,
     thinkingLoading, dagLoading, blocksLoading,
-    planning, thinkingDag, agentExecutions, taskExecutions, thinkingOrigin,
-    setThinkingOrigin, clearThinkingOrigin,
+    thinkingOpenedAt, thinkingStartedAt, thinkingOrigin,
+    planning, thinkingDag, agentExecutions, taskExecutions,
+    setThinkingOrigin, clearThinkingOrigin, markThinkingStart,
     startThinkingLoading, setThinkingDag, setThinkingBlocks,
     openThinkingModal, closeThinkingModal, requestAutoCloseThinkingModal,
     resetPlanning, updatePlanning,

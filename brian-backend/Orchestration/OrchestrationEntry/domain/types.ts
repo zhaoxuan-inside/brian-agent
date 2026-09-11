@@ -24,7 +24,7 @@ export class ReceiveWorkOutput extends Output {
   interact_id = '';
   orchestration_strategy = '';
   final_response = '';
-  /** 是否因需求理解得分低于阈值而暂停，等待用户确认（此时 final_response 为空，不应流式输出文本） */
+  /** 是否因需求理解无法自动决策而暂停，等待用户确认（此时 final_response 为空，不应流式输出文本） */
   paused = false;
   /** 暂停等待用户补充参数时的澄清问题（需用户补充参数才能执行的任务） */
   clarifications: Array<{ question: string; domain?: string }> = [];

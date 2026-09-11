@@ -564,4 +564,3 @@ export async function buildThinkingBlocksAndDag(
 
   return { workBlocksMap, workDagMap };
 }
-export { buildThinkingBlocksAndDag };

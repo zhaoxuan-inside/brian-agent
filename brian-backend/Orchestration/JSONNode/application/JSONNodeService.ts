@@ -459,6 +459,7 @@ export class JSONNodeService {
     context: JSONNodeContext,
   ): Promise<void> {
     const userQuery = (sharedData.user_query as string) ?? '';
+    const displayQuery = String(sharedData.original_user_query ?? '').trim() || userQuery;
     const sessionId = (sharedData.session_id as string) ?? context.session_id ?? '';
     const workId = (sharedData.work_id as string) ?? context.work_id ?? '';
     const interactId = (sharedData.interact_id as string) ?? context.interact_id ?? '';
@@ -496,7 +497,7 @@ export class JSONNodeService {
       info_type: (sharedData.info_type as string) ?? (params.info_type as string) ?? InfoType.REQUEST,
       info_creator_role: (sharedData.info_creator_role as string) ?? 'USER',
       info_creator_id: (sharedData.info_creator_id as string) ?? '',
-      info: userQuery,
+      info: displayQuery,
       parent_info_ids: citingIds,
       trace_id: (sharedData.trace_id as string) ?? '',
     });
@@ -538,6 +539,7 @@ export class JSONNodeService {
     const userQuery = (sharedData.user_query as string) ?? '';
     const maxRecent = (params.max_recent_works as number) ?? 5;
     const includeProfile = (params.include_user_profile as boolean) ?? true;
+    const contextStartedAt = Date.now();
 
     let sessionContext: Record<string, unknown> = {};
     let contextCategories: unknown = undefined;
@@ -624,6 +626,7 @@ export class JSONNodeService {
         user_profile_present: Boolean(userProfile && Object.keys(userProfile).length > 0),
         session_context_count: Array.isArray(sessionContext) ? sessionContext.length : 0,
         created_at: IdGenerator.now(),
+        elapsed_ms: Date.now() - contextStartedAt,
       }, {
         work_id: workId,
         interact_id: (sharedData.interact_id as string) ?? context.interact_id ?? '',
@@ -989,6 +992,28 @@ export class JSONNodeService {
     const resultsKey = (params.agent_results_key as string) ?? 'agent_results';
     const saveKey = (params.save_response_key as string) ?? 'final_response';
     const agentResults = (sharedData[resultsKey] as Record<string, unknown>[]) ?? [];
+
+    const answers = agentResults
+      .map((r) => String((r as { answer?: unknown; result?: unknown })?.answer ?? (r as { result?: unknown })?.result ?? '').trim())
+      .filter(Boolean);
+    if (answers.length === 1) {
+      sharedData[saveKey] = answers[0];
+      sharedData.final_response_handle_result_type = '';
+      const updData: DataObject[] = [
+        { field: 'status', value: 'WRITING' },
+        { field: 'updated', value: IdGenerator.now() },
+      ];
+      await this.relationDb.updateDB(
+        Object.assign(new UpdateDBInput(), {
+          table: 'orchestration_work',
+          data: updData,
+          conditions: [{ field: 'work_id', operator: Operator.EQ, value: workId }],
+        }),
+        new UpdateDBOutput(),
+        new DBContext(),
+      );
+      return;
+    }
 
     const writeInput = Object.assign(new WriteInput(), {
       work_id: workId,

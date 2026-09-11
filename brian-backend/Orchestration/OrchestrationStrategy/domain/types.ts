@@ -11,6 +11,8 @@ export class StartOrchestrationInput extends Input {
   interact_id!: string;
   session_id!: string;
   user_query!: string;
+  /** 用户原始输入；存在时 SAVE_USER_INPUT 落库原文，user_query 仅作为编排执行 query */
+  original_user_query?: string;
   strategy!: string;
   work_context?: Record<string, unknown>;
   citing_msg_ids?: string[];

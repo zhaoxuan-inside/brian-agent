@@ -10,6 +10,7 @@ import { Network } from '@lucide/vue'
 import { useChatUiStore } from '@/stores/chatUi'
 import type { AgentDagData, AgentExecutionStatus } from '@/api/types'
 import { layoutDag, DAG_NODE_W, DAG_NODE_H } from './dagLayout'
+import { formatDuration } from '@/utils/format'
 
 const props = defineProps<{
   dag: AgentDagData
@@ -203,7 +204,7 @@ function formatJson(val: unknown): string {
             <span class="text-[9px] px-1 py-px rounded" :class="STATUS_META[resolveStatus(node)].chip">
               {{ STATUS_META[resolveStatus(node)].label }}
             </span>
-            <span v-if="node.elapsedMs" class="text-[9px] opacity-70 flex-shrink-0">{{ node.elapsedMs }}ms</span>
+            <span v-if="node.elapsedMs" class="text-[9px] opacity-70 flex-shrink-0">{{ formatDuration(node.elapsedMs) }}</span>
           </div>
         </button>
       </div>
@@ -215,7 +216,7 @@ function formatJson(val: unknown): string {
         <span>节点详情: {{ activeNode.agentName || activeNode.label }}</span>
         <div class="flex items-center gap-3 text-[11px] font-normal text-apple-gray-500">
           <span v-if="activeNode.taskId" class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400">任务: {{ activeNode.taskId }}</span>
-          <span v-if="activeNode.elapsedMs">{{ activeNode.elapsedMs }}ms</span>
+          <span v-if="activeNode.elapsedMs">{{ formatDuration(activeNode.elapsedMs) }}</span>
           <span v-if="activeNode.tokenUsage">{{ activeNode.tokenUsage }} tokens</span>
         </div>
       </div>

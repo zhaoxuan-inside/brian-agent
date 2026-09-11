@@ -96,6 +96,14 @@ describe('LLM Strategies & Factory', () => {
     });
     const model = createMockModel({ llm_title: 'gemini-1.5-pro' });
 
+    it('buildListModelsRequest 原生 /models 不应携带 Bearer，避免 Google 按 OAuth 返回 401', () => {
+      const req = strategy.buildListModelsRequest(provider);
+      expect(req.url).toContain('/v1beta/models');
+      expect(req.url).toContain('key=AIzaSyTestKey');
+      expect(req.headers['x-goog-api-key']).toBe('AIzaSyTestKey');
+      expect(req.headers['Authorization']).toBeUndefined();
+    });
+
     it('buildChatRequest 应该正确构造请求头与带 key 的 URL，并默认使用 openai/chat/completions', () => {
       const input = { prompt: 'Hello', system: 'You are helpful' } as ExecLLMInput;
       const req = strategy.buildChatRequest(provider, model, input);

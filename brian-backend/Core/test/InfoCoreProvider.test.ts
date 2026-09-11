@@ -13,6 +13,7 @@ import {
   IdGenerator,
   CollectionSource,
   HandleResultType,
+  InfoType,
 } from '@brian-agent/base';
 import {
   InfoCoreAccess,
@@ -590,6 +591,32 @@ describe('InfoCoreProvider', () => {
       await infoCore.lastNInfo(input, output, new InfoCoreContext());
 
       expect(output.list.length).toBe(1);
+    });
+
+    it('info_types 按 IN 过滤，lastN 只计匹配类型', async () => {
+      const sid = 's-types';
+      const req = makeSaveInput({ session_id: sid, info: 'question' });
+      req.info_type = InfoType.REQUEST;
+      await infoCore.saveInfo(req, new SaveInfoOutput(), new InfoCoreContext());
+      const think = makeSaveInput({ session_id: sid, info: 'thinking trace' });
+      think.info_type = InfoType.THINK;
+      await infoCore.saveInfo(think, new SaveInfoOutput(), new InfoCoreContext());
+      const act = makeSaveInput({ session_id: sid, info: 'tool act' });
+      act.info_type = InfoType.ACT;
+      await infoCore.saveInfo(act, new SaveInfoOutput(), new InfoCoreContext());
+      const resp = makeSaveInput({ session_id: sid, info: 'answer' });
+      resp.info_type = InfoType.RESPONSE;
+      await infoCore.saveInfo(resp, new SaveInfoOutput(), new InfoCoreContext());
+
+      const input = new LastNInfoInput();
+      input.session_id = sid;
+      input.lastN = 2;
+      input.info_types = [InfoType.REQUEST, InfoType.RESPONSE];
+      const output = new LastNInfoOutput();
+      await infoCore.lastNInfo(input, output, new InfoCoreContext());
+
+      expect(output.list.length).toBe(2);
+      expect(output.list.every((r) => r.info_type === InfoType.REQUEST || r.info_type === InfoType.RESPONSE)).toBe(true);
     });
   });
 
