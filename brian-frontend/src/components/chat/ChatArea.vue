@@ -20,6 +20,7 @@ import IntentConfirmCard from './IntentConfirmCard.vue'
 import ClarificationCard from './ClarificationCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 import { groupConversationTurns, type ConversationTurn } from '@/utils/conversationTurns'
+import { isLongReply, shouldCollapseTurn } from '@/utils/turnCollapse'
 
 const sessionStore = useSessionStore()
 const chatUi = useChatUiStore()
@@ -77,6 +78,7 @@ function getCitingIds(msg: ChatMessage): string[] {
 
 watch(() => sessionStore.focusInfoId, async (id) => {
   if (!id) return
+  expandTurnContaining(id)
   await nextTick()
   const el = listRef.value?.querySelector(`[data-info-id="${id}"]`) as HTMLElement | null
   if (!el || !listRef.value) return
@@ -130,6 +132,61 @@ const turns = computed(() =>
   groupConversationTurns(sessionStore.messages, sessionStore.blocks, sessionStore.isStreaming),
 )
 
+const expandedTurnKeys = ref<Set<string>>(new Set())
+const collapsedTurnKeys = ref<Set<string>>(new Set())
+
+watch(() => sessionStore.currentSessionId, () => {
+  expandedTurnKeys.value = new Set()
+  collapsedTurnKeys.value = new Set()
+})
+
+function turnCollapsed(turn: ConversationTurn, index: number): boolean {
+  const list = turns.value
+  return shouldCollapseTurn({
+    isLast: index === list.length - 1,
+    live: turn.live,
+    content: turn.assistant?.content ?? '',
+    extrasCount: turn.extras.length,
+    forceExpanded: expandedTurnKeys.value.has(turn.key),
+    forceCollapsed: collapsedTurnKeys.value.has(turn.key),
+  })
+}
+
+function turnCanToggle(turn: ConversationTurn, index: number): boolean {
+  if (turn.live || !turn.assistant) return false
+  if (turnCollapsed(turn, index)) return true
+  if (index === turns.value.length - 1) return collapsedTurnKeys.value.has(turn.key)
+  return isLongReply(turn.assistant.content) || turn.extras.length >= 2 || collapsedTurnKeys.value.has(turn.key) || expandedTurnKeys.value.has(turn.key)
+}
+
+function toggleTurnCollapse(turn: ConversationTurn, index: number) {
+  const nextExpanded = new Set(expandedTurnKeys.value)
+  const nextCollapsed = new Set(collapsedTurnKeys.value)
+  if (turnCollapsed(turn, index)) {
+    nextCollapsed.delete(turn.key)
+    nextExpanded.add(turn.key)
+  } else {
+    nextExpanded.delete(turn.key)
+    nextCollapsed.add(turn.key)
+  }
+  expandedTurnKeys.value = nextExpanded
+  collapsedTurnKeys.value = nextCollapsed
+}
+
+function expandTurnContaining(infoId: string) {
+  const list = turns.value
+  const idx = list.findIndex(t => t.user.id === infoId || t.assistant?.id === infoId)
+  if (idx < 0) return
+  const turn = list[idx]
+  if (!turnCollapsed(turn, idx)) return
+  const next = new Set(expandedTurnKeys.value)
+  next.add(turn.key)
+  const nextCollapsed = new Set(collapsedTurnKeys.value)
+  nextCollapsed.delete(turn.key)
+  expandedTurnKeys.value = next
+  collapsedTurnKeys.value = nextCollapsed
+}
+
 function openTurnDetails(turn: ConversationTurn) {
   if (turn.live) {
     chatUi.openThinkingModal(null)
@@ -180,7 +237,12 @@ function startResize(e: MouseEvent) {
         </div>
 
         <div v-else class="max-w-3xl mx-auto w-full space-y-8">
-          <section v-for="turn in turns" :key="turn.key" class="space-y-3">
+          <section
+            v-for="(turn, idx) in turns"
+            :key="turn.key"
+            class="space-y-3"
+            :class="idx === turns.length - 1 ? '[overflow-anchor:auto]' : ''"
+          >
             <div class="flex items-start gap-3" :data-info-id="turn.user.id">
               <div class="flex-shrink-0 w-7 h-7 rounded-full bg-brian-blue/15 text-brian-blue flex items-center justify-center mt-0.5">
                 <UserRound :size="14" />
@@ -215,7 +277,7 @@ function startResize(e: MouseEvent) {
             </div>
 
             <div
-              v-if="turn.thinking.length > 0 || turn.live"
+              v-if="!turnCollapsed(turn, idx) && (turn.thinking.length > 0 || turn.live)"
               class="pl-10"
             >
               <ThinkingTrace
@@ -228,7 +290,7 @@ function startResize(e: MouseEvent) {
             </div>
 
             <div
-              v-for="block in turn.extras"
+              v-for="block in (turnCollapsed(turn, idx) ? [] : turn.extras)"
               :key="block.id"
               class="pl-10"
             >
@@ -261,13 +323,16 @@ function startResize(e: MouseEvent) {
                   :work-id="turn.assistant.workId"
                   mode="timeline"
                   :citing-mode="sessionStore.citingMode"
-                  :show-thinking-action="turn.thinking.length === 0"
+                  :show-thinking-action="turn.thinking.length === 0 || turnCollapsed(turn, idx)"
                   :is-streaming="sessionStore.isStreaming && turn.live"
+                  :body-collapsed="turnCollapsed(turn, idx)"
+                  :show-collapse-toggle="turnCanToggle(turn, idx) && !turnCollapsed(turn, idx)"
                   :node-map="nodeMap"
                   @toggle-select="sessionStore.toggleMsgSelection"
                   @toggle-pin="togglePin"
                   @click-card="centerMapOn"
                   @jump-to="jumpTo"
+                  @toggle-collapse="toggleTurnCollapse(turn, idx)"
                   @show-thinking="showThinking"
                   @show-eval="chatUi.openEvalResult"
                 />

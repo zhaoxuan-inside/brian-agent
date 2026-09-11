@@ -8,6 +8,7 @@ import {
   ValidationError, NotFoundError,
   InfoType,
   HandleResultType,
+  collectRuntimeEnvironment,
   type PromptsAccess, type LLMAccess, type Logger, type Condition,
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
@@ -631,6 +632,7 @@ export class OrchestrationEntryService {
       user_profile: userProfile,
       recent_works: recentWorks,
       selected_msg_ids: input.selected_msg_ids ?? [],
+      runtime_environment: collectRuntimeEnvironment(),
       created_at: IdGenerator.now(),
       metadata: { orchestration_version: '1.0' },
     };

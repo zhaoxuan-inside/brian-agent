@@ -398,6 +398,18 @@ export const userProfileApi = {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId }),
     }),
+  savePreference: (payload: {
+    session_id: string
+    language?: string
+    style?: string
+    depth?: string
+    format?: string
+    additional_preferences?: string
+  }) =>
+    request<{ success: boolean }>('/profile/preference', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 }
 
 export const visualizationApi = {

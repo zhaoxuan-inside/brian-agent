@@ -106,6 +106,79 @@ describe('PlannerAgent', () => {
       expect(out.plan_id).toBeTruthy();
       expect(out.task_dag.nodes.length).toBeLessThanOrEqual(10);
     });
+
+    it('有 session_id 时拉取会话上下文，并丢掉上下文已覆盖的平台澄清题', async () => {
+      const infoCore = {
+        saveInfo: vi.fn().mockResolvedValue(true),
+        context: vi.fn().mockImplementation(async (_i: any, o: any) => {
+          o.list = [{ info: '用户想看 YouTube 上浏览量最高的视频' }];
+          return true;
+        }),
+        lastNInfo: vi.fn().mockResolvedValue(true),
+      };
+      const llmAccess = {
+        execLLM: vi.fn().mockImplementation(async (_i: any, o: any) => {
+          o.result = JSON.stringify({
+            nodes: [{
+              task_id: '1', parent_task_id: '', task_content: '下载前十浏览量视频',
+              task_complexity: 20, task_domain: '', priority: 1, dependencies: [],
+            }],
+            edges: [],
+            clarifications: [{ question: '请问是 YouTube 还是 Bilibili？', domain: '平台' }],
+          });
+          return true;
+        }),
+      };
+      const p = new PlannerAgentService(
+        db, llmAccess as any, NOOP_PROMPTS_ACCESS, infoCore as any,
+        makeAccess(builder), makeAccess(libSvc),
+      );
+      const out = new PlanHierarchicalOutput();
+      await p.planHierarchical(
+        Object.assign(new PlanHierarchicalInput(), {
+          work_id: 'w-ctx', interact_id: 'i-ctx',
+          task_content: '把前十浏览量的视频下载到本地',
+        }),
+        out,
+        Object.assign(new PlannerAgentContext(), { session_id: 'sess-yt' }),
+      );
+
+      expect(infoCore.context).toHaveBeenCalled();
+      expect(infoCore.context.mock.calls[0][0].session_id).toBe('sess-yt');
+      expect(out.clarifications).toEqual([]);
+    });
+
+    it('无会话主题时保留平台澄清题', async () => {
+      const llmAccess = {
+        execLLM: vi.fn().mockImplementation(async (_i: any, o: any) => {
+          o.result = JSON.stringify({
+            nodes: [{
+              task_id: '1', parent_task_id: '', task_content: '下载前十浏览量视频',
+              task_complexity: 20, task_domain: '', priority: 1, dependencies: [],
+            }],
+            edges: [],
+            clarifications: [{ question: '请问是 YouTube 还是 Bilibili？', domain: '平台' }],
+          });
+          return true;
+        }),
+      };
+      const p = new PlannerAgentService(
+        db, llmAccess as any, NOOP_PROMPTS_ACCESS, NOOP_INFO_CORE,
+        makeAccess(builder), makeAccess(libSvc),
+      );
+      const out = new PlanHierarchicalOutput();
+      await p.planHierarchical(
+        Object.assign(new PlanHierarchicalInput(), {
+          work_id: 'w-amb', interact_id: 'i-amb',
+          task_content: '把前十浏览量的视频下载到本地',
+        }),
+        out,
+        new PlannerAgentContext(),
+      );
+      expect(out.clarifications).toEqual([
+        { question: '请问是 YouTube 还是 Bilibili？', domain: '平台' },
+      ]);
+    });
   });
 
   describe('configPlannerAgent', () => {

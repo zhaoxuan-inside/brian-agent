@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
-import { Send, Square, Quote, X } from '@lucide/vue'
+/**
+ * 对话输入条。左侧不是「引用原文」，而是「选用上文」：
+ * 打开后消息出现勾选框，指定本次提问主要依据哪些历史消息。
+ */
+import { computed, nextTick, ref } from 'vue'
+import { Send, Square, ListChecks, X } from '@lucide/vue'
+import { useI18nStore } from '@/stores/i18n'
 
 const props = defineProps<{
   disabled?: boolean
@@ -15,9 +20,24 @@ const emit = defineEmits<{
   (e: 'stop'): void
 }>()
 
+const i18n = useI18nStore()
 const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const citingIds = ref<string[]>([])
+
+const selectedCount = computed(() => props.selectedCount ?? 0)
+
+const contextButtonLabel = computed(() => {
+  if (!props.citingMode) return i18n.t('chat.pickContext')
+  if (selectedCount.value > 0) return i18n.t('chat.pickContextCount').replace('{n}', String(selectedCount.value))
+  return i18n.t('chat.pickContextOn')
+})
+
+const placeholder = computed(() => {
+  if (props.citingMode && selectedCount.value === 0) return i18n.t('chat.input.placeholderPicking')
+  if (props.citingMode) return i18n.t('chat.input.placeholderPicked')
+  return i18n.t('chat.input.placeholder')
+})
 
 function handleSend() {
   const val = text.value.trim()
@@ -47,27 +67,44 @@ function onKeydown(e: KeyboardEvent) {
   <div class="px-4 py-3">
     <div class="max-w-3xl mx-auto space-y-1.5">
       <div
-        v-if="selectedCount && selectedCount > 0"
-        class="flex items-center justify-between px-3 py-1 rounded-xl bg-brian-blue/10 border border-brian-blue/20 text-brian-blue text-xs"
+        v-if="citingMode && selectedCount === 0"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-brian-blue/10 border border-brian-blue/20 text-xs text-apple-gray-600 dark:text-apple-gray-300"
       >
-        <span class="truncate">已勾选 {{ selectedCount }} 条消息作为本次问答唯一上下文（与钉住消息合并）</span>
+        <ListChecks :size="13" class="text-brian-blue flex-shrink-0" />
+        <span>{{ i18n.t('chat.pickContextHint') }}</span>
+      </div>
+
+      <div
+        v-else-if="selectedCount > 0"
+        class="flex items-center justify-between px-3 py-1.5 rounded-xl bg-brian-blue/10 border border-brian-blue/20 text-brian-blue text-xs"
+      >
+        <span class="truncate">{{ i18n.t('chat.pickContextSelected').replace('{n}', String(selectedCount)) }}</span>
         <button
           class="flex items-center gap-0.5 text-xs text-apple-gray-500 hover:text-brian-blue ml-2 flex-shrink-0"
-          title="清空勾选"
+          :title="i18n.t('chat.pickContextClear')"
           @click="emit('clearSelected')"
         >
-          <X :size="12" /> 清空
+          <X :size="12" /> {{ i18n.t('chat.pickContextClear') }}
         </button>
       </div>
 
-      <div class="flex items-end gap-2 bg-apple-gray-50 dark:bg-apple-gray-800 rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 px-4 py-2">
+      <div
+        class="flex items-end gap-2 bg-apple-gray-50 dark:bg-apple-gray-800 rounded-2xl border px-3 py-2 transition-colors"
+        :class="citingMode
+          ? 'border-brian-blue/40 ring-1 ring-brian-blue/20'
+          : 'border-apple-gray-200 dark:border-apple-gray-700'"
+      >
         <button
-          class="p-1.5 rounded-lg transition-colors flex-shrink-0"
-          :class="citingMode ? 'bg-brian-blue/10 text-brian-blue' : 'text-apple-gray-400 hover:text-brian-blue'"
-          title="引用模式"
+          class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0"
+          :class="citingMode
+            ? 'bg-brian-blue text-white'
+            : 'text-apple-gray-500 hover:text-brian-blue hover:bg-brian-blue/10'"
+          :title="i18n.t('chat.pickContextTip')"
+          :aria-pressed="citingMode"
           @click="emit('toggleCiting')"
         >
-          <Quote :size="18" />
+          <ListChecks :size="16" />
+          <span>{{ contextButtonLabel }}</span>
         </button>
 
         <textarea
@@ -75,7 +112,7 @@ function onKeydown(e: KeyboardEvent) {
           v-model="text"
           class="flex-1 bg-transparent resize-none text-sm text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400 focus:outline-none py-2 min-h-[36px] max-h-[200px]"
           :disabled="disabled"
-          placeholder="输入消息..."
+          :placeholder="placeholder"
           rows="1"
           @input="autoResize"
           @keydown="onKeydown"

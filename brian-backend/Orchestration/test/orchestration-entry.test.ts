@@ -329,6 +329,8 @@ describe('OrchestrationEntry', () => {
       expect(output.work_context.user_query).toBe('你好');
       expect(output.work_context.recent_works).toBeDefined();
       expect(output.work_context.metadata).toBeDefined();
+      expect(output.work_context.runtime_environment).toBeTruthy();
+      expect((output.work_context.runtime_environment as { os?: string }).os).toMatch(/macos|windows|linux/);
     });
 
     it('TC-BWC-002: 无历史工作时构建上下文', async () => {

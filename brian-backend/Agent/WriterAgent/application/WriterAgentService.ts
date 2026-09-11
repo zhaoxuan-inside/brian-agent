@@ -23,7 +23,7 @@ import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
   AgentLibraryContext,
 } from '../../AgentLibrary/domain/types';
-import { formatContextCategories } from '@brian-agent/base';
+import { formatContextCategories, formatRuntimeEnvironment, mergePromptContext } from '@brian-agent/base';
 import { TraceStore } from '../../AgentExecution/application/trace/TraceStore';
 import { buildSingleAnswerTrace } from '../../AgentExecution/application/trace/TraceCodec';
 import { renderPromptWithFallback, resolveAgentLlm } from '../../shared/AgentKit';
@@ -93,7 +93,7 @@ export class WriterAgentService {
       };
     }
 
-    let contextExtra = '';
+    let contextExtra = formatRuntimeEnvironment();
     if (ctx.session_id) {
       try {
         const ctxOut = new ContextInfoOutput();
@@ -110,7 +110,7 @@ export class WriterAgentService {
           new InfoCoreContext(),
         );
         // ===== 修改后的方法：结构化分类包裹与属性脱敏 =====
-        contextExtra = formatContextCategories(ctxOut);
+        contextExtra = mergePromptContext(contextExtra, formatContextCategories(ctxOut));
       } catch { /* best-effort */ }
     }
 

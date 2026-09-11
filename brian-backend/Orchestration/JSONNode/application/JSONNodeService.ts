@@ -6,6 +6,7 @@ import {
   UpdateDBOutput, DBContext, IdGenerator, ValidationError,
   InfoType,
   HandleResultType,
+  collectRuntimeEnvironment,
   type Logger, type Condition,
   type StreamAccess,
 } from '@brian-agent/base';
@@ -46,6 +47,7 @@ import {
 } from '../../OrchestrationExecution/domain/types';
 import { JSONNodeContext, JSONNodeConfig, NodeHandler, NodeExecutionTrace, ExecJSONNodeInput, ExecJSONNodeOutput, GetJSONNodeTraceInput, GetJSONNodeTraceOutput, RegisterNodeTypeInput, RegisterNodeTypeOutput, ValidateJSONNodeInput, ValidateJSONNodeOutput, ConfigJSONNodeInput, ConfigJSONNodeOutput, BUILTIN_NODE_TYPES } from '../domain/types';
 import { selectOrchestrationStrategy } from '../../shared/strategySelector';
+import { filterGroundedClarifications } from '../../shared/clarificationFilter';
 
 export class JSONNodeService {
   private readonly nodeTypeRegistry = new Map<string, NodeHandler>();
@@ -609,6 +611,7 @@ export class JSONNodeService {
       context_attribute_map: contextAttributeMap,
       user_profile: userProfile,
       recent_works: recentWorks,
+      runtime_environment: collectRuntimeEnvironment(),
       created_at: IdGenerator.now(),
       metadata: { orchestration_version: '1.0' },
     };
@@ -782,6 +785,17 @@ export class JSONNodeService {
     }
   }
 
+  /** 将 work_context 压成可供澄清题覆盖判断的纯文本。 */
+  private stringifySharedContext(workContext: unknown): string {
+    if (!workContext) return '';
+    if (typeof workContext === 'string') return workContext;
+    try {
+      return JSON.stringify(workContext);
+    } catch {
+      return '';
+    }
+  }
+
   private async handlePlanWork(
     sharedData: Record<string, unknown>,
     params: Record<string, unknown>,
@@ -789,8 +803,12 @@ export class JSONNodeService {
   ): Promise<void> {
     const workId = (sharedData.work_id as string) ?? context.work_id ?? '';
     const interactId = (sharedData.interact_id as string) ?? context.interact_id ?? '';
+    const sessionId = (sharedData.session_id as string) ?? context.session_id ?? '';
     const userQuery = (sharedData.user_query as string) ?? '';
     const savePlanKey = (params.save_plan_key as string) ?? 'plan_result';
+    const selectedMsgIds = Array.isArray(sharedData.selected_msg_ids)
+      ? (sharedData.selected_msg_ids as string[])
+      : undefined;
 
     const planInput = Object.assign(new PlanHierarchicalInput(), {
       work_id: workId,
@@ -802,15 +820,29 @@ export class JSONNodeService {
     await this.plannerAgent.planHierarchical(
       planInput,
       planOutput,
-      Object.assign(new PlannerAgentContext(), { trace_id: (sharedData.trace_id as string) ?? '' }),
+      Object.assign(new PlannerAgentContext(), {
+        session_id: sessionId,
+        work_id: workId,
+        interact_id: interactId,
+        selected_msg_ids: selectedMsgIds,
+        trace_id: (sharedData.trace_id as string) ?? '',
+      }),
     );
 
     // ===== 需求澄清：Planner 识别出需用户补充参数才能执行的任务（不进入 DAG）=====
-    const clarifications = (planOutput.clarifications ?? []).filter(
-      (c) => c && typeof c.question === 'string' && c.question.trim(),
+    // 会话主题已确立时（如前文已是 YouTube）丢弃重复的平台选择题，避免打断用户。
+    const groundedText = [
+      userQuery,
+      typeof sharedData.original_user_query === 'string' ? sharedData.original_user_query : '',
+      this.stringifySharedContext(sharedData.work_context),
+    ].join('\n');
+    const clarifications = filterGroundedClarifications(
+      (planOutput.clarifications ?? []).filter(
+        (c) => c && typeof c.question === 'string' && c.question.trim(),
+      ),
+      groundedText,
     );
     if (clarifications.length > 0) {
-      const sessionId = (sharedData.session_id as string) ?? context.session_id ?? '';
       const metadata = {
         trace_id: (sharedData.trace_id as string) ?? '',
         clarifications,
@@ -855,7 +887,6 @@ export class JSONNodeService {
     };
     sharedData.task_count = (planOutput.task_dag as unknown as TaskDAG)?.nodes?.length ?? 0;
 
-    const sessionId = (sharedData.session_id as string) ?? context.session_id ?? '';
     if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
       await this.streamAccess.pushEvent(sessionId, 'plan_created', 'DAG', {
         plan_id: planOutput.plan_id,
@@ -1023,7 +1054,19 @@ export class JSONNodeService {
     });
     const writeOutput = new WriteOutput();
     const writeStartedAt = Date.now();
-    await this.writerAgent.execWrite(writeInput, writeOutput, new WriterAgentContext());
+    await this.writerAgent.execWrite(
+      writeInput,
+      writeOutput,
+      Object.assign(new WriterAgentContext(), {
+        session_id: (sharedData.session_id as string) ?? context.session_id ?? '',
+        work_id: workId,
+        interact_id: interactId,
+        selected_msg_ids: Array.isArray(sharedData.selected_msg_ids)
+          ? (sharedData.selected_msg_ids as string[])
+          : undefined,
+        trace_id: (sharedData.trace_id as string) ?? '',
+      }),
+    );
     const writeElapsed = Date.now() - writeStartedAt;
 
     sharedData[saveKey] = writeOutput.response;

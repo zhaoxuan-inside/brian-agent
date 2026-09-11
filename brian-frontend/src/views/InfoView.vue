@@ -6,7 +6,8 @@
  * 页签业务逻辑见 composables/useInfoTabs 各 useXxxTab；
  * 页签视图见 components/info/（HistoryTab/MemoryTab/LibraryTab/GraphPane/ProfileTab）。
  */
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   Clock, Brain, Database, Network, GitBranch, UserRound,
 } from '@lucide/vue'
@@ -28,9 +29,21 @@ import {
 
 // Tabs
 const i18nStore = useI18nStore()
+const route = useRoute()
 const infoTabKeys: InfoTabKey[] = ['history', 'memory', 'library', 'tagGraph', 'keywordGraph', 'profile']
+
+function tabFromQuery(): InfoTabKey | null {
+  const q = route.query.tab
+  return typeof q === 'string' && infoTabKeys.includes(q as InfoTabKey) ? (q as InfoTabKey) : null
+}
+
 const storedInfoTab = localStorage.getItem('brian-info-active-tab')
-const activeTab = ref<InfoTabKey>(infoTabKeys.includes(storedInfoTab as InfoTabKey) ? (storedInfoTab as InfoTabKey) : 'history')
+const activeTab = ref<InfoTabKey>(tabFromQuery() ?? (infoTabKeys.includes(storedInfoTab as InfoTabKey) ? (storedInfoTab as InfoTabKey) : 'history'))
+
+watch(() => route.query.tab, () => {
+  const fromQuery = tabFromQuery()
+  if (fromQuery) activeTab.value = fromQuery
+})
 const tabs = computed(() => [
   { key: 'history' as const, label: i18nStore.t('info.history'), icon: Clock },
   { key: 'memory' as const, label: i18nStore.t('info.memory'), icon: Brain },
