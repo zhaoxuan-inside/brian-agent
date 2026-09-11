@@ -64,7 +64,7 @@ import {
   LastNInfoInput, LastNInfoOutput,
 } from '@brian-agent/core';
 import { parseJsonObject, parseTaskContentAndContext } from '../../shared/signature';
-import { formatContextCategories } from '@brian-agent/base';
+import { formatContextCategories, formatRuntimeEnvironment, mergePromptContext } from '@brian-agent/base';
 
 const EXEC_QUEUE = 'agent.execution';
 
@@ -184,7 +184,7 @@ export class AgentExecutionService {
     // ===== 修改后的方法：剥离 work_context 非内容 JSON 属性，确保 Prompt 仅包含纯净 Task Content =====
     const { cleanTaskContent } = parseTaskContentAndContext(input.task_content);
     input.task_content = cleanTaskContent;
-    let contextData = cleanTaskContent;
+    let contextData = formatRuntimeEnvironment();
 
     const sessionId = ctx.session_id;
     if (sessionId) {
@@ -207,7 +207,7 @@ export class AgentExecutionService {
         // 不再拼入上下文；上下文仅包含历史引用消息，任务内容经 task_content 变量单独注入。
         const formattedCtx = formatContextCategories(ctxOut);
         if (formattedCtx) {
-          contextData = formattedCtx;
+          contextData = mergePromptContext(contextData, formattedCtx);
         }
       } catch {
         /* best-effort */

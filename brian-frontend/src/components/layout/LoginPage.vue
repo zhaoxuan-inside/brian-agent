@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useIdentityStore } from '@/stores/identity'
 
 const authStore = useAuthStore()
+const identity = useIdentityStore()
 const password = ref('')
 const error = ref('')
 const isLoading = ref(false)
@@ -27,7 +29,9 @@ async function handleLogin() {
       <div class="text-center mb-8">
         <h1 class="text-4xl font-bold text-brian-blue mb-2">Brian</h1>
         <p class="text-sm text-apple-gray-500 dark:text-apple-gray-400">
-          {{ authStore.hasPassword ? '请输入密码解锁' : '请设置初始密码' }}
+          {{ authStore.hasPassword
+            ? (identity.displayName.trim() ? `欢迎回来，${identity.greetingName}` : '请输入密码解锁')
+            : '请设置初始密码' }}
         </p>
       </div>
 

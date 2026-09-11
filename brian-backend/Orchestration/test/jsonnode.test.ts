@@ -330,6 +330,95 @@ describe('JSONNode', () => {
     });
   });
 
+  describe('PLAN_WORK', () => {
+    const planWorkDef: JSONNodeDefinition = {
+      version: '1.0', orchestration_id: 'plan-work', start_node: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1',
+      nodes: [
+        { node_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1', node_type: 'PLAN_WORK', params: { save_plan_key: 'plan_result' }, next: null },
+      ],
+    };
+
+    it('将 session_id 与 selected_msg_ids 传入 Planner', async () => {
+      const input = Object.assign(new ExecJSONNodeInput(), {
+        orchestration_id: 'orch-plan-ctx',
+        jsonnode_definition: planWorkDef,
+        initial_data: {
+          session_id: 'sess-yt',
+          work_id: 'w-yt',
+          interact_id: 'i-yt',
+          user_query: '把前十浏览量的视频下载到本地',
+          selected_msg_ids: ['m1'],
+        },
+      });
+      const output = new ExecJSONNodeOutput();
+      await jsonNode.execJSONNode(input, output, new JSONNodeContext());
+
+      expect(output.shared_data._error).toBeUndefined();
+      expect(plannerAgent.planHierarchical).toHaveBeenCalled();
+      const ctx = plannerAgent.planHierarchical.mock.calls[0][2];
+      expect(ctx.session_id).toBe('sess-yt');
+      expect(ctx.work_id).toBe('w-yt');
+      expect(ctx.interact_id).toBe('i-yt');
+      expect(ctx.selected_msg_ids).toEqual(['m1']);
+    });
+
+    it('上下文已有 YouTube 时丢掉平台澄清题并继续执行', async () => {
+      plannerAgent.planHierarchical.mockImplementationOnce(async (_i: any, o: any) => {
+        o.plan_id = 'plan-yt';
+        o.task_dag = {
+          nodes: [{ task_id: 't1', task_content: 'download', task_complexity: 20, task_domain: '', priority: 1, dependencies: [] }],
+          edges: [],
+        };
+        o.clarifications = [{ question: '请问是 YouTube 还是 Bilibili？', domain: '平台' }];
+        return true;
+      });
+
+      const input = Object.assign(new ExecJSONNodeInput(), {
+        orchestration_id: 'orch-plan-filter',
+        jsonnode_definition: planWorkDef,
+        initial_data: {
+          session_id: 's', work_id: 'w', interact_id: 'i',
+          user_query: '把前十浏览量的视频下载到本地',
+          work_context: { recent_works: [{ user_query: '帮我看看 YouTube 上最近的热门视频' }] },
+        },
+      });
+      const output = new ExecJSONNodeOutput();
+      await jsonNode.execJSONNode(input, output, new JSONNodeContext());
+
+      expect(output.shared_data._paused).toBeFalsy();
+      expect(output.shared_data._clarifications).toBeUndefined();
+      expect((output.shared_data.plan_result as { plan_id?: string } | undefined)?.plan_id).toBe('plan-yt');
+    });
+
+    it('无会话主题时保留平台澄清题并暂停', async () => {
+      plannerAgent.planHierarchical.mockImplementationOnce(async (_i: any, o: any) => {
+        o.plan_id = 'plan-ask';
+        o.task_dag = {
+          nodes: [{ task_id: 't1', task_content: 'download', task_complexity: 20, task_domain: '', priority: 1, dependencies: [] }],
+          edges: [],
+        };
+        o.clarifications = [{ question: '请问是 YouTube 还是 Bilibili？', domain: '平台' }];
+        return true;
+      });
+
+      const input = Object.assign(new ExecJSONNodeInput(), {
+        orchestration_id: 'orch-plan-ask',
+        jsonnode_definition: planWorkDef,
+        initial_data: {
+          session_id: 's', work_id: 'w', interact_id: 'i',
+          user_query: '把前十浏览量的视频下载到本地',
+        },
+      });
+      const output = new ExecJSONNodeOutput();
+      await jsonNode.execJSONNode(input, output, new JSONNodeContext());
+
+      expect(output.shared_data._paused).toBe(true);
+      expect(output.shared_data._clarifications).toEqual([
+        { question: '请问是 YouTube 还是 Bilibili？', domain: '平台' },
+      ]);
+    });
+  });
+
   // =========================================================================
   // 3. validate
   // =========================================================================

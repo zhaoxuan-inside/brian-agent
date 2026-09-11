@@ -1,5 +1,10 @@
 export { PlannerAgentAccess } from './access/PlannerAgentAccess';
 export {
+  filterGroundedClarifications,
+  isClarificationAlreadyGrounded,
+  extractClarificationChoices,
+} from './application/clarificationFilter';
+export {
   PlannerAgentContext,
   PlanInput, PlanOutput,
   PlanHierarchicalInput, PlanHierarchicalOutput,

@@ -23,8 +23,9 @@ import {
   GetAgentInput, GetAgentOutput, AgentLibraryContext,
 } from '../../AgentLibrary/domain/types';
 import { parseJsonObject } from '../../shared/signature';
-import { formatContextCategories } from '@brian-agent/base';
+import { formatContextCategories, formatRuntimeEnvironment, mergePromptContext } from '@brian-agent/base';
 import { assertPromptExists, renderPromptWithFallback, resolveAgentLlm } from '../../shared/AgentKit';
+import { filterGroundedClarifications } from './clarificationFilter';
 
 type TaskDag = PlanTaskDAG;
 
@@ -138,9 +139,10 @@ export class PlannerAgentService {
     return agent;
   }
 
-  /** 构建规划上下文（结构化分类包裹），失败时返回空串。 */
+  /** 构建规划上下文：本机运行环境 + 会话召回。无 session 时仍注入运行环境。 */
   private async buildPlanContext(ctx: PlannerAgentContext, input: PlanInput): Promise<string> {
-    if (!ctx.session_id) return '';
+    const runtime = formatRuntimeEnvironment();
+    if (!ctx.session_id) return runtime;
     try {
       const ctxOut = new ContextInfoOutput();
       await this.infoCore.context(
@@ -154,9 +156,9 @@ export class PlannerAgentService {
         ctxOut,
         new InfoCoreContext(),
       );
-      return formatContextCategories(ctxOut);
+      return mergePromptContext(runtime, formatContextCategories(ctxOut));
     } catch {
-      return '';
+      return runtime;
     }
   }
 
@@ -519,7 +521,10 @@ export class PlannerAgentService {
       if (!parsed) return null;
       const nodes = (parsed.nodes as TaskDag['nodes']) ?? [];
       const edges = (parsed.edges as TaskDag['edges']) ?? [];
-      const clarifications = this.parseClarifications(parsed.clarifications);
+      const clarifications = filterGroundedClarifications(
+        this.parseClarifications(parsed.clarifications),
+        `${task}\n${contextExtra}`,
+      );
       if (!Array.isArray(nodes) || nodes.length === 0) return null;
       // 补全 task_id / parent_task_id / dependencies，保证后续层级与执行依赖计算稳定
       for (const n of nodes) {

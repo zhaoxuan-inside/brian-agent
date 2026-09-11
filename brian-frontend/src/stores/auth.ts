@@ -69,7 +69,21 @@ export const useAuthStore = defineStore('auth', () => {
     return login(password)
   }
 
+  function changePassword(oldPassword: string, newPassword: string) {
+    const next = newPassword.trim()
+    if (!next) throw new Error('请输入新密码')
+    if (next.length < 4) throw new Error('密码至少 4 位')
+    if (userPassword.value) {
+      if (hashPassword(oldPassword) !== userPassword.value) {
+        throw new Error('当前密码错误')
+      }
+    }
+    const hashed = hashPassword(next)
+    userPassword.value = hashed
+    localStorage.setItem('brian-auth-hash', hashed)
+  }
+
   const hasPassword = computed(() => !!userPassword.value)
 
-  return { isLoggedIn, userPassword, sessionToken, checkSession, login, logout, lock, unlock, hasPassword }
+  return { isLoggedIn, userPassword, sessionToken, checkSession, login, logout, lock, unlock, changePassword, hasPassword }
 })

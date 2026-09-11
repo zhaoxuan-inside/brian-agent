@@ -1,16 +1,33 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
 import { useI18nStore } from '@/stores/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { MessageCircle, Brain, BookOpen, BarChart3, Settings, Sun, Moon, Globe, User, Lock, Wrench, Clock } from '@lucide/vue'
+import UserMenu from './UserMenu.vue'
 
 const router = useRouter()
 const route = useRoute()
 const themeStore = useThemeStore()
 const i18nStore = useI18nStore()
 const authStore = useAuthStore()
+const userMenuOpen = ref(false)
+const userMenuWrap = ref<HTMLElement | null>(null)
+
+function onDocumentPointerDown(ev: MouseEvent) {
+  if (!userMenuOpen.value) return
+  const wrap = userMenuWrap.value
+  if (wrap && ev.target instanceof Node && wrap.contains(ev.target)) return
+  userMenuOpen.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocumentPointerDown)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocumentPointerDown)
+})
 
 const navItems = computed(() => [
   { icon: MessageCircle, route: '/', name: i18nStore.t('nav.chat') },
@@ -70,13 +87,22 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <!-- User / Lock -->
-      <button class="icon-btn" title="锁定" @click="authStore.lock()">
+      <!-- User / Lock：锁是一键隐私；小人打开「我」——身份、画像、偏好 -->
+      <button class="icon-btn" :title="i18nStore.t('user.lockNow')" @click="authStore.lock()">
         <Lock :size="16" />
       </button>
-      <button class="icon-btn" title="用户">
-        <User :size="18" />
-      </button>
+      <div ref="userMenuWrap" class="relative">
+        <button
+          class="icon-btn"
+          :class="{ 'text-brian-blue bg-apple-gray-100 dark:bg-apple-gray-800': userMenuOpen }"
+          :title="i18nStore.t('nav.user')"
+          :aria-expanded="userMenuOpen"
+          @click="userMenuOpen = !userMenuOpen"
+        >
+          <User :size="18" />
+        </button>
+        <UserMenu v-if="userMenuOpen" @close="userMenuOpen = false" />
+      </div>
     </div>
   </header>
 </template>

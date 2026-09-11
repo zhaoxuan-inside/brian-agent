@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, MoreHorizontal } from '@lucide/vue'
+import { Pin, PinOff, ChevronDown, ChevronRight, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, MoreHorizontal } from '@lucide/vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import { renderMarkdown } from '@/utils/markdown'
 import { useChatUiStore } from '@/stores/chatUi'
+import { useI18nStore } from '@/stores/i18n'
+import { previewReply } from '@/utils/turnCollapse'
 import { formatTime as sharedFormatTime } from '../../utils/format'
 
 const props = withDefaults(
@@ -29,6 +31,8 @@ const props = withDefaults(
     citingMode?: boolean
     showThinkingAction?: boolean
     showEvalAction?: boolean
+    bodyCollapsed?: boolean
+    showCollapseToggle?: boolean
   }>(),
   {
     infoId: '',
@@ -49,6 +53,8 @@ const props = withDefaults(
     citingMode: false,
     showThinkingAction: true,
     showEvalAction: true,
+    bodyCollapsed: false,
+    showCollapseToggle: false,
   },
 )
 
@@ -59,9 +65,11 @@ const emit = defineEmits<{
   (e: 'jumpTo', id: string): void
   (e: 'showThinking', id: string): void
   (e: 'showEval', id: string): void
+  (e: 'toggleCollapse', id: string): void
 }>()
 
 const chatUi = useChatUiStore()
+const i18n = useI18nStore()
 
 const expandedCiting = ref(false)
 const expandedCited = ref(false)
@@ -105,6 +113,14 @@ const effectiveTraceId = computed(() => props.traceId || '')
 
 const textLength = computed(() => props.content ? props.content.length : 0)
 
+const collapsedPreview = computed(() => previewReply(props.content))
+
+const expandLabel = computed(() => i18n.t('chat.expandReply'))
+const collapseLabel = computed(() => i18n.t('chat.collapseReply'))
+const collapsedMeta = computed(() =>
+  i18n.t('chat.collapsedReplyMeta').replace('{n}', String(textLength.value)),
+)
+
 const effectiveCitedCount = computed(() => {
   if (props.citedCount && props.citedCount > 0) return props.citedCount
   return props.citedInfoIds?.length ?? 0
@@ -140,6 +156,10 @@ function handlePin() {
 
 function handleCardClick() {
   emit('clickCard', targetId.value)
+}
+
+function handleToggleCollapse() {
+  emit('toggleCollapse', targetId.value)
 }
 
 function handleJump(cid: string) {
@@ -198,7 +218,7 @@ async function copyTraceId() {
       <div class="flex items-center gap-1.5">
         <AlertCircle v-if="isError" :size="12" class="text-error-red flex-shrink-0" title="执行出错" />
 
-        <label v-if="mode === 'map' || showSelect" class="flex items-center cursor-pointer" title="勾选以指定本次问答上下文" @click.stop>
+        <label v-if="mode === 'map' || showSelect" class="flex items-center cursor-pointer" title="勾选后，下次提问将主要依据这些消息" @click.stop>
           <input
             type="checkbox"
             class="rounded cursor-pointer h-3.5 w-3.5 accent-brian-blue"
@@ -254,10 +274,38 @@ async function copyTraceId() {
       </details>
     </div>
     <div
-      v-else
-      class="markdown-body break-words text-[15px] leading-relaxed text-apple-gray-900 dark:text-apple-gray-100"
-      v-html="renderedContent"
-    />
+      v-else-if="bodyCollapsed"
+      class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700 bg-apple-gray-50/70 dark:bg-apple-gray-800/40 px-3 py-2.5 cursor-pointer hover:border-brian-blue/40 transition-colors"
+      role="button"
+      :aria-expanded="false"
+      :title="expandLabel"
+      @click.stop="handleToggleCollapse"
+    >
+      <p class="text-[14px] leading-relaxed text-apple-gray-600 dark:text-apple-gray-300 line-clamp-3">
+        {{ collapsedPreview || '…' }}
+      </p>
+      <div class="mt-1.5 flex items-center gap-1.5 text-[12px] text-brian-blue">
+        <ChevronRight :size="13" />
+        <span>{{ expandLabel }}</span>
+        <span class="text-apple-gray-400">{{ collapsedMeta }}</span>
+      </div>
+    </div>
+    <div v-else>
+      <div
+        class="markdown-body break-words text-[15px] leading-relaxed text-apple-gray-900 dark:text-apple-gray-100"
+        v-html="renderedContent"
+      />
+      <button
+        v-if="showCollapseToggle"
+        class="mt-2 inline-flex items-center gap-1 text-[12px] text-apple-gray-500 hover:text-brian-blue"
+        type="button"
+        :aria-expanded="true"
+        @click.stop="handleToggleCollapse"
+      >
+        <ChevronDown :size="13" class="rotate-180" />
+        {{ collapseLabel }}
+      </button>
+    </div>
 
     <!-- 底部：对话区只保留有信息量的操作；图谱模式保持完整工具条 -->
     <div
