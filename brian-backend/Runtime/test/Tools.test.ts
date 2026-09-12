@@ -208,11 +208,40 @@ describe('ToolService', () => {
     const exec = new ExecToolInput();
     exec.tool_id = 'skill_exec';
     exec.raw_args = '{"skill_id":"s1","params":{}}';
+    exec.component_scope = { skills: ['s1'], mcps: [] };
     const out = new ExecToolOutput();
     await toolAccess.execTool(exec, out, new ToolContext());
     expect(out.result.status).toBe('ok');
     expect(out.result.output).toBe('skill:s1 ok');
     expect(mockSkill.execSkill).toHaveBeenCalled();
+  });
+
+  it('skill_exec 无组件绑定时应拒执行（选/执分离执行门）', async () => {
+    const reg = new RegisterBuiltinToolsInput();
+    reg.enabled = ['skill_exec'];
+    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
+    const exec = new ExecToolInput();
+    exec.tool_id = 'skill_exec';
+    exec.raw_args = '{"skill_id":"weather","params":{}}';
+    const out = new ExecToolOutput();
+    await toolAccess.execTool(exec, out, new ToolContext());
+    expect(out.result.status).toBe('error');
+    expect(out.result.output).toContain('Agent 未绑定任何 Skill');
+  });
+
+  it('skill_exec 绑定清单外的 id 应拒执行并回示可用清单', async () => {
+    const reg = new RegisterBuiltinToolsInput();
+    reg.enabled = ['skill_exec'];
+    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
+    const exec = new ExecToolInput();
+    exec.tool_id = 'skill_exec';
+    exec.raw_args = '{"skill_id":"weather","params":{}}';
+    exec.component_scope = { skills: ['s1'], mcps: [] };
+    const out = new ExecToolOutput();
+    await toolAccess.execTool(exec, out, new ToolContext());
+    expect(out.result.status).toBe('error');
+    expect(out.result.output).toContain('不在本运行的组件绑定范围内');
+    expect(out.result.output).toContain('s1');
   });
 
   it('内置工具 id 不可被覆盖', async () => {

@@ -374,6 +374,17 @@ VectorDBProvider 采用 **DDD 四层架构**：
 - `存储`： SQLite（通过 RelationDBProvider 管理）
 
 > VectorDBProvider 用到的所有配置项集中存储于 SQLite 配置表 vectordb_config，采用键值对结构，运行时按需读取；搜索默认参数由 soVector 读取，向量数据库启用 / 禁用状态由 enableVectorDB 读取并持久化，避免硬编码与状态丢失。
+>
+> `initializeConfig()`（2026-09-07 实现，此前为空方法体）负责默认配置项的幂等写入与启用状态恢复：仅在配置项不存在时写入默认值，不覆盖已有值；随后从配置表恢复 `enabled` 状态（上次运行中若通过 enableVectorDB 禁用，重启后保持禁用）。
+
+**默认配置项（initializeConfig 幂等写入）**：
+
+| config_key | 默认值 | 值类型 | 说明 |
+| ---------- | ------ | ------ | ---- |
+| enabled | true | BOOLEAN | 向量数据库是否启用（enableVectorDB 读写，重启后由此恢复） |
+| default_top_k | 10 | INT | 相似度搜索默认返回条数（top_k 未显式指定时使用） |
+| default_similarity_threshold | 0 | DOUBLE | 相似度搜索默认阈值（0-100 归一化分数） |
+| default_distance_metric | COSINE | STRING | 默认距离度量方式（COSINE / L2 / IP） |
 
 | 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
 | ------ | ----- | ----- | ----- | ----- | ----- |

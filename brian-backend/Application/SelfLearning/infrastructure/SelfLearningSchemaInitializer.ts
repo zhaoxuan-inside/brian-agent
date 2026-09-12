@@ -7,12 +7,15 @@ export class SelfLearningSchemaInitializer {
   async init(): Promise<void> {
     // chat_session 表由 Chat 模块（ChatSchemaInitializer）统一建表/管列——2026-09-06 修复双 schema 冲突
     // 存量 Tag 维护记录 source 词表统一（connection/activation/aging/orphan → TAG_MAINTENANCE；2026-09-06）
-    this.relationDb.executeRaw(
-      "UPDATE self_learning_result SET source = 'TAG_MAINTENANCE' WHERE source IN ('connection', 'activation', 'aging', 'orphan')",
-    );
-    this.relationDb.executeRaw(
-      'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
-    );
+    //
+    // ===== 原始语句（保留作为参考）：迁移与索引先于建表执行，全新库（self_learning_result/chat_session 尚不存在）会
+    // 直接抛 SQLITE_ERROR("no such table")，导致学习模块在全新数据库上初始化失败（e2e :memory: 库实测复现）=====
+    // this.relationDb.executeRaw(
+    //   "UPDATE self_learning_result SET source = 'TAG_MAINTENANCE' WHERE source IN ('connection', 'activation', 'aging', 'orphan')",
+    // );
+    // this.relationDb.executeRaw(
+    //   'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
+    // );
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS self_learning_library (
@@ -140,6 +143,12 @@ export class SelfLearningSchemaInitializer {
       'CREATE INDEX IF NOT EXISTS idx_sl_result_type ON self_learning_result(type)',
     );
 
+    // 存量 Tag 维护记录 source 词表统一（connection/activation/aging/orphan → TAG_MAINTENANCE；2026-09-06）
+    // 移到 self_learning_result 建表之后执行——全新库也能安全初始化
+    this.relationDb.executeRaw(
+      "UPDATE self_learning_result SET source = 'TAG_MAINTENANCE' WHERE source IN ('connection', 'activation', 'aging', 'orphan')",
+    );
+
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS self_learning_result_tag (
         id TEXT PRIMARY KEY NOT NULL,
@@ -247,6 +256,14 @@ export class SelfLearningSchemaInitializer {
         `ALTER TABLE self_learning_config ADD COLUMN "document_query_llm_id" TEXT DEFAULT ''`,
       );
     } catch { /* 已存在 document_query_llm_id 列时忽略 */ }
+
+    // chat_session 索引：表由 Chat 模块建表，SelfLearning 不拥有该表——
+    // Chat 尚未初始化时跳过（ChatSchemaInitializer 会补建），避免全新库初始化失败
+    try {
+      this.relationDb.executeRaw(
+        'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
+      );
+    } catch { /* chat_session 表尚未创建时忽略（Chat 模块负责建表） */ }
 
     const configCount = await this.relationDb.count('self_learning_config');
     if (configCount === 0) {

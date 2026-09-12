@@ -17,16 +17,16 @@ SelfLearning Application 是系统的自主学习引擎，负责驱动系统从�
 | 学习类型 | 说明 | 触发方式 | 执行方式 |
 |---------|------|---------|---------|
 | 从文档学习 | 读取资料库中的 Markdown 文件，通过 Orchestration 层调用 Agent 进行内容理解和知识提取 | 手动/定时/随机 | OrchestrationEntry.receiveWorkAsync |
-| 从对话学习 | 对历史对话进行回顾分析，提取用户偏好和知识模式 | 定时/随机 | EvolutorAgent.startEvalSchedule |
-| Tag 图维护 | 检查 Tag 之间的语义相似性连接，建立缺失连接、激活活跃连接、老化不活跃连接 | 定时（cron） | InfoCore.graphTag → GraphDBProvider |
+| 从对话学习 | 对历史对话进行回顾分析，提取用户偏好和知识模式 | 手动（单轮）/随机 | EvolutorAgent.runEvalOnce（单轮完整评估闭环，2026-09-09 起） |
+| Tag 图维护 | 检查 Tag 之间的语义相似性连接，建立缺失连接、激活活跃连接、老化不活跃连接 | 手动（单轮）/随机 | InfoCore.graphTag → GraphDBProvider |
 
 ### 依赖关系
 
 | 依赖层级 | 模块 | 调用接口 | 用途 |
 |---------|------|---------|------|
 | Orchestration | OrchestrationEntry | receiveWorkAsync | 异步提交文档学习 work |
-| Agent | EvolutorAgent | startEvalSchedule | 启动定时评估（从对话学习） |
-| Agent | EvolutorAgent | stopEvalSchedule | 停止定时评估 |
+| Agent | EvolutorAgent | runEvalOnce | 立即执行一轮完整评估闭环（从对话学习，单轮任务模型） |
+| Agent | EvolutorAgent | stopEvalSchedule | 停止定时评估（stopLearning 幂等兼容清理，best-effort） |
 | Agent | WriterAgent | getUserProfile | 获取用户画像作为学习上下文 |
 | Core | InfoCore | graphTag | 为 Tag 建立语义相似性连接 |
 | Core | InfoCore | relationKInfo | 查询 Tag 相关性的关联信息 |
@@ -166,11 +166,12 @@ SelfLearning Application 是系统的自主学习引擎，负责驱动系统从�
 
 1. 调用 RelationDBProvider.selectDB 查询 `self_learning_library` 表（按 library_id 可选过滤，enable_self_learning=true）；
 2. 对每个资料库：
-   a. 调用 RelationDBProvider.selectDB 查询 `self_learning_file` 表中状态为 PENDING 的文件（按 created 升序）；
-   b. 将文件逐个投递到 MQ 队列 `self_learning.document`（调用 MQProvider.sendMQ）；
+   a. **增量同步资料库目录（syncLibraryFiles）**：按 relative_path + file_path（绝对路径，兼容空 relative_path 的存量数据）与 `self_learning_file` 表存量记录判重，把磁盘上新增的文件/目录登记为 PENDING；已有记录保持原状态（COMPLETED 不重复学习），磁盘上已移除的记录不删除；
+   b. 调用 RelationDBProvider.selectDB 查询 `self_learning_file` 表中状态为 PENDING 的文件（按 created 升序，每 tick 最多 learning_rate 条）；
+   c. 将文件逐个学习（handleDocumentLearning，见 3.3 节）；
 3. 调用 MQCore.startWorker 确保 `self_learning.document` 队列上有 Worker 消费；
 4. Worker 消费逻辑：从队列取出文件消息 → 读取文件内容 → 调用 handleDocumentLearning 处理 → 更新文件状态为 COMPLETED/FAILED；
-5. 若 learning_mode 含 CONVERSATION：调用 EvolutorAgent.startEvalSchedule 启动从对话学习；
+5. 若 learning_mode 含 CONVERSATION：调用 EvolutorAgent.runEvalOnce 立即执行一轮完整评估闭环（单轮任务，fire-and-forget，防重入由 conversationPassRunning 承担）；
 6. 若 learning_mode 含 TAG_MAINTENANCE：调用 startTagMaintenance 启动 Tag 图维护；
 7. 返回启动结果；
 
@@ -449,6 +450,8 @@ Tag 图维护是系统的核心学习方向之一，目标是通过持续维护 
 2. 调用 RelationDBProvider.selectDB 查询 `self_learning_task` 表获取待执行任务队列（status=PENDING，按 scheduled_at 升序）；
 3. 调用 RelationDBProvider.selectDB 查询 `self_learning_builtin_task` 表获取内置任务列表；
 4. 组装返回；
+
+> **实现差异（2026-09-07）**：手动触发学习已任务化为 **fire-and-forget 注册表**（实例内存 `soLearningTasks`，非 DB 表）：`startLearning` 三分支（DOCUMENT/CONVERSATION/TAG_MAINTENANCE）各自注册任务（running）→ 后台执行 → 完成/失败回填，任务列表 running 优先、按开始时间倒序、上限 50 条；前端经 `GET /api/learning/tasks` 轮询（2s）渲染任务条。同时文档学习为 LLM 直采（callLLMJson 抽取知识点写入 self_learning_result），不再经 OrchestrationEntry（去编排化）；`self_learning_file.status` 以文件级 COMPLETED/FAILED 记录结果。
 
 #### 3.6.2. 获取学习成果（getLearningResults）
 
@@ -740,6 +743,8 @@ SelfLearning 模块的配置通过 Config Application 统一管理（`/api/confi
 | content | 成果内容 | TEXT | N | | |
 | summary | 成果摘要 | TEXT | Y | | |
 | learned_at | 学习时间 | timestamp | N | | |
+
+> **实现差异（2026-09-07）**：除 KNOWLEDGE / INSIGHT 外，表中还存在两类"学习记录"行——`type='DOCUMENT'`（source=文件名，每个文件学习完成插 1 条）与 `type='TAG_MAINTENANCE'`（source=TAG_MAINTENANCE，Tag 维护动作记录）。它们不出现在知识/洞察列表（列表按 type 过滤），仅用于 `getLearningStats` 的总学习次数/本周学习次数/学习趋势统计；信息页 Tag 关系图卡片亦依赖 source='TAG_MAINTENANCE' 词表。
 
 ### 5.6. 学习成果关联 Tag 表（SQLite）
 

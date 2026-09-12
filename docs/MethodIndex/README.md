@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-05T09:25:24.885Z；方法总数：529
+> 生成时间：2026-09-07T11:25:38.481Z；方法总数：485
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -35,10 +35,10 @@
 | **Core 小计** | | **73** |
 | Runtime | [Agents](./Runtime/Agents.md) | 6 |
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
-| Runtime | [Runs](./Runtime/Runs.md) | 9 |
+| Runtime | [Runs](./Runtime/Runs.md) | 11 |
 | Runtime | [Session](./Runtime/Session.md) | 7 |
 | Runtime | [Tools](./Runtime/Tools.md) | 6 |
-| **Runtime 小计** | | **32** |
+| **Runtime 小计** | | **34** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |
 | Agent | [AgentExecution](./Agent/AgentExecution.md) | 10 |
@@ -50,16 +50,10 @@
 | Agent | [SummaryAgent](./Agent/SummaryAgent.md) | 3 |
 | Agent | [WriterAgent](./Agent/WriterAgent.md) | 5 |
 | **Agent 小计** | | **64** |
-| Orchestration | [JSONNode](./Orchestration/JSONNode.md) | 8 |
-| Orchestration | [OrchestrationEntry](./Orchestration/OrchestrationEntry.md) | 10 |
-| Orchestration | [OrchestrationExecution](./Orchestration/OrchestrationExecution.md) | 10 |
-| Orchestration | [OrchestrationStrategy](./Orchestration/OrchestrationStrategy.md) | 10 |
-| Orchestration | [OrchestrationVisualization](./Orchestration/OrchestrationVisualization.md) | 5 |
-| **Orchestration 小计** | | **43** |
-| Application | [Chat](./Application/Chat.md) | 16 |
+| Application | [Chat](./Application/Chat.md) | 12 |
 | Application | [Config](./Application/Config.md) | 50 |
-| Application | [SelfLearning](./Application/SelfLearning.md) | 21 |
+| Application | [SelfLearning](./Application/SelfLearning.md) | 22 |
 | Application | [UserProfile](./Application/UserProfile.md) | 13 |
 | Application | [Visualization](./Application/Visualization.md) | 10 |
-| **Application 小计** | | **110** |
-| **总计** | | **529** |
+| **Application 小计** | | **107** |
+| **总计** | | **485** |

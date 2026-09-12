@@ -19,7 +19,7 @@ import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { VectorDBComponent } from '../../components/VectorDB/VectorDBComponent';
-import { ConfigService } from '../../shared/config/ConfigService';
+import { ConfigService, ValueType } from '../../shared/config/ConfigService';
 import {
   ComponentDisabledError,
   ValidationError,
@@ -90,8 +90,42 @@ export class VectorDBService {
    * 初始化配置表：写入默认配置项（idempotent）并恢复 enabled 状态。
    *
    * 与 initialize() 分离，允许在 LanceDB 组件初始化之前完成配置初始化。
+   *
+   * 默认配置项（仅在配置不存在时写入，不覆盖已有值）：
+   * - enabled：启用状态（enableVectorDB 读写，重启后由此恢复）；
+   * - default_top_k / default_similarity_threshold：soVector 未显式传参时的默认搜索参数；
+   * - default_distance_metric：默认距离度量方式（配置中心 vectordb_provider 模块读写，
+   *   getStoredMetric 在 LanceDB 初始化前读取该值决定向量表度量）。
    */
   async initializeConfig(): Promise<void> {
+    await this.config.initDefaults([
+      {
+        config_key: 'enabled',
+        config_value: 'true',
+        value_type: ValueType.BOOLEAN,
+        description: '向量数据库是否启用（enableVectorDB 读写）',
+      },
+      {
+        config_key: 'default_top_k',
+        config_value: '10',
+        value_type: ValueType.INT,
+        description: '相似度搜索默认返回条数（top_k 未显式指定时使用）',
+      },
+      {
+        config_key: 'default_similarity_threshold',
+        config_value: '0',
+        value_type: ValueType.DOUBLE,
+        description: '相似度搜索默认阈值（0-100 归一化分数）',
+      },
+      {
+        config_key: 'default_distance_metric',
+        config_value: 'COSINE',
+        value_type: ValueType.STRING,
+        description: '默认距离度量方式（COSINE / L2 / IP）',
+      },
+    ]);
+    // 恢复持久化的启用状态：上次运行中若通过 enableVectorDB 禁用，重启后保持禁用
+    this.enabled = await this.config.getBoolean('enabled', true);
   }
 
   /**

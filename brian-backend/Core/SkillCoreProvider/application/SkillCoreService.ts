@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
+import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_IDS } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SkillCoreContext,
@@ -37,6 +37,9 @@ import {
   SKILL_USAGE_TABLE,
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
+import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
+import { parseRankingCandidates, filterByThreshold, type RankedCandidate } from '../../shared/RankingParser';
+import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
 
 /**
  * SkillCoreProvider 应用服务。
@@ -53,6 +56,9 @@ export class SkillCoreService {
    */
   /** 单行配置仓 */
   private readonly configStore: SingleRowConfigStore<SkillCoreConfigRecord>;
+
+  // ===== 新增（2026-09-11）：匹配结果内存缓存（agent_id + 任务前缀；TTL 命中直接水合，重复任务零 LLM） =====
+  private readonly matchCache = new VectorMatchCache();
 
   constructor(
     private readonly relationDb: RelationDBAccess,
@@ -81,8 +87,27 @@ export class SkillCoreService {
       throw new ValidationError('agent_id 为必填');
     }
 
-    const config = await this.getConfig();
+    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    if (input.bound_skill_ids && input.bound_skill_ids.length > 0) {
+      output.skills = await this.enrichMatchedSkills(input.bound_skill_ids);
+      return true;
+    }
 
+    // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排） =====
+    const cached = input.bypass_cache
+      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t)) }
+      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t));
+    const cachedIds = (cached.record?.result ?? []).map((r) => r.id);
+    if (cachedIds.length > 0) {
+      const hydrated = await this.hydrateSkillsOrNone(cachedIds);
+      if (hydrated.length > 0) {
+        output.skills = hydrated;
+        return true;
+      }
+      this.matchCache.clear();
+    }
+
+    const config = await this.getConfig();
     // 获取可用 Skill 列表
     const skillOutput = new SoSkillOutput();
     await this.skillAccess.soSkill(
@@ -91,59 +116,21 @@ export class SkillCoreService {
     );
     const availableSkills = skillOutput.list;
 
-    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
-    // 绑定的写入/解除由 Agent 模块评估后执行（AgentLibrary.bindAgentComponent），Core 只做选择与水合
-    if (input.bound_skill_ids && input.bound_skill_ids.length > 0) {
-      output.skills = await this.enrichMatchedSkills(input.bound_skill_ids);
-      return true;
-    }
-
     // ===== 第 1.5 层：simpleSimilarity 匹配历史/关联特征（纯打分，不落库） =====
-
     // ===== 第 2 层：LLM 打分推荐 =====
+    // ===== 修改后（2026-09-11）：score_threshold 淘汰后的空结果 = "无合格组件"，不再逐题自生成（防生成风暴）；
+    // Layer-3 自生成仅在库内无可启用 Skill 时进行 =====
     let ranked: Array<{ skill_id: string; skill_brief: string; relevance: number }> = [];
-    if (availableSkills.length > 0) {
-      const skillsJson = JSON.stringify(
-        availableSkills.map((s) => ({
-          name: s.name,
-          skill_brief: s.skill_brief,
-          skill_md: s.skill_md,
-        })),
-      );
-      const promptText = await this.renderPrompt(
-        config.prompt_template_id,
-        { agent_id, context_id, interact_id, skills: skillsJson },
-      );
-      const llmResult = await this.callLLM(promptText);
-      ranked = this.parseSkillRanking(llmResult, availableSkills);
+    if (availableSkills.length === 0) {
+      ranked = await this.generateSkill(agent_id);
+    } else {
+      ranked = await this.rankSkillsByLLM(agent_id, context_id, interact_id, availableSkills, config, input.task_content ?? '');
     }
 
-    // ===== 第 3 层：自动生成 Skill 并添加到库中 =====
-    if (ranked.length === 0) {
-      const genPrompt = `Based on agent_id: ${agent_id}, please generate a new skill name, brief description, and markdown code block for this task. Return JSON: {"name": "...", "skill_brief": "...", "skill_md": "..."}`;
-      const genRes = await this.callLLM(genPrompt);
-      const parsed = JsonParser.parseObject(genRes);
-      if (parsed && parsed.name) {
-        const addOut = new SoSkillOutput();
-        await this.skillAccess.addSkill(
-          {
-            data: {
-              name: String(parsed.name),
-              skill_brief: String(parsed.skill_brief || ''),
-              skill_md: String(parsed.skill_md || ''),
-              enable: true,
-            },
-          } as any,
-          addOut as any, new SkillContext(),
-        );
-        const newSkillId = (addOut as any).id;
-        if (newSkillId) {
-          ranked = [{ skill_id: newSkillId, skill_brief: String(parsed.skill_brief || ''), relevance: 1.0 }];
-        }
-      }
+    // ===== 匹配结果入缓存（MD5 + 任务向量；复用 lookup 阶段向量） =====
+    if (availableSkills.length > 0 && ranked.length > 0) {
+      await this.commitMatchCache(input.task_content ?? '', cached.query, ranked);
     }
-
-    // 纯选择：不持久化任何绑定（绑定事实源为 Agent 表，由 Agent 模块评估后写入）
     output.skills = ranked;
     return true;
   }
@@ -296,7 +283,7 @@ export class SkillCoreService {
    */
   async configSkillCore(input: ConfigSkillCoreInput, output: ConfigSkillCoreOutput, _context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined) {
+    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined) {
       const updateData: Array<{ field: string; value: unknown }> = [];
       if (input.regen_rate !== undefined) {
         if (input.regen_rate < 0 || input.regen_rate > 100) {
@@ -323,9 +310,34 @@ export class SkillCoreService {
         }
         updateData.push({ field: 'prompt_template_id', value: input.prompt_template_id || '' });
       }
+      if (input.score_threshold !== undefined) {
+        if (input.score_threshold < 0 || input.score_threshold > 100) {
+          throw new ValidationError('score_threshold 必须在 0-100 之间');
+        }
+        updateData.push({ field: 'score_threshold', value: input.score_threshold });
+      }
+      if (input.vector_similarity_threshold !== undefined) {
+        if (input.vector_similarity_threshold < 0 || input.vector_similarity_threshold > 1) {
+          throw new ValidationError('vector_similarity_threshold 必须在 0.0-1.0 之间');
+        }
+        updateData.push({ field: 'vector_similarity_threshold', value: input.vector_similarity_threshold });
+      }
+      if (input.match_cache_ttl_ms !== undefined) {
+        if (input.match_cache_ttl_ms < 0) {
+          throw new ValidationError('match_cache_ttl_ms 不能为负');
+        }
+        updateData.push({ field: 'match_cache_ttl_ms', value: input.match_cache_ttl_ms });
+      }
+      if (input.match_cache_capacity !== undefined) {
+        if (input.match_cache_capacity <= 0) {
+          throw new ValidationError('match_cache_capacity 必须为正整数');
+        }
+        updateData.push({ field: 'match_cache_capacity', value: input.match_cache_capacity });
+      }
       await this.configStore.upsert(updateData);
     }
-
+    // ===== 2026-09-11：配置变更即清缓存 + 应用缓存参数 =====
+    await this.applyMatchCacheConfig();
     const config = await this.getConfig();
     output.regen_rate = config.regen_rate;
     output.prompt_template_id = config.prompt_template_id;
@@ -337,6 +349,17 @@ export class SkillCoreService {
   // ---------------------------------------------------------------------------
 
   /** 获取 skill_core_config 记录（不存在则返回默认值） */
+  // ===== 新增（2026-09-11）：匹配缓存参数应用（容量/相似度阈值/TTL 读配置表） =====
+  private async applyMatchCacheConfig(): Promise<void> {
+    const serviceConfig = await this.getConfig();
+    this.matchCache.configure({
+      capacity: serviceConfig?.match_cache_capacity ?? MatchCache.Capacity,
+      similarityThreshold: serviceConfig?.vector_similarity_threshold ?? VectorSimilarity.Default,
+      ttlMs: serviceConfig?.match_cache_ttl_ms ?? MatchCache.TtlMs,
+    });
+    this.matchCache.clear();
+  }
+
   private async getConfig(): Promise<SkillCoreConfigRecord> {
     return (await this.configStore.load()) ?? {
       id: '',
@@ -345,6 +368,10 @@ export class SkillCoreService {
       regen_rate: 75,
       similarity_threshold: 0.7,
       prompt_template_id: '',
+      score_threshold: ScoreThreshold.Default,
+      vector_similarity_threshold: VectorSimilarity.Default,
+      match_cache_ttl_ms: MatchCache.TtlMs,
+      match_cache_capacity: MatchCache.Capacity,
     };
   }
 
@@ -362,7 +389,10 @@ export class SkillCoreService {
     ]);
   }
 
-  /** 渲染 Prompt 模板 */
+  /**
+   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板（无硬编码内存回退）。
+   * 模板缺失/渲染失败 fail-loud（配置中心可见可修）。
+   */
   private async renderPrompt(
     templateId: string,
     variables: Record<string, unknown>,
@@ -375,70 +405,140 @@ export class SkillCoreService {
         promptOutput, new PromptContext(),
       );
       if (promptOutput.prompt) return promptOutput.prompt;
-    } catch {
-      /* fallback */
-    }
-    const tpl = getBuiltinTemplate(PROMPT_IDS.skillMatch);
-    return tpl ? renderTemplate(tpl, variables) : '';
+    } catch { /* 下沉 fail-loud */ }
+    throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 
-  /** 调用 LLM（留空 ID 由 LLMProvider 统一处理默认模型与首模型兜底） */
-  private async callLLM(prompt: string): Promise<string> {
+  // ===== 修改后的方法（2026-09-11）：统一 LLM 排序调用（shutdown 快、max_tokens 上限、返回文本给 RankingParser） =====
+  /** 排序 LLM 调用（逻辑控制；失败返回空串 → 调用方走 threshold 兜底语义） */
+    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
+    input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const llmOutput = new ExecLLMOutput();
     try {
-      const ok = await this.llmAccess.execLLM(
-        { id: '', prompt },
-        llmOutput, new LLMContext(),
-      );
-      if (!ok) return '';
-      return llmOutput.result || '';
+      const ok = await this.llmAccess.execLLM(input, llmOutput, new LLMContext());
+      return ok ? (llmOutput.result ?? '') : '';
     } catch {
       return '';
     }
   }
 
-  /** 解析 LLM 返回的 Skill 排序结果 */
-  private parseSkillRanking(
-    llmResult: string,
-    availableSkills: Array<{ id: string; skill_brief: string }>,
-  ): MatchedSkillEntry[] {
-    const parsed = JsonParser.parseArray(llmResult);
-    if (!parsed) {
-      throw new ProcessingError('LLM 返回格式无效，期望 JSON 数组');
-    }
-
-    const skillByBrief = new Map(
-      availableSkills.map((s) => [s.skill_brief, s]),
+  /**
+   * LLM 排序（逻辑控制）：统一 `[{"id","score"}]` 百分制输出 + score_threshold 截断。
+   */
+  private async rankSkillsByLLM(
+    agentId: string,
+    contextId: string,
+    interactId: string,
+    availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
+    config: SkillCoreConfigRecord,
+    taskContent: string,
+  ): Promise<MatchedSkillEntry[]> {
+    const skillsJson = JSON.stringify(
+      availableSkills.map((s) => ({ id: s.id, name: s.name ?? '', skill_brief: s.skill_brief })),
     );
+    const promptText = await this.renderPrompt(config.prompt_template_id, {
+      agent_id: agentId,
+      context_id: contextId,
+      interact_id: interactId,
+      task_content: taskContent,
+      skills: skillsJson,
+    });
+    const result = await this.soRankLLM({
+      id: '',
+      prompt: promptText,
+      temperature: 0.1,
+      max_tokens: 300,
+    } as ExecLLMInput);
+    const threshold = config.score_threshold ?? ScoreThreshold.Default;
+    return filterByThreshold(parseRankingCandidates(result), threshold)
+      .map((c) => this.toSkillEntry(c, availableSkills))
+      .filter((e): e is MatchedSkillEntry => e != null);
+  }
 
-    const result: MatchedSkillEntry[] = [];
-    for (const raw of parsed) {
-      const item = (raw ?? {}) as { skill_brief?: unknown; relevance?: unknown };
-      const brief = typeof item.skill_brief === 'string' ? item.skill_brief : '';
-      if (!brief) {
-        continue;
-      }
-      const skill = skillByBrief.get(brief);
-      if (skill) {
-        result.push({
-          skill_id: skill.id,
-          skill_brief: skill.skill_brief,
-          relevance: typeof item.relevance === 'number' ? item.relevance : 0,
-        });
-        skillByBrief.delete(brief);
+  /** 候选 → MatchedSkillEntry（数据处理；未知 id 丢弃） */
+  private toSkillEntry(candidate: RankedCandidate, skills: Array<{ id: string; skill_brief: string }>): MatchedSkillEntry | null {
+    const skill = skills.find((s) => s.id === candidate.id);
+    if (!skill) {
+      return null;
+    }
+    return { skill_id: skill.id, skill_brief: skill.skill_brief, relevance: candidate.score / 100 };
+  }
+
+  /** 第 3 层 Skill 自生成（逻辑控制；原 matchSkill 内联生成逻辑抽出复用） */
+  private async generateSkill(agentId: string): Promise<MatchedSkillEntry[]> {
+    const genPrompt = `Based on agent_id: ${agentId}, please generate a new skill name, brief description, and markdown code block for this task. Return JSON: {"name": "...", "skill_brief": "...", "skill_md": "..."}`;
+    const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: 600 } as ExecLLMInput);
+    const parsed = JsonParser.parseObject(genRes);
+    if (!parsed || !parsed.name) {
+      return [];
+    }
+    const addOut = new SoSkillOutput();
+    await this.skillAccess.addSkill(
+      {
+        data: {
+          name: String(parsed.name),
+          skill_brief: String(parsed.skill_brief || ''),
+          skill_md: String(parsed.skill_md || ''),
+          enable: true,
+        },
+      } as any,
+      addOut as any, new SkillContext(),
+    );
+    const newSkillId = (addOut as any).id;
+    if (!newSkillId) {
+      return [];
+    }
+    return [{ skill_id: String(newSkillId), skill_brief: String(parsed.skill_brief || ''), relevance: 1.0 }];
+  }
+
+  /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, ranked: MatchedSkillEntry[]): Promise<void> {
+    if (!taskContent || ranked.length === 0) {
+      return;
+    }
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    this.matchCache.commit(
+      buildCacheKey(taskContent),
+      query ?? [],
+      ranked.map((r) => ({ id: r.skill_id, score: Math.round(r.relevance * 100) })),
+    );
+  }
+
+  /** 任务向量化（数据处理；走系统默认 embedding 模型） */
+  private async embedTask(task: string): Promise<number[]> {
+    const output = new EmbedLLMOutput();
+    const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
+    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    if (!ok || !output.embedding?.length) {
+      throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
+    }
+    return output.embedding;
+  }
+
+  /** 缓存命中的 Skill 水合（数据处理；全部失效时返回空数组由调用方清缓存） */
+  private async hydrateSkillsOrNone(skillIds: string[]): Promise<MatchedSkillEntry[]> {
+    const ranked: MatchedSkillEntry[] = [];
+    for (const id of skillIds) {
+      const hydrated = await this.hydrateSkillOrNone(id);
+      if (hydrated) {
+        ranked.push(hydrated);
       }
     }
+    return ranked;
+  }
 
-    // 附加 LLM 未返回的剩余 Skill（赋零优先级）
-    for (const remaining of skillByBrief.values()) {
-      result.push({
-        skill_id: remaining.id,
-        skill_brief: remaining.skill_brief,
-        relevance: 0,
-      });
+  /** 单 Skill 水合（数据处理；失效返回 null） */
+  private async hydrateSkillOrNone(skillId: string): Promise<MatchedSkillEntry | null> {
+    const skillOutput = new SoSkillOutput();
+    await this.skillAccess.soSkill(
+      { conditions: [{ field: 'id', operator: Operator.EQ, value: skillId }] },
+      skillOutput, new SkillContext(),
+    );
+    if (!skillOutput.list.length) {
+      return null;
     }
-
-    return result;
+    return { skill_id: skillId, skill_brief: skillOutput.list[0].skill_brief, relevance: 1 };
   }
 
   /** 将既有绑定（agent 表 skill_ids_json）水合为 MatchedSkillEntry 列表（从 Skill 表补充 brief；失效 id 过滤） */
@@ -479,6 +579,10 @@ export class SkillCoreService {
       regen_rate: Number(row.regen_rate),
       similarity_threshold: Number(row.similarity_threshold ?? 0.7),
       prompt_template_id: String(row.prompt_template_id ?? ''),
+      score_threshold: Number(row.score_threshold ?? ScoreThreshold.Default),
+      vector_similarity_threshold: Number(row.vector_similarity_threshold ?? VectorSimilarity.Default),
+      match_cache_ttl_ms: Number(row.match_cache_ttl_ms ?? MatchCache.TtlMs),
+      match_cache_capacity: Number(row.match_cache_capacity ?? MatchCache.Capacity),
     };
   }
 

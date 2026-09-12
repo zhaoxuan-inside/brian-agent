@@ -3,7 +3,7 @@
  *
  * 覆盖本次线上问题修复的关键语义：
  * - 确定性匹配：同任务两次 submitRun → 同一 def（exact/signature 命中），**不再重复构建**（无随机）；
- * - 组件按任务重解析：快照 soul 经 matchSoul 动态解析（不沿用 agent_soul 历史绑定）；
+ * - 组件绑定收敛（2026-09-11）：def 无显式绑定则 system 无 Soul 段，不走 Core 组件匹配（命中即复用绑定）；
  * - 身份段：system 以 builtin.identity 开头（"你是谁"由身份声明回答，而非 WorkAgent 人设）；
  * - session lane：活动 run 未结算时第二次 submitRun → steer 注入（steered=true，同 run_id）；
  * - steering 消息经边界抽干成为会话第二条 user 消息；
@@ -32,6 +32,7 @@ import { RegisterStreamInput, RegisterStreamOutput, PushEventToEndpointInput, Pu
 import { StreamContext } from '../../Base/StreamProvider/domain/types';
 import { Report } from '@brian-agent/base';
 import { ToolAccess } from '../Tools/access/ToolAccess';
+import { PromptsAccess } from '@brian-agent/base';
 import { LoopAccess } from '../Loop/access/LoopAccess';
 import { AgentDefAccess } from '../Agents/access/AgentDefAccess';
 import { RunGatewayAccess } from '../Runs/access/RunGatewayAccess';
@@ -88,6 +89,12 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     });
     const toolAccess = new ToolAccess(relationDb, {});
     await toolAccess.initialize();
+
+    // ===== 2026-09-11：Prompt 模板统一由 prompt_template 表承载（系统模板受 is_system 保护），
+    // 快照渲染走 DB —— 测试库预置内置模板 }}"
+    // eslint-disable-next-line no-inline-comments
+    const promptsAccessForSeed = new PromptsAccess(relationDb);
+    await promptsAccessForSeed.initialize(); // 初始化包含 PromptCatalog.seed（INSERT-only，builtin.* + is_system=1）
 
     // mock LLM：收到 system 后直接给出 stop（捕获入参供断言）
     execLLMEventsMock = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -178,7 +185,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(second.runId).not.toBe(first.runId);
   });
 
-  it('组件按任务重解析：system 应包含 identity 段与动态匹配的 Soul（而非历史绑定）', async () => {
+  it('组件绑定收敛：def 无显式绑定则 system 无 Soul 段，且不走 Core 组件匹配', async () => {
     const first = await submit('你是谁？');
     const wait = new WaitRunInput();
     wait.run_id = first.runId;
@@ -186,8 +193,10 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const llmInput = execLLMEventsMock.mock.calls[0][0] as ExecLLMEventsInput;
     expect(llmInput.system).toContain('# 身份');
     expect(llmInput.system).toContain('你是 Brian');
-    expect(llmInput.system).toContain('通用人格'); // matchSoul 动态解析内容
-    expect(matchSoulMock).toHaveBeenCalled();
+    // ===== 2026-09-11 收敛语义：def 命中即复用绑定 —— def.soul_id 为空则不注入任何 Soul，
+    // 也不再调用 matchSoul 动态匹配（原断言"通用人格动态解析/ matchSoul 被调用"已随收敛删除） =====
+    expect(llmInput.system).not.toContain('通用人格');
+    expect(matchSoulMock).not.toHaveBeenCalled();
   });
 
   it('session lane：活动 run 未结算时第二次提交应该 steer 注入（同 run_id）', async () => {
@@ -299,5 +308,36 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(wait, out, new Context());
     expect(out.status).toBe('running');
     void LLMContext;
+  });
+
+  it('错误 Agent 立即杀死：LLM 异常 run 结算后 def 应 disable（后续同任务不再命中）', async () => {
+    // 让 LLM 抛错 → run 结算为 error → 杀死链路（disable def）
+    execLLMEventsMock.mockImplementationOnce(async () => {
+      throw new Error('LLM 流断开');
+    });
+    const first = await submit('天气怎么样？');
+    const wait = new WaitRunInput();
+    wait.run_id = first.runId;
+    const out = new WaitRunOutput();
+    await gateway.waitRun(wait, out, new RunGatewayContext());
+    expect(out.status).toBe('error');
+    await new Promise((r) => setTimeout(r, 60)); // fire-and-forget 杀死链路落库
+
+    // def 已 disable（错误 Agent 立即停匹配）
+    const defRows = relationDb.queryRaw<{ status: string }>(
+      `SELECT "status" FROM "runtime_agent_def" WHERE "task_signature" LIKE '%天气怎么样%'`,
+    );
+    expect(defRows.length).toBeGreaterThan(0);
+    expect(defRows.every((r) => r.status === 'disabled')).toBe(true);
+
+    // agent.disbanded 事件已投影
+    await new Promise((r) => setTimeout(r, 120));
+    const events = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
+      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = ?',
+      ['sess-a', 'agent.disbanded'],
+    );
+    expect(events?.length).toBeGreaterThan(0);
+    const payload = JSON.parse(String(events![0].payload_json)) as { reason?: string };
+    expect(payload.reason).toBe('run_error');
   });
 });

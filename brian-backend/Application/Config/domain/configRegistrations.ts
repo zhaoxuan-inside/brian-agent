@@ -105,6 +105,8 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- LLMProvider ---
   base('llm_provider', 'basic', 'enabled', 'LLM 组件启用', 'BOOLEAN', true, 'LLM 组件是否启用'),
+  base('llm_provider', 'basic', 'exec_timeout_ms', 'LLM 调用超时（ms）', 'INT', 120000, '单次 LLM 调用请求超时时间（毫秒）'),
+  base('llm_provider', 'basic', 'embed_timeout_ms', 'Embedding 调用超时（ms）', 'INT', 15000, '向量模型请求超时时间（毫秒）：embedding 服务不可达时快速失败，防止拖垮对话/匹配链路'),
   base('llm_provider', 'quota', 'default_quota_tokens_per_day', '默认每日 Token 限额', 'INT', 0, '0 为不限制'),
   base('llm_provider', 'quota', 'default_quota_tokens_per_week', '默认每周 Token 限额', 'INT', 0, '0 为不限制'),
   base('llm_provider', 'quota', 'default_quota_tokens_per_month', '默认每月 Token 限额', 'INT', 0, '0 为不限制'),
@@ -173,6 +175,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('llm_core', 'basic', 'similarity_threshold', 'LLM 相似度阈值', 'DOUBLE', 0.7, 'LLM 匹配的相似度阈值（0.0-1.0）：预留的相似度判定阈值（当前 matchLLM 未实际使用，匹配由缓存复用概率 regen_rate 与 LLM 打分决定）'),
   core('llm_core', 'basic', 'regen_rate', 'LLM 重新匹配概率（0-100）', 'INT', 75, '匹配缓存命中后跳过缓存、重新评估并重新绑定 LLM 的概率：值越大越倾向于重新匹配；设为 0 表示始终复用缓存绑定，设为 100 表示每次都重新评估'),
   core('llm_core', 'basic', 'prompt_template_id', 'LLM 匹配 Prompt', 'STRING', '', 'LLM 选择排名所用的 Prompt 模板 ID：用于让大模型在候选 LLM 列表（标题/简介/用途）中为 Agent 选出最合适的提供商；留空使用内置默认提示词'),
+  core('llm_core', 'basic', 'score_threshold', 'LLM 采纳阈值（0-100）', 'INT', 90, '候选 LLM 排序采纳阈值（百分制）：低于该分的候选被丢弃；全部低于阈值时回退默认模型'),
   core('llm_core', 'quota', 'quota_tokens_per_day', '每日 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_week', '每周 Token 限额', 'INT', 0, '0 为不限制'),
   core('llm_core', 'quota', 'quota_tokens_per_month', '每月 Token 限额', 'INT', 0, '0 为不限制'),
@@ -213,11 +216,19 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('mcp_core', 'basic', 'similarity_threshold', 'MCP 相似度阈值', 'DOUBLE', 0.7, '第1层算法匹配与第2层LLM打分阈值 (0.0-1.0)'),
   core('mcp_core', 'basic', 'regen_rate', 'MCP 重新匹配概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
   core('mcp_core', 'basic', 'prompt_template_id', 'MCP 匹配 Prompt', 'STRING', '', '用于 MCP 匹配排名'),
+  core('mcp_core', 'basic', 'score_threshold', 'MCP 采纳阈值（0-100）', 'INT', 90, '排序候选采纳阈值（百分制）：低于该分的 MCP 不采纳（视为无合适组件）；0-100'),
+  core('mcp_core', 'basic', 'vector_similarity_threshold', 'MCP 任务向量命中阈值', 'DOUBLE', 0.8, '同义任务缓存命中的向量余弦阈值（0.0-1.0）；命中后直接复用上次组件选择'),
+  core('mcp_core', 'basic', 'match_cache_ttl_ms', 'MCP 匹配缓存过期（ms）', 'INT', 600000, '组件匹配结果缓存 TTL；0 或极小值会让每问都重跑组件排序'),
+  core('mcp_core', 'basic', 'match_cache_capacity', 'MCP 匹配缓存容量', 'INT', 500, '组件匹配结果缓存最大条目数（FIFO 淘汰）'),
 
   // --- SkillCoreProvider ---
   core('skill_core', 'basic', 'similarity_threshold', 'Skill 相似度阈值', 'DOUBLE', 0.7, '第1层算法匹配与第2层LLM打分阈值 (0.0-1.0)'),
   core('skill_core', 'basic', 'regen_rate', 'Skill 重新生成概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
   core('skill_core', 'basic', 'prompt_template_id', 'Skill 匹配 Prompt', 'STRING', '', '用于 Skill 匹配排名'),
+  core('skill_core', 'basic', 'score_threshold', 'Skill 采纳阈值（0-100）', 'INT', 90, '排序候选采纳阈值（百分制）：低于该分的候选被丢弃；全部低于时不再逐题自生成，使用空组件集'),
+  core('skill_core', 'basic', 'vector_similarity_threshold', 'Skill 任务向量命中阈值', 'DOUBLE', 0.8, '组件匹配缓存相似度命中阈值（0.0-1.0）：同义任务复用上次组件选择'),
+  core('skill_core', 'basic', 'match_cache_ttl_ms', 'Skill 匹配缓存过期（ms）', 'INT', 600000, '组件匹配结果缓存 TTL'),
+  core('skill_core', 'basic', 'match_cache_capacity', 'Skill 匹配缓存容量', 'INT', 500, '组件匹配结果缓存最大条目数（FIFO 淘汰）'),
   core('skill_core', 'opt_rule', 'opt_rule.days', '优化规则观察天数', 'INT', 30, '技能淘汰/优化规则的观察窗口'),
   core('skill_core', 'opt_rule', 'opt_rule.min_usage_count', '优化规则最小使用次数', 'INT', 5, '低于此次数的技能可能被淘汰'),
 
@@ -226,6 +237,10 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('soul_core', 'basic', 'regen_rate', 'Soul 重新生成概率（0-100）', 'INT', 75, '值越大越倾向于重新评估'),
   core('soul_core', 'basic', 'prompt_template_id', 'Soul 匹配 Prompt', 'STRING', '', '用于 Soul 匹配排名'),
   core('soul_core', 'basic', 'llm_id', 'Soul 匹配模型', 'STRING', '', '留空则使用系统默认模型'),
+  core('soul_core', 'basic', 'score_threshold', 'Soul 采纳阈值（0-100）', 'INT', 90, '排序候选采纳阈值（百分制）：低于该分的人设不采纳；全部低于阈值时返回无人设'),
+  core('soul_core', 'basic', 'vector_similarity_threshold', 'Soul 任务向量命中阈值', 'DOUBLE', 0.8, '组件匹配缓存相似度命中阈值（0.0-1.0）：同义任务复用上次人设选择'),
+  core('soul_core', 'basic', 'match_cache_ttl_ms', 'Soul 匹配缓存过期（ms）', 'INT', 600000, '组件匹配结果缓存 TTL'),
+  core('soul_core', 'basic', 'match_cache_capacity', 'Soul 匹配缓存容量', 'INT', 500, '组件匹配结果缓存最大条目数（FIFO 淘汰）'),
   core('soul_core', 'opt_rule', 'opt_rule.days', '优化规则观察天数', 'INT', 30, 'Soul 淘汰/优化规则的观察窗口'),
   core('soul_core', 'opt_rule', 'opt_rule.min_usage_count', '优化规则最小使用次数', 'INT', 5, '低于此次数的 Soul 可能被淘汰'),
 
@@ -265,6 +280,9 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   agent('agent_library', 'basic', 'similarity_threshold', 'Agent 复用相似度阈值', 'DOUBLE', 0.7, 'Agent 复用的相似度阈值（0.0-1.0）：第一层 Jaccard 算法匹配得分与第二层 LLM 打分均需达到该值才复用现有 Agent，否则生成新 Agent'),
   agent('agent_library', 'basic', 'prompt_template_id', 'Agent 匹配 Prompt', 'STRING', '', '第二层 LLM 匹配所用的 Prompt 模板 ID：大模型依据候选 Agent 的用途/名称对任务打分并选出最佳 Agent；留空使用内置默认提示词'),
   agent('agent_library', 'basic', 'max_agent_count', '最大 Agent 保留数量', 'INT', 100, 'Agent 库允许保留的最大启用数量：启用数量超过该值时自动触发老化淘汰（依据观察窗口内使用次数与评估分数禁用低活跃 Agent）'),
+  agent('agent_library', 'basic', 'match_score_threshold', 'Agent 匹配采纳阈值（0-100）', 'INT', 70, 'Agent 匹配 LLM 打分采纳阈值（百分制）：命中分低于该值时走重建流程；同时控制"命中后重评估"路径的采纳判定'),
+
+
 
   // --- AgentExecution ---
   agent('agent_execution', 'basic', 'think_prompt_template_id', 'Think Prompt', 'STRING', '', 'Worker Think 阶段 Prompt 模板'),
@@ -292,6 +310,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   agent('evolutor_agent', 'basic', 'eval_work_prompt_template_id', 'Work 评估 Prompt', 'STRING', '', '评估 WorkAgent 结果所用的 Prompt 模板'),
   agent('evolutor_agent', 'basic', 'eval_write_prompt_template_id', 'Write 评估 Prompt', 'STRING', '', '评估 WriterAgent 结果所用的 Prompt 模板'),
   agent('evolutor_agent', 'basic', 'optimize_threshold', '优化阈值', 'INT', 60, '评分低于此值触发优化'),
+  agent('evolutor_agent', 'basic', 'critical_disband_score', '解散阈值', 'INT', 30, '评分低于此值且为系统构建 Agent 时直接解散（删除该 Agent 并禁用其声明定义）；用户创建的 Agent 不会被解散'),
   agent('evolutor_agent', 'basic', 'eval_frequency_threshold', '评估频率阈值', 'INT', 5, '使用次数达到此值触发评估'),
   agent('evolutor_agent', 'basic', 'eval_schedule_interval_ms', '评估调度间隔（ms）', 'INT', 3600000, '定期评估的调度间隔'),
   agent('evolutor_agent', 'basic', 'eval_batch_size', '评估批量大小', 'INT', 20, '单次评估处理的 Agent 数量'),

@@ -46,6 +46,8 @@ import {
   SoAgentSnapshotInput,
   SoAgentSnapshotOutput,
   AgentDefContext,
+  KillErroredAgentInput,
+  KillErroredAgentOutput,
 } from '../../Agents';
 import {
   RunGatewayContext,
@@ -83,6 +85,9 @@ export class RunGatewayService {
   private enabled = true;
   private readonly config: ConfigService;
 
+  // ===== 修改后（2026-09-11）：权限等待超时改读 runtime_runs_config（permission_wait_timeout_ms，默认 120000） =====
+  private static readonly PERMISSION_WAIT_DEFAULT_MS = 120_000;
+
   /** 会话 lane 注册表：`${laneKind}:${session_key}` → lane（活动 run / 排队 / steering 队列） */
   private readonly lanes = new Map<string, SessionLane>();
   /** 每 lane 并发计数（main/subagent/background 并发上限控制；session 由 activeRunId 承担） */
@@ -102,10 +107,40 @@ export class RunGatewayService {
   }
 
   /** 初始化组件 */
+  // ===== 修改后（2026-09-11）：启动时收敛遗留 run —— restartMap 存活期外的 running/queued 行
+  // 内存态已随旧进程丢失（lane 队列/waiters 均不可恢复），统一结算为 aborted，不再永久 running。
   async initialize(): Promise<void> {
     const enabledRow = await this.config.getString('enabled', 'true');
     this.enabled = enabledRow !== 'false';
+    await this.convergeOrphanRuns();
     this.logger?.debug?.('RunGatewayService 初始化完成');
+  }
+
+  /** 启动时收敛遗留 run（逻辑控制）：running/queued → aborted（stop_reason=service_restart） */
+  private async convergeOrphanRuns(): Promise<void> {
+    try {
+      const rows = await this.relationDb.select(RUNTIME_RUN_TABLE, {
+        conditions: [
+          { field: 'status', operator: Operator.IN, value: ['running', 'queued'] },
+        ],
+      });
+      for (const row of rows ?? []) {
+        const runId = String(row.id ?? '');
+        if (!runId) {
+          continue;
+        }
+        await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
+          status: RunStatus.Aborted,
+          stop_reason: AbortReason.ServiceRestart,
+          settled_at: IdGenerator.now(),
+        }), [{ field: 'id', operator: Operator.EQ, value: runId }]);
+      }
+      if (rows?.length) {
+        this.logger?.info?.(`[startup] 遗留 run 收敛为 aborted（count=${rows.length}）`, { log_source: 'SYSTEM' });
+      }
+    } catch (err) {
+      this.logger?.warn?.('遗留 run 收敛失败（best effort）', { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /** 组件使能守卫 */
@@ -256,8 +291,10 @@ export class RunGatewayService {
 
   /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；异常必收敛 */
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
+    let matchOut: MatchAgentDefOutput | undefined;
     try {
-      const matchOut = await this.matchAgent(input, parent?.report);
+      matchOut = await this.matchAgent(input, parent?.report);
+      // ===== 修改后（2026-09-11 收敛版）：def 命中即复用绑定，不再传 regen 绕过缓存 =====
       const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.report);
       // 过程可观测：Agent 选择与组件选定清单（Soul/Skill/MCP/Prompt/LLM）
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
@@ -276,10 +313,46 @@ export class RunGatewayService {
       const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
       const loopOutput = new ExecAgentLoopOutput();
       await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
-      await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id);
+      // ===== 修改后（2026-09-11）：错误 run 结算后立即杀死 Agent（错误立即杀死 / 正确自然凋亡） =====
+      await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.report);
+      if (loopOutput.stop_reason === LoopStopReason.Error) {
+        await this.killErroredAgent(runId, matchOut, input, parent?.report, loopOutput.error ?? '');
+      }
     } catch (err) {
-      parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: err instanceof Error ? err.message : String(err) });
-      await this.settleRun(runId, LoopStopReason.Error, 0, '');
+      const errMessage = err instanceof Error ? err.message : String(err);
+      parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: errMessage });
+      await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.report, errMessage);
+      if (matchOut?.def?.agent_ref) {
+        await this.killErroredAgent(runId, matchOut, input, parent?.report, errMessage);
+      }
+    }
+  }
+
+  /** 错误 Agent 立即杀死（逻辑控制；错误 run 结算后触发；与正确 Agent 自然凋亡分离） */
+  private async killErroredAgent(
+    runId: string,
+    matchOut: MatchAgentDefOutput,
+    input: SubmitRunInput,
+    report?: Report,
+    errorMessage?: string,
+  ): Promise<void> {
+    try {
+      await this.agents.killErroredAgent(
+        Object.assign(new KillErroredAgentInput(), {
+          agent_ref: matchOut.def.agent_ref,
+          work_id: runId,
+          interact_id: input.interact_id ?? '',
+          trace_id: input.interact_id ?? '',
+          task_content: input.user_message,
+          error: errorMessage ?? '',
+        }),
+        new KillErroredAgentOutput(),
+        new AgentDefContext(),
+        undefined,
+        report,
+      );
+    } catch (err) {
+      report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -303,8 +376,12 @@ export class RunGatewayService {
     return matchOutput;
   }
 
-  /** 组件快照（逻辑控制） */
-  private async soSnapshot(defId: string, input: SubmitRunInput, report?: Report): Promise<SoAgentSnapshotOutput['snapshot']> {
+  /** 组件快照（逻辑控制；2026-09-11 收敛版：只读 def 显式绑定，无 regen 绕过） */
+  private async soSnapshot(
+    defId: string,
+    input: SubmitRunInput,
+    report?: Report,
+  ): Promise<SoAgentSnapshotOutput['snapshot']> {
     const snapInput = new SoAgentSnapshotInput();
     snapInput.def_id = defId;
     snapInput.task_content = input.user_message;
@@ -316,7 +393,28 @@ export class RunGatewayService {
     return snapOutput.snapshot;
   }
 
-  /** Loop 入参组装（数据处理） */
+  /** Loop 入参组装（原始方法，保留作为参考） */
+  // private prepareLoopInput(
+  //   runId: string,
+  //   input: SubmitRunInput,
+  //   runtimeSessionId: string,
+  //   snapshot: SoAgentSnapshotOutput['snapshot'],
+  // ): ExecAgentLoopInput {
+  //   const loopInput = new ExecAgentLoopInput();
+  //   loopInput.run_id = runId;
+  //   loopInput.session_key = input.session_key;
+  //   loopInput.session_id = runtimeSessionId;
+  //   loopInput.user_message = input.user_message;
+  //   loopInput.system = snapshot.system;
+  //   loopInput.llm_id = snapshot.llm_id;
+  //   loopInput.temperature = snapshot.temperature;
+  //   loopInput.budget = { total: input.budget_total ?? snapshot.budget_total };
+  //   return loopInput;
+  // }
+
+  /** Loop 入参组装（2026-09-11 选/执分离：工具可见性由 match 阶段组件绑定驱动；
+   * 未绑定 Skill → 不注入 skill_exec；未绑定 MCP → 不注入 mcp_exec；
+   * component_scope 携带选定 id 清单，作为执行门的唯一合法范围） */
   private prepareLoopInput(
     runId: string,
     input: SubmitRunInput,
@@ -332,11 +430,47 @@ export class RunGatewayService {
     loopInput.llm_id = snapshot.llm_id;
     loopInput.temperature = snapshot.temperature;
     loopInput.budget = { total: input.budget_total ?? snapshot.budget_total };
+    const boundSkills = (snapshot.tools ?? []).filter((t) => t.kind === 'skill').map((t) => t.id);
+    const boundMcps = (snapshot.tools ?? []).filter((t) => t.kind === 'mcp').map((t) => t.id);
+    // 工具可见性显式清单：skill_exec/mcp_exec 仅在组件已绑定时注入（其余为通用原语工具）
+    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate'];
+    if (boundSkills.length) {
+      loopInput.tools.push('skill_exec');
+    }
+    if (boundMcps.length) {
+      loopInput.tools.push('mcp_exec');
+    }
+    loopInput.component_scope = { skills: boundSkills, mcps: boundMcps };
     return loopInput;
   }
 
-  /** 结算落账（逻辑控制）：状态 + waiter 唤醒 + followup 排水 */
-  private async settleRun(runId: string, stopReason: string, budgetUsed: number, agentDefId: string): Promise<void> {
+  /** 结算落账（原始方法，保留作为参考） */
+  // private async settleRun(runId: string, stopReason: string, budgetUsed: number, agentDefId: string): Promise<void> {
+  //   const status: RunStatus = stopReason === 'stop' || stopReason === 'budget' ? RunStatus.Finished : (stopReason as RunStatus);
+  //   await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
+  //     status,
+  //     stop_reason: stopReason,
+  //     settled_at: IdGenerator.now(),
+  //     budget_used: budgetUsed,
+  //     agent_def_id: agentDefId,
+  //   }), [{ field: 'id', operator: Operator.EQ, value: runId }]);
+  //   const waiter = this.waiters.get(runId);
+  //   this.waiters.delete(runId);
+  //   waiter?.resolve({ status, stop_reason: stopReason });
+  //   await this.drainFollowups(runId);
+  // }
+
+  /** 结算落账（2026-09-11：补充 agent_ref/任务/错误信息参数；错误 Agent 杀死由 executeRun 在结算后触发） */
+  private async settleRun(
+    runId: string,
+    stopReason: string,
+    budgetUsed: number,
+    agentDefId: string,
+    agentRef?: string,
+    _taskContent?: string,
+    report?: Report,
+    errorMessage?: string,
+  ): Promise<void> {
     const status: RunStatus = stopReason === 'stop' || stopReason === 'budget' ? RunStatus.Finished : (stopReason as RunStatus);
     await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
       status,
@@ -348,6 +482,9 @@ export class RunGatewayService {
     const waiter = this.waiters.get(runId);
     this.waiters.delete(runId);
     waiter?.resolve({ status, stop_reason: stopReason });
+    if (agentRef && errorMessage) {
+      report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, agent_id: agentRef, error: errorMessage.slice(0, 300) });
+    }
     await this.drainFollowups(runId);
   }
 
@@ -498,15 +635,38 @@ export class RunGatewayService {
 
   /**
    * 权限等待挂起（逻辑控制；Loop 权限门调用，permission.asked 已由 Loop 经 Report 下发）。
+   *
+   * ===== 修改后（2026-09-11）：等待加超时兜底（PERMISSION_WAIT_TIMEOUT_MS，默认 120s）——
+   * 僵尸 run 复盘：用户关闭页面后 Deferred 永远无人 resolve，run 永久卡 running；超时归一为默认拒绝（approved=false），
+   * Loop 按"被拒"走正常配对回流并结算，不再永久挂起。
    */
   async waitPermission(input: WaitPermissionInput, output: WaitPermissionOutput, _context: RunGatewayContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.permission_id) {
       throw new ValidationError('permission_id 不能为空');
     }
+    const timeoutRef = { value: RunGatewayService.PERMISSION_WAIT_DEFAULT_MS };
+    try {
+      timeoutRef.value = await this.soPermissionWaitTimeout();
+    } catch { /* best effort：配置读取失败回退默认 */ }
     const result = await new Promise<{ approved: boolean }>((resolve) => {
       this.permissionWaiters.set(input.permission_id, { resolve, answered: false });
+      const timer = setTimeout(
+        () => {
+          if (this.permissionWaiters.get(input.permission_id)?.resolve === resolve) {
+            this.permissionWaiters.delete(input.permission_id);
+            resolve({ approved: false });
+          }
+        },
+        timeoutRef.value,
+      );
+      // 有应答时清掉超时定时器（answerPermission 负责删除 waiter；timeout 后自键已删，安全幂等）
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
     });
+
+
     this.permissionWaiters.delete(input.permission_id);
     output.approved = result.approved;
     output.answered = true;
@@ -530,13 +690,27 @@ export class RunGatewayService {
     return true;
   }
 
-  async configRuns(input: ConfigRunsInput, _output: ConfigRunsOutput, _context: RunGatewayContext, _metrics?: Metrics, _report?: Report,
+  async configRuns(input: ConfigRunsInput, output: ConfigRunsOutput, _context: RunGatewayContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.enabled !== undefined) {
       this.enabled = input.enabled;
       await this.config.set('enabled', input.enabled ? 'true' : 'false', 'BOOLEAN');
     }
+    // ===== 2026-09-11：权限等待超时可配置 =====
+    if (input.permission_wait_timeout_ms !== undefined) {
+      if (input.permission_wait_timeout_ms < 0) {
+        throw new ValidationError('permission_wait_timeout_ms 不能为负');
+      }
+      await this.config.set('permission_wait_timeout_ms', String(input.permission_wait_timeout_ms), 'NUMBER');
+    }
+    output.permission_wait_timeout_ms = await this.soPermissionWaitTimeout();
     return true;
+  }
+
+  /** 权限等待超时读取（数据处理）：缺少配置行回退默认 120000 */
+  private async soPermissionWaitTimeout(): Promise<number> {
+    const value = await this.config.getInt('permission_wait_timeout_ms', RunGatewayService.PERMISSION_WAIT_DEFAULT_MS);
+    return value > 0 ? value : RunGatewayService.PERMISSION_WAIT_DEFAULT_MS;
   }
 
   // -------------------------------------------------------------------------

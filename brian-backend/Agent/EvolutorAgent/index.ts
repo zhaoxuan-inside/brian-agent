@@ -5,6 +5,7 @@ export {
   EvalWriterAgentInput, EvalWriterAgentOutput,
   StartEvalScheduleInput, StartEvalScheduleOutput,
   StopEvalScheduleInput, StopEvalScheduleOutput,
+  RunEvalOnceInput, RunEvalOnceOutput,
   GetEvaluationInput, GetEvaluationOutput,
   GetEvolutionReportInput, GetEvolutionReportOutput,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,

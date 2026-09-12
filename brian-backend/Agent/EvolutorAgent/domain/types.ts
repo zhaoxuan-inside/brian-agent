@@ -32,6 +32,8 @@ export interface EvolutorAgentConfigRecord {
   eval_schedule_interval_ms: number;
   eval_batch_size: number;
   llm_id: string | null;
+  /** 低分解散阈值（百分制；2026-09-11 新增，默认 30） */
+  critical_disband_score: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,10 +66,13 @@ export class EvalWorkAgentOutput extends Output {
   scores: EvalScores = { correctness: 0, completeness: 0, efficiency: 0, relevance: 0, overall: 0 };
   suggestions: string[] = [];
   need_optimize = false;
+  /** 低分解散是否已执行（2026-09-11 新增；overall < DisbandThreshold.Critical 且 system 归属时 true） */
+  disbanded = false;
 }
 
 // ---------------------------------------------------------------------------
 // evalWriterAgent
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 export class EvalWriterAgentInput extends Input {
@@ -167,10 +172,34 @@ export class ConfigEvolutorAgentInput extends Input {
   eval_schedule_interval_ms?: number;
   eval_batch_size?: number;
   llm_id?: string | null;
+  /** 低分解散阈值（百分制；2026-09-11 新增） */
+  critical_disband_score?: number;
 }
 
 export class ConfigEvolutorAgentOutput extends Output {
   config: EvolutorAgentConfigRecord | null = null;
+}
+
+// ---------------------------------------------------------------------------
+// runEvalOnce（单轮评估闭环：手动触发/随机触发各执行一次完整评估，不启动常驻调度）
+// ---------------------------------------------------------------------------
+
+export class RunEvalOnceInput extends Input {
+  /** 评估时间窗（毫秒），默认 7 天 */
+  cutoff_ms?: number;
+  /** 触发阈值：Agent 累计未评估 usage 达到该值才评估，默认 5 */
+  eval_frequency_threshold?: number;
+  /** 单 Agent 单轮最大评估条数，默认 20 */
+  eval_batch_size?: number;
+}
+
+export class RunEvalOnceOutput extends Output {
+  /** 本轮扫描到的 Agent 数 */
+  scanned_agents = 0;
+  /** 本轮实际评估的 usage 条数 */
+  evaluated_count = 0;
+  /** 本轮跳过（无 usage_context 关键字段）的条数 */
+  skipped_count = 0;
 }
 
 // ---------------------------------------------------------------------------

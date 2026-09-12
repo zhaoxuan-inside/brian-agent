@@ -21,6 +21,7 @@
   - info_creator_role：信息产生方角色；USER（用户）、LEARNING（自学习）、AGENT（Agent）、SKILL（技能）、MCP（MCP 工具）（可选，默认空）
   - info_creator_id：信息产生方实例 ID，UUID 类型；USER 与 LEARNING 为空字符串，AGENT/SKILL/MCP 为各自实例 ID（可选，默认空）
   - info：信息内容（必选）
+  - created：消息真实创建时间（毫秒时间戳，可选，缺省取保存时刻）。会话同步等场景传入原始消息时间（如 `runtime_message.created`），保证 user 消息先于 assistant 回复的时间先后次序，并使按 `created` 去重的条件成立（2026-09-09 起）
   - parent_info_ids：父级信息ID列表（可选）
 - context：SaveInfoContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
 - output：SaveInfoOutput（继承 Output），承载返回内容：
@@ -853,6 +854,20 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 共现关系同时持久化到 GraphDB：`tagInfo` 在保存时为同一 info 的标签两两建立 `cooccur` 边（边类型 `cooccur`，权重为共现次数），`rebuildCooccurGraph` 用于存量数据全量回填。这样 GraphDB 的边数（「监控 > 系统健康 > GraphDB」）与标签图展示一致，不再依赖向量化。
 
 ## 5. 变更记录
+
+### [2026-09-09] saveInfo 支持传入真实创建时间（修复对话区消息顺序颠倒）
+**变更原因**：Runtime v2 会话同步（ChatService.syncRuntimeMessagesToInfoRaw）在 run 结束后统一调 saveInfo，未携带真实消息时间 → 同一轮 user/assistant 落库同一 `created`；历史查询 `lastNInfo` 按 `created DESC` 排序对同时间戳记录次序不稳定，前端同时间戳 tie-break 又落入 UUID 字符串比较 → 对话区出现"用户消息显示在系统回复下面"的随机颠倒。同时按 `(session_id, info, created)` 去重的条件因落库时间与消息时间错位而恒不匹配，重复同步存在重复插入风险。
+
+**修改的方法**：
+  - `SaveInfoInput` — 新增可选 `created?: number`（消息真实创建时间，毫秒；缺省行为不变）；
+  - `InfoCoreService.saveInfo` — 原代码：`info_raw.created/updated` 一律取保存时刻 `now`（原行已注释保留）；修改后：`createdAt = input.created > 0 ? input.created : now`，`info_raw` 写入真实时间。
+
+**影响的端点**：
+  - 所有经 `saveInfo` 落库的调用方（向后兼容：未传 `created` 的行为与原实现一致）；
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 传入 `runtime_message.created`（见 Chat-PRD 变更记录），历史查询天然有序、去重条件成立。
+
+**可能存在的问题**：
+  - 存量 V2 数据（已以保存时刻时间落库）时间戳不可追溯；显示层由前端角色 tie-break 兜底（同时间戳 user 恒在前）。
 
 ### [2026-08-22] info_raw 新增 trace_id 列并随 saveInfo 落库
 

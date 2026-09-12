@@ -128,6 +128,13 @@ export class StreamService {
     }
     output.seq = seq;
     output.delivered = this.writeEventToEndpoint(input.endpoint_id, input.type, input.payload);
+    if (!output.delivered) {
+      this.logger?.warn?.('publishEvent: 端点投递失败（端点不存在或会话已关闭）', {
+        endpoint_id: input.endpoint_id,
+        session_key: input.session_key,
+        type: input.type,
+      });
+    }
   }
 
   /** 分配下一条事件 seq（逻辑控制；进程缓存 + DB MAX 持久事实源） */

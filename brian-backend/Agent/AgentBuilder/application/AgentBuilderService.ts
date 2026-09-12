@@ -6,7 +6,7 @@ import {
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
   InfoType,
-  PROMPT_IDS, getBuiltinTemplate, renderTemplate,
+  PROMPT_IDS,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -232,6 +232,8 @@ export class AgentBuilderService {
         skill_ids: (skillOut.skills ?? []).map((s) => s.skill_id),
         mcp_ids: mcpOut.mcp_ids ?? [],
         prompt_template_id: promptTemplateId,
+        // ===== 2026-09-11：自动构建的 Agent 归属 system（解散动作仅作用于系统侧） =====
+        created_by: 'system',
       }),
       addOut,
       libCtx,
@@ -698,10 +700,10 @@ export class AgentBuilderService {
           promptOut,
           new PromptContext(),
         );
-        let prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
+        // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
+        const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
         if (!prompt) {
-          const tpl = getBuiltinTemplate(PROMPT_IDS.taskAnalysis);
-          if (tpl) prompt = renderTemplate(tpl, variables);
+          throw new ValidationError(`Prompt 模板不可用或渲染为空: ${config.task_analysis_prompt_template_id || PROMPT_IDS.taskAnalysis}`);
         }
         if (prompt) {
           const llmOut = new ExecLLMOutput();

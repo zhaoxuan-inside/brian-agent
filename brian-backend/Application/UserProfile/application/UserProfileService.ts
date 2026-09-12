@@ -1,6 +1,6 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
-import { IdGenerator, Operator, Direction, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, JsonParser, PROMPT_IDS, getBuiltinTemplate, renderTemplate, type DataObject } from '@brian-agent/base';
+import { IdGenerator, Operator, Direction, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, JsonParser, PROMPT_IDS, type DataObject } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import {
   LastNInfoInput, LastNInfoOutput, RelationKInfoInput, RelationKInfoOutput, InfoCoreContext,
@@ -1080,39 +1080,22 @@ export class UserProfileService {
     }
   }
 
-  private buildDefaultAnalysisPrompt(
-    directionKey: string,
-    directionName: string,
-    conversationText: string,
-  ): string {
-    const tpl = getBuiltinTemplate(PROMPT_IDS.profileAnalysis);
-    return tpl
-      ? renderTemplate(tpl, {
-        direction_key: directionKey,
-        direction_name: directionName,
-        conversation_sample: conversationText.slice(0, 4000),
-      })
-      : '';
-  }
-
-  /** 渲染 Prompt：配置模板 → 内置模板 → 内存兜底 */
+  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省 builtin ID；缺失 fail-loud */
   private async renderPrompt(
     templateId: string | undefined,
     builtinId: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
     const id = templateId || builtinId;
-    try {
-      const promptOut = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        Object.assign(new ExecPromptInput(), { id, variables }),
-        promptOut,
-        new PromptContext(),
-      );
-      if (promptOut.prompt) return promptOut.prompt;
-    } catch { /* use fallback */ }
-    const tpl = getBuiltinTemplate(builtinId);
-    return tpl ? renderTemplate(tpl, variables) : '';
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    const promptOut = new ExecPromptOutput();
+    await this.promptsAccess.execPrompt(
+      Object.assign(new ExecPromptInput(), { id, variables }),
+      promptOut,
+      new PromptContext(),
+    );
+    if (promptOut.prompt) return promptOut.prompt;
+    throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 
   private parseLLMAnalysis(response: string): { value: unknown; confidence: number; evidence: unknown[] } {

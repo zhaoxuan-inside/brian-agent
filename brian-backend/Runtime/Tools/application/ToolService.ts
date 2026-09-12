@@ -52,6 +52,16 @@ export class ToolService {
   private defaultMaxOutput = DEFAULT_MAX_OUTPUT;
   private readonly registry = new Map<string, AnyToolDef>();
 
+  /**
+   * 工具规格缓存（2026-09-11 新增）：
+   * 会话每轮 LLM 调用前都要经 soLoopToolSpecs → soTools 取工具规格，
+   * 原实现每次都重新做 zod → JSON Schema 转换（纯 CPU、随轮次重复）。
+   * 工具定义注册后即为静态（initialize/registerBuiltinTools 已在启动期注册完毕），
+   * 故在启动期预构建 spec 缓存；registerTool 覆盖注册时使对应缓存失效，
+   * 下次查询自动重建。zodToJSONSchema 对同一 def 输出确定，缓存安全。
+   */
+  private readonly specCache = new Map<string, ToolSpecJson>();
+
   constructor(
     private readonly deps: BuiltinToolDeps = {},
     private readonly logger?: Logger,
@@ -59,7 +69,18 @@ export class ToolService {
 
   /** 初始化组件（阶段2：注册表内存态，无持久化） */
   async initialize(): Promise<void> {
-    this.logger?.debug?.('ToolService 初始化完成');
+    // ===== 新增（2026-09-11）：启动期预热工具规格缓存，消除每轮 LLM 调用前的重复 zod→JSON Schema 转换 =====
+    this.warmSpecCache();
+    this.logger?.debug?.(`ToolService 初始化完成（规格缓存 warmed=${this.specCache.size}）`);
+  }
+
+  /** 启动期预热规格缓存（数据处理；幂等） */
+  private warmSpecCache(): void {
+    for (const id of this.registry.keys()) {
+      if (!this.specCache.has(id)) {
+        this.specCache.set(id, this.toSpecJson(this.registry.get(id)!));
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -67,6 +88,7 @@ export class ToolService {
   // -------------------------------------------------------------------------
 
   /** 注册工具（逻辑控制；幂等；拒绝覆盖内置 id） */
+  // ===== 修改后（2026-09-11）：覆盖注册时使旧规格缓存失效，下次查询自动按新 def 重建 =====
   async registerTool(input: RegisterToolInput, _output: RegisterToolOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.def?.id || !input.def.description || !input.def.parameters || !input.def.execute) {
@@ -80,6 +102,8 @@ export class ToolService {
       if (BUILTIN_TOOL_IDS.has(input.def.id)) {
         throw new ValidationError(`内置工具 ${input.def.id} 不可被覆盖`);
       }
+      // 覆盖自定义工具 → 旧规格缓存失效（幂等同引用时不改缓存）
+      this.specCache.delete(input.def.id);
     }
     this.registry.set(input.def.id, input.def);
     return true;
@@ -94,9 +118,11 @@ export class ToolService {
       if (!enabled.has(def.id)) {
         continue;
       }
-      await this.registerTool(this.prepareRegisterInput(def), new RegisterToolOutput(), new ToolContext());
+      await this.registerTool(this.prepareRegisterInput(def), new RegisterToolOutput(), new ToolContext(), _metrics);
       output.registered.push(def.id);
     }
+    // ===== 新增（2026-09-11）：启动期注册完内置工具后立即预热规格缓存 =====
+    this.warmSpecCache();
     return true;
   }
 
@@ -145,9 +171,9 @@ export class ToolService {
     return true;
   }
 
-  /** 工具执行上下文组装（数据处理；emitEvent 为工具→事件流出口） */
+  /** 工具执行上下文组装（数据处理；emitEvent 为工具→事件流出口；component_scope 贯穿执行门） */
   private prepareToolContext(input: ExecToolInput): ToolExecutionContext {
-    return { run_id: input.run_id, session_key: input.session_key, signal: input.signal, emitEvent: input.emitEvent };
+    return { run_id: input.run_id, session_key: input.session_key, signal: input.signal, emitEvent: input.emitEvent, component_scope: input.component_scope };
   }
 
   /** 参数解析与 zod 校验（数据处理；失败不抛错，转配对回流） */
@@ -209,13 +235,36 @@ export class ToolService {
   // -------------------------------------------------------------------------
 
   /** 查询工具规格（逻辑控制） */
+  // ===== 修改后（2026-09-11）：优先读启动期规格缓存，miss 时重建回填；registerTool 覆盖注册已使缓存失效 =====
   async soTools(input: SoToolsInput, output: SoToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const ids = input.tool_ids?.length ? input.tool_ids : Array.from(this.registry.keys());
     output.specs = ids
       .filter((id) => this.registry.has(id))
-      .map((id) => this.toSpecJson(this.registry.get(id)!));
+      .map((id) => this.soCachedSpec(id));
     return true;
+  }
+
+  // ===== 原始方法（保留作为参考）=====
+  // /** 查询工具规格（逻辑控制） */
+  // async soTools(input: SoToolsInput, output: SoToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   const ids = input.tool_ids?.length ? input.tool_ids : Array.from(this.registry.keys());
+  //   output.specs = ids
+  //     .filter((id) => this.registry.has(id))
+  //     .map((id) => this.toSpecJson(this.registry.get(id)!));
+  //   return true;
+  // }
+
+  /** 规格缓存查询（数据处理；miss 重建并回填） */
+  private soCachedSpec(id: string): ToolSpecJson {
+    const cached = this.specCache.get(id);
+    if (cached) {
+      return cached;
+    }
+    const spec = this.toSpecJson(this.registry.get(id)!);
+    this.specCache.set(id, spec);
+    return spec;
   }
 
   /** 定义转 LLM 规格（数据处理：zod → JSON Schema） */

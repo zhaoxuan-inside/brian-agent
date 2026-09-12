@@ -213,10 +213,15 @@ export class AnswerPermissionOutput extends Output {
 export class ConfigRunsInput extends Input {
   /** 启用/禁用网关（缺省 true） */
   enabled?: boolean;
+  /** 权限等待超时（毫秒；超时默认拒绝；2026-09-11 新增） */
+  permission_wait_timeout_ms?: number;
 }
 
 /** configRuns 出参 */
-export class ConfigRunsOutput extends Output {}
+export class ConfigRunsOutput extends Output {
+  /** 当前配置 */
+  permission_wait_timeout_ms?: number;
+}
 
 // ---------------------------------------------------------------------------
 // 网关内部数据结构（实例注册表条目）

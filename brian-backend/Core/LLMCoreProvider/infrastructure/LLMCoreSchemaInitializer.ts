@@ -36,9 +36,17 @@ export class LLMCoreSchemaInitializer {
         "updated"              INTEGER NOT NULL,
         "regen_rate"           INTEGER NOT NULL DEFAULT 75,
         "similarity_threshold" REAL    NOT NULL DEFAULT 0.7,
-        "prompt_template_id"   TEXT
+        "prompt_template_id"   TEXT,
+        "score_threshold"      INTEGER NOT NULL DEFAULT 90
       )
     `);
+    // ===== 2026-09-11 迁移：排序采纳阈值与任务向量命中阈值（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${LLM_CORE_CONFIG_TABLE}" ADD COLUMN "score_threshold" INTEGER NOT NULL DEFAULT 90`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${LLM_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
+    } catch { /* column already exists */ }
 
     // agent_llm 表（Agent 与 LLM 的绑定关系）
     this.relationDb.executeRaw(`

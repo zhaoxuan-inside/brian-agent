@@ -26,8 +26,7 @@ import {
   GetLearningStatsInput, GetLearningStatsOutput,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,  ListLearningTasksInput,
   ListLearningTasksOutput,
-  LearningTaskStatus,
-
+  // LearningTaskStatus,  // 未使用，移除（eslint no-unused-vars）
 } from '../domain/types';
 
 export class SelfLearningAccess {

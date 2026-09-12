@@ -33,6 +33,8 @@ export function useChatStream() {
 
   // 需求确认 / 需求补充的提交中状态（防重复提交）
   const confirmingIntent = ref(false)
+  /** 权限卡应答进行中（加载态） */
+  const permitting = ref(false)
 
   function addErrorBlock(botMsgId: string, message: string, errorCode: string, retryAvailable: boolean) {
     const errBlock: Block = {
@@ -140,21 +142,15 @@ export function useChatStream() {
   /**
    * 需求理解确认：APPROVE 按理解执行 / KEEP 按原文执行 / CANCEL 取消并丢弃原始输入。
    * 立即关闭确认弹窗，SSE 流式完成后实时展示思考过程与系统回答，最后刷新历史。
+   *
+   * ===== 修改后（2026-09-11）：permission.asked 不再复用本卡片 =====
+   * 权限卡改为独立 PermissionConfirmCard 插入对话区（chatStreamEvents.onPermissionAsked），
+   * 应答走 handlePermissionConfirm；避免"按原文执行"被二次映射为拒绝的事故
+   * （interact 2109c9a5，answerPermission(action === 'APPROVE')）。
    */
   async function handleIntentConfirm(action: 'APPROVE' | 'KEEP' | 'CANCEL') {
     const conf = chatUi.intentConfirmation
     if (!conf || confirmingIntent.value) return
-    // 权限门分流：permission.asked 的应答走 answerPermission（v2 权限门）
-    if ((conf as unknown as { kind?: string }).kind === 'permission') {
-      confirmingIntent.value = true
-      chatUi.clearIntentConfirmation()
-      try {
-        await answerPermission((conf as unknown as { permission_id: string }).permission_id, action === 'APPROVE')
-      } finally {
-        confirmingIntent.value = false
-      }
-      return
-    }
     confirmingIntent.value = true
     // 立即关闭确认弹窗，避免后端同步重入编排（APPROVE/KEEP 会重新执行完整编排、耗时较长）期间弹窗长期停留
     chatUi.clearIntentConfirmation()
@@ -182,9 +178,31 @@ export function useChatStream() {
   }
 
   /** 需求补充提交：收集各澄清项答案并发起流式执行 */
+  /**
+   * 工具权限确认（对话区内联卡片应答）：允许 / 拒绝 → answerPermission 唤醒挂起的 Loop。
+   * 同时幂等更新本地卡片状态（pending → allowed/denied），落库由后端权限审计桥完成。
+   */
+  async function handlePermissionConfirm(permission: ChatMessage['permission'], approved: boolean) {
+    if (!permission || permission.status !== 'pending' || permitting.value) return
+    const msgId = `perm-${permission.permissionId}`
+    permitting.value = true
+    try {
+      await answerPermission(permission.permissionId, approved)
+      sessionStore.updateMessage(msgId, {
+        permission: { ...permission, status: approved ? 'allowed' : 'denied', answeredAt: Date.now() },
+      })
+    } catch {
+      /* 保持 pending，允许用户继续点击 */
+    } finally {
+      permitting.value = false
+    }
+  }
+
   return {
     confirmingIntent,
+    permitting,
     handleSend,
     handleIntentConfirm,
+    handlePermissionConfirm,
   }
 }

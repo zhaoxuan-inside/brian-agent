@@ -3,7 +3,7 @@ import { startTestServer, stopTestServer, cleanupE2ETempDirs } from './e2e-serve
 import type * as http from 'node:http';
 
 let apiBase: string;
-let server: http.Server;
+let server: http.Server | undefined;
 
 beforeAll(async () => {
   const setup = await startTestServer();
@@ -12,7 +12,18 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
-  await stopTestServer(server);
+  // 清理：停掉 start 用例启动的全部学习定时器（DOCUMENT/RANDOM/CONVERSATION/TAG_MAINTENANCE），
+  // 避免 vitest 因活跃 setInterval 挂起
+  if (apiBase) {
+    try {
+      await fetch(`${apiBase}/api/learning/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ learning_mode: 'ALL' }),
+      });
+    } catch { /* server may already be closed */ }
+  }
+  if (server) await stopTestServer(server);
   cleanupE2ETempDirs();
 });
 
@@ -102,14 +113,50 @@ describe('Learning Page - Stats E2E', () => {
     expect(typeof res.body.totalLearnCount).toBe('number');
     expect(typeof res.body.knowledgeCount).toBe('number');
   });
+
+  it('should get stats filtered by source (三模式卡片统计)', async () => {
+    for (const source of ['from-document', 'from-conversation', 'tag-graph']) {
+      const res = await api(`/api/learning/stats?source=${source}`);
+      expect(res.status).toBe(200);
+      expect(typeof res.body.totalLearnCount).toBe('number');
+      expect(Array.isArray(res.body.trend)).toBe(true);
+    }
+  });
+});
+
+describe('Learning Page - Task Registry E2E (任务条)', () => {
+  it('should register fire-and-forget tasks on start (running→completed)', async () => {
+    const start = await api('/api/learning/start', { method: 'POST', body: JSON.stringify({ mode: 'from-document' }) });
+    expect(start.status).toBe(200);
+
+    // 任务注册表：任务应已登记（可能仍在 running 或已完成）
+    const tasks = await api('/api/learning/tasks');
+    expect(tasks.status).toBe(200);
+    expect(Array.isArray(tasks.body.tasks)).toBe(true);
+    expect(tasks.body.tasks.length).toBeGreaterThan(0);
+    const docTask = tasks.body.tasks.find((t: any) => t.mode === 'DOCUMENT');
+    expect(docTask).toBeDefined();
+    expect(['running', 'completed', 'failed']).toContain(docTask.status);
+    expect(typeof docTask.task_id).toBe('string');
+    expect(typeof docTask.label).toBe('string');
+    expect(typeof docTask.started_at).toBe('number');
+  });
 });
 
 describe('Learning Page - Progress E2E', () => {
   it('TC-LEARN-019: should get learning progress', async () => {
     const res = await api('/api/learning/progress-enhanced');
     expect(res.status).toBe(200);
-    expect(res.body.status !== undefined).toBe(true);
-    expect(Array.isArray(res.body.queue)).toBe(true);
+    // ===== 原始断言（保留作为参考）：progress-enhanced 已演进为三模式契约（mode/running/randomFactor/queueSize/modes）=====
+    // expect(res.body.status !== undefined).toBe(true);
+    // expect(Array.isArray(res.body.queue)).toBe(true);
+    expect(typeof res.body.mode).toBe('string');
+    expect(typeof res.body.running).toBe('boolean');
+    expect(typeof res.body.randomFactor).toBe('number');
+    expect(typeof res.body.queueSize).toBe('number');
+    expect(res.body.modes).toBeDefined();
+    expect(res.body.modes['from-document']).toHaveProperty('auto');
+    expect(res.body.modes['from-document']).toHaveProperty('randomFactor');
   });
 
   it('should get learning queue', async () => {
@@ -122,7 +169,7 @@ describe('Learning Page - Progress E2E', () => {
     for (let i = 0; i < 3; i++) {
       const res = await api('/api/learning/progress-enhanced');
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body.queue)).toBe(true);
+      expect(typeof res.body.queueSize).toBe('number');
     }
   });
 });

@@ -109,6 +109,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     input.user_message = '北京今天天气怎么样？';
     input.system = '你是任务执行代理，可用工具完成查询。';
     input.llm_id = '';
+    input.component_scope = { skills: ['weather'], mcps: [] };
     if (overrides) {
       Object.assign(input, overrides);
     }

@@ -38,9 +38,17 @@ export class PromptsSchemaInitializer {
         "prompt_template_title" TEXT    NOT NULL,
         "prompt_template_brief" TEXT,
         "prompt_template"       TEXT    NOT NULL,
+        "is_system"             INTEGER NOT NULL DEFAULT 0,
+        "seed_hash"             TEXT,
         "enable"                INTEGER NOT NULL DEFAULT 1
       )
     `);
+    // ===== 2026-09-11 迁移：老库补列 + 存量 builtin 行补系统标记 =====
+    this.addColumnIfMissing('is_system', 'INTEGER NOT NULL DEFAULT 0');
+    this.addColumnIfMissing('seed_hash', 'TEXT');
+    this.relationDb.executeRaw(
+      `UPDATE "${PROMPT_TEMPLATE_TABLE}" SET "is_system" = 1 WHERE "id" LIKE 'builtin.%'`,
+    );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_created" ON "${PROMPT_TEMPLATE_TABLE}" ("created")`,
     );
@@ -79,5 +87,16 @@ export class PromptsSchemaInitializer {
         "updated"      INTEGER NOT NULL
       )
     `);
+  }
+
+  /** 补列迁移（数据处理；列已存在则跳过） */
+  private addColumnIfMissing(column: string, ddl: string): void {
+    const cols = this.relationDb.queryRaw<{ name: string }>(
+      `PRAGMA table_info("${PROMPT_TEMPLATE_TABLE}")`,
+      [],
+    );
+    if (!cols?.some((c) => c.name === column)) {
+      this.relationDb.executeRaw(`ALTER TABLE "${PROMPT_TEMPLATE_TABLE}" ADD COLUMN "${column}" ${ddl}`);
+    }
   }
 }

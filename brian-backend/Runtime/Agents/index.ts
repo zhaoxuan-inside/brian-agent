@@ -21,6 +21,8 @@ export {
   SoAgentDefsOutput,
   ConfigAgentDefInput,
   ConfigAgentDefOutput,
+  KillErroredAgentInput,
+  KillErroredAgentOutput,
   AgentMode,
   AgentDefStatus,
   AgentMatchLayer,

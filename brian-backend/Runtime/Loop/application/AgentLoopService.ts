@@ -91,6 +91,8 @@ interface LoopRunContext {
   budget: IterationBudget;
   controller: AbortController;
   specs: ToolSpecJson[];
+  /** 组件选择范围（match 阶段选定；执行门依据，透传 execTool→ToolExecutionContext） */
+  componentScope?: { skills: string[]; mcps: string[] };
   stopReason: LoopStopReason;
   result: string;
   error?: string;
@@ -122,6 +124,22 @@ interface LLMTurnResult {
   error?: string;
 }
 
+/** 权限审计鸭子接口（组合根实现；失败不阻断 run，仅记录） */
+export interface PermissionAudit {
+  /** 权限询问落库（info_raw: info_type=PERMISSION, info=JSON） */
+  asked(input: {
+    permission_id: string;
+    session_id: string;
+    session_key: string;
+    run_id: string;
+    tool_id: string;
+    arguments_json: string;
+    asked_at: number;
+  }): Promise<void>;
+  /** 权限应答更新落库（pending → allowed/denied） */
+  answered(input: { permission_id: string; approved: boolean; answered_at: number }): Promise<void>;
+}
+
 /**
  * AgentLoopService。
  */
@@ -139,6 +157,8 @@ export class AgentLoopService {
     private readonly queue?: LoopQueue,
     /** 权限门（Runs 注入；工具执行前询问，permission.asked → 应答 → 继续/拒绝） */
     private readonly permissionGate?: { wait(input: { permission_id: string }): Promise<{ approved: boolean }> },
+    /** 权限审计（组合根注入；asked 落库 / answered 更新状态，均为 best-effort） */
+    private readonly permissionAudit?: PermissionAudit,
   ) {}
 
   /** 初始化组件 */
@@ -217,6 +237,7 @@ export class AgentLoopService {
       budget,
       controller,
       specs,
+      componentScope: input.component_scope,
       stopReason: LoopStopReason.Stop,
       result: '',
       iterations: 0,
@@ -349,12 +370,13 @@ export class AgentLoopService {
   // LLM 调用与流处理
   // -------------------------------------------------------------------------
 
+  // ===== 修改后的方法（2026-09-11）：透传 ctx.metrics 至 execLLMEvents，LLM 单次调用 token/耗时统计可落 Metrics =====
   /** 单轮 LLM 调用（逻辑控制；AbortedError → aborted 收敛） */
   private async callLLMTurn(ctx: LoopRunContext): Promise<LLMTurnResult> {
     const input = await this.prepareLLMTurnInput(ctx);
     const output = new ExecLLMEventsOutput();
     try {
-      const ok = await this.llm.execLLMEvents(input, output, new LLMCtx());
+      const ok = await this.llm.execLLMEvents(input, output, new LLMCtx(), ctx.metrics);
       if (!ok) {
         ctx.error = output.error;
         return { ok: false, verdict: LoopStopReason.Error, error: output.error };
@@ -381,6 +403,41 @@ export class AgentLoopService {
     };
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // /** LLM 入参组装（逻辑控制；finalTurn 收掉工具） */
+  // private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
+  //   const input = new ExecLLMEventsInput();
+  //   input.id = ctx.llmId ?? '';
+  //   input.system = ctx.system;
+  //   input.messages = await this.prepareModelMessages(ctx.sessionId);
+  //   if (!ctx.finalTurn) {
+  //     input.tools = ctx.specs.map((spec) => ({
+  //       tool_id: spec.id,
+  //       description: spec.description,
+  //       parameters: spec.parameters,
+  //     }));
+  //     input.tool_choice = 'auto';
+  //   }
+  //   input.temperature = ctx.temperature;
+  //   input.max_tokens = ctx.maxTokens;
+  //   input.idle_watchdog_ms = ctx.idleWatchdogMs;
+  //   input.signal = ctx.controller.signal;
+  //   input.on_event = (event) => this.streamHandler(ctx, event);
+  //   // 过程可观测：当轮上下文构建完成（wire 消息即当轮 prompt 输入侧）
+  //   const round = ctx.iterations + 1;
+  //   ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
+  //     round,
+  //     message_count: input.messages.length,
+  //     messages: input.messages.map((m) => ({
+  //       role: m.role,
+  //       content: String(m.content ?? '').slice(0, 4000),
+  //       tool_calls: m.tool_calls?.map((t) => t.function.name),
+  //     })),
+  //   });
+  //   return input;
+  // }
+
+  // ===== 修改后的方法（2026-09-09）：context.built 补报 system prompt（模型调用输入的 system 侧）=====
   /** LLM 入参组装（逻辑控制；finalTurn 收掉工具） */
   private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
     const input = new ExecLLMEventsInput();
@@ -400,11 +457,12 @@ export class AgentLoopService {
     input.idle_watchdog_ms = ctx.idleWatchdogMs;
     input.signal = ctx.controller.signal;
     input.on_event = (event) => this.streamHandler(ctx, event);
-    // 过程可观测：当轮上下文构建完成（wire 消息即当轮 prompt 输入侧）
+    // 过程可观测：当轮上下文构建完成（system prompt + wire 消息即当轮 prompt 输入侧）
     const round = ctx.iterations + 1;
     ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
       round,
       message_count: input.messages.length,
+      system: String(ctx.system ?? '').slice(0, 4000),
       messages: input.messages.map((m) => ({
         role: m.role,
         content: String(m.content ?? '').slice(0, 4000),
@@ -547,7 +605,23 @@ export class AgentLoopService {
     }
   }
 
-  /** 新增 Part 并发布 part.created（逻辑控制） */
+  // ===== 原始方法（保留作为参考）=====
+  // /** 新增 Part 并发布 part.created（逻辑控制） */
+  // private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
+  //   const input = new AddPartInput();
+  //   input.message_id = messageId;
+  //   input.run_id = ctx.runId;
+  //   input.part_type = partType;
+  //   input.content = content;
+  //   const output = new AddPartOutput();
+  //   await this.session.addPart(input, output, new SessionCtx());
+  //   await this.publishPartCreated(ctx, messageId, output.part_id, partType);
+  // }
+
+  // ===== 修改后的方法（2026-09-09）：reasoning/text Part 直接收敛为 completed 终态 =====
+  // 原实现在 turn 结束时直存 Part，状态停留 pending（与 tool Part 的状态机不一致），
+  // 导致 runtime_message_part 中思考/回复 Part 恒为 pending；直存即完成，无需经过 running。
+  /** 新增 Part 并发布 part.created（逻辑控制）；直存 Part 落库即终态 completed */
   private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
     const input = new AddPartInput();
     input.message_id = messageId;
@@ -557,6 +631,10 @@ export class AgentLoopService {
     const output = new AddPartOutput();
     await this.session.addPart(input, output, new SessionCtx());
     await this.publishPartCreated(ctx, messageId, output.part_id, partType);
+    const upd = new UpdatePartInput();
+    upd.part_id = output.part_id;
+    upd.status = PartStatus.Completed;
+    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
   }
 
   /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制） */
@@ -597,6 +675,26 @@ export class AgentLoopService {
     }
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // /** 权限询问（逻辑控制）：permission.asked 经 Report 下发，挂起等待 answerPermission 应答 */
+  // private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
+  //   if (!this.permissionGate) {
+  //     return true;
+  //   }
+  //   const permissionId = IdGenerator.generate();
+  //   ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAsked, {
+  //     permission_id: permissionId,
+  //     tool_id: call.tool_id,
+  //     input: call.arguments,
+  //     run_id: ctx.runId,
+  //   });
+  //   const result = await this.permissionGate.wait({ permission_id: permissionId });
+  //   return result.approved;
+  // }
+
+  // ===== 修改后的方法（2026-09-11）：permission.asked/answered 双向接权限审计回调 =====
+  // 事故复盘（run 46a7be65）：权限被拒仅体现为 tool error 文本，无落库记录可追溯。
+  // 现在挂起前回调 audit.asked（落 PERMISSION 信息记录），应答后回调 audit.answered（更新状态）。
   /** 权限询问（逻辑控制）：permission.asked 经 Report 下发，挂起等待 answerPermission 应答 */
   private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
     if (!this.permissionGate) {
@@ -609,7 +707,21 @@ export class AgentLoopService {
       input: call.arguments,
       run_id: ctx.runId,
     });
+    await this.permissionAudit?.asked({
+      permission_id: permissionId,
+      session_id: ctx.sessionId,
+      session_key: ctx.sessionKey,
+      run_id: ctx.runId,
+      tool_id: call.tool_id,
+      arguments_json: call.arguments,
+      asked_at: Date.now(),
+    });
     const result = await this.permissionGate.wait({ permission_id: permissionId });
+    await this.permissionAudit?.answered({
+      permission_id: permissionId,
+      approved: result.approved,
+      answered_at: Date.now(),
+    });
     return result.approved;
   }
 
@@ -659,6 +771,7 @@ export class AgentLoopService {
     input.run_id = ctx.runId;
     input.session_key = ctx.sessionKey;
     input.signal = ctx.controller.signal;
+    input.component_scope = ctx.componentScope;
     // 工具的业务事件出口：经 Report→StreamProvider（保存/审计/投递）
     input.emitEvent = (type: string, payload: unknown) => {
       ctx.report?.pushBusinessEvent(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });

@@ -36,11 +36,29 @@ export class SoulCoreSchemaInitializer {
         "regen_rate"          INTEGER NOT NULL DEFAULT 75,
         "similarity_threshold" REAL   NOT NULL DEFAULT 0.7,
         "prompt_template_id"  TEXT,
-        "llm_id"              TEXT
+        "llm_id"              TEXT,
+        "score_threshold"     INTEGER NOT NULL DEFAULT 90,
+        "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8
       )
     `);
+    // ===== 2026-09-11 迁移：匹配缓存 TTL / 容量（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_ttl_ms" INTEGER NOT NULL DEFAULT 600000`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_capacity" INTEGER NOT NULL DEFAULT 500`);
+    } catch { /* column already exists */ }
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "llm_id" TEXT`);
+    } catch {
+      // 字段已存在则忽略
+    }
+    // ===== 2026-09-11 迁移：排序采纳阈值与任务向量命中阈值 =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "score_threshold" INTEGER NOT NULL DEFAULT 90`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch {
       // 字段已存在则忽略
     }

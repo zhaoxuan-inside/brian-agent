@@ -9,7 +9,7 @@
 
 import type { RelationDBAccess, Metrics, Report, Logger, LLMAccess } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
-import { AgentLoopService } from '../application/AgentLoopService';
+import { AgentLoopService, type PermissionAudit } from '../application/AgentLoopService';
 import type { SessionAccess } from '../../Session';
 import type { ToolAccess } from '../../Tools';
 /** 权限门鸭子接口（Runs 实现；工具执行前询问，应答后继续/拒绝） */
@@ -40,9 +40,9 @@ import {
 export class LoopAccess {
   private readonly service: AgentLoopService;
 
-  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate,
+  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate, permissionAudit?: PermissionAudit,
   ) {
-    const rawService = new AgentLoopService(llm, session, tool, logger, queue, permissionGate);
+    const rawService = new AgentLoopService(llm, session, tool, logger, queue, permissionGate, permissionAudit);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentLoopService;
   }
 

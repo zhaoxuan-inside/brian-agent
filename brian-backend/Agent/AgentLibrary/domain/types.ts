@@ -28,6 +28,8 @@ export interface AgentRecord {
   usage_count: number;
   eval_score: number;
   enable: number | boolean;
+  /** 归属（2026-09-11 新增）：user=用户手动创建；system=AgentBuilder 自动构建/系统内置 */
+  created_by: string;
 }
 
 export interface AgentUsageRecord {
@@ -66,6 +68,8 @@ export interface AgentLibraryConfigRecord {
   similarity_threshold: number;
   regen_rate: number;
   max_agent_count: number;
+  /** Agent 匹配 LLM 采纳阈值（百分制；2026-09-11 新增，默认 70） */
+  match_score_threshold: number;
 }
 
 export class AddAgentInput extends Input {
@@ -82,6 +86,8 @@ export class AddAgentInput extends Input {
   mcp_ids?: string[];
   /** 初始绑定 Prompt 模板 ID（可选） */
   prompt_template_id?: string;
+  /** 归属（可选；2026-09-11 新增）：user=用户创建（默认）；system=AgentBuilder/系统内置 */
+  created_by?: string;
 }
 
 export class AddAgentOutput extends Output {
@@ -227,6 +233,8 @@ export class ConfigAgentLibraryInput extends Input {
   similarity_threshold?: number;
   regen_rate?: number;
   max_agent_count?: number;
+  /** Agent 匹配 LLM 采纳阈值（百分制 0-100；2026-09-11 新增，默认 70） */
+  match_score_threshold?: number;
 }
 
 export class ConfigAgentLibraryOutput extends Output {
@@ -234,6 +242,8 @@ export class ConfigAgentLibraryOutput extends Output {
   similarity_threshold = 0.7;
   regen_rate = 75;
   max_agent_count = 100;
+  /** Agent 匹配 LLM 采纳阈值（2026-09-11 新增） */
+  match_score_threshold = 70;
 }
 
 export const AGENT_TABLE = 'agent';

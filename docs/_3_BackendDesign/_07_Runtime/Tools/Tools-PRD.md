@@ -89,3 +89,49 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
 2. **signal 贯穿边界（阶段4）**：`ToolExecutionContext.signal` 已随 execTool 入参传递，但 `ExecSkillInput/ExecMcpInput/CDTCore*Input` 暂无 signal 字段，内置工具执行中不支持中途取消（仅取消检查点在 LLM 流侧）；待 Base/Core Input 契约补 signal 后贯穿。
 3. **max_output**：skill_exec/mcp_exec 不再显式设置（走 ToolService 默认 8000）；`CDT_CONTENT_MAX` 仅用于 CDT 内容截断。
 4. **zod 内省收敛**：zod v3 `_def` 访问收敛至 `zodDef/zodShape` 辅助函数（单一逃逸口）。
+
+## 8. CDP 命令超时（2026-09-09）
+
+**变更原因**：事故（run `367d9572`，会话 `fb3efe8f`，interact `5f24881f`）——`cdt_browser navigate` 后 CDP 目标无响应，`CDTService.execCDP` 的命令应答 await 无超时，Promise 永不结算 → 工具 Part 恒 `running` → run 永不停 settle（25 分钟+ 仍 running）→ SSE `waitRun` 5 分钟超时向用户报"系统问答超时"，run 卡死占住 lane。
+
+**修改的方法**：
+  - `Base/CDTProvider/application/CDTService.execCDP` — 原代码：命令 Promise 仅依赖 message/error/close 事件，无超时（原结构已注释保留于方法内说明）；修改后：新增 `CDP_COMMAND_TIMEOUT_MS = 30_000` 常量，命令注册定时器，超时按失败结算（`output.error = 'CDP 命令超时（30000ms）：<method>'`）并关闭 WebSocket，run 可正常 settle，Agent 收到工具错误可自行换路重试（实测：模型答复"浏览器打开超时了，我换个方式再试一次"后再次发起导航）。
+  - `Base/CDTProvider/application/CDTService.connectWebSocket` — 同步补 30s 连接超时（防浏览器进程半死时 WebSocket 停在 CONNECTING 永不结算）。
+
+**影响的端点**：
+  - 所有经 `cdt_browser` 的 run（`POST /api/chat/stream`）——单条 CDP 命令最长 30s，工具失败以 error 结果返回而非挂死。
+
+**可能存在的问题**：
+  - 30s 对极慢页面加载可能偏紧（`Page.navigate` 正常应答不受影响；`waitForLoad` 的拟人化等待在命令应答之后，不受该超时约束）；
+  - 超时后该次 WebSocket 连接关闭（每命令一连，无复用损失）。
+
+
+## 9. 权限确认卡独立组件 + 权限审计落库（2026-09-11）
+
+**变更原因**：事故复盘（run `46a7be65`，会话 `58348296`，interact `2109c9a5`）——`cdt_browser navigate` 被拒，根因不是 CDP 调用失败，而是权限确认卡复用了需求理解确认卡（IntentConfirmCard），三按钮「取消 / 按原文执行 / 按理解执行」中**「按原文执行」（KEEP）也被映射为拒绝**（`answerPermission(approved = action === 'APPROVE')`），用户想授权反而触发 permission denied；且权限询问/应答无落库记录，事后不可追溯，历史对话区也看不到权限卡。
+
+**修改的方法**：
+  - `Base/shared/base/InfoEnums.ts` `InfoType` — 新增 `PERMISSION = 'PERMISSION'`（权限卡信息类型，落 info_raw；ChatMap 前端 `buildMessageGraph` 仅收 REQUEST/RESPONSE，天然排除权限卡）。
+  - `Runtime/Loop/application/AgentLoopService.askPermission` — 原代码：仅 `permissionGate.wait` 挂起（已注释保留于方法上方）；修改后：挂起前回调 `permissionAudit.asked`（落 info_raw，info=JSON{permission_id, tool_id, input, status:'pending', asked_at}），应答后回调 `permissionAudit.answered`（status → 'allowed'/'denied'）。
+  - `Runtime/Loop/application/AgentLoopService` 增 `PermissionAudit` 鸭子接口（ctor 可选参），`Runtime/Loop/access/LoopAccess` 构造器透传，`Runtime/index.ts` 导出类型。
+  - `dev-server.ts` — 组合根实现 `permissionAuditBridge`（best-effort：asked 直插 info_raw；answered 按内存 permission_id→info_id 映射回写 info/updated；失败仅记日志不阻断 run）；`GET /api/chat/history` 过滤条件加入 PERMISSION，映射为带 `permission` 字段的对话区消息并入历史返回。
+
+**影响的端点**：
+  - `POST /api/chat/permission/answer` — 应答后权限记录状态收敛（allowed/denied），同会话历史/回放可见决策。
+  - `GET /api/chat/history/{sessionId}` — 新增返回 `permission` 类型消息（对话区渲染权限卡；ChatMap 不展示）。
+  - 所有经权限门的 run（`POST /api/chat/stream`）— asked/answered best-effort 落库，不改变挂起/应答时序。
+
+**可能存在的问题**：
+  - 运行中权限卡状态由前端本地翻转（SSE 无 permission.answered 事件），多端同会话场景另一端状态不同步；
+  - 服务重启期间 pending 权限的内存映射丢失，answered 无法回写（记录停留 pending，历史卡只读展示）；
+  - permission 记录不走 saveInfo 全链路（无向量/关键词派生与 GraphDB 节点），仅 info_raw 存档，检索不可见（预期：权限卡非知识信息）。
+
+### [2026-09-11] 启动期预热工具规格缓存
+
+**变更原因**：会话每轮 LLM 调用前都经 `soLoopToolSpecs → soTools` 取工具规格，原实现每次重新做 zod→JSON Schema 转换（纯 CPU 重复）；复盘 interact 65f80eb3 归因延迟后随单清清理。
+
+**修改的方法**：
+  - `ToolService` 新增 `specCache`（Map<tool_id, ToolSpecJson>）；`initialize()` 与 `registerBuiltinTools()` 启动期 `warmSpecCache()` 预热；`soTools` 改走 `soCachedSpec`（miss 重建回填，原实现已注释保留）；`registerTool` 覆盖注册时使旧缓存失效，下次查询按新 def 自动重建。
+
+**可能存在的问题**：
+  - 缓存基于"注册后 def 不变"假设：init 期以外热注册新工具首次查询有一次一次性构建成本（已保证返回正确值）。

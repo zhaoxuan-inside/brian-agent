@@ -247,7 +247,13 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
 
   /** Agent 反思：追加 REFLECT 步骤（反思阶段仍属于思考推理中 RUNNING） */
 
-  /** Agent 产出完成（SUCCESS → 绿色）：回填输出与 Token 用量/耗时；文本产出同时流入用户可见文本块 */
+  /**
+   * ===== 修改后的方法（2026-09-12）：tool.result 不再写入用户可见文本块 =====
+   * 原实现把工具输出 appendAssistantChunk 追加进用户可见 TextParagraph，与随后的
+   * reply.delta 最终回复同块拼接 → 一次提问在同一个气泡里出现"工具结果 + 最终回复"
+   * 两段回答（interact 307bee46 复盘）。现改为：Agent 输出只回填思考块，用户可见
+   * 最终回复仅由 reply.delta / text_chunk 提供。
+   */
   function onAgentOutput(ctx: StreamEventCtx) {
     const { payload } = ctx
     const outputVal = payload.output || payload.result || payload.chunk || payload.answer
@@ -270,8 +276,9 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
         meta: { ...thinkBlock.meta, status: 'done' },
       })
     }
-    // 如果也是向用户展示的文本块
-    appendAssistantChunk(ctx, typeof outputVal === 'string' ? outputVal : String(outputVal || ''))
+    // ===== 原始代码（保留作为参考）：工具输出曾直接流入用户可见文本块，造成"一次提问两个回答" =====
+    // appendAssistantChunk(ctx, typeof outputVal === 'string' ? outputVal : String(outputVal || ''))
+    // 修改后：用户可见最终回复仅由 reply.delta / text_chunk 提供，工具输出只进思考块。
   }
 
   /** 最终回复流式文本：开始输出即收敛思考块为 done，避免弹窗在回复已展示后仍显示「思考中...」 */
@@ -316,6 +323,69 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     thinkBlock.content += lines.join('\n') + '\n'
   }
 
+  /** intent.analyzed：意图识别（LLM 需求/意图匹配评估）结果 → 思考面板 */
+  function onIntentAnalyzed(ctx: StreamEventCtx) {
+    const score = Number(ctx.payload.score ?? 0)
+    const reason = String(ctx.payload.reason || '')
+    const matchedAgent = String(ctx.payload.agent_id || '')
+    const adopted = Boolean(ctx.payload.adopted)
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[意图分析] 打分 ${score}（${adopted ? '采纳' : '未达阈值'}）${matchedAgent ? ' → ' + matchedAgent : ''}\n`
+    if (reason) thinkBlock.content += `· ${reason}\n`
+  }
+
+  /** agent.built：Agent 构建完成（未命中既有 Agent 新建）→ 思考面板 */
+  function onAgentBuilt(ctx: StreamEventCtx) {
+    const name = String(ctx.payload.name || ctx.payload.agent_id || 'agent')
+    const purpose = String(ctx.payload.purpose || '')
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[Agent 构建] ${name}${purpose ? ' — ' + purpose : ''}\n`
+  }
+
+  /** llm.selected：LLM 选定 → 思考面板 */
+  function onLlmSelected(ctx: StreamEventCtx) {
+    const llmId = String(ctx.payload.llm_id || '')
+    if (!llmId) return
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[LLM 选定] ${llmId}\n`
+  }
+
+  /** prompt.selected：Prompt 选定（模板渲染出 system prompt）→ 思考面板 */
+  function onPromptSelected(ctx: StreamEventCtx) {
+    const templateId = String(ctx.payload.template_id || 'builtin.identity')
+    const system = String(ctx.payload.system || '')
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[Prompt 选定] ${templateId}\n`
+    if (system) thinkBlock.prompt = system
+  }
+
+  /** skill.selected：Skill 选定 → 思考面板 */
+  function onSkillSelected(ctx: StreamEventCtx) {
+    const skills = Array.isArray(ctx.payload.skills) ? ctx.payload.skills as Array<{ id?: string; brief?: string }> : []
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[Skill 选定]${skills.length ? '' : '（无）'}\n`
+    for (const s of skills) thinkBlock.content += `· ${s.id}${s.brief ? ' — ' + s.brief : ''}\n`
+  }
+
+  /** mcp.selected：MCP 选定 → 思考面板 */
+  function onMcpSelected(ctx: StreamEventCtx) {
+    const mcps = Array.isArray(ctx.payload.mcps) ? ctx.payload.mcps as Array<{ id?: string; brief?: string }> : []
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[MCP 选定]${mcps.length ? '' : '（无）'}\n`
+    for (const m of mcps) thinkBlock.content += `· ${m.id}${m.brief ? ' — ' + m.brief : ''}\n`
+  }
+
+  /** evaluation.completed：Evolutor 评估结论 → 思考面板 */
+  function onEvaluationCompleted(ctx: StreamEventCtx) {
+    const evalType = String(ctx.payload.eval_type || '')
+    const scores = (ctx.payload.scores && typeof ctx.payload.scores === 'object') ? ctx.payload.scores as Record<string, unknown> : {}
+    const overall = Number(scores.overall ?? 0)
+    const suggestions = Array.isArray(ctx.payload.suggestions) ? (ctx.payload.suggestions as unknown[]).map(String) : []
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[评估] ${evalType} overall=${overall}${ctx.payload.need_optimize ? '（需优化）' : ''}\n`
+    for (const s of suggestions) thinkBlock.content += `· ${s}\n`
+  }
+
   /** tool.started：工具开始执行 → 动作轨迹 */
   function onToolStarted(ctx: StreamEventCtx) {
     onAgentAction({ ...ctx, payload: { action: ctx.payload.tool_id, input: ctx.payload.input } })
@@ -344,16 +414,44 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     } as never)
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // /** permission.asked（v2 协议）：复用需求理解确认弹窗（IntentConfirmCard）展示权限询问 */
+  // function onPermissionAsked(ctx: StreamEventCtx) {
+  //   ui.setIntentConfirmation({
+  //     session_id: String(ctx.payload.session_key ?? ''),
+  //     original_query: String(ctx.payload.tool_id ?? 'tool'),
+  //     understood_requirement: '允许执行工具 ' + String(ctx.payload.tool_id ?? '') + ' ？',
+  //     reasoning: '该工具需要你的授权后才能执行',
+  //     kind: 'permission',
+  //     permission_id: String(ctx.payload.permission_id ?? ''),
+  //     tool_id: String(ctx.payload.tool_id ?? ''),
+  //   })
+  // }
+
+  // ===== 修改后的方法（2026-09-11）：权限卡独立组件，直接插入对话区消息时间线 =====
+  // 事故复盘（interact 2109c9a5）：复用 IntentConfirmCard 导致"按原文执行"按钮被映射为拒绝
+  // （answerPermission(approved = action === 'APPROVE')），用户想授权反而拒绝。
+  // 现改为：permission.asked 在对话区插入独立 PermissionConfirmCard（允许/拒绝双按钮），
+  // 同一记录由后端落库（info_raw: PERMISSION），历史回放同款卡片；ChatMap 因
+  // buildMessageGraph 仅收 REQUEST/RESPONSE 天然不展示。卡 id 用许可 id 保证幂等。
   /** permission.asked（v2 协议）：权限确认卡（approve/deny → answerPermission 唤醒挂起的 Loop） */
   function onPermissionAsked(ctx: StreamEventCtx) {
-    ui.setIntentConfirmation({
-      session_id: String(ctx.payload.session_key ?? ''),
-      original_query: String(ctx.payload.tool_id ?? 'tool'),
-      understood_requirement: '允许执行工具 ' + String(ctx.payload.tool_id ?? '') + ' ？',
-      reasoning: '该工具需要你的授权后才能执行',
-      kind: 'permission',
-      permission_id: String(ctx.payload.permission_id ?? ''),
-      tool_id: String(ctx.payload.tool_id ?? ''),
+    const permissionId = String(ctx.payload.permission_id ?? '')
+    if (!permissionId) return
+    const msgId = `perm-${permissionId}`
+    if (ctx.chat.messages.some(m => m.id === msgId)) return
+    ctx.chat.addMessage({
+      id: msgId,
+      role: 'assistant',
+      content: '',
+      timestamp: ctx.serverTime,
+      permission: {
+        permissionId,
+        toolId: String(ctx.payload.tool_id ?? 'tool'),
+        input: ctx.payload.input ?? {},
+        status: 'pending',
+        askedAt: ctx.serverTime,
+      },
     })
   }
 
@@ -450,6 +548,13 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.ContextBuilt]: onContextBuilt,
     [BusinessEvent.AgentSelected]: onAgentSelected,
     [BusinessEvent.AgentComponents]: onAgentComponents,
+    [BusinessEvent.IntentAnalyzed]: onIntentAnalyzed,
+    [BusinessEvent.AgentBuilt]: onAgentBuilt,
+    [BusinessEvent.LlmSelected]: onLlmSelected,
+    [BusinessEvent.PromptSelected]: onPromptSelected,
+    [BusinessEvent.SkillSelected]: onSkillSelected,
+    [BusinessEvent.McpSelected]: onMcpSelected,
+    [BusinessEvent.EvaluationCompleted]: onEvaluationCompleted,
     [BusinessEvent.ErrorOccurred]: onError,
     [BusinessEvent.MessageBlock]: () => { /* 阶段4 块流 */ },
     [SseTransportEvent.Done]: onDone,

@@ -19,7 +19,7 @@ import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationD
 import type { Logger } from '../../shared/aop/AopProxy';
 import type { PromptsAccess } from '../../PromptsProvider/access/PromptsAccess';
 import { PromptContext, ExecPromptInput, ExecPromptOutput } from '../../PromptsProvider/domain/types';
-import { PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '../../PromptCatalog/catalog';
+import { PROMPT_IDS } from '../../PromptCatalog/catalog';
 import { ConfigService } from '../../shared/config/ConfigService';
 import { HttpAccess } from '../../ToolProvider/access/HttpAccess';
 import { TOOL_CONFIG_TABLE } from '../../ToolProvider/domain/types';
@@ -72,8 +72,12 @@ const LIST_TIMEOUT_MS = 30000;
 
 /** 模型列表缓存有效期（毫秒），默认 1 小时 */
 
-/** execLLM 默认请求超时时间（毫秒） */
-const EXEC_TIMEOUT_MS = 120000;
+// ===== 2026-09-11：调用超时改为可配置（llm_config：exec_timeout_ms / embed_timeout_ms，配置中心 LLM Provider 页可调） =====
+/** execLLM 默认请求超时时间（毫秒；配置中心可调） */
+const EXEC_TIMEOUT_DEFAULT_MS = 120000;
+
+/** embedLLM 超时时间（毫秒；embedding 服务不可达时快速失败，防拖垮调用链；配置中心可调） */
+const EMBED_TIMEOUT_DEFAULT_MS = 15000;
 
 /**
  * LLMProvider 应用服务。
@@ -87,6 +91,11 @@ export class LLMService {
 
   /** 是否已执行 closeLLM（终态标记） */
   private closed = false;
+
+  /** 请求超时（毫秒；llm_config.exec_timeout_ms，2026-09-11 起可配置） */
+  private execTimeoutMs = EXEC_TIMEOUT_DEFAULT_MS;
+  /** embedding 请求超时（毫秒；llm_config.embed_timeout_ms，2026-09-11 起可配置） */
+  private embedTimeoutMs = EMBED_TIMEOUT_DEFAULT_MS;
 
   private readonly config: ConfigService;
   private readonly http: HttpAccess;
@@ -116,6 +125,11 @@ export class LLMService {
    */
   async initialize(): Promise<void> {
     this.enabled = await this.config.getBoolean('enabled', true);
+    // ===== 2026-09-11：超时参数读配置（llm_config 表；缺省枚举默认值） =====
+    const execMs = await this.config.getInt('exec_timeout_ms', EXEC_TIMEOUT_DEFAULT_MS);
+    const embedMs = await this.config.getInt('embed_timeout_ms', EMBED_TIMEOUT_DEFAULT_MS);
+    this.execTimeoutMs = execMs > 0 ? execMs : EXEC_TIMEOUT_DEFAULT_MS;
+    this.embedTimeoutMs = embedMs > 0 ? embedMs : EMBED_TIMEOUT_DEFAULT_MS;
   }
 
   /**
@@ -868,9 +882,48 @@ export class LLMService {
    * - max_tokens: 最大 Token 数（可选，未指定时使用模型默认 max_tokens）
    * - extra: 其他参数原样传入请求体
    */
+  // ===== 新增方法（2026-09-11）：单次 LLM 调用统计回填（Metrics + INFO 日志，best-effort 不影响主流程） =====
+  /**
+   * 回填单次 LLM 调用统计到 Metrics 并记录 INFO 日志。
+   *
+   * - Metrics.recordLLMUsage：累积到 metrics.llm_usage（AOP 落 log_record 时随序列化携带）；
+   * - metrics.info：直接落 log_record（INFO 级别，含 trace_id，监控页可按 TraceId 关联）。
+   */
+  private recordLLMCallMetrics(metrics?: Metrics, usage?: {
+    llm_id?: string;
+    attempt?: number;
+    input_tokens: number;
+    output_tokens: number;
+    duration_ms: number;
+  }): void {
+    if (!metrics || !usage) {
+      return;
+    }
+    try {
+      metrics.recordLLMUsage({
+        llm_id: usage.llm_id,
+        attempt: usage.attempt,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        duration_ms: usage.duration_ms,
+      });
+      metrics.info(`LLM call: ${usage.input_tokens} in / ${usage.output_tokens} out tokens in ${usage.duration_ms}ms`, {
+        log_source: 'LLM',
+        llm_id: usage.llm_id,
+        attempt: usage.attempt,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        duration_ms: usage.duration_ms,
+      });
+    } catch {
+      /* best effort */
+    }
+  }
+
   // ===== 修改后的方法：支持模型故障自动降级回退（指定模型 -> 默认模型 -> 启用模型1 -> 启用模型2 ...） =====
   // 当 input.no_fallback 为 true 时，仅尝试指定模型，不降级到其他模型
-  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
+  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const prompt = String(input.prompt ?? '');
@@ -900,6 +953,14 @@ export class LLMService {
       const ok = await this.executeSingleLLM(currentId, input, startTime, singleOutput);
       if (ok) {
         Object.assign(output, singleOutput);
+        // 过程可观测（2026-09-11）：单次 LLM 调用统计回填 Metrics（token + 耗时）
+        this.recordLLMCallMetrics(metrics, {
+          llm_id: currentId,
+          attempt: i + 1,
+          input_tokens: Number(output.input_tokens ?? 0) || 0,
+          output_tokens: Number(output.output_tokens ?? 0) || 0,
+          duration_ms: Number(output.duration_ms ?? 0) || (Date.now() - startTime),
+        });
         if (i > 0) {
           this.logger?.debug(
             `LLM failover: 模型 ${candidateIds[0]} 调用失败，自动降级至候选模型 ${currentId} 成功 (尝试第 ${i + 1} 个)`,
@@ -958,7 +1019,8 @@ export class LLMService {
    * 5. **真取消**：外部 signal 触发 → AbortedError 立即上抛（不触发降级）；
    *    空闲看门狗（默认 30s 连续无 chunk）→ AbortedError('timeout') 同样上抛。
    */
-  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
+  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     this.validateEventsInput(input);
@@ -974,6 +1036,14 @@ export class LLMService {
       const single = await this.executeEventsSingle(candidateIds[i], input, input.signal);
       if (single.ok) {
         this.fillEventsOutput(output, single, startTime, input);
+        // 过程可观测（2026-09-11）：单次 LLM 调用统计回填 Metrics（token + 耗时）
+        this.recordLLMCallMetrics(metrics, {
+          llm_id: candidateIds[i],
+          attempt: i + 1,
+          input_tokens: Number(output.input_tokens ?? 0) || 0,
+          output_tokens: Number(output.output_tokens ?? 0) || 0,
+          duration_ms: Number(output.duration_ms ?? 0) || (Date.now() - startTime),
+        });
         return true;
       }
       lastError = single.error || 'Unknown error';
@@ -1274,7 +1344,7 @@ export class LLMService {
         const streamBodyStr = JSON.stringify(streamBody);
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), EXEC_TIMEOUT_MS);
+        const timer = setTimeout(() => controller.abort(), this.execTimeoutMs);
 
         const res = await fetch(req.url, {
           method: req.method || 'POST',
@@ -1348,7 +1418,7 @@ export class LLMService {
           method: req.method,
           headers: req.headers,
           body: req.body,
-          timeout_ms: EXEC_TIMEOUT_MS,
+          timeout_ms: this.execTimeoutMs,
         });
         const httpOutput = new ExecRequestOutput();
         await this.http.execRequest(httpInput, httpOutput, new HttpContext());
@@ -1451,10 +1521,11 @@ export class LLMService {
     try {
       const httpInput = Object.assign(new ExecRequestInput(), {
         url: req.url,
-        method: req.method,
+        method: req.headers ? req.method : req.method,
         headers: req.headers,
         body: req.body,
-        timeout_ms: EXEC_TIMEOUT_MS,
+        // ===== 2026-09-11：embedding 走独立短超时（一次卡死会拖垮匹配缓存命中链路） =====
+        timeout_ms: this.embedTimeoutMs,
       });
       const httpOutput = new ExecRequestOutput();
       await this.http.execRequest(httpInput, httpOutput, new HttpContext());
@@ -1544,17 +1615,7 @@ export class LLMService {
       );
       prompt = execPromptOutput.prompt || '';
     }
-    // 兜底：PromptsProvider 未注入或模板缺失时，用内存内置模板渲染
-    if (!prompt) {
-      const template = getBuiltinTemplate(PROMPT_IDS.llmAttrGen);
-      if (template) {
-        prompt = renderTemplate(template, {
-          model_name: llm.llm_title,
-          llm_type: llm.llm_type || 'text',
-          provider_title: providerTitle,
-        });
-      }
-    }
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud（模板统一由 prompt_template 表承载） =====
     if (!prompt) {
       throw new ValidationError('模型属性生成 Prompt 不可用');
     }

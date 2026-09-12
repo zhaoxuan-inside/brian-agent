@@ -8,6 +8,6 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `initialize` | `` | `Promise<void>` | — |
+| `initialize` | `` | `Promise<void>` | 初始化：确保内置摘要 Soul / 系统 Agent 就绪（幂等，失败仅告警不阻断启动）。 |
 | `ensureBuiltin` | `ctx: SummaryAgentContext` | `Promise<boolean>` | — |
 | `generateSummary` | `i: GenerateSummaryInput, o: GenerateSummaryOutput, c: SummaryAgentContext, metrics?: Me...` | `Promise<boolean>` | — |

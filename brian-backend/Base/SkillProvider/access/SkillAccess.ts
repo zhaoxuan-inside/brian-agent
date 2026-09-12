@@ -15,7 +15,6 @@ import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationD
 import { SkillSchemaInitializer } from '../infrastructure/SkillSchemaInitializer';
 import { SkillService } from '../application/SkillService';
 import { IsolatedVMSandbox } from '../infrastructure/sandbox/IsolatedVMSandbox';
-import { UnavailableJsSandbox } from '../infrastructure/sandbox/UnavailableJsSandbox';
 import type { ISandbox } from '../infrastructure/sandbox/ISandbox';
 import {
   SkillContext,
@@ -65,16 +64,11 @@ export class SkillAccess {
   constructor(relationDb: RelationDBAccess, logger?: Logger) {
     // 初始化表结构
     new SkillSchemaInitializer(relationDb).init();
-    // 创建沙箱实例：isolated-vm 预编译二进制缺失的平台（部分离线发行包）降级为
-    // 占位实现（.js Skill 执行时返回明确错误），保证服务可正常启动
-    let sandbox: ISandbox;
-    try {
-      sandbox = new IsolatedVMSandbox();
-    } catch (e) {
-      sandbox = new UnavailableJsSandbox((e as Error).message);
-      // eslint-disable-next-line no-console
-      console.warn(`[skill] JavaScript 沙箱不可用，.js Skill 已降级禁用: ${(e as Error).message}`);
-    }
+    // 创建沙箱实例：IsolatedVMSandbox 延迟加载 isolated-vm 原生模块，
+    // 优先使用 prebuilt/ 离线二进制；缺失时由 vendored loader 自动从源码
+    // 编译兜底（Win/macOS/Linux 三平台，见 vendor/isolated-vm/isolated-vm.js），
+    // 保证 .js Skill 沙箱在任意平台可用，不再有"缺失降级"路径。
+    const sandbox: ISandbox = new IsolatedVMSandbox();
     // 创建 Service 并通过代理模式增加切面注入能力
     const rawService = new SkillService(relationDb, sandbox);
     this.service = AopProxy.wrap(rawService, { logger });

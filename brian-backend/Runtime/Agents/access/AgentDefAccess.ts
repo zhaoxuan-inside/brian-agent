@@ -18,6 +18,8 @@ import {
   SoAgentDefsOutput,
   ConfigAgentDefInput,
   ConfigAgentDefOutput,
+  KillErroredAgentInput,
+  KillErroredAgentOutput,
 } from '../domain/types';
 
 /**
@@ -65,5 +67,11 @@ export class AgentDefAccess {
   async configAgentDef(input: ConfigAgentDefInput, output: ConfigAgentDefOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.configAgentDef(input, output, context, metrics, report);
+  }
+
+  /** 错误 Agent 立即杀死（错误 run 结算即触发；disable def + system 归属硬删除） */
+  async killErroredAgent(input: KillErroredAgentInput, output: KillErroredAgentOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.killErroredAgent(input, output, context, metrics, report);
   }
 }

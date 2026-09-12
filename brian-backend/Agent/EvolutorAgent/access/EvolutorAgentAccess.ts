@@ -13,6 +13,7 @@ import {
   EvalWriterAgentInput, EvalWriterAgentOutput,
   StartEvalScheduleInput, StartEvalScheduleOutput,
   StopEvalScheduleInput, StopEvalScheduleOutput,
+  RunEvalOnceInput, RunEvalOnceOutput,
   GetEvaluationInput, GetEvaluationOutput,
   GetEvolutionReportInput, GetEvolutionReportOutput,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,
@@ -67,6 +68,12 @@ export class EvolutorAgentAccess {
   ): Promise<boolean> {
     await this.initPromise;
     return this.service.stopEvalSchedule(i, o, c, metrics, report);
+  }
+
+  async runEvalOnce(i: RunEvalOnceInput, o: RunEvalOnceOutput, c: EvolutorAgentContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.runEvalOnce(i, o, c, metrics, report);
   }
 
   async soEvaluation(i: GetEvaluationInput, o: GetEvaluationOutput, c: EvolutorAgentContext, metrics?: Metrics, report?: Report,

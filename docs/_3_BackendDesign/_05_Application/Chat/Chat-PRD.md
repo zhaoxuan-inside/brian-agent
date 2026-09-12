@@ -440,9 +440,9 @@ Chat 模块的配置通过 Config Application 统一管理（`/api/config/update
 | SSE 流式回复 | openChatStream | 实时推送 work 执行过程 |
 | 消息列表展示 | getChatHistory | 查询会话消息历史 |
 | 消息引用 | submitWork（citing_msg_ids） | 提交时携带引用消息 ID |
-| 回复气泡流式显示 | openChatStream（text 事件） | WriterAgent 逐块推送文本 |
-| Thinking 消息展示 | openChatStream（agent_thinking 事件） | Agent 思考过程 |
-| Planning 策略拆解展示 | openChatStream（plan_created / agent_dag_created / dag_node_start / dag_node_end 事件） | 任务拆解 / Agent DAG / 编排执行步骤；`GET /api/chat/thinking` 响应含 `dag` 字段 |
+| 回复气泡流式显示 | openChatStreamV2（reply.delta 事件） | Runtime v2 逐增量推送文本 |
+| Thinking 消息展示 | openChatStreamV2（think.created / think.delta 事件，经 Report→StreamProvider SSE）；点按"思考过程"按钮回放走 `GET /api/chat/thinking` | Agent 思考过程；回放数据源：V2 run 查 runtime_run / stream_event / runtime_message / runtime_message_part，V1 历史查编排 5 张表 |
+| Planning 策略拆解展示 | openChatStreamV2（实时 agent_dag 事件）；`GET /api/chat/thinking` 响应含 `dag` 字段（V2 直连 run 为单节点 DAG，V1 历史为编排 DAG） | 任务拆解 / Agent DAG / 编排执行步骤 |
 | 反馈按钮 | 见 Feedback Application（本文档暂不涉及） | 评分/点赞/点踩 |
 | 会话列表 | searchSession | 搜索会话列表 |
 | 会话创建 | createSession | 创建新会话 |
@@ -457,6 +457,66 @@ Chat 模块的配置通过 Config Application 统一管理（`/api/config/update
 | 取消工作 | cancelWork | 中断正在执行的 work |
 
 ## 7. 变更记录
+
+### [2026-09-09] "复制 TraceId" 关联语义修复（日志补盖 trace_id）
+**语义约定**：TraceId = 一次 `openChatStream` SSE 交互的追踪 id（与该轮 `interact_id` 同值）。对话区消息卡"复制 TraceId"（`info_raw.trace_id`）、Feedback/Error 块与评估弹窗复制按钮、监控页 `log_record.trace_id` 过滤，三处同一 id 域。
+
+**变更原因**：`ChatService` 直连 `logger?.info/warn` 绕过 `Metrics.merge` 的 trace_id 自动盖章，`log_record.trace_id` 恒 NULL——复制的 TraceId 在监控页查不到日志，id 失去关联语义。
+
+**修改的方法**：
+  - `ChatService.openChatStreamV2` — `run settled` 日志补 `trace_id` / `interact_id` / `work_id`（原行已注释保留）。
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 同步失败 warn 日志补 `trace_id` / `interact_id`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 每轮 settled 日志携带交互 trace；复制 TraceId → 监控页 `GET /api/monitor/logs/query?trace_id=<值>` 可命中。
+
+### [2026-09-09] 对话区重复上一轮内容修复（同步判重键错误 + 空占位行中断同步）
+**变更原因**：`syncRuntimeMessagesToInfoRaw` 每轮结束后按会话全量重读 `runtime_message`，去重条件 `(session_id, info, created)` 中 `created` 取保存时刻（旧数据）或 runtime 真实时间（新数据）——两者对不上时判重必然失败。事故（会话 `fb3efe8f`，interact `5f24881f`/`0c92601f`）：第二轮（`北京`，interact `5f24881f`）run 超时后的同步把第一轮问答（interact `0c92601f`）整组重复插入 info_raw（新 interact 盖旧消息），对话区重复出现上一轮内容；同时空内容占位行（run 未回复完成时 assistant 行 `content=''`）令 `saveInfo` 抛 ValidationError，中断整个同步循环致后续消息漏同步。
+
+**修改的方法**：
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 原代码：按 `created` 精确相等逐条判重 + 空内容直接进 `saveInfo` 抛错中断（原行已注释保留）；修改后：
+    1. 去重键改为 `(work_id, info_type, info)`（与 `created` 无关，历史旧数据亦正确判重）；
+    2. 已落库集合一次查询载入内存 Set（替代逐条 COUNT 的 N+1）；
+    3. 空内容占位行 `continue` 跳过（不再中断循环）；
+    4. 读取上限最近 200 条（`ORDER BY seq DESC LIMIT 200` 后反转为时间序）。
+  - 注：仍按会话全量读取（而非仅本次 run），保证超时 run 迟到落库的最终回复能在下一轮补齐进历史；迟到补齐行会带当轮 `trace_id`，`work_id` 仍为原 run，历史按 work 分组不受影响。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 会话同步落库判重语义变化（work_id 维度），对话区不再重复历史内容。
+  - `GET /api/chat/history/:session_id` — 每条消息仅一份（旧事故会话数据已手工修复：保留 interact `0c92601f` 一组、created 校正为 runtime 真实时间；删除重复组及其派生 tag/keyword）。
+
+**可能存在的问题**：
+  - 同一 run 内合法出现的完全相同消息文本（同 work、同类型、同内容）会被判重跳过一条（概率极低，展示无感知）；
+  - 超时 run 迟到补齐的历史行 interact_id 归当轮 trace（语义近似，按 work 分组展示正确）。
+
+### [2026-09-09] 对话区消息顺序颠倒修复（user/assistant 同时间戳 + 前端 UUID tie-break）
+**变更原因**：`syncRuntimeMessagesToInfoRaw` 在 run 结束后统一同步消息且未携带真实时间 → 同一轮 user/assistant 落库同一 `created`；历史查询按 `created` 排序对同时间戳记录次序不稳定，前端 timeline 同时间戳同 kind 消息落入 UUID 字符串比较 → 用户消息随机显示在系统回复下面。
+
+**修改的方法**：
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 原代码：`SaveInfoInput` 未传 `created`（原行已注释保留）；修改后：`saveInput.created = runtime_message.created`，落库保留消息真实先后（user 先于 assistant），且按 `created` 去重的条件成立。
+  - 前端 `ChatArea.vue` timeline — 原代码：同时间戳消息直接 `key.localeCompare`（UUID 随机序）；修改后：同 kind 消息按角色 tie-break（`user` 恒在 `assistant` 之前），兜底存量同时间戳数据的显示顺序。
+
+**影响的端点**：
+  - `GET /api/chat/history/:session_id` — 新会话消息按真实时间天然有序；存量同时间戳数据由前端角色 tie-break 保证 user 在前。
+  - `POST /api/chat/stream` — 会话同步落库时间戳语义变化（真实消息时间，见 InfoCore-PRD 变更记录）。
+
+**可能存在的问题**：
+  - 存量 V2 数据（修复前落库）user/assistant 同时间戳，历史查询层（ORDER BY created）仍不稳定；显示已由前端兜底，无感知。
+
+### [2026-09-09] V2 直连 run 思考过程重建修复（"思考过程"按钮恒为空）
+**变更原因**：V1 编排链路移除（2026-09-05）后所有对话走 Runtime v2，但 `GET /api/chat/thinking` 的 `buildThinkingBlocksAndDag` 仅查编排 5 张表，V2 run 无编排记录 → "思考过程"按钮弹窗恒为"暂无思考过程"。实全会话 `09634b38`（interact `abe6eeae-…`）验证：V2 上报（agent.selected / agent.components / context.built / think.delta / reply.delta / run.*）与保存（stream_event / runtime_message_part）均正常，仅重建读表错位。**处理原则：不回退 V1，仅在 V2 链路基础上补齐重建流程。**
+
+**修改的方法**：
+  - `dev-server.ts buildThinkingBlocksAndDag` — 原实现改名 `buildThinkingBlocksFromOrchestration` 保留（V1 历史数据只读兼容）；新方法 = 编排表重建 + 无记录 work 回退 `buildThinkingBlocksFromRuntime`（从 runtime_run / stream_event / runtime_message / runtime_message_part 重建 ThinkingChain Block 与单节点 DAG）。
+  - `Runtime/Loop/application/AgentLoopService.addTurnPart` — reasoning/text Part 直存后补 `updatePart(status=Completed)`，修复 Part 状态恒 pending。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — V2 直连 run 可回放思考过程（module=all|dag|blocks 均已验证）；V1 历史行为不变。
+  - `POST /api/chat/stream` — 新对话的 reasoning/text Part 落库状态为 `completed`。
+
+**可能存在的问题**：
+  - `stream_event.run_id` 为空串（report2 未携带 run_id），重建按 session_key + 时间窗关联 run；同会话多 run 时间窗交叠的极端场景存在串扰风险。
+  - V2 直连链路不产生 InfoCore 分类上下文，弹窗 pinned/similarity/keyword/random 等分类为空属预期。
 
 ### [2026-08-23] 需求理解暂停确认：done 事件 paused 标记、历史接口思考过程重建修复
 **变更原因**：① IntentAgent 匹配得分低于阈值时 work 暂停，但 `openChatStream` 仍把暂停的 JSON 串当最终回复流式输出；② `/api/chat/history` 调用 `buildThinkingBlocksAndDag` 时参数错位（少传 infoCore），导致历史消息的思考 Blocks 恒为空，暂停/完成的工作思考过程均无法在刷新后恢复。
@@ -498,3 +558,12 @@ Chat 模块的配置通过 Config Application 统一管理（`/api/config/update
 
 **可能存在的问题**：
 - 历史旧数据 `info_raw.trace_id` 为空时「复制 TraceId」按钮不展示；`trace_id` 依赖上游编排在 `saveInfo` 时落库，缺失时由 AOP 层自动生成。
+
+### [2026-09-11] openChatStreamV2 删除重复 title 生成调用
+**变更原因**：`openChatStreamV2` 内 `autoGenerateSessionTitleIfEmpty` 被连续调用两次（仅隔一次 Connected/Loading emit）， submitsRun 前每次多做一次 chat_session 查询往返；复盘 interact 65f80eb3 时随网络延迟清理项一并移除。
+
+**修改的方法**：
+  - `ChatService.openChatStreamV2` — 保留 `emit(Connected)` 前的一次调用，删除第二次调用（原行已注释保留于方法内）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 每次问答少 1 次冗余 DB 查询往返；title 自动生成行为不变（首次空名为关键字截断 50 字符）。

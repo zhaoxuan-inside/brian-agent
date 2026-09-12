@@ -18,6 +18,7 @@ import {
   DelInfoGraphInput, DelInfoGraphOutput,
   KeywordKInfoInput, KeywordKInfoOutput,
   PinInfoInput, PinInfoOutput,
+  SaveInfoInput, SaveInfoOutput,
   InfoCoreContext,
 } from '@brian-agent/core';
 import {
@@ -109,8 +110,11 @@ export class ChatService {
     report?: Report,
     onEvent?: (event: SSEEvent) => void,
   ): Promise<boolean> {
-    const traceId = context.trace_id || IdGenerator.generate();
-    context.trace_id = traceId;
+    // trace_id 属维护字段：唯一承载点 = Metrics（AOP 已生成/回填）；无则本地生成回填
+    const traceId = metrics?.trace_id || IdGenerator.generate();
+    if (metrics) {
+      metrics.trace_id = traceId;
+    }
     const events: SSEEvent[] = [];
     const emit = (event: string, data: Record<string, unknown>) => {
       const evt: SSEEvent = { event, data };
@@ -118,12 +122,20 @@ export class ChatService {
       onEvent?.(evt);
     };
     const sessionId = input.session_id;
+    // ===== 修改后（2026-09-11）：删除重复的 autoGenerateSessionTitleIfEmpty 调用 =====
+    // 原实现在 openChatStreamV2 内对同一次请求调用了两次（submitRun 前，仅隔一次 emit），
+    // 每次多做一次 chat_session 查询往返；title 只依赖首次写入，保留 Connected 前一次即可。
+    // 原代码：
+    //   await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
+    //   emit Connected / Loading
+    //   const runtime = this.runtime!;
+    //   await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);   ← 重复调用（已删）
     await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
     emit(SseTransportEvent.Connected, { session_id: sessionId, trace_id: traceId });
     emit(SseTransportEvent.Loading, { work_id: sessionId });
 
     const runtime = this.runtime!;
-    await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
+
     const overflowInput = Object.assign(new CheckSessionOverflowInput(), { session_id: sessionId });
     const overflowOutput = new CheckSessionOverflowOutput();
     await this.checkSessionOverflow(overflowInput, overflowOutput, context, metrics, report);
@@ -134,7 +146,9 @@ export class ChatService {
     }
     const addIn = new AddSessionInput();
     addIn.session_key = sessionId;
-    await runtime.session.addSession(addIn, new AddSessionOutput(), new SessionContext());
+    const addOut = new AddSessionOutput();
+    await runtime.session.addSession(addIn, addOut, new SessionContext());
+    const runtimeSessionId = addOut.session_id;
 
     // ===== Report 只负责接收业务的消息：携带 SSE 端点 ID，上报经 StreamProvider =====
     // 保存（stream_event 持久化/审计）、断线恢复重放、按端点 ID 定位 SSE 连接投递，
@@ -155,12 +169,121 @@ export class ChatService {
     await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report2);
     const waitIn = new WaitRunInput();
     waitIn.run_id = submitOut.run_id;
+    waitIn.timeout_ms = 300_000;
     const waitOut = new WaitRunOutput();
     await runtime.gateway.waitRun(waitIn, waitOut, new RunGatewayContext(), metrics, report2);
-    this.logger?.info?.('openChatStreamV2: run settled', { session_id: sessionId, run_id: submitOut.run_id, status: waitOut.status, stop_reason: waitOut.stop_reason });
-    emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: 0, token_usage: {}, paused: false });
+    // ===== 修改后（2026-09-09）：日志携带 trace_id，保证"复制 TraceId"的 id 能在监控页（log_record.trace_id）按交互关联 =====
+    // 原代码：meta 未含 trace_id（直连 logger 绕过 Metrics.merge 的自动盖章），log_record.trace_id 恒 NULL，
+    // 复制的 TraceId 在监控页查不到任何记录，id 失去关联语义。
+    this.logger?.info?.('openChatStreamV2: run settled', {
+      session_id: sessionId,
+      run_id: submitOut.run_id,
+      status: waitOut.status,
+      stop_reason: waitOut.stop_reason,
+      trace_id: traceId,
+      interact_id: traceId,
+      work_id: submitOut.run_id,
+    });
+
+    // Runtime v2 消息持久化在 runtime_message 表，同步到 info_raw 供 chat history 读取
+    await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId);
+
+    if (waitOut.status === 'running') {
+      emit('error.occurred', { error_message: '系统问答超时（5 分钟），请稍后重试', error_code: 'RUN_TIMEOUT', run_id: submitOut.run_id });
+    } else {
+      emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: 0, token_usage: {}, paused: false });
+    }
     output.events = events;
     return true;
+  }
+
+  /**
+   * 将 Runtime v2 的 runtime_message 表消息同步到 info_raw 表，
+   * 供 chat history（soChatHistory）读取。
+   *
+   * ===== 修改后（2026-09-09）：修复对话区重复上一轮内容 =====
+   * 原问题（事故：会话 fb3efe8f，trace 5f24881f / 0c92601f）：
+   * 1. 原实现按 session 全量重读 runtime_message，每轮结束都把历史消息重抄一遍；
+   *    去重条件 (session_id, info, created=保存时刻) 与 runtime_message.created 恒不相等，
+   *    判重必然失败 → 历史问答被重复插入 info_raw，对话区反复出现上一轮内容，
+   *    且旧消息被盖上本轮 traceId（interact_id 污染）。
+   * 2. 空内容占位行（run 未回复完成时 assistant 行 content=''）会令 saveInfo 抛
+   *    ValidationError，异常中断整个同步循环，后续消息漏同步。
+   * 修改后：
+   * 1. 仍按会话读取（便于超时后迟到的最终回复在下一轮补齐），但去重键改为
+   *    (work_id, info_type, info)——与 created 无关，历史旧数据（created=保存时刻）
+   *    也能正确判重，不再产生重复行；读取上限 200 条防成本膨胀。
+   * 2. 跳过空内容行（continue 而非中断）。
+   * 3. 已落库集合一次查询载入内存，避免逐条 COUNT 的 N+1 查询。
+   * 注：迟到补齐的历史行会带上当轮 traceId（interact_id），work_id 仍为其原 run，
+   * 历史按 work_id 分组展示不受影响。
+   */
+  private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string): Promise<void> {
+    try {
+      // ===== 原始代码（保留作为参考）=====
+      // const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
+      //   `SELECT * FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" ASC`,
+      //   [runtimeSessionId],
+      // );
+      // for (const msg of rows) {
+      //   const existing = this.relationDb.queryRaw<{ cnt: number }>(
+      //     `SELECT COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" = ? AND "info" = ? AND "created" = ?`,
+      //     [chatSessionId, msg.content, msg.created],
+      //   );
+      //   if (existing?.[0]?.cnt > 0) continue;
+      //   ...
+      //   await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext());  // 未传 created
+      // }
+      // 倒序取最近 200 条后反转为时间序（限制全量重读成本）
+      const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
+        `SELECT "id", "role", "content", "created", "run_id" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" DESC LIMIT 200`,
+        [runtimeSessionId],
+      );
+      if (!rows || rows.length === 0) return;
+      rows.reverse();
+
+      // 已落库消息集合一次载入（key: work_id|info_type|info），替代逐条 COUNT
+      const existingRows = this.relationDb.queryRaw<{ work_id: string; info_type: string; info: string }>(
+        `SELECT "work_id", "info_type", "info" FROM "info_raw" WHERE "session_id" = ?`,
+        [chatSessionId],
+      );
+      const existingKeys = new Set<string>(
+        (existingRows ?? []).map((r) => `${r.work_id || ''}\u0001${r.info_type || ''}\u0001${r.info || ''}`),
+      );
+
+      for (const msg of rows) {
+        // 空内容占位行（如 run 超时未回复的 assistant 行）跳过，不落库也不中断
+        if (!msg.content || msg.content.trim() === '') continue;
+
+        const infoType = msg.role === 'user' ? 'REQUEST' : 'RESPONSE';
+        const infoCreatorRole = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+        const workId = msg.run_id || runId;
+        const dedupKey = `${workId}\u0001${infoType}\u0001${msg.content}`;
+        if (existingKeys.has(dedupKey)) continue;
+        existingKeys.add(dedupKey);
+
+        const saveInput = new SaveInfoInput();
+        saveInput.session_id = chatSessionId;
+        saveInput.work_id = workId;
+        saveInput.interact_id = traceId;
+        saveInput.trace_id = traceId;
+        saveInput.info_type = infoType;
+        saveInput.info_creator_role = infoCreatorRole;
+        saveInput.info = msg.content;
+        // 携带 runtime_message 的真实创建时间：保证 user 先于 assistant 的时序，
+        // 历史查询 ORDER BY created 顺序稳定（否则对话区顺序错乱）。
+        saveInput.created = Number(msg.created) > 0 ? Number(msg.created) : undefined;
+        const saveOutput = new SaveInfoOutput();
+        await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext());
+      }
+    } catch (err: unknown) {
+      this.logger?.warn?.('syncRuntimeMessagesToInfoRaw: 同步失败（不影响 SSE 流）', {
+        session_id: chatSessionId,
+        trace_id: traceId,
+        interact_id: traceId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 最终回复 → transcript text 分块（数据处理；2-5 字符打字机分块，与 StreamProvider 默认口径一致） */

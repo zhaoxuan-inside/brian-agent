@@ -2,7 +2,7 @@ import { callLLMJson } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
 import * as fs from 'fs';
 import * as path from 'path';
-import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, InfoType, PROMPT_IDS, getBuiltinTemplate, renderTemplate, type Logger, type Condition } from '@brian-agent/base';
+import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, InfoType, PROMPT_IDS, type Logger, type Condition } from '@brian-agent/base';
 import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import type {
   InfoCoreAccess, MQCoreAccess, LLMCoreAccess,
@@ -28,7 +28,7 @@ import {
 } from '@brian-agent/core';
 import {
   EvolutorAgentContext,
-  StartEvalScheduleInput, StartEvalScheduleOutput,
+  RunEvalOnceInput, RunEvalOnceOutput,
   StopEvalScheduleInput, StopEvalScheduleOutput,
 } from '@brian-agent/agent';
 import {
@@ -56,13 +56,27 @@ import {
 } from '../domain/types';
 
 export class SelfLearningService {
-  private documentLearningTimer: ReturnType<typeof setInterval> | null = null;
+  // ===== 修改后的字段：系统唯一的定时器 = 随机概率触发器 =====
+  // 手动触发改为"立即完整执行一次"的单轮任务，不再安装 document/tag 等 per-mode 定时器；
+  // 对话学习改为 Evolutor runEvalOnce 单轮闭环，不再依赖常驻评估调度（原 evalSchedule* 标记随之移除）。
+  /** 唯一的系统定时器：按概率触发三类学习任务（RANDOM / ALL 启动时确保其运行） */
   private randomLearningTimer: ReturnType<typeof setInterval> | null = null;
-  private evalScheduleRunning = false;
-  private tagConnectionTimer: ReturnType<typeof setInterval> | null = null;
-  private tagEstablishTimer: ReturnType<typeof setInterval> | null = null;
-  private tagAgingTimer: ReturnType<typeof setInterval> | null = null;
-  private orphanTagTimer: ReturnType<typeof setInterval> | null = null;
+  /** 三类单轮任务的防重入标志：同一时刻同模式只允许一轮完整执行 */
+  private documentPassRunning = false;
+  private conversationPassRunning = false;
+  private tagMaintenanceRunning = false;
+  /** 手动停止意图：进行中的单轮任务在单元边界（文件 / 建图-激活阶段）检查后提前结束 */
+  private readonly cancelRequested = new Set<LearningTaskRecord['mode']>();
+
+  // ===== 原始字段（保留作为参考）=====
+  // private documentLearningTimer: ReturnType<typeof setInterval> | null = null;
+  // private evalScheduleRunning = false;
+  // private evalScheduleActive = false;
+  // private evalScheduleStartPromise: Promise<void> | null = null;
+  // private tagConnectionTimer: ReturnType<typeof setInterval> | null = null;
+  // private tagEstablishTimer: ReturnType<typeof setInterval> | null = null;
+  // private tagAgingTimer: ReturnType<typeof setInterval> | null = null;
+  // private orphanTagTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly relationDb: RelationDBAccess,
@@ -122,12 +136,14 @@ export class SelfLearningService {
    * 目录记录：is_directory=1，file_size=0，status='PENDING'（不参与文档学习）。
    * 文件记录：is_directory=0，status='PENDING'，relative_path/parent_path 记录层级。
    *
+   * @param skipExisting 传入时为增量模式：relative_path 或 file_path（绝对路径）已存在的条目跳过入库（保留原状态），其子目录仍会递归
    * @returns 扫描到的文件数与目录数
    */
   private async scanLibraryDirectory(
     libraryId: string,
     rootPath: string,
     now: number,
+    skipExisting?: Set<string>,
   ): Promise<{ fileCount: number; dirCount: number }> {
     let fileCount = 0;
     let dirCount = 0;
@@ -160,6 +176,11 @@ export class SelfLearningService {
         }
         if (!isDir && !isFile) continue;
 
+        if (skipExisting && (skipExisting.has(relPath) || skipExisting.has(absPath))) {
+          if (isDir) await walk(absPath, relPath);
+          continue;
+        }
+
         let fileSize = 0;
         if (isFile) {
           try { fileSize = fs.statSync(absPath).size; } catch { fileSize = 0; }
@@ -191,6 +212,28 @@ export class SelfLearningService {
 
     await walk(rootPath, '');
     return { fileCount, dirCount };
+  }
+
+  /**
+   * 增量同步资料库目录：把磁盘上新增的文件/目录登记为 PENDING。
+   * 已有记录保持原状态（COMPLETED 不重复学习），磁盘上已移除的记录不删除。
+   */
+  private async syncLibraryFiles(libraryId: string, rootPath: string, now: number): Promise<void> {
+    if (!rootPath) return;
+    const existing = await this.relationDb.select('self_learning_file', {
+      conditions: [
+        { field: 'library_id', operator: Operator.EQ, value: libraryId },
+      ],
+    });
+    // 遗留数据可能没有 relative_path（空串），故同时按 file_path 绝对路径判重
+    const knownPaths = new Set<string>();
+    for (const r of existing) {
+      const rel = String(r.relative_path ?? '');
+      if (rel) knownPaths.add(rel);
+      const abs = String(r.file_path ?? '');
+      if (abs) knownPaths.add(abs);
+    }
+    await this.scanLibraryDirectory(libraryId, rootPath, now, knownPaths);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -554,36 +597,22 @@ export class SelfLearningService {
     return true;
   }
 
-  private buildDefaultDocumentQueryPrompt(
-    selection: string,
-    contextBefore: string,
-    contextAfter: string,
-    question: string,
-  ): string {
-    const tpl = getBuiltinTemplate(PROMPT_IDS.documentQuery);
-    return tpl
-      ? renderTemplate(tpl, { selection, context_before: contextBefore, context_after: contextAfter, question })
-      : '';
-  }
-
-  /** 渲染 Prompt：配置模板 → 内置模板 → 内存兜底 */
+  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省 builtin ID；缺失 fail-loud */
   private async renderPrompt(
     templateId: string | undefined,
     builtinId: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
     const id = templateId || builtinId;
-    try {
-      const promptOut = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        Object.assign(new ExecPromptInput(), { id, variables }),
-        promptOut,
-        new PromptContext(),
-      );
-      if (promptOut.prompt) return promptOut.prompt;
-    } catch { /* use fallback */ }
-    const tpl = getBuiltinTemplate(builtinId);
-    return tpl ? renderTemplate(tpl, variables) : '';
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    const promptOut = new ExecPromptOutput();
+    await this.promptsAccess.execPrompt(
+      Object.assign(new ExecPromptInput(), { id, variables }),
+      promptOut,
+      new PromptContext(),
+    );
+    if (promptOut.prompt) return promptOut.prompt;
+    throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -629,23 +658,27 @@ export class SelfLearningService {
   // startLearning
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ===== 修改后的 startLearning：手动触发 = 立即完整执行一次指定任务 =====
+  // 原逻辑：手动触发会顺带安装 60s 文档定时器 / 30min Tag 定时器，并启动 Evolutor 常驻评估调度
+  //（系统内实际存在 3+ 个定时器，手动触发≠一次完整执行）。
+  // 新逻辑：手动触发对每个指定模式注册任务并完整执行一轮（同步跑完该轮，fire-and-forget 不阻塞 HTTP），
+  // 任务列表 running→completed/failed 可观测；不再创建任何 per-mode 定时器。
+  // 系统唯一定时器为随机概率触发器，仅在 mode 为 ALL / RANDOM 时确保其运行。
   async startLearning(input: StartLearningInput, _output: StartLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
     const learningRate = input.learning_rate ?? (config.learning_rate as number) ?? 5;
-    const interval = (config.learning_interval_ms as number) ?? 600000;
     const mode = input.learning_mode ?? 'ALL';
 
-    // 手动触发任务化：注册任务 → 后台执行（fire-and-forget）→ 任务列表可见（running→completed/failed）
     if (!mode || mode === 'ALL' || mode.includes('DOCUMENT')) {
       const taskId = this.registerLearningTask('DOCUMENT', '从文档学习');
-      void this.startDocumentLearning(input.library_id, learningRate, interval)
+      void this.runDocumentLearningPass(input.library_id, learningRate)
         .then(() => this.finishLearningTask(taskId))
         .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
     }
     if (mode === 'ALL' || mode.includes('CONVERSATION')) {
       const taskId = this.registerLearningTask('CONVERSATION', '从对话学习');
-      void this.startConversationLearning()
+      void this.runConversationLearningPass()
         .then(() => this.finishLearningTask(taskId))
         .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
     }
@@ -662,6 +695,38 @@ export class SelfLearningService {
 
     return true;
   }
+
+  // ===== 原始方法（保留作为参考）=====
+  // async startLearning(input: StartLearningInput, _output: StartLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   const config = await this.getConfig();
+  //   const learningRate = input.learning_rate ?? (config.learning_rate as number) ?? 5;
+  //   const interval = (config.learning_interval_ms as number) ?? 600000;
+  //   const mode = input.learning_mode ?? 'ALL';
+  //   if (!mode || mode === 'ALL' || mode.includes('DOCUMENT')) {
+  //     const taskId = this.registerLearningTask('DOCUMENT', '从文档学习');
+  //     void this.startDocumentLearning(input.library_id, learningRate, interval)
+  //       .then(() => this.finishLearningTask(taskId))
+  //       .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+  //   }
+  //   if (mode === 'ALL' || mode.includes('CONVERSATION')) {
+  //     const taskId = this.registerLearningTask('CONVERSATION', '从对话学习');
+  //     this.evalScheduleRunning = true;
+  //     void this.startConversationLearning()
+  //       .then(() => this.finishLearningTask(taskId))
+  //       .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+  //   }
+  //   if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
+  //     const taskId = this.registerLearningTask('TAG_MAINTENANCE', 'Tag图维护');
+  //     void this.startTagMaintenanceGuarded(config)
+  //       .then(() => this.finishLearningTask(taskId))
+  //       .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+  //   }
+  //   if (mode === 'ALL' || mode === 'RANDOM') {
+  //     this.startRandomTriggerLearning(config);
+  //   }
+  //   return true;
+  // }
 
   private startRandomTriggerLearning(config: Record<string, unknown>): void {
     if (this.randomLearningTimer) {
@@ -686,19 +751,19 @@ export class SelfLearningService {
         if (Number(fresh.document_auto_enable) !== 0) {
           const rf = (fresh.document_random_factor as number) ?? 10;
           if (Math.floor(Math.random() * 101) < rf) {
-            await this.startDocumentLearning(undefined, rate, learningIntervalMs);
+            await this.runDocumentLearningPass(undefined, rate);
           }
         }
         if (Number(fresh.conversation_auto_enable) !== 0) {
           const rf = (fresh.conversation_random_factor as number) ?? 10;
           if (Math.floor(Math.random() * 101) < rf) {
-            await this.startConversationLearning();
+            await this.runConversationLearningPass();
           }
         }
         if (Number(fresh.tag_auto_enable) !== 0) {
           const rf = (fresh.tag_random_factor as number) ?? 10;
           if (Math.floor(Math.random() * 101) < rf) {
-            await this.startTagMaintenance(fresh);
+            await this.startTagMaintenanceGuarded(fresh);
           }
         }
       } catch (err: unknown) {
@@ -730,38 +795,42 @@ export class SelfLearningService {
     }
   }
 
-  private async startDocumentLearning(
+  // ===== 修改后的方法：文档学习单轮完整执行 =====
+  // 原逻辑：每 60s 一个定时器 tick，每轮每库只处理 learning_rate 条 PENDING（学习慢、但会悬挂定时器）。
+  // 新逻辑：一次调用即完整处理本轮——同步目录后分页循环，直到各启用库没有 PENDING 文件；
+  // 不安装任何定时器；防重入 + stopLearning 取消意图（文件边界生效）。
+  private async runDocumentLearningPass(
     libraryId: string | undefined,
     learningRate: number,
-    _interval: number,
   ): Promise<void> {
-    if (this.documentLearningTimer) {
-      clearInterval(this.documentLearningTimer);
-      this.documentLearningTimer = null;
-    }
+    if (this.documentPassRunning) return;
+    this.documentPassRunning = true;
+    this.cancelRequested.delete('DOCUMENT');
+    try {
+      const libraryConditions: Condition[] = [
+        { field: 'enable_self_learning', operator: Operator.EQ, value: 1 },
+      ];
+      if (libraryId) {
+        libraryConditions.push({ field: 'library_id', operator: Operator.EQ, value: libraryId });
+      }
 
-    let docTickRunning = false;
-    const tick = async () => {
-      if (docTickRunning) return;
-      docTickRunning = true;
-      try {
-        const libraryConditions: Condition[] = [
-          { field: 'enable_self_learning', operator: Operator.EQ, value: 1 },
-        ];
-        if (libraryId) {
-          libraryConditions.push({ field: 'library_id', operator: Operator.EQ, value: libraryId });
-        }
+      const libSel = Object.assign(new SelectDBInput(), {
+        query_param: { table: 'self_learning_library', conditions: libraryConditions },
+      });
+      const libOut = Object.assign(new SelectDBOutput(), {});
+      await this.relationDb.selectDB(libSel, libOut, new DBContext());
 
-        const libSel = Object.assign(new SelectDBInput(), {
-          query_param: { table: 'self_learning_library', conditions: libraryConditions },
-        });
-        const libOut = Object.assign(new SelectDBOutput(), {});
-        await this.relationDb.selectDB(libSel, libOut, new DBContext());
+      for (const lib of libOut.rows) {
+        if (this.cancelRequested.has('DOCUMENT')) return;
+        const lid = lib.library_id as string;
+        const libRate = (lib.learning_rate as number) ?? learningRate;
 
-        for (const lib of libOut.rows) {
-          const lid = lib.library_id as string;
-          const libRate = (lib.learning_rate as number) ?? learningRate;
+        // 先增量同步目录：磁盘上新增的文件登记为 PENDING（已有记录保持原状态）
+        await this.syncLibraryFiles(lid, String(lib.library_path ?? ''), IdGenerator.now());
 
+        // 完整一轮：分页取 PENDING 直至取空（每页 libRate 条）
+        for (;;) {
+          if (this.cancelRequested.has('DOCUMENT')) return;
           const fileConditions: Condition[] = [
             { field: 'library_id', operator: Operator.EQ, value: lid },
             { field: 'status', operator: Operator.EQ, value: 'PENDING' },
@@ -776,29 +845,125 @@ export class SelfLearningService {
           });
           const fileOut = Object.assign(new SelectDBOutput(), {});
           await this.relationDb.selectDB(fileSel, fileOut, new DBContext());
+          if (!fileOut.rows.length) break;
 
           for (const file of fileOut.rows) {
+            if (this.cancelRequested.has('DOCUMENT')) return;
             await this.handleDocumentLearning(file);
           }
+          if (fileOut.rows.length < libRate) break;
         }
-      } catch (err: unknown) {
-        this.logger?.error?.('Document learning tick error', { error: err instanceof Error ? err.message : String(err) });
-      } finally {
-        docTickRunning = false;
       }
-    };
-
-    await tick();
-    this.documentLearningTimer = setInterval(tick, 60000);
+    } catch (err: unknown) {
+      this.logger?.error?.('Document learning pass error', { error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      this.documentPassRunning = false;
+      this.cancelRequested.delete('DOCUMENT');
+    }
   }
 
-  private async startConversationLearning(): Promise<void> {
-    if (this.evalScheduleRunning) return;
-    const scheduleInput = Object.assign(new StartEvalScheduleInput(), {});
-    const scheduleOutput = Object.assign(new StartEvalScheduleOutput(), {});
-    await this.evolutorAgent.startEvalSchedule(scheduleInput, scheduleOutput, new EvolutorAgentContext());
-    this.evalScheduleRunning = true;
+  // ===== 原始方法（保留作为参考）=====
+  // private async startDocumentLearning(
+  //   libraryId: string | undefined,
+  //   learningRate: number,
+  //   _interval: number,
+  // ): Promise<void> {
+  //   if (this.documentLearningTimer) {
+  //     clearInterval(this.documentLearningTimer);
+  //     this.documentLearningTimer = null;
+  //   }
+  //   let docTickRunning = false;
+  //   const tick = async () => {
+  //     if (docTickRunning) return;
+  //     docTickRunning = true;
+  //     try {
+  //       const libraryConditions: Condition[] = [
+  //         { field: 'enable_self_learning', operator: Operator.EQ, value: 1 },
+  //       ];
+  //       if (libraryId) {
+  //         libraryConditions.push({ field: 'library_id', operator: Operator.EQ, value: libraryId });
+  //       }
+  //       const libSel = Object.assign(new SelectDBInput(), {
+  //         query_param: { table: 'self_learning_library', conditions: libraryConditions },
+  //       });
+  //       const libOut = Object.assign(new SelectDBOutput(), {});
+  //       await this.relationDb.selectDB(libSel, libOut, new DBContext());
+  //       for (const lib of libOut.rows) {
+  //         const lid = lib.library_id as string;
+  //         const libRate = (lib.learning_rate as number) ?? learningRate;
+  //         await this.syncLibraryFiles(lid, String(lib.library_path ?? ''), IdGenerator.now());
+  //         const fileConditions: Condition[] = [
+  //           { field: 'library_id', operator: Operator.EQ, value: lid },
+  //           { field: 'status', operator: Operator.EQ, value: 'PENDING' },
+  //         ];
+  //         const fileSel = Object.assign(new SelectDBInput(), {
+  //           query_param: {
+  //             table: 'self_learning_file',
+  //             conditions: fileConditions,
+  //             order_by: [{ field: 'created', direction: 'ASC' }],
+  //             page: { current: 1, size: libRate },
+  //           },
+  //         });
+  //         const fileOut = Object.assign(new SelectDBOutput(), {});
+  //         await this.relationDb.selectDB(fileSel, fileOut, new DBContext());
+  //         for (const file of fileOut.rows) {
+  //           await this.handleDocumentLearning(file);
+  //         }
+  //       }
+  //     } catch (err: unknown) {
+  //       this.logger?.error?.('Document learning tick error', { error: err instanceof Error ? err.message : String(err) });
+  //     } finally {
+  //       docTickRunning = false;
+  //     }
+  //   };
+  //   await tick();
+  //   this.documentLearningTimer = setInterval(tick, 60000);
+  // }
+
+  // ===== 修改后的方法：对话学习单轮完整执行 =====
+  // 原逻辑：调用 Evolutor startEvalSchedule 启动常驻评估调度（worker + 1h schedule 定时器），
+  // 任务"完成"仅代表调度器已挂上，并非一次完整评估闭环。
+  // 新逻辑：调用 Evolutor runEvalOnce 立即执行一次完整评估闭环（扫描未评估 usage → 同步评估 → Agent 老化），
+  // 返回即代表本轮闭环执行完毕；不依赖任何常驻 worker / 定时器。
+  private async runConversationLearningPass(): Promise<void> {
+    if (this.conversationPassRunning) return;
+    this.conversationPassRunning = true;
+    this.cancelRequested.delete('CONVERSATION');
+    try {
+      if (this.cancelRequested.has('CONVERSATION')) return;
+      await this.evolutorAgent.runEvalOnce(
+        Object.assign(new RunEvalOnceInput(), {}),
+        Object.assign(new RunEvalOnceOutput(), {}),
+        new EvolutorAgentContext(),
+      );
+    } catch (err: unknown) {
+      this.logger?.error?.('Conversation learning pass error', { error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      this.conversationPassRunning = false;
+      this.cancelRequested.delete('CONVERSATION');
+    }
   }
+
+  // ===== 原始方法（保留作为参考）=====
+  // private async startConversationLearning(): Promise<void> {
+  //   if (this.evalScheduleActive || this.evalScheduleStartPromise) return;
+  //   const startPromise = (async () => {
+  //     const scheduleInput = Object.assign(new StartEvalScheduleInput(), {});
+  //     const scheduleOutput = Object.assign(new StartEvalScheduleOutput(), {});
+  //     await this.evolutorAgent.startEvalSchedule(scheduleInput, scheduleOutput, new EvolutorAgentContext());
+  //     this.evalScheduleActive = true;
+  //     if (!this.evalScheduleRunning) {
+  //       const stopInput = Object.assign(new StopEvalScheduleInput(), {});
+  //       const stopOutput = Object.assign(new StopEvalScheduleOutput(), {});
+  //       await this.evolutorAgent.stopEvalSchedule(stopInput, stopOutput, new EvolutorAgentContext());
+  //       this.evalScheduleActive = false;
+  //     }
+  //   })();
+  //   this.evalScheduleStartPromise = startPromise
+  //     .catch(() => { /* 学习异常不外溢，保持与旧版一致 */ })
+  //     .finally(() => { this.evalScheduleStartPromise = null; });
+  //   return startPromise;
+  // }
 
   /** Tag 维护守护壳：防重入，维护异常不外溢 */
   private async startTagMaintenanceGuarded(config: Record<string, unknown>): Promise<void> {
@@ -813,51 +978,58 @@ export class SelfLearningService {
     }
   }
 
+  // ===== 修改后的方法：Tag 维护单轮完整执行 =====
+  // 原逻辑：先安装 tagConnectionTimer / tagEstablishTimer 两个 30min 定时器，再顺带执行一次
+  // 建立+激活（定时器悬挂在实例上，且 aging/orphan 已由 CronProvider 接管）。
+  // 新逻辑：一次调用 = 一轮完整维护（连接建立 → 标签激活），跑完即止；不再创建任何定时器，
+  // 周期化需求由唯一概率触发定时器（randomLearningTimer）承担。
   private async startTagMaintenance(config: Record<string, unknown>): Promise<void> {
-    const tagConnMs = (config.tag_connection_check_interval_ms as number) ?? 1800000;
-
-    this.clearTagTimers();
-
-    this.tagConnectionTimer = setInterval(() => {
-      this.startTagConnectionEstablishment().catch((err) => {
-        this.logger?.error?.('Tag connection establishment error', { error: err instanceof Error ? err.message : String(err) });
-      });
-    }, tagConnMs);
-
-    this.tagEstablishTimer = setInterval(() => {
-      this.startTagActivation().catch((err) => {
-        this.logger?.error?.('Tag activation error', { error: err instanceof Error ? err.message : String(err) });
-      });
-    }, tagConnMs);
-
-    // 标签老化与孤立标签检查已改为 CronProvider 定时调度（cron_task：tag_aging / orphan_tag_check），
-    // 不再使用硬编码 24 小时间隔定时器。
-
+    void config;
     await this.startTagConnectionEstablishment();
+    if (this.cancelRequested.has('TAG_MAINTENANCE')) return;
     await this.startTagActivation();
   }
 
-  private clearTagTimers(): void {
-    if (this.tagConnectionTimer) { clearInterval(this.tagConnectionTimer); this.tagConnectionTimer = null; }
-    if (this.tagEstablishTimer) { clearInterval(this.tagEstablishTimer); this.tagEstablishTimer = null; }
-    if (this.tagAgingTimer) { clearInterval(this.tagAgingTimer); this.tagAgingTimer = null; }
-    if (this.orphanTagTimer) { clearInterval(this.orphanTagTimer); this.orphanTagTimer = null; }
-  }
+  // ===== 原始方法（保留作为参考）=====
+  // private async startTagMaintenance(config: Record<string, unknown>): Promise<void> {
+  //   const tagConnMs = (config.tag_connection_check_interval_ms as number) ?? 1800000;
+  //   this.clearTagTimers();
+  //   this.tagConnectionTimer = setInterval(() => {
+  //     this.startTagConnectionEstablishment().catch((err) => {
+  //       this.logger?.error?.('Tag connection establishment error', { error: err instanceof Error ? err.message : String(err) });
+  //     });
+  //   }, tagConnMs);
+  //   this.tagEstablishTimer = setInterval(() => {
+  //     this.startTagActivation().catch((err) => {
+  //       this.logger?.error?.('Tag activation error', { error: err instanceof Error ? err.message : String(err) });
+  //     });
+  //   }, tagConnMs);
+  //   await this.startTagConnectionEstablishment();
+  //   await this.startTagActivation();
+  // }
+
+  // ===== clearTagTimers 已移除（保留作为参考）=====
+  // private clearTagTimers(): void {
+  //   if (this.tagConnectionTimer) { clearInterval(this.tagConnectionTimer); this.tagConnectionTimer = null; }
+  //   if (this.tagEstablishTimer) { clearInterval(this.tagEstablishTimer); this.tagEstablishTimer = null; }
+  //   if (this.tagAgingTimer) { clearInterval(this.tagAgingTimer); this.tagAgingTimer = null; }
+  //   if (this.orphanTagTimer) { clearInterval(this.orphanTagTimer); this.orphanTagTimer = null; }
+  // }
 
   // ─────────────────────────────────────────────────────────────────────────
   // stopLearning
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ===== 修改后的 stopLearning：系统唯一定时器 = 概率触发调度器 =====
+  // 新语义：
+  //  - ALL / RANDOM：停止概率触发调度器（唯一可"停止"的常驻定时器）；
+  //  - 具体模式：登记取消意图，进行中的同模式单轮任务在单元边界（文件 / 建图-激活阶段）提前结束；
+  //    未在执行时幂等无副作用（不存在需要清理的 per-mode 定时器）。
+  // 兼容清理：对话学习已改为 runEvalOnce 单轮，不再依赖 Evolutor 常驻评估调度，
+  // 仍保留一次幂等 stopEvalSchedule（best-effort）以清理历史版本可能残留的 worker。
   async stopLearning(input: StopLearningInput, _output: StopLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const mode = input.learning_mode ?? 'ALL';
-
-    if (mode === 'ALL' || mode.includes('DOCUMENT')) {
-      if (this.documentLearningTimer) {
-        clearInterval(this.documentLearningTimer);
-        this.documentLearningTimer = null;
-      }
-    }
 
     if (mode === 'ALL' || mode === 'RANDOM') {
       if (this.randomLearningTimer) {
@@ -866,21 +1038,49 @@ export class SelfLearningService {
       }
     }
 
+    if (mode === 'ALL' || mode.includes('DOCUMENT')) {
+      this.cancelRequested.add('DOCUMENT');
+    }
     if (mode === 'ALL' || mode.includes('CONVERSATION')) {
-      if (this.evalScheduleRunning) {
+      this.cancelRequested.add('CONVERSATION');
+    }
+    if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
+      this.cancelRequested.add('TAG_MAINTENANCE');
+    }
+
+    if (mode === 'ALL' || mode.includes('CONVERSATION')) {
+      try {
         const stopInput = Object.assign(new StopEvalScheduleInput(), {});
         const stopOutput = Object.assign(new StopEvalScheduleOutput(), {});
         await this.evolutorAgent.stopEvalSchedule(stopInput, stopOutput, new EvolutorAgentContext());
-        this.evalScheduleRunning = false;
-      }
-    }
-
-    if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
-      this.clearTagTimers();
+      } catch { /* best-effort：历史常驻调度残留清理，失败不影响停止语义 */ }
     }
 
     return true;
   }
+
+  // ===== 原始方法（保留作为参考）=====
+  // async stopLearning(input: StopLearningInput, _output: StopLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   const mode = input.learning_mode ?? 'ALL';
+  //   if (mode === 'ALL' || mode.includes('DOCUMENT')) {
+  //     if (this.documentLearningTimer) { clearInterval(this.documentLearningTimer); this.documentLearningTimer = null; }
+  //   }
+  //   if (mode === 'ALL' || mode === 'RANDOM') {
+  //     if (this.randomLearningTimer) { clearInterval(this.randomLearningTimer); this.randomLearningTimer = null; }
+  //   }
+  //   if (mode === 'ALL' || mode.includes('CONVERSATION')) {
+  //     this.evalScheduleRunning = false;
+  //     this.evalScheduleActive = false;
+  //     const stopInput = Object.assign(new StopEvalScheduleInput(), {});
+  //     const stopOutput = Object.assign(new StopEvalScheduleOutput(), {});
+  //     await this.evolutorAgent.stopEvalSchedule(stopInput, stopOutput, new EvolutorAgentContext());
+  //   }
+  //   if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
+  //     this.clearTagTimers();
+  //   }
+  //   return true;
+  // }
 
   // ─────────────────────────────────────────────────────────────────────────
   // handleDocumentLearning (private)
@@ -1111,8 +1311,7 @@ export class SelfLearningService {
    * 不让出事件循环会冻结全部 HTTP 请求数分钟（页面表现为"切几个页面就卡死"）。
    */
   private static readonly TAG_MAINTENANCE_BATCH = 20;
-  /** 标签维护重入守卫：启动 / 30min timer / 随机 tick 三路都可能触发全量计算，禁止叠加执行 */
-  private tagMaintenanceRunning = false;
+  // 注：tagMaintenanceRunning 已上移到类字段区（与 documentPassRunning / conversationPassRunning 统一）
   /** 全局图统计缓存（60s TTL；避免每次统计全量扫描图数据库） */
   private graphStatsCache: { at: number; data: Record<string, unknown> } | null = null;
   private graphStatsComputing = false;
@@ -1634,16 +1833,14 @@ export class SelfLearningService {
     return true;
   }
 
-  /** 手动学习是否正在运行（文档/对话评估/Tag 维护 Worker 处于活动状态，不含自动随机触发） */
+  /** 学习是否正在运行：概率触发调度器活动，或存在进行中的单轮任务（running 状态任务） */
   private isLearningRunning(): boolean {
-    return !!(
-      this.documentLearningTimer ||
-      this.evalScheduleRunning ||
-      this.tagConnectionTimer ||
-      this.tagEstablishTimer ||
-      this.tagAgingTimer ||
-      this.orphanTagTimer
-    );
+    if (this.randomLearningTimer) return true;
+    if (this.documentPassRunning || this.conversationPassRunning || this.tagMaintenanceRunning) return true;
+    for (const t of this.learningTasks.values()) {
+      if (t.status === LearningTaskStatus.Running) return true;
+    }
+    return false;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1746,7 +1943,8 @@ export class SelfLearningService {
       .map((id) => this.learningTasks.get(id))
       .filter((t): t is LearningTaskRecord => !!t)
       .sort((a, b) => rank(a) - rank(b) || b.started_at - a.started_at)
-      .slice(0, input.limit ?? 20);
+      // ===== 原始表达式（保留作为参考）：.slice(0, input.limit ?? 20); =====
+      .slice(0, limit);
     return true;
   }
 

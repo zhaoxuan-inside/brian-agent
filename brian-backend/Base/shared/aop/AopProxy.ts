@@ -141,24 +141,23 @@ export class AopProxy {
           const contextArg = isNewStyle ? args[2] : args[1];
           const outputArg = isNewStyle ? args[1] : args[2];
 
-          // trace_id 自动生成：traceId 独立于 work_id / interact_id / info_id 等业务 ID。
-          // 有效 trace_id 优先级：入参 Input.trace_id（显式传播）→ Context.trace_id → 新生成。
-          // 生成结果回填到 Context（供日志与后续读取），不回填 Input（避免污染查询类入参的 trace_id 过滤字段）。
-          let effectiveTraceId = AopProxy.pickField(args[0], 'trace_id');
-          if (!effectiveTraceId) effectiveTraceId = AopProxy.pickField(contextArg, 'trace_id');
+          // trace_id 自动生成（2026-09-11：trace_id 属维护字段，唯一存放点 = Metrics；
+          // Context/Input 均为业务承载，不得回填 trace_id）。
+          // 有效 trace_id 优先级：Metrics.trace_id（已有链路，显式传播）→ 新生成；
+          // 生成结果仅回填 Metrics 与 Report（事件流关联日志用），不污染业务对象。
+          const metricsInstance = isNewStyle ? args[3] : undefined;
+          let effectiveTraceId = metricsInstance instanceof Metrics ? metricsInstance.trace_id : undefined;
           if (!effectiveTraceId) effectiveTraceId = IdGenerator.generate();
-          if (contextArg && typeof contextArg === 'object' && !Array.isArray(contextArg)) {
-            (contextArg as { trace_id?: string }).trace_id = effectiveTraceId;
+          if (metricsInstance instanceof Metrics) {
+            const metrics = metricsInstance as Metrics;
+            if (!metrics.trace_id) metrics.trace_id = effectiveTraceId;
+            if (!metrics.category) metrics.category = `${targetName}.${methodName}`;
           }
 
           // 新式调用：Metrics / Report 未传时自动创建默认实例（调用方无需手工构造）。
           if (isNewStyle) {
             if (!args[3]) {
               args[3] = new Metrics(options?.logger, `${targetName}.${methodName}`, effectiveTraceId);
-            } else if (args[3] instanceof Metrics) {
-              const metrics = args[3] as Metrics;
-              if (!metrics.trace_id) metrics.trace_id = effectiveTraceId;
-              if (!metrics.category) metrics.category = `${targetName}.${methodName}`;
             }
             if (!args[4]) {
               args[4] = new Report({
@@ -384,10 +383,12 @@ export class AopProxy {
   }
 
   /**
-   * 提取有效 trace_id：优先 Context（AOP 已回填），其次 Input（显式传播），无则 undefined。
+   * 提取有效 trace_id（维护字段唯一存放点）：优先 Metrics，其次 Input 上的领域级 trace_id 字段
+   * （如 GetTraceInput.trace_id 业务查询键），Context 不再承载 trace_id。
    */
   private static pickTraceId(ctx: InterceptContext): string | undefined {
-    return AopProxy.pickField(ctx.context, 'trace_id') ?? AopProxy.pickField(ctx.input, 'trace_id');
+    const metrics = ctx.metrics as Metrics | undefined;
+    return metrics?.trace_id ?? AopProxy.pickField(ctx.input, 'trace_id');
   }
 
   /**

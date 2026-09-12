@@ -54,6 +54,8 @@ export class ExecAgentLoopInput extends Input {
   llm_id?: string;
   /** 可见工具 id 列表（空=全部已注册工具） */
   tools?: string[];
+  /** 组件选择范围（match 阶段选定；执行门依据：skill_exec/mcp_exec 仅可调用范围内的 id） */
+  component_scope?: { skills: string[]; mcps: string[] };
   /** 预算规格（缺省 total=60 + 宽限收尾） */
   budget?: BudgetSpec;
   /** 采样温度 */

@@ -23,7 +23,7 @@ import {
   AnswerPermissionInput,
   AnswerPermissionOutput,
 } from './Runtime';
-import type { LoopQueue } from './Runtime';
+// import type { LoopQueue } from './Runtime';  // 未使用（loopQueueBridge 用内联 import('@brian-agent/runtime').LoopQueue），移除（eslint no-unused-vars）
 import { applySystemSeed } from './seed/systemSeed';
 import { LLMAccess } from './Base/LLMProvider';
 import { MCPAccess } from './Base/MCPProvider';
@@ -597,6 +597,7 @@ async function buildContext() {
       );
     },
   });
+  Report.setLogger(logger);
 
   // ---- Core Providers ----
   const infoCore = new InfoCoreAccess(relationDb, llmAccess, promptsAccess, vectorDBAccess, graphDBAccess, logger);
@@ -742,7 +743,87 @@ async function buildContext() {
       return { approved: o.approved };
     },
   };
-  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeToolAccess, logger, loopQueueBridge, permissionGateBridge);
+  // ===== 修改后的代码（2026-09-11）：权限审计落库桥 =====
+  // 事故复盘（run 46a7be65）：权限被拒只有 tool error 文本，无记录可追溯，且历史对话区看不到权限卡。
+  // now：askPermission 前落一条 info_raw（info_type=PERMISSION, info=JSON 含 permission_id/tool/args/status=pending），
+  // answerPermission 后按内存映射回写 status=allowed/denied。best-effort：失败不阻断 run。
+  // ===== 修改后的代码（2026-09-11）：权限审计落库桥辅助 =====
+  function safeJsonParse(text: string): unknown {
+    try { return JSON.parse(text); } catch { return text; }
+  }
+  /** 异常摘要文本（Error / 任意值 → 安全字符串） */
+  function rawText(err: unknown): string {
+    return err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? '');
+  }
+  /** info_raw 表名（权限审计落库用；与 InfoCoreService 保持一致） */
+  const INFO_RAW_TABLE = 'info_raw';
+  const permissionAuditMap = new Map<string, string>();
+  const permissionAuditBridge: import('@brian-agent/runtime').PermissionAudit = {
+    asked: async (input) => {
+      try {
+        const infoId = IdGenerator.generate();
+        const payload = {
+          permission_id: input.permission_id,
+          session_key: input.session_key,
+          run_id: input.run_id,
+          tool_id: input.tool_id,
+          input: safeJsonParse(input.arguments_json),
+          status: 'pending',
+          asked_at: input.asked_at,
+        };
+        await relationDb.insert(INFO_RAW_TABLE, [
+          { field: 'id', value: infoId },
+          { field: 'created', value: input.asked_at },
+          { field: 'updated', value: input.asked_at },
+        // ===== 修改后（2026-09-11）：session_id 落 chat 会话键（session_key），保证历史接口可查 =====
+        // 事故复盘：原实现落 input.session_id（Runtime 内部 runtimeSessionId，RunGateway.prepareLoopInput 传入），
+        // 而 /api/chat/history 经 soChatHistory 按 chat session_key 过滤 info_raw，
+        // PERMISSION 行查不到 → run 收尾 loadChatHistory 全量替换 messages 后权限卡消失。
+        // ===== 原始代码（保留作为参考）=====
+        // { field: 'session_id', value: input.session_id },
+        { field: 'session_id', value: input.session_key || input.session_id },
+          { field: 'work_id', value: '' },
+          { field: 'interact_id', value: '' },
+          { field: 'info_id', value: infoId },
+          { field: 'info_creator_id', value: '' },
+          { field: 'info_creator_role', value: 'SYSTEM' },
+          { field: 'info', value: JSON.stringify(payload) },
+          { field: 'info_length', value: JSON.stringify(payload).length },
+          { field: 'pin', value: 0 },
+          { field: 'info_type', value: InfoType.PERMISSION },
+          { field: 'trace_id', value: '' },
+          { field: 'handle_result_type', value: 'correct' },
+        ]);
+        permissionAuditMap.set(input.permission_id, infoId);
+      } catch (err) {
+        logger.info('[permission-audit] asked 落库失败（不影响 run）', rawText(err));
+      }
+    },
+    answered: async (input) => {
+      try {
+        const infoId = permissionAuditMap.get(input.permission_id);
+        if (!infoId) return;
+        const row = relationDb.queryRaw<{ info: string; created: number; session_id: string }>(
+          `SELECT info, created, session_id FROM info_raw WHERE id = ? LIMIT 1`,
+          [infoId],
+        )[0];
+        if (row) {
+          const payload = JSON.parse(String(row.info ?? '{}'));
+          payload.status = input.approved ? 'allowed' : 'denied';
+          payload.answered_at = input.answered_at;
+          await relationDb.update(INFO_RAW_TABLE, [
+            { field: 'info', value: JSON.stringify(payload) },
+            { field: 'info_length', value: JSON.stringify(payload).length },
+            { field: 'updated', value: input.answered_at },
+          ], [{ field: 'id', operator: Operator.EQ, value: infoId }]);
+        }
+        permissionAuditMap.delete(input.permission_id);
+      } catch (err) {
+        logger.info('[permission-audit] answered 更新失败（不影响 run）', rawText(err));
+      }
+    },
+  };
+  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeToolAccess, logger, loopQueueBridge, permissionGateBridge, permissionAuditBridge);
   await runtimeLoopAccess.initialize();
   const runtimeAgentDefAccess = new AgentDefAccess(relationDb, llmAccess, {
     agentBuilder,
@@ -1027,6 +1108,222 @@ function serveFrontend(res: http.ServerResponse, pathname: string): boolean {
   return true;
 }
 
+// ===== 修改后的方法（2026-09-09）：编排表重建 + Runtime v2 直连 run 回退重建 =====
+// V1 编排链路移除（2026-09-05）后，所有对话经 Runtime v2 执行，数据落 runtime_run /
+// runtime_message / runtime_message_part / stream_event；编排 5 张表不再有新记录。
+// 原 buildThinkingBlocksAndDag 仅查编排表导致 Runtime run 的"思考过程"弹窗恒为空，
+// 故改名为 buildThinkingBlocksFromOrchestration 保留原实现（旧会话数据仍走此路径），
+// 新方法先做编排表重建，再对无记录的 work 回退到 Runtime v2 表重建。
+async function buildThinkingBlocksAndDag(
+  relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
+  infoCore: any,
+  workIds: string[],
+  promptsAccess?: any,
+  soulAccess?: any,
+): Promise<{ workBlocksMap: Map<string, any[]>; workDagMap: Map<string, any> }> {
+  // 编排表重建（原方法，覆盖 2026-09-05 之前的 V1 会话数据）
+  const { workBlocksMap, workDagMap } = await buildThinkingBlocksFromOrchestration(relationDb, infoCore, workIds, promptsAccess, soulAccess);
+  // Runtime v2 直连 run 回退重建（work_id 即 runtime_run.id）
+  for (const wid of workIds) {
+    if (!wid) continue;
+    const existing = workBlocksMap.get(wid);
+    if (existing && existing.length > 0) continue;
+    try {
+      const rebuilt = await buildThinkingBlocksFromRuntime(relationDb, wid);
+      if (rebuilt) {
+        workBlocksMap.set(wid, rebuilt.blocks);
+        if (rebuilt.dag) workDagMap.set(wid, rebuilt.dag);
+      }
+    } catch { /* degrade gracefully */ }
+  }
+  return { workBlocksMap, workDagMap };
+}
+
+/**
+ * Runtime v2 直连 run 思考过程重建（数据处理）：
+ * 从 runtime_run / stream_event / runtime_message / runtime_message_part 重建
+ * 单 Agent 的 ThinkingChain Block 与单节点 DAG。
+ *
+ * 上报与保存链路（2026-09-05 起）：
+ * - Agent 选择/组件选定：run.accepted → agent.selected / agent.components（RunGatewayService）
+ * - 上下文构建：context.built（AgentLoopService，每轮 wire 消息）
+ * - 每轮输入输出：think.delta / reply.delta（流式增量）、tool.started / tool.result（工具配对）
+ * - 保存：stream_event（事件流持久化）+ runtime_message_part（reasoning/text/tool Part 全量）
+ */
+async function buildThinkingBlocksFromRuntime(
+  relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
+  runId: string,
+): Promise<{ blocks: any[]; dag: any } | null> {
+  // 1. run 记录 → 会话键与时间窗
+  const runRows = relationDb.queryRaw<Record<string, unknown>>(
+    `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used
+     FROM runtime_run WHERE id = ? LIMIT 1`,
+    [runId],
+  );
+  if (runRows.length === 0) return null;
+  const run = runRows[0];
+  const sessionKey = String(run.session_key ?? '');
+  if (!sessionKey) return null;
+  const startTs = Number(run.started_at ?? run.accepted_at ?? 0) - 5000;
+  const settleTs = Math.max(Number(run.settled_at ?? 0), Number(run.accepted_at ?? 0)) + 5000;
+
+  // 2. 事件流 → Agent 选择 / 组件选定 / 上下文构建（每轮 prompt 输入侧）
+  const evRows = relationDb.queryRaw<{ seq: number; event_type: string; payload_json: string }>(
+    `SELECT seq, event_type, payload_json FROM stream_event
+     WHERE session_key = ? AND ts >= ? AND ts <= ? ORDER BY seq ASC`,
+    [sessionKey, startTs, settleTs],
+  );
+  let selected: any = null;
+  let components: any = null;
+  const builtContexts: any[] = [];
+  for (const ev of evRows) {
+    let payload: any;
+    try { payload = JSON.parse(String(ev.payload_json ?? '{}')); } catch { continue; }
+    if (ev.event_type === 'agent.selected') selected = payload;
+    else if (ev.event_type === 'agent.components') components = payload;
+    else if (ev.event_type === 'context.built') builtContexts.push(payload);
+  }
+
+  // 3. 消息与 Part（轮次输入输出全量）
+  const msgRows = relationDb.queryRaw<{ id: string; role: string; content: string; seq: number; token_count: number }>(
+    `SELECT id, role, content, seq, token_count FROM runtime_message WHERE run_id = ? ORDER BY seq ASC`,
+    [runId],
+  );
+  const partRows = relationDb.queryRaw<{ message_id: string; part_type: string; part_order: number; content: string; tool_id: string; input_json: string; output_json: string; status: string }>(
+    `SELECT message_id, part_type, part_order, content, tool_id, input_json, output_json, status
+     FROM runtime_message_part WHERE run_id = ? ORDER BY part_order ASC`,
+    [runId],
+  );
+  const partsByMessage = new Map<string, typeof partRows>();
+  for (const p of partRows) {
+    const list = partsByMessage.get(p.message_id) ?? [];
+    list.push(p);
+    partsByMessage.set(p.message_id, list);
+  }
+
+  const userMsg = msgRows.find((m) => m.role === 'user');
+  const assistantMsgs = msgRows.filter((m) => m.role === 'assistant');
+  if (!userMsg && assistantMsgs.length === 0) return null;
+
+  // 4. 组装 steps（THINK / ACT）与输出
+  const steps: any[] = [];
+  let reasoningContent = '';
+  let outputAnswer = '';
+  let hasActTools = false;
+  let stepIndex = 0;
+  for (const msg of assistantMsgs) {
+    const parts = partsByMessage.get(msg.id) ?? [];
+    for (const p of parts) {
+      stepIndex += 1;
+      if (p.part_type === 'reasoning' && p.content) {
+        reasoningContent += (reasoningContent ? '\n' : '') + p.content;
+        steps.push({ phase: 'THINK', iteration: stepIndex, content: p.content });
+      } else if (p.part_type === 'tool') {
+        hasActTools = true;
+        let params: any;
+        try {
+          const meta = JSON.parse(String(p.input_json || '{}'));
+          const raw = meta.arguments;
+          params = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? {});
+        } catch { params = {}; }
+        let result: any = p.output_json || '';
+        try { result = JSON.parse(String(p.output_json || 'null')) ?? String(p.output_json ?? ''); } catch { /* 原文返回 */ }
+        steps.push({
+          phase: 'ACT',
+          iteration: stepIndex,
+          toolCalls: [{ toolName: p.tool_id || 'Tool', toolType: 'Tool', params, result }],
+        });
+      } else if (p.part_type === 'text' && p.content) {
+        outputAnswer = p.content;
+      }
+    }
+  }
+  if (!outputAnswer && assistantMsgs.length > 0) {
+    outputAnswer = String(assistantMsgs[assistantMsgs.length - 1].content ?? '');
+  }
+
+  // 5. prompt（每轮 wire 消息）与组件信息
+  const lastBuilt = builtContexts[builtContexts.length - 1] ?? null;
+  let fullPrompt = '';
+  if (lastBuilt && Array.isArray(lastBuilt.messages)) {
+    fullPrompt = (lastBuilt.messages as any[])
+      .map((m) => `[${m.role}]\n${String(m.content ?? '')}`)
+      .join('\n\n');
+  }
+  const agentName = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
+  const skills = Array.isArray(components?.skills)
+    ? (components.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean)
+    : [];
+  const mcps = Array.isArray(components?.mcps)
+    ? (components.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean)
+    : [];
+  const tokenUsage = assistantMsgs.reduce((sum, m) => sum + Number(m.token_count ?? 0), 0);
+  const createdTs = Number(run.started_at ?? run.accepted_at ?? Date.now());
+
+  const block = {
+    id: `block-think-${runId}-runtime`,
+    msgId: '',
+    role: 'assistant',
+    type: 'ThinkingChain',
+    content: reasoningContent,
+    summary: '',
+    durationMs: Math.max(0, Number(run.settled_at ?? createdTs) - createdTs),
+    tokenUsage,
+    thinkingStrategy: hasActTools ? 'ReACT' : 'CoT',
+    prompt: fullPrompt || String(userMsg?.content ?? ''),
+    rawResponse: outputAnswer,
+    agentInfo: {
+      id: String(selected?.def_id ?? run.agent_def_id ?? ''),
+      name: agentName,
+      type: 'WORKER',
+      llmId: components?.llm_id ? String(components.llm_id) : undefined,
+      soulId: components?.soul_id ? String(components.soul_id) : undefined,
+      skills,
+      mcps,
+    },
+    context: {
+      strategy: 'Runtime 直连执行 (Agent 精确匹配)',
+      userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
+      citingMessages: [],
+      timelineMessages: lastBuilt && Array.isArray(lastBuilt.messages)
+        ? (lastBuilt.messages as any[]).map((m) => ({ role: m.role, content: String(m.content ?? '') }))
+        : undefined,
+    },
+    input: String(userMsg?.content ?? ''),
+    output: outputAnswer,
+    steps,
+    meta: {
+      status: 'done',
+      createdAt: createdTs,
+      updatedAt: Number(run.settled_at ?? createdTs),
+    },
+  };
+
+  // 6. 单节点 DAG（直连执行无任务拆解）
+  const dag = {
+    planId: '',
+    totalCount: 1,
+    nodes: [{
+      id: 'task-1',
+      agentId: String(selected?.def_id ?? run.agent_def_id ?? ''),
+      taskId: 'task-1',
+      label: `任务 1: ${agentName}`,
+      domain: '',
+      content: String(userMsg?.content ?? ''),
+      status: String(run.status ?? 'finished') === 'finished' ? 'COMPLETED' : String(run.status ?? '').toUpperCase(),
+      agentName,
+      input: String(userMsg?.content ?? ''),
+      output: outputAnswer,
+      elapsedMs: block.durationMs,
+      tokenUsage,
+    }],
+    edges: [],
+  };
+
+  return { blocks: [block], dag };
+}
+
+// ===== 原始方法（保留作为参考；2026-09-09 改名，仅负责编排表数据源） =====
 // ===== 从数据表采集思考过程：根据 work_id 列表重建各 Agent 的 ThinkingChain Blocks =====
 // 数据来源：orchestration_agent_dag_record / agent_plan / orchestration_agent_execution /
 //          agent / agent_execution_trace 五张表；由 /api/chat/history 原始内联逻辑抽取而来。
@@ -1048,7 +1345,8 @@ async function rebuildPromptFromRef(
   }
 }
 
-async function buildThinkingBlocksAndDag(
+// ===== 原始方法（保留作为参考；2026-09-09 改名，仅负责编排表数据源） =====
+async function buildThinkingBlocksFromOrchestration(
   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
   infoCore: any,
   workIds: string[],
@@ -2476,6 +2774,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           task_signature: String(b.task_signature || `[${String(b.agent_name || 'custom').toLowerCase()}] 自定义任务`),
           agent_name: String(b.agent_name || `Agent-${agentId.slice(0, 8)}`),
           agent_purpose: String(b.agent_purpose || b.description || ''),
+          // ===== 2026-09-11：用户走本 API 创建 → 归属 user（解散动作不允许作用于 user 资产） =====
+          created_by: 'user',
         });
         try {
           const addOut = new AddAgentOutput();
@@ -2724,6 +3024,31 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.chatAccess.soChatHistory(input, output, context);
 
         // ===== 修改后代码：精准关联各 Work 的 Agent 执行与 Trace 迭代步骤，解析具名标题、多 Agent DAG 网络、上下文、Input、Output 与步骤 =====
+
+        // PERMISSION 类型：权限确认卡（对话区展示专用；ChatMap 由 REQUEST/RESPONSE 过滤天然排除）
+        const permissionMessages: Array<Record<string, unknown>> = [];
+        for (const m of (output.messages || [])) {
+          if (m.info_type !== InfoType.PERMISSION) continue;
+          let p: Record<string, unknown> = {};
+          try { p = JSON.parse(String(m.info || '{}')); } catch { p = { tool_id: 'tool' }; }
+          permissionMessages.push({
+            id: m.info_id,
+            role: 'assistant',
+            content: '',
+            timestamp: m.created,
+            pin: m.pin,
+            workId: m.work_id,
+            traceId: m.trace_id || '',
+            permission: {
+              permissionId: String(p.permission_id ?? m.info_id),
+              toolId: String(p.tool_id ?? 'tool'),
+              input: p.input ?? {},
+              status: String(p.status ?? 'pending'),
+              askedAt: Number(p.asked_at ?? m.created ?? 0),
+            },
+          });
+        }
+
         const rawMessages = (output.messages || []).filter(
           (m) => m.info_type === InfoType.REQUEST || m.info_type === InfoType.RESPONSE
         );
@@ -2768,7 +3093,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           };
         });
 
-        sendJson(res, 200, { messages });
+        // ===== 修改后代码（2026-09-11）：权限卡消息并入历史（时间线由前端按 timestamp 排序） =====
+        sendJson(res, 200, { messages: [...messages, ...permissionMessages] });
 
       } else if (method === 'GET' && pathname === '/api/chat/thinking') {
         // 思考过程采集接口：从数据表重建指定消息 / 工作 / 交互的思考过程（ThinkingChain Blocks）
@@ -2978,6 +3304,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new DeleteSessionOutput();
         const context = new ChatContext();
         await ctx.chatAccess.deleteSession(input, output, context);
+        // 级联清理用户画像数据（user_profile_record / user_profile_dimension_data）
+        try {
+          await ctx.userProfileAccess.resetUserProfile(
+            Object.assign(new ResetUserProfileInput(), { session_id: sid }),
+            new ResetUserProfileOutput(),
+            new UserProfileContext(),
+          );
+        } catch {
+          // 画像重置失败不影响会话删除（最佳努力清理）
+        }
         sendJson(res, 200, { deleted_count: output.deleted_count });
 
       } else if (method === 'GET' && pathname.startsWith('/api/chat/session/')) {

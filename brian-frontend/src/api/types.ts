@@ -283,6 +283,18 @@ export interface ChatMessage {
   citedInfoIds?: string[]
   citingInfoIds?: string[]
   pin?: boolean
+  /** 权限确认卡（PERMISSION 落库记录 / SSE permission.asked 实时卡） */
+  permission?: PermissionCardData
+}
+
+/** 权限确认数据：工具执行前询问（答允许/拒绝；status 收敛后仅展示） */
+export interface PermissionCardData {
+  permissionId: string
+  toolId: string
+  input: unknown
+  status: 'pending' | 'allowed' | 'denied'
+  askedAt?: number
+  answeredAt?: number
 }
 
 // ============================================================

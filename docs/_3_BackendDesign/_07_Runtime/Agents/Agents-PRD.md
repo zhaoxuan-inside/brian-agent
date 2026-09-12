@@ -79,3 +79,43 @@ export class ConfigAgentDefInput extends Input { snapshot_ttl_ms?: number; match
 
 - 单测：upsert 幂等；三层匹配各命中路径；快照组件 fail-loud；Wildcard 末条匹配；分层 prompt 切界稳定。
 - 集成：main.plan 与 main.build 行为差异仅由声明数据决定（同一循环代码）；curator 后台优化 AgentDef 后活跃 run 不中断。
+
+### [2026-09-11] 启动期资产缓存 + 慢匹配廉价化（复盘 interact 9b68defe）
+
+**变更原因**：interact `9b68defe`（"今天天气怎么样？"）run 全程 65.0s，其中 LLM 回答仅 3.7s，其余 61.4s 在 match → soAgentSnapshot：Soul 排序 LLM 无界时间（9.3s）叠 Skill 排序 LLM 无 max_tokens（实测 52s、流式 2840 tokens）。Agent 复用本身正常（L1 exact 命中同一 def），浪费全部发生在组件匹配放噪声上：matchSkill 的 prompt 曾把每个 Skill 的**全量 skill_md 原文** JSON 进去。
+
+**修改的方法**：
+  - `Runtime/Agents/application/AgentDefService` —— 新增启动期资产缓存：
+    - `initialize()` → `warmAssetCaches()`：预热 agent 绑定事实源（agent 表全量 → 内存）与 active def 全表；
+    - `soActiveDefsCached()`：匹配每轮读内存，TTL 30s 过期重读；`insertDefFromAgent()` 写侧主动失效；
+    - `soAgentAsset()` 未命中 AgentLibrary 命名/用途时回退绑定行（同名/用途仍然可得）。
+  - `Core/SkillCoreProvider/application/SkillCoreService.matchSkill` —— 排序 prompt 只用 `name/skill_brief`（原代码携带全量 `skill_md`，已注释保留）；`callLLM` 增加 `max_tokens: 300`（原实现未设上限，模型可流式输出数千 token）。
+  - 组件语义保持不变：Soul/Skill/MCP 仍**按任务内容动态重解析**（Layer 1 绑定水合语义不启用——PRD v2 以任务内容为准，runtime 测试锁死该语义）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` —— run 启动期不再触发 skill_md 全量注入的排序；排序 LLM 有了 300 token 终止上限；匹配/快照消除每轮重复全表查询。同任务复现：65s → 16s（帽内 LLM 排序 2.9s + 6.9s + 回复 5.9s）。
+
+**可能存在的问题**：
+  - 排序 LLM 尾部延迟仍受模型本身速度影响（本次满分排序计算出 2.9s/6.9s，属正常变异）。
+  - 资产缓存 TTL 30s：外部（配置中心）改写 agent 表后最长 30s 内旧值仍可能命中。
+
+### [2026-09-11] 组件绑定收敛：命中即复用绑定，删除重复的"重新生成概率"（复盘 session 27890105）
+
+**变更原因**：interact `27890105`（"今天适合穿什么衣服"）run 全程 26s，用户质疑两点：① `applyRegenDecision`（agent_library_config.regen_rate 概率推翻 L1/L2 复用）与 Agent 层 `AgentLibraryService.matchAgent` 的 regen_rate 失效判决是**同义概念重复实现**（且两处 `shouldReuseByRegenRate` 语义相反）；② def 已命中仍走 Core `matchSoul/matchSkill/matchMCP` 按任务动态重解析——「命中即绑定，无绑定就是没有」，没有概率推翻、也没有组件层动态匹配。
+
+**修改的方法**：
+  - `Runtime/Agents/application/AgentDefService`：
+    - `applyRegenDecision` —— 注释弃用（原方法保留）；Runtime 不再承载"重新生成概率"，该概念唯一实现收敛于 Agent 层 `AgentLibraryService.matchAgent`（regen_rate 失效判决 → regenerate → AgentBuilder 重构）；
+    - `matchAgentDef` —— 删除 `await this.applyRegenDecision(input)` 与 `input.regenerate` 三个判定分支（原方法已注释保留）；def 命中（exact/signature/llm）即复用，无随机推翻；
+    - `soAgentSnapshot` —— 只读 def 显式绑定：soul 读 `def.soul_id`（无绑定即空）、tools 读 `def.tools_json`（无绑定即无工具）（原动态 matchSoul/matchSkill/matchMCP 版本已注释保留）；
+    - `soSoulContent` / `soSnapshotTools` / `appendMcpEntries` —— 删除 Core 组件匹配调用与 `bypass_cache`/`task_content` 透传（原方法已注释保留）；`skill.selected`/`mcp.selected` 仅在 `tools_json` 显式绑定时上报（source='explicit'）。
+  - `Runtime/Agents/domain/types.ts` —— `MatchAgentDefInput.regenerate` / `MatchAgentDefOutput.regenerate` / `SoAgentSnapshotInput.regenerate` 注释弃用（原字段已注释保留）。
+  - `Runtime/Runs/application/RunGatewayService.soSnapshot` —— 删除 regenerate 透传参（原方法已注释保留）。
+  - `Runtime/test/RuntimeGateway.test.ts` —— 断言随收敛语义更新：def 无 soul 绑定时 system 无 Soul 段且 `matchSoul` **不被调用**（原断言"通用人格动态解析"已注释为语义变更说明）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` —— e2e 实测（"你是谁"，def signature 命中）：run 全程 **1.4s**（run.accepted→run.finished），零路由 LLM、零组件匹配 LLM；对比修复前 26s。
+
+**可能存在的问题**：
+  - def 的 binding 为空时 system 无 Soul 段，Agent 人格完全依赖模板 identity 段；若预期有 Soul，必须先经 `declareAgent`/配置中心显式写 `soul_id`/`tools_json`。
+  - skill/mcp 不能再被 LLM 侧"选"，只能由 def 显式绑定 ---- 需要绑定能力的入口只剩构建（AgentBuilder）与 declareAgent。

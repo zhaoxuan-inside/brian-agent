@@ -28,6 +28,8 @@ export interface PromptTemplateData {
   prompt_template_brief?: string;
   /** Prompt 内容（Markdown 格式模板） */
   prompt_template: string;
+  /** 是否系统内置（2026-09-11 新增；is_system=1 的模板不可删除、不可解除系统标记） */
+  is_system?: boolean;
   /** 是否启用，默认 true；资源级启用/禁用通过 updatePrompt 修改该字段实现 */
   enable?: boolean;
 }

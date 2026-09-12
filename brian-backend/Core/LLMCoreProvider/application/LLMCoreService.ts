@@ -13,9 +13,12 @@ import { IdGenerator, Operator } from '@brian-agent/base';
 import {
   ValidationError,
   NotFoundError,
+  ProcessingError,
 } from '../../shared/errors';
-import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
+import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
+import { ScoreThreshold } from '../../shared/MatchConstants';
 import { ensureDefaultConfig } from '../../shared/ConfigHelper';
+import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
 import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared';
 import type { LLMProviderQuotaRecord, LLMCoreConfigRecord } from '../domain/types';
 import {
@@ -45,8 +48,6 @@ import {
 } from '@brian-agent/base';
 import {
   PROMPT_IDS,
-  getBuiltinTemplate,
-  renderTemplate,
 } from '@brian-agent/base';
 
 /**
@@ -82,6 +83,7 @@ export class LLMCoreService {
     await ensureDefaultConfig(this.relationDb, LLM_CORE_CONFIG_TABLE, [
       { field: 'regen_rate', value: 75 },
       { field: 'prompt_template_id', value: null },
+      { field: 'score_threshold', value: ScoreThreshold.Default },
     ]);
   }
 
@@ -113,12 +115,16 @@ export class LLMCoreService {
     );
     if (cacheResult.hit && cacheResult.entries?.[0]) {
       const boundId = cacheResult.entries[0].entity_id;
-      const boundLLM = availableLLMs.find((l) => l.id === boundId);
-      const llmRecord = boundLLM ? await this.getLLMById(boundId) : { id: boundId, llm_title: boundId, enable: true };
-      output.llm_id = boundId;
-      output.llm = llmRecord;
-      output.from_cache = true;
-      return true;
+      // ===== 修改后的代码：绑定 LLM 先经 DB 校验（存在且启用），不再构造合成记录 =====
+      const llmRecord = await this.getLLMById(boundId);
+      if (llmRecord && llmRecord.enable) {
+        output.llm_id = boundId;
+        output.llm = llmRecord;
+        output.from_cache = true;
+        return true;
+      }
+      // 绑定失效（LLM 已被删除/禁用）：清除绑定缓存，继续走第 2/3 层重新匹配
+      await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
     }
 
     if (availableLLMs.length === 0) {
@@ -140,27 +146,14 @@ export class LLMCoreService {
       interact_id: input.interact_id,
       available_llms: this.buildLlmList(availableLLMs),
     };
-    let selectionPrompt: string;
-    if (config?.prompt_template_id) {
-      const execPromptOutput = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        {
-          id: config.prompt_template_id,
-          variables: selectionVariables,
-        } as ExecPromptInput,
-        execPromptOutput, new PromptContext(),
-      );
-      selectionPrompt = execPromptOutput.prompt;
-      if (!selectionPrompt) {
-        selectionPrompt = this.renderDefault(selectionVariables);
-      }
-    } else {
-      selectionPrompt = this.renderDefault(selectionVariables);
-    }
-
+    // ===== 修改后（2026-09-11）：prompt 仅经 DB 渲染（无硬编码回退），排序走统一 [{id, score}] 百分制 + threshold =====
+    const selectionPrompt = await this.renderMatchPrompt(
+      config?.prompt_template_id ?? PROMPT_IDS.llmMatch,
+      selectionVariables,
+    );
     const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
     const execLLMOutput = new ExecLLMOutput();
-    await this.llmAccess.execLLM(
+    const ok = await this.llmAccess.execLLM(
       {
         id: rankerLLM.id,
         prompt: selectionPrompt,
@@ -169,11 +162,14 @@ export class LLMCoreService {
       } as ExecLLMInput,
       execLLMOutput, new LLMContext(),
     );
-
-    let selectedLLMId = this.parseSelectionResult(
-      execLLMOutput.result,
-      availableLLMs,
-    );
+    const threshold = config?.score_threshold ?? ScoreThreshold.Default;
+    const ranked = ok
+      ? filterByThreshold(parseRankingCandidates(execLLMOutput.result ?? ''), threshold)
+      : [];
+    const llmIds = new Set(availableLLMs.map((l) => l.id));
+    let selectedLLMId = ranked
+      .map((c) => c.id)
+      .find((id) => llmIds.has(id)) ?? '';
 
     // ===== 第 3 层：模型自适应生成/系统默认兜底（LLM 不可凭空生成代词代码） =====
     if (!selectedLLMId) {
@@ -308,7 +304,7 @@ export class LLMCoreService {
    */
   async configLLMCore(input: ConfigLLMCoreInput, output: ConfigLLMCoreOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined) {
+    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined) {
       const updateData: Array<{ field: string; value: unknown }> = [];
       if (input.regen_rate !== undefined) {
         if (input.regen_rate < 0 || input.regen_rate > 100) {
@@ -334,6 +330,12 @@ export class LLMCoreService {
           }
         }
         updateData.push({ field: 'prompt_template_id', value: input.prompt_template_id || null });
+      }
+      if (input.score_threshold !== undefined) {
+        if (input.score_threshold < 0 || input.score_threshold > 100) {
+          throw new ValidationError('score_threshold 必须在 0-100 之间');
+        }
+        updateData.push({ field: 'score_threshold', value: input.score_threshold });
       }
       await this.configStore.upsert(updateData);
     }
@@ -390,6 +392,7 @@ export class LLMCoreService {
       regen_rate: (raw['regen_rate'] as number) ?? 75,
       similarity_threshold: Number(raw['similarity_threshold'] ?? 0.7),
       prompt_template_id: (raw['prompt_template_id'] as string) || null,
+      score_threshold: Number(raw['score_threshold'] ?? ScoreThreshold.Default),
     };
   }
 
@@ -554,38 +557,19 @@ export class LLMCoreService {
     }).join('\n');
   }
 
-  /** 渲染内置 LLM 匹配模板（内存兜底） */
-  private renderDefault(variables: Record<string, unknown>): string {
-    const tpl = getBuiltinTemplate(PROMPT_IDS.llmMatch);
-    return tpl ? renderTemplate(tpl, variables) : '';
+  /**
+   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板；无硬编码内存回退，缺失 fail-loud。
+   */
+  private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
+    const execPromptOutput = new ExecPromptOutput();
+    await this.promptsAccess.execPrompt(
+      { id: templateId, variables } as ExecPromptInput,
+      execPromptOutput, new PromptContext(),
+    );
+    if (execPromptOutput.prompt) {
+      return execPromptOutput.prompt;
+    }
+    throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
   }
 
-  /** 从 LLM 排名回复中解析出选中的 LLM ID */
-  private parseSelectionResult(
-    resultText: string,
-    availableLLMs: Array<{ id: string; llm_title?: string }>,
-  ): string {
-    const trimmed = resultText.trim().replace(/^['"]+|['"]+$/g, '');
-
-    for (const llm of availableLLMs) {
-      if (trimmed === llm.id) {
-        return trimmed;
-      }
-    }
-
-    for (const llm of availableLLMs) {
-      if (llm.id && trimmed.includes(llm.id)) {
-        return llm.id;
-      }
-    }
-
-    for (const llm of availableLLMs) {
-      const title = llm.llm_title;
-      if (title && trimmed.toLowerCase().includes(title.toLowerCase())) {
-        return llm.id;
-      }
-    }
-
-    return availableLLMs[0]?.id ?? '';
-  }
 }

@@ -150,13 +150,19 @@ export class InfoCoreService {
     const isCorrect = handleResultType === HandleResultType.CORRECT;
 
     const now = IdGenerator.now();
+    // ===== 原始代码（保留作为参考）=====
+    // info_raw.created / updated 一律取保存时刻 now；
+    // ===== 修改后（2026-09-09）：优先使用调用方传入的真实创建时间（input.created，
+    //      如 runtime_message.created），避免 run 结束后统一同步导致 user/assistant
+    //      落库同一时间戳、对话区消息顺序颠倒（并使按 created 去重的条件真正成立）=====
+    const createdAt = input.created && input.created > 0 ? input.created : now;
     const id = IdGenerator.generate();
     const infoId = IdGenerator.generate();
 
     await this.relationDb.insert(INFO_RAW_TABLE, [
       { field: 'id', value: id },
-      { field: 'created', value: now },
-      { field: 'updated', value: now },
+      { field: 'created', value: createdAt },
+      { field: 'updated', value: createdAt },
       { field: 'session_id', value: input.session_id },
       { field: 'work_id', value: input.work_id },
       { field: 'interact_id', value: input.interact_id || '' },

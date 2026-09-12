@@ -6,7 +6,7 @@ import {
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
   SoLLMInput, SoLLMOutput,
-  PROMPT_IDS, getBuiltinTemplate, renderTemplate,
+  PROMPT_IDS,
   type DataObject, type Condition,
 } from '@brian-agent/base';
 import {
@@ -59,6 +59,7 @@ function mapAgent(row: Record<string, unknown>): AgentRecord {
     usage_count: Number(row.usage_count ?? 0),
     eval_score: Number(row.eval_score ?? 50),
     enable: toBool(row.enable),
+    created_by: String(row.created_by ?? 'user'),
   };
 }
 
@@ -104,17 +105,19 @@ export class AgentLibraryService {
       { field: 'task_signature', value: input.task_signature ?? '' },
       { field: 'usage_count', value: 0 },
       { field: 'eval_score', value: 50 },
+      { field: 'created_by', value: input.created_by || 'user' },
       { field: 'enable', value: 1 },
     ];
     if (input.agent_purpose !== undefined) {
       insertFields.push({ field: 'agent_purpose', value: input.agent_purpose });
     }
 
+    // ===== 2026-09-11：created_by 归属列随 insert 写入；老表缺列时容错降级重插 =====
     try {
       await this.relationDb.insert(AGENT_TABLE, insertFields);
     } catch {
-      // 容错降级：若内存表未包含 agent_purpose 列则去掉该字段重新插入
-      const fallbackFields = insertFields.filter(f => f.field !== 'agent_purpose');
+      // 容错降级：老表缺 created_by 列时去掉该列重新插入（agent_purpose 保留 —— 是匹配依据）
+      const fallbackFields = insertFields.filter((f) => f.field !== 'created_by');
       await this.relationDb.insert(AGENT_TABLE, fallbackFields);
     }
     output.agent_id = input.agent_id;
@@ -320,6 +323,8 @@ export class AgentLibraryService {
     }
 
     let deleted = 0;
+    // ===== 2026-09-11：解散守卫 —— 用户创建（created_by=user）的 Agent 不允许系统删除 =====
+    await this.assertNotUserOwned(input.ids);
     for (const id of input.ids) {
       if (!id) continue;
       const rows = await this.relationDb.select(AGENT_TABLE, {
@@ -351,6 +356,22 @@ export class AgentLibraryService {
     }
     output.deleted_count = deleted;
     return true;
+  }
+
+  // ===== 新增方法（2026-09-11）：删除守卫 —— 用户创建（created_by=user）的 Agent 不允许系统删除 =====
+  /** 删除守卫（逻辑控制）：任一目标行归属 user 时 fail-loud */
+  private async assertNotUserOwned(internalIds: string[]): Promise<void> {
+    const targets = internalIds.filter(Boolean);
+    if (targets.length === 0) {
+      return;
+    }
+    const rows = await this.relationDb.select(AGENT_TABLE, {
+      conditions: [{ field: 'id', operator: Operator.IN, value: targets }],
+    });
+    const userOwned = (rows ?? []).some((row) => String(row.created_by ?? 'user') === 'user');
+    if (userOwned) {
+      throw new ValidationError('用户创建的 Agent 不允许系统自动删除');
+    }
   }
 
   async toggleAgent(input: ToggleAgentInput, output: ToggleAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
@@ -608,14 +629,27 @@ export class AgentLibraryService {
     let config = await this.getConfig();
     if (!config) {
       const now = IdGenerator.now();
-      await this.relationDb.insert(AGENT_LIBRARY_CONFIG_TABLE, [
-        { field: 'id', value: IdGenerator.generate() },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'prompt_template_id', value: '' },
-        { field: 'similarity_threshold', value: 0.7 },
-        { field: 'max_agent_count', value: 100 },
-      ]);
+      try {
+        await this.relationDb.insert(AGENT_LIBRARY_CONFIG_TABLE, [
+          { field: 'id', value: IdGenerator.generate() },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'prompt_template_id', value: '' },
+          { field: 'similarity_threshold', value: 0.7 },
+          { field: 'max_agent_count', value: 100 },
+          { field: 'match_score_threshold', value: 70 },
+        ]);
+      } catch {
+        // ===== 2026-09-11：老测试库缺 match_score_threshold 列时容错重插（去新列重试） =====
+        await this.relationDb.insert(AGENT_LIBRARY_CONFIG_TABLE, [
+          { field: 'id', value: IdGenerator.generate() },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'prompt_template_id', value: '' },
+          { field: 'similarity_threshold', value: 0.7 },
+          { field: 'max_agent_count', value: 100 },
+        ]);
+      }
       config = await this.getConfig();
     }
     if (!config) throw new ValidationError('config init failed');
@@ -655,6 +689,13 @@ export class AgentLibraryService {
       }
       data.push({ field: 'max_agent_count', value: input.max_agent_count });
     }
+    // ===== 2026-09-11：Agent 匹配 LLM 采纳阈值（配置中心 Agent 库参数页可调） =====
+    if (input.match_score_threshold !== undefined) {
+      if (input.match_score_threshold < 0 || input.match_score_threshold > 100) {
+        throw new ValidationError('match_score_threshold 必须在 0-100');
+      }
+      data.push({ field: 'match_score_threshold', value: input.match_score_threshold });
+    }
 
     if (data.length > 0) {
       data.push({ field: 'updated', value: IdGenerator.now() });
@@ -670,6 +711,7 @@ export class AgentLibraryService {
     output.similarity_threshold = latest?.similarity_threshold ?? 0.7;
     output.regen_rate = latest?.regen_rate ?? 75;
     output.max_agent_count = latest?.max_agent_count ?? 100;
+    output.match_score_threshold = latest?.match_score_threshold ?? 70;
 
     if (input.max_agent_count !== undefined && latest) {
       const count = await this.relationDb.count(AGENT_TABLE, [
@@ -693,6 +735,7 @@ export class AgentLibraryService {
       similarity_threshold: Number(row.similarity_threshold ?? 0.7),
       regen_rate: Number(row.regen_rate ?? 75),
       max_agent_count: Number(row.max_agent_count ?? 100),
+      match_score_threshold: Number(row.match_score_threshold ?? 70),
     };
   }
 
@@ -732,24 +775,21 @@ export class AgentLibraryService {
     }));
 
     const candidatesJson = JSON.stringify(candidateList, null, 2);
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
     let prompt = '';
     const id = promptTemplateId || PROMPT_IDS.agentMatch;
-    try {
-      const promptOut = new ExecPromptOutput();
-      const okPrompt = await this.promptsAccess.execPrompt(
-        Object.assign(new ExecPromptInput(), {
-          id,
-          variables: { task_content: taskContent, candidates: candidatesJson },
-        }),
-        promptOut,
-        new PromptContext(),
-      );
-      if (okPrompt && promptOut.prompt) prompt = promptOut.prompt;
-    } catch { /* ignore prompt failure */ }
-
+    const promptOut = new ExecPromptOutput();
+    const okPrompt = await this.promptsAccess.execPrompt(
+      Object.assign(new ExecPromptInput(), {
+        id,
+        variables: { task_content: taskContent, candidates: candidatesJson },
+      }),
+      promptOut,
+      new PromptContext(),
+    );
+    if (okPrompt && promptOut.prompt) prompt = promptOut.prompt;
     if (!prompt) {
-      const tpl = getBuiltinTemplate(PROMPT_IDS.agentMatch);
-      if (tpl) prompt = renderTemplate(tpl, { task_content: taskContent, candidates: candidatesJson });
+      throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
     }
 
     const llmOut = new ExecLLMOutput();

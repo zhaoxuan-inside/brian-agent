@@ -1,4 +1,483 @@
+## [2026-09-11] trace_id 收敛为维护字段（唯一存放点 = Metrics）+ console.log 出清
+
+**变更原因**：规范确立——Context / Input / Output 均为业务承载对象，trace_id 是链路追踪维护字段，唯一存放点应为 Metrics（或 Report 事件关联），不得散落 Context/Input；调试日志一律走 Metrics→LogProvider 网关，不得直用 console.log。
+
+**修改的方法**：
+  - `Base/shared/base/Input.ts` / `Context.ts` — 基类删除 `trace_id`；领域 Input 上的业务同名键（如 `GetTraceInput.trace_id` 查询字段）不受限。
+  - `Base/shared/aop/AopProxy.ts` — trace_id 生成/回填重写：来源 = Metrics.trace_id（显式传播）→ IdGenerator 新生成；仅回填 Metrics 与 Report，不再写 Context；`pickTraceId`（旧式兜底错误日志）改为 Metrics 优先、领域 Input 兜底。
+  - `Base/LogProvider/interceptor/LogInterceptor.ts` — 错误日志 trace_id 提取顺序：metrics 优先 → 领域 input 字段兜底。
+  - `Application/Chat/application/ChatService.openChatStreamV2` — `context.trace_id` 读写改为 `metrics.trace_id`（无 metrics 时本地生成并回填到其 metrics 实例）。
+  - `Base/components/SQLite/SQLiteComponent.ts` — verbose 输出不再直用 console，改为 `verbose_logger` 注入通道（未注入时不输出）。
+  - `docs/_1_DevStandards/DevStandards.md` — §7 日志规范新增第 5 条：trace_id 属维护字段，唯一承载点 = Metrics；console.log 禁用原则重申。
+
+**影响的端点**：全链路无对外行为变化；log_record.trace_id 采集来源由 Input/Context 改为 Metrics（AOP 自动回填保证语义不变）。
+
+**可能存在的问题**：旧式 3 参调用（无 Metrics）若 Input 无领域级 trace_id 字段，错误日志将缺 trace_id——经查运行时核心链路均已 5 参化，影响面为空。
+
+**验收**：typecheck 5 workspace 全绿；base 807 / core 192 / runtime 39 / agent 121 / application 476 全过；eslint 无错误；残留 console 仅 3 处合法场景（ConsoleLogger 兜底 / dev-server 退出前 Fatal / 沙箱内 no-op 注入）。
+
+## [2026-09-11] 错误 Agent 立即杀死（与正确 Agent 自然凋亡分离；复盘：session 2e871085 无删除发起）
+
+**变更原因**：复盘发现解散机制（evalWorkAgent → disbandBadAgent）对错误 run 从未触达——Runtime v2 生态圈（RunGateway→AgentLoop）不写 agent_usage（usage 最新记录停留在 2026-08-31，v2 上线后评估闭环断粮），错误产物（tool.result error）也无通道进入评估输入；错误 Agent 若不立即处置，同类任务仍命中同一 def 持续报错（实测会话 2e871085 连续 skill_exec/mcp_exec 两次猜 id 报错）。确立原则：正确 Agent 走评估衰减/老化自然凋亡；错误 Agent 执行即杀死。
+
+**修改的方法**：
+  - `Runtime/Agents/domain/types.ts` — 新增 `KillErroredAgentInput/Output`。
+  - `Runtime/Agents/application/AgentDefService` — 新增 `killErroredAgent`：1) 错误 usage 落账（usage_context 带 run_error:true/error 摘要，评估闭环可回溯）；2) disable 全部 runtime_agent_def（agent_ref 对齐）并失效 active def 缓存 → 下一轮匹配立即不再命中；3) system 归属 → `delAgent` 硬删除（连带 usage/skill_usage/agent_llm 清理）；user 归属 → 仅软禁用（delAgent 内守卫拒绝越权）；4) 上报 `agent.disbanded`（reason=run_error）。
+  - `Runtime/Agents/access/AgentDefAccess` — `killErroredAgent` 代理。
+  - `Runtime/Runs/application/RunGatewayService.executeRun` — stop_reason=error（loop 报错或异常收敛两条路径）结算后**立即触发杀死**（fire-and-forget 内联 await，失败不阻断 run 结算）；`settleRun` 补充 agent_ref/错误信息参数并上报 error.occurred（agent_id 关联）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — run error 结算即：该 Agent def 立即失效，同任务下一轮重新走三层匹配（低配重建或 L4 构建）；不再出现"同一错误 Agent 反复被选中反复报错"。
+  - 评估闭环（SelfLearning runEvalOnce）— 错误 usage（run_error=true）进入 agent_usage，可回溯评估。
+
+**可能存在的问题**：
+  - 瞬时故障（LLM 单次断流/超时）也会触发杀死——按"错误立即杀死"语义执行，重建成本可接受（构建器会对同类任务重新构建）；如需容错可后续加"连错 N 次才杀"的阈值。
+  - 测试库 agent 表无 created_by 列时归属判定回退 user（仅软禁用），生产库含该列。
+
+**验收**：runtime 39（新增错误立即杀死用例）/ agent 121 / application 476 全过；tsc+eslint 全绿；e2e 用例断言 def 行状态 active→disabled + agent.disbanded 事件投影。
+
+## [2026-09-11] 选/执分离：组件选择收敛到 match 阶段，执行门按绑定清单放行（复盘 session 2e871085）
+
+**变更原因**：复盘会话 2e871085-7d5c-49b3-9416-aac3e56b76a4（"今天应该穿什么衣服"）——skill/mcp.selected 均为空、agent.components 绑定为空，但 LLM 仍看到常驻工具 `skill_exec`/`mcp_exec` 且 system 没有可用 id 清单，只能凭语义猜 id（`skill_exec{"skill_id":"weather"}` → "Skill 不存在: weather"，MCP 同样失败），浪费两轮工具调用并降级为反问。根因：组件选择与组件执行未分离（工具可见性与绑定脱钩、执行不校验 id 来源）。
+
+**修改的方法**：
+  - `Runtime/Tools/domain/types.ts` — 新增 `ComponentScope`（skills/mcps id 清单）；`ToolExecutionContext` / `ExecToolInput` 增加 `component_scope`（执行门依据）。
+  - `Runtime/Loop/domain/types.ts` — `ExecAgentLoopInput` 增加 `component_scope`。
+  - `Runtime/Runs/application/RunGatewayService.prepareLoopInput` — 按快照绑定组装 Loop 工具清单：`skill_exec` 仅在 ≥1 skill 绑定时注入、`mcp_exec` 仅在 ≥1 MCP 绑定时注入（显式清单含 cdt_browser/update_plan/delegate 通用原语）；同时携带 `component_scope`。
+  - `Runtime/Loop/application/AgentLoopService` — `component_scope` 贯穿 LoopRunContext → execLoopTool → ExecToolInput。
+  - `Runtime/Tools/application/ToolService.prepareToolContext` — `component_scope` 透传到 ToolExecutionContext。
+  - `Runtime/Tools/application/builtinTools.ts` — `skill_exec` / `mcp_exec` 执行门：无 component_scope（Agent 未绑定任何组件）→ 拒执行；id 不在绑定清单内 → 拒执行并回示可用 id 清单（"Skill 不在本运行的组件绑定范围内。可用 Skill id：…"）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 未绑定 Skill/MCP 的 Agent 不再看到 skill_exec/mcp_exec（消除"猜 id"路径）；越权 id 调用在执行门处被拒，错误文案可回流模型改写。
+  - 权限门之前完成校验（越权 id 不再触发 permission.asked 弹窗，减少用户侧无谓审批）。
+
+**可能存在的问题**：
+  - 显式 `tools_json` 绑定的 id 若已被删除，执行门仍会拒执行（提示可能为空清单）——与 `AgentKit.validateAgentSkills`（配置期校验）互补，形成双保险。
+  - Skill/MCP/Soul/Prompt 的"按需创建（demand-provision）"（Provider 建组件→返回 id→建立 agent 绑定关系）为后续增强，本变更只做"绑定约束执行"。
+
+**验收**：runtime 38 / agent 121 / application 476 全过；tsc --noEmit 与 eslint 全绿。
+
+## [2026-09-11] Soul/Skill/MCP match 结果内存缓存 + MCP 排序 max_tokens（复盘：interact 9b68defe / 4f69b46b）
+
+**变更原因**：同 (agent, 任务) 的组件排序每轮重复全量 LLM（实测变异 2.6s→9.3s→32.9s，provider 对 max_tokens 不约束其深度思考输出），用户复现"新会话同一问题 65s 无回复"（run f8410358：accept→消息落库间隔 56.3s = Soul 排序 32.9s + Skill 排序 23.2s 两级串行）。耗时不随用户问题难度，而随排序模型发挥。
+
+**修改的方法**：
+  - `Core/SoulCoreProvider/SoulCoreService.matchSoul`、`Core/SkillCoreProvider/SkillCoreService.matchSkill`、`Core/MCPCoreProvider/MCPCoreService.matchMCP` — 进程内存匹配缓存：键 `agent_id|任务前缀(128字)`，TTL 10 分钟，容量 500（FIFO）；`config*Core` 配置变更即清缓存；MatchSkillInput/MatchMcpInput 新增 `task_content?`（AgentDefService snapshot 透传）。
+  - `MCPCoreService.rankMcpsWithLLM` — 排序新增 `max_tokens: 300`。
+  - 复述:`matchSkill` 排序 prompt 已摘要化（只带 name/skill_brief，先元数据后按需 enrich 全文 —— 渐进式加载语义）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 同 (agent, 同任务) 复现：预匹配 LLM 由 2 次串行（最坏 56s）→ 0 次；端到端 52s → 5.2s（首问仍需 1 次排序入缓存，30.2s，受模型深度思考影响）。
+
+**可能存在的问题**：
+  - 任务内容前缀 key 对"同义改写"不命中（仍走 LLM 排序一次）；深度思考 provider 对 max_tokens 约束不生效的尾部延迟仍在（仅新任务首问受影响）。
+
+## [2026-09-11] 参数全量入配置中心（消除硬编码业务参数）
+
+**变更原因**：用户要求"几乎所有的参数都应该在配置中心可以看到和配置"，清理系统内仍有硬编码的 Marshalling 业务参数。
+
+**修改的方法**：
+  - `Base/LLMProvider` — `exec_timeout_ms`（默认 120000）与 `embed_timeout_ms`（默认 15000）改为 `llm_config` 表读取（initialize 时载入），`LLMService` 取消两处写死常量的直接使用。
+  - `Runtime/Runs` — 权限等待超时改为 `runtime_runs_config.permission_wait_timeout_ms`（默认 120000），`configRuns` 可读写；`waitPermission` 超时由配置驱动（回退 120000）。
+  - `Runtime/Agents` — Agent 匹配 LLM 打分采纳阈值改读 `agent_library_config.match_score_threshold`（默认 70），删除 `LLM_SCORE_THRESHOLD` 直取常量。
+  - `Agent/AgentLibrary` — `match_score_threshold` 加入 `AgentLibraryConfigRecord` / Config 输入输出；config 表 ALTER 迁移；老测试库容错降级重插。
+  - `Agent/EvolutorAgent` — 新增 `evolutor_agent_config.critical_disband_score`（默认 30），解散判定读该配置，老表容错降级重插。
+  - `Core` 四模块 — `VectorMatchCache.configure()` 支持 capacity / similarityThreshold / ttlMs 动态调整；soul/skill/mvp 三核现在的 `match_cache_ttl_ms`(600000) / `match_cache_capacity`(500) 与 `vector_similarity_threshold` 均进配置中心（Application/Config/configRegistrations 注册）。
+  - `Application/Config/configRegistrations.ts` — 新增 12 项注册：4 项 LLM 超时与启用、soul/skill/mcp/llm_core 的 score_threshold / vector_similarity_threshold / match_cache_ttl_ms / match_cache_capacity、agent_library 的 match_score_threshold、evolutor_agent 的 critical_disband_score。
+
+**影响的端点**：
+  - `GET /api/config/:module` — 以上 12 项均可在"配置中心"查看；Soul/Skill/MCP/Llm 采纳阈值与缓存参数改后即时生效（缓存按新参数重置）。
+  - `POST /api/chat/stream` — 同参数不再依赖重启；regen 概率已由 agent_library_config.regen_rate（实测=10）控制。
+
+**验收**：base 807 / core 192 / runtime 36 / agent 121 / application 476 全过；tsc/lint/build 全绿；E2E 对照：首问 14.5s（2 次排序 1.3s+3.8s）→ 同句复问 **4.9s**（组件匹配 0 次 LLM，仅答案回话 1 次）。
+
+## [2026-09-11] 组件匹配体系重构（统一 [{id,score}] + score_threshold + MD5/向量缓存 + 解散 + regen）
+
+**变更原因**：复盘 interact 9b68defe / 4f69b46b —— 组件排序全量 LLM 每轮重跑且输出无界（provider 不受 max_tokens 约束的深度思考，实测 52s/2840 tokens）；skill 排序 prompt 携带全量 skill_md；match 结果无记忆；无 score 无法判定"最匹配的也不合适"。
+
+**修改的方法**：
+  - `Base` — prompt_template 表新增 `is_system` / `seed_hash` 列；`seed()` INSERT-only + 指纹刷新（用户未编辑的系统模板随代码升级，编辑过的保留）；`delPrompt`/`updatePrompt` 系统模板守卫；全部 `getBuiltinTemplate` 运行时硬编码回退删除（4 Core + AgentKit + 6 Agent/Application Service），DB 渲染失败 fail-loud；四个排序模板统一输出 `[{"id","score":百分制}]`。
+  - `Core/shared` — 新增 `FifoCache`（可复用容量淘汰）、`MatchConstants`（枚举：ScoreThreshold=90 / AgentScoreThreshold=70 / VectorSimilarity=0.8 / CacheCapacity=500 / CacheTTL=10min / CreatedBy / DisbandThreshold=30）、`RankingParser`（宽容解析 + threshold 截断）、`VectorMatchCache`（MD5 精确 → cosine 相似度两级命中）。
+  - `Core` 4 Service — config 表新增 `score_threshold`(90) / `vector_similarity_threshold`(0.8)，config*Core 可读写、变更清缓存；matchSoul/matchSkill/matchMCP 换 VectorMatchCache（embedding 走 nomic-embed；embed 失败降级 MD5-only；embedLLM 独立 15s 超时）；排序调用统一禁用深度思考（thinking:disabled）；matchSkill 排序仅用元数据（渐进式加载：命中后 enrichMatchedSkills 取全文）；LLMCore 无缓存（按用户决策）。
+  - `Agent` — agent 表新增 `created_by`(user/system)；`delAgent` 守卫（user 资产 fail-loud）；EvolutorAgent 低分解散（overall < 30 且 system 归属 → delAgent + runtime_agent_def disabled + `agent.disbanded` 事件）；`businessEvent` 新增。
+  - `Runtime` — `matchAgentDef` 命中后走 `agent_library_config.regen_rate` 随机判决，触发时 `soAgentSnapshot` `bypass_cache` 强制全量重排；`Match*Input` 新增 `task_content` / `bypass_cache`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 思考禁用后排序回归 1~8s 级；同 (agent, 任务) 第二次问 → MD5 缓存命中零排序 LLM；embedding 服务（127.0.0.1:8080 LLamaCPP）当前 502 不可达期间命中链路 15s 快速失败降级，请优先修复 embedding 服务以恢复全速。
+  - `POST /api/config` — soul/skill/mcp/llm 四核可调 `score_threshold`（默认 90）与 `vector_similarity_threshold`（默认 0.8）；`agent_library_config.regen_rate`（默认 75）控制命中后重评估概率。
+  - `DELETE /api/prompts/:id` — 系统模板（is_system=1）拒绝（400）。
+
+**验收**：base 807 / core 192 / runtime 36 / agent 121 / application 476 全过；tsc/lint/build 全绿；同句二次问答已验证缓存命中路径；首问阈值驱动 Layer-3 自生成仍需观测（score_threshold=90 严格度可在配置中心下调）。
+
+## [2026-09-11] 权限等待 120s 超时兜底 + 启动收敛遗留 run（复盘僵尸 run b5a8b667 / c19996e8）
+
+**变更原因**：两个 run 永久卡 `running`——权限卡（`cdt_browser` 首次执行确权）挂起后用户关闭页面，`waitPermission` Deferred 无超时无兜底；重启后内存 waiters 丢失，遗留 run 行永远无法结算。
+
+**修改的方法**：
+  - `Runtime/Runs/application/RunGatewayService.waitPermission` — 等待加 `PERMISSION_WAIT_TIMEOUT_MS=120s` 超时兜底，超时默认拒绝（approved=false），Loop 按拒绝配对流收敛结算（原实现已注释保留）。
+  - 同文件 `initialize()` — 新增 `convergeOrphanRuns()`：启动时把遗留 `running/queued` 收敛为 `aborted`（stop_reason=service_restart）。
+  - `Runtime/shared/types.ts` — `AbortReason` 新增 `ServiceRestart = 'service_restart'`。
+- 权限卡展示语义复核：对话区展示（`dev-server.ts` /api/chat/history 将 PERMISSION 并入消息）、ChatMap 不展示（前端 `messageGraph.ts` 仅收 REQUEST/RESPONSE）——已满足，无需改动。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（权限门 run）— 挂起上限 120s；`POST /api/chat/permission/answer/{id}` 超时后 answered=false。
+  - 后端启动（`tsx dev-server.ts`）— 遗留 running/queued 统一 aborted（实测 count=2 落账成功）。
+
+**验收**：runtime 36 单测 + tsc + lint 全绿；重启后 b5a8b667/c19996e8 均 aborted/service_restart，E2E 问答 13.7s 正常收尾。
+
+## [2026-09-11] 组件匹配廉价化（摘要排序 + max_tokens）+ AgentDef 启动资产缓存（复盘：interact 9b68defe）
+
+**变更原因**：同一句"今天天气怎么样？"最坏 65s：LLM 回答仅 3.7s，61.4s 烧在 soAgentSnapshot 的组件动态匹配——Soul 排序 9.3s 叠 Skill 排序 LLM 无 max_tokens 上限（流式 2840 tokens/52s），且 matchSkill 的 prompt 把**全量 skill_md** JSON 进 prompt。耗时不随问题难度而随排序模型发挥。
+
+**修改的方法**：
+  - `Core/SkillCoreProvider/application/SkillCoreService.matchSkill` — 排序 prompt 只带 `name/skill_brief`（不再携带全量 skill_md，原代码已注释保留）；`callLLM` 加 `max_tokens: 300`（原来无上限）。
+  - `Runtime/Agents/application/AgentDefService` — `initialize()` 启动预热：agent 绑定事实源（agent 表全量）+ active def 全表进内存；`soActiveDefsCached()` 匹配每轮读内存（TTL 30s 过期重读，`insertDefFromAgent` 写侧失效）；`soAgentAsset()` 回退绑定缓存行。
+  - 语义保持：Soul/Skill/MCP 仍按任务内容动态匹配（未启用 Layer 1 绑定水合），与 RuntimeGateway 测试锁定的 PRD 语义一致。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 同任务复现 65s → 16s；排序 LLM 有了终止上限；匹配/快照消除每轮重复全表查询。
+
+**可能存在的问题**：
+  - 排序 LLM 延迟仍受模型速度影响（变异正常范围）；资产缓存 TTL 30s 内外部改写以旧值为准。
+
+## [2026-09-11] LLM 调用 Metrics 遥测 + 会话入口冗余清理 + 启动期工具规格缓存（优化：interact 65f80eb3）
+
+**变更原因**：
+复盘 interact `65f80eb3`（run `f53058fd`，用户问"今天天气怎么样"）发现简单问答也耗时约 7.5s：LLM 调用仅约 3.2s，其余为 run 受理后到 LLM 首次调用前的固定开销（工具规格解析、冗余 title 生成 DB 往返等），且全仓无"单次 LLM 调用"粒度的 token/耗时统计（llm_usage 仅按天聚合），延迟无法归因。
+
+**修改的方法**：
+  - `Base/shared/base/Metrics.ts` — 新增 `LLMCallUsageMetrics` 接口与 `Metrics.llm_usage` 字段、`recordLLMUsage(usage)` / `summarizeLLMUsage()` 方法；AOP 落 log_record 时随 Metrics 序列化自动携带（原结构已注释保留于方法上方）。
+  - `Base/LLMProvider/application/LLMService.ts` — `execLLM` / `execLLMEvents` 成功路径回填新增 `recordLLMCallMetrics(metrics, ...)`：Metrics.recordLLMUsage 记 token 与单次耗时，并发 INFO 日志（`LLM call: X in / Y out tokens in Zms`，含 llm_id/attempt，带 trace_id 可在监控页关联）。
+  - `Runtime/Loop/application/AgentLoopService.callLLMTurn` — 透传 `ctx.metrics` 至 `execLLMEvents`（原调用未传 metrics，AOP 默认实例与 run 无关联）。
+  - `Application/Chat/application/ChatService.openChatStreamV2` — 删除重复的第二次 `autoGenerateSessionTitleIfEmpty` 调用（原行已注释保留；每次调用为一次 chat_session 查询往返）。
+  - `Runtime/Tools/application/ToolService` — 新增 `specCache`（Map<tool_id, ToolSpecJson>）；`initialize()` 与 `registerBuiltinTools()` 启动期 `warmSpecCache()` 预热；`soTools` 改走 `soCachedSpec`（miss 重建回填，原实现已注释保留）；`registerTool` 覆盖注册时使旧缓存失效，下次查询按新 def 自动重建。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 每次 LLM 调用在 log_record 留一条多小时延遥测日志（token + 单次耗时），`metrics.llm_usage` 随 AOP invocation 记录携带；run 启动期少 1 次 title DB 往返，每轮 LLM 前不再重复 zod→JSON Schema 转换。
+
+**验收**：
+  - tsc --noEmit / lint:backend 全绿；base 807 + runtime 36 + application 476 单测全部通过。
+  - E2E：重启后端后发送"今天天气怎么样"，SSE 正常收流收尾，log_record 出现 `ChatService.openChatStream LLM call: 1200 in / 343 out tokens in 3229ms`（trace_id 已关联），title 自动生成正常（仅一次）。
+
+**可能存在的问题**：
+  - `llm_usage` 只累积内存 Metrics 实例：直连调用链未把 run 级 metrics 传到 AOP 落库的调用（如 waitRun）时，stats 只体现在 INFO 遥测日志，不体现在 invocation_json；后续可在 run 结算时把 summarizeLLMUsage 写入 runtime_message.token_count/output 侧记账。
+  - 工具规格缓存基于"注册后 def 不变"假设：registerTool 覆盖同一 id 的自定义工具时会正确失效重建，但 init 期以外热注册新工具首次查询有一次性构建成本。
+  - 单次耗时 duration_ms 在降级失败次数多时语义为"最终成功候选的本次耗时"（attempt 字段已给出降级序号可区分）。
+
+## [2026-09-11] 权限确认卡独立组件 + 权限审计落库（事故：interact 2109c9a5）
+
+**变更原因**：
+用户反馈"CDP 还是调用失败了"。复盘 interact `2109c9a5`（run `46a7be65`，会话 `58348296`，用户输入"北京"查天气）定位根因：**不是 CDP 调用失败**，`cdt_browser navigate` 从未执行，在权限门即被拒（49s 后 tool part error："工具 cdt_browser 被用户拒绝执行（permission denied）"）。权限确认卡复用了需求理解卡 IntentConfirmCard（三按钮：取消/按原文执行/按理解执行），`handleIntentConfirm` 的 `answerPermission(approved = action === 'APPROVE')` 把用户点「按原文执行」也解释为拒绝。且 permission 询问/应答无任何落库记录，历史对话区无权限卡可回放。
+
+**修改的方法**：
+  - `Base/shared/base/InfoEnums.ts` — `InfoType` 新增 `PERMISSION`。
+  - `Runtime/Loop/application/AgentLoopService.askPermission` — 原代码（已注释保留）：
+    ```
+    private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
+      if (!this.permissionGate) return true;
+      const permissionId = IdGenerator.generate();
+      ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAsked, {...});
+      const result = await this.permissionGate.wait({ permission_id: permissionId });
+      return result.approved;
+    }
+    ```
+    修改后：挂起前/后分别回调 `permissionAudit?.asked(...)` / `permissionAudit?.answered(...)`；新增 `PermissionAudit` 鸭子接口（asked/answered，可选注入）。
+  - `Runtime/Loop/access/LoopAccess` 构造器新增第 8 参 `permissionAudit`；`Runtime/Loop/index.ts` 与 `Runtime/index.ts` 导出类型。
+  - `dev-server.ts` — 新增 `permissionAuditBridge`：asked 直插 `info_raw`（info_type=PERMISSION，info=JSON{permission_id/tool_id/input/status:'pending'/asked_at}），answered 按内存映射回写 status='allowed'/'denied'（best-effort，失败仅记日志）；`GET /api/chat/history` 加入 PERMISSION 消息映射（带 `permission` 字段）并入返回。
+  - 前端：新增 `components/chat/PermissionConfirmCard.vue`（允许/拒绝双按钮，六种状态文案：等待授权/已允许/已拒绝）；`api/types.ts` ChatMessage 增 `permission?: PermissionCardData`；`stores/session.ts` 新增 `updateMessage`；`chatStreamEvents.onPermissionAsked` — 原代码（已注释保留）改为把 permission.asked 以独立卡片消息插入对话区（id=`perm-<permission_id>` 幂等），不再写 chatUi.intentConfirmation；`useChatStream.handlePermissionConfirm` 新增（answerPermission + 本地状态翻转），`handleIntentConfirm` 移除 permission 分流；`ChatArea.vue` 权限消息渲染 PermissionConfirmCard（历史/实时同路径）。
+
+**影响的端点**：
+  - `POST /api/chat/permission/answer` — 应答即落库决策（allowed/denied），历史可追溯。
+  - `GET /api/chat/history/{sessionId}` — 权限卡并入历史，对话区展示；ChatMap 因 `buildMessageGraph` 仅收 REQUEST/RESPONSE 而不展示。
+  - `GET /api/chat/stream`（所有权限门 run）— asked/answered 落库 best-effort，不改挂起语义。
+
+**验收**：
+  - lint:backend / typecheck（base/core/runtime/agent/application）/ vue-tsc 全绿；runtime 36 + application 476 + base 807 单测全部通过（含权限门挂起-恢复既有用例）。
+  - dev-server 未重启（tsx 无 watch），生效需重启后端。
+
+**可能存在的问题**：
+  - 权限卡运行中状态由点击端本地翻转，多端不同步（后端 PermissionAnswered 事件有枚举未接线）；
+  - 重启时 pending 权限的内存映射丢失，answered 无法回写，记录停留 pending；
+  - permission 记录未经 saveInfo 全链路（无向量/关键词/GraphDB 派生），属只读存档。
 # 代码变更记录 (CHANGELOG)
+
+## [2026-09-11] 权限确认卡历史消失修复（PERMISSION 落库 session_id 用错会话域）
+**变更原因**：用户反馈"对话区权限确认卡交互后就看不到了，应该保留"。定位：`Runtime/Runs/application/RunGatewayService.prepareLoopInput` 传给 Loop 的 `session_id` 是 Runtime 内部会话 ID（runtimeSessionId），`AgentLoopService.askPermission` 把它透传给权限审计桥，`dev-server.ts permissionAuditBridge.asked` 将该内部 ID 落入 `info_raw.session_id`；而 `GET /api/chat/history` 经 `ChatService.soChatHistory` 按 chat session_key 过滤 info_raw，PERMISSION 行永远查不到——run 收尾 `runSseInteraction` finally 里 `loadChatHistory` 全量替换 messages（useChatStream.ts:61），实时卡被替换成空，卡片消失（落库为空、只存 stream_event）。
+**修改的方法**：
+  - `dev-server.ts permissionAuditBridge.asked` — 原代码（已注释保留）：`{ field: 'session_id', value: input.session_id }`；修改后：`{ field: 'session_id', value: input.session_key || input.session_id }`（session_key 即 chat 会话键，与历史查询同域）。
+**影响的端点**：
+  - `POST /api/chat/stream`（权限门 run）— PERMISSION 审计行落 chat 会话域，历史可回放。
+  - `GET /api/chat/history/{sessionId}` — 权限卡并入历史后真正可查，交互/刷新后卡片保留。
+**可能存在的问题**：
+  - 修复前已交互但落错域的 PERMISSION 行（session_id=runtimeSessionId）属孤儿数据，历史仍查不到，如需可手工 UPDATE；
+  - 后端未重启（tsx 无 watch）时改动不生效，需重启 dev-server。
+
+
+## [2026-09-09] "复制 TraceId" 关联语义修复：Chat 链路日志补盖 trace_id（此前 log_record.trace_id 恒 NULL）
+**变更原因**：用户指出"id 的含义不对——复制 TraceId 按钮复制的应该就是 TraceId"。排查发现按钮本身复制的是 `info_raw.trace_id`（交互 trace，取值正确），但该 id 在监控页失去关联语义：`ChatService` 直连 `logger?.info/warn` 的调用绕过了 `Metrics.merge` 的 trace_id 自动盖章（AOP Metrics 路径有盖章，直连路径没有），导致 `log_record.trace_id` 全部为 NULL——对话区复制的 TraceId 在监控页按 trace 过滤查不到任何日志。**TraceId 语义约定：一次 openChatStream SSE 交互的追踪 id（与该轮 interact_id 同值），对话区消息卡 / Feedback / Error 块 / 评估弹窗复制按钮、监控页 log_record.trace_id、info_raw.trace_id 三处同一 id 域。**
+
+**修改的方法**：
+  - `Application/Chat/application/ChatService.openChatStreamV2` — 原代码：`run settled` 日志 meta 仅含 session/run/status（原行已注释保留）；修改后：补 `trace_id` / `interact_id` / `work_id`（= 本轮交互 trace 与 run id）。
+  - `Application/Chat/application/ChatService.syncRuntimeMessagesToInfoRaw` — 原代码：同步失败 warn 日志 meta 无 trace；修改后：补 `trace_id` / `interact_id`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 每轮 settled 日志携带交互 trace；实测复制 TraceId 后在监控页 `GET /api/monitor/logs/query?trace_id=<复制的值>` 可命中该轮日志。
+
+**可能存在的问题**：
+  - 其余模块（SelfLearning / UserProfile 等）仍有直连 logger 调用未盖 trace_id——它们无用户可复制的 TraceId 入口，暂不扩散；后续若监控页需要按 trace 关联其他域，可统一改为经 Metrics 或 AsyncLocalStorage 传播。
+
+## [2026-09-09] 对话区重复上一轮内容修复 + CDP 命令超时（事故：interact 5f24881f / 0c92601f）
+**变更原因**：用户报告两起对话区故障——(1) interact `5f24881f`（输入"北京"）后对话区重复出现上一轮问答；(2) interact `0c92601f`（输入"今天天气怎么样？"）整轮执行与保存流程异常。经数据库取证（info_raw / runtime_message / runtime_run / stream_event / brian_log）还原事故链：
+1. 第一轮（interact `0c92601f`，run `1636e735`，11:44）由旧版同步落库（未传 created），user/assistant 同时间戳（保存时刻 11:44:09.274）；
+2. 第二轮（interact `5f24881f`，run `367d9572`，11:54）`cdt_browser navigate` 后 CDP 命令应答无超时被挂死（工具 Part 恒 running）→ run 永不 settle → `waitRun` 5 分钟超时（11:59:48，status=running）；
+3. 超时后的 `syncRuntimeMessagesToInfoRaw` 按会话全量重读 runtime_message，去重条件 `(session_id, info, created)` 与第 1 步落库的保存时刻时间戳不相等 → 判重失败，把第一轮问答整组重复插入（interact 盖章为 `5f24881f`），对话区即"重复上一轮内容"；随后空内容占位行（assistant `content=''`）令 `saveInfo` 抛 ValidationError 中断同步。
+**处理原则：判重键与 created 解耦（work_id 维度）+ 空行跳过 + CDP 命令级超时，不动 Runtime v2 消息模型。**
+
+**修改的方法**（原始代码均以注释保留在文件中）：
+  - `Application/Chat/application/ChatService.syncRuntimeMessagesToInfoRaw` — 原代码：逐条 `COUNT(*) WHERE session_id+info+created` 判重（created 恒不匹配历史数据）+ 空内容直接进 saveInfo 抛错中断；修改后：去重键改 `(work_id, info_type, info)`、已落库集合一次载入内存 Set、空内容占位行 `continue` 跳过、读取上限最近 200 条；保留会话全量读取以补齐超时 run 迟到落库的最终回复。
+  - `Base/CDTProvider/application/CDTService.execCDP` — 原代码：命令 Promise 仅依赖 message/error/close 事件无超时；修改后：新增 `CDP_COMMAND_TIMEOUT_MS=30s`，超时按失败结算（`CDP 命令超时（30000ms）：<method>`）并关闭连接，工具返回 error 结果，Agent 可换路重试。
+  - `Base/CDTProvider/application/CDTService.connectWebSocket` — 补 30s 连接超时（防 WebSocket 停在 CONNECTING 永不结算）。
+  - 数据修复（会话 `fb3efe8f`）：删除重复组（info_id `36b2f961`/`3272b9db` 及其派生 info_tag×10 / info_keyword×12），保留 interact `0c92601f` 一组并校正 created 为 runtime 真实时间（user 11:44:01.685 / assistant 11:44:09.272）；卡死 run `367d9572` 状态置 error/aborted。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 同步判重语义变化（work_id 维度）；cdt_browser 单条 CDP 命令最长 30s，run 不再永久挂死。
+  - `GET /api/chat/history/:session_id` — 每条消息仅一份；实测会话 `5410fe25`（3 轮连续发送 + 1 次超时场景）无任何重复、时序正确。
+
+**可能存在的问题**：
+  - 同一 run 内完全相同的消息文本会被判重跳过一条（概率极低）；
+  - 超时 run 迟到补齐的历史行 interact_id 归当轮 trace（按 work 分组展示正确）；
+  - 30s 超时对极慢页面可能偏紧（`Page.navigate` 应答本身不受影响；拟人化等待在应答之后）；
+  - 运行中 run 仍无整体看门狗（budget/timeout 不落账），依赖单命令超时兜底，后续可补 run 级 watchdog。
+
+## [2026-09-09] 全链路过程上报补齐：意图识别/Agent构建/LLM/Prompt/Skill/MCP 选定/评估结论经 Report 上报
+**变更原因**：逐项核查 V2 链路上报覆盖发现 7 类过程信息缺口——意图识别（matchAgentDef L3 LLM 匹配评估的 score/reason）、Agent 构建（buildNewDef → AgentBuilder.buildAgent）、LLM 选定（快照 def.model_id）、Prompt 选定（prepareSystemPrompt 模板与渲染结果）、Skill/MCP 选定（matchSkill/matchMCP 动态解析）、Evolutor 评估结论（evalWorkAgent/evalWriterAgent）均未上报；`context.built` 缺 system prompt（模型调用输入的 system 侧）。根源：`matchAgentDef`/`soAgentSnapshot`/`evalWorkAgent`/`evalWriterAgent` 方法签名均接收 `report` 但弃用（`_report`）。**处理原则：在对应方法内、功能完成点立即经 `report.pushBusinessEvent` 上报，事件名以 BusinessEvent 枚举注册。**
+
+**修改的方法**（原始方法均注释保留在文件中）：
+  - `Base/shared/base/BusinessEvent.ts` — 新增 7 个枚举成员：`intent.analyzed` / `agent.built` / `llm.selected` / `prompt.selected` / `skill.selected` / `mcp.selected` / `evaluation.completed`（19 → 26 成员）。
+  - `Runtime/Agents/application/AgentDefService.soLLMRankedDef(defs, taskContent, report?)` — 原代码：LLM 打分后仅按阈值采纳，结果不外露（原方法已注释保留）；修改后：解析出 score/reason/agent_ref 后立即上报 `intent.analyzed` `{ score, reason(≤1000), agent_id, adopted, candidates_count }`。
+  - `Runtime/Agents/application/AgentDefService.buildNewDef(input, report?)` — 原代码：`buildAgent` 后直接 `insertDefFromAgent` 返回（原方法已注释保留）；修改后：构建+def 落账完成后上报 `agent.built` `{ agent_id, def_id, name, purpose, task_signature }`。
+  - `Runtime/Agents/application/AgentDefService.soAgentSnapshot(..., report?)` — 原代码：`_report` 弃用（原方法已注释保留）；修改后：`soDefRow` 后立即上报 `llm.selected` `{ llm_id }`；`prepareSystemPrompt` 后上报 `prompt.selected` `{ template_id, system(≤4000), soul_selected, tools_count }`。
+  - `Runtime/Agents/application/AgentDefService.soSnapshotTools(def, input, report?)` / `appendMcpEntries(def, input, entries, report?)` — 原代码：matchSkill/matchMCP 结果仅进快照（原方法已注释保留）；修改后：match 完成即上报 `skill.selected` `{ source, skills[{id,brief}] }` / `mcp.selected` `{ mcps[{id,brief}] }`（显式 tools_json 路径以 source='explicit' 上报）。
+  - `Runtime/Loop/application/AgentLoopService.prepareLLMTurnInput(ctx)` — 原代码：`context.built` payload 仅 `{ round, message_count, messages }`（原方法已注释保留）；修改后：补 `system`（system prompt 截断 4000），模型调用输入两侧（system + wire 消息）完整可观测。
+  - `Agent/EvolutorAgent/application/EvolutorAgentService.evalWorkAgent(..., report?)` / `evalWriterAgent(..., report?)` — 原代码：`_report` 弃用，评估结论只落 `agent_evaluation` 表（原方法已注释保留）；修改后：评分/建议/落账/MQ 触发完成后上报 `evaluation.completed` `{ eval_type, eval_id, agent_id, work_id, interact_id, scores, suggestions, need_optimize }`（call_error/internal_error 跳过路径不报；离线闭环无流会话时静默降级 no-op）。
+  - `brian-frontend/src/composables/sseEventTypes.ts` — BusinessEvent mirror + `EVENT_UI_STYLE` 同步登记 7 个新事件（均 area='thinking'）。
+  - `brian-frontend/src/composables/chatStreamEvents.ts` — 新增 7 个处理器（onIntentAnalyzed/onAgentBuilt/onLlmSelected/onPromptSelected/onSkillSelected/onMcpSelected/onEvaluationCompleted），按既有直改思考块 content 约定追加展示行；`prompt.selected` 同时回填 `thinkBlock.prompt`。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（V2 链路）— 每轮 run 新增最多 6 类过程事件（intent.analyzed 仅 L3 层触发；agent.built 仅 Built 层触发；llm/prompt/skill/mcp.selected 每次 soAgentSnapshot 各一条；context.built payload 增 system 字段）。
+  - Evolutor 评估链路（`POST /api/learning/start` 直调 runEvalOnce / MQ 队列消费）— 携带 report 时评估结论进事件流；无流会话静默降级。
+
+**验证**：
+  - `npm run typecheck`（base/core/runtime/agent/application）0 错；`lint:backend` 0 error；前端 `vue-tsc --noEmit` 0 错、eslint 0 error（8 条警告均为既有）
+  - 单测全绿：Base 807/807、Runtime 36/36（含 AgentLoop）、Agent 121/121、Application 476/476
+
+**可能存在的问题/风险点**：
+  - `prompt.selected` 上报渲染后的 system prompt（截断 4000），含 soul 内容与任务指令；事件流持久化于 stream_event，注意敏感信息面
+  - 离线评估闭环（runEvalOnce/MQ）当前调用方未传 report → 评估事件静默 no-op；如需离线可观测需在调度层构造 Report
+  - exact/signature 命中层不经 LLM，无 intent.analyzed（意图分析仅 LLM 评估层存在）；确定性层过程仍仅由 agent.selected 的 matched_by 表达
+
+---
+
+## [2026-09-09] 对话区消息顺序颠倒修复（user/assistant 同时间戳 + 前端 UUID tie-break）
+**变更原因**："对话"页面对话区出现"用户消息显示在系统回复下面"。根因有二：① `ChatService.syncRuntimeMessagesToInfoRaw` 在 run 结束后统一调 `saveInfo`，未携带真实消息时间 → 同一轮 user/assistant 落库同一 `created`（实测同轮两条 created 完全相同，而真实先后在 `runtime_message.created` 中：user 1788921198811 < assistant 1788921200138）；② 前端 `ChatArea.vue` timeline 对同时间戳同 kind 消息落入 `key.localeCompare`（UUID 字符串比较），顺序由 UUID 随机决定。连带发现：去重条件 `created = msg.created` 与落库时间（保存时刻）错位，去重恒不匹配、存在重复插入风险。
+
+**修改的方法**：
+  - `Core/InfoCoreProvider/domain/types.ts SaveInfoInput` — 新增可选 `created?: number`（消息真实创建时间，毫秒；缺省行为不变，全调用方向后兼容）。
+  - `Core/InfoCoreProvider/application/InfoCoreService.saveInfo` — 原代码：`info_raw.created/updated` 一律取保存时刻（原行已注释保留）；修改后：`createdAt = input.created > 0 ? input.created : now`。
+  - `Application/Chat/application/ChatService.syncRuntimeMessagesToInfoRaw` — 原代码：未传 `created`（原行已注释保留）；修改后：`saveInput.created = runtime_message.created`，落库保留真实先后并使去重条件成立。
+  - `brian-frontend/src/components/chat/ChatArea.vue` timeline — 原代码：同时间戳消息直接 `key.localeCompare`（UUID 随机序，原行已注释保留）；修改后：同 kind 消息按角色 tie-break（`user` 恒在 `assistant` 之前），兜底存量同时间戳数据。
+
+**影响的端点**：
+  - `GET /api/chat/history/:session_id` — 新会话按真实时间天然有序；存量数据由前端 tie-break 兜底。
+  - `POST /api/chat/stream` — 会话同步落库时间戳语义变化（保存真实消息时间）。
+
+**验证**：
+  - 后端 tsc 0 错、eslint 0 error；Core 192/192、Application 476/476；前端 vue-tsc 0 错、eslint 0 error（既有警告不涉及本次文件）；全量回归 1632/1632
+  - E2E（重启后端）：① 存量会话 `09634b38`（同时间戳）经修复后 timeline 排序 user 在前、assistant 在后 ✓；② 真实新对话（session `361db3dd`）：info_raw 中 REQUEST created=1788925927771 < RESPONSE created=1788925929044，天然有序 ✓
+
+**可能存在的问题/风险点**：
+  - 存量 V2 数据（修复前落库）user/assistant 同时间戳不可追溯，历史查询层（ORDER BY created）对同时间戳仍不稳定；显示已由前端兜底，无感知
+  - 修复前已同步过的旧会话若再触发同步（新 run 完成），旧消息按 `(session_id, info, created=msg.created)` 去重仍不匹配旧落库行（created=旧保存时刻）→ 可能重复插入旧消息；此为修复前既有缺陷，新落库行（created=真实消息时间）去重已正确
+
+---
+
+## [2026-09-09] SelfLearning 测试契约迁移：startEvalSchedule → runEvalOnce（单轮任务模型）
+**变更原因**：全量回归 5 例失败（TC-SL-050/051/053/059/060，断言 `evolutorAgent.startEvalSchedule` 被调用但得到 0 次）。根因：`SelfLearningService.startLearning` 已随"单轮任务"重构迁移到新契约——CONVERSATION 分支改为 `runConversationLearningPass()` → `EvolutorAgent.runEvalOnce`（单轮完整评估闭环），不再启动常驻评估调度；防重入由 `conversationPassRunning` 承担（原 `evalSchedule*` 标记移除）。测试仍断言已移除的旧契约。**生产代码为新设计不动，仅迁移测试断言。**
+
+**修改的方法**：
+  - `Application/test/self-learning.test.ts`（beforeEach）— `runEvalOnce` / `stopEvalSchedule` 改为**透传 spy**（`vi.spyOn` 不替换实现、不伪造数据）：仅用于调用计数断言，真实单轮评估闭环对真实测试库完整执行；移除已无调用方的 `startEvalSchedule` 桩（单轮任务化重构后不再被调用）。
+  - `TC-SL-050/051/053/059` — 断言与标题迁移：`startEvalSchedule toHaveBeenCalled` → `runEvalOnce toHaveBeenCalled`（计数对象为真实执行）。
+  - `TC-SL-052/054/055/056/058/061` — 反向断言同步迁移为 `runEvalOnce not.toHaveBeenCalled`（原断言 startEvalSchedule 未被调用，在旧桩下恒真、语义失真）。
+  - `TC-SL-060` — 幂等语义随重构迁移：检验 SelfLearningService 自身的 `conversationPassRunning` 防重入守卫（真实代码）。因真实 `runEvalOnce` 在空库上为微任务级瞬时完成、无法确定性构造"第一轮仍在执行"的并发窗口，仅对依赖边界做**挂起门控**（pending promise，不伪造任何数据与返回值），第一轮未完成时第二次 start 不再触发第二轮，`toHaveBeenCalledTimes(1)`；标题与注释同步更新。
+
+**影响的端点**：无业务端点变化；`POST /api/learning/start`（CONVERSATION/ALL 模式）行为契约已在测试层对齐为 runEvalOnce 单轮模型；生产代码零改动、零 mock（已扫描 SelfLearningService / EvolutorAgentService / EvolutorAgentAccess 无 mock/fake/stub）。
+
+**测试**：
+  - `self-learning.test.ts` 107/107 全绿；Application 全量 476/476 全绿（修复前 471/476）
+  - `tsc --noEmit`（application）0 错；eslint 0 error
+
+**可能存在的问题/风险点**：
+  - `runEvalOnce` 在真实链路中为同步闭环，单轮耗时取决于待评估 usage 量（默认阈值 5 / 批量 20）；若未来引入异步调度语义，TC-SL-060 的 pending-mock 幂等验证需随之调整
+  - `startLearning` 手动触发为 fire-and-forget，HTTP 立即返回；任务结果经任务列表（running→completed/failed）可观测
+
+---
+
+## [2026-09-09] V2 直连 run 思考过程重建修复（"思考过程"按钮恒为空）
+**变更原因**：会话 `09634b38`（interact/trace `abe6eeae-70ac-49aa-b653-8cc88f08318d`）点击消息卡"思考过程"按钮后弹窗显示"暂无思考过程"。排查链路：V2 Runtime 上报与保存均正常（stream_event 完整记录 run.accepted / agent.selected / agent.components / run.started / context.built / think.delta×5 / reply.delta×7 / think.created / reply.created / run.finished，runtime_message_part 的 reasoning/text 内容完整），但 `GET /api/chat/thinking` 的重建函数 `buildThinkingBlocksAndDag` 仅查 V1 编排 5 张表（orchestration_agent_dag_record / agent_plan / orchestration_agent_execution / agent / agent_execution_trace / orchestration_work）；V1 编排链路已于 2026-09-05 移除（ChatService.openChatStream 即 v2 链路），新对话不再写编排表 → blocks 恒为 0。另发现 reasoning/text Part 直存后状态恒为 `pending`（与 tool Part 状态机不一致）。**处理原则：不回退 V1，仅在 V2 链路基础上补齐重建流程。**
+
+**修改的方法**：
+  - `dev-server.ts buildThinkingBlocksAndDag(...)` — 原始代码：单函数仅查编排表重建（已整体改名为 `buildThinkingBlocksFromOrchestration` 保留，注释标记"原始方法保留作为参考"，供 2026-09-05 前 V1 历史数据继续重建）；新方法 = 编排表重建 + 逐 work 判空后回退 `buildThinkingBlocksFromRuntime`。
+  - `dev-server.ts buildThinkingBlocksFromRuntime(relationDb, runId)`（新增）— 从 V2 表重建：`runtime_run`（session_key/时间窗/状态）→ `stream_event`（按 created 时间窗取 agent.selected / agent.components / context.built）→ `runtime_message`（user 输入 + assistant 轮次）→ `runtime_message_part`（reasoning→THINK 步骤、tool→ACT 步骤（params/result 配对）、text→输出）；组装 ThinkingChain Block（agentInfo 组件清单 / prompt=当轮 wire 消息 / input/output / thinkingStrategy=CoT|ReACT / durationMs=settled-started / tokenUsage=assistant 消息 token 合计）与单节点 DAG（status 按 run.status 映射）。
+  - `Runtime/Loop/application/AgentLoopService.addTurnPart(ctx, messageId, partType, content)` — 原始代码：
+    ```typescript
+    private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
+      const input = new AddPartInput();
+      input.message_id = messageId;
+      input.run_id = ctx.runId;
+      input.part_type = partType;
+      input.content = content;
+      const output = new AddPartOutput();
+      await this.session.addPart(input, output, new SessionCtx());
+      await this.publishPartCreated(ctx, messageId, output.part_id, partType);
+    }
+    ```
+    修改后：追加 `updatePart(status=Completed)`——reasoning/text Part 直存即终态，不再恒为 pending。
+
+**影响的端点**：
+  - `GET /api/chat/thinking`（info_id / interact_id / work_id 任一参数，module=all|dag|blocks）— V2 直连 run 现可重建思考块与单节点 DAG；V1 历史数据行为不变。
+  - 全部 `POST /api/chat/stream` 会话 — 新对话的 runtime_message_part reasoning/text 状态落库为 `completed`（此前恒 pending）。
+
+**验证**：
+  - `tsc -p brian-backend/tsconfig.json --noEmit` 0 错；eslint 0 error；Runtime 36/36 测试全绿
+  - E2E：`GET /api/chat/thinking?info_id=6483328f…`（interact abe6eeae）→ count=1，agentInfo=w2-general-…、steps=[THINK]、input="hello"、output=完整回复、prompt=[user] wire 消息、dag 单节点 COMPLETED；module=dag/blocks 分参数行为正确
+
+**可能存在的问题/风险点**：
+  - `stream_event.run_id` 恒为空串（ChatService 的 report2 未携带 run_id/work_id，Report.pushBusinessEvent 落库时无 run 可带）；当前重建按 session_key + 时间窗关联，多 run 交叠时间窗极端场景可能串扰（当前按 seq 顺序取每类事件最后值，风险可控）
+  - V2 重建的 context 仅含 wire 消息（timelineMessages）与策略标注，V1 时代的 InfoCore 分类上下文（pinned/similarity/keyword/random 等）在 V2 直连链路不产生，弹窗对应分类显示为空
+  - 前端按钮仅能回放已结束 run；流式期间自动弹窗仍走 SSE 实时块（不受本次修改影响）
+
+---
+
+## [2026-09-07] isolated-vm 版本策略核查结论固化 + 运行时编译兜底 npx 第三级解析加固
+
+**变更原因**：用户要求评估"高版本 isolated-vm 不支持某平台时降级使用早期版本预编译"的可行性。核查上游全部 Release（v4.6.0 → v6.0.2）得出结论性事实：**darwin-x64 预编译二进制在上游任何版本都不存在 Node 22 (ABI 127) 形态**——仅 v4.6.0/v4.7.2 发布过 darwin-x64 且 ABI 为 93/108/115（Node 16/18/19）；isolated-vm 为 V8 直接绑定（非 N-API），ABI 严格锁定，v4 二进制在本仓库 .nvmrc（Node 22.22.1）上物理不可加载；且降级整个 vendored 副本会破坏现有 linux-x64/win32-x64/darwin-arm64 的 node127 预编译。**结论：降级旧版不可行，v5.0.4 源码编译即 darwin-x64 的上游官方路径**（binding.gyp `MACOSX_DEPLOYMENT_TARGET=10.12`，mac-x64 上 `npm install isolated-vm` 本身就是源码编译）。据此固化保障链并对运行时兜底做最后加固。
+
+**修改的方法与模块**：
+- `Base/SkillProvider/infrastructure/sandbox/vendor/isolated-vm/isolated-vm.js` — `resolveNodeGyp` 升级为**三级解析**：仓库内 node_modules → 全局 PATH → `npx --yes node-gyp`（在线获取；便携包自带 Node 运行时必有 npm/npx，保证无 node_modules 的发行形态也能完成源码编译兜底）；编译命令按解析结果分派（`node <gyp.js>` 直执 / npx 转发，win32 走 shell）；错误信息列出完整尝试链。
+- `brian-backend/scripts/build-isolated-vm.js` — 同步三级 node-gyp 解析与分派逻辑。
+- `brian-backend/prebuilt/README.md` / `docs/_3_BackendDesign/_01_Base/SkillProvider/SkillProvider-PRD.md` — 固化版本策略结论（ABI 矩阵 + 降级不可行依据 + 三级编译兜底 + build-isolated-vm.js 入库路径）。
+
+**影响的端点**：无业务端点变化；影响面为 `.js` Skill 沙箱的可用性保障链（`SkillAccess` → `IsolatedVMSandbox` → vendored loader）。
+
+**测试**：
+- npx 兜底分支实测：`cd vendor && npx --yes node-gyp rebuild --release -j max` 完整编译成功，产物加载 + Isolate 创建通过
+- 恢复原二进制后 require + Isolate 冒烟通过；`build-isolated-vm.js --check` 三处路径 OK
+- 全量回归：typecheck 0 错、eslint 0 error、五工作区 1632/1632 全绿（Base 807 / Core 192 / Runtime 36 / Agent 121 / Application 476）
+
+**可能存在的问题/风险点**：
+- npx 第三级需网络（node-gyp 会缓存到 npm 缓存目录，二次离线可用）；完全离线且无全局 node-gyp 的 darwin-x64 环境仍会 fail-fast——消除手段唯一且明确：在 Intel Mac 上跑 `build-isolated-vm.js` 提交预编译入库
+- 上游若未来发布 darwin-x64 预编译，直接放置到 `prebuilt/isolated-vm/darwin-x64/node{abi}/` 即可，无需改代码
+
+---
+
+## [2026-09-07] isolated-vm 三平台可用性保障补全 + 存量测试与工具链问题修复
+
+**变更原因**：用户确认 isolated-vm 沙箱为硬性要求（无沙箱不可接受，Win/Mac/Linux 三平台必须可用），并要求同步修复存量问题。调查发现：① 上游 isolated-vm v5.0.4 Release **不再发布 darwin-x64 预编译包**（仅 darwin-arm64），此前仓库对该平台只有"运行时源码编译兜底"一条路，缺仓库级工具与文档闭环；② `self-learning.test.ts` TC-SL-065/067 稳定失败——`SelfLearningService` 存在**启停竞态**：`startLearning` 将 CONVERSATION 分支 fire-and-forget 后立即返回，`evalScheduleRunning=true` 要等 `await startEvalSchedule` 完成才置位，紧接的 `stopLearning` 以该 flag 为守卫会跳过 `stopEvalSchedule`（前端快速 start→stop 同样命中，属真实代码缺陷而非测试问题）；③ `visualization.test.ts` 的 `insOrchWork`/`insOrchAgentExec` fixtures 指向已删除的 V1 编排表（orchestration_work / orchestration_agent_execution，b31f289 删除），每次运行产生 22 个 Unhandled Rejection（"no such table"），全量跑时 vitest 偶发将其计为用例失败；④ `npm run docs:index` 扫描已删除的 Orchestration 目录直接崩溃。
+
+**修改的方法与模块**：
+- `brian-backend/scripts/build-isolated-vm.js`（新增）— isolated-vm 预编译构建工具：从 vendor 全量 C++ 源码 node-gyp 编译，产物同时安装到 `brian-backend/prebuilt/isolated-vm/{platform}-{arch}/node{abi}/`（离线包分发源）、vendor `prebuilt/` 镜像与 `out/`（dev require 加载路径）三处；`--check` 仅检查。维护者在 Intel Mac 上执行后可将 darwin-x64 二进制提交入库，实现该平台离线覆盖。
+- `packaging/pack.mjs` — isolated-vm 解析增强：目标平台 = 本机平台且预编译缺失时，打包期自动执行 build-isolated-vm.js 源码构建补齐（构建失败保留告警并依赖运行时兜底）；"已知限制"注释同步改写。
+- `brian-backend/prebuilt/README.md` — 覆盖表 isolated-vm darwin-x64 标注 ○* 并说明双路径（运行时自动编译 / build-isolated-vm.js 产出入库）。
+- `Application/SelfLearning/application/SelfLearningService.ts` — **启停竞态修复（三态协调）**：① `startLearning` CONVERSATION 分支同步置位意图标记 `evalScheduleRunning`；② `startConversationLearning` 增加实际状态 `evalScheduleActive` + in-flight 去重句柄 `evalScheduleStartPromise`（并发 start 只触发一次 startEvalSchedule，保住 TC-SL-060 幂等断言），启动完成时若意图已复位则**补偿停止**（避免悬挂调度）；③ `stopLearning` 同步复位意图标记与实际状态，并**无条件调用** `stopEvalSchedule`（幂等），不再以未置位的 flag 为守卫。
+- `Application/test/visualization.test.ts` — 删除死 fixtures：`insOrchWork`/`insOrchAgentExec` helper 与全部 22 处调用（服务只读 info_raw / visualization_config / info_summary / info_context_config，V1 编排表已随框架删除；`insTrace` 使用的 agent_execution_trace 仍存在，保留）。
+- `scripts/generate-method-index.mjs` — LAYERS 移除已删除的 'Orchestration' 层；`collectAccessFiles` 对不存在目录跳过（容错）。
+- `Agent/SummaryAgent/access/SummaryAgentAccess.ts` — `initialize` 补 JSDoc（方法索引自动生成可提取说明）。
+- 文档重新生成：`npm run docs:index` 恢复可用，485 个方法重索引（Orchestration 索引文件随之删除）。
+
+**影响的端点**：
+- `POST /api/learning/start` → `POST /api/learning/stop` 快速连续调用：stop 不再漏掉 Evolutor 评估调度停止（真实缺陷修复，前端学习页立即受益）
+- 便携包打包（`node packaging/pack.mjs`）：本机目标缺 isolated-vm 二进制时自动源码构建补齐
+- `npm run docs:index`：恢复可用
+- Application 测试套件：从 474/476（2 flaky + 22 unhandled）修复为 **476/476 全绿 0 unhandled**
+
+**测试**：
+- `self-learning.test.ts` **107/107** 全绿（TC-SL-065/067 修复；TC-SL-060 幂等语义保持）
+- `visualization.test.ts` **94/94** 全绿且 0 Unhandled Rejection
+- 全量回归：Base 807/807、Core 192/192、Runtime 36/36、Agent 121/121、Application 476/476 —— **五工作区 1632/1632 全绿**
+- 静态检查：typecheck 0 错；eslint 0 error
+- 沙箱端到端冒烟：真实 isolated-vm 执行 .js Skill（result=42）通过；`build-isolated-vm.js --check` 三处路径 OK
+
+**可能存在的问题/风险点**：
+- darwin-x64 便携包最终用户若既无预编译二进制又无 Xcode CLT，沙箱将 fail-fast（不降级）——维护者可在 Intel Mac 上跑 `build-isolated-vm.js` 提交二进制消除该情形；上游恢复发布 darwin-x64 预编译后可直接替换
+- `stopLearning` CONVERSATION 分支现在无条件调用 `stopEvalSchedule`（原为 flag 守卫跳过）——evolutor 侧幂等（按 worker 标识停止），多调一次无害；若未来 Evolutor 停止变为有副作用操作需回归此处
+
+---
+
+## [2026-09-07] 审计整改：桩方法补齐 + JS 沙箱全平台源码编译兜底 + 死代码删除 + LLM/Agent 绑定资源 DB 校验
+
+**变更原因**：后端审计发现 6 处问题并按用户要求逐项整改：① `VectorDBService.initializeConfig()` 为空方法体（注释声称"写入默认配置项并恢复 enabled 状态"但什么都没做）；② `SummaryAgentAccess.initialize()` 为空 no-op，与其余 Agent 模块的初始化行为不一致；③ `.js` Skill 沙箱在缺 isolated-vm 预编译二进制的平台（darwin-x64）降级为抛错占位 `UnavailableJsSandbox`，不满足"Win/Mac/Linux 三环境必须可用"；④ `Core/shared/AgingEngine.ts` 实现完整但生产代码零引用（Skill/Soul 各自私有实现），属重构遗留死代码；⑤ `LLMCoreService.matchLLM` 对"绑定存在但 LLM 表无记录"的缓存命中返回未经 DB 验证的合成记录 `{ id, llm_title, enable: true }`；⑥ Agent 层缺少对 LLM/Prompt/Skill/MCP/Soul 绑定资源的统一校验。
+
+**修改的方法与模块**：
+- `Base/VectorDBProvider/application/VectorDBService.ts` — `initializeConfig()` 补齐实现：经 `ConfigService.initDefaults` 幂等写入 4 个默认配置项（`enabled=true`/`default_top_k=10`/`default_similarity_threshold=0`/`default_distance_metric=COSINE`，仅缺失时写入不覆盖已有值），随后从配置表恢复 `enabled` 状态（上次禁用重启后保持禁用）。
+- `Agent/SummaryAgent/application/SummaryAgentService.ts` + `access/SummaryAgentAccess.ts` — 新增 `SummaryAgentService.initialize(ctx)`：执行该模块真实初始化工作（确保内置摘要 Soul + 内置系统 Agent 就绪，幂等；失败仅 logger.warn 不阻断启动）；Access 层改为 `initPromise` 模式（构造时启动初始化，`initialize/ensureBuiltin/generateSummary` 统一 `await this.initPromise`），与其他 Agent 模块行为一致。
+- `Base/SkillProvider/infrastructure/sandbox/vendor/isolated-vm/isolated-vm.js` — vendored loader 增加源码编译兜底：预编译路径（BRIAN_NATIVE_DIR → prebuilt/{platform}-{arch}/node{abi} → prebuilt/{platform}-{arch} → out/）全部未命中时自动 node-gyp rebuild（锁文件防并发 + 进程内去重 + build/Release→out 拷贝缓存），Win/macOS/Linux 三平台均可获得可用的 isolated-vm 服务；加载失败直接抛错 fail-fast。实测：隐藏全部 linux-x64 二进制后首次加载 45s 完成源码编译并通过沙箱执行验证（result=42）。
+- `Base/SkillProvider/access/SkillAccess.ts` — 删除 `UnavailableJsSandbox` 降级分支与 try/catch，直接构造 `IsolatedVMSandbox`（源码编译兜底保证任意平台可用）；`infrastructure/sandbox/UnavailableJsSandbox.ts` 删除。
+- `Core/shared/AgingEngine.ts` + `Core/test/shared/AgingEngine.test.ts` — 删除死代码及 `Core/shared/index.ts` 导出（SkillCore/SoulCore 各自私有老化实现为生效路径）。
+- `Core/LLMCoreProvider/application/LLMCoreService.ts` — `matchLLM` 第 1 层缓存命中改为先经 DB 校验（`getLLMById` 确认存在且 enable）：校验通过才复用绑定；校验失败清除失效绑定（`clearMatchCache`）并继续第 2/3 层重新匹配；**移除合成记录**。
+- `Agent/shared/AgentKit.ts` — 新增 Agent 绑定资源校验套件（全部经 DB 校验）：`validateAgentSoul`（Soul 存在且启用）、`validateAgentPrompt`（Prompt 模板存在且启用）、`validateAgentSkills`/`validateAgentMcps`（批量存在且启用，返回 valid/invalid 列表）、`validateAgentLlm`（LLMProvider 存在且启用）、`validateAgentResources`（组合校验，返回 issues 清单与有效 ID 集合，不抛异常由调用方决定降级策略）。
+- `Agent/AgentExecution/application/AgentExecutionService.ts` — `execAgent` 接入校验门：执行前对 Agent 绑定的 Soul/Prompt/Skill/MCP 全量 DB 校验（失效 Skill/MCP 从本次执行剔除、问题清单 logger.warn），LLM 绑定校验失败直接抛 ValidationError（执行必须依赖有效 LLM）。
+- 文档同步：`VectorDBProvider-PRD.md`（新增 initializeConfig 默认配置项表）、`LLMCore-PRD.md`（§2.1 matchLLM 补 DB 校验步骤）、`SkillProvider-PRD.md`（§5 沙箱全平台可用说明）、`MethodIndex/Agent/SummaryAgent.md`（initialize 说明）、`packaging/pack.mjs` 与 `brian-backend/prebuilt/README.md`（移除"降级禁用"过时说明）。
+
+**影响的端点**：
+- `SkillAccess` 构造（`Base/SkillProvider`）：行为变更——原生模块不可用时启动 fail-fast（原为降级启动），满足"三平台必须可用"要求
+- `POST/GET /api/config`（vectordb 模块）：首次初始化后 vectordb_config 出现 4 个默认配置项，配置中心可见可改
+- Agent 执行链路（`/api/chat/stream` → 编排 → `AgentExecutionAccess.execAgent`）：失效绑定资源（Soul/Prompt/Skill/MCP）不再参与执行并被告警记录；LLM 绑定失效时执行明确失败
+- `LLMCoreAccess.matchLLM`（全部 Agent 的 LLM 解析路径）：绑定 LLM 被删除/禁用后自动重新匹配，不再返回假记录
+
+**测试**：
+- 新增单测：`Base/test/VectorDBProvider.test.ts`（默认配置幂等写入 + 禁用状态重启恢复，17/17）、`Core/test/LLMCoreProvider.test.ts`（绑定失效清缓存重新匹配、不返回合成记录，22/22）
+- 全量回归：Base 807/807、Core 192/192、Runtime 36/36、Agent 121/121 全绿；Application 474/476（2 个失败为 `self-learning.test.ts` TC-SL-065/067，属工作区既有未提交改动，与本次 diff 零交集，隔离复跑稳定复现；`visualization.test.ts` 单跑 94/94 通过）
+- 端到端冒烟：真实 isolated-vm 沙箱执行 .js Skill `result = params.a + params.b` → 42 通过
+- 静态检查：typecheck 5 工作区 0 错；eslint 0 error（0 新增 warning）
+
+**可能存在的问题/风险点**：
+- 源码编译兜底要求构建机具备 C/C++ 工具链与 Python 3，首次编译需联网下载 Node 头文件；无工具链的离线环境加载 isolated-vm 将 fail-fast（不再有降级路径）——SEA/便携包通过内置 prebuilt 二进制覆盖 linux-x64/win32-x64/darwin-arm64，darwin-x64 依赖运行时编译
+- `execAgent` 的资源校验为逐条 DB 查询（Soul/Prompt/逐 Skill/逐 MCP），绑定数量极大时增加少量延迟；当前量级无感知
+- Application 工作区 `self-learning.test.ts` TC-SL-065/067 存量失败（用户未提交的 SelfLearning 改动），建议随该改动一并修复
+
+---
+
+## [2026-09-07] 学习页面前后端联调收尾：增量同步入库 + 前端任务条补渲染 + 全新库初始化崩溃修复 + e2e 装配漂移修复
+
+**变更原因**：继续学习页面开发任务——验证"学习"页面前后端全链路可用并符合 SelfLearning-PRD。实测发现 4 个问题：① 文档学习只认 `self_learning_file` 表存量记录，磁盘上新增的 .md 文件永远学不到（资料库加文件后学习无产出）；② 前端 `LearningPanel` 轮询了学习任务列表（2s）但模板从未渲染（commit 6fc4276 只落了数据管道，任务条 UI 缺失）；③ `SelfLearningSchemaInitializer.init()` 把存量迁移 UPDATE（作用于 self_learning_result）与 chat_session 索引放在建表之前执行，全新数据库（e2e :memory: 库实测复现）直接抛 SQLITE_ERROR("no such table")，学习模块在全新库上无法初始化；④ 前端 e2e 装配 `e2e-server.ts` 仍 import 已删除的 `@brian-agent/orchestration`（V1 编排已删），学习页 e2e 全套无法启动，且 chat/memory 路由按旧式 3 参 `(input, context, output)` 调用新式 Access 方法（Runtime v2 后为 `(input, output, context)`），服务把返回值写到错误对象上，输出全空。
+
+**修改的方法与模块**：
+- `Application/SelfLearning/application/SelfLearningService.ts` — `scanLibraryDirectory(libraryId, rootPath, now, skipExisting?)` 新增可选判重集合（命中跳过入库、子目录仍递归）；新增私有 `syncLibraryFiles(libraryId, rootPath, now)`：按 relative_path + file_path（绝对路径，兼容空 relative_path 存量数据）判重，把磁盘新增文件/目录登记为 PENDING，已有记录保持原状态（COMPLETED 不重复学习），磁盘移除不删记录；`startDocumentLearning` 每个 tick 对每个资料库先增量同步再取 PENDING 分页学习。
+- `brian-frontend/src/components/panels/LearningPanel.vue` — 补学习任务条渲染（running 优先蓝色脉冲、completed 绿勾、failed 红叉含错误信息、时间 HH:mm:ss，最多 5 条，随 2s 轮询刷新；无任务时整条隐藏）；新增 `visibleTasks/runningTaskCount/taskTime` 派生。
+- `Application/SelfLearning/infrastructure/SelfLearningSchemaInitializer.ts` — 存量迁移 UPDATE 移到 `self_learning_result` 建表之后；chat_session 索引包 try/catch（表由 Chat 模块负责建，未就绪时跳过）——全新库初始化不再崩溃。
+- `brian-frontend/test/e2e-server.ts` — 删除 `@brian-agent/orchestration` import 与全部 V1 编排装配（保留注释）；ChatAccess 构造改新签名 `(relationDb, infoCore, logger)`；新增真实 `SelfLearningAccess` 装配（依赖与 dev-server 组合根一致：relationDb/infoCore/mqCore/llmCore/evolutorAgent/writerAgent/graphDBAccess/mqAccess/chunkAccess/llmAccess/promptsAccess），learning 全部 11 条路由从硬编码 Mock 改为调真实服务（镜像 dev-server 语义，stop 支持显式 learning_mode 供 e2e 清理定时器）；chat/memory 路由改新式参数序 `(input, output, context)`；`/api/chat/send` 显式 501（submitWork 已删，Runtime v2 发送链路属对话页专项）。
+- `brian-frontend/test/learning-page.e2e.test.ts` — progress-enhanced 断言对齐真实契约（mode/running/randomFactor/queueSize/modes，原 status/queue 断言注释保留）；新增 stats 三来源过滤用例与任务注册表用例（start → tasks 登记 running/completed）；afterAll 先 POST stop(ALL) 清定时器再关服务（防 vitest 挂起），server 未定义兜底。
+- 顺修 3 处存量 eslint error（unused vars）：`SelfLearningService.soLearningTasks` slice 复用 limit 变量、`SelfLearningAccess` 移除未用 LearningTaskStatus import、`dev-server.ts` 移除未用 LoopQueue import。
+
+**影响的端点**：
+- 学习页全部端点（live dev-server 实测 200）：`POST /api/learning/start`、`POST /api/learning/stop`、`PUT /api/learning/mode|auto|random-factor|driver-weights`、`GET /api/learning/tasks|stats|progress-enhanced|queue|knowledge|insights`
+- `POST /api/learning/start`（DOCUMENT）行为增强：每 tick 先增量同步资料库目录再学习——磁盘新增文件自动入库学习（实测：新建 incr-e2e-verify.md → 触发后 PENDING→COMPLETED → knowledge 列表可见），存量 COMPLETED 不重学
+- `GET /api/learning/tasks`：前端任务条数据源（running 优先、上限 50 条）——此前已实现，本次补齐前端渲染
+- e2e 测试服路由（学习 11 条 + chat/memory 若干）：真实服务替换 Mock；`/api/chat/send` 返回 501
+
+**测试**：
+- 学习页 e2e：`test/learning-page.e2e.test.ts` **15/15 全绿**（控制启停/模式与配置/统计含来源过滤/进度含新契约断言/成果/任务注册表）
+- 全前端 e2e 套件：**83/88**（learning 15 + monitor 15 + config 21 + info 12 + chatMapLayout 6 + chat 14；仅 5 条对话发送用例因 Runtime v2 send 链路未在 e2e 装配而 501，属对话页专项）
+- 静态检查：backend typecheck 0 错 + eslint 0 error；frontend vue-tsc 0 错 + eslint 0 error
+- live 验证：tsx dev-server 重启后 11 个学习端点全 200；三模式触发任务均登记且 completed；增量同步实测通过；vite HMR 正常编译 LearningPanel
+
+**可能存在的问题/风险点**：
+- `self_learning_result` 中存在 `type='DOCUMENT'`（source=文件名）的"文件学习记录"行与 `type='TAG_MAINTENANCE'` 维护记录行，均超出 PRD 5.5 的 type ENUM（KNOWLEDGE/INSIGHT）——它们是"总学习次数/学习趋势"的数据源且信息页 Tag 卡片依赖 source 词表（cfb2001），本次不改语义，已在 PRD 增补说明
+- e2e 装配中对话发送链路（RunGateway/streamAccess/session）未接，`POST /api/chat/send` 501——对话页专项补齐
+- `syncLibraryFiles` 每 tick 对每个资料库做一次全表 select 判重；资料库极大时（万级文件）可换索引/缓存，当前量级无感知
+
+---
 
 ## [2026-09-05] 融合架构：Report 参数 = 上报端点的管理对象，Bus 保留事件流的持久化/断线恢复/审计
 
@@ -460,3 +939,26 @@
 
 **可能存在的问题/风险点**：
 - 高并发复杂任务场景下，多 Agent 级联推理耗时仍受 LLM 响应速度影响，已提高默认 DAG 超时配置进行防护。
+
+## [2026-09-11] 组件绑定收敛：def 命中即复用绑定 + 删除 Runtime 侧重复的 regen 概率判决
+**变更原因**：复盘 session `27890105`（"今天适合穿什么衣服"）26s 慢响应：① Runtime `applyRegenDecision`（regen_rate 概率推翻 L1/L2 复用）与 Agent 层 `AgentLibraryService.matchAgent` 的 regen_rate 失效判决同义重复（且两处 `shouldReuseByRegenRate` 语义相反）；② def 已命中仍经 Core matchSoul/matchSkill/matchMCP 按任务动态重解析组件——按约束"命中即绑定，无绑定就是没有"，两者都应删除。
+**修改的方法**：
+  - `Runtime/Agents/application/AgentDefService` —
+    - `matchAgentDef(input, output, context, metrics?, report?)` — 原始代码（regen 版，已注释保留）：
+      ```
+      await this.applyRegenDecision(input);
+      const exact = input.regenerate ? null : this.soExactMatch(...);
+      const signatureHit = input.regenerate && !input.force_new ? null : this.soSignatureMatch(...);
+      ... output.regenerate = input.regenerate === true;
+      ```
+      修改后：命中即复用（exact/signature/llm → def），无概率推翻、无 regenerate 输出。
+    - `applyRegenDecision(input)` — 注释弃用（原方法已注释保留）；"重新生成概率"唯一实现收敛于 Agent 层 `AgentLibraryService.matchAgent`（regen_rate 失效判决 → AgentBuilder 重构）。
+    - `soAgentSnapshot(...)` / `soSoulContent(...)` / `soSnapshotTools(...)` / `appendMcpEntries(...)` — 原始代码（动态 match 版，已注释保留）；修改后：soul 只读 `def.soul_id`（无绑定即空）、tools 只读 `def.tools_json`（无绑定即无工具），不再调用 Core 组件匹配，`bypass_cache`/`regenerate` 透传删除；`skill.selected`/`mcp.selected` 仅 `tools_json` 显式绑定时上报（source='explicit'）。
+  - `Runtime/Agents/domain/types.ts` — `MatchAgentDefInput/Output.regenerate`、`SoAgentSnapshotInput.regenerate` 注释弃用（原字段已注释保留）。
+  - `Runtime/Runs/application/RunGatewayService.soSnapshot(...)` — 删除 regenerate 透传参（原方法已注释保留）。
+  - `Runtime/test/RuntimeGateway.test.ts` — 断言改锁"def 无 soul 绑定 → system 无 Soul 段且 matchSoul 不被调用"。
+**影响的端点**：
+  - `POST /api/chat/stream` — e2e 实测（"你是谁"，signature 命中）：run 全程 1.4s（修复前 26s）；无 regen 判决、无组件匹配调用；def 空绑定时不再上报 skill.selected/mcp.selected。
+**可能存在的问题**：
+  - skill/mcp/soul 此后只能经 def 显式绑定（构建/declareAgent）获得，LLM 侧不再有组件级"选择"能力；
+  - 运行中服务加载的是 `@brian-agent/runtime` dist 产物，需重跑 `npm run build --workspace=@brian-agent/runtime` 并重启后端才生效。

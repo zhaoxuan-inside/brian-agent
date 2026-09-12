@@ -34,6 +34,8 @@ export enum AbortReason {
   Budget = 'budget',
   /** 被更新提交取代（interrupt 队列模式） */
   Superseded = 'superseded',
+  /** 服务重启收敛（启动时遗留 running/queued run 统一结算） */
+  ServiceRestart = 'service_restart',
 }
 
 /** run.status 事件 phase（Loop 发布 run 生命周期用） */

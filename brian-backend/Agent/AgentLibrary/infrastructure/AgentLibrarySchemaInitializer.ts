@@ -32,6 +32,14 @@ export class AgentLibrarySchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN prompt_template_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
+    // 归属列（2026-09-11：user=用户手动创建；system=AgentBuilder 自动构建/系统内置；
+    // 解散动作只允许作用于 system 侧，delAgent 对 user 资产 fail-loud）
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN created_by TEXT NOT NULL DEFAULT 'user'`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_score_threshold INTEGER NOT NULL DEFAULT 70`);
+    } catch { /* column already exists */ }
     // LLM 绑定只保留在 LLMProvider 的 agent_llm，agent 表不再存储 llm_id（旧库删除遗留列）
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} DROP COLUMN llm_id`);
@@ -77,6 +85,7 @@ export class AgentLibrarySchemaInitializer {
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
         prompt_template_id TEXT NOT NULL, similarity_threshold REAL NOT NULL DEFAULT 0.7,
         regen_rate INTEGER NOT NULL DEFAULT 75,
+        match_score_threshold INTEGER NOT NULL DEFAULT 70,
         max_agent_count INTEGER NOT NULL DEFAULT 100
       )`,
     );

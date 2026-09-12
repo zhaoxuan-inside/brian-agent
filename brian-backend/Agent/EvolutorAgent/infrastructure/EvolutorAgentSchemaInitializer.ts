@@ -27,7 +27,8 @@ export class EvolutorAgentSchemaInitializer {
         eval_frequency_threshold INTEGER NOT NULL DEFAULT 5,
         eval_schedule_interval_ms INTEGER NOT NULL DEFAULT 3600000,
         eval_batch_size INTEGER NOT NULL DEFAULT 20,
-        llm_id TEXT
+        llm_id TEXT,
+        critical_disband_score INTEGER NOT NULL DEFAULT 30
       )`,
     );
     try {
@@ -35,6 +36,10 @@ export class EvolutorAgentSchemaInitializer {
     } catch {
       // 字段已存在
     }
+    // ===== 2026-09-11 迁移：低分解散阈值（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${EVOLUTOR_AGENT_CONFIG_TABLE} ADD COLUMN critical_disband_score INTEGER NOT NULL DEFAULT 30`);
+    } catch { /* column already exists */ }
 
     const count = await this.relationDb.count(EVOLUTOR_AGENT_CONFIG_TABLE);
     if (count > 0) return;
@@ -49,6 +54,7 @@ export class EvolutorAgentSchemaInitializer {
       { field: 'eval_frequency_threshold', value: 5 },
       { field: 'eval_schedule_interval_ms', value: 3600000 },
       { field: 'eval_batch_size', value: 20 },
+      { field: 'critical_disband_score', value: 30 },
     ]);
   }
 }

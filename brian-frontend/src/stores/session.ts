@@ -143,6 +143,15 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // 按消息 id 幂等更新（权限卡应答后把 pending → allowed/denied 等翻转场景）
+  function updateMessage(msgId: string, updates: Partial<ChatMessage>) {
+    const idx = messages.value.findIndex(m => m.id === msgId)
+    if (idx < 0) return
+    const next = [...messages.value]
+    next[idx] = { ...next[idx], ...updates }
+    messages.value = next
+  }
+
   function addBlock(block: Block) {
     const existing = blocks.value.findIndex(b => b.id === block.id)
     if (existing >= 0) {
@@ -257,7 +266,7 @@ export const useSessionStore = defineStore('session', () => {
     splitRatio, isStreaming, selectedMsgIds, citingMode,
     focusInfoId, centerInfoId,
     setSplitRatio, loadChatList, ensureSession, loadChatHistory, loadDag,
-    deleteSession, clearMessages, addMessage, removeUserMessageByContent, addBlock,
+    deleteSession, clearMessages, addMessage, updateMessage, removeUserMessageByContent, addBlock,
     updateBlock, appendBlockContent, finalizeBlocks, finalizeThinkingBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
     toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter,
     setStreaming, setCancelController, cancelCurrentTask,

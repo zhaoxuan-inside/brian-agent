@@ -112,34 +112,7 @@ function insInfoContextConfig(db: RelationDBAccess, overrides: Record<string, un
   db.insert('info_context_config', fields);
 }
 
-function insOrchWork(db: RelationDBAccess, overrides: Record<string, unknown> = {}) {
-  const defaults: Record<string, unknown> = {
-    id: genId(), created: now(), updated: now(),
-    work_id: 'work-1', interact_id: genId(), session_id: 'sess-1',
-    user_query: 'Test', status: 'COMPLETED',
-    orchestration_strategy: 'SIMPLE', task_count: 1, completed_task_count: 0,
-    elapsed_ms: 500, cancel_reason: '', error_message: '', final_response: '', metadata: '{}',
-  };
-  const fields: InsField[] = [];
-  for (const [k, dv] of Object.entries(defaults)) {
-    fields.push({ field: k, value: overrides[k] !== undefined ? overrides[k] : dv });
-  }
-  db.insert('orchestration_work', fields);
-}
 
-function insOrchAgentExec(db: RelationDBAccess, overrides: Record<string, unknown> = {}) {
-  const defaults: Record<string, unknown> = {
-    id: genId(), created: now(), updated: now(),
-    work_id: 'work-1', agent_id: 'agent-1', plan_id: '', task_id: '',
-    execution_type: 'DAG', task_content: 'Test', status: 'COMPLETED',
-    answer: '', trace_id: '', iterations: 0, elapsed_ms: 0, error_info: '',
-  };
-  const fields: InsField[] = [];
-  for (const [k, dv] of Object.entries(defaults)) {
-    fields.push({ field: k, value: overrides[k] !== undefined ? overrides[k] : dv });
-  }
-  db.insert('orchestration_agent_execution', fields);
-}
 
 function insTrace(db: RelationDBAccess, overrides: Record<string, unknown> = {}) {
   const defaults: Record<string, unknown> = {
@@ -523,8 +496,6 @@ describe('VisualizationService', () => {
   // ═══════════════════════════════════════════════════════════════
   describe('soVisualizedAgentDAG', () => {
     it('TC-VIS-042: strategy ref resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', orchestration_strategy: 'PLANNING' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -535,8 +506,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-043: llm ref resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -547,8 +516,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-044: soul ref resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -559,8 +526,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-045: skills refs resolved as array', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -571,8 +536,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-046: mcps refs resolved as array', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -583,8 +546,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-047: prompt_templates refs resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -595,8 +556,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-048: context_source_refs - pinned resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -607,8 +566,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-049: context_source_refs - timeline resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -619,8 +576,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-050: result_refs - evaluation resolved', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedAgentDAGInput();
       input.work_id = 'work-1';
@@ -631,8 +586,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-064: WRITING phase refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'SIMPLE' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedWorkFlowInput();
       input.work_id = 'work-1';
@@ -642,8 +595,6 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-065: EVALUATING phase refs', async () => {
-      insOrchWork(ctxEnv.db, { work_id: 'work-1', status: 'COMPLETED', orchestration_strategy: 'SIMPLE' });
-      insOrchAgentExec(ctxEnv.db, { work_id: 'work-1', agent_id: 'agent-1', status: 'COMPLETED' });
 
       const input = new GetVisualizedWorkFlowInput();
       input.work_id = 'work-1';

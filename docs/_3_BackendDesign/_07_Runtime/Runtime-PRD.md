@@ -138,7 +138,7 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 | **0 地基** ✅（2026-09-04） | `Runtime/` 骨架；Base/LLMProvider 增加 LLMEvent 流 + 原生 tool_calls + AbortSignal | 单测：LLMEvent 流归一化（14 用例）；tool_calls 请求/响应；IterationBudget（6 用例）；zod 依赖就位；见 CHANGELOG 同日记录 |
 | **1 数据模型** | Session/Message/Part/RunState（SQLite 6 表）；EventBus + SSE v2 投影 | soContextDetail 读取正确；事件重放一致 |
 | **2 单代理循环** ✅（2026-09-04） | agentLoop + Tool 框架（skill/mcp/cdt 3 工具）+ Budget | DIRECT 场景端到端验证（`Runtime/test/AgentLoop.test.ts`：多轮 tool_calls 配对回流→stop / 预算→budget / 取消→aborted / 失败→error）；消息中心派生 wire 消息验证；见 CHANGELOG 同日记录 |
-| **3 编排即工具**（部分落地 2026-09-04） | ✅ Runs（两段式 submitRun + session lane + steer/followup/interrupt + waitRun）；✅ Agents（确定性匹配 exact→signature→LLM→构建 + 组件按任务动态重解析 + identity 身份段）；✅ Loop 接 steering/followup 真队列；⬜ update_plan/delegate/ask_user 工具、curator | 线上验证：身份问答自称 Brian（不再套编码 Soul）、一般问答正常、确定性复用不重复构建 |
+| **3 编排即工具**（部分落地 2026-09-04） | ✅ Runs（两段式 submitRun + session lane + steer/followup/interrupt + waitRun）；✅ Agents（确定性匹配 exact→signature→LLM→构建 + identity 身份段 + 组件绑定收敛（2026-09-11：soAgentSnapshot 只读 def 显式绑定 soul_id/tools_json，命中即复用，无动态重解析、无 Runtime 侧 regen 判决——"重新生成概率"唯一实现收敛于 Agent 层 AgentLibraryService.matchAgent））；✅ Loop 接 steering/followup 真队列；⬜ update_plan/delegate/ask_user 工具、curator | 线上验证：身份问答自称 Brian（不再套编码 Soul）、一般问答正常、确定性复用不重复构建；2026-09-11 e2e：def 命中 run 1.4s（对比收敛前 26s） |
 | **4 网关切换**（过渡投影已上线 2026-09-04） | ✅ Chat v2 分流（`runtime.v2_enabled` 开关，缺省 true）；✅ v2 事件 → 现有前端 SSE 协议过渡投影（part.delta→text_chunk/agent_thinking、tool.*→agent_action/agent_output）；⬜ 前端 v2 原生协议改造（完成后删除过渡投影） | 线上 `/api/chat/stream` 全量走 v2 内核；run 两段式结算 + done 帧 final_response 正确 |
 | **5 退役** | 退役清单 §10 全部下线；可视化改为事件投影 | 退役后全量测试通过 |
 
@@ -182,6 +182,6 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 
 1. **统一 `主体.动作` 点分风格**：主体 = 领域对象（run/reply/think/tool/plan/permission/context/agent/error/message/session），动作 = 祈使语气（accepted/started/finished/failed/delta/updated/asked…）。
 2. **前端视角命名**：回复正文用 `reply.*`、思考过程用 `think.*`（不暴露存储术语 part）；会话传输帧用 `session.*`（connected/loading/done，ChatService 直发，非业务事件）。
-3. **唯一注册点**：后端 `Base/shared/base/BusinessEvent.ts`（`BusinessEvent` 19 成员 + `SseTransportEvent` 3 成员 + `businessEventMsgType`：reply.delta/think.delta → TEXT，其余 TRACE）；前端 `composables/sseEventTypes.ts` 同构 mirror + `EVENT_UI_STYLE` 展示样式映射表（area: text/thinking/action/output/lifecycle/error × tone: default/success/error/muted）。新增事件必须同步登记。
-4. **生产方覆盖**：全部 19 个业务事件中 17 个有生产方（`part.updated`/`message.block` 为阶段4 预留）；问答过程覆盖：上下文构建（context.built，含当轮 wire 消息）、Agent 选择（agent.selected，匹配层）、组件选定（agent.components，Soul/Skill/MCP/Prompt/LLM 清单）、思考/回复增量、工具执行、计划/权限、run 生命周期。
+3. **唯一注册点**：后端 `Base/shared/base/BusinessEvent.ts`（`BusinessEvent` 26 成员 + `SseTransportEvent` 3 成员 + `businessEventMsgType`：reply.delta/think.delta → TEXT，其余 TRACE）；前端 `composables/sseEventTypes.ts` 同构 mirror + `EVENT_UI_STYLE` 展示样式映射表（area: text/thinking/action/output/lifecycle/error × tone: default/success/error/muted）。新增事件必须同步登记。
+4. **生产方覆盖**：全部 26 个业务事件均有生产方（`part.updated`/`message.block` 为阶段4 预留）；问答过程覆盖：上下文构建（context.built，含当轮 wire 消息与 system prompt）、Agent 选择（agent.selected，匹配层）、组件选定（agent.components，Soul/Skill/MCP/Prompt/LLM 清单）、意图识别（intent.analyzed，LLM 匹配评估打分）、Agent 构建（agent.built，未命中新建）、LLM/Prompt/Skill/MCP 选定（llm.selected / prompt.selected / skill.selected / mcp.selected，soAgentSnapshot 组件解析各维完成即报）、思考/回复增量、工具执行、计划/权限、run 生命周期、评估结论（evaluation.completed，Evolutor 对 Work/Writer Agent 的评分，离线闭环路径无流会话静默降级）。
 5. **生产方通路**：业务事件一律经 `report.pushBusinessEvent`（Report 携带端点 ID）→ StreamProvider 持久化/投递；禁止直调 streamAccess 发业务事件。

@@ -151,7 +151,16 @@ export function makeAccess(obj: any) {
 }
 
 export const NOOP_LLM_ACCESS = { execLLM: vi.fn().mockResolvedValue(true), execLLMStream: vi.fn(), model: vi.fn(), insertModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(), enableLLM: vi.fn(), closeLLM: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;
-export const NOOP_PROMPTS_ACCESS = { execPrompt: vi.fn().mockResolvedValue(true), soPrompt: vi.fn().mockResolvedValue(true), insertPrompt: vi.fn(), updatePrompt: vi.fn(), deletePrompt: vi.fn(), configPrompts: vi.fn(), enablePrompts: vi.fn(), closePrompts: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;
+export const NOOP_PROMPTS_ACCESS = {
+  // ===== 2026-09-11：renderPrompt 统一 fail-loud（模板由 prompt_template 表承载），
+  // 测试桩内做最简 `{{var}}` 渲染，保证模板"可用"语义 =====
+  execPrompt: vi.fn().mockImplementation(async (_i: any, o: any) => {
+    // 测试桩：模板内容不可达也无妨，返回占位文本保证"渲染成功"语义
+    o.prompt = o.prompt || `noop prompt: ${String(_i?.id ?? '')}`;
+    return true;
+  }),
+  soPrompt: vi.fn().mockResolvedValue(true), insertPrompt: vi.fn(), updatePrompt: vi.fn(), deletePrompt: vi.fn(), configPrompts: vi.fn(), enablePrompts: vi.fn(), closePrompts: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined),
+} as any;
 export const NOOP_MCP_ACCESS = { execMCP: vi.fn().mockResolvedValue(true), soMCP: vi.fn(), insertMCP: vi.fn(), updateMCP: vi.fn(), deleteMCP: vi.fn(), configMCP: vi.fn(), enableMCP: vi.fn(), closeMCP: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;
 export const NOOP_MQ_ACCESS = { sendMQ: vi.fn().mockResolvedValue(true), soQueueStats: vi.fn().mockResolvedValue(true), consume: vi.fn(), ack: vi.fn(), nack: vi.fn(), enableMQ: vi.fn(), closeMQ: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;
 export const NOOP_SKILL_ACCESS = { execSkill: vi.fn().mockResolvedValue(true), soSkill: vi.fn(), insertSkill: vi.fn(), updateSkill: vi.fn(), deleteSkill: vi.fn(), enableSkill: vi.fn(), closeSkill: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;

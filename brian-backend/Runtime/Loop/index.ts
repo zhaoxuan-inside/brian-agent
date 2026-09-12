@@ -5,6 +5,7 @@
 // access 层
 export { LoopAccess, LoopContext } from './access/LoopAccess';
 export type { PermissionGate } from './access/LoopAccess';
+export type { PermissionAudit } from './application/AgentLoopService';
 
 // domain 层
 export {

@@ -16,9 +16,25 @@ export class MCPCoreSchemaInitializer {
         "updated"              INTEGER NOT NULL,
         "regen_rate"           INTEGER NOT NULL DEFAULT ${DEFAULT_REGENERATE_RATE},
         "similarity_threshold" REAL    NOT NULL DEFAULT 0.7,
-        "prompt_template_id"   TEXT
+        "prompt_template_id"   TEXT,
+        "score_threshold"      INTEGER NOT NULL DEFAULT 90,
+        "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8
       )
     `);
+    // ===== 2026-09-11 迁移：匹配缓存 TTL / 容量（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_ttl_ms" INTEGER NOT NULL DEFAULT 600000`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_capacity" INTEGER NOT NULL DEFAULT 500`);
+    } catch { /* column already exists */ }
+    // ===== 2026-09-11 迁移：排序采纳阈值与任务向量命中阈值（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "score_threshold" INTEGER NOT NULL DEFAULT 90`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
+    } catch { /* column already exists */ }
 
     // agent_mcp 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 mcp_ids_json；旧库残留表不再读写）
 

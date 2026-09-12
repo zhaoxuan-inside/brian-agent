@@ -27,6 +27,22 @@ export interface MetricsLogger {
 }
 
 /**
+ * LLM 单次调用统计记录（LLMProvider 调用侧回填）。
+ */
+export interface LLMCallUsageMetrics {
+  /** 本次实际使用的模型 ID（降级后为最终成功候选） */
+  llm_id?: string;
+  /** 降级尝试序号（从 1 开始；无降级恒为 1） */
+  attempt?: number;
+  /** 本单次调用输入 Token 数 */
+  input_tokens: number;
+  /** 本单次调用输出 Token 数 */
+  output_tokens: number;
+  /** 本单次调用耗时（毫秒） */
+  duration_ms: number;
+}
+
+/**
  * Metrics 基类。
  *
  * 用法示例：
@@ -49,12 +65,42 @@ export class Metrics {
   /** 本次执行的耗时（毫秒），由 AopProxy 自动填充 */
   elapsed_ms?: number;
 
+  /**
+   * LLM 调用统计（2026-09-11 新增）：按调用次序累积每次 LLM 调用的
+   * token 用量与单次调用耗时，由 LLMProvider 调用侧回填；
+   * AOP 落 log_record 时随 Metrics 序列化自动携带。
+   */
+  llm_usage?: LLMCallUsageMetrics[];
+
   protected logger?: MetricsLogger;
 
   constructor(logger?: MetricsLogger, category?: string, trace_id?: string) {
     this.logger = logger;
     this.category = category;
     this.trace_id = trace_id;
+  }
+
+  /**
+   * 记录一次 LLM 调用统计（2026-09-11 新增；累积式调用）。
+   */
+  recordLLMUsage(usage: LLMCallUsageMetrics): void {
+    if (!this.llm_usage) {
+      this.llm_usage = [];
+    }
+    this.llm_usage.push(usage);
+  }
+
+  /**
+   * 汇总 LLM 调用统计（累积合计；无记录时返回零值快照）。
+   */
+  summarizeLLMUsage(): { calls: number; input_tokens: number; output_tokens: number; duration_ms: number } {
+    const usage = this.llm_usage ?? [];
+    return {
+      calls: usage.length,
+      input_tokens: usage.reduce((sum, u) => sum + (u.input_tokens ?? 0), 0),
+      output_tokens: usage.reduce((sum, u) => sum + (u.output_tokens ?? 0), 0),
+      duration_ms: usage.reduce((sum, u) => sum + (u.duration_ms ?? 0), 0),
+    };
   }
 
   /** 记录调试日志 */

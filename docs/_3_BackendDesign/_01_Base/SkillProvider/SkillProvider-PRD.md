@@ -323,7 +323,9 @@ id / created / updated 为系统字段，由 Provider 维护，不通过 Data �
 - 每次执行创建新 Context，执行完毕后释放；
 - memoryLimit 默认 128MB；
 - JavaScript 代码中的 `result` 变量回传执行结果；
-- 注入 `var console={log:function(){}}` 避免沙箱输出污染主进程。
+- 注入 `var console={log:function(){}}` 避免沙箱输出污染主进程；
+- **全平台可用（2026-09-07 起）**：原生模块加载顺序为 `BRIAN_NATIVE_DIR`（SEA 打包）→ `prebuilt/{platform}-{arch}/node{abi}/` → `prebuilt/{platform}-{arch}/` → `out/`；当以上路径均无与当前平台（OS + arch + ABI）匹配的二进制时，自动从源码编译兜底——node-gyp 三级解析（仓库 node_modules → 全局 PATH → `npx --yes node-gyp` 在线获取，便携包自带 Node 运行时必有 npx），Win / macOS / Linux 三平台均可获得可用的沙箱服务，**不再存在"缺失降级"路径**（编译需 C/C++ 工具链与 Python 3，首次编译需联网下载 Node 头文件，编译产物缓存后离线可用；加载失败直接抛错 fail-fast）。
+  - 平台事实说明：上游 isolated-vm 全部 Release（v4.6.0 → v6.0.2）从未发布过 darwin-x64 的 Node 22 (ABI 127) 预编译包；v4.x 的 darwin-x64（ABI 93/108/115）与本仓库 Node 22 物理不兼容（V8 直接绑定、非 N-API），**不可降级使用旧版预编译**；v5.0.4 源码官方支持 darwin-x64（binding.gyp `MACOSX_DEPLOYMENT_TARGET=10.12`），源码编译即上游官方路径。`brian-backend/scripts/build-isolated-vm.js` 可在对应平台一键产出预编译并提交入库。
 
 ### LocalSandbox
 

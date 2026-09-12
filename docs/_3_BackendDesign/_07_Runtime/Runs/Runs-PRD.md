@@ -101,3 +101,16 @@ submitRun ──ack──► accepted(queued)
 5. **session_id 语义修复**：`runtime_run.session_id` 统一落 `runtime_session.id`（submitRun 内按 session_key 幂等解析；入参 `session_id` 仅为兼容保留）。
 6. **run.accepted 事件**：submitRun 受理时发布（§4 的 11 类事件协议补齐）。
 7. **业务事件双通道**：持久化经 Bus（重放/审计事实源）；客户端可感知的业务事件同步经 `Report.pushBusinessEvent`（BusinessEvent 枚举注册，无流会话静默降级）。
+
+### [2026-09-11] 权限等待超时兜底 + 启动时遗留 run 收敛（复盘僵尸 run b5a8b667 / c19996e8）
+
+**变更原因**：两个 run 卡死 `running` 数十分钟——用户在权限卡（`cdt_browser` 首次执行确权）挂 await 后关闭页面，`waitPermission` Deferred 永远无人 resolve，且无超时；服务重启后内存 waiters 丢失，run 行永久停留 running。
+
+**修改的方法**：
+  - `RunGatewayService.waitPermission` — 等待加 `PERMISSION_WAIT_TIMEOUT_MS`（默认 120s）超时兜底：超时删除 waiter 并以默认拒绝（approved=false）收敛，Loop 按配对拒绝语义正常结算（原实现已注释保留）。
+  - `RunGatewayService.initialize()` → `convergeOrphanRuns()` —— 启动时把遗留 `running/queued` run 统一收敛为 `aborted`（stop_reason=service_restart；内存 lane 队列/waiters 重启后不可恢复）。
+  - `Runtime/shared/types.ts` `AbortReason` 新增 `ServiceRestart = 'service_restart'`。
+
+**影响的端点**：
+  - `POST /api/chat/permission/answer/{permission_id}` — 120s 后回答幂等失效（waiter 已删），返回 answered=false。
+  - 所有权限门 run — 挂起不再可能无限期（≤120s）；重启不再遗留永久 running run。

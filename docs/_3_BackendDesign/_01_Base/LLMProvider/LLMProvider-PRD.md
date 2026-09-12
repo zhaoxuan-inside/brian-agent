@@ -615,3 +615,18 @@
 - 模型缓存数据处理下沉领域服务 `domain/services/LLMCacheDomainService.ts`：缓存新鲜度判定（isModelsCacheFresh / TTL 6h）、远端错误详情提取（extractRemoteErrorDetail）、llm_cache 插入/更新字段映射（toCacheInsertRecord / toCacheUpdatePatch，复用 RecordBuilder）。
 - strategies/ 目录维持 Strategy + Factory + Template Method（BaseLLMStrategy.buildEndpoint/buildHeaders 钩子）。
 - 应用服务瘦身为流程编排；listLLM 不再内联字段映射。
+
+### [2026-09-11] execLLM / execLLMEvents 成功路径回填 Metrics LLM 调用统计
+
+**变更原因**：全仓无"单次 LLM 调用"粒度的 token/耗时统计（llm_usage 仅按天聚合），复盘 interact 65f80eb3 延迟时无法精确归因。
+
+**修改的方法**：
+  - `Base/shared/base/Metrics.ts` — 新增 `LLMCallUsageMetrics` 接口与 `Metrics.llm_usage` 字段、`recordLLMUsage(usage)` / `summarizeLLMUsage()`。
+  - `LLMService.execLLM` / `execLLMEvents` — 成功路径调用新增 `recordLLMCallMetrics(metrics, {...})`：Metrics.recordLLMUsage 记 token 与单次耗时，并落 INFO 日志（`LLM call: X in / Y out tokens in Zms`，含 llm_id/attempt/category/trace_id，监控页可按 TraceId 关联）。
+  - 上游 Loop（`AgentLoopService.callLLMTurn`）已随后透传 `ctx.metrics`，聊天链路可与 run 关联。
+
+**影响的端点**：
+  - `POST /api/chat/stream` 及所有经 execLLM/execLLMEvents 的调用 — 每次成功调用多一条小时延遥测日志；语义：duration_ms 为最终成功候选本次耗时，attempt 给出降级序号。
+
+**可能存在的问题**：
+  - metrics.llm_usage 为内存实例字段，仅随 AOP invocation 序列化（DEBUG 级）与显式 INFO 遥测日志落库；调用方未传 run 级 metrics 时 invocation_json 不携带。

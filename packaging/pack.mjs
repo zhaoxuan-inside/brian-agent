@@ -19,8 +19,10 @@
  *   node packaging/pack.mjs --skip-frontend-build  # 复用已有前端 dist
  *
  * 已知限制：
- *   - darwin-x64（Intel Mac）仓库未内置 isolated-vm 预编译二进制，该目标
- *     的 .js Skill 沙箱将降级禁用（服务其余功能不受影响，启动时打印警告）。
+ *   - darwin-x64（Intel Mac）上游 isolated-vm v5.0.4 不发布预编译二进制；便携包
+ *     在该目标首次运行时由 vendored loader 自动从源码编译兜底（需 Xcode CLT，
+ *     产物缓存后离线可用）；也可在 Intel Mac 上执行
+ *     `node brian-backend/scripts/build-isolated-vm.js` 产出并提交入库。
  *   - macOS 目标未做公证，用户首次运行前需执行
  *     `xattr -dr com.apple.quarantine <包目录>`（README 中已说明）。
  */
@@ -228,8 +230,16 @@ async function resolveNatives(targetKey) {
     natives['jieba.node'] = await fetchJiebaNative(t.napi);
   }
 
-  // isolated-vm：仓库内置（darwin-x64 缺失 → 降级，服务仍可启动）
+  // isolated-vm：仓库内置；目标平台 = 本机且缺二进制时先尝试源码构建补齐
+  //（上游 v5.0.4 不发布 darwin-x64 预编译包，其余平台二进制均已入库）
   const ivm = path.join(PREBUILT, 'isolated-vm', `${t.os}-${t.arch}`, PREBUILT_ABI, 'isolated_vm.node');
+  if (!fs.existsSync(ivm) && `${t.os}-${t.arch}` === `${process.platform}-${process.arch}` && process.versions.modules === PREBUILT_ABI) {
+    try {
+      execSync('node brian-backend/scripts/build-isolated-vm.js', { cwd: ROOT, stdio: 'inherit' });
+    } catch (e) {
+      warn(`isolated-vm: 本机源码构建失败（${e.message}），目标 ${targetKey} 将依赖运行时编译兜底`);
+    }
+  }
   natives['isolated_vm.node'] = fs.existsSync(ivm) ? ivm : null;
 
   for (const [k, p] of Object.entries(natives)) {

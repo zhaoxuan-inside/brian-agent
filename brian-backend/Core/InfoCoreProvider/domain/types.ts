@@ -161,6 +161,12 @@ export class SaveInfoInput extends Input {
   info_creator_role?: string;
   info_creator_id?: string;
   info!: string;
+  /**
+   * 消息真实创建时间（毫秒时间戳；可选，缺省取保存时刻）。
+   * 会话同步等场景传入原始消息时间（如 runtime_message.created），
+   * 保证 user 消息先于 assistant 回复的时间先后次序（否则消息在对话区顺序错乱）。
+   */
+  created?: number;
   parent_info_ids?: string[];
   /** 预生成的摘要（由上层编排调用 SummaryAgent 生成后传入；为空则不为该 info 生成摘要） */
   summary?: string;

@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SoulAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
+import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_IDS } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SoulCoreContext,
@@ -41,6 +41,9 @@ import {
 import { ProcessingError } from '../../shared/errors';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
 import { ensureDefaultConfig } from '../../shared/ConfigHelper';
+import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
+import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
+import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
 
 /**
  * SoulCoreProvider 应用服务。
@@ -51,6 +54,9 @@ import { ensureDefaultConfig } from '../../shared/ConfigHelper';
 export class SoulCoreService {
   /** 单行配置仓 */
   private readonly configStore: SingleRowConfigStore<SoulCoreConfigRecord>;
+
+  // ===== 修改后（2026-09-11）：MD5+向量两级匹配缓存（按任务内容；重复任务零 LLM） =====
+  private readonly matchCache = new VectorMatchCache();
 
   /**
    * @param relationDb RelationDBProvider 接入层
@@ -78,6 +84,10 @@ export class SoulCoreService {
     await ensureDefaultConfig(this.relationDb, SOUL_CORE_CONFIG_TABLE, [
       { field: 'regen_rate', value: 75 },
       { field: 'prompt_template_id', value: null },
+      { field: 'score_threshold', value: ScoreThreshold.Default },
+      { field: 'vector_similarity_threshold', value: VectorSimilarity.Default },
+      { field: 'match_cache_ttl_ms', value: MatchCache.TtlMs },
+      { field: 'match_cache_capacity', value: MatchCache.Capacity },
     ]);
   }
 
@@ -95,6 +105,31 @@ export class SoulCoreService {
       throw new ValidationError('matchSoul 需要提供 agent_id');
     }
 
+    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    if (input.bound_soul_id) {
+      const soulRecord = await this.getSoulById(input.bound_soul_id);
+      output.soul_id = input.bound_soul_id;
+      output.soul = soulRecord;
+      output.from_cache = true;
+      return true;
+    }
+
+    // ===== 缓存命中水合（MD5 精确 → 余弦 >= vector_similarity_threshold；重复任务零 LLM；bypass_cache 强制全量） =====
+    const cached = input.bypass_cache
+      ? { record: null, query: await this.matchCache.embedOf(task_content ?? '', (t) => this.embedTask(t)) }
+      : await this.matchCache.lookup(task_content ?? '', (t) => this.embedTask(t));
+    const cachedSoulId = cached.record?.result[0]?.id ?? '';
+    if (cachedSoulId) {
+      const soulRecord = await this.hydrateSoulOrClear(cachedSoulId);
+      if (soulRecord) {
+        output.soul_id = cachedSoulId;
+        output.soul = soulRecord;
+        output.from_cache = true;
+        return true;
+      }
+      this.matchCache.clear();
+    }
+
     const config = await this.getCoreConfig();
     // 获取可用 Soul 列表
     const soOutput = new SoSoulOutput();
@@ -104,31 +139,23 @@ export class SoulCoreService {
     );
     const availableSouls = soOutput.list;
 
-    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
-    // 绑定的写入/解除由 Agent 模块评估后执行（AgentLibrary.bindAgentComponent），Core 只做选择与水合
-    if (input.bound_soul_id) {
-      const soulRecord = await this.getSoulById(input.bound_soul_id);
-      output.soul_id = input.bound_soul_id;
-      output.soul = soulRecord;
-      output.from_cache = true;
-      return true;
-    }
-
     // ===== 第 2 层：LLM 打分推荐 =====
+    // ===== 修改后（2026-09-11）：threshold 淘汰后的空 = "无合格人设"，不再逐题自生成（防生成风暴）；
+    // Layer-3 自生成仅在库内无可启用 Soul 时进行 =====
     let selectedSoulId = '';
     if (availableSouls.length > 0) {
       selectedSoulId = await this.rankSoulsByLLM(
         agent_id, context_id, interact_id, task_content, task_domain, availableSouls, config,
       );
-    }
-
-    // ===== 第 3 层：自生成全新的 Persona (Soul) =====
-    if (!selectedSoulId) {
+    } else {
       selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, interact_id, task_content, task_domain);
     }
 
-    // 纯选择：不持久化任何绑定（绑定事实源为 Agent 表，由 Agent 模块评估后写入）
     const soulRecord = await this.getSoulById(selectedSoulId);
+    // ===== 匹配结果入缓存（MD5 + 任务向量；commit 复用 lookup 期向量；空结果不入缓存） =====
+    if (selectedSoulId) {
+      await this.commitMatchCache(task_content ?? '', cached.query, selectedSoulId);
+    }
     output.soul_id = selectedSoulId;
     output.soul = soulRecord;
     output.from_cache = false;
@@ -317,7 +344,7 @@ export class SoulCoreService {
   // ===== 修改后的方法 =====
   async configSoulCore(input: ConfigSoulCoreInput, output: ConfigSoulCoreOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.llm_id !== undefined) {
+    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.llm_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined) {
       const updateData: Array<{ field: string; value: unknown }> = [];
       if (input.regen_rate !== undefined) {
         if (input.regen_rate < 0 || input.regen_rate > 100) {
@@ -347,9 +374,36 @@ export class SoulCoreService {
       if (input.llm_id !== undefined) {
         updateData.push({ field: 'llm_id', value: input.llm_id || null });
       }
+      // ===== 2026-09-11：排序采纳阈值与任务向量命中阈值（均可在配置中心调整） =====
+      if (input.score_threshold !== undefined) {
+        if (input.score_threshold < 0 || input.score_threshold > 100) {
+          throw new ValidationError('score_threshold 必须在 0-100 之间');
+        }
+        updateData.push({ field: 'score_threshold', value: input.score_threshold });
+      }
+      if (input.vector_similarity_threshold !== undefined) {
+        if (input.vector_similarity_threshold < 0 || input.vector_similarity_threshold > 1) {
+          throw new ValidationError('vector_similarity_threshold 必须在 0.0-1.0 之间');
+        }
+        updateData.push({ field: 'vector_similarity_threshold', value: input.vector_similarity_threshold });
+      }
+      if (input.match_cache_ttl_ms !== undefined) {
+        if (input.match_cache_ttl_ms < 0) {
+          throw new ValidationError('match_cache_ttl_ms 不能为负');
+        }
+        updateData.push({ field: 'match_cache_ttl_ms', value: input.match_cache_ttl_ms });
+      }
+      if (input.match_cache_capacity !== undefined) {
+        if (input.match_cache_capacity <= 0) {
+          throw new ValidationError('match_cache_capacity 必须为正整数');
+        }
+        updateData.push({ field: 'match_cache_capacity', value: input.match_cache_capacity });
+      }
       await this.configStore.upsert(updateData);
     }
 
+    // ===== 新增（2026-09-11）：配置变更即清缓存 + 应用缓存参数 =====
+    await this.applyMatchCacheConfig();
     output.config = await this.getCoreConfig();
     return true;
   }
@@ -361,6 +415,17 @@ export class SoulCoreService {
   /** 获取配置（单行配置仓：进程内缓存 + 空表回退默认值） */
   private async getCoreConfig(): Promise<SoulCoreConfigRecord | null> {
     return this.configStore.load();
+  }
+
+  // ===== 新增（2026-09-11）：匹配缓存参数应用（容量/相似度阈值/TTL 读配置表） =====
+  private async applyMatchCacheConfig(): Promise<void> {
+    const serviceConfig = await this.getCoreConfig();
+    this.matchCache.configure({
+      capacity: serviceConfig?.match_cache_capacity ?? MatchCache.Capacity,
+      similarityThreshold: serviceConfig?.vector_similarity_threshold ?? VectorSimilarity.Default,
+      ttlMs: serviceConfig?.match_cache_ttl_ms ?? MatchCache.TtlMs,
+    });
+    this.matchCache.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -430,6 +495,8 @@ export class SoulCoreService {
       llmId,
       prompt: generationPrompt,
       retries: 2,
+      /// ===== 2026-09-11：生成加 max_tokens 上限；执行 disabled thinking（CallLLMJson 内部统一） =====
+      extra: { max_tokens: 800 },
       parse: (text) => JsonParser.parseObject(text),
     }).then((res) => {
       if (res === null) {
@@ -468,6 +535,9 @@ export class SoulCoreService {
 
   /**
    * 调用 LLM 对可用 Soul 进行相关性排序，返回最匹配的 Soul ID。
+   *
+   * 2026-09-11：统一 `[{"id","score"}]` 百分制输出（RankingParser）+ score_threshold 截断；
+   * prompt 仅从 prompt_template 表渲染（无硬编码回退，缺模板 fail-loud）。
    */
   private async rankSoulsByLLM(
     agentId: string,
@@ -484,90 +554,86 @@ export class SoulCoreService {
       interact_id: interactId,
       task_content: taskContent || '',
       task_domain: taskDomain || '',
-      available_souls: availableSouls.map((s) => {
-        const usage = s.soul_usage ?? '';
-        return `- id: ${s.id}, brief: ${s.soul_brief}, usage: ${usage}`;
-      }).join('\n'),
+      available_souls: JSON.stringify(availableSouls.map((s) => ({
+        id: s.id,
+        soul_brief: s.soul_brief,
+        soul_usage: s.soul_usage ?? '',
+      }))),
     };
-
-    let selectionPrompt: string;
-    if (config?.prompt_template_id) {
-      const execPromptOutput = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        {
-          id: config.prompt_template_id,
-          variables: selectionVariables,
-        } as ExecPromptInput,
-        execPromptOutput, new PromptContext(),
-      );
-      selectionPrompt = execPromptOutput.prompt;
-      if (!selectionPrompt) selectionPrompt = this.renderDefault(selectionVariables);
-    } else {
-      selectionPrompt = this.renderDefault(selectionVariables);
-    }
-
+    const selectionPrompt = await this.renderMatchPrompt(
+      config?.prompt_template_id ?? PROMPT_IDS.soulMatch,
+      selectionVariables,
+    );
     const llmId = config?.llm_id || '';
+    const result = await this.soRankLLM({
+      id: llmId,
+      prompt: selectionPrompt,
+      temperature: 0.1,
+      max_tokens: 256,
+    });
+    const threshold = config?.score_threshold ?? ScoreThreshold.Default;
+    return filterByThreshold(parseRankingCandidates(result), threshold)[0]?.id
+      ?? availableSouls[0]?.id ?? '';
+  }
+
+  /**
+   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板；删除硬编码内存回退，
+   * 模板缺失/渲染失败 fail-loud（配置中心可见可修）。渲染空结果时回保 builtin ID 重试一次。
+   */
+  private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
+    const execPromptOutput = new ExecPromptOutput();
+    await this.promptsAccess.execPrompt(
+      { id: templateId, variables } as ExecPromptInput,
+      execPromptOutput, new PromptContext(),
+    );
+    if (execPromptOutput.prompt) {
+      return execPromptOutput.prompt;
+    }
+    throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
+  }
+
+  /**
+   * 排序 LLM 调用（逻辑控制；失败返回空串 → 调用方走 threshold 兜底语义）。
+   */
+    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
+    input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const execLLMOutput = new ExecLLMOutput();
-    let ok = false;
     try {
-      ok = await this.llmAccess.execLLM(
-        {
-          id: llmId,
-          prompt: selectionPrompt,
-          temperature: 0.1,
-          max_tokens: 256,
-        } as ExecLLMInput,
-        execLLMOutput, new LLMContext(),
-      );
+      const ok = await this.llmAccess.execLLM(input, execLLMOutput, new LLMContext());
+      return ok ? (execLLMOutput.result ?? '') : '';
     } catch {
-      ok = false;
-    }
-    if (!ok || !execLLMOutput.result) {
-      return availableSouls[0]?.id ?? '';
-    }
-
-    return this.parseSoulSelectionResult(execLLMOutput.result, availableSouls);
-  }
-
-  /** 构建默认 Soul 匹配 Prompt */
-  /** 渲染内置 Soul 匹配模板（内存兜底） */
-  private renderDefault(variables: Record<string, unknown>): string {
-    const tpl = getBuiltinTemplate(PROMPT_IDS.soulMatch);
-    return tpl ? renderTemplate(tpl, variables) : '';
-  }
-
-  /** 从 LLM 排名回复中解析出选中的 Soul ID */
-  private parseSoulSelectionResult(
-    resultText: string,
-    availableSouls: Array<{ id: string; soul_brief: string }>,
-  ): string {
-    const trimmed = resultText.trim().replace(/^['"]+|['"]+$/g, '');
-
-    // LLM 判定无合适 Soul（如 "NONE" / "none" / 空）→ 返回空，触发第 3 层自生成
-    if (!trimmed || /^(none|n\/a|null|无|没有)$/i.test(trimmed)) {
       return '';
     }
+  }
 
-    for (const soul of availableSouls) {
-      if (trimmed === soul.id) {
-        return trimmed;
-      }
+  /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, soulId: string): Promise<void> {
+    if (!soulId) {
+      return;
     }
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    this.matchCache.commit(
+      buildCacheKey(taskContent),
+      query ?? [],
+      [{ id: soulId, score: ScoreThreshold.Max }],
+    );
+  }
 
-    for (const soul of availableSouls) {
-      if (soul.id && trimmed.includes(soul.id)) {
-        return soul.id;
-      }
+  /** 任务向量化（数据处理；走系统默认 embedding 模型） */
+  private async embedTask(task: string): Promise<number[]> {
+    const output = new EmbedLLMOutput();
+    const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
+    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    if (!ok || !output.embedding?.length) {
+      throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
     }
+    return output.embedding;
+  }
 
-    for (const soul of availableSouls) {
-      const brief = soul.soul_brief;
-      if (brief && trimmed.toLowerCase().includes(brief.toLowerCase())) {
-        return soul.id;
-      }
-    }
-
-    return availableSouls[0]?.id ?? '';
+  /** 缓存命中的 Soul 水合（数据处理；目标已失效返回 null，由调用方清缓存） */
+  private async hydrateSoulOrClear(soulId: string): Promise<Record<string, unknown> | null> {
+    return this.getSoulById(soulId);
   }
 
   // ---------------------------------------------------------------------------
@@ -656,6 +722,10 @@ export class SoulCoreService {
       similarity_threshold: Number(raw['similarity_threshold'] ?? 0.7),
       prompt_template_id: (raw['prompt_template_id'] as string) || null,
       llm_id: (raw['llm_id'] as string) || null,
+      score_threshold: Number(raw['score_threshold'] ?? ScoreThreshold.Default),
+      vector_similarity_threshold: Number(raw['vector_similarity_threshold'] ?? VectorSimilarity.Default),
+      match_cache_ttl_ms: Number(raw['match_cache_ttl_ms'] ?? MatchCache.TtlMs),
+      match_cache_capacity: Number(raw['match_cache_capacity'] ?? MatchCache.Capacity),
     };
   }
 

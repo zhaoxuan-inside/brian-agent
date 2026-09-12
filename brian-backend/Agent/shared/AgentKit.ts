@@ -7,7 +7,7 @@
  * 模式：Facade —— 对"模板渲染 + 内置兜底"与"Agent LLM 绑定解析"的高频组合提供单一入口。
  */
 
-import type { PromptsAccess, SoulAccess } from '@brian-agent/base';
+import type { PromptsAccess, SoulAccess, SkillAccess, MCPAccess, LLMAccess } from '@brian-agent/base';
 import {
   ExecPromptInput,
   ExecPromptOutput,
@@ -15,24 +15,34 @@ import {
   SoPromptInput,
   SoPromptOutput,
   Operator,
-  getBuiltinTemplate,
-  renderTemplate,
   GetSoulInput,
   GetSoulOutput,
   SoulContext,
   ValidationError,
+  GetLLMInput,
+  GetLLMOutput,
+  LLMContext,
+  GetSkillInput,
+  GetSkillOutput,
+  SkillContext,
+  GetMcpInput,
+  GetMcpOutput,
+  McpContext,
 } from '@brian-agent/base';
 import type { LLMCoreAccess } from '@brian-agent/core';
 import { MatchLLMInput, MatchLLMOutput, LLMCoreContext } from '@brian-agent/core';
 
 /**
- * 渲染 Prompt：优先执行配置的模板（templateId），失败或为空时回退到内置模板。
+ * 渲染 Prompt：经 DB（prompt_template 表）渲染配置模板（templateId），缺省 builtin ID。
+ *
+ * ===== 2026-09-11 修改：删除硬编码内存回退（getBuiltinTemplate），DB 渲染失败 fail-loud =====
+ * 所有 Prompt 统一由 "配置中心 > 角色与提示词 > Prompt 模板" 承载（系统模板 is_system=1 受保护）。
  *
  * @param promptsAccess PromptsProvider 接入层
- * @param templateId 配置的模板 ID（可为空，空则直接使用内置模板）
+ * @param templateId 配置的模板 ID（可为空，空则直接使用内置模板 ID）
  * @param builtinId 内置模板 ID（PROMPT_IDS）
  * @param variables 模板变量
- * @returns 渲染后的 Prompt 文本（可能为空字符串）
+ * @returns 渲染后的 Prompt 文本（模板缺失/渲染为空抛 ValidationError）
  */
 export async function renderPromptWithFallback(
   promptsAccess: PromptsAccess,
@@ -41,19 +51,14 @@ export async function renderPromptWithFallback(
   variables: Record<string, unknown>,
 ): Promise<string> {
   const id = templateId || builtinId;
-  try {
-    const promptOut = new ExecPromptOutput();
-    await promptsAccess.execPrompt(
-      Object.assign(new ExecPromptInput(), { id, variables }),
-      promptOut,
-      new PromptContext(),
-    );
-    if (promptOut.prompt) return promptOut.prompt;
-  } catch {
-    /* 回退内置模板 */
-  }
-  const tpl = getBuiltinTemplate(builtinId);
-  return tpl ? renderTemplate(tpl, variables) : '';
+  const promptOut = new ExecPromptOutput();
+  await promptsAccess.execPrompt(
+    Object.assign(new ExecPromptInput(), { id, variables }),
+    promptOut,
+    new PromptContext(),
+  );
+  if (promptOut.prompt) return promptOut.prompt;
+  throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
 }
 
 /**
@@ -119,4 +124,203 @@ export async function getSoulSystemPrompt(soulAccess: SoulAccess, soulId: string
   } catch {
     return '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Agent 绑定资源校验（LLM / Prompt / Skill / MCP / Soul，全部经 DB 校验）
+// ---------------------------------------------------------------------------
+
+/** Agent 绑定资源校验结果 */
+export interface AgentResourceValidationResult {
+  /** Soul / Prompt / 全部 Skill / 全部 MCP 是否全部有效 */
+  valid: boolean;
+  /** 绑定 Soul 是否存在且启用 */
+  soul_ok: boolean;
+  /** 绑定 Prompt 模板是否存在且启用 */
+  prompt_ok: boolean;
+  /** 校验通过的 Skill ID 列表 */
+  valid_skill_ids: string[];
+  /** 校验失败（不存在或已禁用）的 Skill ID 列表 */
+  invalid_skill_ids: string[];
+  /** 校验通过的 MCP ID 列表 */
+  valid_mcp_ids: string[];
+  /** 校验失败（不存在或已禁用）的 MCP ID 列表 */
+  invalid_mcp_ids: string[];
+  /** 全部问题清单（人可读） */
+  issues: string[];
+}
+
+/**
+ * 校验 Agent 绑定的 Soul（经 SoulProvider DB 校验：存在且启用）。
+ */
+export async function validateAgentSoul(soulAccess: SoulAccess, soulId: string): Promise<boolean> {
+  if (!soulId) return false;
+  try {
+    const out = new GetSoulOutput();
+    await soulAccess.soSoulById(
+      Object.assign(new GetSoulInput(), { id: soulId }),
+      out,
+      new SoulContext(),
+    );
+    return Boolean(out.soul?.enable);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 校验 Agent 绑定的 Prompt 模板（经 PromptsProvider DB 校验：存在且启用）。
+ */
+export async function validateAgentPrompt(promptsAccess: PromptsAccess, promptId: string): Promise<boolean> {
+  if (!promptId) return false;
+  try {
+    const out = new SoPromptOutput();
+    await promptsAccess.soPrompt(
+      Object.assign(new SoPromptInput(), {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: promptId }],
+      }),
+      out,
+      new PromptContext(),
+    );
+    const row = out.list?.[0];
+    return Boolean(row && row.enable);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 批量校验 Agent 绑定的 Skill（经 SkillProvider DB 校验：存在且启用）。
+ *
+ * @returns { valid, invalid } 通过/失败 ID 列表
+ */
+export async function validateAgentSkills(
+  skillAccess: SkillAccess,
+  skillIds: string[],
+): Promise<{ valid: string[]; invalid: string[] }> {
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const id of skillIds) {
+    try {
+      const out = new GetSkillOutput();
+      await skillAccess.soSkillById(
+        Object.assign(new GetSkillInput(), { id }),
+        out,
+        new SkillContext(),
+      );
+      if (out.skill?.enable) valid.push(id);
+      else invalid.push(id);
+    } catch {
+      invalid.push(id);
+    }
+  }
+  return { valid, invalid };
+}
+
+/**
+ * 批量校验 Agent 绑定的 MCP（经 MCPProvider DB 校验：存在且启用）。
+ *
+ * @returns { valid, invalid } 通过/失败 ID 列表
+ */
+export async function validateAgentMcps(
+  mcpAccess: MCPAccess,
+  mcpIds: string[],
+): Promise<{ valid: string[]; invalid: string[] }> {
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const id of mcpIds) {
+    try {
+      const out = new GetMcpOutput();
+      await mcpAccess.soMcpById(
+        Object.assign(new GetMcpInput(), { id }),
+        out,
+        new McpContext(),
+      );
+      if (out.mcp?.enable) valid.push(id);
+      else invalid.push(id);
+    } catch {
+      invalid.push(id);
+    }
+  }
+  return { valid, invalid };
+}
+
+/**
+ * 校验执行用 LLM（经 LLMProvider DB 校验：存在且启用）。
+ *
+ * @param llmAccess LLMProvider 接入层
+ * @param llmId 待校验的 LLM ID（来自 Core.matchLLM 解析结果）
+ */
+export async function validateAgentLlm(llmAccess: LLMAccess, llmId: string): Promise<boolean> {
+  if (!llmId) return false;
+  try {
+    const out = new GetLLMOutput();
+    await llmAccess.soLLMById(
+      Object.assign(new GetLLMInput(), { id: llmId }),
+      out,
+      new LLMContext(),
+    );
+    return Boolean(out.llm?.enable);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 完整校验 Agent 的绑定资源（Soul / Prompt / Skill / MCP，全部经 DB 校验）。
+ *
+ * LLM 绑定校验单独使用 validateAgentLlm（LLM 绑定存于 LLMProvider 的 agent_llm，
+ * 由 Core.matchLLM 解析后传入执行流程）。
+ *
+ * 校验失败不抛异常，返回问题清单，由调用方决定降级策略
+ * （如剔除失效 Skill/MCP 后继续执行、记录告警等）。
+ *
+ * @param deps 校验依赖（Agent 绑定信息 + 各资源接入层）
+ */
+export async function validateAgentResources(deps: {
+  /** Agent 业务 ID（用于问题清单描述） */
+  agentId: string;
+  soulId?: string;
+  promptId?: string;
+  skillIds?: string[];
+  mcpIds?: string[];
+  soulAccess: SoulAccess;
+  promptsAccess: PromptsAccess;
+  skillAccess: SkillAccess;
+  mcpAccess: MCPAccess;
+}): Promise<AgentResourceValidationResult> {
+  const issues: string[] = [];
+  const { agentId, soulAccess, promptsAccess, skillAccess, mcpAccess } = deps;
+
+  const soulOk = await validateAgentSoul(soulAccess, deps.soulId || '');
+  if (!soulOk && deps.soulId) {
+    issues.push(`Agent ${agentId} 绑定的 Soul 不存在或已禁用: ${deps.soulId}`);
+  }
+
+  const promptOk = await validateAgentPrompt(promptsAccess, deps.promptId || '');
+  if (!promptOk && deps.promptId) {
+    issues.push(`Agent ${agentId} 绑定的 Prompt 模板不存在或已禁用: ${deps.promptId}`);
+  }
+
+  const skills = await validateAgentSkills(skillAccess, deps.skillIds ?? []);
+  for (const id of skills.invalid) {
+    issues.push(`Agent ${agentId} 绑定的 Skill 不存在或已禁用: ${id}`);
+  }
+
+  const mcps = await validateAgentMcps(mcpAccess, deps.mcpIds ?? []);
+  for (const id of mcps.invalid) {
+    issues.push(`Agent ${agentId} 绑定的 MCP 不存在或已禁用: ${id}`);
+  }
+
+  const result: AgentResourceValidationResult = {
+    valid: soulOk && promptOk && skills.invalid.length === 0 && mcps.invalid.length === 0,
+    soul_ok: soulOk,
+    prompt_ok: promptOk,
+    valid_skill_ids: skills.valid,
+    invalid_skill_ids: skills.invalid,
+    valid_mcp_ids: mcps.valid,
+    invalid_mcp_ids: mcps.invalid,
+    issues,
+  };
+  return result;
 }

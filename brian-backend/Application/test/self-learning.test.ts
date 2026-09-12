@@ -65,8 +65,13 @@ describe('SelfLearningService', () => {
     initSelfLearningSchema(db);
     await new Promise((r) => setTimeout(r, 10));
 
-    vi.spyOn(evolutorAgent, 'startEvalSchedule').mockResolvedValue(true);
-    vi.spyOn(evolutorAgent, 'stopEvalSchedule').mockResolvedValue(true);
+    // ===== 修改后（2026-09-09）：对话学习已迁移到 Evolutor runEvalOnce 单轮闭环 =====
+    // 原契约：startLearning CONVERSATION 分支调 startEvalSchedule 启动常驻评估调度（已随单轮任务化重构移除）；
+    // 新契约：CONVERSATION 分支调 runEvalOnce 立即执行一轮完整评估闭环，防重入由 conversationPassRunning 承担。
+    // 以下均为透传 spy（不替换实现、不伪造数据）：仅用于调用计数断言，runEvalOnce / stopEvalSchedule
+    // 的真实逻辑对真实测试库完整执行；startEvalSchedule 自单轮任务化重构后已无调用方，不再打桩。
+    vi.spyOn(evolutorAgent, 'runEvalOnce');
+    vi.spyOn(evolutorAgent, 'stopEvalSchedule');
     vi.spyOn(graphDb, 'selectGraph').mockImplementation(async (_i: any, o: any, _c: any, ) => {
       o.list = [];
       return true;
@@ -868,13 +873,13 @@ describe('SelfLearningService', () => {
       vi.useRealTimers();
     });
 
-    it('TC-SL-050: ALL mode → starts conversation learning', async () => {
+    it('TC-SL-050: ALL mode → starts conversation learning (runEvalOnce)', async () => {
       const input = Object.assign(new StartLearningInput(), { learning_mode: 'ALL' });
 
       const result = await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
       expect(result).toBe(true);
-      expect(evolutorAgent.startEvalSchedule).toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
     it('TC-SL-051: Specific library_id in ALL mode', async () => {
@@ -885,7 +890,7 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
     it('TC-SL-052: DOCUMENT mode only → does not start conversation learning', async () => {
@@ -893,15 +898,15 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
 
-    it('TC-SL-053: CONVERSATION mode → calls evolutorAgent.startEvalSchedule', async () => {
+    it('TC-SL-053: CONVERSATION mode → calls evolutorAgent.runEvalOnce', async () => {
       const input = Object.assign(new StartLearningInput(), { learning_mode: 'CONVERSATION' });
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
     it('TC-SL-054: TAG_MAINTENANCE mode → does not start conversation learning', async () => {
@@ -909,7 +914,7 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
 
     it('TC-SL-055: RANDOM mode → sets randomLearningTimer', async () => {
@@ -917,7 +922,7 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
 
     it('TC-SL-056: Learning mode compatible with DOCUMENT substrings', async () => {
@@ -925,7 +930,7 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
 
     it('TC-SL-057: Invalid library_id → does not throw, runs normally', async () => {
@@ -947,7 +952,7 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
 
     it('TC-SL-059: Default learning_mode is ALL', async () => {
@@ -955,16 +960,24 @@ describe('SelfLearningService', () => {
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
-    it('TC-SL-060: Start twice → second call is idempotent (eval schedule already running)', async () => {
+    // ===== 修改后（2026-09-09）：幂等语义随单轮任务化重构迁移 =====
+    // 原契约：startEvalSchedule 已运行时第二次 start 不再重复启动（evalSchedule* 标记）；
+    // 新契约：对话单轮任务防重入由 conversationPassRunning 承担——第一轮 runEvalOnce
+    // 尚未完成时第二次 start 不再触发第二轮，runEvalOnce 仅被调用 1 次。
+    // 本用例检验的是 SelfLearningService 自身的防重入守卫（真实代码）；真实 runEvalOnce
+    // 在空库上为微任务级瞬时完成，无法确定性构造"第一轮仍在执行"的并发窗口，故仅对
+    // 依赖边界做挂起门控（不伪造任何数据与返回值），使真实守卫逻辑可被确定性验证。
+    it('TC-SL-060: Start twice → second call is idempotent (conversation pass re-entrancy guard)', async () => {
+      vi.mocked(evolutorAgent.runEvalOnce).mockImplementation(() => new Promise(() => { /* 挂起门控：模拟第一轮执行中 */ }));
       const input = Object.assign(new StartLearningInput(), { learning_mode: 'ALL' });
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
-      expect(evolutorAgent.startEvalSchedule).toHaveBeenCalledTimes(1);
+      expect(evolutorAgent.runEvalOnce).toHaveBeenCalledTimes(1);
     });
 
     it('TC-SL-061: Invalid learning_mode → no error, just no-op', async () => {
@@ -973,7 +986,7 @@ describe('SelfLearningService', () => {
       const result = await service.startLearning(input, makeCtx(), new StartLearningOutput());
 
       expect(result).toBe(true);
-      expect(evolutorAgent.startEvalSchedule).not.toHaveBeenCalled();
+      expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
   });
 

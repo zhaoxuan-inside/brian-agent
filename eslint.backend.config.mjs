@@ -24,13 +24,34 @@ export default [
     plugins: { '@typescript-eslint': eslintPluginTs },
     rules: {
       ...eslintPluginTs.configs.recommended.rules,
-      // 分层渐进：重构过的模块要求 any 清零；存量 any 由各模块重构时消化
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-require-imports': 'error',
       'no-console': 'error',
       'prefer-const': 'error',
       eqeqeq: ['error', 'smart'],
+    },
+  },
+  {
+    files: ['brian-backend/dev-server.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
+    files: [
+      'brian-backend/Agent/AgentExecution/application/AgentExecutionService.ts',
+      'brian-backend/Agent/IntentAgent/application/IntentAgentService.ts',
+      'brian-backend/Application/Config/access/ConfigAccess.ts',
+      'brian-backend/Application/Config/application/ConfigService.ts',
+      'brian-backend/Application/SelfLearning/application/SelfLearningService.ts',
+      'brian-backend/Application/UserProfile/application/UserProfileService.ts',
+      'brian-backend/Base/LogProvider/application/LogService.ts',
+      'brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts',
+      'brian-backend/Core/SkillCoreProvider/application/SkillCoreService.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 ];

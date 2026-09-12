@@ -52,12 +52,28 @@ export enum BusinessEvent {
   PermissionAnswered = 'permission.answered',
 
   // —— 过程可观测 ——
-  /** 上下文构建完成（含当轮 wire 消息） */
+  /** 上下文构建完成（含当轮 wire 消息与 system prompt） */
   ContextBuilt = 'context.built',
   /** Agent 选择完成（匹配层/命中 Agent） */
   AgentSelected = 'agent.selected',
   /** 组件选定清单（Soul/Skill/MCP/Prompt/LLM） */
   AgentComponents = 'agent.components',
+  /** 意图识别完成（LLM 需求/意图匹配评估打分） */
+  IntentAnalyzed = 'intent.analyzed',
+  /** Agent 构建完成（未命中既有 Agent 时新建） */
+  AgentBuilt = 'agent.built',
+  /** LLM 选定（快照解析出模型） */
+  LlmSelected = 'llm.selected',
+  /** Prompt 选定（模板渲染出 system prompt） */
+  PromptSelected = 'prompt.selected',
+  /** Skill 选定（matchSkill 动态解析） */
+  SkillSelected = 'skill.selected',
+  /** MCP 选定（matchMCP 动态解析） */
+  McpSelected = 'mcp.selected',
+  /** 评估完成（Evolutor 对 Work/Writer Agent 的评分结论） */
+  EvaluationCompleted = 'evaluation.completed',
+  /** Agent 解散（2026-09-11 新增；低分 < DisbandThreshold.Critical 且 system 归属时执行） */
+  AgentDisbanded = 'agent.disbanded',
 
   // —— 错误与块流 ——
   /** 错误（规范化失败消息） */

@@ -41,6 +41,14 @@ export interface ToolResult {
   elapsed_ms?: number;
 }
 
+/** 组件选择范围（match 阶段选定；选/执分离：执行只允许调用范围内已绑定的 id） */
+export interface ComponentScope {
+  /** match 阶段选定的 Skill id 清单 */
+  skills: string[];
+  /** match 阶段选定的 MCP id 清单 */
+  mcps: string[];
+}
+
 /** 工具执行上下文（经 ToolContext 注入 run/会话定位与取消信号） */
 export interface ToolExecutionContext {
   /** 引用 runtime_run.id */
@@ -51,6 +59,8 @@ export interface ToolExecutionContext {
   signal?: AbortSignal;
   /** 业务事件出口（工具经此上报业务事件，如 plan.updated；由 Loop 接 Report→StreamProvider） */
   emitEvent?: (type: string, payload: unknown) => void;
+  /** 组件选择范围（本 run 选定的 Skill/MCP id；缺省=未绑定任何组件，skill_exec/mcp_exec 拒执行） */
+  component_scope?: ComponentScope;
 }
 
 /**
@@ -117,6 +127,8 @@ export class ExecToolInput extends Input {
   signal?: AbortSignal;
   /** 业务事件出口（Loop 接 Report→StreamProvider） */
   emitEvent?: (type: string, payload: unknown) => void;
+  /** 组件选择范围（本 run 选定的 Skill/MCP id；执行门依据） */
+  component_scope?: ComponentScope;
 }
 
 /** execTool 出参（配对结果） */

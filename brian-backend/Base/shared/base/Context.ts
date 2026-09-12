@@ -27,7 +27,4 @@ export class Context {
 
   /** 请求开始时间戳（毫秒），由 AOP 层自动填充 */
   request_started_at?: number;
-
-  /** 请求追踪 ID（traceId，独立于 work_id / interact_id / info_id），由 AOP 层在缺失时自动生成并回填 */
-  trace_id?: string;
 }

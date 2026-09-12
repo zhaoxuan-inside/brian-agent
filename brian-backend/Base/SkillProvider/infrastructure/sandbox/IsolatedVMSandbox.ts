@@ -31,8 +31,9 @@ export class IsolatedVMSandbox implements ISandbox {
    *  该值影响 v8 堆大小与外部分配内存的总和。
    */
   constructor(memoryLimitMB = 128) {
-    // 延迟加载：平台缺少预编译 .node 时此处抛错（上层降级为 UnavailableJsSandbox），
-    // 而非模块导入期抛错导致整个服务无法启动
+    // 延迟加载：优先使用 prebuilt/ 离线二进制；当前平台（OS + arch + ABI）
+    // 缺失时由 vendored loader 自动从源码编译兜底（Win/macOS/Linux 三平台均可用，
+    // 见 vendor/isolated-vm/isolated-vm.js），任何加载失败直接抛错（fail-fast）
     // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
     const ivm = require('isolated-vm') as IvmModule;
     this.isolate = new ivm.Isolate({ memoryLimit: memoryLimitMB });

@@ -30,6 +30,7 @@ export type { AbortReasonKind } from '@brian-agent/base';
 
 // Loop：两级 agent 循环（消息中心 · 预算 · 真取消）（阶段2）
 export { LoopAccess, LoopContext } from './Loop';
+export type { PermissionAudit } from './Loop';
 export {
   ExecAgentLoopInput,
   ExecAgentLoopOutput,

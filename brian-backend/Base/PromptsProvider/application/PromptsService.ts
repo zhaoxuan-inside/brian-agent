@@ -21,7 +21,7 @@ import {
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator, Logic } from '../../shared/query';
 import type { Condition, DataObject, OrderBy, Page } from '../../shared/query';
-import { PromptContext, PromptTemplateRecord, AddPromptInput, AddPromptOutput, DelPromptInput, DelPromptOutput, UpdatePromptInput, UpdatePromptOutput, GetPromptInput, GetPromptOutput, SoPromptInput, SoPromptOutput, ExecPromptInput, ExecPromptOutput, EnablePromptsInput, EnablePromptsOutput, ClosePromptInput, ClosePromptOutput, PROMPT_TEMPLATE_TABLE, PROMPT_TEMPLATE_USAGE_TABLE, PROMPTS_CONFIG_TABLE } from '../domain/types';
+import { PromptContext, PromptTemplateRecord, PromptTemplateData, AddPromptInput, AddPromptOutput, DelPromptInput, DelPromptOutput, UpdatePromptInput, UpdatePromptOutput, GetPromptInput, GetPromptOutput, SoPromptInput, SoPromptOutput, ExecPromptInput, ExecPromptOutput, EnablePromptsInput, EnablePromptsOutput, ClosePromptInput, ClosePromptOutput, PROMPT_TEMPLATE_TABLE, PROMPT_TEMPLATE_USAGE_TABLE, PROMPTS_CONFIG_TABLE } from '../domain/types';
 import { renderPromptTemplate } from '../domain/services/PromptDomainService';
 
 /**
@@ -103,6 +103,8 @@ export class PromptsService {
       { field: 'prompt_template_title', value: data.prompt_template_title },
       { field: 'prompt_template_brief', value: data.prompt_template_brief ?? null },
       { field: 'prompt_template', value: data.prompt_template },
+      // ===== 2026-09-11：用户自建模板恒为非系统（is_system 只能由种子化写入） =====
+      { field: 'is_system', value: 0 },
       { field: 'enable', value: data.enable !== false ? 1 : 0 },
     ];
     await this.relationDb.insert(PROMPT_TEMPLATE_TABLE, dataObjects);
@@ -114,6 +116,7 @@ export class PromptsService {
    * 删除 Prompt（delPrompt）。
    *
    * PRD 3.1.2 条：支持按 ID 批量删除或按条件删除。
+   * ===== 修改后（2026-09-11）：is_system=1 的系统模板禁止删除（配置中心 Prompt 模板语义） =====
    */
   async delPrompt(input: DelPromptInput, output: DelPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -126,6 +129,7 @@ export class PromptsService {
       ? [{ field: 'id', operator: Operator.IN, value: input.ids }]
       : input.conditions!;
 
+    await this.assertNotDeleteSystem(conditions);
     const affected = await this.relationDb.delete(PROMPT_TEMPLATE_TABLE, conditions);
     output.affected_rows = affected;
 
@@ -137,6 +141,29 @@ export class PromptsService {
     }
 
     return true;
+  }
+
+  // ===== 新增方法（2026-09-11）：删除守卫 —— is_system=1 行不允许删除 =====
+  /** 删除守卫（逻辑控制）：目标行含系统模板时 fail-loud */
+  private async assertNotDeleteSystem(conditions: Condition[]): Promise<void> {
+    const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, { conditions });
+    const systemHit = (rows ?? []).some((row) => Number(row.is_system ?? 0) === 1);
+    if (systemHit) {
+      throw new ValidationError('系统内置 Prompt 模板不允许删除');
+    }
+  }
+
+  // ===== 新增方法（2026-09-11）：更新守卫 —— 系统模板不可解除 is_system 标记 =====
+  /** 更新守卫（逻辑控制）：尝试把系统模板改为非系统（is_system=false）时 fail-loud */
+  private async assertNotUnmarkSystem(conditions: Condition[], patch: Partial<PromptTemplateData>): Promise<void> {
+    if (patch.is_system !== false) {
+      return;
+    }
+    const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, { conditions });
+    const systemHit = (rows ?? []).some((row) => Number(row.is_system ?? 0) === 1);
+    if (systemHit) {
+      throw new ValidationError('系统内置 Prompt 模板不允许解除系统标记');
+    }
   }
 
   /**
@@ -156,8 +183,9 @@ export class PromptsService {
       ? [{ field: 'id', operator: Operator.EQ, value: input.id }]
       : input.conditions!;
 
-    const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
     const patch = input.data;
+    await this.assertNotUnmarkSystem(conditions, patch);
+    const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
     if (patch.prompt_template_title !== undefined) {
       data.push({ field: 'prompt_template_title', value: patch.prompt_template_title });
     }

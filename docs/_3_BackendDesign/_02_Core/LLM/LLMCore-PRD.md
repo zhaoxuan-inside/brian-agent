@@ -20,8 +20,10 @@
 **处理流程**：
 
 1. 调用 RelationDBProvider.selectOneDB 根据 `agent_id` 查询 `agent_llm` 表，获取该 Agent 已绑定的 llm_id；
-2. 若存在绑定的 llm_id：生成随机数（0-100），若随机数 >= regen_rate（从 `llm_core_config` 表读取，默认 75），则直接返回该 llm_id（复用已有绑定）；
-3. 若随机数 < regen_rate 或不存在绑定，执行重新匹配流程：
+2. 若存在绑定的 llm_id：生成随机数（0-100），若随机数 >= regen_rate（从 `llm_core_config` 表读取，默认 75），则**先经 DB 校验该绑定的 llm_id**（调用 LLMProvider.soLLMById 确认 LLM 存在且 enable）：
+   - 校验通过：直接返回该 llm_id（复用已有绑定）；
+   - 校验失败（LLM 已被删除或禁用）：清除该绑定缓存（delete agent_llm），继续走重新匹配流程（**不返回合成记录**，2026-09-07 变更：原先对"绑定存在但 LLM 表无记录"的情形返回未经 DB 验证的合成记录 `{ id, llm_title, enable: true }`，已移除）；
+3. 若随机数 < regen_rate 或不存在绑定（或绑定校验失败），执行重新匹配流程：
    a. 调用 LLMProvider.soLLM 加载所有已启用的 LLM；
    b. 若可用 LLM 数量为 0，返回 false 并记录错误日志；
    c. **若可用 LLM 数量为 1，直接返回该 LLM，跳过 LLM 排名调用**；

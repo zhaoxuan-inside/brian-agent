@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { Brain, Loader2, FileText, MessageCircle, Network, Zap } from '@lucide/vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle } from '@lucide/vue'
 import { learningApi } from '@/api'
 import type { LearningStats, LearningProgress } from '@/api/types'
 
@@ -144,6 +144,16 @@ async function fetchTasks() {
   try { tasks.value = (await learningApi.getTasks()).tasks ?? [] } catch { /* */ }
 }
 
+const VISIBLE_TASK_COUNT = 5
+const visibleTasks = computed(() => tasks.value.slice(0, VISIBLE_TASK_COUNT))
+const runningTaskCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
+
+function taskTime(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 onMounted(() => {
   fetchAll()
   fetchTasks()
@@ -165,6 +175,37 @@ onUnmounted(() => {
       <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 shrink-0">
         <Brain :size="20" class="text-brian-blue" /> 学习控制
       </h2>
+
+      <!-- 学习任务条（后端 fire-and-forget 任务可视化，running 优先，2s 轮询） -->
+      <div v-if="tasks.length > 0" class="mb-3 shrink-0">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="text-[11px] text-apple-gray-500">学习任务</span>
+          <span
+            v-if="runningTaskCount > 0"
+            class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue"
+          >{{ runningTaskCount }} 个执行中</span>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <div
+            v-for="t in visibleTasks"
+            :key="t.task_id"
+            class="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] border"
+            :class="t.status === 'running'
+              ? 'border-brian-blue/40 bg-brian-blue/5 text-brian-blue'
+              : t.status === 'failed'
+                ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400'
+                : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 text-apple-gray-500 dark:text-apple-gray-400'"
+            :title="t.error || `${t.label} · ${t.status}`"
+          >
+            <Loader2 v-if="t.status === 'running'" :size="12" class="animate-spin" />
+            <CheckCircle2 v-else-if="t.status === 'completed'" :size="12" class="text-success-green" />
+            <XCircle v-else :size="12" />
+            <span class="font-medium">{{ t.label }}</span>
+            <span class="opacity-70">{{ taskTime(t.started_at) }}</span>
+            <span v-if="t.error" class="max-w-40 truncate opacity-80">{{ t.error }}</span>
+          </div>
+        </div>
+      </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
         <div

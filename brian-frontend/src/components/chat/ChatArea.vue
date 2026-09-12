@@ -17,14 +17,17 @@ import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
 import EvalResultModal from './EvalResultModal.vue'
 import IntentConfirmCard from './IntentConfirmCard.vue'
+import PermissionConfirmCard from './PermissionConfirmCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
 const sessionStore = useSessionStore()
 const chatUi = useChatUiStore()
 const {
   confirmingIntent,
+  permitting,
   handleSend,
   handleIntentConfirm,
+  handlePermissionConfirm,
 } = useChatStream()
 
 const leftWidth = computed(() => `${sessionStore.splitRatio * 100}%`)
@@ -150,6 +153,13 @@ const timeline = computed<TimelineEntry[]>(() => {
       if (a.kind === 'block') return -1
       if (b.kind === 'block') return 1
     }
+    // ===== 修改后（2026-09-09）：同 kind 消息按角色稳定排序（user < assistant） =====
+    // 原代码：直接落入 key（UUID）字符串比较——历史同步时 user/assistant 落库同一时间戳，
+    // 排序结果由 UUID 随机决定，出现"用户消息显示在系统回复下面"的顺序颠倒。
+    // 现按角色 tie-break（提问在前、回复在后），与时间线语义一致。
+    if (a.kind === 'message' && b.kind === 'message' && a.message.role !== b.message.role) {
+      return a.message.role === 'user' ? -1 : 1
+    }
     return a.key.localeCompare(b.key)
   })
   return entries
@@ -206,7 +216,17 @@ function startResize(e: MouseEvent) {
             :class="entry.message.role === 'user' ? 'justify-start' : 'justify-end'"
             :data-info-id="entry.message.id"
           >
+            <!-- 权限确认卡：独立组件步骤（历史/实时同一渲染路径；落库记录直读 permission 字段） -->
+            <div v-if="entry.message.permission" class="w-full">
+              <PermissionConfirmCard
+                :permission="entry.message.permission"
+                :submitting="permitting"
+                @confirm="approved => handlePermissionConfirm(entry.message.permission, approved)"
+              />
+            </div>
+
             <!-- 用户消息：靠左，头像在消息框左侧 -->
+            <template v-else>
             <div v-if="entry.message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 text-brian-blue flex items-center justify-center mt-1">
               <UserRound :size="16" />
             </div>
@@ -249,10 +269,21 @@ function startResize(e: MouseEvent) {
             <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 flex items-center justify-center mt-1">
               <Brain :size="16" />
             </div>
+            </template>
           </div>
 
-          <!-- 思考过程不展示在对话区（以弹窗形式展示），其余块正常渲染 -->
-          <div v-else-if="entry.block.type !== 'ThinkingChain'" class="max-w-[85%]" :class="entry.block.role === 'user' ? 'ml-auto' : 'mr-auto'">
+          <!-- ===== 修改后（2026-09-12）：ToolInvocation 执行卡靠右（与系统回复消息一致）；其余块维持原布局 ===== -->
+          <!-- ===== 原始代码（保留作为参考）：所有非 Thinking 块按 block.role 分左右，role==='tool' 的 -->
+          <!-- ToolInvocation 落到 mr-auto 靠左、与用户消息同侧，视觉上误读为用户输入 -->
+          <!-- <div v-else-if="entry.block.type !== 'ThinkingChain'" class="max-w-[85%]" -->
+          <!--   :class="entry.block.role === 'user' ? 'ml-auto' : 'mr-auto'"> -->
+          <!--   <BlockRenderer :block="entry.block" /> -->
+          <!-- </div> -->
+          <div
+            v-else-if="entry.block.type !== 'ThinkingChain'"
+            class="max-w-[85%]"
+            :class="entry.block.type === 'ToolInvocation' ? 'ml-auto' : 'mr-auto'"
+          >
             <BlockRenderer :block="entry.block" />
           </div>
         </template>

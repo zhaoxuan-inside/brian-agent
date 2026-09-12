@@ -105,6 +105,43 @@ describe('LLMCoreProvider', () => {
       expect(output.from_cache).toBe(true);
     });
 
+    it('绑定失效（LLM 已从 DB 删除）时清除缓存重新匹配，不返回合成记录', async () => {
+      const now = IdGenerator.now();
+      // 绑定指向 llm-gone，但 llm_available 中不存在该行（已被删除）：
+      // 旧实现会返回合成记录 { id: 'llm-gone', llm_title: 'llm-gone', enable: true }，
+      // 新实现先经 DB 校验，校验失败清除绑定并走第 2/3 层重新匹配。
+      await relationDb.insert(AGENT_LLM_TABLE, [
+        { field: 'id', value: 'cache-stale' },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'agent_id', value: 'agent-stale' },
+        { field: 'llm_id', value: 'llm-gone' },
+      ]);
+      await relationDb.delete(LLM_CORE_CONFIG_TABLE, []);
+      await relationDb.insert(LLM_CORE_CONFIG_TABLE, [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'regen_rate', value: 0 },
+        { field: 'similarity_threshold', value: 0.0 },
+        { field: 'prompt_template_id', value: null },
+      ]);
+
+      const input = new MatchLLMInput();
+      input.agent_id = 'agent-stale';
+      input.context_id = 'c1';
+      input.interact_id = 'i1';
+      // 无可用 LLM 时重新匹配抛 NotFoundError（证明未走合成记录缓存返回）
+      await expect(
+        llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
+      ).rejects.toThrow(NotFoundError);
+      // 失效绑定缓存已被清理
+      const rows = await relationDb.select(AGENT_LLM_TABLE, {
+        conditions: [{ field: 'agent_id', operator: Operator.EQ, value: 'agent-stale' }],
+      });
+      expect(rows.length).toBe(0);
+    });
+
     it('should throw NotFoundError when no LLMs available and not cached', async () => {
       const input = new MatchLLMInput();
       input.agent_id = 'agent-unknown';

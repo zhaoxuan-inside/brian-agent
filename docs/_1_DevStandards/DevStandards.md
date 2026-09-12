@@ -25,6 +25,7 @@
       2. **方法内日志**：5 参方法体内记录日志使用第 4 参 metrics（`metrics.debug/info/warn/error`，自动携带 category/trace_id/elapsed_ms）；调用方未传时由 AopProxy 自动创建默认实例（注入 wrap 时配置的 LogProvider logger）；
       3. **AOP 切面日志**：由内置日志切面在方法**返回或抛异常**时（切入点 4）经 `Metrics.saveInvocation` 保存，级别为 **DEBUG**（调用 LogProvider 时通过 **级别参数** 显式携带：`logger.log(level, message, meta)`；logger 未实现 `log` 时按级别回退到 debug/info/warn/error）——采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，以 **JSON 格式**写入 LogProvider（log_record.metadata.invocation_json；参数内容序列化为函数/循环引用安全，超长截断）；默认 `min_level=INFO` 时 DEBUG 记录自动过滤，排查问题将 log 配置 `min_level` 调整为 `DEBUG` 即可开启全量调用记录；
       4. 日志记录的级别（debug/info/warn/error）需要根据日志内容进行选择；每次方法调用会产生 1 条 AOP 调用记录，体量由 log_rule 白名单、min_level 过滤与日志老化共同约束；
+      5. **trace_id 属维护字段（2026-09-11 修订）**：唯一承载点 = **Metrics**（`metrics.trace_id`，由 AOP 自动生成/回填/传播）；Context / Input / Output 均为业务承载对象，不得持有 trace_id；个别领域 Input 上的 trace_id 字段（如 `GetTraceInput.trace_id` 业务查询键）是业务字段，不受此限；调试用的 `console.log` 一律改为 Metrics/LogProvider 通道。
 8. 外部资源接入点唯一性原则
       1. 系统中调用外部资源（如 LLM、Skill、MCP、Prompts 等）必须通过对应的 Provider/Access 接入层进行调用，不允许各层绕过 Provider 直接访问底层资源；
       2. 各业务模块向内聚合至核心模块，由核心模块统一接管对外部资源的管理和调度，避免出现多个模块各自维护独立的外部资源连接；
@@ -32,3 +33,6 @@
 9. 种子数据约定（2026-08-15 起）
       1. 系统的内置/默认数据（如内置 MCP 市场、Agent 策略等）应直接保存到 SQLite 中，通过接口进行增删改；禁止在代码中硬编码种子常量（如 `*_DEFAULT_PROVIDERS`、`*_DEFAULT_STRATEGIES`）并在启动时自动写入；
       2. 配置默认值不应通过 `initDefaults` 从硬编码常量在启动时写入；读取配置时应使用带默认回退值的 `getString/getInt/getBoolean`（如 `config.getInt('port', 9222)`）。
+10. 方法规范
+    1. 逻辑控制和数据操作要分离；
+    2. 每一个方法的长度尽量不要超过20行，最长不能超过40行；

@@ -204,3 +204,73 @@ describe('VectorDBAccess.applyDimension 运行时切换维度', () => {
     await expect(access.applyDimension(-1)).rejects.toThrow(/正整数/);
   });
 });
+
+describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复', () => {
+  let dir: string;
+  let relationDb: RelationDBAccess;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'brian-vectordb-initcfg-'));
+    relationDb = new RelationDBAccess({ dbPath: join(dir, 'test.db') });
+    await relationDb.initialize();
+  });
+
+  afterAll(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch { /* ignore */ }
+  });
+
+  it('initialize 写入全部默认配置项（幂等，不覆盖已有值）', async () => {
+    const access = new VectorDBAccess(relationDb, {
+      lancePath: join(dir, 'vectordb-a'),
+      dimension: 4,
+      metric: 'cosine',
+    });
+    await access.initialize();
+    const rows = relationDb.queryRaw<{ config_key: string; config_value: string }>(
+      'SELECT "config_key", "config_value" FROM "vectordb_config" ORDER BY "config_key"',
+      [],
+    );
+    const map = new Map(rows.map((r) => [r.config_key, r.config_value]));
+    expect(map.get('enabled')).toBe('true');
+    expect(map.get('default_top_k')).toBe('10');
+    expect(map.get('default_similarity_threshold')).toBe('0');
+    expect(map.get('default_distance_metric')).toBe('COSINE');
+
+    // 幂等：修改一个已有值后重复 initialize，已有值不被覆盖、不产生重复行
+    relationDb.executeRaw(
+      "UPDATE \"vectordb_config\" SET \"config_value\" = '25' WHERE \"config_key\" = 'default_top_k'",
+    );
+    await access.initialize();
+    const rows2 = relationDb.queryRaw<{ config_key: string; config_value: string }>(
+      'SELECT "config_key", "config_value" FROM "vectordb_config"',
+      [],
+    );
+    const map2 = new Map(rows2.map((r) => [r.config_key, r.config_value]));
+    expect(map2.get('default_top_k')).toBe('25');
+    expect(rows2.length).toBe(4);
+  });
+
+  it('禁用状态持久化：重启（重新 initialize）后 enabled=false 被恢复', async () => {
+    const out: { ids: string[] } = { ids: [] };
+    const access = new VectorDBAccess(relationDb, {
+      lancePath: join(dir, 'vectordb-b'),
+      dimension: 4,
+      metric: 'cosine',
+    });
+    await access.initialize();
+    await access.enableVectorDB(
+      Object.assign({}, { enable: false }),
+      Object.assign({}, {}),
+      Object.assign({}, {}),
+    );
+    // 模拟重启：重新 initialize，禁用状态应从配置表恢复
+    await access.initialize();
+    await expect(access.addVector(
+      Object.assign({}, { vectors: [{ content: 'x', embedding: [1, 0, 0, 0] }] }),
+      out,
+      Object.assign({}, {}),
+    )).rejects.toThrow();
+  });
+});

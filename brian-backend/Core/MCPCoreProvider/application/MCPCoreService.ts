@@ -1,10 +1,13 @@
 import { Metrics, Report } from '@brian-agent/base';
+import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
+import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
+import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
+import { ProcessingError } from '../../shared/errors';
 import type { RelationDBAccess, MCPAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import {
   Operator,
   IdGenerator,
-  JsonParser,
   ValidationError,
   McpContext,
   SoMcpInput,
@@ -12,13 +15,15 @@ import {
   LLMContext,
   ExecLLMInput,
   ExecLLMOutput,
+  EmbedLLMInput,
+  EmbedLLMOutput,
   PromptContext,
   GetPromptInput,
   GetPromptOutput,
   ExecPromptInput,
   ExecPromptOutput,
   McpInstallRecord,
-  PROMPT_IDS, getBuiltinTemplate, renderTemplate,
+  PROMPT_IDS,
 } from '@brian-agent/base';
 import {
   McpCoreContext,
@@ -38,6 +43,9 @@ export class MCPCoreService {
   /** 单行配置仓 */
   private readonly configStore: SingleRowConfigStore<McpCoreConfigRecord>;
 
+  // ===== 修改后（2026-09-11）：MD5+向量两级匹配缓存（按任务内容；重复任务零 LLM） =====
+  private readonly matchCache = new VectorMatchCache();
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly mcpAccess: MCPAccess,
@@ -53,8 +61,18 @@ export class MCPCoreService {
         regen_rate: Number(raw.regen_rate),
         similarity_threshold: Number(raw.similarity_threshold ?? 0.7),
         prompt_template_id: String(raw.prompt_template_id ?? ''),
+        score_threshold: Number(raw.score_threshold ?? ScoreThreshold.Default),
+        vector_similarity_threshold: Number(raw.vector_similarity_threshold ?? VectorSimilarity.Default),
+        match_cache_ttl_ms: Number(raw.match_cache_ttl_ms ?? MatchCache.TtlMs),
+        match_cache_capacity: Number(raw.match_cache_capacity ?? MatchCache.Capacity),
       }),
-      defaults: [{ field: 'prompt_template_id', value: '' }],
+      defaults: [
+        { field: 'prompt_template_id', value: '' },
+        { field: 'score_threshold', value: ScoreThreshold.Default },
+        { field: 'vector_similarity_threshold', value: VectorSimilarity.Default },
+        { field: 'match_cache_ttl_ms', value: MatchCache.TtlMs },
+        { field: 'match_cache_capacity', value: MatchCache.Capacity },
+      ],
     });
   }
 
@@ -75,6 +93,17 @@ export class MCPCoreService {
       return true;
     }
 
+    // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排） =====
+    const cached = input.bypass_cache
+      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t)) }
+      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t));
+    if (cached.record) {
+      const ids = cached.record.result.map((r) => r.id);
+      output.mcp_ids = ids;
+      output.mcp_details = this.toMcpDetails(ids, availableMcps);
+      return true;
+    }
+
     // ===== 第 2 层：LLM 打分推荐（纯选择，不落库） =====
     let rankedIds: string[] = [];
     if (availableMcps.length > 0) {
@@ -82,13 +111,16 @@ export class MCPCoreService {
         availableMcps,
         input,
         config.prompt_template_id,
+        config.score_threshold,
       );
     }
 
+    // ===== 匹配结果入缓存（MD5 + 任务向量；复用 lookup 阶段向量） =====
+    if (availableMcps.length > 0) {
+      await this.commitMatchCache(input.task_content ?? '', cached.query, rankedIds);
+    }
     output.mcp_ids = rankedIds;
-    output.mcp_details = rankedIds
-      .map((id) => availableMcps.find((r) => r.id === id))
-      .filter((r): r is McpInstallRecord => r != null);
+    output.mcp_details = this.toMcpDetails(rankedIds, availableMcps);
     return true;
   }
 
@@ -118,7 +150,13 @@ export class MCPCoreService {
 
   async configMCPCore(input: ConfigMcpCoreInput, output: ConfigMcpCoreOutput, _context: McpCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined) {
+    if (input.score_threshold !== undefined && (input.score_threshold < 0 || input.score_threshold > 100)) {
+      throw new ValidationError('score_threshold 必须在 0-100 之间');
+    }
+    if (input.vector_similarity_threshold !== undefined && (input.vector_similarity_threshold < 0 || input.vector_similarity_threshold > 1)) {
+      throw new ValidationError('vector_similarity_threshold 必须在 0.0-1.0 之间');
+    }
+    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined) {
       const updateData: Array<{ field: string; value: unknown }> = [];
       if (input.regen_rate !== undefined) {
         if (input.regen_rate < 0 || input.regen_rate > 100) {
@@ -145,11 +183,34 @@ export class MCPCoreService {
         }
         updateData.push({ field: 'prompt_template_id', value: input.prompt_template_id || '' });
       }
+      if (input.score_threshold !== undefined) {
+        updateData.push({ field: 'score_threshold', value: input.score_threshold });
+      }
+      if (input.vector_similarity_threshold !== undefined) {
+        updateData.push({ field: 'vector_similarity_threshold', value: input.vector_similarity_threshold });
+      }
+      if (input.match_cache_ttl_ms !== undefined) {
+        updateData.push({ field: 'match_cache_ttl_ms', value: input.match_cache_ttl_ms });
+      }
+      if (input.match_cache_capacity !== undefined) {
+        updateData.push({ field: 'match_cache_capacity', value: input.match_cache_capacity });
+      }
       await this.configStore.upsert(updateData);
     }
 
     output.config = await this.getConfig();
     return true;
+  }
+
+  // ===== 新增（2026-09-11）：匹配缓存参数应用（容量/相似度阈值/TTL 读配置表） =====
+  private async applyMatchCacheConfig(): Promise<void> {
+    const serviceConfig = await this.getConfig();
+    this.matchCache.configure({
+      capacity: serviceConfig?.match_cache_capacity ?? MatchCache.Capacity,
+      similarityThreshold: serviceConfig?.vector_similarity_threshold ?? VectorSimilarity.Default,
+      ttlMs: serviceConfig?.match_cache_ttl_ms ?? MatchCache.TtlMs,
+    });
+    this.matchCache.clear();
   }
 
   private async getConfig(): Promise<McpCoreConfigRecord> {
@@ -160,6 +221,10 @@ export class MCPCoreService {
       regen_rate: DEFAULT_REGENERATE_RATE,
       similarity_threshold: 0.7,
       prompt_template_id: '',
+      score_threshold: ScoreThreshold.Default,
+      vector_similarity_threshold: VectorSimilarity.Default,
+      match_cache_ttl_ms: MatchCache.TtlMs,
+      match_cache_capacity: MatchCache.Capacity,
     };
   }
 
@@ -190,62 +255,77 @@ export class MCPCoreService {
     mcps: McpInstallRecord[],
     input: MatchMcpInput,
     promptTemplateId: string,
+    scoreThreshold: number,
   ): Promise<string[]> {
-    const mcpDescriptions = mcps.map(
-      (m) =>
-        `"${m.id}": ${m.mcp_title}${m.mcp_brief ? ` - ${m.mcp_brief}` : ''}`,
-    );
-
-    let prompt: string;
     const variables = {
       agent_id: input.agent_id,
       context_id: input.context_id,
       interact_id: input.interact_id,
-      available_mcps: mcpDescriptions.join('\n'),
+      task_content: input.task_content ?? '',
+      available_mcps: JSON.stringify(mcps.map((m) => ({ id: m.id, title: m.mcp_title, brief: m.mcp_brief ?? '' }))),
     };
-    const id = promptTemplateId || PROMPT_IDS.mcpMatch;
-    try {
-      const execPromptInput = new ExecPromptInput();
-      execPromptInput.id = id;
-      execPromptInput.variables = variables;
-      const execPromptOutput = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        execPromptInput,
-        execPromptOutput, new PromptContext(),
-      );
-      prompt = execPromptOutput.prompt;
-      if (!prompt) {
-        const tpl = getBuiltinTemplate(PROMPT_IDS.mcpMatch);
-        prompt = tpl ? renderTemplate(tpl, variables) : '';
-      }
-    } catch {
-      const tpl = getBuiltinTemplate(PROMPT_IDS.mcpMatch);
-      prompt = tpl ? renderTemplate(tpl, variables) : '';
-    }
-
-    const execInput = new ExecLLMInput();
-    execInput.id = '';
-    execInput.prompt = prompt;
-    const execOutput = new ExecLLMOutput();
-    await this.llmAccess.execLLM(
-      execInput,
-      execOutput, new LLMContext(),
-    );
-
-    return this.parseLLMRanking(execOutput.result, mcps);
+    const prompt = await this.renderMatchPrompt(promptTemplateId || PROMPT_IDS.mcpMatch, variables);
+    const text = await this.soRankLLM({ id: '', prompt, temperature: 0.1, max_tokens: 300 } as ExecLLMInput);
+    const threshold = Number.isFinite(scoreThreshold) ? scoreThreshold : ScoreThreshold.Default;
+    const mcpIds = new Set(mcps.map((m) => m.id));
+    return filterByThreshold(parseRankingCandidates(text), threshold)
+      .map((c) => c.id)
+      .filter((id) => mcpIds.has(id));
   }
 
-  private parseLLMRanking(
-    result: string,
-    mcps: McpInstallRecord[],
-  ): string[] {
-    const parsed = JsonParser.parseArray(result);
-    if (parsed) {
-      const rankedIds = parsed
-        .filter((v): v is string => typeof v === 'string')
-        .filter((id) => mcps.some((m) => m.id === id));
-      return rankedIds;
+  /**
+   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板；无硬编码内存回退，缺失 fail-loud。
+   */
+  private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
+    try {
+      const execPromptOutput = new ExecPromptOutput();
+      await this.promptsAccess.execPrompt(
+        { id: templateId, variables } as ExecPromptInput,
+        execPromptOutput, new PromptContext(),
+      );
+      if (execPromptOutput.prompt) return execPromptOutput.prompt;
+    } catch { /* 下沉 fail-loud */ }
+    throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
+  }
+
+  /** 排序 LLM 调用（逻辑控制；失败返回空串 → threshold 过滤取空语义） */
+    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
+    input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
+    const execOutput = new ExecLLMOutput();
+    try {
+      const ok = await this.llmAccess.execLLM(input, execOutput, new LLMContext());
+      return ok ? (execOutput.result ?? '') : '';
+    } catch {
+      return '';
     }
-    return mcps.map((m) => m.id);
+  }
+
+  /** 候选 → MCP 明细水合（数据处理；未知 id 过滤） */
+  private toMcpDetails(ids: string[], mcps: McpInstallRecord[]): McpInstallRecord[] {
+    return ids
+      .map((id) => mcps.find((r) => r.id === id))
+      .filter((r): r is McpInstallRecord => r != null);
+  }
+
+  /** 匹配缓存提交（数据处理；复用 lookup 阶段的任务向量，缺失时补算） */
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, rankedIds: string[]): Promise<void> {
+    if (!taskContent || rankedIds.length === 0) {
+      return;
+    }
+    const key = buildCacheKey(taskContent);
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    this.matchCache.commit(key, query ?? [], rankedIds.map((id) => ({ id, score: ScoreThreshold.Max })));
+  }
+
+  /** 任务向量化（数据处理；走系统默认 embedding 模型） */
+  private async embedTask(task: string): Promise<number[]> {
+    const output = new EmbedLLMOutput();
+    const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
+    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    if (!ok || !output.embedding?.length) {
+      throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
+    }
+    return output.embedding;
   }
 }

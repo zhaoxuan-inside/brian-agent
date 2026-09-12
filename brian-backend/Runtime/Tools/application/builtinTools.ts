@@ -38,7 +38,7 @@ import {
   CDTCoreEvaluateOutput,
   CDTCoreContext,
 } from '@brian-agent/core';
-import type { ToolDef, ToolExecutionContext, ToolResult } from '../domain/types';
+import type { ToolDef, ToolExecutionContext, ToolResult, ComponentScope } from '../domain/types';
 import { ToolResultStatus } from '../domain/types';
 
 /** CDT getContent / evaluate 输出截断上限（与旧 AgentExecution.execCdtAction 语义一致） */
@@ -53,6 +53,15 @@ export interface BuiltinToolDeps {
   runGateway?: { submitRun(input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string }): Promise<void> };
 }
 
+/** 组件范围兜底文案（数据处理） */
+function scopeDeniedHint(scope: ComponentScope | undefined, kind: 'Skill' | 'MCP'): string {
+  const bound = kind === 'Skill' ? scope?.skills ?? [] : scope?.mcps ?? [];
+  if (!scope || !bound.length) {
+    return `Agent 未绑定任何 ${kind}（须在 match 阶段完成组件绑定后才能执行）`;
+  }
+  return `${kind} 不在本运行的组件绑定范围内。可用 ${kind} id：${bound.join(', ')}`;
+}
+
 /** skill_exec 工具 */
 export function skillExecTool(deps: BuiltinToolDeps): ToolDef<{ skill_id: string; params?: Record<string, unknown> }> {
   return {
@@ -62,9 +71,16 @@ export function skillExecTool(deps: BuiltinToolDeps): ToolDef<{ skill_id: string
       skill_id: z.string(),
       params: z.record(z.unknown()).optional(),
     }),
+    // ===== 修改后（2026-09-11）：选/执分离执行门——id 必须存在于本 run 的组件选择范围 =====
     async execute(args, _ctx: ToolExecutionContext) {
       if (!deps.skillAccess) {
         throw new ValidationError('Skill Provider 未注入（skillAccess 为空）');
+      }
+      if (!_ctx.component_scope?.skills.length) {
+        throw new ValidationError(scopeDeniedHint(_ctx.component_scope, 'Skill'));
+      }
+      if (!_ctx.component_scope.skills.includes(args.skill_id)) {
+        throw new ValidationError(scopeDeniedHint(_ctx.component_scope, 'Skill'));
       }
       const input = Object.assign(new ExecSkillInput(), { id: args.skill_id, params: args.params ?? {} });
       const output = new ExecSkillOutput();
@@ -87,9 +103,16 @@ export function mcpExecTool(deps: BuiltinToolDeps): ToolDef<{ mcp_id: string; to
       tool_name: z.string().optional(),
       params: z.record(z.unknown()).optional(),
     }),
+    // ===== 修改后（2026-09-11）：选/执分离执行门——id 必须存在于本 run 的组件选择范围 =====
     async execute(args, _ctx: ToolExecutionContext) {
       if (!deps.mcpAccess) {
         throw new ValidationError('MCP Provider 未注入（mcpAccess 为空）');
+      }
+      if (!_ctx.component_scope?.mcps.length) {
+        throw new ValidationError(scopeDeniedHint(_ctx.component_scope, 'MCP'));
+      }
+      if (!_ctx.component_scope.mcps.includes(args.mcp_id)) {
+        throw new ValidationError(scopeDeniedHint(_ctx.component_scope, 'MCP'));
       }
       const input = Object.assign(new ExecMcpInput(), {
         id: args.mcp_id,

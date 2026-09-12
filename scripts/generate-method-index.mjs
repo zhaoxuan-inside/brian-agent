@@ -14,10 +14,13 @@ import path from 'node:path';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BACKEND = path.join(ROOT, 'brian-backend');
 const OUT = path.join(ROOT, 'docs', 'MethodIndex');
-const LAYERS = ['Base', 'Core', 'Runtime', 'Agent', 'Orchestration', 'Application'];
+// 2026-09-07：Orchestration 层已随 V1 编排框架删除（b31f289），从层清单移除；
+// collectAccessFiles 对不存在的目录跳过（容错新增/删除层）
+const LAYERS = ['Base', 'Core', 'Runtime', 'Agent', 'Application'];
 
 /** 递归收集目录下的 access/*.ts */
 function collectAccessFiles(dir, out = []) {
+  if (!fs.existsSync(dir)) return out;
   for (const f of fs.readdirSync(dir)) {
     const p = path.join(dir, f);
     const st = fs.statSync(p);

@@ -15,7 +15,7 @@ import {
   InfoType,
   HandleResultType,
   classifyHandleResult,
-  PROMPT_IDS, getBuiltinTemplate, renderTemplate,
+  PROMPT_IDS,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -64,6 +64,7 @@ import {
   LastNInfoInput, LastNInfoOutput,
 } from '@brian-agent/core';
 import { parseJsonObject, parseTaskContentAndContext } from '../../shared/signature';
+import { validateAgentResources, validateAgentLlm } from '../../shared/AgentKit';
 import { formatContextCategories } from '@brian-agent/base';
 
 const EXEC_QUEUE = 'agent.execution';
@@ -221,8 +222,31 @@ export class AgentExecutionService {
       new AgentStrategyContext(),
     );
 
-    const skills = await this.loadSkills(input.agent_id, ctx);
-    const mcps = await this.loadMcps(input.agent_id, ctx);
+    const skillsLoaded = await this.loadSkills(input.agent_id, ctx);
+    const mcpsLoaded = await this.loadMcps(input.agent_id, ctx);
+    // ===== Agent 绑定资源 DB 校验（Soul/Prompt/Skill/MCP）：失效绑定剔除后再进入执行 =====
+    const resourceValidation = await validateAgentResources({
+      agentId: input.agent_id,
+      soulId: agent.soul_id,
+      promptId: agent.prompt_template_id,
+      skillIds: agent.skill_ids ?? [],
+      mcpIds: agent.mcp_ids ?? [],
+      soulAccess: this.soulAccess,
+      promptsAccess: this.promptsAccess,
+      skillAccess: this.skillAccess,
+      mcpAccess: this.mcpAccess,
+    });
+    if (resourceValidation.issues.length > 0) {
+      for (const issue of resourceValidation.issues) {
+        this.logger?.warn?.(`execAgent ${issue}`);
+      }
+    }
+    const skills = skillsLoaded.filter((s) => !resourceValidation.invalid_skill_ids.includes(s.id));
+    const mcps = mcpsLoaded.filter((m) => !resourceValidation.invalid_mcp_ids.includes(m.id));
+    // LLM 绑定 DB 校验（LLMProvider 存在且启用）：执行必须依赖有效 LLM，无效直接失败
+    if (!(await validateAgentLlm(this.llmAccess, llmId))) {
+      throw new ValidationError(`Agent ${input.agent_id} 绑定的 LLM 不存在或已禁用: ${llmId}`);
+    }
     const skillIds = skills.map((s) => s.id);
     const mcpIds = mcps.map((m) => m.id);
     const toolsJson = JSON.stringify({
@@ -1288,19 +1312,15 @@ export class AgentExecutionService {
     variables: Record<string, unknown>,
   ): Promise<string> {
     const id = templateId || builtinId;
-    try {
-      const out = new ExecPromptOutput();
-      const ok = await this.promptsAccess.execPrompt(
-        Object.assign(new ExecPromptInput(), { id, variables }),
-        out,
-        new PromptContext(),
-      );
-      if (ok && out.prompt) return out.prompt;
-    } catch {
-      /* fallback */
-    }
-    const tpl = getBuiltinTemplate(builtinId);
-    return tpl ? renderTemplate(tpl, variables) : '';
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    const out = new ExecPromptOutput();
+    const ok = await this.promptsAccess.execPrompt(
+      Object.assign(new ExecPromptInput(), { id, variables }),
+      out,
+      new PromptContext(),
+    );
+    if (ok && out.prompt) return out.prompt;
+    throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 
   private async assertPromptExists(id: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess, SoulAccess, Logger } from '@brian-agent/base';
-import { Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext, PROMPT_IDS, getBuiltinTemplate, renderTemplate } from '@brian-agent/base';
+import { Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext, PROMPT_IDS } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { InfoCoreContext, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput } from '@brian-agent/core';
 import type { AgentBuilderAccess } from '../../AgentBuilder/access/AgentBuilderAccess';
@@ -30,6 +30,25 @@ export class SummaryAgentService {
     private readonly llmCore?: LLMCoreAccess,
     private readonly logger?: Logger,
   ) {}
+
+  /**
+   * 初始化：确保摘要生成所需的内置资源就绪（幂等）。
+   *
+   * SummaryAgent 无独立表结构（摘要配置由 InfoCore 的 info_summary_config 承载、
+   * 摘要文本存于 info_raw.summary），初始化工作即确保：
+   * 1. 内置摘要 Soul（soul 表）存在；
+   * 2. 内置系统 Agent（agent 表，agent_type=SUMMARY）存在并绑定该 Soul。
+   *
+   * 初始化失败不阻断服务启动（dev-server 启动流程稍后仍会显式调用 ensureBuiltin 并告警），
+   * 仅记录警告，与 generateSummary 的降级行为一致。
+   */
+  async initialize(_ctx: SummaryAgentContext): Promise<void> {
+    try {
+      await this.ensureBuiltin(_ctx);
+    } catch (e) {
+      this.logger?.warn?.(`SummaryAgent 初始化失败（内置摘要 Soul/Agent）: ${String(e)}`);
+    }
+  }
 
   async ensureBuiltin(_ctx: SummaryAgentContext): Promise<boolean> {
     const builtinSoulId = await this.ensureBuiltinSoul();
@@ -150,12 +169,11 @@ export class SummaryAgentService {
       promptOut,
       new PromptContext(),
     );
-    let prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
+    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
+    const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
     if (!prompt) {
-      const tpl = getBuiltinTemplate(PROMPT_IDS.summary);
-      if (tpl) prompt = renderTemplate(tpl, { task_content: info, soul: system });
+      throw new ValidationError(`Prompt 模板不可用或渲染为空: ${PROMPT_IDS.summary}`);
     }
-    if (!prompt) return '';
 
     const llmOut = new ExecLLMOutput();
     const ok = await this.llmAccess.execLLM(

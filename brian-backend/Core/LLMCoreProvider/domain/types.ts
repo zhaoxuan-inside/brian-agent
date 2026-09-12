@@ -35,6 +35,8 @@ export interface LLMCoreConfigRecord {
   regen_rate: number;
   similarity_threshold: number;
   prompt_template_id: string | null;
+  /** LLM 候选采纳阈值（百分制 0-100；2026-09-11 新增，默认 90） */
+  score_threshold: number;
 }
 
 /** llm_provider_quota 表记录 */
@@ -166,6 +168,8 @@ export class ConfigLLMCoreInput extends Input {
   similarity_threshold?: number;
   /** Prompt 模板 ID */
   prompt_template_id?: string;
+  /** LLM 候选采纳阈值（0-100；2026-09-11 新增） */
+  score_threshold?: number;
 }
 
 /** configLLMCore 出参 */

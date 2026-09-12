@@ -26,6 +26,7 @@
 | `soLearningProgress` | `i: GetLearningProgressInput, o: GetLearningProgressOutput, c: SelfLearningContext, metr...` | `Promise<boolean>` | — |
 | `soLearningResults` | `i: GetLearningResultsInput, o: GetLearningResultsOutput, c: SelfLearningContext, metric...` | `Promise<boolean>` | — |
 | `soLearningStats` | `i: GetLearningStatsInput, o: GetLearningStatsOutput, c: SelfLearningContext, metrics?: ...` | `Promise<boolean>` | — |
+| `soLearningTasks` | `i: ListLearningTasksInput, o: ListLearningTasksOutput, c: SelfLearningContext, metrics?...` | `Promise<boolean>` | 查询学习任务列表（手动触发后台任务可视化） |
 | `configSelfLearning` | `i: ConfigSelfLearningInput, o: ConfigSelfLearningOutput, c: SelfLearningContext, metric...` | `Promise<boolean>` | — |
 | `startTagAging` | `` | `Promise<void>` | 标签老化（供 CronProvider 定时触发） |
 | `startOrphanTagCheck` | `` | `Promise<void>` | 孤立标签检查（供 CronProvider 定时触发） |

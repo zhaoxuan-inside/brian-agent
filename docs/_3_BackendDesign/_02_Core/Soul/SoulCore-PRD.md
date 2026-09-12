@@ -213,3 +213,14 @@ Soul 匹配、生成与优化评估调用 LLM 时按以下顺序选择模型：
 ## 落地差异（2026-09-05 · 绑定收权）
 
 Agent↔本模块组件的绑定关系收敛至 **Agent 模块 agent 表**（唯一事实源）：Core 的 agent_* 绑定表停止创建与读写；`match*` 为纯选择（Input 增 `bound_*` 传入既有绑定做确定性水合，不传则按任务选择，零持久化）；`opt*` 仅记 usage（键 (agent_id, component_id)，usage 表检测旧键自动重建）；`age*` 输出解绑候选（不删除）；绑定/解绑由 Agent 模块 `AgentLibrary.bindAgentComponent/unbindAgentComponent` 经评估链路（EvolutorAgent 评估 → AgentBuilder.optimizeAgent）执行。
+
+### [2026-09-11] match 结果内存缓存 + 排序 max_tokens 上限（复盘 interact 9b68defe / 4f69b46b）
+
+**变更原因**：同一 (agent, 任务) 的组件排序每轮都全量重跑 LLM，实测延迟变异 2.6s→9.3s→32.9s（provider 对 max_tokens 的约束不覆盖深度思考输出的变异性），单轮 run 启动期最长 61s；排列 prompt 还携带全量 skill_md 原文。
+
+**修改的方法**：
+  - `match*`（matchSoul / matchSkill / matchMCP）新增进程内存缓存：键 `agent_id|任务前缀(128字)`，TTL 10 分钟、容量 500（FIFO 淘汰）；`config*Core` 配置变更即清缓存。命中直接水合（`from_cache`/返回结构与原语义一致）。
+  - matchSkill 排序 prompt 已摘要化（只带 name/skill_brief，命中后 enrichMatchedSkills 取全量）；matchMCP 排序新增 `max_tokens: 300`；MatchSkillInput / MatchMcpInput 新增 `task_content?: string`（AgentDefService 快照透传，供缓存键）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 同 (agent, 同任务) 复现：预匹配 LLM 从 2 次串行（最坏 56s）降为 0 次；同句问答端到端 52s→5.2s。

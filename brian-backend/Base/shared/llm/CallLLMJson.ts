@@ -34,6 +34,8 @@ export interface CallLLMJsonOptions<T> {
   fallback?: () => T;
   /** 每次失败时的回调（用于日志） */
   onError?: (error: unknown, attempt: number) => void;
+  /** 额外入参透传（max_tokens / temperature 等；thinking 已由本工具统一禁用） */
+  extra?: Partial<ExecLLMInput>;
 }
 
 /**
@@ -57,6 +59,8 @@ export async function callLLMJson<T>(
       const input = Object.assign(new ExecLLMInput(), {
         id: opts.llmId ?? '',
         prompt: opts.prompt,
+        ...(opts.extra ?? {}),
+        extra: { ...(opts.extra?.extra ?? {}), thinking: { type: 'disabled' } },
         ...(opts.system !== undefined ? { system: opts.system } : {}),
       });
       const ok = await llmAccess.execLLM(input, out, new LLMContext());

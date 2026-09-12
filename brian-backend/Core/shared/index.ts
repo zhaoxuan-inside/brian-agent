@@ -3,7 +3,6 @@
  */
 export * from './errors';
 export { ensureDefaultConfig } from './ConfigHelper';
-export { AgingEngine, type AgingConfig, type AgingRuleRecord, type BindingRecord } from './AgingEngine';
 export {
   checkMatchCache,
   clearMatchCache,
@@ -13,3 +12,19 @@ export {
   type RegenMode,
 } from './MatchCacheHelper';
 export { simpleSimilarity, shouldReuseByRegenRate } from './SimilarityHelper';
+export { FifoCache } from './FifoCache';
+export {
+  parseRankingCandidates,
+  filterByThreshold,
+  type RankedCandidate,
+} from './RankingParser';
+export { VectorMatchCache, buildCacheKey, type MatchCacheRecord } from './VectorMatchCache';
+export {
+  AgentScoreThreshold,
+  ScoreThreshold,
+  MatchCache,
+  VectorSimilarity,
+  CreatedBy,
+  DisbandThreshold,
+  SortDirection,
+} from './MatchConstants';

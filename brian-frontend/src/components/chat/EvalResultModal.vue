@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { X, Gauge, Loader2, Lightbulb, CircleCheck, CircleAlert } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { X, Gauge, Loader2, Lightbulb, CircleCheck, CircleAlert, Copy, Check } from '@lucide/vue'
 import { useChatUiStore } from '@/stores/chatUi'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const chatUi = useChatUiStore()
 
@@ -10,6 +11,8 @@ const loading = computed(() => chatUi.evalResultLoading)
 const error = computed(() => chatUi.evalResultError)
 const evaluation = computed(() => chatUi.evalResult)
 const traceId = computed(() => chatUi.evalTraceId)
+
+const copied = ref(false)
 
 interface EvalPayload {
   scores?: Record<string, number | string>
@@ -49,6 +52,16 @@ const needOptimize = computed<boolean | null>(() => {
 
 function close() {
   chatUi.closeEvalResult()
+}
+
+async function copyTraceId() {
+  const tid = traceId.value
+  if (!tid) return
+  const success = await copyToClipboard(tid)
+  if (success) {
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  }
 }
 
 function scoreColor(score: number): string {
@@ -104,6 +117,14 @@ function formatTime(ts: number): string {
             <div v-if="traceId" class="flex items-center gap-1 text-[11px] text-apple-gray-400 font-mono">
               <span class="flex-shrink-0">TraceId:</span>
               <span class="truncate select-text">{{ traceId }}</span>
+              <button
+                class="flex-shrink-0 flex items-center gap-0.5 px-1 py-0.5 rounded text-xs text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+                title="复制 TraceId"
+                @click="copyTraceId"
+              >
+                <component :is="copied ? Check : Copy" :size="12" />
+                {{ copied ? '已复制' : '复制' }}
+              </button>
             </div>
 
             <template v-if="parsed">

@@ -97,9 +97,17 @@ export class Report {
   /** 事件流网关（StreamProvider 适配；组合根启动时注入一次） */
   private static eventStream?: ReportEventStream;
 
+  /** 日志器（组合根启动时注入一次；用于 pushBusinessEvent 失败时记录） */
+  private static logger?: { error: (msg: string, meta?: unknown) => void };
+
   /** 注入事件流网关（组合根调用一次；StreamProvider 适配实现） */
   static setEventStreamGateway(gateway: ReportEventStream | null): void {
     Report.eventStream = gateway ?? undefined;
+  }
+
+  /** 注入日志器（组合根调用一次） */
+  static setLogger(logger: { error: (msg: string, meta?: unknown) => void } | null): void {
+    Report.logger = logger ?? undefined;
   }
 
   constructor(meta?: ReportMeta, channel?: ReportChannel) {
@@ -130,7 +138,6 @@ export class Report {
    */
   pushBusinessEvent(event: BusinessEvent, data: unknown, meta?: Record<string, unknown>): void {
     if (Report.eventStream && this.stream_endpoint_id) {
-      // 携带 SSE 端点 ID 调用 StreamProvider：保存（持久化/审计）+ 按端点 ID 投递 + 断线恢复重放
       void Report.eventStream
         .pushToEndpoint({
           endpoint_id: this.stream_endpoint_id,
@@ -139,7 +146,14 @@ export class Report {
           type: event,
           payload: data,
         })
-        .catch(() => undefined);
+        .catch((err: unknown) => {
+          Report.logger?.error?.('pushBusinessEvent: pushToEndpoint 失败', {
+            event,
+            endpoint_id: this.stream_endpoint_id,
+            session_key: this.session_key || this.session_id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
       return;
     }
     this.pushEvent(event, businessEventMsgType(event), data, meta);

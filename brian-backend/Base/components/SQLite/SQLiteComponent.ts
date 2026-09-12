@@ -29,6 +29,8 @@ export interface SQLiteComponentOptions {
   foreignKeys?: boolean;
   /** 是否启用 verbose 日志（默认 false） */
   verbose?: boolean;
+  /** verbose 日志输出通道（2026-09-11：日志统一经 Logger 网关，不得直用 console；未注入时不输出） */
+  verbose_logger?: (message: string) => void;
 }
 
 /**
@@ -75,7 +77,7 @@ export class SQLiteComponent {
 
     try {
       this.db = new BetterSqlite3(this.dbPath, options.verbose
-        ? { verbose: (msg?: unknown) => console.log(`[SQLite] ${String(msg)}`) }
+        ? { verbose: (msg?: unknown) => options.verbose_logger?.(`[SQLite] ${String(msg)}`) }
         : undefined);
 
       // 启用 WAL 模式提升并发读性能

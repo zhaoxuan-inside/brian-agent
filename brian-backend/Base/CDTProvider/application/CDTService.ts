@@ -40,6 +40,9 @@ interface CDPResponse {
   error?: { code: number; message: string };
 }
 
+/** CDP 单条命令应答超时（毫秒）：防止目标无响应时 execCDP 永久挂起拖死整条 run 链路 */
+const CDP_COMMAND_TIMEOUT_MS = 30_000;
+
 /** 常用键名到 CDP code 的映射 */
 const keyMap: Record<string, string> = {
   Enter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape',
@@ -323,14 +326,25 @@ export class CDTService {
 
     try {
       const ws = await this.connectWebSocket();
+      // ===== 修改后（2026-09-09）：增加 CDP 命令超时 =====
+      // 原代码：命令应答 await 无超时——CDP 目标（浏览器渲染进程）无响应时 Promise 永不
+      // 结算，工具→run→整条对话链路被挂死（事故：run 367d9572 于 11:56 cdt_browser
+      // navigate 后 25 分钟无应答，SSE 5 分钟超时，run 永久停留 running）。
+      // 现增加命令级超时（默认 30s）：超时按失败结算并关闭连接，错误上抛由工具层返回，
+      // run 可正常 settle。
       return new Promise((resolve) => {
         let resolved = false;
+        const timer = setTimeout(() => {
+          output.error = `CDP 命令超时（${CDP_COMMAND_TIMEOUT_MS}ms）：${input.method}`;
+          cleanup();
+          resolve(false);
+        }, CDP_COMMAND_TIMEOUT_MS);
 
         const cleanup = () => {
-          if (!resolved) {
-            resolved = true;
-            try { ws.close(); } catch { /* ignore */ }
-          }
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          try { ws.close(); } catch { /* ignore */ }
         };
 
         ws.on('message', (data: Buffer) => {
@@ -763,8 +777,13 @@ export class CDTService {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
         const { WebSocket } = require('ws') as typeof import('ws');
         const ws = new WebSocket(this.endpoint);
-        ws.once('open', () => resolve(ws));
-        ws.once('error', reject);
+        // 连接超时：防止浏览器进程半死时 WebSocket 停在 CONNECTING 永不结算
+        const timer = setTimeout(() => {
+          try { ws.close(); } catch { /* ignore */ }
+          reject(new Error(`CDP WebSocket 连接超时（${CDP_COMMAND_TIMEOUT_MS}ms）`));
+        }, CDP_COMMAND_TIMEOUT_MS);
+        ws.once('open', () => { clearTimeout(timer); resolve(ws); });
+        ws.once('error', (err: Error) => { clearTimeout(timer); reject(err); });
       } catch (e) {
         reject(e);
       }

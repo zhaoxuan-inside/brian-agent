@@ -486,3 +486,22 @@
   3. **历史会话恢复**：后端 `/api/chat/history` 在查询会话记录时，从 `orchestration_agent_execution` 及 `agent_execution_trace` 聚合各 Work 的 Agent 执行轨迹，为回答组装对应的 ThinkingBlocks，前端 `sessionStore.ts` 载入会话时自动恢复，实现刷新页面后思考过程与上下文不丢失。
   4. **Agent 相似度匹配算法升级**：重构 `simpleSimilarity` 为 Bigram + 中文字符级 Jaccard 算法（包含去标点归一化与领域隔离），彻底解决相同或相似提问下因传统空格切词失效而无法复用 Agent 的问题。
   5. **思考 Blocks 严格时间序**：重构 `ChatArea.vue` 时间线排序，确保多 Agent 思考块严格按 `createdAt` 升序及消息角色优先关系无倒置呈现。
+### [2026-09-12] 交互复盘修复（interact 307bee46）：一次提问不再出现两个回答 + Tool 执行卡靠右对齐
+- **变更原因**：用户在问答 interact 307bee46-f0b3-4365-8f60-61d6c041f1d8 中反馈两点不合理：① 一次提问出现"两个回答"——`tool.result` 的工具输出经 `onAgentOutput → appendAssistantChunk` 被追加进用户可见 TextParagraph，随后的 `reply.delta` 最终回复又拼进同一块，形成"工具结果 + 最终回复"两段回答；② 工具执行动画卡（ToolInvocation）在对话区靠左渲染，与用户消息同侧，视觉上误读为用户输入。
+- **修改的方法**：
+  - `chatStreamEvents.ts onAgentOutput(ctx)` — 原始代码（保留在文件内注释参考）：
+    ```
+    // 如果也是向用户展示的文本块
+    appendAssistantChunk(ctx, typeof outputVal === 'string' ? outputVal : String(outputVal || ''))
+    ```
+    修改后：删除该追加调用；Agent 输出只回填思考块，用户可见最终回复仅由 `reply.delta` / `text_chunk` 提供。
+  - `ChatArea.vue` 时间线 Block 包裹层 — 原始代码（保留在文件内注释参考）：
+    ```
+    :class="entry.block.role === 'user' ? 'ml-auto' : 'mr-auto'"
+    ```
+    修改后：`entry.block.type === 'ToolInvocation' ? 'ml-auto' : 'mr-auto'`，ToolInvocation 执行卡靠右、与系统回复消息一致。
+- **影响的端点**：
+  - `POST /api/chat/stream`、`POST /api/chat/confirm-intent`、`POST /api/chat/submit-clarification` — SSE 帧分发逻辑变更：`tool.result` 不再流入对话区正文。
+- **可能存在的问题**：
+  - 若某些编排路径仅通过 `agent.output`（`tool.result` 承载）交付最终答案而无 `reply.delta`，对话区正文将不再展示该路径的答案（可观测回归点）。
+  - ToolInvocation 卡靠右后与 Feedback 块、错误块的左右混排需在后续回归中确认视觉一致性。
