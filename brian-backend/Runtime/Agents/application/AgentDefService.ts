@@ -38,7 +38,6 @@ import {
   ConfigService,
   ValidationError,
   NotFoundError,
-  PROMPT_IDS,
   renderTemplate,
   LLMContext,
   ExecLLMInput,
@@ -92,6 +91,11 @@ interface AgentRecordLike {
   agent_id: string;
   agent_name?: string;
   agent_purpose?: string;
+  soul_id?: string;
+  skill_ids?: string[];
+  mcp_ids?: string[];
+  prompt_template_id?: string;
+  model_id?: string;
 }
 
 /** agent 表绑定事实源（2026-09-11 新增；缓存与 Layer 1 直读共用） */
@@ -100,6 +104,7 @@ interface AgentBindingRow {
   soul_id: string;
   skill_ids_json: string;
   mcp_ids_json: string;
+  prompt_template_id?: string;
   agent_purpose: string;
 }
 
@@ -167,7 +172,7 @@ export class AgentDefService {
   private async warmAssetCaches(): Promise<void> {
     try {
       const agentRows = await this.relationDb.queryRaw<AgentRowFull>(
-        'SELECT "agent_id", "soul_id", "skill_ids_json", "mcp_ids_json", "agent_purpose" FROM "agent"',
+        'SELECT "agent_id", "soul_id", "skill_ids_json", "mcp_ids_json", "prompt_template_id", "agent_purpose" FROM "agent"',
         [],
       );
       this.agentBindingCache.clear();
@@ -177,6 +182,7 @@ export class AgentDefService {
           soul_id: String(row.soul_id ?? ''),
           skill_ids_json: String(row.skill_ids_json ?? '[]'),
           mcp_ids_json: String(row.mcp_ids_json ?? '[]'),
+          prompt_template_id: String(row.prompt_template_id ?? ''),
           agent_purpose: String(row.agent_purpose ?? ''),
         });
       }
@@ -212,6 +218,7 @@ export class AgentDefService {
         soul_id: String(row.soul_id ?? ''),
         skill_ids_json: String(row.skill_ids_json ?? '[]'),
         mcp_ids_json: String(row.mcp_ids_json ?? '[]'),
+        prompt_template_id: String(row.prompt_template_id ?? ''),
         agent_purpose: String(row.agent_purpose ?? ''),
       };
       this.agentBindingCache.set(agentRef, binding);
@@ -491,14 +498,15 @@ export class AgentDefService {
   // ===== 修改后的方法（2026-09-09）：LLM 意图/匹配评估完成即上报 intent.analyzed =====
   // ===== 修改后（2026-09-11）：agentMatch 统一百分制（score 0-100，threshold=AgentScoreThreshold.Default 70）；
   // prompt 仅经 prompt_template 表渲染（删除硬编码内存回退，缺失 fail-loud） =====
-  /** L3 LLM 打分命中（逻辑控制；经 LLMAccess.execLLM，Prompt 为 builtin.agent_match 渲染） */
+  /** L3 LLM 打分命中（逻辑控制；经 LLMAccess.execLLM，Prompt 为 Agent 匹配模板渲染） */
   private async soLLMRankedDef(defs: AgentDefRecord[], taskContent: string, report?: Report): Promise<AgentDefRecord | null> {
     // ===== 2026-09-11：采纳阈值读配置（agent_library_config.match_score_threshold，配置中心 Agent 库参数页可调） =====
     const adoptThreshold = await this.soMatchScoreThreshold();
     const candidates = defs
       .map((def, index) => `${index + 1}. agent_id=${def.agent_ref || def.id} 用途: ${def.name} — ${this.defBrief(def)}`)
       .join('\n');
-    const prompt = await this.renderMatchPrompt(PROMPT_IDS.agentMatch, { task_content: taskContent, candidates });
+    const matchPromptId = await this.soMatchPromptTemplateId();
+    const prompt = await this.renderMatchPrompt(matchPromptId, { task_content: taskContent, candidates });
     const execInput = new ExecLLMInput();
     execInput.prompt = prompt;
     execInput.max_tokens = 300;
@@ -527,6 +535,22 @@ export class AgentDefService {
       return null;
     }
     return defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
+  }
+
+  /** Agent 匹配提示词模板 ID 读取（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    try {
+      const rows = this.relationDb.queryRaw<{ prompt_template_id: string }>(
+        'SELECT "prompt_template_id" FROM "agent_library_config" LIMIT 1',
+        [],
+      );
+      if (rows?.[0]?.prompt_template_id) return String(rows[0].prompt_template_id);
+    } catch { /* best effort */ }
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    throw new ValidationError('未找到 Agent 匹配提示词模板');
   }
 
   // ===== 原始方法（保留作为参考）=====
@@ -580,21 +604,29 @@ export class AgentDefService {
     return ctx;
   }
 
-  /** 从旧 agent 资产写声明定义（逻辑控制；取名/用途经 AgentLibraryAccess，落账 id 取自插入记录） */
+  // ===== 修改后的方法（将 agent 绑定的 soul_id、prompt_template_id、tools_json 同步持久化到 runtime_agent_def） =====
+  /** 从旧 agent 资产写声明定义（逻辑控制；取名/用途/组件绑定经 AgentLibraryAccess，落账 id 取自插入记录） */
   private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord> {
     const asset = await this.soAgentAsset(agentId);
+    const binding = await this.soAgentBinding(agentId);
     const name = asset?.agent_name || 'agent';
     const purpose = String(asset?.agent_purpose ?? '') || this.buildSignature(input.task_content, input.task_domain);
+    const soulId = asset?.soul_id || binding?.soul_id || '';
+    const promptTemplateId = asset?.prompt_template_id || binding?.prompt_template_id || '';
+    const skillIds = asset?.skill_ids || (binding ? this.soJsonIdArray(binding.skill_ids_json) : []);
+    const mcpIds = asset?.mcp_ids || (binding ? this.soJsonIdArray(binding.mcp_ids_json) : []);
+    const toolsJson = (skillIds.length > 0 || mcpIds.length > 0) ? JSON.stringify({ skills: skillIds, mcps: mcpIds }) : '';
+
     const record = newRecord({
       name: `w2-${name}-${IdGenerator.generate().slice(0, 8)}`,
       mode: AgentMode.Primary,
       agent_ref: agentId,
       task_signature: this.buildSignature(input.task_content, input.task_domain),
       agent_purpose: purpose,
-      prompt_template_id: '',
-      model_id: '',
-      soul_id: '',
-      tools_json: '',
+      prompt_template_id: promptTemplateId,
+      model_id: asset?.model_id || '',
+      soul_id: soulId,
+      tools_json: toolsJson,
       budget_total: DEFAULT_BUDGET_TOTAL,
       status: AgentDefStatus.Active,
     });
@@ -673,18 +705,18 @@ export class AgentDefService {
   //   return true;
   // }
 
-  // ===== 修改后的方法（2026-09-11 收敛版）：def 命中即复用绑定 —— soul 只读
-  // def.soul_id（无绑定即空），tools 只读 def.tools_json（无绑定即无工具），
-  // 不再走 Core matchSoul/matchSkill/matchMCP 动态匹配 =====
+  // ===== 修改后的方法（支持从 def 及 agent 绑定双重解析 soul/tools，上报真实 template_id UUID） =====
   /** 组装会话级快照（逻辑控制） */
   async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const def = await this.soDefRow(input.def_id);
     // LLM 选定（快照解析出模型）完成即上报
     report?.pushBusinessEvent(BusinessEvent.LlmSelected, { llm_id: def.model_id });
-    const soulContent = await this.soSoulContent(def);
+    const soulId = def.soul_id || (def.agent_ref ? (await this.soAgentBinding(def.agent_ref))?.soul_id : '') || '';
+    const soulContent = soulId ? await this.soSoulContentById(soulId) : '';
     const tools = await this.soSnapshotTools(def, report);
     const system = await this.prepareSystemPrompt(def, soulContent, tools, input.user_message ?? input.task_content);
+    const templateId = def.prompt_template_id || await this.soDefaultIdentityTemplateId();
     output.snapshot = {
       def_id: def.id,
       name: def.name,
@@ -693,13 +725,13 @@ export class AgentDefService {
       temperature: def.temperature,
       budget_total: def.budget_total,
       tools,
-      meta: { soul_id: def.soul_id || undefined, llm_id: def.model_id || undefined, matched_by: 'snapshot' },
+      meta: { soul_id: soulId || undefined, llm_id: def.model_id || undefined, matched_by: 'snapshot' },
     };
     // Prompt 选定（模板渲染出 system prompt）完成即上报
     report?.pushBusinessEvent(BusinessEvent.PromptSelected, {
-      template_id: def.prompt_template_id || PROMPT_IDS.identity,
+      template_id: templateId,
       system: system.slice(0, 4000),
-      soul_selected: Boolean(def.soul_id || soulContent),
+      soul_selected: Boolean(soulId && soulContent),
       tools_count: tools.length,
     });
     return true;
@@ -751,7 +783,7 @@ export class AgentDefService {
 
   /** 按 id 读取 Soul 内容（逻辑控制；经 SoulCoreAccess.soSoulContent，禁止直查 soul 表） */
   private async soSoulContentById(soulId: string): Promise<string> {
-    if (!this.components.soulCore) {
+    if (!this.components.soulCore || typeof this.components.soulCore.soSoulContent !== 'function') {
       return '';
     }
     const input = new SoSoulContentInput();
@@ -810,26 +842,50 @@ export class AgentDefService {
   //   ... matchSkill / appendMcpEntries（match 输入含 task_content/bypass_cache）
   // }
 
-  // ===== 修改后的方法（2026-09-11 收敛版）：只读 def.tools_json 显式绑定，无绑定即无工具 =====
-  /** 工具清单解析（数据处理；显式 tools_json 唯一来源，无绑定即空） */
+  // ===== 修改后的方法（2026-09-11 收敛版）：只读 def.tools_json 显式绑定，缺失回退 agent 绑定 =====
+  /** 工具清单解析（数据处理；显式 tools_json 唯一来源，缺失从 agent 绑定回退） */
   private async soSnapshotTools(def: AgentDefRecord, report?: Report): Promise<SnapshotToolEntry[]> {
-    if (!def.tools_json) {
+    let toolsJson = def.tools_json;
+    if (!toolsJson && def.agent_ref) {
+      const binding = await this.soAgentBinding(def.agent_ref);
+      if (binding && (binding.skill_ids_json !== '[]' || binding.mcp_ids_json !== '[]')) {
+        const skillIds = this.soJsonIdArray(binding.skill_ids_json);
+        const mcpIds = this.soJsonIdArray(binding.mcp_ids_json);
+        if (skillIds.length > 0 || mcpIds.length > 0) {
+          toolsJson = JSON.stringify({ skills: skillIds, mcps: mcpIds });
+        }
+      }
+    }
+    if (!toolsJson) {
       return [];
     }
-    const explicit = parseJsonObject(def.tools_json);
+    const explicit = parseJsonObject(toolsJson);
     const entries = this.entriesFromExplicit(explicit);
     const skills = entries.filter((e) => e.kind === 'skill');
     const mcps = entries.filter((e) => e.kind === 'mcp');
-    report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
-      source: 'explicit',
-      skills: skills.map((e) => ({ id: e.id, brief: e.brief })),
-    });
+    if (skills.length) {
+      report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
+        source: 'explicit',
+        skills: skills.map((e) => ({ id: e.id, brief: e.brief })),
+      });
+    }
     if (mcps.length) {
       report?.pushBusinessEvent(BusinessEvent.McpSelected, {
         mcps: mcps.map((e) => ({ id: e.id, brief: e.brief })),
       });
     }
     return entries;
+  }
+
+  /** 解析 JSON 字符串为 ID 列表（数据处理） */
+  private soJsonIdArray(raw?: string): string[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
   }
 
   /** 定义简述（数据处理：agent_purpose 优先，签名兜底） */
@@ -894,7 +950,7 @@ export class AgentDefService {
   //   return entries;
   // }
 
-  /** 系统提示组装（数据处理→逻辑控制）：prompt_template 表渲染 identity 模板（2026-09-11 删除硬编码回退） */
+  /** 系统提示组装（数据处理→逻辑控制）：prompt_template 表渲染 identity 模板 */
   private async prepareSystemPrompt(def: AgentDefRecord, soulContent: string, tools: SnapshotToolEntry[], userMessage: string): Promise<string> {
     const toolLines = tools
       .map((t) => `- ${t.kind === 'skill' ? 'skill_exec(skill_id' : 'mcp_exec(mcp_id'}: "${t.id}") ${t.brief}`.replace('))', ')'))
@@ -903,9 +959,23 @@ export class AgentDefService {
       `当前任务：${(userMessage ?? '').slice(0, 500)}`,
       tools.length ? `\n可用工具（经 skill_exec / mcp_exec 调用，按 id 传入）：\n${toolLines}` : '',
     ].join('\n');
-    const system = await this.renderMatchPrompt(def.prompt_template_id || PROMPT_IDS.identity, { soul: soulContent, task_directive: directive });
-    this.logger?.debug?.('soAgentSnapshot.system', { head: system.slice(0, 400), template_id: def.prompt_template_id || 'builtin.identity' });
+    const templateId = def.prompt_template_id || await this.soDefaultIdentityTemplateId();
+    const system = await this.renderMatchPrompt(templateId, { soul: soulContent, task_directive: directive });
+    this.logger?.debug?.('soAgentSnapshot.system', { head: system.slice(0, 400), template_id: templateId });
     return system;
+  }
+
+  /** 默认身份提示词模板 ID 读取（逻辑控制；DB 查询标题含 '身份' 的模板，缺失回退首个启用模板） */
+  private async soDefaultIdentityTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%身份%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ValidationError('未找到可用的身份提示词模板');
   }
 
   /** Agent 匹配采纳阈值读取（逻辑控制；agent_library_config 行缺失回退默认 70） */

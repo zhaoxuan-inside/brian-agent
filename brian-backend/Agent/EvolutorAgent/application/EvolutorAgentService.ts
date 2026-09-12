@@ -1,6 +1,6 @@
 import { Metrics, Report, BusinessEvent } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess, MQAccess } from '@brian-agent/base';
-import { IdGenerator, Operator, ValidationError, NotFoundError, ExecLLMInput, ExecLLMOutput, LLMContext, PromptContext, SoPromptInput, SoPromptOutput, SendMQInput, SendMQOutput, MQContext, HandleResultType, PROMPT_IDS, type DataObject, type Direction } from '@brian-agent/base';
+import { IdGenerator, Operator, ValidationError, NotFoundError, ExecLLMInput, ExecLLMOutput, LLMContext, PromptContext, SoPromptInput, SoPromptOutput, SendMQInput, SendMQOutput, MQContext, HandleResultType, type DataObject, type Direction } from '@brian-agent/base';
 import type { InfoCoreAccess, MQCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { StartWorkerInput, StartWorkerOutput, StopWorkerInput, StopWorkerOutput, MQCoreContext, DisbandThreshold } from '@brian-agent/core';
 import { DelAgentInput, DelAgentOutput } from '@brian-agent/agent';
@@ -270,7 +270,7 @@ export class EvolutorAgentService {
 
     const prompt = await this.renderPrompt(
       config?.eval_work_prompt_template_id,
-      PROMPT_IDS.evalWork,
+      'WorkAgent 质量评估',
       {
         task_content: input.task_content,
         agent_output: input.agent_output,
@@ -586,7 +586,7 @@ export class EvolutorAgentService {
 
     const prompt = await this.renderPrompt(
       config?.eval_write_prompt_template_id,
-      PROMPT_IDS.evalWrite,
+      'WriterAgent 质量评估',
       {
         task_content: input.user_query,
         final_response: input.final_response,
@@ -729,7 +729,6 @@ export class EvolutorAgentService {
           output_tokens: params.outputTokens,
           elapsed_ms: params.elapsedMs,
           template_id: params.templateId,
-          builtin_id: PROMPT_IDS.evalWrite,
           variables: {
             task_content: params.taskContent,
             agent_name: params.agentName,

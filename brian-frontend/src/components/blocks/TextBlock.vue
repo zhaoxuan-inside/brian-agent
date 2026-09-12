@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TextBlock, HeadingBlock } from '@/api/types'
+import { createThrottledMarkdownRenderer } from '@/utils/markdown'
 
 const props = defineProps<{ block: TextBlock | HeadingBlock }>()
 
 const isStreaming = computed(() => props.block.meta.status === 'streaming')
 const isHeading = computed(() => props.block.type === 'Heading')
 const headingLevel = computed(() => isHeading.value ? (props.block as HeadingBlock).level || 2 : null)
+
+// ===== 新增（2026-09-12）：流式 markdown 节流渲染（实现见 utils/markdown） =====
+// 原实现恒为纯文本（whitespace-pre-wrap），流式过程中 markdown 始终不渲染。
+const getDisplayHtml = createThrottledMarkdownRenderer(300)
 
 const headingClasses = computed(() => {
   const lvl = headingLevel.value
@@ -36,11 +41,21 @@ const headingClasses = computed(() => {
         >{{ cid.slice(-8) }}</span>
       </div>
 
-      <!-- Content -->
-      <p class="whitespace-pre-wrap" :class="block.meta.status === 'error' ? 'text-error-red/70' : ''">
+      <!-- Content：正文按 Markdown 渲染（流式节流），标题保持纯文本样式 -->
+      <p
+        v-if="isHeading"
+        class="whitespace-pre-wrap"
+        :class="block.meta.status === 'error' ? 'text-error-red/70' : ''"
+      >
         {{ 'content' in block ? block.content : '' }}
-        <span v-if="isStreaming" class="inline-block w-1.5 h-4 bg-brian-blue animate-cursor-blink align-middle ml-0.5" />
       </p>
+      <div
+        v-else
+        class="markdown-body text-sm leading-relaxed break-words"
+        :class="block.meta.status === 'error' ? 'text-error-red/70' : ''"
+        v-html="getDisplayHtml('content' in block ? block.content : '', isStreaming)"
+      />
+      <span v-if="isStreaming" class="inline-block w-1.5 h-4 bg-brian-blue animate-cursor-blink align-middle ml-0.5" />
 
       <!-- Cited count badge -->
       <div v-if="'citedCount' in block && block.citedCount && block.citedCount > 0" class="mt-2 flex items-center">

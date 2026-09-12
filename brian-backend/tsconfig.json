@@ -18,6 +18,9 @@
       "@brian-agent/agent": [
         "./Agent/index.ts"
       ],
+      "@brian-agent/runtime": [
+        "./Runtime/index.ts"
+      ],
       "@brian-agent/orchestration": [
         "./Orchestration/index.ts"
       ],

@@ -14,8 +14,8 @@ import type { SessionAccess } from '../../Session';
 import type { ToolAccess } from '../../Tools';
 /** 权限门鸭子接口（Runs 实现；工具执行前询问，应答后继续/拒绝） */
 export interface PermissionGate {
-  /** 挂起等待应答（permission.asked 已由 Loop 经 Report 下发） */
-  wait(input: { permission_id: string }): Promise<{ approved: boolean }>;
+  /** 挂起等待应答（permission.asked 已由 Loop 经 Report 下发；tool_id 命中信任表时直接放行） */
+  wait(input: { permission_id: string; tool_id?: string }): Promise<{ approved: boolean; autoApproved?: boolean }>;
 }
 import {
   ExecAgentLoopInput,

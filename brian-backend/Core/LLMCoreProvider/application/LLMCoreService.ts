@@ -38,16 +38,13 @@ import {
   LLM_PROVIDER_QUOTA_TABLE,
   LLM_CORE_USAGE_TABLE,
 } from '../domain/types';
-import { SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, LLMContext } from '@brian-agent/base';
+import { SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, LLMContext, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
 import {
   GetPromptInput,
   GetPromptOutput,
   ExecPromptInput,
   ExecPromptOutput,
   PromptContext,
-} from '@brian-agent/base';
-import {
-  PROMPT_IDS,
 } from '@brian-agent/base';
 
 /**
@@ -146,9 +143,9 @@ export class LLMCoreService {
       interact_id: input.interact_id,
       available_llms: this.buildLlmList(availableLLMs),
     };
-    // ===== 修改后（2026-09-11）：prompt 仅经 DB 渲染（无硬编码回退），排序走统一 [{id, score}] 百分制 + threshold =====
+    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
     const selectionPrompt = await this.renderMatchPrompt(
-      config?.prompt_template_id ?? PROMPT_IDS.llmMatch,
+      templateId,
       selectionVariables,
     );
     const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
@@ -570,6 +567,19 @@ export class LLMCoreService {
       return execPromptOutput.prompt;
     }
     throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
+  }
+
+  /** 获取 LLM 匹配模板 ID（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%LLM%匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ProcessingError('未找到 LLM 匹配提示词模板');
   }
 
 }

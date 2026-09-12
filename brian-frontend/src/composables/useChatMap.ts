@@ -243,19 +243,18 @@ export function useChatMap() {
     sessionStore.triggerFocus(infoId)
   }
 
-  // ===== 思考过程独立按模块并发加载（DAG 与 ThinkingBlocks 独立加载与渐进式展示） =====
+  // 思考过程加载：请求思考块与执行轨迹并展示弹窗
   async function showThinking(infoId: string) {
     chatUi.startThinkingLoading(infoId)
 
-    const dagPromise = chatApi.thinking(infoId, 'dag')
-      .then(res => chatUi.setThinkingDag(res.dag ?? null))
-      .catch(() => chatUi.setThinkingDag(null))
-
-    const blocksPromise = chatApi.thinking(infoId, 'blocks')
-      .then(res => chatUi.setThinkingBlocks(res.blocks ?? []))
-      .catch(() => chatUi.setThinkingBlocks([]))
-
-    await Promise.allSettled([dagPromise, blocksPromise])
+    try {
+      const res = await chatApi.thinking(infoId, 'blocks')
+      chatUi.setThinkingBlocks(res.blocks ?? [])
+      chatUi.setThinkingTrace((res as { trace?: import('@/api/types').ThinkingTrace | null }).trace ?? null)
+    } catch {
+      chatUi.setThinkingBlocks([])
+      chatUi.setThinkingTrace(null)
+    }
   }
 
   // 列表点击消息 -> 平移 ChatMap 使该消息居中并高亮

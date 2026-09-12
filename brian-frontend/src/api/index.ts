@@ -63,8 +63,9 @@ export const chatApi = {
   pinMessage: (infoId: string) =>
     request<{ pin: boolean }>(`/chat/message/${encodeURIComponent(infoId)}/pin`, { method: 'POST' }),
   // ===== 修改后：支持模块化独立的思考过程数据采集 (module='all'|'dag'|'blocks') =====
+  // ===== 修改后（V2）：同时返回完整执行轨迹 trace（timeline/tools/permissions/run），供思考过程弹窗完整追溯 =====
   thinking: (infoId: string, module: 'all' | 'dag' | 'blocks' = 'all') =>
-    request<{ work_id: string; interact_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; module?: string }>(
+    request<{ work_id: string; interact_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; trace?: import('./types').ThinkingTrace | null; module?: string }>(
       `/chat/thinking?info_id=${encodeURIComponent(infoId)}&module=${module}`,
     ).then(r => r),
   evalResult: (infoId: string) =>
@@ -295,6 +296,16 @@ export const monitorApi = {
   resources: () => request<{ cpu: number; memory: number; disk: number }>('/monitor/resources'),
   tokenTrend: () => request<{ points: { date: string; tokens: number }[] }>('/analytics/token-trend').then(r => r.points),
   modelDistribution: () => request<{ models: { model: string; tokens: number; input_tokens: number; output_tokens: number; deleted?: boolean; type?: string }[] }>('/analytics/model-distribution').then(r => r.models),
+  tokenUsage: (params?: { session_id?: string; interact_id?: string; work_id?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.session_id) q.set('session_id', params.session_id)
+    if (params?.interact_id) q.set('interact_id', params.interact_id)
+    if (params?.work_id) q.set('work_id', params.work_id)
+    const qs = q.toString()
+    return request<{ input_tokens: number; output_tokens: number; total_tokens: number; call_count: number }>(
+      `/llm/token-usage${qs ? `?${qs}` : ''}`,
+    )
+  },
   logs: (params?: { level?: string; keyword?: string; trace_id?: string; source?: string; log_source?: string; start_time?: number; end_time?: number; limit?: number }) => {
     const q = new URLSearchParams()
     if (params?.level) q.set('level', params.level)
@@ -605,7 +616,7 @@ export const cronToolApi = {
 
 export { request as fetchApi }
 
-/** 权限应答（v2 权限门：permission.asked → 应答唤醒挂起的 Loop） */
-export function answerPermission(permission_id: string, approved: boolean): Promise<{ ok: boolean; answered: boolean }> {
-  return request('/chat/permission/answer', { method: 'POST', body: JSON.stringify({ permission_id, approved }) })
+/** 权限应答（v2 权限门：permission.asked → 应答唤醒挂起的 Loop；remember=true 为"始终允许"，工具入信任表） */
+export function answerPermission(permission_id: string, approved: boolean, remember = false): Promise<{ ok: boolean; answered: boolean }> {
+  return request('/chat/permission/answer', { method: 'POST', body: JSON.stringify({ permission_id, approved, remember }) })
 }

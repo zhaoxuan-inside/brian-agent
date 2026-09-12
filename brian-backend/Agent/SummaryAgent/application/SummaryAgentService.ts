@@ -1,6 +1,6 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess, SoulAccess, Logger } from '@brian-agent/base';
-import { Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext, PROMPT_IDS } from '@brian-agent/base';
+import { Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { InfoCoreContext, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput } from '@brian-agent/core';
 import type { AgentBuilderAccess } from '../../AgentBuilder/access/AgentBuilderAccess';
@@ -160,10 +160,11 @@ export class SummaryAgentService {
       }
     }
 
+    const templateId = await this.soSummaryPromptTemplateId();
     const promptOut = new ExecPromptOutput();
     const okPrompt = await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), {
-        id: PROMPT_IDS.summary,
+        id: templateId,
         variables: { task_content: info, soul: system },
       }),
       promptOut,
@@ -172,7 +173,7 @@ export class SummaryAgentService {
     // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
     const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
     if (!prompt) {
-      throw new ValidationError(`Prompt 模板不可用或渲染为空: ${PROMPT_IDS.summary}`);
+      throw new ValidationError(`Prompt 模板不可用或渲染为空: ${templateId}`);
     }
 
     const llmOut = new ExecLLMOutput();
@@ -187,6 +188,25 @@ export class SummaryAgentService {
     );
     if (!ok || !llmOut.result) return '';
     return llmOut.result.trim();
+  }
+
+  /** 获取系统响应摘要生成提示词模板 ID（逻辑控制） */
+  private async soSummaryPromptTemplateId(): Promise<string> {
+    try {
+      const soOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: '系统响应摘要生成' }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (String(p.prompt_template_title || '').includes('摘要') || String(p.prompt_template_brief || '').includes('摘要')));
+      if (hit) return hit.id;
+      const anyHit = soOut.list?.find((p) => p.enable !== false);
+      if (anyHit) return anyHit.id;
+    } catch {
+      /* ignore */
+    }
+    return '系统响应摘要生成';
   }
 
   /**

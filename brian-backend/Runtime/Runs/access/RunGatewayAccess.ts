@@ -5,7 +5,7 @@
 import type { RelationDBAccess, Metrics, Report, Logger } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import { RunsSchemaInitializer } from '../infrastructure/RunsSchemaInitializer';
-import { RunGatewayService } from '../application/RunGatewayService';
+import { RunGatewayService, OutputEvaluator, OutputWriter } from '../application/RunGatewayService';
 import type { SessionAccess } from '../../Session';
 import type { LoopAccess } from '../../Loop';
 import type { AgentDefAccess } from '../../Agents';
@@ -35,9 +35,17 @@ import {
 export class RunGatewayAccess {
   private readonly service: RunGatewayService;
 
-  constructor(relationDb: RelationDBAccess, session: SessionAccess, agents: AgentDefAccess, loop: LoopAccess, logger?: Logger) {
+  constructor(
+    relationDb: RelationDBAccess,
+    session: SessionAccess,
+    agents: AgentDefAccess,
+    loop: LoopAccess,
+    logger?: Logger,
+    evaluator?: OutputEvaluator,
+    writer?: OutputWriter,
+  ) {
     new RunsSchemaInitializer(relationDb).init();
-    const rawService = new RunGatewayService(relationDb, session, agents, loop, logger);
+    const rawService = new RunGatewayService(relationDb, session, agents, loop, logger, evaluator, writer);
     this.service = AopProxy.wrap(rawService, { logger }) as RunGatewayService;
   }
 

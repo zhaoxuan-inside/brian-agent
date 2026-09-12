@@ -31,7 +31,9 @@ const offenders = [];
 const all = [];
 const mergeCandidates = [];
 for (const layer of LAYERS) {
-  for (const file of walk(path.join(BACKEND, layer))) {
+  const layerPath = path.join(BACKEND, layer);
+  if (!fs.existsSync(layerPath)) continue;
+  for (const file of walk(layerPath)) {
     const rel = path.relative(BACKEND, file);
     const src = fs.readFileSync(file, 'utf8');
     const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);

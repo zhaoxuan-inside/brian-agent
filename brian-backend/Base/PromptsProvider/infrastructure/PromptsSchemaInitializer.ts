@@ -8,6 +8,7 @@
  */
 
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import {
   PROMPT_TEMPLATE_TABLE,
   PROMPT_TEMPLATE_USAGE_TABLE,
@@ -25,11 +26,49 @@ export class PromptsSchemaInitializer {
    */
   constructor(private readonly relationDb: RelationDBAccess) {}
 
+  // ===== 原始方法（保留作为参考）=====
+  // init(): void {
+  //   this.relationDb.executeRaw(`
+  //     CREATE TABLE IF NOT EXISTS "${PROMPT_TEMPLATE_TABLE}" (
+  //       "id"                    TEXT    NOT NULL PRIMARY KEY,
+  //       "created"               INTEGER NOT NULL,
+  //       "updated"               INTEGER NOT NULL,
+  //       "prompt_template_title" TEXT    NOT NULL,
+  //       "prompt_template_brief" TEXT,
+  //       "prompt_template"       TEXT    NOT NULL,
+  //       "is_system"             INTEGER NOT NULL DEFAULT 0,
+  //       "seed_hash"             TEXT,
+  //       "enable"                INTEGER NOT NULL DEFAULT 1
+  //     )
+  //   `);
+  //   this.addColumnIfMissing('is_system', 'INTEGER NOT NULL DEFAULT 0');
+  //   this.addColumnIfMissing('seed_hash', 'TEXT');
+  //   this.relationDb.executeRaw(
+  //     `UPDATE "${PROMPT_TEMPLATE_TABLE}" SET "is_system" = 1 WHERE "id" LIKE 'builtin.%'`,
+  //   );
+  //   this.relationDb.executeRaw(
+  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_created" ON "${PROMPT_TEMPLATE_TABLE}" ("created")`,
+  //   );
+  //   this.relationDb.executeRaw(
+  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_updated" ON "${PROMPT_TEMPLATE_TABLE}" ("updated")`,
+  //   );
+  //   this.relationDb.executeRaw(
+  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_prompt_template_title" ON "${PROMPT_TEMPLATE_TABLE}" ("prompt_template_title")`,
+  //   );
+  //   // ...
+  // }
+
+  // ===== 修改后的方法（全量 UUID 校验与表结构初始化） =====
   /**
-   * 创建所有 PromptsProvider 表（IF NOT EXISTS 语义，可安全重复调用）。
+   * 创建所有 PromptsProvider 表并迁移历史非 UUID 主键为标准 UUID。
    */
   init(): void {
-    // prompt_template 表
+    this.createTables();
+    this.migrateLegacyNonUuidTemplates();
+  }
+
+  /** 创建表结构与索引（数据处理） */
+  private createTables(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${PROMPT_TEMPLATE_TABLE}" (
         "id"                    TEXT    NOT NULL PRIMARY KEY,
@@ -43,12 +82,8 @@ export class PromptsSchemaInitializer {
         "enable"                INTEGER NOT NULL DEFAULT 1
       )
     `);
-    // ===== 2026-09-11 迁移：老库补列 + 存量 builtin 行补系统标记 =====
     this.addColumnIfMissing('is_system', 'INTEGER NOT NULL DEFAULT 0');
     this.addColumnIfMissing('seed_hash', 'TEXT');
-    this.relationDb.executeRaw(
-      `UPDATE "${PROMPT_TEMPLATE_TABLE}" SET "is_system" = 1 WHERE "id" LIKE 'builtin.%'`,
-    );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_created" ON "${PROMPT_TEMPLATE_TABLE}" ("created")`,
     );
@@ -59,7 +94,6 @@ export class PromptsSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_prompt_template_title" ON "${PROMPT_TEMPLATE_TABLE}" ("prompt_template_title")`,
     );
 
-    // prompt_template_usage 表（按天使用次数统计）
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${PROMPT_TEMPLATE_USAGE_TABLE}" (
         "id"                 TEXT    NOT NULL PRIMARY KEY,
@@ -77,7 +111,6 @@ export class PromptsSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_USAGE_TABLE}_usage_date" ON "${PROMPT_TEMPLATE_USAGE_TABLE}" ("usage_date")`,
     );
 
-    // prompts_config 配置表
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${PROMPTS_CONFIG_TABLE}" (
         "config_key"   TEXT    NOT NULL PRIMARY KEY,
@@ -87,6 +120,46 @@ export class PromptsSchemaInitializer {
         "updated"      INTEGER NOT NULL
       )
     `);
+  }
+
+  /** 迁移存量非 UUID 模板为标准 UUID（数据处理） */
+  private migrateLegacyNonUuidTemplates(): void {
+    try {
+      const rows = this.relationDb.queryRaw<{ id: string; prompt_template_title: string }>(
+        `SELECT "id", "prompt_template_title" FROM "${PROMPT_TEMPLATE_TABLE}"`,
+        [],
+      );
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      for (const row of rows ?? []) {
+        if (!row.id || uuidRegex.test(row.id)) continue;
+        const existing = this.relationDb.queryRaw<{ id: string }>(
+          `SELECT "id" FROM "${PROMPT_TEMPLATE_TABLE}" WHERE "prompt_template_title" = ? AND "id" != ? LIMIT 1`,
+          [row.prompt_template_title, row.id],
+        );
+        if (existing?.[0]?.id && uuidRegex.test(existing[0].id)) {
+          this.rebindPromptId(row.id, existing[0].id);
+          this.relationDb.executeRaw(`DELETE FROM "${PROMPT_TEMPLATE_TABLE}" WHERE "id" = ?`, [row.id]);
+        } else {
+          const newId = IdGenerator.generate();
+          this.relationDb.executeRaw(`UPDATE "${PROMPT_TEMPLATE_TABLE}" SET "id" = ? WHERE "id" = ?`, [newId, row.id]);
+          this.rebindPromptId(row.id, newId);
+        }
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** 级联更新关联表的 prompt_template_id 引用（数据处理） */
+  private rebindPromptId(oldId: string, newId: string): void {
+    const tables = ['agent', 'runtime_agent_def', 'prompt_template_usage', 'user_profile_direction'];
+    for (const table of tables) {
+      try {
+        this.relationDb.executeRaw(`UPDATE "${table}" SET "prompt_template_id" = ? WHERE "prompt_template_id" = ?`, [newId, oldId]);
+      } catch {
+        /* best effort */
+      }
+    }
   }
 
   /** 补列迁移（数据处理；列已存在则跳过） */

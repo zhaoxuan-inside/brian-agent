@@ -48,3 +48,20 @@ export function formatTokens(n?: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
   return `${(n / 1_000_000).toFixed(1)}M`
 }
+
+/**
+ * 耗时（毫秒）→ 秒级展示（0.85s / 3.2s / 1m20s）。
+ *
+ * 统一为秒为单位：不足 1 秒保留 2 位小数，1 秒以上保留 1 位小数，超过 60 秒折分为分钟+秒。
+ */
+export function formatDuration(ms?: number): string {
+  if (!ms && ms !== 0) return '—'
+  const totalSec = ms / 1000
+  if (totalSec >= 60) {
+    const m = Math.floor(totalSec / 60)
+    const s = Math.round(totalSec % 60)
+    return s > 0 ? `${m}m${s}s` : `${m}min`
+  }
+  if (totalSec >= 1) return `${totalSec.toFixed(1)}s`
+  return `${totalSec.toFixed(2)}s`
+}

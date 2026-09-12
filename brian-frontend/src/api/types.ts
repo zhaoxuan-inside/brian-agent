@@ -57,6 +57,10 @@ export interface ThinkingStep {
   passed?: boolean
   tokenUsage?: number
   elapsedMs?: number
+  /** 本轮输入（发送给 LLM 的 prompt / 用户消息） */
+  input?: string
+  /** 本轮输出（LLM 回复内容） */
+  output?: string
 }
 
 export interface ThinkingBlock extends BlockBase {
@@ -77,6 +81,7 @@ export interface ThinkingBlock extends BlockBase {
     role?: string
     llmId?: string
     soulId?: string
+    promptId?: string
     skills?: string[]
     mcps?: string[]
   }
@@ -295,6 +300,100 @@ export interface PermissionCardData {
   status: 'pending' | 'allowed' | 'denied'
   askedAt?: number
   answeredAt?: number
+  /** 所属 V2 run（= workId），用于“在思考过程中查看详情”定位 */
+  runId?: string
+}
+
+// ============================================================
+// V2 完整执行轨迹（Runtime 直连 run：timeline/tools/permissions/run）
+// 后端 buildThinkingBlocksFromRuntime 组装，前端“思考过程”弹窗按此渲染
+// ============================================================
+
+export interface ThinkingTimelineItem {
+  seq: number
+  ts: number
+  event: string
+  title: string
+  detail?: string
+  kind: string
+  /** 执行内容卡片跳转锚点（data-anchor；空串表示不可跳转） */
+  target?: string
+}
+
+export interface ThinkingToolTrace {
+  index: number
+  partId: string
+  /** 执行内容卡片跳转锚点（data-anchor） */
+  targetKey?: string
+  toolId: string
+  params: unknown
+  result: unknown
+  status: string
+  elapsedMs: number
+  tokenCount: number
+}
+
+export interface ThinkingPermissionTrace {
+  permissionId: string
+  /** 执行内容卡片跳转锚点（data-anchor） */
+  targetKey?: string
+  toolId: string
+  input: unknown
+  status: string
+  askedAt: number
+  answeredAt: number
+  autoApproved?: boolean
+}
+
+export interface ThinkingRunTrace {
+  id: string
+  status: string
+  agentDefId: string
+  agentName: string
+  llmId?: string
+  soulId?: string
+  durationMs: number
+  tokenUsage: number
+  /** 输入 Token 合计（LLMProvider 明细账，提供商返回真实值） */
+  inputTokens?: number
+  /** 输出 Token 合计（LLMProvider 明细账，提供商返回真实值） */
+  outputTokens?: number
+  budgetUsed: number
+  toolCount: number
+  permissionCount: number
+  thinkChars: number
+  replyChars: number
+  startedAt: number
+  settledAt: number
+}
+
+export interface ThinkingContextRound {
+  round: number
+  /** 执行内容卡片跳转锚点（data-anchor） */
+  targetKey?: string
+  messageCount: number
+  messages: Array<{ role: string; content: string }>
+}
+
+/** 运行节点详情：意图分析/Agent 选择/组件装配/模型与提示词等过程节点的结构化明细 */
+export interface ThinkingNodeTrace {
+  seq: number
+  /** 执行内容卡片跳转锚点（data-anchor） */
+  targetKey: string
+  title: string
+  kind: string
+  detail?: string
+  fields: Array<{ label: string; value: string }>
+}
+
+export interface ThinkingTrace {
+  run: ThinkingRunTrace
+  timeline: ThinkingTimelineItem[]
+  tools: ThinkingToolTrace[]
+  permissions: ThinkingPermissionTrace[]
+  /** 运行节点结构化明细（每个时间线节点都有可点开的结构化详情） */
+  nodes: ThinkingNodeTrace[]
+  contextRounds: ThinkingContextRound[]
 }
 
 // ============================================================

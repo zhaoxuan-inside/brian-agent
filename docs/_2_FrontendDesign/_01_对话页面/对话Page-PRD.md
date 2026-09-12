@@ -133,9 +133,22 @@
 #### 4.3.6 块级交互与反馈
 -   **思考过程弹窗**：对话区与 ChatMap 区每条消息框底部提供「思考过程」按钮（紫色胶囊 + 大脑图标）。点击后：
     1. 立即打开 `ThinkingModal` 弹窗（含流式场景下 target 为空时实时展示当前流式思考块）；
-    2. 并行调用 `GET /api/chat/thinking?info_id=...` 从后端采集该消息对应 Work 的 Agent 执行轨迹（ThinkingChain Blocks 与 Planning 策略拆解 Task/Agent DAG），返回后弹窗切换到历史思考块；
+    2. 并行调用 `GET /api/chat/thinking?info_id=...` 从后端采集该消息对应 Work 的 Agent 执行轨迹（ThinkingChain Blocks、执行时间线、工具/授权明细、运行概览与上下文轮次），返回后弹窗切换到历史数据；
     3. 采集失败或反查不到 work_id 时展示「暂无思考过程」空态，不阻断弹窗关闭。
-    弹窗顶部优先展示 **Planning 策略拆解**（`PlanningBreakdown`）：任务级拆解子任务清单（领域/复杂度/优先级/依赖）、任务→Agent 映射 DAG（复用 `AgentDagFlow`）、JSONNode 编排执行步骤（状态/耗时）；下方逐 Agent 展示思考块。流式期间拆解数据随 `plan_created` / `agent_dag_created` / `dag_node_start` / `dag_node_end` 事件实时填充。
+
+    弹窗内容自上而下固定四段顺序：
+
+    1. **运行概览**：整次问答汇总——耗时（settled-started）、Token 输入/输出（LLMProvider 明细账 `llm_call_log` 按 work_id=runId 求和，均为模型提供商返回真实值，空账回退 `runtime_message` 输出侧）、工具调用次数、授权次数；
+    2. **基础上下文**（ContextProvider 提供）：`ThinkingContext` 组件聚合各思考块的 context 字段——用户画像、引用消息按采集方式分类（显式引用/时间线/钉住/语义相似/标签相关/关键词/随机/手动勾选）与数量统计、分类保存的上下文 ID 列表、最近工作、相关知识/编排策略；下方附每轮上下文轮次（wire 消息明细，即模型实际输入侧）；
+3. **执行时间线**：run 级事件按时间序排布（受理/需求确认/Agent 选择/LLM 与提示词选定/组件装配/开始执行/上下文构建/多轮思考与工具执行/评估 Agent 质量打分/写作 Agent 美化排版/回复/完成），高频 delta 聚合为统计节点；**每个节点可点击**——点击后 smooth 滚动到下方「执行内容」中对应卡片并短暂高亮（过程节点→「运行节点」卡片、工具事件→工具卡片、授权事件→授权记录卡片、思考/回复事件→深度思考卡片、上下文构建→上下文轮次卡片，`data-anchor` 关联）；任务进行中实时追加并自动滚动到底部；轨迹来源为 `stream_event` 逐条真实事件（非假数据），涵盖 `需求确认 → 选择 Agent → 组件装配 → 执行 Agent → 评估 Agent → 写作 Agent` 完整五阶段。
+     4. **执行内容**：时间线中每个节点的工作详细内容——**扁平分组行**（运行节点/工具调用/授权记录/深度思考四个子块由独立卡片改为分组标题行 + 下方卡片列表，消除三层卡片嵌套）：运行节点（意图分析/Agent 选择/组件装配/模型与提示词/计划/评估/写作排版等过程节点的结构化字段明细）、工具调用（输入参数/返回结果/状态/耗时，可折叠展开）、授权记录（询问/应答时间、授权参数、自动放行标记）、深度思考（各 Agent 的 ThinkingChain Block：Agent 构建组件、思考步骤 THINK/工具步骤 ACT/最终输出）。
+
+    **Agent 构建信息**：深度思考中每个 Agent 卡片头部展示构建组件（Prompt 提示词模板 / Soul 人格 / LLM 模型 / Skill 技能 / MCP 服务）名称胶囊，点击弹出 `ComponentInfoModal` 组件详情（按 kind 从 `/api/prompts`、`/api/config/soul`、`/api/config/model`、`/api/skill`、`/api/config/mcp` 拉取并展示友好字段 + 原始 JSON）。
+
+    **CoT / ReACT 每轮输入输出**：思考步骤 Tab 中每个步骤（轮）展示「本轮输入」（该轮发送给 LLM 的 prompt / 用户消息）与「本轮输出」（该轮 LLM 回复内容）——Runtime 直连路径按 `runtime_message` 的 user→assistant 轮次配对，编排历史路径按迭代 `think.prompt/raw_response`、`reflect.prompt/raw_response` 还原。
+
+    **耗时秒级统一**：运行概览、工具卡片、Agent 卡片与思考步骤的耗时统一经 `formatDuration`（`utils/format.ts`）展示为秒级（`0.85s` / `3.2s` / `1m20s`），不再展示毫秒。
+
     弹窗支持点击遮罩 / 右上角 X 关闭；流式对话进行中（`done` 事件前）弹窗自动弹出并实时展示思考块，`done`/`error` 事件后自动关闭。
 -   **悬浮工具栏**：鼠标悬停 Block 区域 300ms 后浮现轻量操作栏（复制、引用、反馈）；移出后延迟 200ms 消失；移动端改为长按触发底部面板。
 -   **本地视觉状态**：折叠/展开、详情展开等状态由独立本地状态管理，不与数据层混合，页面刷新后重置。
@@ -191,6 +204,29 @@
 -   **移动端适配**：针对触摸操作、横向溢出、工具栏触发方式做专项适配。
 
 ## 7. 变更记录
+
+### [2026-09-12] 工具盒改圆球 + 流式 Markdown 渲染
+- **变更原因**：①工具执行长条卡纵向占位大、多工具堆叠时间线冗长；②流式过程中 Markdown 从不渲染（TextBlock 恒纯文本；MessageCard 被全局 isStreaming 误伤，之前问答的 Markdown 在本轮结束前全部退化为纯文本）。
+- **功能变更**：
+  1. `ToolCallBlock.vue` 改版为状态圆球：默认仅 36px 圆球（执行中琥珀旋转图标、完成绿、失败红，右下状态点，悬停显示工具名+状态），右侧配工具名小字；点击展开详情面板——参数 JSON 缩进展示，响应按类型渲染（对象/JSON 串 → JSON 缩进块，其余 → Markdown 渲染），空参/无返回有占位文案。
+  2. `TextBlock.vue` 正文改 Markdown 渲染：流中经 `createThrottledMarkdownRenderer(300)` 节流（最多 300ms 全量解析一次，避免每帧重解析的 O(n²) 开销），流结束翻转即全量对齐；标题分支保持纯文本样式。
+  3. `ChatArea.vue` — MessageCard 的 `:is-streaming` 恒传 `false`：流式文本实际承载于临时 TextParagraph Block（自带 streaming 状态），从不在卡片内逐字更新；原全局绑定导致整轮流式期间所有历史回答卡退化为纯文本。
+- **行为差异**：
+  - 修改前：工具=长条卡（空盒问题已于同日早前修复）；流式全程纯文本、结束后才有排版。
+  - 修改后：工具=圆球+按需展开；流式过程中即见排版（300ms 级延迟），历史问答排版不受本轮流式影响。
+- **新增边界条件**：流中未闭合的 Markdown  fence/标记按 marked 容错渲染，结束后自动规整； throttle 缓存按组件实例隔离，多块互不串扰。
+
+### [2026-09-12] 对话区四问修复（Block 对齐 + 工具盒 + 中间文本 + 永久批准）
+- **变更原因**：问答复盘——①流式文本（TextParagraph）靠左落在用户消息同侧，被误读为用户输入；②工具执行盒恒为空（字段映射错位 + result 从未回填）且多个空盒堆叠过长；③"好的，我来帮你查一下…""页面还没加载完…"等中间过程进了对话框；④工具授权每次重复确认。
+- **功能变更**：
+  1. `ChatArea.vue` — Block 按 `role` 对齐：仅 `user` 靠左（`mr-auto`），`assistant/tool/system` 靠右（`ml-auto`），与消息气泡左右侧一致。
+  2. `chatStreamEvents.ts` — 后端 `{part_id, tool_id, input}` 归一化（input 支持 JSON 串/对象）；块 id 按 `part_id` 关联，started/launch/result 命中同一块（更新不重复建）；`tool.result` 回填 result 并收敛 `done/error`。`ToolCallBlock.vue` 折叠态新增状态文案与结果摘要单行预览。
+  3. 中间过程只进思考过程：最终回复仅由最终轮 `reply.delta` 提供（后端转轮分流，见 Loop-PRD）；前端 `permission.answered` 回执翻卡（自动放行无点击时不悬挂 pending）。
+  4. `PermissionConfirmCard.vue` 新增"始终允许"按钮 → `answerPermission(remember=true)` → 工具入后端信任表（跨会话、重启保留），后续同工具自动放行。
+- **行为差异**：
+  - 修改前：流式文本/工具盒靠左（用户侧）；工具盒空且多；中间叙述占对话框气泡（流式 + 历史各一条）；每次执行都弹窗授权。
+  - 修改后：用户文本唯一靠左；工具盒含名/参/结果/状态且单块更新；对话框仅最终回复，中间叙述只在"思考过程"弹窗（含历史重建的 THINK 步骤）；信任工具不再打扰。
+- **新增边界条件**：信任粒度为整工具（不含参数）；撤销走 `configRuns({trusted_tools})` 全量覆盖（暂无管理页入口）。
 
 ### [2026-08-25] ChatMap 连线逻辑重构：顺序问答纵向排布 + 引用问答横向对齐
 - **变更原因**：原布局把「未复选上下文」的追问也生成 `CITATION` 边并横向布局，导致默认问答被画成横向；引用问答此前为「整列底部对齐」，与需求「引用问题框与被引用最下面消息框对齐」不符。

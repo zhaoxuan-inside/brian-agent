@@ -46,6 +46,8 @@ export class ExecAgentLoopInput extends Input {
   session_key!: string;
   /** 引用 runtime_session.id（消息/Part 持久化） */
   session_id!: string;
+  /** 交互标识（= trace_id，用于 Token 归因到 interact 维度） */
+  interact_id?: string;
   /** 用户消息（写入会话后作为首条 wire 消息） */
   user_message!: string;
   /** 系统提示（Agents 声明式快照阶段3 接入前显式传入） */
@@ -66,6 +68,8 @@ export class ExecAgentLoopInput extends Input {
   signal?: AbortSignal;
   /** 空闲看门狗毫秒数（透传 LLMEventsRunner，缺省 30000） */
   idle_watchdog_ms?: number;
+  /** 延迟最终回复与完成事件（由外部排版/评估流程在循环后统一输出） */
+  defer_final_reply?: boolean;
 }
 
 /** execAgentLoop 出参 */

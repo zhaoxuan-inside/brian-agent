@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SoulAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_IDS } from '@brian-agent/base';
+import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SoulCoreContext,
@@ -140,14 +140,14 @@ export class SoulCoreService {
     const availableSouls = soOutput.list;
 
     // ===== 第 2 层：LLM 打分推荐 =====
-    // ===== 修改后（2026-09-11）：threshold 淘汰后的空 = "无合格人设"，不再逐题自生成（防生成风暴）；
-    // Layer-3 自生成仅在库内无可启用 Soul 时进行 =====
+    // 当现有 Soul 均不符合当前任务特质（低于采纳阈值）或 Soul 库为空时，自动生成专属 Soul
     let selectedSoulId = '';
     if (availableSouls.length > 0) {
       selectedSoulId = await this.rankSoulsByLLM(
         agent_id, context_id, interact_id, task_content, task_domain, availableSouls, config,
       );
-    } else {
+    }
+    if (!selectedSoulId) {
       selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, interact_id, task_content, task_domain);
     }
 
@@ -560,8 +560,9 @@ export class SoulCoreService {
         soul_usage: s.soul_usage ?? '',
       }))),
     };
+    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
     const selectionPrompt = await this.renderMatchPrompt(
-      config?.prompt_template_id ?? PROMPT_IDS.soulMatch,
+      templateId,
       selectionVariables,
     );
     const llmId = config?.llm_id || '';
@@ -572,8 +573,22 @@ export class SoulCoreService {
       max_tokens: 256,
     });
     const threshold = config?.score_threshold ?? ScoreThreshold.Default;
-    return filterByThreshold(parseRankingCandidates(result), threshold)[0]?.id
-      ?? availableSouls[0]?.id ?? '';
+    const candidates = parseRankingCandidates(result);
+    const filtered = filterByThreshold(candidates, threshold);
+    return filtered[0]?.id ?? '';
+  }
+
+  /** 获取 Soul 匹配模板 ID（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Soul 匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ProcessingError('未找到 Soul 匹配提示词模板');
   }
 
   /**

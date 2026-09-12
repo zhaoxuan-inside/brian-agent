@@ -15,7 +15,6 @@ import {
   InfoType,
   HandleResultType,
   classifyHandleResult,
-  PROMPT_IDS,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -527,7 +526,7 @@ export class AgentExecutionService {
     const system = await this.loadSoulSystem(input.soul_id);
     const prompt = await this.renderOrFallback(
       config?.think_prompt_template_id,
-      PROMPT_IDS.think,
+      'Worker Think',
       {
         agent_name: input.agent_name,
         soul: system,
@@ -659,7 +658,7 @@ export class AgentExecutionService {
     const system = await this.loadSoulSystem(input.soul_id);
     const prompt = await this.renderOrFallback(
       config?.reflect_prompt_template_id,
-      PROMPT_IDS.reflect,
+      'Worker Reflect',
       {
         agent_name: input.agent_name,
         soul: system,
@@ -693,7 +692,7 @@ export class AgentExecutionService {
     const system = await this.loadSoulSystem(input.soul_id);
     const prompt = await this.renderOrFallback(
       config?.answer_prompt_template_id,
-      PROMPT_IDS.answer,
+      'Worker Answer',
       {
         agent_name: input.agent_name,
         soul: system,
@@ -1196,21 +1195,21 @@ export class AgentExecutionService {
   }
 
   private thinkPromptRef(env: AgentExecutionEnv, iteration: number) {
-    return buildPromptRef(env.config?.think_prompt_template_id, PROMPT_IDS.think, {
+    return buildPromptRef(env.config?.think_prompt_template_id, 'Worker Think', {
       task_content: env.input.task_content, agent_name: env.agentName, domain: env.domain,
       iteration, tools_json: env.toolsJson, soul_id: env.agent.soul_id,
     });
   }
 
   private reflectPromptRef(env: AgentExecutionEnv, iteration: number, maxIter: number) {
-    return buildPromptRef(env.config?.reflect_prompt_template_id, PROMPT_IDS.reflect, {
+    return buildPromptRef(env.config?.reflect_prompt_template_id, 'Worker Reflect', {
       task_content: env.input.task_content, agent_name: env.agentName, domain: env.domain,
       iteration, max_iterations: maxIter, tools_json: env.toolsJson, soul_id: env.agent.soul_id,
     });
   }
 
   private answerPromptRef(env: AgentExecutionEnv) {
-    return buildPromptRef(env.config?.answer_prompt_template_id, PROMPT_IDS.answer, {
+    return buildPromptRef(env.config?.answer_prompt_template_id, 'Worker Answer', {
       task_content: env.input.task_content, agent_name: env.agentName, domain: env.domain,
       tools_json: env.toolsJson, soul_id: env.agent.soul_id,
     });
@@ -1308,18 +1307,35 @@ export class AgentExecutionService {
 
   private async renderOrFallback(
     templateId: string | undefined,
-    builtinId: string,
+    fallbackTitle: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
-    const id = templateId || builtinId;
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    let id = templateId;
+    if (!id) {
+      const soOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: fallbackTitle }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (p.prompt_template_title?.includes(fallbackTitle) || p.prompt_template_brief?.includes(fallbackTitle)));
+      if (hit) {
+        id = hit.id;
+      } else {
+        const anyHit = soOut.list?.find((p) => p.enable !== false);
+        if (anyHit) id = anyHit.id;
+      }
+    }
+    if (!id) {
+      throw new ValidationError(`未找到匹配的 Prompt 模板: ${fallbackTitle}`);
+    }
     const out = new ExecPromptOutput();
-    const ok = await this.promptsAccess.execPrompt(
+    await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), { id, variables }),
       out,
       new PromptContext(),
     );
-    if (ok && out.prompt) return out.prompt;
+    if (out.prompt) return out.prompt;
     throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 

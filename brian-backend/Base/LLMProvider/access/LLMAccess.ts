@@ -54,6 +54,8 @@ import {
   VisualizedLLMOutput,
   EnableLLMInput,
   EnableLLMOutput,
+  SoTokenUsageInput,
+  SoTokenUsageOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
@@ -222,5 +224,11 @@ export class LLMAccess {
   async enableLLM(input: EnableLLMInput, output: EnableLLMOutput, context: LLMContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.enableLLM(input, output, context, metrics, report);
+  }
+
+  /** 按 session / interact / work 分级统计 Token（LLMProvider 明细账求和） */
+  async soTokenUsage(input: SoTokenUsageInput, output: SoTokenUsageOutput, context: LLMContext,
+  ): Promise<boolean> {
+    return this.service.soTokenUsage(input, output, context);
   }
 }

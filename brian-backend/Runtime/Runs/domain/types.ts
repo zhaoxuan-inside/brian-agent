@@ -181,6 +181,8 @@ export class SoRunStatusOutput extends Output {
 export class WaitPermissionInput extends Input {
   /** 权限请求 ID（Loop 生成并随 permission.asked 事件下发） */
   permission_id!: string;
+  /** 工具 ID（2026-09-12 新增：信任表命中时直接放行，无需挂起） */
+  tool_id?: string;
 }
 
 /** waitPermission 出参 */
@@ -189,6 +191,8 @@ export class WaitPermissionOutput extends Output {
   approved = false;
   /** 是否已应答（超时/未应答时 false） */
   answered = false;
+  /** 是否由信任表自动放行（2026-09-12 新增：无用户交互） */
+  auto_approved = false;
 }
 
 /** answerPermission 入参 */
@@ -197,6 +201,8 @@ export class AnswerPermissionInput extends Input {
   permission_id!: string;
   /** 是否批准 */
   approved!: boolean;
+  /** 是否记住为信任工具（2026-09-12 新增：批准且记住时写入信任表，后续同工具自动放行） */
+  remember?: boolean;
 }
 
 /** answerPermission 出参 */
@@ -215,12 +221,16 @@ export class ConfigRunsInput extends Input {
   enabled?: boolean;
   /** 权限等待超时（毫秒；超时默认拒绝；2026-09-11 新增） */
   permission_wait_timeout_ms?: number;
+  /** 信任工具表全量覆盖（2026-09-12 新增：用于撤销信任；缺省不改动） */
+  trusted_tools?: string[];
 }
 
 /** configRuns 出参 */
 export class ConfigRunsOutput extends Output {
   /** 当前配置 */
   permission_wait_timeout_ms?: number;
+  /** 当前信任工具表（2026-09-12 新增） */
+  trusted_tools?: string[];
 }
 
 // ---------------------------------------------------------------------------

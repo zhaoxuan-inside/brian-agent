@@ -72,15 +72,18 @@
 **影响的端点**：
 - `POST /api/chat`、`POST /api/chat/stream` — WorkAgent 的 Think/Reflect 阶段现在能正确感知当前任务主体（城市/关键词），不再被历史上下文中的旧主体误导。
 
-### [2026-08-25] 上下文文本化收敛到 PromptCatalog（新增 contextFormatter）
+### [2026-09-12] 全量 ID 规范化为 UUID + 移除代码硬编码种子播种
 
-**变更原因**：上下文结构化数据 → prompt 片段文本的拼接逻辑（`formatContextCategories`）原散落在 Agent 层 `shared/signature.ts`，被 AgentExecution / Writer / Planner / PromptRebuilder 多处重复引用，职责不清。上下文文本化属于 Prompt 装配层职责，应收敛到 Base 层 PromptCatalog 统一承载。
+**变更原因**：
+1. 废除 `builtin.*` / `strategy_selector_prompt` 等字符串 ID，全系统 ID 统一为标准 UUID 格式；
+2. 移除启动时代码向 `prompt_template` 播种内置模板的硬编码逻辑（`PromptCatalogAccess.seed`），Prompt 模板全生命周期由 `PromptsProvider` 与 DB `prompt_template` 表统一管理，快照与恢复由专门的配置管理模块承载。
 
 **修改的方法**：
-- 新增 `Base/PromptCatalog/contextFormatter.ts` — 从 Agent 层迁移 `formatContextCategories` 及 `ContextItemLike` / `ContextCategoriesLike` / `ContextOutputLike` 纯接口（不依赖 Core 层类型），经 `PromptCatalog/index.ts` 与 `@brian-agent/base` 统一导出；
-- `Agent/shared/signature.ts` — 移除 `formatContextCategories` 与相关接口，仅保留 Agent 层专用的 `buildTaskSignature` / `parseJsonObject` / `parseTaskContentAndContext`；
-- `AgentExecutionService` / `WriterAgentService` / `PlannerAgentService` / `PromptRebuilder` / `shared-full.test` — 改从 `@brian-agent/base` 导入 `formatContextCategories`。
+- `PromptsSchemaInitializer` — 自动迁移存量非 UUID 主键为标准 UUID，并级联更新各引用表；
+- `PromptsAccess.initialize` — 移除 `catalog.seed()` 播种；
+- 移除各模块对硬编码 `PROMPT_IDS` 字符串常量的依赖，统一通过配置或 `PromptsProvider.soPrompt` 动态解析 UUID 模板。
 
 **影响的端点**：
-- 所有将上下文文本化注入 `context_data` 变量的 Agent / Prompt 渲染链路（Think / Reflect / Answer / Writer / Planner）。
+- 所有 Prompt 模板检索、渲染与 Agent 快照装配链路。
+
 

@@ -173,7 +173,7 @@ export class InfoCoreService {
       { field: 'info', value: input.info },
       { field: 'info_length', value: input.info.length },
       { field: 'pin', value: 0 },
-      { field: 'trace_id', value: input.trace_id || '' },
+      { field: 'trace_id', value: (input as { trace_id?: string }).trace_id || metrics?.trace_id || '' },
       { field: 'handle_result_type', value: handleResultType },
     ]);
 

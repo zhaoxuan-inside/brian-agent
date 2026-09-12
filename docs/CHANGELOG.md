@@ -1,3 +1,212 @@
+## [2026-09-12] 全量 ID 规范化为 UUID + 移除代码种子播种 + 任务特质 Soul 匹配与 AgentDef 资产同步修复
+
+**变更原因**：
+1. 系统中存在 `builtin.*` / `strategy_selector_prompt` 等非规范字符串 ID，未遵守「所有 ID 均为标准 UUID 格式」规范；
+2. 启动时通过 `PromptCatalogAccess.seed()` 强制向 `prompt_template` 表播种代码内置模板，违反「配置与模板由 PromptProvider/DB 统一管理，快照与恢复由专门模块负责」的设计原则；
+3. `AgentDefService.insertDefFromAgent` 在将 `AgentBuilder` 构建的 `agent` 写入 `runtime_agent_def` 时将 `soul_id`、`prompt_template_id`、`tools_json`、`model_id` 写入空串，导致运行时快照丢失 Soul 与工具注入；
+4. 当现有 Soul 库中仅有特定类型（如仅编码助手）时，数学推导、文字创作等不同任务类型未能自动生成与匹配差异化特质的专属 Soul。
+
+**修改的方法**：
+- `Base/PromptsProvider/infrastructure/PromptsSchemaInitializer.ts` — 新增存量非 UUID 模板迁移为标准 UUID 的能力，并级联更新各引用表；
+- `Base/PromptsProvider/access/PromptsAccess.ts` — `initialize()` 移除 `catalog.seed()` 硬编码播种；
+- `Core/SoulCoreProvider/application/SoulCoreService.ts` — `matchSoul` 在无合适可用 Soul（均未达采纳阈值）或库为空时，自动调用 `generateAndAddSoul` 为任务领域（数学、写作、代码等）生成具备专属特质的角色设定并赋予 UUID 存入 `soul` 表；移除硬编码 `PROMPT_IDS`，按标题动态从 DB 查询模板 UUID；
+- `Agent/AgentBuilder/application/AgentBuilderService.ts` & `AgentLibraryService.ts` & `AgentExecutionService.ts` & `WriterAgentService.ts` & `PlannerAgentService.ts` & `EvolutorAgentService.ts` & `IntentAgentService.ts` & `SummaryAgentService.ts` — 移除对 `PROMPT_IDS` 的依赖，统一使用 PromptsAccess / DB 动态模板查找；
+- `Runtime/Agents/application/AgentDefService.ts` — 
+  - `insertDefFromAgent`：从 `agent` 资产中同步读取 `soul_id`、`prompt_template_id`、`skill_ids / mcp_ids`，持久化到 `runtime_agent_def` 表的对应字段；
+  - `soAgentSnapshot`：读取 `def.soul_id`（兜底回退 `agent` 绑定）并加载 Soul 内容，上报真实模板 UUID；
+  - `prepareSystemPrompt`：在 Brian 统一身份骨架下将针对任务特质的专属 Soul 注入到 `{{soul}}` 中。
+- `Runtime/test/RuntimeGateway.test.ts` — 新增「Soul 注入：当构建出的 Agent 绑定了 Soul 时，Soul 正确同步到 def 并注入到 system prompt 中」测试用例。
+
+**影响的端点**：
+- `POST /api/chat/stream` — 问答会话中的 Soul 注入与工具数正确生效并展示，不同任务类型具备差异化特质的 Soul。
+- `GET /api/chat/thinking` — 思考过程中的模板 ID、Soul 注入、工具数准确上报并展示真实数据。
+
+## [2026-09-12] 恢复评估 Agent 与写作 Agent 至主链路（完整五阶段闭环）
+
+**变更原因**：用户反馈主链路缺少「评估本次输出质量」与「以最佳形式展示（Markdown 层次排版、Mermaid 流程图）」的完整能力。在 V2 直连执行完成后，重新接入 EvolutorAgent 对 Worker Agent 的输出进行质量打分，并接入 WriterAgent 对最终结果进行 Markdown/Mermaid 结构化美化与排版。
+
+**修改的方法**：
+  - `Base/shared/base/BusinessEvent.ts` — 新增 `WriterCompleted = 'writer.completed'` 业务事件。
+  - `Base/PromptCatalog/catalog.ts` — 升级 `PROMPT_IDS.writer` 模板：明确支持 Markdown 层级结构与 Mermaid 流程图（````mermaid ... ````）排版。
+  - `Runtime/Loop/domain/types.ts` & `AgentLoopService.ts` — `ExecAgentLoopInput` 新增 `defer_final_reply`，在注入 Writer 时由 Loop 延迟发送最终 `reply.delta` 和 `run.finished`。
+  - `Runtime/Runs/application/RunGatewayService.ts` & `RunGatewayAccess.ts` — 新增 `OutputEvaluator` 与 `OutputWriter` 鸭子接口注入：
+    - 执行 Worker Loop 得到粗糙结果；
+    - 阶段四（评估）：调用 `EvolutorAgent.evalWorkAgent` 评估本次输出（正确性/完整性/效率/相关性打分并发布 `evaluation.completed`）；
+    - 阶段五（写作）：调用 `WriterAgent.execWrite` 生成 Markdown 与 Mermaid 流程图，发布 `writer.completed`，发送最终 `reply.delta`，并同步更新消息库；
+    - Gateway 统筹发布 `run.finished`。
+  - `brian-backend/dev-server.ts` — 为 `runtimeGateway` 注入 `evolutorAgent` 和 `writerAgent`，在时间线重建中新增 `writer.completed` 节点支持。
+  - `brian-frontend/src/composables/sseEventTypes.ts` & `ThinkingModal.vue` — 登记 `writer.completed` 事件展示样式与图标。
+  - `Runtime/test/RuntimeGateway.test.ts` — 新增「完整五阶段链路：评估 Agent 打分 + 写作 Agent 美化排版后输出最终 reply.delta」单元测试，42 项测试全绿。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 问答回复经过 Evolutor 评估与 Writer 排版后流式输出，流程图自动以 Mermaid 代码块呈现。
+  - `GET /api/chat/thinking` — 思考过程时间线清晰呈现：`需求确认 → 选择 Agent → 组件装配 → 执行 Agent → 评估 Agent → 写作 Agent` 完整闭环。
+
+**可能存在的问题**：
+  - 写作 Agent 针对简单文本问答仅做轻量 Markdown 格式化，有流程图/时序/步骤时自动生成 Mermaid 流程图；
+  - 写作 Agent 若遇异常，降级直发原始输出，不影响用户正常使用。
+
+## [2026-09-12] 思考过程时间线：全节点详情 + 选择/装配顺序修复 + 轨迹真实性澄清
+
+**变更原因**：某次问答（interact `369b27f9-…`）的「思考过程」时间线大部分环节无详情、只有「上下文构建 / 深度思考」两步可点开，且「选定模型 / 选定提示词」出现在「选中 Agent」之前、组件清单显空，让用户误以为时间线是假数据。排查确认：时间线逐一来自 `stream_event` 真实事件；问题根源是——① `agent.selected` 在 `soSnapshot`（LLM/提示词选定）之后才上报，顺序颠倒；② 意图/选择/组件/模型等过程事件未生成结构化详情；③ 该次为「LLM 命中复用」的 CoT 直问解答（无 ReACT、无 Planner/评估/写作 Agent），复用 def 的 soul/prompt/model/tools 均为空，故组件显空。
+
+**修改的方法**：
+  - `Runtime/Runs/application/RunGatewayService.ts` — `executeRun` 将 `agent.selected` 上报提前到 `soSnapshot` 之前（用 `matchOut.def.name`），使事件顺序符合「需求确认→选择 Agent→组件写作（LLM/Soul/Prompt/Skill/MCP）→开始执行」。
+  - `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：新增 `nodes`（运行节点结构化明细，`pushNode` 生成 `node-{seq}` 锚点）；时间线各过程事件补 `target` 与丰富 `detail`（意图分析含得分/采纳/候选数/命中 Agent/理由，组件装配含 Soul/Prompt/LLM/Skill/MCP 逐一标注（缺省显「（无）/（默认）」），选定模型/提示词含模板与工具数）；`trace` 新增 `nodes`，`trace.run` 组件名去 `w2-` 前缀。
+  - `brian-frontend/src/api/types.ts` — 新增 `ThinkingNodeTrace`，`ThinkingTrace` 新增 `nodes`。
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 「执行内容」新增「运行节点」分组；时间线节点标题区分「开始思考（Agent 推理）」「开始组织回复（Agent 输出）」；思考/回复 summary 节点补 Agent 名说明（同一 Agent 两阶段）。
+  - `brian-frontend/src/utils/format.ts` / `ThinkingBlock.vue` / `AgentDagFlow.vue` — 耗时秒级（`formatDuration`），见上一条变更。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — `trace.nodes` 新增结构化过程节点明细（纯增量字段）；新 run 事件顺序修正（历史 run 数据顺序不变，仅展示侧补详情）。
+  - 思考过程弹窗 — 时间线每个节点均可点开查看结构化详情，思考/回复两阶段标注清晰。
+
+**可能存在的问题**：
+  - 历史 run 的 `agent.selected` 仍位于 LLM/提示词选定之后（数据已定序，仅新 run 修正）；展示侧不改写历史顺序，以免再造“假数据”。
+  - 复用空组件 def 时组件装配显「无 Soul/Prompt/LLM/Skill/MCP 显式绑定」，反映真实空绑定而非造假。
+  - 该次无 Planner/评估/写作 Agent（直答 CoT），故时间线无这些阶段——属真实执行路径（LLM 命中复用、无 ReACT 工具）。
+
+## [2026-09-12] 思考过程弹窗优化：执行内容扁平化 + 耗时秒级 + Agent 构建组件可点击 + 每轮输入输出
+
+**变更原因**：①执行内容三个子块（工具调用/授权记录/深度思考）各套独立卡片容器，形成三层卡片嵌套，视觉层级过深；②耗时以毫秒展示，与真实执行尺度（秒级）不符；③Agent 卡片仅平铺展示 soul/skill/mcp 名称文本，无法查看组件详情，且缺少 Prompt 组件；④CoT/ReACT 思考步骤缺少每轮的输入与输出内容。
+
+**修改的方法**：
+  - `brian-frontend/src/utils/format.ts` — 新增 `formatDuration`（耗时统一秒级：`0.85s` / `3.2s` / `1m20s`）。
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 执行内容段去嵌套：工具调用/授权记录/深度思考由独立卡片改为分组标题行 + 下方卡片列表；工具耗时改 `formatDuration`。
+  - `brian-frontend/src/components/blocks/ThinkingBlock.vue` — 新增构建组件胶囊（Prompt/Soul/LLM/Skill/MCP，点击弹出 `ComponentInfoModal`）；思考步骤展示每轮「本轮输入/本轮输出」；Agent 与步骤耗时改秒级。
+  - `brian-frontend/src/components/chat/ComponentInfoModal.vue`（新增）— 组件详情弹窗：按 kind 从 `/api/prompts`、`/api/config/soul`、`/api/config/model`、`/api/skill`、`/api/config/mcp` 拉取，展示友好字段 + 原始 JSON。
+  - `brian-frontend/src/components/chat/AgentDagFlow.vue` — 节点耗时改秒级。
+  - `brian-backend/dev-server.ts` — `agentInfo` 新增 `promptId`（Runtime 直连取 `agent.components.prompt_template_id`，编排历史取首个 `prompt_ref.template_id`）；steps 新增 `input/output`（Runtime 直连按 `runtime_message` user→assistant 轮次配对，编排历史按迭代 `think/reflect.prompt/raw_response`、`act.result` 还原）。
+  - `brian-frontend/src/api/types.ts` — `ThinkingStep` 新增 `input/output`，`ThinkingBlock.agentInfo` 新增 `promptId`。
+  - `brian-frontend/test/formatDuration.test.ts`（新增）— 秒级格式化单测。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — 思考块新增 `agentInfo.promptId` 与步骤 `input/output`（纯增量字段，老数据缺失时前端不展示对应区块）。
+
+**可能存在的问题**：
+  - 编排历史路径的 ACT 步骤 input 取当轮 `think.prompt`（决策该动作的 prompt），无 think 时缺失；output 取工具结果（与 toolCalls.result 一致）。
+  - Runtime 直连路径的每轮 output 取 assistant 消息文本内容（非逐轮 raw_response），含工具轮无文本时为 `''` 不展示。
+  - 历史数据无 promptId 时「构建组件」区仅展示现有字段。
+
+## [2026-09-12] 思考过程弹窗：执行内容扁平化 + 耗时秒级 + Agent 构建组件可点击 + CoT/ReACT 每轮输入输出
+
+**变更原因**：执行内容三段（工具调用/授权记录/深度思考）各套独立卡片容器再叠卡片，三层嵌套视觉过重；耗时以毫秒展示不符合"秒级"直觉；Agent 卡片仅平铺组件 ID 不可点击，无法查看组件详情；思考步骤只展示推理/工具调用，未展示每轮（iteration）的输入与输出。
+
+**修改的方法**：
+  - `brian-frontend/src/utils/format.ts` — 新增 `formatDuration(ms)`：统一秒级展示（`0.85s` / `3.2s` / `1m20s`），不再输出毫秒。
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 「执行内容」扁平化：三个子块由独立嵌套卡片改为分组标题行 + 下方卡片列表（去掉一层卡片嵌套）；工具卡片耗时改用 `formatDuration`。
+  - `brian-frontend/src/components/blocks/ThinkingBlock.vue` — Agent 头部耗时/步骤耗时改用 `formatDuration`；组件区（Prompt/Soul/LLM/Skill/MCP）改为可点击胶囊，点击弹出 `ComponentInfoModal`；思考步骤 Tab 新增「本轮输入 / 本轮输出」展示。
+  - `brian-frontend/src/components/chat/ComponentInfoModal.vue`（新增）— 组件详情弹窗：按 kind 拉取（`/api/prompts`、`/api/config/soul`、`/api/config/model`、`/api/skill`、`/api/config/mcp`）并展示友好字段 + 原始 JSON，未命中时展示原始引用。
+  - `brian-frontend/src/components/chat/AgentDagFlow.vue` — 节点耗时展示改用 `formatDuration`（秒级）。
+  - `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：steps 按 `runtime_message` 轮次配对补 `input`（该轮前最近的 user 消息）/ `output`（assistant 消息内容或工具结果）；`agentInfo` 新增 `promptId`（`components.prompt_template_id`）。编排历史重建路径：steps 按迭代补 `input`/`output`（`think.prompt/raw_response`、`reflect.prompt/raw_response`），`agentInfo` 新增 `promptId`（`firstPromptRef.template_id`）。
+  - `brian-frontend/src/api/types.ts` — `ThinkingStep` 新增 `input`/`output`；`ThinkingBlock.agentInfo` 新增 `promptId`。
+  - `brian-frontend/test/formatDuration.test.ts`（新增）— `formatDuration` 秒级展示单元测试（空值/亚秒/秒/分钟）。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — blocks.steps 携带 `input`/`output`、agentInfo 携带 `promptId`（纯增量字段，老数据缺失时前端自动隐藏）；耗时展示全面切秒级。
+  - 思考过程弹窗（实时流式与历史回放）— 执行内容嵌套层级减少、Agent 构建组件可点击查看详情、思考步骤逐轮展示输入输出。
+
+**可能存在的问题**：
+  - 老历史 trace 无迭代 `prompt/raw_response` 时步骤无 input/output（隐藏，不报错）；`promptId` 缺失时 Prompt 胶囊不显示。
+  - `ComponentInfoModal` 依赖 `configApi`/`skillApi` 接口，某类组件接口异常时该 kind 弹窗展示错误文案，不影响其他组件查看。
+
+## [2026-09-12] 运行概览输入Token缺失修复 + Agent名清理 + llm_call_log schema修复
+
+**变更原因**：运行概览Token显示输入恒为 0（llm_call_log 表缺 `updated` 列，newRecord() 每次插入静默失败，明细账恒空）；且运行概览/深度思考头部展示了内部运行时 Agent 名（w2-xxx-8位hex 后缀）。
+
+**修改的方法**：
+  - `Base/LLMProvider/infrastructure/LLMSchemaInitializer.ts` — llm_call_log 建表补充 `updated` 列 + 存量库 ALTER TABLE 迁移（newRecord 恒补 id/created/updated 三列）。
+  - `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime` 明细账为空时输入侧按 prompt 字符数/4 预估（不再恒记 0，system 提示词与 wire 消息合计）；agentName 去掉 `w2-` 前缀与 8 位 hex 随机后缀，展示人类可读名称。
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 运行概览卡片移除内部 Agent 名行（整体问答不展示单个 Agent 内部运行时名称）。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — trace.run/block 的 agentName 与 inputTokens 显示更合理；老数据（无明细账）输入 Token 为预估值。
+
+**可能存在的问题**：
+  - 输入 Token 预估为字符数/4 近似值，非提供商真实值；提供商返回真实 usage 的明细账写入后（schema 已修）自动恢复真实值。
+  - 运行概览不再显示 Agent 名，Agent 名仅在"深度思考"块头部展示。
+
+## [2026-09-12] 思考过程弹窗四段式重组（运行概览 → 基础上下文 → 执行时间线 → 执行内容）
+
+**变更原因**：思考过程弹窗信息层次混乱：上下文/工具/授权/深度思考平铺并列，无"概览-上下文-时序-明细"的主次结构；执行时间线节点与执行明细割裂，无法从时间线直接定位某项工作的详细内容。
+
+**修改的方法**：
+  - `brian-backend/dev-server.ts` — 执行时间线节点新增 `target` 跳转锚点：tool.started/result→`tool-{part_id}`（无 part_id 用顺序 `tool-idx-N`）、permission.asked/answered→`perm-{permission_id}`、think/reply 相关→`agent-0`、context.built→`ctx-{round}`；trace.tools/permissions/contextRounds 同步补 `targetKey` 对应锚点。
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 重排为四段：①运行概览 ②基础上下文（`ThinkingContext` 组件聚合 context 字段 + 每轮上下文轮次，原底部"上下文"区块并入，含上下文轮次卡片锚点）③执行时间线（节点可点击，`scrollToAnchor` smooth 滚动 + `thinking-jump-flash` 短暂高亮）④执行内容（工具调用/授权记录/深度思考三个可折叠子块合入，卡片带 `data-anchor` 供时间线跳转）；live 模式实时时间线/工具/授权归约同步生成对应 `target`/`targetKey`。
+  - `brian-frontend/src/api/types.ts` — `ThinkingTimelineItem` 新增 `target`、`ThinkingToolTrace`/`ThinkingPermissionTrace`/`ThinkingContextRound` 新增 `targetKey`。
+**影响的端点**：
+  - `GET /api/chat/thinking` — 时间线节点与 trace 明细携带 `target`/`targetKey`（纯增量字段，老数据缺失时前端降级为不可点击）。
+**可能存在的问题**：
+  - 老历史数据无 target/targetKey 时对应节点不可点击（不跳转），不报错。
+  - 授权记录无 permission_id 时按 `perm-idx-{toolId}-{askedAt}` 定位，事件侧兜底行可正常关联。
+
+## [2026-09-12] 运行概览Token拆分 + LLMProvider明细账分级统计
+
+**变更原因**：运行概览定位为全流程耗时/输入输出Token/工具次数/授权次数，但 Token 为单值（实为输出和）；llm_usage 仅按模型×天聚合，无法归因到会话/交互/问答；流式 usage 缺失时按 len/4 预测，违反真实值要求。
+
+**修改的方法**：
+  - `Base/LLMProvider/domain/types.ts` — ExecLLM/Events/Embed 入参新增 `session_id/interact_id/work_id`；新增 `LLMCallLogRecord`、`SoTokenUsageInput/Output`、`LLM_CALL_LOG_TABLE`。
+  - `Base/LLMProvider/infrastructure/LLMSchemaInitializer.ts` — 新建 `llm_call_log`表明细账 + 三维度索引。
+  - `Base/LLMProvider/application/LLMService.ts` — 新增 `logCall`（成功调用记一条真实值，best-effort）+ `soTokenUsage`（分级求和）；`executeEventsSingle/executeSingleLLM/embedLLM` 均记明细账。
+  - `Base/LLMProvider/application/llmevents/LLMEventsParser.ts` — `buildUsage` 缺 usage 记 0/0，去掉 len/4 预测。
+  - `Base/LLMProvider/access/LLMAccess.ts` — 暴露 `soTokenUsage`。
+  - `Runtime/Loop/domain/types.ts` + `application/AgentLoopService.ts` — `ExecAgentLoopInput/interact_id`，Loop 上下文透传，`prepareLLMTurnInput` 设 `session_id/interact_id/work_id`。
+  - `Runtime/Runs/application/RunGatewayService.ts` — `prepareLoopInput` 透传 `interact_id`。
+  - `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime` 按 `work_id=runId` 查明细账得 `inputTokens/outputTokens`，空账回退 `runtime_message` 求和；`trace.run/block` 新增拆分字段；新增 `GET /api/llm/token-usage`。
+  - `brian-frontend/src/api/types.ts` + `components/chat/ThinkingModal.vue` + `api/index.ts` — 运行概览 `Token 输入/输出`拆分展示 + `monitorApi.tokenUsage` 封装。
+**影响的端点**：
+  - `GET /api/chat/thinking` — `run` 新增 `inputTokens/outputTokens`（`tokenUsage` 保留兼容）。
+  - `GET /api/llm/token-usage?session_id=&interact_id=&work_id=` — 新增，分级统计真实值。
+**可能存在的问题**：
+  - 历史 run 无明细账，回退值为输出侧合计，输入记 0。
+  - 提供商不返 usage 的流式调用记 0/0（诚实零值）。
+
+## [2026-09-12] 工具盒改圆球 + 流式 Markdown 渲染
+
+**变更原因**：①工具执行长条卡纵向占位大；②流式过程中 Markdown 从不渲染（TextBlock 恒纯文本；MessageCard 被全局 `isStreaming` 误伤，之前问答的排版在本轮结束前全部退化为纯文本）。
+
+**修改的方法**：
+  - `brian-frontend/src/components/blocks/ToolCallBlock.vue` — 改版为状态圆球 + 点击展开：36px 圆球（执行中旋转/完成绿/失败红 + 状态点，悬停提示工具名与状态）；详情面板参数 JSON 缩进、响应按类型渲染（对象/JSON 串 → JSON 缩进块，其余 → Markdown）。
+  - `brian-frontend/src/utils/markdown.ts` — 新增 `createThrottledMarkdownRenderer(throttleMs)`：非流式立即全量，流式最多每 300ms 解析一次，实例级缓存隔离。
+  - `brian-frontend/src/components/blocks/TextBlock.vue` — 正文改 Markdown 渲染（流式节流，结束全量对齐）；标题分支不变。
+  - `brian-frontend/src/components/chat/ChatArea.vue` — MessageCard `:is-streaming` 恒传 `false`（流式文本载体是临时 Block，卡片内从不逐字更新）。
+  - 单测：`test/throttledMarkdown.test.ts` 新增 5 用例（立即渲染/窗口节流/缓存命中/结束对齐/实例隔离）。
+
+**影响的端点**：纯前端展示变更，无后端接口变化；对话区流式文本与工具展示行为如上。
+
+**可能存在的问题**：
+  - 流中未闭合 fence 按 marked 容错渲染，形态短暂不规整，结束后自动对齐。
+  - 超长回答流式解析每 300ms 一次，主线程仍有毫秒级开销——如卡顿可继续调大阈值。
+
+**验收**：`vue-tsc` 全绿；前端 unit 11 过；eslint 0 错误（ChatArea 4 warning 为预存）。
+
+## [2026-09-12] 对话区四问修复（Block 对齐 + 工具盒回填 + 中间文本进思考过程 + 永久批准）
+
+**变更原因**：问答复盘（会话 `cdfb00ba`）：①助手流式文本出现在用户消息位置；②Tool 执行过程框空且过长；③"好的，我来帮你查一下…""页面还没加载完…"等中间过程进了对话框；④工具授权缺"永久批准"，安全命令重复确认。
+
+**修改的方法**：
+  - `brian-frontend/src/components/chat/ChatArea.vue` — Block 按 `role` 对齐：仅 `user` 靠左，其余（assistant/tool/system）靠右（原仅 ToolInvocation 靠右，TextParagraph 流式文本落在用户侧）。
+  - `brian-frontend/src/composables/chatStreamEvents.ts` — 新增 `normalizeToolPayload`：后端 `{part_id, tool_id, input}`（input 多为 JSON 串）归一化；块 id 按 `part_id` 关联（started/launch/result 同一块更新）；`onToolResult` 回填 result 并收敛 done/error（原仅回填思考块）；新增 `onPermissionAnswered`（自动放行时卡片翻态，不悬挂 pending）。
+  - `brian-frontend/src/components/blocks/ToolCallBlock.vue` — 折叠态加状态文案与结果摘要单行预览。
+  - `brian-frontend/src/components/chat/PermissionConfirmCard.vue` + `useChatStream.ts` + `api/index.ts` — 新增"始终允许"按钮，`answerPermission(..., remember)` 透传。
+  - `Runtime/Loop/application/AgentLoopService.ts` — 转轮文本分流：轮中 50ms 合帧文本保守进 `think.delta`；轮末残留刷向 think，最终轮再把全文（`turn.text`）发一条 `reply.delta`；失败轮残留同样进 thinking。`askPermission` 透传 `tool_id`，应答后下发 `permission.answered`（含 `auto_approved`）。
+  - `Runtime/Runs/application/RunGatewayService.ts` + `domain/types.ts` — 信任工具表：内存态 + `runtime_runs_config.trusted_tools`（JSON 数组）持久化；命中直接放行；`answerPermission(remember)` 入表；`configRuns` 支持全量覆盖（撤销入口）并回显。
+  - `Runtime/Loop/access/LoopAccess.ts` + `dev-server.ts` — 权限门鸭子接口透传 `tool_id`/`autoApproved`；`/api/chat/permission/answer` 透传 `remember`。
+  - `Application/Chat/application/ChatService.syncRuntimeMessagesToInfoRaw` — 含 tool Part 的中间轮 assistant 消息不同步 RESPONSE（每 run 末条兜底）；`dev-server.buildThinkingBlocksFromRuntime` — 中间轮文本记 THINK 步骤。
+  - 单测：`AgentLoop.test.ts` 精确断言分流（think 含中间叙述、reply 仅最终全文）+ `permission.answered` 断言；`RuntimeGateway.test.ts` 新增信任表两用例（自动放行/持久化/撤销）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 流式事件语义变化：中间轮不再产 `reply.delta`（只 `think.delta`），最终轮末单条全文 `reply.delta`；每次权限询问必有 `permission.answered` 配对事件。
+  - `GET /api/chat/history/:sessionId` — 每 run 仅一条 RESPONSE；思考块含中间叙述 THINK 步骤。
+  - `POST /api/chat/permission/answer` — 新增 `remember` 字段；信任工具后续自动放行（跨会话、重启保留）。
+
+**可能存在的问题**：
+  - 最终回复改为轮末整块到达（不再逐字直播；思考中指示 + 思考弹窗直播保留进度感）——如需恢复逐字感，后续可对最终轮全文做快速分块重发。
+  - 信任粒度为整工具（不含参数）；撤销暂只能走 `configRuns`（无管理页入口）。
+  - 存量历史中的中间轮 RESPONSE 行不会被回扫清理（仅新 run 生效）。
+
+**验收**：runtime 41 / application 476 / 前端 unit 全过；runtime+application `tsc --noEmit` 全绿；根 tsconfig 仅剩 2 处预存 `trace_id` 报错（与本次 diff 零交集）；eslint 无错误；Runtime dist 已重建（dev-server 引 dist）。
+
 ## [2026-09-11] trace_id 收敛为维护字段（唯一存放点 = Metrics）+ console.log 出清
 
 **变更原因**：规范确立——Context / Input / Output 均为业务承载对象，trace_id 是链路追踪维护字段，唯一存放点应为 Metrics（或 Report 事件关联），不得散落 Context/Input；调试日志一律走 Metrics→LogProvider 网关，不得直用 console.log。

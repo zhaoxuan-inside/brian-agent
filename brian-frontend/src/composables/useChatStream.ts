@@ -179,15 +179,15 @@ export function useChatStream() {
 
   /** 需求补充提交：收集各澄清项答案并发起流式执行 */
   /**
-   * 工具权限确认（对话区内联卡片应答）：允许 / 拒绝 → answerPermission 唤醒挂起的 Loop。
+   * 工具权限确认（对话区内联卡片应答）：允许 / 拒绝 / 始终允许 → answerPermission 唤醒挂起的 Loop。
    * 同时幂等更新本地卡片状态（pending → allowed/denied），落库由后端权限审计桥完成。
    */
-  async function handlePermissionConfirm(permission: ChatMessage['permission'], approved: boolean) {
+  async function handlePermissionConfirm(permission: ChatMessage['permission'], approved: boolean, remember = false) {
     if (!permission || permission.status !== 'pending' || permitting.value) return
     const msgId = `perm-${permission.permissionId}`
     permitting.value = true
     try {
-      await answerPermission(permission.permissionId, approved)
+      await answerPermission(permission.permissionId, approved, remember)
       sessionStore.updateMessage(msgId, {
         permission: { ...permission, status: approved ? 'allowed' : 'denied', answeredAt: Date.now() },
       })

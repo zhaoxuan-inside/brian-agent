@@ -23,7 +23,7 @@ import {
   ExecPromptInput,
   ExecPromptOutput,
   McpInstallRecord,
-  PROMPT_IDS,
+  PROMPT_TEMPLATE_TABLE,
 } from '@brian-agent/base';
 import {
   McpCoreContext,
@@ -264,13 +264,27 @@ export class MCPCoreService {
       task_content: input.task_content ?? '',
       available_mcps: JSON.stringify(mcps.map((m) => ({ id: m.id, title: m.mcp_title, brief: m.mcp_brief ?? '' }))),
     };
-    const prompt = await this.renderMatchPrompt(promptTemplateId || PROMPT_IDS.mcpMatch, variables);
+    const templateId = promptTemplateId || await this.soMatchPromptTemplateId();
+    const prompt = await this.renderMatchPrompt(templateId, variables);
     const text = await this.soRankLLM({ id: '', prompt, temperature: 0.1, max_tokens: 300 } as ExecLLMInput);
     const threshold = Number.isFinite(scoreThreshold) ? scoreThreshold : ScoreThreshold.Default;
     const mcpIds = new Set(mcps.map((m) => m.id));
     return filterByThreshold(parseRankingCandidates(text), threshold)
       .map((c) => c.id)
       .filter((id) => mcpIds.has(id));
+  }
+
+  /** 获取 MCP 匹配模板 ID（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%MCP%匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ProcessingError('未找到 MCP 匹配提示词模板');
   }
 
   /**

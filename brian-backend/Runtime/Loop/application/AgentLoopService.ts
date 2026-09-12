@@ -83,6 +83,8 @@ interface LoopRunContext {
   runId: string;
   sessionKey: string;
   sessionId: string;
+  /** 交互标识（= trace_id，透传 LLM 做 Token 归因） */
+  interactId?: string;
   system?: string;
   llmId?: string;
   temperature?: number;
@@ -101,12 +103,13 @@ interface LoopRunContext {
   outputTokens: number;
   lastMessageId?: string;
   finalTurn: boolean;
+  deferFinalReply: boolean;
   /** 业务事件在线上报通道（无流会话为 undefined，pushBusinessEvent no-op） */
   report?: Report;
   /** 衡量对象（方法内日志经 Metrics 保存——Metrics 封装 LogProvider 调用接口） */
   metrics?: Metrics;
   /** 权限门（工具执行前询问；Runs 注入） */
-  permissionGate?: { wait(input: { permission_id: string }): Promise<{ approved: boolean }> };
+  permissionGate?: { wait(input: { permission_id: string; tool_id?: string }): Promise<{ approved: boolean; autoApproved?: boolean }> };
   /** part.delta 合帧缓冲（修复③：50ms 合并降频，delta 拼接语义不变） */
   deltaBuffer: { text: string; reasoning: string; timer?: ReturnType<typeof setTimeout> };
 }
@@ -156,7 +159,7 @@ export class AgentLoopService {
     /** 会话级队列（steering/followup；RunGateway 注入，鸭子接口不反向依赖） */
     private readonly queue?: LoopQueue,
     /** 权限门（Runs 注入；工具执行前询问，permission.asked → 应答 → 继续/拒绝） */
-    private readonly permissionGate?: { wait(input: { permission_id: string }): Promise<{ approved: boolean }> },
+    private readonly permissionGate?: { wait(input: { permission_id: string; tool_id?: string }): Promise<{ approved: boolean; autoApproved?: boolean }> },
     /** 权限审计（组合根注入；asked 落库 / answered 更新状态，均为 best-effort） */
     private readonly permissionAudit?: PermissionAudit,
   ) {}
@@ -229,6 +232,7 @@ export class AgentLoopService {
       runId: input.run_id,
       sessionKey: input.session_key,
       sessionId: input.session_id,
+      interactId: input.interact_id,
       system: input.system,
       llmId: input.llm_id || undefined,
       temperature: input.temperature,
@@ -244,6 +248,7 @@ export class AgentLoopService {
       inputTokens: 0,
       outputTokens: 0,
       finalTurn: false,
+      deferFinalReply: input.defer_final_reply === true,
       metrics,
       report,
       deltaBuffer: { text: '', reasoning: '' },
@@ -348,12 +353,23 @@ export class AgentLoopService {
     ctx.finalTurn = gate.finalTurn;
     const turn = await this.callLLMTurn(ctx);
     if (!turn.ok) {
-      this.flushDeltaBuffer(ctx);
+      // ===== 修改后（2026-09-12）：失败轮残留文本进 thinking，不进对话框 =====
+      // 原实现无条件按 reply 刷新，异常中断的中间轮叙述会残留为用户可见文本。
+      this.flushDeltaBuffer(ctx, 'think');
       return turn.verdict ?? LoopStopReason.Error;
     }
-    this.flushDeltaBuffer(ctx);
+    // ===== 修改后（2026-09-12）：中间轮（带 tool_calls）文本进 thinking，仅最终轮进对话框 =====
+    // 原实现所有轮的 text_delta 都发 reply.delta，对话区出现"好的，我来帮你查一下…"等
+    // 过程性叙述；轮中合帧已保守进 think（见 bufferDelta），此处轮末把残留刷向 think，
+    // 最终轮再把全文（turn.text，与持久化一致）发一条 reply.delta，保证对话框只见最终回复。
+    this.flushDeltaBuffer(ctx, 'think');
     await this.persistAssistantTurn(ctx, turn);
     if (turn.finishReason !== 'tool-calls') {
+      if (turn.finishReason !== 'error' && turn.text) {
+        if (!ctx.deferFinalReply) {
+          ctx.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: turn.text });
+        }
+      }
       ctx.result = turn.text ?? '';
       // 修复①消费侧：流中途断开（无 finish_reason 帧）→ finish_reason='error'，规范化失败
       if (turn.finishReason === 'error') {
@@ -442,6 +458,9 @@ export class AgentLoopService {
   private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
     const input = new ExecLLMEventsInput();
     input.id = ctx.llmId ?? '';
+    input.session_id = ctx.sessionKey;
+    input.interact_id = ctx.interactId;
+    input.work_id = ctx.runId;
     input.system = ctx.system;
     input.messages = await this.prepareModelMessages(ctx.sessionId);
     if (!ctx.finalTurn) {
@@ -487,12 +506,15 @@ export class AgentLoopService {
   private bufferDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string): void {
     ctx.deltaBuffer[field] += delta;
     if (!ctx.deltaBuffer.timer) {
-      ctx.deltaBuffer.timer = setTimeout(() => this.flushDeltaBuffer(ctx), DELTA_FLUSH_MS);
+      // ===== 修改后（2026-09-12）：轮中合帧的文本默认进 thinking =====
+      // 轮中尚不知本轮是否为中间轮（finishReason 轮末才确定），保守进 think 避免过程叙述
+      // 闪现对话框；轮末 flush 再按 finishReason 把最终轮全文发 reply（见 runInnerTurn）。
+      ctx.deltaBuffer.timer = setTimeout(() => this.flushDeltaBuffer(ctx, 'think'), DELTA_FLUSH_MS);
     }
   }
 
   /** 刷新合帧缓冲（逻辑控制；turn 完成/结算时同步调用，timer 清理） */
-  private flushDeltaBuffer(ctx: LoopRunContext): void {
+  private flushDeltaBuffer(ctx: LoopRunContext, textAs: 'reply' | 'think' = 'reply'): void {
     if (ctx.deltaBuffer.timer) {
       clearTimeout(ctx.deltaBuffer.timer);
       ctx.deltaBuffer.timer = undefined;
@@ -503,13 +525,14 @@ export class AgentLoopService {
         continue;
       }
       ctx.deltaBuffer[field] = '';
-      this.publishPartDelta(ctx, field, buffered);
+      this.publishPartDelta(ctx, field, buffered, textAs);
     }
   }
 
   /** part.delta 事件发布（数据处理；投递失败记录告警，不中断流处理） */
-  private publishPartDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string): void {
-    const event = field === 'text' ? BusinessEvent.ReplyDelta : BusinessEvent.ThinkDelta;
+  private publishPartDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string, textAs: 'reply' | 'think' = 'reply'): void {
+    // ===== 修改后（2026-09-12）：text 目标可切换 reply/think；reasoning 恒为 think =====
+    const event = field === 'text' && textAs === 'reply' ? BusinessEvent.ReplyDelta : BusinessEvent.ThinkDelta;
     ctx.report?.pushBusinessEvent(event, { delta });
   }
 
@@ -695,6 +718,9 @@ export class AgentLoopService {
   // ===== 修改后的方法（2026-09-11）：permission.asked/answered 双向接权限审计回调 =====
   // 事故复盘（run 46a7be65）：权限被拒仅体现为 tool error 文本，无落库记录可追溯。
   // 现在挂起前回调 audit.asked（落 PERMISSION 信息记录），应答后回调 audit.answered（更新状态）。
+  // ===== 修改后（2026-09-12）：透传 tool_id 供信任表自动放行；应答后下发 permission.answered =====
+  // 信任命中（wait 直接返回 autoApproved）时前端卡片经 answered 事件翻为"已允许"，
+  // 不再有"点了允许卡片却长期 pending"的悬挂态；audit.asked/answered 照常落库可追溯。
   /** 权限询问（逻辑控制）：permission.asked 经 Report 下发，挂起等待 answerPermission 应答 */
   private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
     if (!this.permissionGate) {
@@ -716,7 +742,14 @@ export class AgentLoopService {
       arguments_json: call.arguments,
       asked_at: Date.now(),
     });
-    const result = await this.permissionGate.wait({ permission_id: permissionId });
+    const result = await this.permissionGate.wait({ permission_id: permissionId, tool_id: call.tool_id });
+    ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAnswered, {
+      permission_id: permissionId,
+      tool_id: call.tool_id,
+      approved: result.approved,
+      auto_approved: result.autoApproved === true,
+      run_id: ctx.runId,
+    });
     await this.permissionAudit?.answered({
       permission_id: permissionId,
       approved: result.approved,
@@ -831,6 +864,10 @@ export class AgentLoopService {
     this.flushDeltaBuffer(ctx);
     this.runControllers.delete(ctx.runId);
     const phase = ctx.stopReason === LoopStopReason.Stop ? RunPhase.End : RunPhase.Error;
+    // 启用 deferFinalReply 时，正常完成的 run.finished 延迟由 RunGateway 在 评估+写作 全部执行完成后发布
+    if (ctx.deferFinalReply && phase === RunPhase.End) {
+      return;
+    }
     try {
       await this.publishRunStatus(ctx, phase, ctx.stopReason);
     } catch (err) {

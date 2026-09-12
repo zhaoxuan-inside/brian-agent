@@ -33,24 +33,45 @@ import type { LLMCoreAccess } from '@brian-agent/core';
 import { MatchLLMInput, MatchLLMOutput, LLMCoreContext } from '@brian-agent/core';
 
 /**
- * 渲染 Prompt：经 DB（prompt_template 表）渲染配置模板（templateId），缺省 builtin ID。
+ * 渲染 Prompt：经 DB（prompt_template 表）渲染配置模板（templateId），缺省按标题/用途动态查找 UUID 模板。
  *
- * ===== 2026-09-11 修改：删除硬编码内存回退（getBuiltinTemplate），DB 渲染失败 fail-loud =====
- * 所有 Prompt 统一由 "配置中心 > 角色与提示词 > Prompt 模板" 承载（系统模板 is_system=1 受保护）。
+ * 所有 Prompt 统一由 PromptProvider / DB prompt_template 承载。
  *
  * @param promptsAccess PromptsProvider 接入层
- * @param templateId 配置的模板 ID（可为空，空则直接使用内置模板 ID）
- * @param builtinId 内置模板 ID（PROMPT_IDS）
+ * @param templateId 配置的模板 ID（可为空，空则按 fallbackTitle 动态解析）
+ * @param fallbackTitle 缺省时的模板标题关键字
  * @param variables 模板变量
  * @returns 渲染后的 Prompt 文本（模板缺失/渲染为空抛 ValidationError）
  */
 export async function renderPromptWithFallback(
   promptsAccess: PromptsAccess,
   templateId: string | undefined,
-  builtinId: string,
+  fallbackTitle: string,
   variables: Record<string, unknown>,
 ): Promise<string> {
-  const id = templateId || builtinId;
+  let id = templateId;
+  if (!id) {
+    try {
+      const soOut = new SoPromptOutput();
+      await promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: fallbackTitle }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (p.prompt_template_title?.includes(fallbackTitle) || p.prompt_template_brief?.includes(fallbackTitle)));
+      if (hit) {
+        id = hit.id;
+      } else {
+        const anyHit = soOut.list?.find((p) => p.enable !== false);
+        if (anyHit) id = anyHit.id;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!id) {
+      id = fallbackTitle;
+    }
+  }
   const promptOut = new ExecPromptOutput();
   await promptsAccess.execPrompt(
     Object.assign(new ExecPromptInput(), { id, variables }),

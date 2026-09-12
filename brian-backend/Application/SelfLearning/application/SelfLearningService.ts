@@ -2,7 +2,7 @@ import { callLLMJson } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
 import * as fs from 'fs';
 import * as path from 'path';
-import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, InfoType, PROMPT_IDS, type Logger, type Condition } from '@brian-agent/base';
+import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, InfoType, type Logger, type Condition } from '@brian-agent/base';
 import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import type {
   InfoCoreAccess, MQCoreAccess, LLMCoreAccess,
@@ -540,10 +540,10 @@ export class SelfLearningService {
     const templateId = String(config.document_query_prompt_template_id ?? '');
     const configuredLlmId = String(config.document_query_llm_id ?? '');
 
-    // 1. 渲染 Prompt（配置的模板，或内置默认）
+    // 1. 渲染 Prompt（配置的模板，或按标题动态解析）
     const prompt = await this.renderPrompt(
       templateId,
-      PROMPT_IDS.documentQuery,
+      '文档阅读问答',
       {
         selection,
         context_before: contextBefore,
@@ -597,14 +597,26 @@ export class SelfLearningService {
     return true;
   }
 
-  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省 builtin ID；缺失 fail-loud */
+  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省按标题动态查找；缺失 fail-loud */
   private async renderPrompt(
     templateId: string | undefined,
-    builtinId: string,
+    fallbackTitle: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
-    const id = templateId || builtinId;
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    let id = templateId;
+    if (!id) {
+      const soOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: fallbackTitle }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (p.prompt_template_title?.includes(fallbackTitle) || p.prompt_template_brief?.includes(fallbackTitle)));
+      if (hit) id = hit.id;
+    }
+    if (!id) {
+      throw new ValidationError(`未找到匹配的 Prompt 模板: ${fallbackTitle}`);
+    }
     const promptOut = new ExecPromptOutput();
     await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), { id, variables }),

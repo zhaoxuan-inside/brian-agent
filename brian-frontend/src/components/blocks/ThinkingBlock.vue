@@ -32,6 +32,16 @@ import type { ThinkingBlock } from '@/api/types'
 import { useChatUiStore } from '@/stores/chatUi'
 import { copyToClipboard } from '@/utils/clipboard'
 import { renderMarkdown } from '@/utils/markdown'
+import { formatDuration } from '@/utils/format'
+import ComponentInfoModal from '@/components/chat/ComponentInfoModal.vue'
+
+// ===== 可点击组件：Prompt / Soul / LLM / Skill / MCP（点击弹出组件详情） =====
+export type ComponentKind = 'prompt' | 'soul' | 'llm' | 'skill' | 'mcp'
+const componentView = ref<{ kind: ComponentKind; ref: string } | null>(null)
+
+function openComponent(kind: ComponentKind, ref?: string) {
+  if (ref) componentView.value = { kind, ref }
+}
 
 const props = withDefaults(
   defineProps<{
@@ -70,9 +80,9 @@ const isThinking = computed(() => runtimeStatus.value === 'RUNNING')
 
 const STATUS_CHIP: Record<string, { label: string; cls: string }> = {
   PENDING: { label: '未执行', cls: 'bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-300' },
-  RUNNING: { label: '思考中', cls: 'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300' },
-  SUCCESS: { label: '已完成', cls: 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300' },
-  ERROR: { label: '执行失败', cls: 'bg-red-100 dark:bg-red-900/60 text-red-700 dark:text-red-300' },
+  RUNNING: { label: '思考中', cls: 'bg-brian-blue/10 text-brian-blue' },
+  SUCCESS: { label: '已完成', cls: 'bg-success-green/10 text-success-green' },
+  ERROR: { label: '执行失败', cls: 'bg-error-red/10 text-error-red' },
 }
 
 const agentTypeLabel = computed(() => {
@@ -93,6 +103,19 @@ const thinkingStrategy = computed(() => {
     return 'ReACT'
   }
   return 'CoT'
+})
+
+// ===== Agent 构建组件：名称化 + 可点击查看详情 =====
+const componentChips = computed<Array<{ kind: ComponentKind; label: string; ref: string; icon: unknown }>>(() => {
+  const info = props.block.agentInfo
+  if (!info) return []
+  const chips: Array<{ kind: ComponentKind; label: string; ref: string; icon: unknown }> = []
+  if (info.promptId) chips.push({ kind: 'prompt', label: String(info.promptId), ref: String(info.promptId), icon: FileText })
+  if (info.soulId) chips.push({ kind: 'soul', label: String(info.soulId), ref: String(info.soulId), icon: Sparkles })
+  if (info.llmId) chips.push({ kind: 'llm', label: String(info.llmId), ref: String(info.llmId), icon: Cpu })
+  for (const s of info.skills || []) chips.push({ kind: 'skill', label: String(s), ref: String(s), icon: Wrench })
+  for (const m of info.mcps || []) chips.push({ kind: 'mcp', label: String(m), ref: String(m), icon: Layers })
+  return chips
 })
 
 // 分别计算与展示 输入 Token 和 输出 Token
@@ -164,32 +187,32 @@ function msgContent(val: unknown): string {
 
 <template>
   <div class="py-1 select-text">
-    <div class="block-card border-purple-200/80 dark:border-purple-800/60 bg-purple-50/40 dark:bg-purple-950/20 rounded-xl overflow-hidden shadow-sm">
+    <div class="block-card rounded-xl overflow-hidden shadow-sm">
       <!-- Header 标题栏 -->
       <button
-        class="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-purple-100/40 dark:hover:bg-purple-900/30 transition-colors"
+        class="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/60 transition-colors"
         @click="isExpanded = !isExpanded"
         :aria-expanded="isExpanded"
       >
         <div class="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
           <ChevronRight
             :size="14"
-            class="text-purple-500 flex-shrink-0 transition-transform duration-200"
+            class="text-apple-gray-400 flex-shrink-0 transition-transform duration-200"
             :class="{ 'rotate-90': isExpanded }"
           />
-          <Brain :size="15" class="text-purple-600 dark:text-purple-400 flex-shrink-0" />
+          <Brain :size="15" class="text-brian-blue flex-shrink-0" />
           
-          <span class="text-xs font-semibold text-purple-900 dark:text-purple-200 truncate">
+          <span class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-100 truncate">
             {{ block.agentInfo?.name || 'Agent' }}
           </span>
 
-          <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 flex-shrink-0">
+          <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brian-blue/10 text-brian-blue flex-shrink-0">
             {{ agentTypeLabel }}
           </span>
 
-          <!-- 思考方式标签 (CoT / ReACT) -->
-          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-200/80 dark:bg-purple-900/80 text-purple-800 dark:text-purple-200 flex-shrink-0 shadow-xs border border-purple-300/50 dark:border-purple-700/50">
-            思考方式: {{ thinkingStrategy }}
+          <!-- 思考方式标签 -->
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300 flex-shrink-0">
+            {{ thinkingStrategy }}
           </span>
 
           <span v-if="block.agentInfo?.llmId" class="hidden md:inline-flex items-center gap-1 text-[10px] text-apple-gray-500 dark:text-apple-gray-400">
@@ -204,125 +227,119 @@ function msgContent(val: unknown): string {
         </div>
 
         <div class="flex items-center gap-2 flex-shrink-0 text-[11px] text-apple-gray-500 dark:text-apple-gray-400">
-          <!-- Token 用量分别展示：输入 Token / 输出 Token -->
-          <span v-if="totalTokens > 0" class="inline-flex items-center gap-1 font-mono text-[10px] bg-purple-100/70 dark:bg-purple-900/40 px-2 py-0.5 rounded-md text-purple-800 dark:text-purple-200" title="Token 用量（输入 Token / 输出 Token）">
-            <Zap :size="11" class="text-amber-500" />
+          <!-- Token 用量：输入 / 输出 -->
+          <span v-if="totalTokens > 0" class="inline-flex items-center gap-1 font-mono text-[10px] bg-apple-gray-100 dark:bg-apple-gray-700/60 px-2 py-0.5 rounded-md text-apple-gray-600 dark:text-apple-gray-300" title="Token 用量（输入 / 输出）">
+            <Zap :size="11" class="text-brian-blue" />
             <span>输入: {{ inputTokens }}</span>
-            <span class="text-purple-300 dark:text-purple-700">|</span>
+            <span class="opacity-40">|</span>
             <span>输出: {{ outputTokens }}</span>
-            <span class="text-purple-400 font-normal">({{ totalTokens }})</span>
+            <span class="opacity-60 font-normal">({{ totalTokens }})</span>
           </span>
           <span v-if="block.durationMs" class="inline-flex items-center gap-1" title="调用耗时">
-            <Clock :size="11" /> {{ block.durationMs }}ms
+            <Clock :size="11" /> {{ formatDuration(block.durationMs) }}
           </span>
         </div>
       </button>
 
       <!-- Expanded Detail 展开面板 -->
-      <div v-if="isExpanded" class="border-t border-purple-100 dark:border-purple-900/40 bg-white/60 dark:bg-apple-gray-900/40 p-3.5 space-y-3">
+      <div v-if="isExpanded" class="border-t border-apple-gray-100 dark:border-apple-gray-800 bg-white dark:bg-apple-gray-900/40 p-3.5 space-y-3">
         
         <!-- 上下文信息环境（若未显式隐藏） -->
-        <div v-if="!hideContext" class="p-3 rounded-lg border border-purple-200/90 dark:border-purple-800/80 bg-gradient-to-r from-purple-50/80 to-blue-50/50 dark:from-purple-950/40 dark:to-blue-950/30 text-xs space-y-2">
-          <div class="flex items-center justify-between font-bold text-purple-900 dark:text-purple-200 border-b pb-1">
+        <div v-if="!hideContext" class="p-3 rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/60 dark:bg-apple-gray-800/40 text-xs space-y-2">
+          <div class="flex items-center justify-between font-bold text-apple-gray-900 dark:text-apple-gray-100 border-b border-apple-gray-200/60 dark:border-apple-gray-700/60 pb-1">
             <div class="flex items-center gap-1.5">
-              <Database :size="13" class="text-purple-600 dark:text-purple-400" />
-              <span>运行与对话上下文环境 (Context)</span>
+              <Database :size="13" class="text-brian-blue" />
+              <span>上下文环境</span>
             </div>
-            <span v-if="block.context?.strategy" class="text-[10px] font-normal px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300">
-              策略: {{ block.context.strategy }}
+            <span v-if="block.context?.strategy" class="text-[10px] font-normal px-2 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300">
+              {{ block.context.strategy }}
             </span>
           </div>
 
-          <div v-if="block.context?.citingMessages?.length" class="p-2 rounded bg-white/80 dark:bg-apple-gray-900/80 border border-purple-100 dark:border-purple-900/40">
-            <span class="font-semibold text-purple-800 dark:text-purple-300 text-[11px]">引用的历史上下文消息:</span>
+          <div v-if="block.context?.citingMessages?.length" class="p-2 rounded bg-white dark:bg-apple-gray-900 border border-apple-gray-200/60 dark:border-apple-gray-700/60">
+            <span class="font-semibold text-apple-gray-700 dark:text-apple-gray-200 text-[11px]">引用的历史消息:</span>
             <ul class="space-y-1 mt-1">
-              <li v-for="(msg, mIdx) in block.context.citingMessages" :key="mIdx" class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 bg-purple-50/40 dark:bg-purple-900/20 p-1.5 rounded">
+              <li v-for="(msg, mIdx) in block.context.citingMessages" :key="mIdx" class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 bg-apple-gray-50 dark:bg-apple-gray-800/60 p-1.5 rounded">
                 • {{ msgContent(msg) }}
               </li>
             </ul>
           </div>
         </div>
 
-        <!-- Sub-Header Badges (Soul, Skills, MCPs) -->
-        <div class="flex items-center gap-2 flex-wrap text-[11px] pb-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
-          <div v-if="block.agentInfo?.soulId" class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/50">
-            <Sparkles :size="11" />
-            <span>Soul: {{ block.agentInfo.soulId }}</span>
-          </div>
-
-          <div v-if="block.agentInfo?.skills?.length" class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200/50">
-            <Wrench :size="11" />
-            <span>技能: {{ block.agentInfo.skills.join(', ') }}</span>
-          </div>
-
-          <div v-if="block.agentInfo?.mcps?.length" class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/50">
-            <Layers :size="11" />
-            <span>MCP: {{ block.agentInfo.mcps.join(', ') }}</span>
-          </div>
+        <!-- 组件标识区：Agent 构建信息（Prompt / Soul / LLM / Skill / MCP），点击查看对应组件详情 -->
+        <div v-if="componentChips.length" class="flex items-center gap-1.5 flex-wrap text-[11px] pb-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
+          <span class="text-[10px] text-apple-gray-400 flex-shrink-0">构建组件</span>
+          <button
+            v-for="chip in componentChips"
+            :key="`${chip.kind}-${chip.ref}`"
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-brian-blue/10 hover:text-brian-blue transition-colors cursor-pointer"
+            :title="`查看 ${chip.label} 组件信息`"
+            @click="openComponent(chip.kind, chip.ref)"
+          >
+            <component :is="chip.icon" :size="11" />
+            <span class="max-w-40 truncate">{{ chip.label }}</span>
+          </button>
         </div>
 
-        <!-- Navigation Tabs (Prompt 与完整回复 / 思考与步骤 / 任务输入输出) -->
+        <!-- Navigation Tabs -->
         <div class="flex items-center gap-1 border-b border-apple-gray-100 dark:border-apple-gray-800 pb-1">
           <button
             class="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors flex items-center gap-1"
-            :class="activeTab === 'io' ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200' : 'text-apple-gray-500 hover:text-purple-600'"
+            :class="activeTab === 'io' ? 'bg-brian-blue/10 text-brian-blue' : 'text-apple-gray-500 hover:text-brian-blue'"
             @click="activeTab = 'io'"
           >
             <FileText :size="12" />
-            完整 Prompt 与模型回复
+            输入与回复
           </button>
 
           <button
             class="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors flex items-center gap-1"
-            :class="activeTab === 'chain' ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200' : 'text-apple-gray-500 hover:text-purple-600'"
+            :class="activeTab === 'chain' ? 'bg-brian-blue/10 text-brian-blue' : 'text-apple-gray-500 hover:text-brian-blue'"
             @click="activeTab = 'chain'"
           >
             <Brain :size="12" />
-            思考与推导步骤 ({{ thinkingStrategy }})
+            思考步骤 ({{ thinkingStrategy }})
           </button>
         </div>
 
         <!-- Tab 1: 完整 Prompt 与 模型完整回复 -->
         <div v-if="activeTab === 'io'" class="space-y-3 text-xs">
-          <!-- 1. Agent 发送给 LLM 的完整 Prompt -->
-          <div class="p-3 rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 space-y-1.5">
-            <div class="flex items-center justify-between font-bold text-blue-900 dark:text-blue-200 text-xs border-b border-blue-200/50 dark:border-blue-900/40 pb-1.5">
+          <!-- 1. 完整输入 -->
+          <div class="p-3 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-800/40 space-y-1.5">
+            <div class="flex items-center justify-between font-bold text-apple-gray-900 dark:text-apple-gray-100 text-xs border-b border-apple-gray-200/60 dark:border-apple-gray-700/60 pb-1.5">
               <div class="flex items-center gap-1.5">
-                <FileText :size="13" class="text-blue-600 dark:text-blue-400" />
-                <span>Agent 发送给 LLM 的完整 Prompt</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200">
-                  PromptProvider 完整 Prompt
-                </span>
+                <FileText :size="13" class="text-brian-blue" />
+                <span>完整输入</span>
               </div>
-              <div class="flex items-center gap-2 font-normal text-[10px] text-blue-700 dark:text-blue-300">
+              <div class="flex items-center gap-2 font-normal text-[10px] text-apple-gray-500">
                 <span class="font-mono">输入 Token: {{ inputTokens }}</span>
                 <button
-                  class="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors text-blue-800 dark:text-blue-200 cursor-pointer"
+                  class="flex items-center gap-1 px-2 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700/60 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors text-apple-gray-600 dark:text-apple-gray-300 cursor-pointer"
                   @click="copyPromptText"
                 >
                   <component :is="copiedPrompt ? Check : Copy" :size="11" />
-                  <span>{{ copiedPrompt ? '已复制 Prompt' : '复制 Prompt' }}</span>
+                  <span>{{ copiedPrompt ? '已复制' : '复制' }}</span>
                 </button>
               </div>
             </div>
-            <pre class="text-[11px] text-apple-gray-800 dark:text-apple-gray-200 font-mono whitespace-pre-wrap overflow-x-auto max-h-72 overflow-y-auto leading-relaxed bg-white/70 dark:bg-apple-gray-900/70 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900/30">{{ fullPrompt }}</pre>
+            <pre class="text-[11px] text-apple-gray-800 dark:text-apple-gray-200 font-mono whitespace-pre-wrap overflow-x-auto max-h-72 overflow-y-auto leading-relaxed bg-white dark:bg-apple-gray-900 p-2.5 rounded-lg border border-apple-gray-200/60 dark:border-apple-gray-700/60">{{ fullPrompt }}</pre>
           </div>
 
-          <!-- 2. 模型的完整回复 -->
-          <div class="p-3 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-1.5">
-            <div class="flex items-center justify-between font-bold text-emerald-900 dark:text-emerald-200 text-xs border-b border-emerald-200/50 dark:border-emerald-900/40 pb-1.5">
+          <!-- 2. 模型回复 -->
+          <div class="p-3 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-800/40 space-y-1.5">
+            <div class="flex items-center justify-between font-bold text-apple-gray-900 dark:text-apple-gray-100 text-xs border-b border-apple-gray-200/60 dark:border-apple-gray-700/60 pb-1.5">
               <div class="flex items-center gap-1.5">
-                <MessageSquare :size="13" class="text-emerald-600 dark:text-emerald-400" />
-                <span>模型的完整回复 (LLM Response)</span>
+                <MessageSquare :size="13" class="text-brian-blue" />
+                <span>模型回复</span>
               </div>
-              <div class="flex items-center gap-2 font-normal text-[10px] text-emerald-700 dark:text-emerald-300">
+              <div class="flex items-center gap-2 font-normal text-[10px] text-apple-gray-500">
                 <span class="font-mono">输出 Token: {{ outputTokens }}</span>
                 <button
-                  class="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors text-emerald-800 dark:text-emerald-200 cursor-pointer"
+                  class="flex items-center gap-1 px-2 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700/60 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors text-apple-gray-600 dark:text-apple-gray-300 cursor-pointer"
                   @click="copyResponseText"
                 >
                   <component :is="copiedResponse ? Check : Copy" :size="11" />
-                  <span>{{ copiedResponse ? '已复制回复' : '复制回复' }}</span>
+                  <span>{{ copiedResponse ? '已复制' : '复制' }}</span>
                 </button>
               </div>
             </div>
@@ -331,13 +348,13 @@ function msgContent(val: unknown): string {
 
             <!-- ===== 修改后的代码：渲染 Markdown 内容 ===== -->
             <div
-              class="markdown-body text-[11px] text-apple-gray-800 dark:text-apple-gray-200 overflow-x-auto max-h-80 overflow-y-auto leading-relaxed bg-white/70 dark:bg-apple-gray-900/70 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/30 select-text break-words"
+              class="markdown-body text-[11px] text-apple-gray-800 dark:text-apple-gray-200 overflow-x-auto max-h-80 overflow-y-auto leading-relaxed bg-white dark:bg-apple-gray-900 p-2.5 rounded-lg border border-apple-gray-200/60 dark:border-apple-gray-700/60 select-text break-words"
               v-html="renderedRawResponseHtml"
             ></div>
           </div>
         </div>
 
-        <!-- Tab 2: 思考链 & 步骤 (Chain & Steps) -->
+        <!-- Tab 2: 思考步骤 -->
         <div v-if="activeTab === 'chain'" class="space-y-2.5 text-xs">
           <!-- 结构化步骤列表 -->
           <template v-if="block.steps && block.steps.length > 0">
@@ -349,43 +366,46 @@ function msgContent(val: unknown): string {
               <div class="flex items-center justify-between font-medium">
                 <div class="flex items-center gap-1.5">
                   <span
-                    class="px-1.5 py-0.5 rounded text-[10px] font-bold"
-                    :class="[
-                      step.phase === 'THINK' ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300' :
-                      step.phase === 'ACT' ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300' :
-                      'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300'
-                    ]"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brian-blue/10 text-brian-blue"
                   >
                     {{ step.phase }}
                   </span>
                   <span class="text-apple-gray-700 dark:text-apple-gray-200">
-                    Step {{ step.iteration ?? (idx + 1) }}
+                    {{ step.iteration ?? (idx + 1) }}
                   </span>
                 </div>
 
                 <span v-if="step.elapsedMs" class="text-[10px] text-apple-gray-400">
-                  {{ step.elapsedMs }}ms
+                  {{ formatDuration(step.elapsedMs) }}
                 </span>
               </div>
 
+              <!-- 本轮输入（发送给 LLM 的 prompt / 用户消息） -->
+              <div v-if="step.input" class="rounded-lg bg-white dark:bg-apple-gray-900 border border-apple-gray-200/50 dark:border-apple-gray-700/50 overflow-hidden">
+                <p class="px-2 py-1 text-[10px] font-medium text-apple-gray-400 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-1">
+                  <FileText :size="10" /> 本轮输入
+                </p>
+                <pre class="px-2 py-1.5 text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap break-all max-h-40 overflow-y-auto leading-relaxed">{{ step.input }}</pre>
+              </div>
+
               <!-- THINK Phase Content -->
-              <div v-if="step.phase === 'THINK' && step.content" class="text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap pl-1 border-l-2 border-purple-300 dark:border-purple-700">
+              <div v-if="step.phase === 'THINK' && step.content" class="text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap pl-2 border-l-2 border-brian-blue/30">
                 {{ step.content }}
               </div>
 
               <!-- ACT Phase Tools -->
               <div v-if="step.phase === 'ACT'" class="space-y-1.5">
                 <div v-for="(tc, tIdx) in step.toolCalls" :key="tIdx" class="p-2 rounded bg-white dark:bg-apple-gray-900 border border-apple-gray-200/50 dark:border-apple-gray-700/50 space-y-1">
-                  <div class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-medium">
+                  <div class="flex items-center gap-1.5 text-brian-blue font-medium">
                     <Wrench :size="12" />
-                    <span>工具调用: {{ tc.toolName || tc.toolType || 'Tool' }}</span>
+                    <span>{{ tc.toolName || tc.toolType || 'Tool' }}</span>
                   </div>
                   <details v-if="tc.params && Object.keys(tc.params).length > 0" class="text-[11px] text-apple-gray-500">
-                    <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300">输入参数 (Params)</summary>
+                    <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300">输入参数</summary>
                     <pre class="mt-1 p-1.5 rounded bg-apple-gray-100 dark:bg-apple-gray-800 overflow-x-auto text-[10px]">{{ formatJson(tc.params) }}</pre>
                   </details>
                   <details v-if="tc.result" class="text-[11px] text-apple-gray-500">
-                    <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300">返回结果 (Result)</summary>
+                    <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300">返回结果</summary>
                     <pre class="mt-1 p-1.5 rounded bg-apple-gray-100 dark:bg-apple-gray-800 overflow-x-auto text-[10px] max-h-36 overflow-y-auto">{{ formatJson(tc.result) }}</pre>
                   </details>
                 </div>
@@ -394,26 +414,41 @@ function msgContent(val: unknown): string {
               <!-- REFLECT Phase -->
               <div v-if="step.phase === 'REFLECT'" class="space-y-1">
                 <div class="flex items-center gap-1.5">
-                  <component :is="step.passed ? CheckCircle2 : XCircle" :size="13" :class="step.passed ? 'text-emerald-500' : 'text-amber-500'" />
-                  <span class="font-medium" :class="step.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'">
-                    {{ step.passed ? '自我反思通过' : '需求进一步优化' }}
+                  <component :is="step.passed ? CheckCircle2 : XCircle" :size="13" :class="step.passed ? 'text-success-green' : 'text-error-red'" />
+                  <span class="font-medium" :class="step.passed ? 'text-success-green' : 'text-error-red'">
+                    {{ step.passed ? '通过' : '需优化' }}
                   </span>
                 </div>
                 <p v-if="step.reflection" class="text-apple-gray-600 dark:text-apple-gray-300 text-[11px]">
                   {{ step.reflection }}
                 </p>
               </div>
+
+              <!-- 本轮输出（LLM 回复内容） -->
+              <div v-if="step.output" class="rounded-lg bg-white dark:bg-apple-gray-900 border border-apple-gray-200/50 dark:border-apple-gray-700/50 overflow-hidden">
+                <p class="px-2 py-1 text-[10px] font-medium text-apple-gray-400 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-1">
+                  <MessageSquare :size="10" /> 本轮输出
+                </p>
+                <pre class="px-2 py-1.5 text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap break-all max-h-40 overflow-y-auto leading-relaxed">{{ step.output }}</pre>
+              </div>
             </div>
           </template>
 
           <!-- 备用降级文本展示 -->
-          <div v-else class="text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap leading-relaxed bg-white/80 dark:bg-apple-gray-900/80 p-3 rounded-lg border border-purple-100 dark:border-purple-900/40">
+          <div v-else class="text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap leading-relaxed bg-white dark:bg-apple-gray-900 p-3 rounded-lg border border-apple-gray-200/60 dark:border-apple-gray-700/60">
             {{ block.content || '思考中...' }}
-            <span v-if="isThinking" class="inline-block w-1.5 h-4 bg-purple-500 animate-cursor-blink align-middle ml-0.5" />
+            <span v-if="isThinking" class="inline-block w-1.5 h-4 bg-brian-blue animate-cursor-blink align-middle ml-0.5" />
           </div>
         </div>
 
       </div>
     </div>
   </div>
+
+  <ComponentInfoModal
+    v-if="componentView"
+    :kind="componentView.kind"
+    :ref-id="componentView.ref"
+    @close="componentView = null"
+  />
 </template>

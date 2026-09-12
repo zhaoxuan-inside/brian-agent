@@ -21,10 +21,10 @@ export const TRACE_LIGHT_TYPE = 'trace';
 /** 构建 prompt 引用：用模板引用 + 小变量替代完整 prompt（不含 context_data / history / soul 全文）。 */
 export function buildPromptRef(
   templateId: string | undefined,
-  builtinId: string,
+  fallbackId: string,
   variables: PromptVariables,
 ): PromptReference {
-  return { template_id: templateId || builtinId, variables };
+  return { template_id: templateId || fallbackId, variables };
 }
 
 /** 从 Think 输出 + prompt 引用构建 Think 轨迹段。 */
@@ -89,7 +89,8 @@ export function buildSingleAnswerTrace(params: {
   output_tokens: number;
   elapsed_ms: number;
   template_id?: string;
-  builtin_id: string;
+  fallback_id?: string;
+  builtin_id?: string;
   variables: PromptVariables;
 }): TraceIterations {
   const tokenUsage = params.input_tokens + params.output_tokens;
@@ -101,7 +102,7 @@ export function buildSingleAnswerTrace(params: {
       input_tokens: params.input_tokens,
       output_tokens: params.output_tokens,
       token_usage: tokenUsage,
-      prompt_ref: buildPromptRef(params.template_id, params.builtin_id, params.variables),
+      prompt_ref: buildPromptRef(params.template_id, params.fallback_id || params.builtin_id || '', params.variables),
     },
     iteration_elapsed_ms: params.elapsed_ms,
   }];

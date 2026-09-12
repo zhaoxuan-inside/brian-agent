@@ -1,6 +1,6 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
-import { IdGenerator, Operator, ValidationError, NotFoundError, ExecLLMInput, ExecLLMOutput, LLMContext, InfoType, PROMPT_IDS, type DataObject } from '@brian-agent/base';
+import { IdGenerator, Operator, ValidationError, NotFoundError, ExecLLMInput, ExecLLMOutput, LLMContext, InfoType, type DataObject } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { SaveInfoInput, SaveInfoOutput, ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
 import type { AgentBuilderAccess } from '../../AgentBuilder/access/AgentBuilderAccess';
@@ -494,7 +494,7 @@ export class PlannerAgentService {
       const system = '';
       const prompt = await this.renderPrompt(
         promptId,
-        PROMPT_IDS.planner,
+        '任务拆分与规划',
         {
           task_content: task,
           context_data: contextExtra,

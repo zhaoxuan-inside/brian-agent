@@ -563,6 +563,28 @@
 
 **重要**：仅当 `execLLM` / `embedLLM` 调用成功时，当天的 usage_count 加 1 并累计 `input_tokens` / `output_tokens`（对话补全取 `prompt_tokens`/`completion_tokens`，向量化仅累计 `prompt_tokens`）。
 
+### 4.4b. llm_call_log 表（Token 明细账，LLMProvider 统一管理）
+
+- `表名`： llm_call_log
+- `说明`： 每次 LLM 成功调用记一条，只记模型提供商返回的 usage 真实值，不做字符数预测；支持按 session / interact / work 分级统计
+
+| 字段名 | 含义 | 类型 | 是否可以为空 | 索引类型 | 备注 |
+| ------ | ----- | ----- | ----- | ----- | ----- |
+| id | 数据唯一标识 | STRING | N | 主键 | UUID |
+| created | 创建时间 | INT64 | N | | 毫秒时间戳 |
+| llm_available_id | 可用模型 ID | STRING | N | | 关联 llm_available.id |
+| session_id | 会话标识 | STRING | N | 普通索引 | chat session_key |
+| interact_id | 交互标识 | STRING | N | 普通索引 | = trace_id |
+| work_id | 问答标识 | STRING | N | 普通索引 | = run_id |
+| input_tokens | 输入 Token 数 | INT | N | | 提供商返回 |
+| output_tokens | 输出 Token 数 | INT | N | | 提供商返回 |
+| duration_ms | 调用耗时 | INT | N | | 毫秒 |
+
+- `execLLM / execLLMEvents / embedLLM` 入参新增 `session_id / interact_id / work_id`（可选归因维度）；Loop 经 `prepareLLMTurnInput` 透传 `sessionKey→session_id、interactId→interact_id、runId→work_id`。
+- `LLMEventsParser.buildUsage` 缺 usage 时记 0/0，不按 `len/4` 预测。
+- 查询：`soTokenUsage({session_id?, interact_id?, work_id?})` → `{input_tokens, output_tokens, call_count}`；HTTP：`GET /api/llm/token-usage?session_id=&interact_id=&work_id=`。
+- 运行概览 `trace.run` 取 `llm_call_log WHERE work_id=runId` 求和得 `inputTokens/outputTokens`，为空时回退 `runtime_message.token_count`（输出侧真实值），仍不预测。
+
 ### 4.5. llm_config 表（组件配置）
 
 - `表名`： llm_config

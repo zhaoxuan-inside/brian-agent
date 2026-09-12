@@ -458,6 +458,16 @@ Chat 模块的配置通过 Config Application 统一管理（`/api/config/update
 
 ## 7. 变更记录
 
+### [2026-09-12] 历史同步只保留最终回复（中间轮叙述不同步 RESPONSE）
+**变更原因**：Loop 每轮（含 tool_calls 中间轮）都持久化 assistant 消息，同步把"好的，我来帮你查一下…"等过程叙述各落一条 RESPONSE，历史对话区一次提问出现多个"回答"气泡。
+
+**修改的方法**：
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 含 tool Part 的中间轮 assistant 消息跳过，仅每 run 最后一条 assistant 消息兜底保留；wire 历史走 `runtime_*` 表不受影响（显示侧过滤）。
+  - `dev-server.buildThinkingBlocksFromRuntime` — 中间轮文本记为 THINK 步骤（思考过程弹窗可见），仅末轮/纯文本轮文本作为最终回复 output。
+
+**影响的端点**：
+  - `GET /api/chat/history/:sessionId` — 每 run 仅一条 RESPONSE（最终回复）+ 完整 ThinkingChain（含中间叙述步骤）；摘要/图谱消费 RESPONSE，同步受益（无中间噪音）。
+
 ### [2026-09-09] "复制 TraceId" 关联语义修复（日志补盖 trace_id）
 **语义约定**：TraceId = 一次 `openChatStream` SSE 交互的追踪 id（与该轮 `interact_id` 同值）。对话区消息卡"复制 TraceId"（`info_raw.trace_id`）、Feedback/Error 块与评估弹窗复制按钮、监控页 `log_record.trace_id` 过滤，三处同一 id 域。
 

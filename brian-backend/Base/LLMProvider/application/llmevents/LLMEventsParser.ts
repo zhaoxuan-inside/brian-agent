@@ -206,7 +206,8 @@ export class LLMEventsParser {
   }
 
   /**
-   * 构建 Token 用量（数据处理）：流式 usage 帧缺失时按 4 字符/Token 粗估输出侧。
+   * 构建 Token 用量（数据处理）：只取提供商返回的 usage，不做字符数预测。
+   * 缺失时记 0/0（诚实零值，调用方按真实值统计）。
    */
   private buildUsage(
     usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
@@ -217,7 +218,6 @@ export class LLMEventsParser {
         output_tokens: usage.completion_tokens ?? 0,
       };
     }
-    const outputTokens = Math.ceil(this.textBuf.length / 4);
-    return { input_tokens: 0, output_tokens: outputTokens };
+    return { input_tokens: 0, output_tokens: 0 };
   }
 }

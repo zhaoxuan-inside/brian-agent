@@ -98,7 +98,7 @@ describe('LLMEventsParser', () => {
     expect(finish.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
   });
 
-  it('usage 帧缺失时应该按 4 字符/Token 粗估输出侧', () => {
+  it('usage 帧缺失时应该记 0/0 诚实零值', () => {
     const parser = new LLMEventsParser();
     parser.parseChunk({ choices: [{ delta: { content: '12345678' }, finish_reason: null }] });
     const finish = parser.buildFinishEvent(null) as Extract<
@@ -106,7 +106,7 @@ describe('LLMEventsParser', () => {
       { type: 'finish' }
     >;
     expect(finish.usage.input_tokens).toBe(0);
-    expect(finish.usage.output_tokens).toBe(2);
+    expect(finish.usage.output_tokens).toBe(0);
   });
 
   it('半包/心跳帧（非 JSON）应该解析为空事件数组', () => {

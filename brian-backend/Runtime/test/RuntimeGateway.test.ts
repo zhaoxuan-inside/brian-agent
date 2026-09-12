@@ -41,6 +41,12 @@ import {
   SubmitRunOutput,
   WaitRunInput,
   WaitRunOutput,
+  WaitPermissionInput,
+  WaitPermissionOutput,
+  AnswerPermissionInput,
+  AnswerPermissionOutput,
+  ConfigRunsInput,
+  ConfigRunsOutput,
   RunGatewayContext,
 } from '../Runs/domain/types';
 import {
@@ -71,7 +77,8 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent (
       id TEXT PRIMARY KEY, created INTEGER, updated INTEGER,
       agent_id TEXT, agent_name TEXT, agent_type TEXT, strategy_id TEXT,
-      soul_id TEXT, task_signature TEXT, usage_count INTEGER DEFAULT 0,
+      soul_id TEXT, skill_ids_json TEXT, mcp_ids_json TEXT, prompt_template_id TEXT,
+      task_signature TEXT, usage_count INTEGER DEFAULT 0,
       eval_score INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, agent_purpose TEXT DEFAULT ''
     )`);
     sessionAccess = new SessionAccess(relationDb);
@@ -90,11 +97,14 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const toolAccess = new ToolAccess(relationDb, {});
     await toolAccess.initialize();
 
-    // ===== 2026-09-11：Prompt 模板统一由 prompt_template 表承载（系统模板受 is_system 保护），
-    // 快照渲染走 DB —— 测试库预置内置模板 }}"
-    // eslint-disable-next-line no-inline-comments
+    // Prompt 模板统一由 prompt_template 表承载
     const promptsAccessForSeed = new PromptsAccess(relationDb);
-    await promptsAccessForSeed.initialize(); // 初始化包含 PromptCatalog.seed（INSERT-only，builtin.* + is_system=1）
+    await promptsAccessForSeed.initialize();
+    const identityPromptId = '11111111-2222-3333-4444-555555555555';
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+      '${identityPromptId}', 1, 1, 'Brian 身份声明', '主代理身份声明',
+      '# 身份\n\n你是 Brian，用户的智能个人助理。\n\n{{#if soul}}\n# 人格\n\n{{soul}}\n\n{{/if}}\n# 任务\n\n{{task_directive}}', 1, 1
+    )`);
 
     // mock LLM：收到 system 后直接给出 stop（捕获入参供断言）
     execLLMEventsMock = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -121,9 +131,16 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     });
     relationDb.executeRaw(`INSERT INTO soul (id, created, updated, soul_content, soul_brief, soul_usage, enable) VALUES ('soul-general', 1, 1, '你是 Brian 的通用人格：友好、简洁、以用户为中心。', '通用人格', '', 1)`);
 
+    const soSoulContentMock = vi.fn(async (i: { soul_id: string }, output: { content: string }) => {
+      if (i.soul_id === 'soul-general') {
+        output.content = '你是 Brian 的通用人格：友好、简洁、以用户为中心。';
+      }
+      return true;
+    });
+
     agentDefAccess = new AgentDefAccess(relationDb, mockLlm, {
       agentBuilder: { buildAgent: buildAgentMock } as never,
-      soulCore: { matchSoul: matchSoulMock } as never,
+      soulCore: { matchSoul: matchSoulMock, soSoulContent: soSoulContentMock } as never,
     });
     await agentDefAccess.initialize();
 
@@ -197,6 +214,24 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     // 也不再调用 matchSoul 动态匹配（原断言"通用人格动态解析/ matchSoul 被调用"已随收敛删除） =====
     expect(llmInput.system).not.toContain('通用人格');
     expect(matchSoulMock).not.toHaveBeenCalled();
+  });
+
+  it('Soul 注入：当构建出的 Agent 绑定了 Soul 时，Soul 正确同步到 def 并注入到 system prompt 中', async () => {
+    relationDb.executeRaw(`INSERT OR REPLACE INTO agent (id, created, updated, agent_id, agent_name, agent_type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, usage_count, eval_score, enable, agent_purpose) VALUES (
+      'agent-math-row', 1, 1, 'agent-math', '数学专家', 'WORKER', 'strat-1', 'soul-general', '[]', '[]', 'sig-math', 0, 0, 1, '数学专家'
+    )`);
+    buildAgentMock.mockImplementationOnce(async (_i: unknown, output: { agent_id: string }) => {
+      output.agent_id = 'agent-math';
+      return true;
+    });
+    const mathRun = await submit('求解微积分方程');
+    const wait = new WaitRunInput();
+    wait.run_id = mathRun.runId;
+    await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
+    const llmInput = execLLMEventsMock.mock.calls[execLLMEventsMock.mock.calls.length - 1][0] as ExecLLMEventsInput;
+    expect(llmInput.system).toContain('# 身份');
+    expect(llmInput.system).toContain('# 人格');
+    expect(llmInput.system).toContain('通用人格');
   });
 
   it('session lane：活动 run 未结算时第二次提交应该 steer 注入（同 run_id）', async () => {
@@ -339,5 +374,174 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(events?.length).toBeGreaterThan(0);
     const payload = JSON.parse(String(events![0].payload_json)) as { reason?: string };
     expect(payload.reason).toBe('run_error');
+  });
+
+  it('信任工具表：remember 应答后同工具自动放行并持久化（永久批准）', async () => {
+    // 未知 permission 应答 → answered=false，不写信任表
+    const missIn = new AnswerPermissionInput();
+    missIn.permission_id = 'perm-missing';
+    missIn.approved = true;
+    missIn.remember = true;
+    const missOut = new AnswerPermissionOutput();
+    await gateway.answerPermission(missIn, missOut, new RunGatewayContext());
+    expect(missOut.answered).toBe(false);
+
+    // 注册 waiter（后台挂起）→ remember 应答批准 → waiter 被唤醒
+    // 注：waitPermission 内有异步 config 读取，waiter 注册晚于调用返回，需让步等待注册完成
+    const waitIn = new WaitPermissionInput();
+    waitIn.permission_id = 'perm-trust-1';
+    waitIn.tool_id = 'cdt_browser';
+    const waitOut = new WaitPermissionOutput();
+    const pending = gateway.waitPermission(waitIn, waitOut, new RunGatewayContext());
+    await new Promise((r) => setTimeout(r, 100));
+    const ansIn = new AnswerPermissionInput();
+    ansIn.permission_id = 'perm-trust-1';
+    ansIn.approved = true;
+    ansIn.remember = true;
+    const ansOut = new AnswerPermissionOutput();
+    await gateway.answerPermission(ansIn, ansOut, new RunGatewayContext());
+    expect(ansOut.answered).toBe(true);
+    await pending;
+    expect(waitOut.approved).toBe(true);
+
+    // 同工具再次等待 → 信任命中直接放行（auto_approved，无需应答）
+    const autoIn = new WaitPermissionInput();
+    autoIn.permission_id = 'perm-trust-2';
+    autoIn.tool_id = 'cdt_browser';
+    const autoOut = new WaitPermissionOutput();
+    await gateway.waitPermission(autoIn, autoOut, new RunGatewayContext());
+    expect(autoOut.approved).toBe(true);
+    expect(autoOut.answered).toBe(true);
+    expect(autoOut.auto_approved).toBe(true);
+
+    // 非信任工具仍挂起（给一个会超时的短等待？此处仅验证未命中不自动放行：
+    // 用 answerPermission(拒绝) 唤醒，approved=false）
+    const otherIn = new WaitPermissionInput();
+    otherIn.permission_id = 'perm-other-1';
+    otherIn.tool_id = 'mcp_exec';
+    const otherOut = new WaitPermissionOutput();
+    const otherPending = gateway.waitPermission(otherIn, otherOut, new RunGatewayContext());
+    await new Promise((r) => setTimeout(r, 100));
+    const denyIn = new AnswerPermissionInput();
+    denyIn.permission_id = 'perm-other-1';
+    denyIn.approved = false;
+    await gateway.answerPermission(denyIn, new AnswerPermissionOutput(), new RunGatewayContext());
+    await otherPending;
+    expect(otherOut.approved).toBe(false);
+    expect(otherOut.auto_approved).toBe(false);
+
+    // configRuns 可见信任表（含 cdt_browser，不含 mcp_exec）
+    const cfgOut = new ConfigRunsOutput();
+    await gateway.configRuns(new ConfigRunsInput(), cfgOut, new RunGatewayContext());
+    expect(cfgOut.trusted_tools).toContain('cdt_browser');
+    expect(cfgOut.trusted_tools).not.toContain('mcp_exec');
+
+    // 信任表持久化：同库新建网关实例读回一致（服务重启仍生效）
+    const gateway2 = new RunGatewayAccess(relationDb, sessionAccess, agentDefAccess, loopAccess);
+    await gateway2.initialize();
+    const cfgOut2 = new ConfigRunsOutput();
+    await gateway2.configRuns(new ConfigRunsInput(), cfgOut2, new RunGatewayContext());
+    expect(cfgOut2.trusted_tools).toContain('cdt_browser');
+  });
+
+  it('信任工具表：configRuns 全量覆盖可撤销信任', async () => {
+    const cfgIn = new ConfigRunsInput();
+    cfgIn.trusted_tools = ['skill_exec'];
+    const cfgOut = new ConfigRunsOutput();
+    await gateway.configRuns(cfgIn, cfgOut, new RunGatewayContext());
+    expect(cfgOut.trusted_tools).toEqual(['skill_exec']);
+
+    // skill_exec 自动放行；旧信任 cdt_browser 已被覆盖掉，需重新询问（挂起可被应答唤醒）
+    const autoIn = new WaitPermissionInput();
+    autoIn.permission_id = 'perm-revoke-1';
+    autoIn.tool_id = 'skill_exec';
+    const autoOut = new WaitPermissionOutput();
+    await gateway.waitPermission(autoIn, autoOut, new RunGatewayContext());
+    expect(autoOut.auto_approved).toBe(true);
+
+    const waitIn = new WaitPermissionInput();
+    waitIn.permission_id = 'perm-revoke-2';
+    waitIn.tool_id = 'cdt_browser';
+    const waitOut = new WaitPermissionOutput();
+    const pending = gateway.waitPermission(waitIn, waitOut, new RunGatewayContext());
+    await new Promise((r) => setTimeout(r, 100));
+    const ansIn = new AnswerPermissionInput();
+    ansIn.permission_id = 'perm-revoke-2';
+    ansIn.approved = true;
+    await gateway.answerPermission(ansIn, new AnswerPermissionOutput(), new RunGatewayContext());
+    await pending;
+    expect(waitOut.approved).toBe(true);
+    expect(waitOut.auto_approved).toBe(false);
+  });
+
+  it('完整五阶段链路：评估 Agent 打分 + 写作 Agent 美化排版后输出最终 reply.delta', async () => {
+    let evalCalled = false;
+    let writeCalled = false;
+    const mockEvaluator = {
+      evalWorkAgent: vi.fn(async () => {
+        evalCalled = true;
+        return true;
+      }),
+    };
+    const mockWriter = {
+      execWrite: vi.fn(async (_i: any, o: { response?: string; response_format?: string }) => {
+        writeCalled = true;
+        o.response = '## 美化标题\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n这是排版后的内容。';
+        o.response_format = 'MARKDOWN';
+        return true;
+      }),
+    };
+
+    const refinedGateway = new RunGatewayAccess(
+      relationDb,
+      sessionAccess,
+      agentDefAccess,
+      loopAccess,
+      undefined,
+      mockEvaluator,
+      mockWriter,
+    );
+    await refinedGateway.initialize();
+
+    execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+      output.finish_reason = 'stop';
+      output.result = '原始粗糙文本输出';
+      return true;
+    });
+
+    const regOut = new RegisterStreamOutput();
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: 'sess-refine', writer: () => true }),
+      regOut,
+      new StreamContext(),
+    );
+    const submitIn = new SubmitRunInput();
+    submitIn.session_key = 'sess-refine';
+    submitIn.session_id = 'sess-row-1';
+    submitIn.user_message = '请画一个流程图';
+    const submitOut = new SubmitRunOutput();
+    const report = new Report({ session_id: 'sess-refine', session_key: 'sess-refine', stream_endpoint_id: regOut.endpoint_id });
+    await refinedGateway.submitRun(submitIn, submitOut, new RunGatewayContext(), undefined, report);
+
+    const waitIn = new WaitRunInput();
+    waitIn.run_id = submitOut.run_id;
+    await refinedGateway.waitRun(waitIn, new WaitRunOutput(), new RunGatewayContext(), undefined, report);
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(evalCalled).toBe(true);
+    expect(writeCalled).toBe(true);
+    expect(mockWriter.execWrite).toHaveBeenCalled();
+    expect(mockEvaluator.evalWorkAgent).toHaveBeenCalled();
+
+    // stream_event 中包含 writer.completed 与美化后的 reply.delta
+    const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
+      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
+      ['sess-refine'],
+    );
+    const types = (rows ?? []).map((r) => r.event_type);
+    expect(types).toContain('writer.completed');
+    expect(types).toContain('reply.delta');
+    const replyDelta = (rows ?? []).find((r) => r.event_type === 'reply.delta');
+    expect(replyDelta?.payload_json).toContain('```mermaid');
   });
 });

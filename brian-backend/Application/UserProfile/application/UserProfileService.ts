@@ -1,6 +1,6 @@
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
-import { IdGenerator, Operator, Direction, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, JsonParser, PROMPT_IDS, type DataObject } from '@brian-agent/base';
+import { IdGenerator, Operator, Direction, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, JsonParser, type DataObject } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import {
   LastNInfoInput, LastNInfoOutput, RelationKInfoInput, RelationKInfoOutput, InfoCoreContext,
@@ -1011,7 +1011,7 @@ export class UserProfileService {
 
     const prompt = await this.renderPrompt(
       templateId,
-      PROMPT_IDS.profileAnalysis,
+      '用户画像维度分析',
       {
         direction_key: directionKey,
         direction_name: directionName,
@@ -1080,14 +1080,26 @@ export class UserProfileService {
     }
   }
 
-  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省 builtin ID；缺失 fail-loud */
+  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省按标题动态查找；缺失 fail-loud */
   private async renderPrompt(
     templateId: string | undefined,
-    builtinId: string,
+    fallbackTitle: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
-    const id = templateId || builtinId;
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+    let id = templateId;
+    if (!id) {
+      const soOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: fallbackTitle }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (p.prompt_template_title?.includes(fallbackTitle) || p.prompt_template_brief?.includes(fallbackTitle)));
+      if (hit) id = hit.id;
+    }
+    if (!id) {
+      throw new ValidationError(`未找到匹配的 Prompt 模板: ${fallbackTitle}`);
+    }
     const promptOut = new ExecPromptOutput();
     await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), { id, variables }),

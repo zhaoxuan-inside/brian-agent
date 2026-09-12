@@ -39,6 +39,8 @@ import {
   AddSessionInput,
   AddSessionOutput,
   SessionContext,
+  RUNTIME_MESSAGE_TABLE,
+  RUNTIME_MESSAGE_PART_TABLE,
 } from '../../Session';
 import {
   MatchAgentDefInput,
@@ -78,6 +80,27 @@ import {
   RUNTIME_RUNS_CONFIG_TABLE,
 } from '../domain/types';
 
+/** 输出评估接口（鸭子类型，由组合根注入 Evolutor 适配器） */
+export interface OutputEvaluator {
+  evalWorkAgent(input: {
+    work_id: string;
+    interact_id: string;
+    agent_id: string;
+    task_content: string;
+    agent_output: string;
+  }, output: unknown, ctx: unknown, metrics?: Metrics, report?: Report): Promise<boolean>;
+}
+
+/** 输出写作排版接口（鸭子类型，由组合根注入 Writer 适配器） */
+export interface OutputWriter {
+  execWrite(input: {
+    work_id: string;
+    interact_id: string;
+    user_query: string;
+    agent_results: Array<{ agent_id: string; task_content?: string; result?: string; answer?: string }>;
+  }, output: { response?: string; response_format?: string; blocks?: unknown[] }, ctx: unknown, metrics?: Metrics, report?: Report): Promise<boolean>;
+}
+
 /**
  * RunGatewayService。
  */
@@ -102,6 +125,8 @@ export class RunGatewayService {
     private readonly agents: AgentDefAccess,
     private readonly loop: LoopAccess,
     private readonly logger?: Logger,
+    private readonly evaluator?: OutputEvaluator,
+    private readonly writer?: OutputWriter,
   ) {
     this.config = new ConfigService(relationDb, RUNTIME_RUNS_CONFIG_TABLE);
   }
@@ -294,14 +319,16 @@ export class RunGatewayService {
     let matchOut: MatchAgentDefOutput | undefined;
     try {
       matchOut = await this.matchAgent(input, parent?.report);
-      // ===== 修改后（2026-09-11 收敛版）：def 命中即复用绑定，不再传 regen 绕过缓存 =====
-      const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.report);
-      // 过程可观测：Agent 选择与组件选定清单（Soul/Skill/MCP/Prompt/LLM）
+      // ===== 修改后（2026-09-12）：选择 Agent 先于组件装配上报，时间线顺序符合
+      // 「需求确认 → 选择 Agent → 组件写作（LLM/Soul/Prompt/Skill/MCP）」 =====
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
         def_id: matchOut.def_id,
-        agent_name: snapshot.name,
+        agent_name: matchOut.def.name,
         matched_by: matchOut.matched_by,
       });
+      // ===== 修改后（2026-09-11 收敛版）：def 命中即复用绑定，不再传 regen 绕过缓存 =====
+      const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.report);
+      // 组件装配完成清单（LLM/Soul/Prompt/Skill/MCP 在 snapshot 中解析完成）
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
         agent_name: snapshot.name,
         soul_id: matchOut.def.soul_id,
@@ -311,8 +338,76 @@ export class RunGatewayService {
         mcps: (snapshot.tools ?? []).filter((t) => t.kind === 'mcp'),
       });
       const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
+      // 注入 Writer 时由外部统一排版输出，延迟 Loop 的原始 reply.delta
+      if (this.writer) {
+        loopInput.defer_final_reply = true;
+      }
       const loopOutput = new ExecAgentLoopOutput();
       await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
+
+      // ===== 执行完成后的 评估 + 写作 阶段（完整五阶段链路） =====
+      let finalResult = loopOutput.result;
+      if (loopOutput.stop_reason === LoopStopReason.Stop && loopOutput.result) {
+        // 1. 评估 Agent：评估本次输出质量（正确性/完整性/效率/相关性评分）
+        if (this.evaluator) {
+          try {
+            const evalOut: Record<string, unknown> = {};
+            const evalCtx: Record<string, unknown> = { session_id: input.session_key, work_id: runId, interact_id: input.interact_id ?? '' };
+            await this.evaluator.evalWorkAgent({
+              work_id: runId,
+              interact_id: input.interact_id ?? '',
+              agent_id: matchOut.def.agent_ref || matchOut.def_id,
+              task_content: input.user_message,
+              agent_output: loopOutput.result,
+            }, evalOut, evalCtx, parent?.metrics, parent?.report);
+          } catch (err) {
+            this.logger?.warn?.('评估 Agent 执行失败（不阻断主流程）', { error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+
+        // 2. 写作 Agent：美化本次输出为 Markdown / Mermaid 等最佳展示格式
+        if (this.writer) {
+          try {
+            const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
+            const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: runId, interact_id: input.interact_id ?? '' };
+            const writeOk = await this.writer.execWrite({
+              work_id: runId,
+              interact_id: input.interact_id ?? '',
+              user_query: input.user_message,
+              agent_results: [{
+                agent_id: matchOut.def.name,
+                task_content: input.user_message,
+                result: loopOutput.result,
+              }],
+            }, writeOut, writeCtx, parent?.metrics, parent?.report);
+            if (writeOk && writeOut.response) {
+              finalResult = writeOut.response;
+              parent?.report?.pushBusinessEvent(BusinessEvent.WriterCompleted, {
+                format: writeOut.response_format || 'MARKDOWN',
+                length: finalResult.length,
+                has_mermaid: finalResult.includes('```mermaid'),
+              });
+              // 发送美化排版后的最终回复
+              parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
+              // 同步更新消息库，保证历史问答（info_raw 聚合）能读到美化后的排版
+              if (loopOutput.message_id) {
+                await this.updateAssistantMessageContent(loopOutput.message_id, finalResult);
+              }
+            } else {
+              parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+            }
+          } catch (err) {
+            this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
+            parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+          }
+        }
+      }
+
+      // 如果启用了 defer_final_reply 且正常完成，由 Gateway 统筹发布 run.finished
+      if (loopInput.defer_final_reply && loopOutput.stop_reason === LoopStopReason.Stop) {
+        parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+      }
+
       // ===== 修改后（2026-09-11）：错误 run 结算后立即杀死 Agent（错误立即杀死 / 正确自然凋亡） =====
       await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.report);
       if (loopOutput.stop_reason === LoopStopReason.Error) {
@@ -353,6 +448,26 @@ export class RunGatewayService {
       );
     } catch (err) {
       report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /** 更新 assistant 消息与 text part 内容为美化后的回复（数据处理；保证 history 同步一致） */
+  private async updateAssistantMessageContent(messageId: string, content: string): Promise<void> {
+    try {
+      await this.relationDb.update(RUNTIME_MESSAGE_TABLE, newPatch({
+        content,
+      }), [{ field: 'id', operator: Operator.EQ, value: messageId }]);
+      await this.relationDb.update(RUNTIME_MESSAGE_PART_TABLE, newPatch({
+        content,
+      }), [
+        { field: 'message_id', operator: Operator.EQ, value: messageId },
+        { field: 'part_type', operator: Operator.EQ, value: 'text' },
+      ]);
+    } catch (err) {
+      this.logger?.warn?.('更新 assistant 消息内容失败（best-effort）', {
+        message_id: messageId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -425,6 +540,7 @@ export class RunGatewayService {
     loopInput.run_id = runId;
     loopInput.session_key = input.session_key;
     loopInput.session_id = runtimeSessionId;
+    loopInput.interact_id = input.interact_id;
     loopInput.user_message = input.user_message;
     loopInput.system = snapshot.system;
     loopInput.llm_id = snapshot.llm_id;
@@ -631,7 +747,38 @@ export class RunGatewayService {
 
   /** 模块配置（逻辑控制） */
   /** 权限等待注册表：permission_id → waiter（Deferred；waitRun 同模式） */
-  private readonly permissionWaiters = new Map<string, { resolve: (r: { approved: boolean }) => void; answered: boolean }>();
+  private readonly permissionWaiters = new Map<string, { resolve: (r: { approved: boolean; autoApproved?: boolean }) => void; answered: boolean; tool_id?: string }>();
+
+  // ===== 新增（2026-09-12）：信任工具表（"永久批准"）=====
+  // 用户在权限卡点"始终允许"后，tool_id 入表并持久化到 runtime_runs_config（trusted_tools，
+  // JSON 数组）；后续同工具 askPermission 直接放行，不再弹窗。撤销走 configRuns 全量覆盖。
+  /** 信任工具内存态（config 表为唯一持久源；懒加载） */
+  private trustedTools: Set<string> | null = null;
+
+  /** 信任表读取（数据处理）：缺配置/坏 JSON 回退空表 */
+  private async soTrustedTools(): Promise<Set<string>> {
+    if (this.trustedTools) return this.trustedTools;
+    try {
+      const raw = await this.config.getString('trusted_tools', '[]');
+      const parsed: unknown = JSON.parse(String(raw ?? '[]'));
+      this.trustedTools = new Set(Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []);
+    } catch {
+      this.trustedTools = new Set();
+    }
+    return this.trustedTools;
+  }
+
+  /** 信任表持久化（逻辑控制；best-effort，失败仅日志不阻断应答） */
+  private async persistTrustedTools(): Promise<void> {
+    if (!this.trustedTools) return;
+    try {
+      await this.config.set('trusted_tools', JSON.stringify([...this.trustedTools]), 'STRING', '永久批准的信任工具表（tool_id 数组）');
+    } catch (err) {
+      this.logger?.warn?.('persistTrustedTools: 信任表持久化失败（内存态仍生效）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   /**
    * 权限等待挂起（逻辑控制；Loop 权限门调用，permission.asked 已由 Loop 经 Report 下发）。
@@ -645,12 +792,22 @@ export class RunGatewayService {
     if (!input.permission_id) {
       throw new ValidationError('permission_id 不能为空');
     }
+    // ===== 新增（2026-09-12）：信任工具直接放行（不注册 waiter、不弹窗等待）=====
+    if (input.tool_id) {
+      const trusted = await this.soTrustedTools();
+      if (trusted.has(input.tool_id)) {
+        output.approved = true;
+        output.answered = true;
+        output.auto_approved = true;
+        return true;
+      }
+    }
     const timeoutRef = { value: RunGatewayService.PERMISSION_WAIT_DEFAULT_MS };
     try {
       timeoutRef.value = await this.soPermissionWaitTimeout();
     } catch { /* best effort：配置读取失败回退默认 */ }
-    const result = await new Promise<{ approved: boolean }>((resolve) => {
-      this.permissionWaiters.set(input.permission_id, { resolve, answered: false });
+    const result = await new Promise<{ approved: boolean; autoApproved?: boolean }>((resolve) => {
+      this.permissionWaiters.set(input.permission_id, { resolve, answered: false, tool_id: input.tool_id });
       const timer = setTimeout(
         () => {
           if (this.permissionWaiters.get(input.permission_id)?.resolve === resolve) {
@@ -670,6 +827,7 @@ export class RunGatewayService {
     this.permissionWaiters.delete(input.permission_id);
     output.approved = result.approved;
     output.answered = true;
+    output.auto_approved = result.autoApproved === true;
     return true;
   }
 
@@ -685,6 +843,14 @@ export class RunGatewayService {
       return true;
     }
     this.permissionWaiters.delete(input.permission_id);
+    // ===== 新增（2026-09-12）："始终允许" → 批准且记住时工具入信任表 =====
+    if (input.approved && input.remember && waiter.tool_id) {
+      const trusted = await this.soTrustedTools();
+      if (!trusted.has(waiter.tool_id)) {
+        trusted.add(waiter.tool_id);
+        await this.persistTrustedTools();
+      }
+    }
     waiter.resolve({ approved: input.approved });
     output.answered = true;
     return true;
@@ -703,7 +869,14 @@ export class RunGatewayService {
       }
       await this.config.set('permission_wait_timeout_ms', String(input.permission_wait_timeout_ms), 'NUMBER');
     }
+    // ===== 新增（2026-09-12）：信任工具表全量覆盖（撤销信任入口）=====
+    if (input.trusted_tools !== undefined) {
+      const next = new Set(input.trusted_tools.filter((t): t is string => typeof t === 'string' && t.length > 0));
+      this.trustedTools = next;
+      await this.persistTrustedTools();
+    }
     output.permission_wait_timeout_ms = await this.soPermissionWaitTimeout();
+    output.trusted_tools = [...(await this.soTrustedTools())];
     return true;
   }
 

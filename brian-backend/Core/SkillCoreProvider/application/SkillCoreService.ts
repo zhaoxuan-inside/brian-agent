@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_IDS } from '@brian-agent/base';
+import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SkillCoreContext,
@@ -397,7 +397,7 @@ export class SkillCoreService {
     templateId: string,
     variables: Record<string, unknown>,
   ): Promise<string> {
-    const id = templateId || PROMPT_IDS.skillMatch;
+    const id = templateId || await this.soMatchPromptTemplateId();
     try {
       const promptOutput = new ExecPromptOutput();
       await this.promptsAccess.execPrompt(
@@ -407,6 +407,19 @@ export class SkillCoreService {
       if (promptOutput.prompt) return promptOutput.prompt;
     } catch { /* 下沉 fail-loud */ }
     throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${id}`);
+  }
+
+  /** 获取 Skill 匹配模板 ID（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ProcessingError('未找到 Skill 匹配提示词模板');
   }
 
   // ===== 修改后的方法（2026-09-11）：统一 LLM 排序调用（shutdown 快、max_tokens 上限、返回文本给 RankingParser） =====

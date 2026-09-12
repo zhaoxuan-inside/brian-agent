@@ -6,7 +6,6 @@ import {
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
   InfoType,
-  PROMPT_IDS,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -703,7 +702,7 @@ export class AgentBuilderService {
         // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
         const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
         if (!prompt) {
-          throw new ValidationError(`Prompt 模板不可用或渲染为空: ${config.task_analysis_prompt_template_id || PROMPT_IDS.taskAnalysis}`);
+          throw new ValidationError(`Prompt 模板不可用或渲染为空: ${config.task_analysis_prompt_template_id}`);
         }
         if (prompt) {
           const llmOut = new ExecLLMOutput();

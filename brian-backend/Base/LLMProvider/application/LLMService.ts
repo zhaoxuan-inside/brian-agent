@@ -18,8 +18,7 @@ import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import type { Logger } from '../../shared/aop/AopProxy';
 import type { PromptsAccess } from '../../PromptsProvider/access/PromptsAccess';
-import { PromptContext, ExecPromptInput, ExecPromptOutput } from '../../PromptsProvider/domain/types';
-import { PROMPT_IDS } from '../../PromptCatalog/catalog';
+import { PromptContext, ExecPromptInput, ExecPromptOutput, SoPromptInput, SoPromptOutput } from '../../PromptsProvider/domain/types';
 import { ConfigService } from '../../shared/config/ConfigService';
 import { HttpAccess } from '../../ToolProvider/access/HttpAccess';
 import { TOOL_CONFIG_TABLE } from '../../ToolProvider/domain/types';
@@ -38,7 +37,7 @@ import { Operator, Direction } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
 import type { LLMMessage } from '../../shared/llm/LLMEvent';
 import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS } from './llmevents/LLMEventsRunner';
-import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
+import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CALL_LOG_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
 import { LLMStrategyFactory } from './strategies';
 import { newPatch, newRecord } from '../../shared/query';
 import {
@@ -212,6 +211,67 @@ export class LLMService {
         }),
       );
     }
+  }
+
+  /**
+   * Token 明细账落账（LLMProvider 统一管理）。
+   * 每次 LLM 成功调用记一条，只记提供商返回真实值，不做预测。
+   * best-effort：失败不阻断主流程。
+   */
+  private async logCall(args: {
+    llmId: string; session_id?: string; interact_id?: string;
+    work_id?: string; input_tokens?: number; output_tokens?: number;
+    duration_ms?: number;
+  }): Promise<void> {
+    try {
+      await this.relationDb.insert(
+        LLM_CALL_LOG_TABLE,
+        newRecord({
+          llm_available_id: args.llmId,
+          session_id: args.session_id ?? '',
+          interact_id: args.interact_id ?? '',
+          work_id: args.work_id ?? '',
+          input_tokens: Number(args.input_tokens ?? 0) || 0,
+          output_tokens: Number(args.output_tokens ?? 0) || 0,
+          duration_ms: Number(args.duration_ms ?? 0) || 0,
+        }),
+      );
+    } catch {
+      /* 明细账失败不阻断主流程 */
+    }
+  }
+
+  /**
+   * 按 session / interact / work 分级统计 Token（均为明细账求和）。
+   */
+  async soTokenUsage(
+    input: SoTokenUsageInput, output: SoTokenUsageOutput,
+    _context: LLMContext,
+  ): Promise<boolean> {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (input.session_id) {
+      conds.push('"session_id" = ?');
+      params.push(input.session_id);
+    }
+    if (input.interact_id) {
+      conds.push('"interact_id" = ?');
+      params.push(input.interact_id);
+    }
+    if (input.work_id) {
+      conds.push('"work_id" = ?');
+      params.push(input.work_id);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const rows = this.relationDb.queryRaw<{ input_tokens: number; output_tokens: number; call_count: number }>(
+      `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "${LLM_CALL_LOG_TABLE}" ${where}`,
+      params,
+    );
+    const row = rows?.[0];
+    output.input_tokens = Number(row?.input_tokens ?? 0) || 0;
+    output.output_tokens = Number(row?.output_tokens ?? 0) || 0;
+    output.call_count = Number(row?.call_count ?? 0) || 0;
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -1095,6 +1155,7 @@ export class LLMService {
         }
       : undefined;
     try {
+      const startedAt = Date.now();
       const request = await this.buildEventsRequest(llmId, input);
       const runner = new LLMEventsRunner({
         request,
@@ -1105,6 +1166,15 @@ export class LLMService {
       });
       const result = await runner.run();
       await this.upsertUsage(llmId, result.input_tokens, result.output_tokens);
+      await this.logCall({
+        llmId,
+        session_id: input.session_id,
+        interact_id: input.interact_id,
+        work_id: input.work_id,
+        input_tokens: result.input_tokens,
+        output_tokens: result.output_tokens,
+        duration_ms: Date.now() - startedAt,
+      });
       return {
         ok: true,
         text: result.text,
@@ -1454,6 +1524,15 @@ export class LLMService {
 
     // 成功后更新 llm_usage 表当天的 usage_count 与 token 用量
     await this.upsertUsage(llmId, output.input_tokens, output.output_tokens);
+    await this.logCall({
+      llmId,
+      session_id: input.session_id,
+      interact_id: input.interact_id,
+      work_id: input.work_id,
+      input_tokens: output.input_tokens,
+      output_tokens: output.output_tokens,
+      duration_ms: output.duration_ms,
+    });
     return true;
   }
 
@@ -1557,6 +1636,15 @@ export class LLMService {
     }
 
     await this.upsertUsage(input.id, output.input_tokens, 0);
+    await this.logCall({
+      llmId: input.id,
+      session_id: input.session_id,
+      interact_id: input.interact_id,
+      work_id: input.work_id,
+      input_tokens: output.input_tokens,
+      output_tokens: 0,
+      duration_ms: output.duration_ms,
+    });
     return true;
   }
 
@@ -1600,20 +1688,29 @@ export class LLMService {
     // 3. 通过 PromptsProvider 渲染 Prompt
     let prompt = '';
     if (this.promptsAccess) {
-      const execPromptInput = Object.assign(new ExecPromptInput(), {
-        id: PROMPT_IDS.llmAttrGen,
-        variables: {
-          model_name: llm.llm_title,
-          llm_type: llm.llm_type || 'text',
-          provider_title: providerTitle,
-        },
-      });
-      const execPromptOutput = new ExecPromptOutput();
-      await this.promptsAccess.execPrompt(
-        execPromptInput,
-        execPromptOutput, new PromptContext(),
+      const soPromptOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: '模型属性生成' }),
+        soPromptOut,
+        new PromptContext(),
       );
-      prompt = execPromptOutput.prompt || '';
+      const templateId = soPromptOut.list?.find((p) => p.enable !== false)?.id;
+      if (templateId) {
+        const execPromptInput = Object.assign(new ExecPromptInput(), {
+          id: templateId,
+          variables: {
+            model_name: llm.llm_title,
+            llm_type: llm.llm_type || 'text',
+            provider_title: providerTitle,
+          },
+        });
+        const execPromptOutput = new ExecPromptOutput();
+        await this.promptsAccess.execPrompt(
+          execPromptInput,
+          execPromptOutput, new PromptContext(),
+        );
+        prompt = execPromptOutput.prompt || '';
+      }
     }
     // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud（模板统一由 prompt_template 表承载） =====
     if (!prompt) {

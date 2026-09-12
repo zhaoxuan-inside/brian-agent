@@ -1,6 +1,6 @@
 ﻿import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
-import { IdGenerator, Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, PromptContext, SoPromptInput, SoPromptOutput, GetSoulInput, GetSoulOutput, SoulContext, HandleResultType, PROMPT_IDS, type DataObject } from '@brian-agent/base';
+import { IdGenerator, Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, PromptContext, SoPromptInput, SoPromptOutput, GetSoulInput, GetSoulOutput, SoulContext, HandleResultType, type DataObject } from '@brian-agent/base';
 import type { SoulAccess, StreamAccess } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
@@ -178,7 +178,7 @@ export class WriterAgentService {
 
     const prompt = await this.renderPrompt(
       config?.write_prompt_template_id,
-      PROMPT_IDS.writer,
+      'Writer',
       {
         task_content: input.user_query,
         preferences: JSON.stringify(preferences),
@@ -294,7 +294,6 @@ export class WriterAgentService {
           output_tokens: params.outputTokens,
           elapsed_ms: params.elapsedMs,
           template_id: params.templateId,
-          builtin_id: PROMPT_IDS.writer,
           variables: {
             task_content: params.taskContent,
             agent_name: params.agentName,

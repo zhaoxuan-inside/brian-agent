@@ -70,6 +70,35 @@ function formatAgentTitle(rawName?: string, agId?: string, agType?: string): str
 
 /** 按 (node_id, node_type) 定位并替换/追加编排执行步骤 */
 
+/**
+ * 后端 tool.* 事件载荷归一化（数据处理；纯函数）：
+ * 后端实际下发 {part_id, tool_id, input}（input 多为 JSON 字符串），旧前端只认
+ * {tool_name/tool_type/params}。归一后三端统一：toolName / params 对象 / partId 关联键。
+ */
+function normalizeToolPayload(payload: Record<string, unknown>): {
+  toolName: string
+  params: Record<string, unknown>
+  partId: string
+} {
+  const toolName = String(
+    payload.tool_name ?? payload.tool_type ?? payload.tool_id ?? payload.action ?? 'Tool',
+  )
+  const raw = payload.params ?? payload.input ?? payload.arguments
+  let params: Record<string, unknown> = {}
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      params = (parsed && typeof parsed === 'object' ? parsed : { _raw: raw }) as Record<string, unknown>
+    } catch {
+      params = { _raw: raw }
+    }
+  } else if (raw && typeof raw === 'object') {
+    params = raw as Record<string, unknown>
+  }
+  const partId = typeof payload.part_id === 'string' ? payload.part_id : ''
+  return { toolName, params, partId }
+}
+
 // ============================================================
 // 事件处理工厂（持有轮内状态：流式文本块指针 / trace_id 回退值）
 // ============================================================
@@ -119,7 +148,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     return existing
   }
 
-  /** 自动弹出思考弹窗时定位动画原点：取"要展示思考过程的问题"（最近一条用户消息）对应的"思考过程"按钮 */
+  /** 自动弹出思考弹窗时定位动画原点：取最近一条用户消息对应的"思考过程"按钮 */
   function resolveAutoThinkingOrigin() {
     const msgs = chat.messages
     let lastUser
@@ -138,6 +167,23 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       }
     }
     ui.setThinkingOrigin(null)
+  }
+
+  /** 问答任务进行中自动弹出思考过程：定位动画原点后以实时模式打开，已打开时为幂等 */
+  function ensureLiveThinkingOpen() {
+    if (ui.thinkingModalVisible) return
+    resolveAutoThinkingOrigin()
+    ui.ensureLiveThinking()
+  }
+
+  function hasPendingPermission(): boolean {
+    return chat.messages.some((m) => m.permission?.status === 'pending')
+  }
+
+  /** 任务结束时尝试自动关闭：仍有待授权则保持打开，等待用户在弹窗内完成授权 */
+  function tryAutoCloseThinking() {
+    if (hasPendingPermission()) return
+    ui.requestAutoCloseThinkingModal()
   }
 
   /** 最终回复文本：首个文本帧创建 TextParagraph 块，后续帧追加内容（agent_output 与 text_chunk 共用） */
@@ -188,7 +234,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
 
   /** 复用既有 Agent：将「构建中」占位卡片收敛为「复用已有 Agent」 */
 
-  /** Agent 思考推理中（RUNNING → 黄色）：追加/续写 THINK 步骤 */
+  /** Agent 思考推理中：追加/续写 THINK 步骤 */
   function onAgentThinking(ctx: StreamEventCtx) {
     const { payload } = ctx
     const chunk = typeof payload === 'string' ? payload : String(payload.chunk || payload.reasoning || '')
@@ -220,8 +266,13 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     if (!thinkBlock.steps) thinkBlock.steps = []
 
-    const toolName = String(payload.tool_name || payload.tool_type || payload.tool_id || 'Tool')
-    const params = (payload.params as Record<string, unknown>) || {}
+    // ===== 修改后的方法（2026-09-12）：后端 tool.started/tool.launch 载荷归一化 =====
+    // 原实现只读 payload.tool_name/tool_type/tool_id/params，而后端实际下发
+    // {part_id, tool_id, input}（AgentLoopService.markPartRunning），input 为 JSON 字符串；
+    // 字段对不上 → 工具块恒为 toolName='Tool'、params={} 的空盒，且 result 从未回填。
+    // 现归一化：tool_id→toolName；input/params/arguments（对象或 JSON 串）→params；
+    // part_id→块 id，保证 started/launch/result 命中同一块、可更新不重复。
+    const { toolName, params, partId } = normalizeToolPayload(payload)
     const iterIdx = typeof payload.iteration === 'number' ? payload.iteration : undefined
 
     if (toolName === 'NONE') return
@@ -232,8 +283,19 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     })
     chat.updateBlock(thinkBlock.id, { steps: thinkBlock.steps })
 
+    const toolBlockId = partId ? `block-tool-${ctx.botMsgId}-${partId}` : `block-tool-${Date.now()}`
+    const existed = chat.blocks.find(b => b.id === toolBlockId)
+    if (existed) {
+      chat.updateBlock(toolBlockId, {
+        toolName,
+        params,
+        result: payload.result ?? (existed as { result?: unknown }).result,
+        meta: { ...existed.meta, status: 'streaming', updatedAt: ctx.serverTime },
+      })
+      return
+    }
     const toolBlock: Block = {
-      id: `block-tool-${Date.now()}`,
+      id: toolBlockId,
       msgId: ctx.botMsgId,
       role: 'tool',
       type: 'ToolInvocation',
@@ -323,7 +385,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     thinkBlock.content += lines.join('\n') + '\n'
   }
 
-  /** intent.analyzed：意图识别（LLM 需求/意图匹配评估）结果 → 思考面板 */
+  /** intent.analyzed：意图识别结果 → 思考面板 */
   function onIntentAnalyzed(ctx: StreamEventCtx) {
     const score = Number(ctx.payload.score ?? 0)
     const reason = String(ctx.payload.reason || '')
@@ -334,7 +396,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     if (reason) thinkBlock.content += `· ${reason}\n`
   }
 
-  /** agent.built：Agent 构建完成（未命中既有 Agent 新建）→ 思考面板 */
+  /** agent.built：Agent 构建完成 → 思考面板 */
   function onAgentBuilt(ctx: StreamEventCtx) {
     const name = String(ctx.payload.name || ctx.payload.agent_id || 'agent')
     const purpose = String(ctx.payload.purpose || '')
@@ -386,22 +448,37 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     for (const s of suggestions) thinkBlock.content += `· ${s}\n`
   }
 
-  /** tool.started：工具开始执行 → 动作轨迹 */
+  /** tool.started：工具开始执行 → 动作轨迹（载荷 {part_id, tool_id, input}，归一化后建块） */
   function onToolStarted(ctx: StreamEventCtx) {
-    onAgentAction({ ...ctx, payload: { action: ctx.payload.tool_id, input: ctx.payload.input } })
+    onAgentAction(ctx)
   }
 
-  /** tool.launch（v2 协议）→ 动作轨迹 */
+  /** tool.launch（v2 协议）→ 动作轨迹（同 started；同 part_id 命中同一块做更新，不重复建块） */
   function onToolLaunch(ctx: StreamEventCtx) {
-    onAgentAction({ ...ctx, payload: { action: ctx.payload.tool_id, input: ctx.payload.input } })
+    onAgentAction(ctx)
   }
 
-  /** tool.result（v2 协议）→ 输出面板 */
+  // ===== 修改后的方法（2026-09-12）：tool.result 回填 ToolInvocation 块 =====
+  // 原实现只调 onAgentOutput（自 09-12 起仅回填思考块）→ 工具块 result 恒空、状态恒 streaming。
+  // 现按 part_id 定位同一块回填 result 并收敛状态；思考块回填保留（onAgentOutput）。
+  /** tool.result（v2 协议）→ 输出面板（工具块回填 + 思考块回填） */
   function onToolResult(ctx: StreamEventCtx) {
+    const { partId } = normalizeToolPayload(ctx.payload)
+    if (partId) {
+      const toolBlockId = `block-tool-${ctx.botMsgId}-${partId}`
+      const existed = ctx.chat.blocks.find(b => b.id === toolBlockId)
+      if (existed) {
+        const done = ctx.payload.status === 'ok'
+        ctx.chat.updateBlock(toolBlockId, {
+          result: ctx.payload.output,
+          meta: { ...existed.meta, status: done ? 'done' : 'error', updatedAt: ctx.serverTime },
+        })
+      }
+    }
     onAgentOutput({ ...ctx, payload: { output: ctx.payload.output, status: ctx.payload.status === 'ok' ? 'done' : 'error' } })
   }
 
-  /** plan.updated（v2 协议）：过程性计划卡 → 规划面板 */
+  /** plan.updated：过程性计划 → 规划面板 */
   function onPlanUpdated(ctx: StreamEventCtx) {
     const steps = Array.isArray(ctx.payload.steps) ? (ctx.payload.steps as Array<{ step: string; status: string }>) : []
     ui.updatePlanning({
@@ -434,12 +511,15 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   // 现改为：permission.asked 在对话区插入独立 PermissionConfirmCard（允许/拒绝双按钮），
   // 同一记录由后端落库（info_raw: PERMISSION），历史回放同款卡片；ChatMap 因
   // buildMessageGraph 仅收 REQUEST/RESPONSE 天然不展示。卡 id 用许可 id 保证幂等。
-  /** permission.asked（v2 协议）：权限确认卡（approve/deny → answerPermission 唤醒挂起的 Loop） */
+  /** permission.asked：授权确认统一在思考过程弹窗内完成，对话区不再展示 */
   function onPermissionAsked(ctx: StreamEventCtx) {
     const permissionId = String(ctx.payload.permission_id ?? '')
     if (!permissionId) return
     const msgId = `perm-${permissionId}`
-    if (ctx.chat.messages.some(m => m.id === msgId)) return
+    if (ctx.chat.messages.some(m => m.id === msgId)) {
+      ensureLiveThinkingOpen()
+      return
+    }
     ctx.chat.addMessage({
       id: msgId,
       role: 'assistant',
@@ -451,6 +531,29 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
         input: ctx.payload.input ?? {},
         status: 'pending',
         askedAt: ctx.serverTime,
+        runId: String(ctx.payload.run_id ?? ''),
+      },
+    })
+    // 有新的授权请求时确保思考过程已弹出，方便用户直接在弹窗内完成授权
+    ensureLiveThinkingOpen()
+  }
+
+  // ===== 新增的方法（2026-09-12）：permission.answered 回执翻卡 =====
+  // 后端 askPermission 应答后必下发 answered（含信任表自动放行 auto_approved）；
+  // 自动放行无用户点击，卡片靠此事件由 pending 翻为 allowed/denied，避免悬挂。
+  // 手动应答本地已即时翻卡，此处幂等（仅 pending 卡才更新）。
+  /** permission.answered：权限应答回执 → 更新对话区权限卡状态 */
+  function onPermissionAnswered(ctx: StreamEventCtx) {
+    const permissionId = String(ctx.payload.permission_id ?? '')
+    if (!permissionId) return
+    const msgId = `perm-${permissionId}`
+    const msg = ctx.chat.messages.find(m => m.id === msgId)
+    if (!msg?.permission || msg.permission.status !== 'pending') return
+    ctx.chat.updateMessage(msgId, {
+      permission: {
+        ...msg.permission,
+        status: ctx.payload.approved === false ? 'denied' : 'allowed',
+        answeredAt: ctx.serverTime,
       },
     })
   }
@@ -459,7 +562,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   function onRunFinished(ctx: StreamEventCtx) {
     chat.finalizeBlocks(ctx.botMsgId)
     ui.updatePlanning({ status: 'done' })
-    ui.requestAutoCloseThinkingModal()
+    tryAutoCloseThinking()
     textBlockId = null
   }
 
@@ -484,8 +587,8 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       textBlockId = null
       return
     }
-    // done 事件 → 自动关闭思考弹窗（满足最短展示 5 秒后关闭）
-    ui.requestAutoCloseThinkingModal()
+    // done 事件 → 自动关闭思考弹窗（有待授权时保持打开）
+    tryAutoCloseThinking()
     const feedbackBlock: Block = {
       id: `block-fb-${Date.now()}`,
       msgId: ctx.botMsgId,
@@ -524,15 +627,20 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       meta: { status: 'error', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
     } as Block
     chat.addBlock(errBlock)
-    ui.requestAutoCloseThinkingModal()
+    tryAutoCloseThinking()
+  }
+
+  /** run 开始 / 受理：问答任务进行中自动弹出思考过程 */
+  function onRunStarted() {
+    ensureLiveThinkingOpen()
   }
 
   /** 事件分发表（键 = sseEventTypes 的线上事件全集；样式映射见 EVENT_UI_STYLE） */
   const handlers: Record<string, (ctx: StreamEventCtx) => void> = {
     [SseTransportEvent.Connected]: onConnected,
     [SseTransportEvent.Loading]: () => { /* 心跳占位帧 */ },
-    [BusinessEvent.RunAccepted]: () => { /* 受理回执：run_id 已在 done 帧承载 */ },
-    [BusinessEvent.RunStarted]: () => { /* 开始执行：思考面板即将输出 */ },
+    [BusinessEvent.RunAccepted]: onRunStarted,
+    [BusinessEvent.RunStarted]: onRunStarted,
     [BusinessEvent.RunFinished]: onRunFinished,
     [BusinessEvent.RunFailed]: onRunFailed,
     [BusinessEvent.PartUpdated]: () => { /* 阶段4 预留 */ },
@@ -544,7 +652,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.ToolResult]: onToolResult,
     [BusinessEvent.PlanUpdated]: onPlanUpdated,
     [BusinessEvent.PermissionAsked]: onPermissionAsked,
-    [BusinessEvent.PermissionAnswered]: () => { /* 应答回执：确认卡已在分流时关闭 */ },
+    [BusinessEvent.PermissionAnswered]: onPermissionAnswered,
     [BusinessEvent.ContextBuilt]: onContextBuilt,
     [BusinessEvent.AgentSelected]: onAgentSelected,
     [BusinessEvent.AgentComponents]: onAgentComponents,

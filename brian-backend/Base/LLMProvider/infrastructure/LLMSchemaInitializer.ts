@@ -13,6 +13,7 @@ import {
   LLM_CACHE_TABLE,
   LLM_AVAILABLE_TABLE,
   LLM_USAGE_TABLE,
+  LLM_CALL_LOG_TABLE,
   LLM_CONFIG_TABLE,
 } from '../domain/types';
 
@@ -229,6 +230,37 @@ export class LLMSchemaInitializer {
     } catch { /* old column, may not exist */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_usage_date" ON "${LLM_USAGE_TABLE}" ("usage_date")`,
+    );
+
+    // llm_call_log 表（Token 明细账：每次 LLM 调用一条，只记提供商返回真实值）
+    // 注意：newRecord() 恒补 id/created/updated 三列，DDL 必须包含 updated 列，否则每次 insert 静默失败、明细账恒空
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${LLM_CALL_LOG_TABLE}" (
+        "id"               TEXT    NOT NULL PRIMARY KEY,
+        "created"          INTEGER NOT NULL,
+        "updated"          INTEGER NOT NULL,
+        "llm_available_id" TEXT    NOT NULL,
+        "session_id"       TEXT    NOT NULL DEFAULT '',
+        "interact_id"      TEXT    NOT NULL DEFAULT '',
+        "work_id"          TEXT    NOT NULL DEFAULT '',
+        "input_tokens"     INTEGER NOT NULL DEFAULT 0,
+        "output_tokens"    INTEGER NOT NULL DEFAULT 0,
+        "duration_ms"      INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "updated" INTEGER NOT NULL DEFAULT 0`,
+      );
+    } catch { /* 已存在 updated 列时忽略（存量库迁移：CREATE TABLE IF NOT EXISTS 不会补列） */ }
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_session" ON "${LLM_CALL_LOG_TABLE}" ("session_id")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact" ON "${LLM_CALL_LOG_TABLE}" ("interact_id")`,
+    );
+    this.relationDb.executeRaw(
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_work" ON "${LLM_CALL_LOG_TABLE}" ("work_id")`,
     );
 
     // llm_config 配置表

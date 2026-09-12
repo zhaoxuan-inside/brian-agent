@@ -251,9 +251,33 @@ export class ChatService {
         (existingRows ?? []).map((r) => `${r.work_id || ''}\u0001${r.info_type || ''}\u0001${r.info || ''}`),
       );
 
-      for (const msg of rows) {
+      // ===== 新增（2026-09-12）：中间轮 assistant 消息不同步到对话框 =====
+      // Loop 每轮（连同含 tool_calls 的中间轮）都持久化 assistant 消息，原来
+      // "好的，我来帮你查一下…"等多条 RESPONSE 会在历史对话区各占一个气泡。
+      // 现只同步每 run 的最终回复：含 tool Part 的中间轮消息跳过；每 run 最后一条
+      // assistant 消息兜底保留（预算耗尽/异常导致无纯文本最终轮时仍有 RESPONSE）。
+      // wire 历史走 runtime_* 表，不受此显示侧过滤影响。
+      const runIds = Array.from(new Set(rows.map((r) => r.run_id).filter(Boolean)));
+      let toolMsgIds = new Set<string>();
+      if (runIds.length > 0) {
+        const placeholders = runIds.map(() => '?').join(',');
+        const partRows = this.relationDb.queryRaw<{ message_id: string }>(
+          `SELECT DISTINCT "message_id" FROM "runtime_message_part" WHERE "run_id" IN (${placeholders}) AND "part_type" = 'tool'`,
+          runIds,
+        );
+        toolMsgIds = new Set((partRows ?? []).map((r) => r.message_id));
+      }
+      const lastAssistantIdxByRun = new Map<string, number>();
+      rows.forEach((m, i) => {
+        if (m.role !== 'user') lastAssistantIdxByRun.set(m.run_id || runId, i);
+      });
+
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        const msg = rows[rowIdx];
         // 空内容占位行（如 run 超时未回复的 assistant 行）跳过，不落库也不中断
         if (!msg.content || msg.content.trim() === '') continue;
+        // 中间轮叙述跳过（兜底保留每 run 最后一条）
+        if (msg.role !== 'user' && toolMsgIds.has(msg.id) && rowIdx !== lastAssistantIdxByRun.get(msg.run_id || runId)) continue;
 
         const infoType = msg.role === 'user' ? 'REQUEST' : 'RESPONSE';
         const infoCreatorRole = msg.role === 'user' ? 'USER' : 'ASSISTANT';
@@ -266,7 +290,6 @@ export class ChatService {
         saveInput.session_id = chatSessionId;
         saveInput.work_id = workId;
         saveInput.interact_id = traceId;
-        saveInput.trace_id = traceId;
         saveInput.info_type = infoType;
         saveInput.info_creator_role = infoCreatorRole;
         saveInput.info = msg.content;

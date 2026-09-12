@@ -4,6 +4,7 @@
 
 // access 层
 export { RunGatewayAccess } from './access/RunGatewayAccess';
+export type { OutputEvaluator, OutputWriter } from './application/RunGatewayService';
 
 // infrastructure 层
 export { RunsSchemaInitializer } from './infrastructure/RunsSchemaInitializer';

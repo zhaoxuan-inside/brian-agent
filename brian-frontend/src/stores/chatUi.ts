@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ClarificationRequest } from '@/api/types'
+import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ClarificationRequest, ThinkingTrace } from '@/api/types'
 import { chatApi } from '@/api'
 
 /**
@@ -22,6 +22,8 @@ export const useChatUiStore = defineStore('chatUi', () => {
   // Planning 策略拆解：planning 为流式期间的实时拆解数据，thinkingDag 为指定消息接口采集的拆解数据
   const planning = ref<PlanningData>({ status: 'idle' })
   const thinkingDag = ref<AgentDagData | null>(null)
+  // V2 完整执行轨迹：指定消息接口采集（timeline/tools/permissions/run），流式期间为空（由实时 blocks/messages 归约）
+  const thinkingTrace = ref<ThinkingTrace | null>(null)
   // 思考过程弹窗动画原点（"思考过程"按钮的视口矩形），供入场/退场 FLIP 动画使用
   const thinkingOrigin = ref<{ left: number; top: number; width: number; height: number } | null>(null)
   // 弹窗打开时刻（用于自动关闭的 5 秒最小展示时长判定）
@@ -96,7 +98,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     clarificationRequest.value = null
   }
 
-  // ===== 思考过程弹窗与独立模块加载状态管理 =====
+  // ===== 思考过程弹窗与加载状态管理（仅 blocks + trace，不再有 V1 DAG 模块） =====
   function setThinkingOrigin(rect: { left: number; top: number; width: number; height: number } | null) {
     thinkingOrigin.value = rect
   }
@@ -109,9 +111,24 @@ export const useChatUiStore = defineStore('chatUi', () => {
     thinkingTargetMsgId.value = msgId
     thinkingBlocks.value = []
     thinkingDag.value = null
+    thinkingTrace.value = null
     thinkingLoading.value = true
-    dagLoading.value = true
+    dagLoading.value = false
     blocksLoading.value = true
+    thinkingOpenedAt.value = Date.now()
+    thinkingModalVisible.value = true
+  }
+
+  // 问答任务进行中自动弹出思考过程（实时模式，target 为空）：已打开时不重复触发，避免重置计时
+  function ensureLiveThinking() {
+    if (thinkingModalVisible.value) return
+    thinkingTargetMsgId.value = null
+    thinkingBlocks.value = []
+    thinkingDag.value = null
+    thinkingTrace.value = null
+    thinkingLoading.value = false
+    dagLoading.value = false
+    blocksLoading.value = false
     thinkingOpenedAt.value = Date.now()
     thinkingModalVisible.value = true
   }
@@ -127,15 +144,18 @@ export const useChatUiStore = defineStore('chatUi', () => {
   function setThinkingBlocks(blocks: Block[]) {
     thinkingBlocks.value = blocks
     blocksLoading.value = false
-    if (!dagLoading.value) {
-      thinkingLoading.value = false
-    }
+    thinkingLoading.value = false
   }
 
-  function openThinkingModal(msgId: string | null = null, blocks: Block[] = [], dag: AgentDagData | null = null) {
+  function setThinkingTrace(trace: ThinkingTrace | null) {
+    thinkingTrace.value = trace
+  }
+
+  function openThinkingModal(msgId: string | null = null, blocks: Block[] = [], dag: AgentDagData | null = null, trace: ThinkingTrace | null = null) {
     thinkingTargetMsgId.value = msgId
     thinkingBlocks.value = blocks
     thinkingDag.value = dag
+    thinkingTrace.value = trace
     thinkingLoading.value = false
     dagLoading.value = false
     blocksLoading.value = false
@@ -148,22 +168,29 @@ export const useChatUiStore = defineStore('chatUi', () => {
       clearTimeout(autoCloseTimer)
       autoCloseTimer = null
     }
+    // 仅隐藏：内容保留至退场动画结束后再清理，避免关闭瞬间内容闪空导致动画突兀
     thinkingModalVisible.value = false
+  }
+
+  // 退场动画结束后由 ThinkingModal @after-leave 调用：此时再清空内容与运行时状态
+  function cleanupThinkingModal() {
+    if (thinkingModalVisible.value) return
     thinkingTargetMsgId.value = null
     thinkingBlocks.value = []
     thinkingDag.value = null
+    thinkingTrace.value = null
     thinkingLoading.value = false
     dagLoading.value = false
     blocksLoading.value = false
     resetPlanning()
     resetAgentStatus()
-    // thinkingOrigin 保留至退场动画结束后由 ThinkingModal 调用 clearThinkingOrigin 清除
+    thinkingOrigin.value = null
   }
 
-  // ===== 自动关闭：收到关闭事件且弹窗已展示超过 5 秒才关闭；不足 5 秒则延迟到满 5 秒后关闭 =====
+  // ===== 自动关闭：收到关闭事件且弹窗已展示超过最短时长才关闭；不足则延迟关闭，保证动画完整 =====
   function requestAutoCloseThinkingModal() {
     if (!thinkingModalVisible.value) return
-    const MIN_OPEN_MS = 5000
+    const MIN_OPEN_MS = 3500
     const elapsed = Date.now() - thinkingOpenedAt.value
     const remaining = MIN_OPEN_MS - elapsed
     if (remaining <= 0) {
@@ -297,6 +324,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
   function resetWorkflowState() {
     planning.value = { status: 'idle' }
     thinkingDag.value = null
+    thinkingTrace.value = null
     agentExecutions.value = {}
     taskExecutions.value = {}
   }
@@ -304,10 +332,10 @@ export const useChatUiStore = defineStore('chatUi', () => {
   return {
     thinkingModalVisible, thinkingTargetMsgId, thinkingBlocks,
     thinkingLoading, dagLoading, blocksLoading,
-    planning, thinkingDag, agentExecutions, taskExecutions, thinkingOrigin,
+    planning, thinkingDag, thinkingTrace, agentExecutions, taskExecutions, thinkingOrigin,
     setThinkingOrigin, clearThinkingOrigin,
-    startThinkingLoading, setThinkingDag, setThinkingBlocks,
-    openThinkingModal, closeThinkingModal, requestAutoCloseThinkingModal,
+    startThinkingLoading, ensureLiveThinking, setThinkingDag, setThinkingBlocks, setThinkingTrace,
+    openThinkingModal, closeThinkingModal, cleanupThinkingModal, requestAutoCloseThinkingModal,
     resetPlanning, updatePlanning,
     setAgentStatus, resetAgentStatus, resetWorkflowState,
     evalResultVisible, evalResultLoading, evalResult, evalResultError, evalTraceId,

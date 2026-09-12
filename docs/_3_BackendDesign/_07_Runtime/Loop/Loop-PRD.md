@@ -108,6 +108,8 @@ finish=tool-calls → `consumeToolCalls`（execTool 配对结果 → Part 状态
 
 并行工具执行：无依赖 tool_calls 默认顺序执行（保配对清晰）；`parallel_batches` 参数可开启批次并行（单批次原子启动检查点）。
 
+> 落地差异（2026-09-12）：转轮文本分流——中间轮（`finishReason==='tool-calls'`）的 `text_delta` 只发 `think.delta`（思考过程），最终轮轮末把全文（`turn.text`，与持久化一致）发一条 `reply.delta`（对话框）；失败轮残留同样进 thinking。`askPermission` 应答后下发 `permission.answered`（含 `auto_approved`，信任表自动放行时前端卡片靠此翻态）。
+
 ## 8. 与旧模型的关系
 
 | 旧 | 新 |

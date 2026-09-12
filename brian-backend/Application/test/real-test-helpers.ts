@@ -207,6 +207,34 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const promptsAccess = new PromptsAccess(relationDb, logger);
   await promptsAccess.initialize();
 
+  const standardPrompts = [
+    { id: '23f9159c-8b18-44ec-8210-6ff14cb4dc19', title: 'LLM 模型匹配', template: 'Match LLM: {{available_llms}}' },
+    { id: 'cfd2753b-e103-43a6-9383-a9cd300dcf44', title: '任务拆分与规划', template: 'Plan: {{task_content}}' },
+    { id: '4fb49814-3078-4455-9aa4-6d2b0de09722', title: 'WorkAgent 质量评估', template: 'Eval: {{task_content}}' },
+    { id: '14e2675a-6a1c-40a0-89b3-f77bed66a375', title: 'WriterAgent 质量评估', template: 'Eval: {{task_content}}' },
+    { id: '95b7c089-4caf-4d6e-a530-0552bc85add3', title: 'Writer 结构化响应', template: 'Write: {{task_content}}' },
+    { id: '7d4997c7-9194-4fde-be25-c1085a8dbcb5', title: 'Worker Think', template: 'Think: {{task_content}}' },
+    { id: '57206602-c41c-4127-9ba9-b72edca33819', title: 'Worker Reflect', template: 'Reflect: {{task_content}}' },
+    { id: '184e528b-a383-4f25-9a6b-12008c7d63c0', title: 'Worker Answer', template: 'Answer: {{task_content}}' },
+    { id: 'd029dfcc-68b4-4930-9265-8e2264b45f20', title: '用户画像维度分析', template: 'Analyze Profile: {{direction_key}} {{conversation_sample}}' },
+    { id: '5d995468-9ee6-4cda-974d-819ae6f119d4', title: '任务分析与签名生成', template: 'Analyze Task: {{task_content}}' },
+    { id: '31c4d572-41db-407a-a694-891cd0ac475c', title: 'MCP 工具匹配', template: 'Match MCP: {{available_mcps}}' },
+    { id: '251fef0b-5082-4767-aaaa-f39c4d75d7f5', title: 'Skill 匹配', template: 'Match Skill: {{available_skills}}' },
+    { id: 'c2fbddb6-16e0-4a71-8b04-61a1e5dcc0d3', title: 'Soul 匹配', template: 'Match Soul: {{available_souls}}' },
+    { id: 'ff3ea600-2e75-42f2-a0ba-3467497d6697', title: '系统响应摘要生成', template: 'Summary: {{task_content}}' },
+    { id: '5ddc44a1-b168-4894-8553-e64b167fcb73', title: 'Agent 匹配', template: 'Match Agent: {{candidates}}' },
+    { id: '1f08b32d-404a-4735-8e3a-02364c61f29d', title: 'Brian 身份声明', template: '# 身份\n\n你是 Brian\n\n{{#if soul}}\n# 人格\n\n{{soul}}\n\n{{/if}}\n# 任务\n\n{{task_directive}}' },
+    { id: '80f64e73-d492-41ec-96eb-c8a2213e633e', title: '需求理解与意图比对', template: 'Understand: {{user_query}}' },
+    { id: '2c83ffb4-f6fa-4b7c-a1db-3f89079551b4', title: '模型属性生成', template: 'Gen LLM Attr: {{model_name}}' },
+    { id: '0c33fe5f-3b89-4e8c-ae0c-9731ca47383e', title: '文档阅读问答', template: 'Document Query: {{question}}' },
+  ];
+  const now = Date.now();
+  for (const p of standardPrompts) {
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+      '${p.id}', ${now}, ${now}, '${p.title}', '${p.title}', '${p.template.replace(/'/g, "''")}', 1, 1
+    )`);
+  }
+
   const graphDBAccess = new GraphDBAccess(relationDb, { dbPath: path.join(tempDir, 'graph.db') }, logger);
   await graphDBAccess.initialize();
 

@@ -6,7 +6,7 @@ import {
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
   SoLLMInput, SoLLMOutput,
-  PROMPT_IDS,
+  PROMPT_TEMPLATE_TABLE,
   type DataObject, type Condition,
 } from '@brian-agent/base';
 import {
@@ -777,7 +777,7 @@ export class AgentLibraryService {
     const candidatesJson = JSON.stringify(candidateList, null, 2);
     // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
     let prompt = '';
-    const id = promptTemplateId || PROMPT_IDS.agentMatch;
+    const id = promptTemplateId || await this.soMatchPromptTemplateId();
     const promptOut = new ExecPromptOutput();
     const okPrompt = await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), {
@@ -821,5 +821,18 @@ export class AgentLibraryService {
     }
     if (typeof data === 'object') return data as Record<string, unknown>;
     return {};
+  }
+
+  /** 获取 Agent 匹配模板 ID（逻辑控制） */
+  private async soMatchPromptTemplateId(): Promise<string> {
+    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' },
+    ]);
+    if (row && row.id) return String(row.id);
+    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (anyRow && anyRow.id) return String(anyRow.id);
+    throw new ValidationError('未找到 Agent 匹配提示词模板');
   }
 }

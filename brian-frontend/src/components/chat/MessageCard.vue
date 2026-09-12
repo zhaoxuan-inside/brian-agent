@@ -274,7 +274,7 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-800/60"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
         title="查看思考过程"
         :data-thinking-id="targetId"
         @click.stop="handleShowThinking"

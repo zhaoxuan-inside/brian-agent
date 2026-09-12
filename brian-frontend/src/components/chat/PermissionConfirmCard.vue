@@ -10,7 +10,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [approved: boolean]
+  confirm: [approved: boolean, remember: boolean]
 }>()
 
 /** 工具入参摘要：对象/文本都收敛为单行小字，避免长参撑开卡片 */
@@ -59,15 +59,24 @@ const interactive = computed(() => props.permission.status === 'pending' && !pro
           <button
             class="px-3 py-1.5 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 flex items-center gap-1"
             :disabled="!interactive"
-            @click="emit('confirm', false)"
+            @click="emit('confirm', false, false)"
           >
             <X v-if="submitting" :size="14" class="animate-spin" />
             拒绝
           </button>
+          <!-- ===== 新增（2026-09-12）：永久批准——批准且工具入信任表，后续同工具不再询问 ===== -->
+          <button
+            class="px-3 py-1.5 rounded-lg text-sm text-brian-blue hover:bg-brian-blue/10 disabled:opacity-50 flex items-center gap-1"
+            title="以后执行该工具不再询问"
+            :disabled="!interactive"
+            @click="emit('confirm', true, true)"
+          >
+            始终允许
+          </button>
           <button
             class="px-3 py-1.5 rounded-lg text-sm text-white bg-brian-blue hover:bg-brian-blue/90 disabled:opacity-50 flex items-center gap-1"
             :disabled="!interactive"
-            @click="emit('confirm', true)"
+            @click="emit('confirm', true, false)"
           >
             <Loader2 v-if="submitting" :size="14" class="animate-spin" />
             <Check v-else :size="14" />

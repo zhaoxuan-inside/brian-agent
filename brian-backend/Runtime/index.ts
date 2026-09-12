@@ -94,6 +94,7 @@ export type {
 
 // Runs：运行网关（两段式 · session lane · 队列模式）（阶段3/4 前置）
 export { RunGatewayAccess, RunsSchemaInitializer } from './Runs';
+export type { OutputEvaluator, OutputWriter } from './Runs';
 export {
   RunGatewayContext,
   SubmitRunInput,

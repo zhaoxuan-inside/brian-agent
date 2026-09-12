@@ -4,8 +4,8 @@ import {
   Operator, ValidationError,
   ExecLLMInput, ExecLLMOutput, LLMContext,
   ExecPromptInput, ExecPromptOutput, PromptContext,
+  SoPromptInput, SoPromptOutput,
   SoSoulOutput, AddSoulOutput, SoulContext,
-  PROMPT_IDS,
 } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import {
@@ -95,8 +95,9 @@ export class IntentAgentService {
     );
 
     // 4. 执行 Prompt 与 LLM 推理
+    const templateId = await this.soIntentPromptTemplateId();
     const promptIn = Object.assign(new ExecPromptInput(), {
-      id: PROMPT_IDS.intentUnderstanding,
+      id: templateId,
       variables: {
         user_query: input.user_query,
         recent_history: historyText,
@@ -233,5 +234,24 @@ export class IntentAgentService {
     } catch {
       return '';
     }
+  }
+
+  /** 获取需求理解提示词模板 ID（逻辑控制） */
+  private async soIntentPromptTemplateId(): Promise<string> {
+    try {
+      const soOut = new SoPromptOutput();
+      await this.promptsAccess.soPrompt(
+        Object.assign(new SoPromptInput(), { keyword: '需求理解与意图比对' }),
+        soOut,
+        new PromptContext(),
+      );
+      const hit = soOut.list?.find((p) => p.enable !== false && (String(p.prompt_template_title || '').includes('需求理解') || String(p.prompt_template_brief || '').includes('需求理解')));
+      if (hit) return hit.id;
+      const anyHit = soOut.list?.find((p) => p.enable !== false);
+      if (anyHit) return anyHit.id;
+    } catch {
+      /* ignore */
+    }
+    return '需求理解与意图比对';
   }
 }

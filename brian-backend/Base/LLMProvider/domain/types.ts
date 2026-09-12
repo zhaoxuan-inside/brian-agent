@@ -174,6 +174,34 @@ export interface LLMAvailableRecord {
 }
 
 /**
+ * llm_call_log 表记录（含系统字段）。
+ *
+ * LLMProvider 统一管理的 Token 明细账：每次 LLM 调用一条记录，
+ * 真实值只从模型提供商返回的 usage 中提取，不做字符数预测。
+ * 分级统计维度：session_id（会话）→ interact_id（交互）→ work_id（问答=run_id）。
+ */
+export interface LLMCallLogRecord {
+  /** 数据唯一标识 */
+  id: string;
+  /** 创建时间（毫秒时间戳） */
+  created: number;
+  /** 可用 LLM ID，关联 llm_available.id */
+  llm_available_id: string;
+  /** 会话标识（chat session_key，与 info_raw.session_id 对齐） */
+  session_id: string;
+  /** 交互标识（= trace_id，一次用户提问） */
+  interact_id: string;
+  /** 问答标识（= run_id，单次 run） */
+  work_id: string;
+  /** 输入 Token 数（提供商返回） */
+  input_tokens: number;
+  /** 输出 Token 数（提供商返回） */
+  output_tokens: number;
+  /** 调用耗时（毫秒） */
+  duration_ms: number;
+}
+
+/**
  * llm_usage 表记录（含系统字段）。
  */
 export interface LLMUsageRecord {
@@ -428,6 +456,12 @@ export class ExecLLMInput extends Input {
   stream?: boolean;
   /** 流式回调：每收到一个 delta token 时调用 */
   onDelta?: (delta: string) => void;
+  /** Token 归因维度：会话标识（chat session_key） */
+  session_id?: string;
+  /** Token 归因维度：交互标识（= trace_id） */
+  interact_id?: string;
+  /** Token 归因维度：问答标识（= run_id） */
+  work_id?: string;
 }
 
 /** execLLM 出参 */
@@ -478,6 +512,12 @@ export class ExecLLMEventsInput extends Input {
   idle_watchdog_ms?: number;
   /** 流事件回调：每个归一化 LLMEvent 触发一次 */
   on_event?: (event: LLMEvent) => void;
+  /** Token 归因维度：会话标识（chat session_key） */
+  session_id?: string;
+  /** Token 归因维度：交互标识（= trace_id） */
+  interact_id?: string;
+  /** Token 归因维度：问答标识（= run_id） */
+  work_id?: string;
 }
 
 /** execLLMEvents 出参 */
@@ -510,6 +550,12 @@ export class EmbedLLMInput extends Input {
   id!: string;
   /** 待向量化的文本 */
   input!: string;
+  /** Token 归因维度：会话标识（chat session_key） */
+  session_id?: string;
+  /** Token 归因维度：交互标识（= trace_id） */
+  interact_id?: string;
+  /** Token 归因维度：问答标识（= run_id） */
+  work_id?: string;
 }
 
 /** embedLLM 出参 */
@@ -565,6 +611,30 @@ export class EnableLLMInput extends Input {
 export class EnableLLMOutput extends Output {}
 
 // ---------------------------------------------------------------------------
+// soTokenUsage（按 session / interact / work 分级统计 Token）
+// ---------------------------------------------------------------------------
+
+/** soTokenUsage 入参：三个维度可选，缺省为全量 */
+export class SoTokenUsageInput extends Input {
+  /** 会话标识（chat session_key） */
+  session_id?: string;
+  /** 交互标识（= trace_id） */
+  interact_id?: string;
+  /** 问答标识（= run_id） */
+  work_id?: string;
+}
+
+/** soTokenUsage 出参：输入/输出拆分，均为提供商返回真实值求和 */
+export class SoTokenUsageOutput extends Output {
+  /** 输入 Token 合计 */
+  input_tokens = 0;
+  /** 输出 Token 合计 */
+  output_tokens = 0;
+  /** 调用次数 */
+  call_count = 0;
+}
+
+// ---------------------------------------------------------------------------
 // 表名
 // ---------------------------------------------------------------------------
 
@@ -579,6 +649,9 @@ export const LLM_AVAILABLE_TABLE = 'llm_available';
 
 /** llm_usage 表名 */
 export const LLM_USAGE_TABLE = 'llm_usage';
+
+/** llm_call_log 表名（Token 明细账，LLMProvider 统一管理） */
+export const LLM_CALL_LOG_TABLE = 'llm_call_log';
 
 /** llm_config 配置表名 */
 export const LLM_CONFIG_TABLE = 'llm_config';

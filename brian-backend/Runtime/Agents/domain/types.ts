@@ -226,6 +226,8 @@ export class KillErroredAgentInput extends Input {
   work_id?: string;
   /** 交互 id */
   interact_id?: string;
+  /** 追踪 id（= interact_id） */
+  trace_id?: string;
   /** 任务内容（错误 usage 回溯） */
   task_content?: string;
   /** 错误描述 */

@@ -172,6 +172,8 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
           function: { name: 'skill_exec' },
         });
         expect(input.messages![2]).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: '北京天气：晴，22°C' });
+        // 最终轮直播增量（轮中合帧保守进 think，轮末全文进 reply，见下断言）
+        input.on_event?.({ type: 'text_delta', delta: '北京今天' });
         output.finish_reason = 'stop';
         output.result = '北京今天晴，22°C。';
         output.tool_calls = [];
@@ -211,7 +213,19 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const events = await replayEvents(input.session_key);
     const types = events.events.map((e) => e.type);
     expect(types[0]).toBe('run.started');
-    expect(types).toContain('reply.delta');
+    // ===== 修改后（2026-09-12）：中间轮文本只进 think.delta，最终轮全文进 reply.delta =====
+    // 原断言仅要求含 reply.delta；现精确断言分流——中间轮叙述"我查一下天气"不出对话框，
+    // 对话框仅见最终全文；轮中直播增量"北京今天"保守进 thinking。
+    const replyDeltas = events.events
+      .filter((e) => e.type === 'reply.delta')
+      .map((e) => (e.payload as { delta: string }).delta);
+    const thinkText = events.events
+      .filter((e) => e.type === 'think.delta')
+      .map((e) => (e.payload as { delta: string }).delta)
+      .join('');
+    expect(thinkText).toContain('我查一下天气');
+    expect(thinkText).toContain('北京今天');
+    expect(replyDeltas).toEqual(['北京今天晴，22°C。']);
     expect(types).toContain('reply.created');
     expect(types).toContain('tool.started');
     expect(types).toContain('tool.result');
@@ -290,6 +304,9 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const events = await replayEvents(input.session_key);
     const denied = events.events.find((e) => e.type === 'tool.result');
     expect((denied!.payload as { output: string }).output).toContain('permission denied');
+    // ===== 新增（2026-09-12）：应答后必下发 permission.answered（卡片翻态依据）=====
+    const answered = events.events.find((e) => e.type === 'permission.answered');
+    expect((answered!.payload as { approved: boolean }).approved).toBe(false);
   });
 
   it('权限门：批准时工具正常执行', async () => {
@@ -323,6 +340,9 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const events = await replayEvents(input.session_key);
     const toolResult = events.events.find((e) => e.type === 'tool.result');
     expect((toolResult!.payload as { status: string }).status).toBe('ok');
+    // ===== 新增（2026-09-12）：批准同样下发 permission.answered（approved=true）=====
+    const answered = events.events.find((e) => e.type === 'permission.answered');
+    expect((answered!.payload as { approved: boolean }).approved).toBe(true);
   });
   
 

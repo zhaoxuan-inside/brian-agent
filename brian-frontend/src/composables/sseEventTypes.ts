@@ -38,6 +38,7 @@ export const BusinessEvent = {
   SkillSelected: 'skill.selected',
   McpSelected: 'mcp.selected',
   EvaluationCompleted: 'evaluation.completed',
+  WriterCompleted: 'writer.completed',
   // 错误与块流
   ErrorOccurred: 'error.occurred',
   MessageBlock: 'message.block',
@@ -90,6 +91,7 @@ export const EVENT_UI_STYLE: Record<SseEventName, EventUiStyle> = {
   [BusinessEvent.SkillSelected]: { area: 'thinking', tone: 'default' },
   [BusinessEvent.McpSelected]: { area: 'thinking', tone: 'default' },
   [BusinessEvent.EvaluationCompleted]: { area: 'thinking', tone: 'default' },
+  [BusinessEvent.WriterCompleted]: { area: 'thinking', tone: 'default' },
   [BusinessEvent.ErrorOccurred]: { area: 'error', tone: 'error' },
   [BusinessEvent.MessageBlock]: { area: 'text', tone: 'default' },
   [SseTransportEvent.Connected]: { area: 'lifecycle', tone: 'muted' },

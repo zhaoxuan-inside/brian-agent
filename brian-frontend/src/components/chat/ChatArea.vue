@@ -17,17 +17,14 @@ import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
 import EvalResultModal from './EvalResultModal.vue'
 import IntentConfirmCard from './IntentConfirmCard.vue'
-import PermissionConfirmCard from './PermissionConfirmCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
 const sessionStore = useSessionStore()
 const chatUi = useChatUiStore()
 const {
   confirmingIntent,
-  permitting,
   handleSend,
   handleIntentConfirm,
-  handlePermissionConfirm,
 } = useChatStream()
 
 const leftWidth = computed(() => `${sessionStore.splitRatio * 100}%`)
@@ -114,31 +111,29 @@ function jumpTo(id: string) {
   scrollListTo(id)
 }
 
-// 思考过程独立按模块并发加载（DAG 与 ThinkingBlocks 独立请求并渐进式展示）
+// 思考过程按消息加载：请求思考块与执行轨迹并展示弹窗
 async function showThinking(id: string) {
-  // 1. 立即打开弹窗并展示"正在加载思考过程..."动态加载态，避免静态空白卡顿
   chatUi.startThinkingLoading(id)
 
-  // 2. 模块独立加载：DAG 图与思考块独立请求并回调更新
-  const dagPromise = chatApi.thinking(id, 'dag')
-    .then(res => chatUi.setThinkingDag(res.dag ?? null))
-    .catch(() => chatUi.setThinkingDag(null))
-
-  const blocksPromise = chatApi.thinking(id, 'blocks')
-    .then(res => chatUi.setThinkingBlocks(res.blocks ?? []))
-    .catch(() => chatUi.setThinkingBlocks([]))
-
-  await Promise.allSettled([dagPromise, blocksPromise])
+  try {
+    const res = await chatApi.thinking(id, 'blocks')
+    chatUi.setThinkingBlocks(res.blocks ?? [])
+    chatUi.setThinkingTrace((res as { trace?: import('@/api/types').ThinkingTrace | null }).trace ?? null)
+  } catch {
+    chatUi.setThinkingBlocks([])
+    chatUi.setThinkingTrace(null)
+  }
 }
 
 type TimelineEntry =
   | { kind: 'message'; key: string; sort: number; message: ChatMessage }
   | { kind: 'block'; key: string; sort: number; block: Block }
 
-// timeline 实现：确保思考 Blocks 严格按创建/执行先后顺序在用户提问之后、最终回复之前正确排列
+// timeline：对话区仅展示用户提问与最终回复；授权确认不在对话区展示，统一在思考过程弹窗内完成
 const timeline = computed<TimelineEntry[]>(() => {
   const entries: TimelineEntry[] = []
   for (const m of sessionStore.messages) {
+    if (m.permission) continue
     entries.push({ kind: 'message', key: `m-${m.id}`, sort: m.timestamp, message: m })
   }
   for (const b of sessionStore.blocks) {
@@ -216,28 +211,12 @@ function startResize(e: MouseEvent) {
             :class="entry.message.role === 'user' ? 'justify-start' : 'justify-end'"
             :data-info-id="entry.message.id"
           >
-            <!-- 权限确认卡：独立组件步骤（历史/实时同一渲染路径；落库记录直读 permission 字段） -->
-            <div v-if="entry.message.permission" class="w-full">
-              <PermissionConfirmCard
-                :permission="entry.message.permission"
-                :submitting="permitting"
-                @confirm="approved => handlePermissionConfirm(entry.message.permission, approved)"
-              />
-            </div>
-
             <!-- 用户消息：靠左，头像在消息框左侧 -->
-            <template v-else>
             <div v-if="entry.message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 text-brian-blue flex items-center justify-center mt-1">
               <UserRound :size="16" />
             </div>
 
             <div class="max-w-[85%] min-w-0">
-              <!-- ===== 原始展示（保留参考）：对话区消息上方渲染长程多 Agent 协同依赖 DAG 网络（Planning 策略拆解卡片） =====
-              <AgentDagFlow v-if="entry.message.agentDag" :dag="entry.message.agentDag" />
-              -->
-
-              <!-- ===== 修改后：对话区不展示 Planning 策略拆解（AgentDagFlow），拆解仅在"思考过程"弹窗内展示 ===== -->
-
               <MessageCard
                 :id="entry.message.id"
                 :info-id="entry.message.id"
@@ -255,7 +234,7 @@ function startResize(e: MouseEvent) {
                 :work-id="entry.message.workId"
                 mode="timeline"
                 :node-map="nodeMap"
-                :is-streaming="sessionStore.isStreaming && entry.message.role !== 'user'"
+                :is-streaming="false"
                 @toggle-select="sessionStore.toggleMsgSelection"
                 @toggle-pin="togglePin"
                 @click-card="centerMapOn"
@@ -265,11 +244,10 @@ function startResize(e: MouseEvent) {
               />
             </div>
 
-            <!-- 系统回复：靠右，大脑头像在消息框右侧 -->
-            <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 flex items-center justify-center mt-1">
+            <!-- 系统回复：靠右，主题蓝头像在消息框右侧 -->
+            <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center mt-1">
               <Brain :size="16" />
             </div>
-            </template>
           </div>
 
           <!-- ===== 修改后（2026-09-12）：ToolInvocation 执行卡靠右（与系统回复消息一致）；其余块维持原布局 ===== -->
@@ -279,10 +257,17 @@ function startResize(e: MouseEvent) {
           <!--   :class="entry.block.role === 'user' ? 'ml-auto' : 'mr-auto'"> -->
           <!--   <BlockRenderer :block="entry.block" /> -->
           <!-- </div> -->
+          <!-- ===== 修改后（2026-09-12）：所有 Block 按 role 对齐——仅 user 靠左（与用户消息一致）， ===== -->
+          <!-- assistant/tool/system 靠右（与系统回复一致）；TextParagraph 流式文本不再落在用户同侧 -->
+          <!-- ===== 原始代码（保留作为参考）：仅 ToolInvocation 靠右，其余（含 assistant 的 TextParagraph）靠左 ===== -->
+          <!-- <div v-else-if="entry.block.type !== 'ThinkingChain'" class="max-w-[85%]" -->
+          <!--   :class="entry.block.type === 'ToolInvocation' ? 'ml-auto' : 'mr-auto'"> -->
+          <!--   <BlockRenderer :block="entry.block" /> -->
+          <!-- </div> -->
           <div
             v-else-if="entry.block.type !== 'ThinkingChain'"
             class="max-w-[85%]"
-            :class="entry.block.type === 'ToolInvocation' ? 'ml-auto' : 'mr-auto'"
+            :class="entry.block.role === 'user' ? 'mr-auto' : 'ml-auto'"
           >
             <BlockRenderer :block="entry.block" />
           </div>

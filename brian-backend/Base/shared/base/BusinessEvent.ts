@@ -72,6 +72,8 @@ export enum BusinessEvent {
   McpSelected = 'mcp.selected',
   /** 评估完成（Evolutor 对 Work/Writer Agent 的评分结论） */
   EvaluationCompleted = 'evaluation.completed',
+  /** 写作排版完成（Writer 对最终输出的 Markdown/Mermaid 结构化美化） */
+  WriterCompleted = 'writer.completed',
   /** Agent 解散（2026-09-11 新增；低分 < DisbandThreshold.Critical 且 system 归属时执行） */
   AgentDisbanded = 'agent.disbanded',
 
