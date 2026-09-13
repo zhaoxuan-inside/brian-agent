@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge } from '@lucide/vue'
+import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, Star } from '@lucide/vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import { renderMarkdown } from '@/utils/markdown'
 import { useChatUiStore } from '@/stores/chatUi'
 import { formatTime as sharedFormatTime } from '../../utils/format'
+import { feedbackApi } from '@/api'
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +23,8 @@ const props = withDefaults(
     citingInfoIds?: string[]
     traceId?: string
     workId?: string
+    interactId?: string
+    sessionId?: string
     mode?: 'map' | 'timeline'
     active?: boolean
     nodeMap?: Map<string, { summary?: string; info?: string }>
@@ -39,6 +42,8 @@ const props = withDefaults(
     citingInfoIds: () => [],
     traceId: '',
     workId: '',
+    interactId: '',
+    sessionId: '',
     mode: 'timeline',
     active: false,
     nodeMap: undefined,
@@ -60,6 +65,24 @@ const chatUi = useChatUiStore()
 const expandedCiting = ref(false)
 const expandedCited = ref(false)
 const copied = ref(false)
+
+const feedbackRating = ref(0)
+const feedbackHovered = ref(0)
+const feedbackSubmitted = ref(false)
+
+async function submitRating(score: number) {
+  if (feedbackSubmitted.value) return
+  feedbackRating.value = score
+  try {
+    await feedbackApi.submit({
+      rating: score,
+      interact_id: props.interactId || undefined,
+      work_id: props.workId || undefined,
+      session_id: props.sessionId || undefined,
+    })
+    feedbackSubmitted.value = true
+  } catch { feedbackRating.value = 0 }
+}
 
 // 摘要/原文折叠状态：默认态由 mode 决定（Map 展开摘要折叠原文，Timeline 展开原文折叠摘要），用户可手动切换
 const summaryOpen = ref(props.mode === 'map')
@@ -291,6 +314,33 @@ async function copyTraceId() {
         <Gauge :size="10" />
         评估结果
       </button>
+
+      <!-- 反馈评分星星（仅系统回复显示） -->
+      <template v-if="!isUser">
+        <div v-if="feedbackSubmitted" class="flex items-center gap-0.5">
+          <span
+            v-for="i in 5"
+            :key="i"
+            :class="feedbackRating >= i ? 'text-warning-orange' : 'text-apple-gray-300'"
+          >
+            <Star :size="11" :fill="feedbackRating >= i ? 'currentColor' : 'none'" />
+          </span>
+        </div>
+        <div v-else class="flex items-center gap-0.5">
+          <button
+            v-for="i in 5"
+            :key="i"
+            class="p-0 transition-colors"
+            :class="(feedbackHovered || feedbackRating) >= i ? 'text-warning-orange' : 'text-apple-gray-300'"
+            :title="`${i} 星`"
+            @click.stop="submitRating(i)"
+            @mouseenter="feedbackHovered = i"
+            @mouseleave="feedbackHovered = 0"
+          >
+            <Star :size="11" :fill="(feedbackHovered || feedbackRating) >= i ? 'currentColor' : 'none'" />
+          </button>
+        </div>
+      </template>
 
       <button
         class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"

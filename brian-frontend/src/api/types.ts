@@ -229,6 +229,38 @@ export interface FeedbackBlock extends BlockBase {
   traceId?: string
 }
 
+export interface FeedbackProcessLogRecord {
+  id: string
+  created: number
+  process_id: string
+  feedback_id: string
+  action: 'submitted' | 'disbanded' | 'skipped'
+  agent_id: string
+  interact_id: string
+  work_id: string
+  rating: number
+  details: string
+}
+
+export interface FeedbackProcessLogDetail {
+  log: FeedbackProcessLogRecord | null
+  feedback: {
+    id: string; created: number; feedback_id: string
+    source: string; agent_id: string; work_id: string; interact_id: string
+    rating: number; comment: string; suggestions: string; category: string
+  } | null
+  user_question: string
+  system_answer: string
+}
+
+export interface FeedbackConfig {
+  id: string
+  created: number
+  updated: number
+  disband_threshold: number
+  enable_auto_disband: boolean
+}
+
 export type Block =
   | TextBlock
   | HeadingBlock
@@ -318,6 +350,10 @@ export interface ThinkingTimelineItem {
   kind: string
   /** 执行内容卡片跳转锚点（data-anchor；空串表示不可跳转） */
   target?: string
+  /** 悬浮展示的原始组件 ID 等机器标识（展示名称友好、ID 悬浮可见；空串不展示） */
+  tooltip?: string
+  /** 本步动作耗时（毫秒；后端 trace 下发，前端实时时间线由相邻 ts 推导） */
+  elapsedMs?: number
 }
 
 export interface ThinkingToolTrace {
@@ -383,7 +419,8 @@ export interface ThinkingNodeTrace {
   title: string
   kind: string
   detail?: string
-  fields: Array<{ label: string; value: string }>
+  /** value 为组件展示名称（用户可读），id 为原始组件 ID（悬浮 tooltip 可见） */
+  fields: Array<{ label: string; value: string; id?: string }>
 }
 
 export interface ThinkingTrace {

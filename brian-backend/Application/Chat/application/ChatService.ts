@@ -147,7 +147,7 @@ export class ChatService {
     const addIn = new AddSessionInput();
     addIn.session_key = sessionId;
     const addOut = new AddSessionOutput();
-    await runtime.session.addSession(addIn, addOut, new SessionContext());
+    await runtime.session.addSession(addIn, addOut, new SessionContext(), metrics);
     const runtimeSessionId = addOut.session_id;
 
     // ===== Report 只负责接收业务的消息：携带 SSE 端点 ID，上报经 StreamProvider =====
@@ -186,12 +186,13 @@ export class ChatService {
     });
 
     // Runtime v2 消息持久化在 runtime_message 表，同步到 info_raw 供 chat history 读取
-    await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId);
+    await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId, metrics);
 
+    const totalElapsed = typeof metrics?.getTotalDuration === 'function' ? metrics.getTotalDuration() : (metrics?.elapsed_ms ?? 0);
     if (waitOut.status === 'running') {
       emit('error.occurred', { error_message: '系统问答超时（5 分钟），请稍后重试', error_code: 'RUN_TIMEOUT', run_id: submitOut.run_id });
     } else {
-      emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: 0, token_usage: {}, paused: false });
+      emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: totalElapsed, token_usage: {}, paused: false });
     }
     output.events = events;
     return true;
@@ -218,7 +219,7 @@ export class ChatService {
    * 注：迟到补齐的历史行会带上当轮 traceId（interact_id），work_id 仍为其原 run，
    * 历史按 work_id 分组展示不受影响。
    */
-  private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string): Promise<void> {
+  private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics): Promise<void> {
     try {
       // ===== 原始代码（保留作为参考）=====
       // const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
@@ -297,7 +298,7 @@ export class ChatService {
         // 历史查询 ORDER BY created 顺序稳定（否则对话区顺序错乱）。
         saveInput.created = Number(msg.created) > 0 ? Number(msg.created) : undefined;
         const saveOutput = new SaveInfoOutput();
-        await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext());
+        await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext(), metrics);
       }
     } catch (err: unknown) {
       this.logger?.warn?.('syncRuntimeMessagesToInfoRaw: 同步失败（不影响 SSE 流）', {

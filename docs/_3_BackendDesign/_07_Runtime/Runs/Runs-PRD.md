@@ -115,19 +115,20 @@ submitRun ──ack──► accepted(queued)
   - `POST /api/chat/permission/answer/{permission_id}` — 120s 后回答幂等失效（waiter 已删），返回 answered=false。
   - 所有权限门 run — 挂起不再可能无限期（≤120s）；重启不再遗留永久 running run。
 
-### [2026-09-12] 信任工具表（永久批准："始终允许"）
+### [2026-09-13] 流程计时体系与 Metrics 持久化落地
 
-**变更原因**：用户反馈安全工具每次执行都要重复授权。权限门此前只有单次允许/拒绝，无信任记忆。
+**变更原因**：问答执行时间线中记录的耗时不对。需将计时逻辑集中存放在 Metrics 对象中，按 `<层名>.<模块名>.<类名>.<方法名>.start/end` 为 key 记录所有流程时间戳，并在问答结束结算时持久化到数据库。
 
 **修改的方法**：
-  - `Runs/domain/types.ts` — `WaitPermissionInput` 新增 `tool_id`；`WaitPermissionOutput` 新增 `auto_approved`；`AnswerPermissionInput` 新增 `remember`；`ConfigRunsInput/Output` 新增 `trusted_tools`（全量覆盖，用于撤销）。
-  - `RunGatewayService` — 信任表内存态 + `runtime_runs_config.trusted_tools`（JSON 数组）持久化；`waitPermission` 命中信任直接放行（`approved=true, auto_approved=true`，不注册 waiter）；`answerPermission(approved+remember)` 将 waiter 携带的 `tool_id` 入表并持久化；`configRuns` 支持全量覆盖（撤销入口）并回显当前表。
-  - `Loop/application/AgentLoopService.askPermission` — wait 透传 `tool_id`；应答后下发 `permission.answered`（含 `auto_approved`），前端卡片翻态；审计 asked/answered 照常落库。
-  - `POST /api/chat/permission/answer` — Body 新增 `remember` 透传。
+  - `Base/shared/base/Metrics.ts` — 新增 `timings` 字段与 `recordTiming` / `recordStart` / `recordEnd` / `getDuration` / `getProcessDurations` / `getTotalDuration` 统计方法；
+  - `Base/shared/aop/AopProxy.ts` — 在方法进入与返回/异常切面自动按 `<层名>.<模块名>.<类名>.<方法名>.start` 和 `.end` 记录时间戳；
+  - `Runtime/Runs/infrastructure/RunsSchemaInitializer.ts` — `runtime_run` 表新增 `metrics_json` 列，并创建 `runtime_metrics` 专门表存储全链路流程计时；
+  - `Runtime/Runs/application/RunGatewayService.ts` — `settleRun` 将 `metrics.timings` 落地写入 `runtime_run.metrics_json` 与 `runtime_metrics` 表，执行链全链路透传同一个 `Metrics` 实例保证问答环境隔离；
+  - `dev-server.ts` & `ThinkingModal.vue` — 时间线构建从持久化 metrics 读取各环节真实精确耗时。
 
 **影响的端点**：
-  - `POST /api/chat/permission/answer` — `remember=true` 且批准时工具入信任表，后续同工具（跨会话、重启后仍生效）不再弹窗，直接执行并经 `permission.answered(auto_approved=true)` 回推卡片为"已允许"。
-  - `configRuns({trusted_tools: [...]})` — 覆盖信任表（撤销手段）。
+  - `POST /api/chat/stream` — 问答全流程使用独立隔离的 Metrics 实例，结束时完成落库；
+  - `GET /api/chat/thinking` — 执行时间线展示准确的各个环节耗时与总耗时。
 
 **可能存在的问题**：
-  - 信任粒度为整工具（不含参数）：恶意/误导性参数仍可直通——后续可加"工具+参数指纹"二级信任。
+  - 存量历史 run 若在升级前产生，其 `metrics_json` 为空，前端展示自动回退兼容旧时间差计算逻辑。

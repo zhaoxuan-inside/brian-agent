@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ClarificationRequest, ThinkingTrace } from '@/api/types'
+import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ClarificationRequest, ThinkingTrace, ThinkingTimelineItem, ThinkingContextRound } from '@/api/types'
 import { chatApi } from '@/api'
 
 /**
@@ -15,6 +15,11 @@ export const useChatUiStore = defineStore('chatUi', () => {
   const thinkingModalVisible = ref(false)
   const thinkingTargetMsgId = ref<string | null>(null)
   const thinkingBlocks = ref<Block[]>([])
+  // 实时执行时间线：流式期间按业务事件（受理/意图/选择/装配/上下文/思考/工具/评估/排版/完成）实时推进
+  const liveTimeline = ref<ThinkingTimelineItem[]>([])
+  // 实时上下文轮次：流式期间由 context.built 事件累积（round/targetKey/messageCount/messages），
+  // 与后端 trace.contextRounds 同构，供思考面板「基础上下文」轮次卡片定位（data-anchor=ctx-N）
+  const liveContextRounds = ref<ThinkingContextRound[]>([])
   // 思考过程各模块独立/整体加载状态
   const thinkingLoading = ref(false)
   const dagLoading = ref(false)
@@ -29,6 +34,8 @@ export const useChatUiStore = defineStore('chatUi', () => {
   // 弹窗打开时刻（用于自动关闭的 5 秒最小展示时长判定）
   const thinkingOpenedAt = ref(0)
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
+  // 流式 run 是否激活：RunStarted 置 true，RunFinished/RunFailed 置 false，供思考过程弹窗状态判断
+  const runActive = ref(false)
   // 每个 Agent 独立的执行运行时状态（思考中/成功/失败），key = agent_id
   const agentExecutions = ref<Record<string, AgentRuntimeInfo>>({})
   // 每个任务节点的执行运行时状态（同一 Agent 复用到多个任务时按 task_id 精确区分），key = task_id
@@ -315,9 +322,37 @@ export const useChatUiStore = defineStore('chatUi', () => {
     }
   }
 
+  function resetLiveTimeline() {
+    liveTimeline.value = []
+    liveContextRounds.value = []
+  }
+
+  function pushLiveTimelineItem(item: ThinkingTimelineItem) {
+    liveTimeline.value.push(item)
+  }
+
+  function pushLiveContextRound(round: ThinkingContextRound) {
+    const idx = liveContextRounds.value.findIndex((r) => r.round === round.round)
+    if (idx >= 0) liveContextRounds.value[idx] = round
+    else liveContextRounds.value.push(round)
+  }
+
+  function updateOrPushLiveTimelineItem(eventKey: string, item: ThinkingTimelineItem) {
+    const idx = liveTimeline.value.findIndex(i => i.event === eventKey)
+    if (idx >= 0) {
+      liveTimeline.value[idx] = item
+    } else {
+      liveTimeline.value.push(item)
+    }
+  }
+
   function resetAgentStatus() {
     agentExecutions.value = {}
     taskExecutions.value = {}
+  }
+
+  function setRunActive(active: boolean) {
+    runActive.value = active
   }
 
   /** 清空会话/开始新会话时重置流式期间产生的交互状态 */
@@ -327,17 +362,22 @@ export const useChatUiStore = defineStore('chatUi', () => {
     thinkingTrace.value = null
     agentExecutions.value = {}
     taskExecutions.value = {}
+    runActive.value = false
+    liveTimeline.value = []
+    liveContextRounds.value = []
   }
 
   return {
     thinkingModalVisible, thinkingTargetMsgId, thinkingBlocks,
     thinkingLoading, dagLoading, blocksLoading,
-    planning, thinkingDag, thinkingTrace, agentExecutions, taskExecutions, thinkingOrigin,
+    planning, thinkingDag, thinkingTrace, agentExecutions, taskExecutions, thinkingOrigin, runActive,
+    liveTimeline, resetLiveTimeline, pushLiveTimelineItem, updateOrPushLiveTimelineItem,
+    liveContextRounds, pushLiveContextRound,
     setThinkingOrigin, clearThinkingOrigin,
     startThinkingLoading, ensureLiveThinking, setThinkingDag, setThinkingBlocks, setThinkingTrace,
     openThinkingModal, closeThinkingModal, cleanupThinkingModal, requestAutoCloseThinkingModal,
     resetPlanning, updatePlanning,
-    setAgentStatus, resetAgentStatus, resetWorkflowState,
+    setAgentStatus, setRunActive, resetAgentStatus, resetWorkflowState,
     evalResultVisible, evalResultLoading, evalResult, evalResultError, evalTraceId,
     openEvalResult, closeEvalResult,
     intentConfirmation, setIntentConfirmation, clearIntentConfirmation,

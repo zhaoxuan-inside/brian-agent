@@ -11,7 +11,7 @@ export {
   type MatchCacheCheckResult,
   type RegenMode,
 } from './MatchCacheHelper';
-export { simpleSimilarity, shouldReuseByRegenRate } from './SimilarityHelper';
+export { vectorCosineSimilarity, simpleSimilarity, shouldReuseByRegenRate } from './SimilarityHelper';
 export { FifoCache } from './FifoCache';
 export {
   parseRankingCandidates,

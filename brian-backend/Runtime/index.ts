@@ -14,7 +14,7 @@
 export { IterationBudget } from './shared/IterationBudget';
 export type { BudgetSpec } from './shared/IterationBudget';
 export { AbortReason, RunPhase, DEFAULT_BUDGET_TOTAL } from './shared/types';
-export { BusinessEvent, businessEventMsgType, SseTransportEvent } from '@brian-agent/base';
+export { BusinessEvent, businessEventMsgType, SseTransportEvent, TimelineItemKind } from '@brian-agent/base';
 export type { BusinessEventKind } from '@brian-agent/base';
 export type {
   LLMEvent,

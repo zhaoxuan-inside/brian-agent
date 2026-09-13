@@ -1,3 +1,181 @@
+## [2026-09-13] Agent 实例去重合并与中文核心功能命名落地
+
+**变更原因**：
+1. 运行时库 `agent` 表累积 43 个实例，其中 25 个为历史任务自动生成的一次性副本（如签名为 "hi"、"你是谁？"、"什么是 AI ？"、具体旅行/编码子任务的 `general-`/`coding-`/`travel-` 副本），同领域多副本并存导致复用匹配命中错误实例；
+2. 存量命名带英文前缀（`general-`/`math-`）与「助手/专家」后缀，违反「纯中文、10-30 字、核心功能命名」规范。
+
+**修改的方法**（数据治理，无代码改动；备份 `brian-backend/data/brian.db.bak-agentmerge-20260913-230950`）：
+  - 删除 25 个重复/一次性 Agent，级联清理 `agent_llm`/`agent_usage`/`agent_skill`/`agent_soul`（口径对齐 `AgentLibraryService.delAgent`），历史 `agent_evaluation` 与执行 trace 保留；同域任务副本分别并入 ai / coding / devops / testing / general / research / travel 领域代表；
+  - 保留 18 个并重命名为纯中文核心功能名（系统 5 个：执行结果质量评估与组件自动进化、用户需求理解与意图识别、复杂任务拆解与执行规划、内容摘要提炼与上下文压缩、执行结果汇总与最终回答生成；WORKER 13 个领域代表），同步泛化 `agent_purpose` 与 `task_signature`，各域签名前缀唯一化；
+  - 同步清理 `runtime_agent_def` 中 9 条 `agent_ref` 悬空的声明定义（一次性测试/任务副本登记，含 1 条历史悬空 `出行推荐`），保留正常的气象天气 def；Runtime 侧 `ASSET_CACHE_TTL_MS=30s` 过期后自动收敛，同类任务下次匹配经 `matchAgentDef → buildNewDef` 重建 def 并指向保留的领域代表 Agent。
+
+**影响的端点**：
+  - `GET /api/agent` — 43→18，名称全部为 10-30 字纯中文；
+  - `AgentBuilder.buildSystemAgent` / `matchAgent` — 系统 Agent 按 `agent_type` 命中、Worker 按签名域命中，改名不影响既有匹配；同域任务后续复用领域代表实例。
+
+**可能存在的问题**：
+  - 历史评测/trace 表仍引用已删除 agent_id（仅展示用快照，不受影响）；
+  - 热门一次性任务签名失去复用实例，后续同类任务可能触发一次新建；
+  - `SYSTEM_AGENT_CONFIG.defaultName` 兜底短名（如「任务规划」）仍短于 10 字，仅在新建兜底路径生效。
+
+## [2026-09-13] Agent 全汉字命名规范、废除 2-gram 关键词匹配与写作 Agent 修复
+
+**变更原因**：
+1. Agent 命名存在英文领域前缀（`general-`）、技术前缀（`w2-`）、哈希后缀（`-fa0f8c2e`）及冗余的「助手」后缀，浪费 Token 且表达不直观；系统属性（如 system/user）和领域属性（如 general/weather）应作为独立字段持久化。
+2. 2-gram Jaccard 字符相似度算法缺乏语义理解，因英文单词偶发字母重合错误选错 Prompt 模板（如将通用散步推荐误选为「Planner 任务拆解」）；需废除 2-gram 关键词匹配，全链路采用「语义向量 + 大模型语义裁判」，并统一百分制（0-100）。
+3. 写作 Agent（WriterAgent）调用底层旧版 `execLLM` 流式解析器时只监听 `delta.content`，且响应头到达后立即 `clearTimeout`，在长文本推流或模型输出思考字段时发生解析中断或超时异常，最终静默判为 `ok = false` 触发保底拼接逻辑；同时模板变量占位符 `{{ user_query }}` 与 `{{ context }}` 存在错配。
+
+**修改的方法**：
+  - `Agent/AgentBuilder/application/AgentBuilderService.ts`：
+    - `SYSTEM_AGENT_CONFIG` 系统 Agent 名称改为纯全汉字功能命名（`任务规划`、`写作汇总`、`进化评估`、`内容摘要`、`需求理解`）；
+    - `generateAgentName` 重构为全汉字功能命名生成函数，剥离英文前缀、哈希及尾部「助手」后缀；
+    - `matchPromptForAgent` 废除 2-gram 匹配，采用大模型语义打分（百分制 0-100，阈值 75），自动过滤系统内部流转组件模板；
+  - `Runtime/Agents/application/AgentDefService.ts`：
+    - `insertDefFromAgent` 去掉 `w2-` 前缀与随机哈希，纯中文功能命名直接落账，并支持基于 `agent_ref` 幂等更新；
+    - `matchAgentDef` 移除 2-gram `soSignatureMatch`，保留精确匹配与大模型裁判（百分制 0-100）；
+  - `Runtime/Agents/infrastructure/AgentsSchemaInitializer.ts`：
+    - `runtime_agent_def` 移除 `name` 列的 `UNIQUE` 约束，支持纯功能命名灵活落账；
+  - `Agent/AgentLibrary/application/AgentLibraryService.ts`：
+    - `matchAgent` 废除 2-gram 匹配，采用精确签名/领域包含 + 大模型语义裁判（百分制 0-100）；
+  - `Core/shared/SimilarityHelper.ts` & `Core/shared/index.ts`：
+    - 新增 `vectorCosineSimilarity`（余弦相似度百分制 0-100 映射），标记 `simpleSimilarity` 为 `@deprecated`；
+  - `Agent/WriterAgent/application/WriterAgentService.ts`：
+    - 补齐 Prompt 渲染变量 `user_query` 与 `context`；
+    - 升级为 `execLLMEvents` 原生流式通道与全生命周期看门狗保活，彻底解决流式解析中断与超时问题；
+    - 优化降级兜底逻辑，清理内部技术前缀，保证输出格式友好；
+  - `Base/LLMProvider/application/LLMService.ts`：
+    - 清理 `executeSingleLLM` 中脆弱的旧版 manual fetch 流式解析代码，统一委托现代 `LLMEventsRunner` 引擎。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 问答回复由现代化流式管道与全汉字 Agent 驱动，彻底根治 Prompt 错选与写作 Agent 降级拼接问题；
+  - `GET /api/agent/list` / `GET /api/chat/thinking` — Agent 名称全部规范展示为纯中文功能名称（如「专业编码与研究」、「任务规划」）。
+
+**可能存在的问题**：
+  - 无
+
+## [2026-09-13] 修复「构建上下文」时间线耗时误计入 LLM 生成时长问题
+
+**变更原因**：用户反馈历史问答 `a07dd1ae-0ef5-4f33-b84e-28175857d58d` 的「构建上下文：第 1 轮 · 1 条消息」显示耗时 10.1s。
+根因分析：
+1. `context.built` 事件发生于 LLM 调用即将启动的时刻，而下一节点（如深度推理/回复）是在 LLM 流式生成完毕（耗时 10.1s）后才到达。
+2. 前端 `ThinkingModal.vue` 原有的 `nextTs - item.ts` 盲目相减回退逻辑把「当前事件到下一事件」的跨度（包含了整整 10.1s 的 LLM 推理生成时长）错误地归咎于「构建上下文」环节。
+3. `AgentLoopService.prepareLLMTurnInput` 构建上下文属于毫秒级内存操作，原先未在事件载荷中携带真实构建耗时。
+
+**修改的方法**：
+  - `Runtime/Loop/application/AgentLoopService.ts` — `prepareLLMTurnInput`：对上下文构建流程打点 `Runtime.Loop.AgentLoopService.prepareContext.start` 与 `.end`，并在 `context.built` 业务事件载荷中显式携带真实的构建耗时 `elapsed_ms: Math.max(1, endContext - startContext)`；
+  - `dev-server.ts` — `buildThinkingBlocksFromRuntime`：`context.built` 节点优先从载荷 `payload.elapsed_ms` 或 `prepareContext` / `soMessages` timings 获取真实毫秒级耗时（默认 1ms），彻底消除虚假秒级估算；
+  - `brian-frontend/src/composables/chatStreamEvents.ts` — `onContextBuilt`：实时流式阶段将载荷携带的真实 `elapsed_ms` 写入 `liveTimeline`；
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — `timelineWithElapsed`：彻底废弃基于相邻节点时间戳盲目相减的 `nextTs - item.ts` 计算方式，严格使用由后端 Metrics 统计的真实耗时 `item.elapsedMs`。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — 历史问答「构建上下文」节点耗时准确显示为真实构建时长（毫秒级，如 1ms~5ms），不再错误显示 10s；
+  - `POST /api/chat/stream` — 实时流式时间线中「构建上下文」同样显示真实毫秒耗时。
+
+**可能存在的问题**：
+  - 无
+
+## [2026-09-13] 问答全流程计时体系与 Metrics 隔离落地
+
+**变更原因**：问答执行时间线中记录的耗时不对（此前基于前后相邻事件时间差估算，存在误差与重叠不准）。需将计时逻辑集中存放在 Metrics 对象中，按 `<层名>.<模块名>.<类名>.<方法名>.start/end` 为 key，以毫秒时间戳为 value 记录所有流程的开始与结束时间，用于统计所有流程耗时及总耗时；每一次问答使用同一个 Metrics 对象保证环境隔离；最后落地数据库以便后续查看。
+
+**修改的方法**：
+  - `Base/shared/base/Metrics.ts` — 新增 `timings: Record<string, number>` 属性与 `recordTiming` / `recordStart` / `recordEnd` / `getDuration` / `getProcessDurations` / `getTotalDuration` 统计方法：
+    ```typescript
+    timings: Record<string, number> = {};
+    recordTiming(key: string, timestamp: number = Date.now()): void;
+    recordStart(layer: string, module: string, className: string, methodName: string, timestamp?: number): string;
+    recordEnd(layer: string, module: string, className: string, methodName: string, timestamp?: number): string;
+    getDuration(layer: string, module: string, className: string, methodName: string): number;
+    getProcessDurations(): Array<{ key: string; layer: string; module: string; className: string; methodName: string; start: number; end: number; duration: number }>;
+    getTotalDuration(): number;
+    ```
+  - `Base/shared/aop/AopProxy.ts` — 拦截所有服务方法调用：
+    - 根据目标类名和 options 推导 `<层名>.<模块名>.<类名>.<方法名>`；
+    - 方法执行前记录 `<层名>.<模块名>.<类名>.<方法名>.start` 时间戳；
+    - 方法返回/异常时记录 `<层名>.<模块名>.<类名>.<方法名>.end` 时间戳；
+  - `Runtime/Runs/infrastructure/RunsSchemaInitializer.ts` — `runtime_run` 表新增 `metrics_json` 列，并新增 `runtime_metrics` 表（包含 `id`, `created`, `updated`, `run_id`, `session_key`, `trace_id`, `timings_json`, `total_duration_ms`）；
+  - `Runtime/Runs/application/RunGatewayService.ts` — `executeRun` / `settleRun`：
+    - `matchAgent`、`soSnapshot`、`execAgentLoop`、`evalWorkAgent`、`execWrite` 全链路透传同一个 `Metrics` 实例；
+    - `settleRun` 将 `metrics.timings` 序列化并落地写入 `runtime_run.metrics_json` 与 `runtime_metrics` 表；
+  - `Runtime/Loop/application/AgentLoopService.ts` — 循环内消息持久化、工具执行、模型推理透传 `ctx.metrics`；
+  - `Runtime/Tools/application/ToolService.ts` & `builtinTools.ts` — 工具执行与 Skill/MCP/CDT 调用透传 `metrics`；
+  - `Application/Chat/application/ChatService.ts` — `openChatStreamV2` 与 `syncRuntimeMessagesToInfoRaw` 透传 `metrics`，Done 事件回传精确总耗时；
+  - `dev-server.ts` — `POST /api/chat/stream` 创建独立 `Metrics` 对象；`buildThinkingBlocksFromRuntime` 读取持久化 `metrics` 并按精确计时计算各环节 `elapsedMs`；
+  - `brian-frontend/src/components/chat/ThinkingModal.vue` — 时间线优先使用后端记录的真实耗时 `item.elapsedMs`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 问答全流程使用独立单例 Metrics 对象追踪并落库；
+  - `GET /api/chat/thinking` — 执行时间线准确展示各阶段精确耗时（不再依赖相邻事件时间差估算）。
+
+**可能存在的问题**：
+  - 无
+
+## [2026-09-13] 思考过程「Skill 选定」明细展示修复：优先技能名称（name），回退简述
+
+**变更原因**：用户反馈「思考过程」弹窗「运行节点」的「Skill 选定」节点「明细」展示的是技能简述（skill_brief，如英文长描述），而非选定技能的名称（如「Information Retrieval Assistant」）。根因是名称解析统一读取 `skill_brief` 列（简述），而 `skill` 表的 `name` 列才是技能名称。
+
+**修改的方法**：
+- `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：`skillName` 由 `resolveComponentName(id, 'skill', 'skill_brief')` 改为 `resolveComponentName(id, 'skill', 'name') || resolveComponentName(id, 'skill', 'skill_brief')`（历史轨迹 `skill.selected` 节点明细、`agent.components` 节点 Skill 清单、运行概览均受益）；顺带移除重构遗留的未使用变量 `thinkDeltaCount`/`replyDeltaCount`。
+- `brian-backend/Runtime/Runs/application/RunGatewayService.ts` — `executeRun` 上报 `agent.components` 载荷 Skill `brief` 由 `soComponentName(t.id,'skill','skill_brief')` 改为新增的 `soSkillName(t.id)`（优先 `name` 列，回退 `skill_brief`）。
+- `brian-backend/Runtime/Agents/application/AgentDefService.ts` — `soSnapshotTools` 上报 `skill.selected` 事件载荷 `brief` 由空串改为 `soSkillName(e.id)`（新增私有方法，优先 `name` 列，回退 `skill_brief`），实时 SSE 思考块展示技能名称而非原始 UUID。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — 历史问答思考过程「Skill 选定」节点明细展示技能名称。
+- `POST /api/chat/stream` — 实时思考过程「Skill 选定」思考块与 `agent.components` 组件装配展示技能名称。
+
+**可能存在的问题**：
+- 技能表 `name` 列缺失时回退展示 `skill_brief`（此时行为与原版一致）；
+- 旧历史 `stream_event` 载荷中 `brief` 为空，由名称解析兜底，无需数据迁移。
+
+## [2026-09-13] 思考过程弹窗：组件展示名称化（时间线/执行内容不再裸显组件 ID，悬浮可见原始 ID）
+
+**变更原因**：用户反馈「思考过程」弹窗的「执行时间线」与「执行内容」中大量节点直接展示组件 ID（Soul/Prompt/LLM/Skill/MCP 的 UUID），不利于阅读；应展示组件名称，鼠标悬浮可见对应 ID。
+
+**修改的方法**：
+- `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：
+  - 新增组件名称解析（`soul_name/prompt_name/llm_name/skill/mcp` 按 id 查 `soul`/`prompt_template`/`llm_available`/`skill`/`mcp_install` 表，带进程内缓存）；另新增 `agentNameOf`（`runtime_agent_def.name` 优先、回退 V1 `agent.agent_name`）解析「需求确认 / 意图分析」命中 Agent 名称；
+  - `agent.components` / `llm.selected` / `prompt.selected` / `skill.selected` / `mcp.selected` / `intent.analyzed` 运行节点字段与时间线标题/详情统一展示组件名称（缺失回退原 ID）；字段新增 `id`、时间线新增 `tooltip` 下发原始组件 ID；
+  - `agentInfo.skills/mcps` 列表同样优先展示名称。
+- `brian-backend/Runtime/Runs/application/RunGatewayService.ts` — `executeRun` 上报 `agent.components` 载荷补充 `soul_name/prompt_name/llm_name` 与 Skill/MCP 的 `brief` 兜底解析（实时路径展示名称）。
+- `brian-backend/Runtime/Agents/application/AgentDefService.ts` — `soAgentSnapshot` 上报 `llm.selected` / `prompt.selected` 载荷补充 `llm_name` / `prompt_name`；`soLLMRankedDef` 上报 `intent.analyzed` 载荷补充 `agent_name`。
+- `brian-frontend/src/api/types.ts` — `ThinkingTimelineItem` 新增 `tooltip`；`ThinkingNodeTrace.fields` 新增可选 `id`。
+- `brian-frontend/src/components/chat/ThinkingModal.vue` — 时间线标题与运行节点字段值悬浮（`title`）展示原始组件 ID。
+- `brian-frontend/src/composables/chatStreamEvents.ts` — `onAgentComponents`/`onLlmSelected`/`onPromptSelected`/`onSkillSelected`/`onMcpSelected`/`onIntentAnalyzed` 优先使用载荷携带的组件名称，时间线 `tooltip` 携带原始 ID。
+- `brian-frontend/test/chatStreamEvents.test.ts` — 新增「组件装配时间线展示名称、悬浮携带原始 ID」「intent.analyzed 命中 Agent 展示名称」单元测试。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — 历史问答「思考过程」弹窗：时间线与运行节点展示组件名称，悬浮可见原始 ID。
+- `POST /api/chat/stream` — 实时思考过程弹窗组件装配环节同样展示名称、悬浮可见 ID。
+
+**可能存在的问题**：
+- 组件表查无名称记录时回退展示原始 ID（此时无名称可展示，行为与原版一致）；
+- 名称解析为按 id 的单行 SELECT，每次 run 有限次查询，缓存复用不引入额外热点。
+
+## [2026-09-13] 思考过程时间线因果时序与节点聚合优化
+
+**变更原因**：
+1. 历史问答时间线汇总流式增量时使用了 `seq: -1`，导致「深度思考汇总」和「组织回复汇总」被错误排序在时间线最顶端（先于「开始受理请求」与「需求确认 / 意图分析」），出现严重的因果时序倒置；
+2. 时间线上同时存在「深度思考：173 个增量 · 共 5449 字」与「开始思考（Agent 推理）」，出现概念技术黑话与重复割裂；
+3. 流式实时阶段（进行中），前端在未解析出具体 Agent 前将意图分析和组件装配事件直接追加至初始块，产生多个无明确命名的「思考：执行 Agent」割裂节点。
+
+**修改的方法**：
+- `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：
+  - 彻底移除 `seq: -1` 侵入式设计；
+  - 追踪深度思考与组织回复的真实起始事件（`thinkAnchor` 与 `replyAnchor`），以事件真实发生的 `seq` 和 `ts` 挂载汇总节点；
+  - 规范业务化标题文案：原「深度思考：X 个增量 · 共 Y 字」优化为「Agent 深度推理思考（Y 字）」，原「组织回复：X 个增量 · 共 Y 字」优化为「生成回答内容（Y 字）」；
+  - 去除重复的空思考节点，时间线严格按 `受理 → 意图识别/Agent选择 → 组件装配 → 上下文构建 → 深度思考/工具调用 → 评估 → 写作排版 → 完成` 线性排序。
+- `brian-frontend/src/composables/chatStreamEvents.ts` — 
+  - `getOrCreateThinkBlock`：同轮次优先复用未绑定块，在 `agent.selected` 到达时更新 `agentInfo.name`，避免单轮问答创建多个冗余思考块；
+  - 修复 `formatAgentTitle`：仅纯 UUID 视为无名称，有意义的名称和 ID 均正常展示；
+  - 补充各过程事件对 Pinia store 的即时触发响应。
+- `brian-frontend/src/components/chat/ThinkingModal.vue` — `liveTimeline`：
+  - 任务进行中动态展示「Agent 深度推理思考（已推导 X 字）」或「Agent 深度推理思考中…」，避免出现空白或「思考：执行 Agent」的无意义重复节点。
+- `brian-frontend/test/chatStreamEvents.test.ts` — 新增思考过程流式事件与单块复用单元测试。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — 完整时间线严格按因果顺序呈现，消除因果倒置与网络增量碎片黑话。
+- `POST /api/chat/stream` — 实时思考过程弹窗平滑追加进展，节点标题业务友好。
+
 ## [2026-09-12] 全量 ID 规范化为 UUID + 移除代码种子播种 + 任务特质 Soul 匹配与 AgentDef 资产同步修复
 
 **变更原因**：

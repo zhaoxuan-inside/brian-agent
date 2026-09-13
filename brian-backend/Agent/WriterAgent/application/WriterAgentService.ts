@@ -1,6 +1,11 @@
 ﻿import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
-import { IdGenerator, Operator, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, PromptContext, SoPromptInput, SoPromptOutput, GetSoulInput, GetSoulOutput, SoulContext, HandleResultType, type DataObject } from '@brian-agent/base';
+import {
+  IdGenerator, Operator, ValidationError,
+  ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, type LLMEvent,
+  LLMContext, PromptContext, SoPromptInput, SoPromptOutput,
+  GetSoulInput, GetSoulOutput, SoulContext, HandleResultType, type DataObject,
+} from '@brian-agent/base';
 import type { SoulAccess, StreamAccess } from '@brian-agent/base';
 import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import { ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
@@ -176,47 +181,114 @@ export class WriterAgentService {
       } catch { /* ignore */ }
     }
 
+    // ===== 原始方法（保留作为参考）=====
+    // const prompt = await this.renderPrompt(
+    //   config?.write_prompt_template_id,
+    //   'Writer',
+    //   {
+    //     task_content: input.user_query,
+    //     preferences: JSON.stringify(preferences),
+    //     context_data: contextExtra,
+    //     agent_results: results,
+    //     soul: system,
+    //   },
+    // );
+    // const llmOut = new ExecLLMOutput();
+    // const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
+    // const execInput = Object.assign(new ExecLLMInput(), {
+    //   id: llmId,
+    //   prompt,
+    //   ...(system ? { system } : {}),
+    //   ...(hasStreamAccess ? {
+    //     stream: true,
+    //     onDelta: (delta: string) => {
+    //       this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', delta, { work_id: input.work_id || ctx.work_id, interact_id: input.interact_id || ctx.interact_id, chunk_delay_ms: 0 });
+    //     },
+    //   } : {}),
+    // });
+    // const ok = await this.llmAccess.execLLM(execInput, llmOut, new LLMContext(), _metrics, _report);
+    // if (!ok) {
+    //   response = `Summary: ${input.user_query.slice(0, 100)}\n\nResults:\n${results}`;
+    //   output.blocks = [{ id: IdGenerator.generate(), type: 'text_paragraph' as const, content: response, meta: { streaming_status: 'completed' as const } }];
+    // } else {
+    //   tokens = Number((llmOut.input_tokens ?? 0) + (llmOut.output_tokens ?? 0));
+    //   const blocks = this.parseBlocks(llmOut.result);
+    //   response = blocks.map(b => b.content).join('\n\n');
+    //   output.blocks = blocks;
+    // }
+
+    // ===== 修改后的方法（补全 user_query/context 占位符变量，采用 execLLMEvents 原生流式与全链路看门狗） =====
     const prompt = await this.renderPrompt(
       config?.write_prompt_template_id,
       'Writer',
       {
+        user_query: input.user_query,
         task_content: input.user_query,
         preferences: JSON.stringify(preferences),
+        context: contextExtra,
         context_data: contextExtra,
         agent_results: results,
         soul: system,
       },
     );
 
-    const llmOut = new ExecLLMOutput();
     const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
-    const execInput = Object.assign(new ExecLLMInput(), {
+    const eventsInput = Object.assign(new ExecLLMEventsInput(), {
       id: llmId,
-      prompt,
-      ...(system ? { system } : {}),
-      ...(hasStreamAccess ? {
-        stream: true,
-        onDelta: (delta: string) => {
+      messages: [
+        ...(system ? [{ role: 'system' as const, content: system }] : []),
+        { role: 'user' as const, content: prompt },
+      ],
+      temperature: 0.3,
+      session_id: ctx.session_id || '',
+      interact_id: input.interact_id || ctx.interact_id || '',
+      work_id: input.work_id || ctx.work_id || '',
+      on_event: (ev: LLMEvent) => {
+        if (ev.type === 'text_delta' && ev.delta && hasStreamAccess) {
           this.streamAccess!.pushText(
             ctx.session_id || '',
             'text_chunk',
-            delta,
+            ev.delta,
             {
               work_id: input.work_id || ctx.work_id,
               interact_id: input.interact_id || ctx.interact_id,
               chunk_delay_ms: 0,
             },
           );
-        },
-      } : {}),
+        }
+      },
     });
-    const ok = await this.llmAccess.execLLM(
-      execInput,
-      llmOut,
-      new LLMContext(),
-    );
-    if (!ok) {
-      response = `Summary: ${input.user_query.slice(0, 100)}\n\nResults:\n${results}`;
+
+    const eventsOutput = new ExecLLMEventsOutput();
+    let ok = false;
+    if (typeof this.llmAccess.execLLMEvents === 'function') {
+      ok = await this.llmAccess.execLLMEvents(
+        eventsInput,
+        eventsOutput,
+        new LLMContext(),
+        _metrics,
+        _report,
+      );
+    } else {
+      const execIn = Object.assign(new ExecLLMInput(), {
+        id: llmId,
+        prompt,
+        ...(system ? { system } : {}),
+      });
+      const execOut = new ExecLLMOutput();
+      ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), _metrics, _report);
+      eventsOutput.result = execOut.result ?? '';
+      eventsOutput.input_tokens = execOut.input_tokens ?? 0;
+      eventsOutput.output_tokens = execOut.output_tokens ?? 0;
+    }
+
+    if (!ok || !eventsOutput.result) {
+      // 降级兜底：清理内部调试标签与前缀，以自然段落输出
+      const cleanResults = results
+        .replace(/\[(?:w2-)?[^\]]+\]\s*/g, '')
+        .replace(/^Summary:\s*/g, '')
+        .trim();
+      response = cleanResults || input.user_query;
       output.blocks = [{
         id: IdGenerator.generate(),
         type: 'text_paragraph' as const,
@@ -224,9 +296,9 @@ export class WriterAgentService {
         meta: { streaming_status: 'completed' as const },
       }];
     } else {
-      tokens = Number((llmOut.input_tokens ?? 0) + (llmOut.output_tokens ?? 0));
-      const blocks = this.parseBlocks(llmOut.result);
-      response = blocks.map(b => b.content).join('\n\n');
+      tokens = Number((eventsOutput.input_tokens ?? 0) + (eventsOutput.output_tokens ?? 0));
+      const blocks = this.parseBlocks(eventsOutput.result);
+      response = blocks.map((b) => b.content).join('\n\n');
       output.blocks = blocks;
     }
 
@@ -250,9 +322,9 @@ export class WriterAgentService {
       soulId: agent?.soul_id ?? '',
       taskContent: input.user_query,
       response,
-      inputTokens: Number(llmOut.input_tokens ?? 0),
-      outputTokens: Number(llmOut.output_tokens ?? 0),
-      rawResponse: String(llmOut.raw_response ?? llmOut.result ?? ''),
+      inputTokens: Number(eventsOutput.input_tokens ?? 0),
+      outputTokens: Number(eventsOutput.output_tokens ?? 0),
+      rawResponse: String(eventsOutput.result ?? ''),
       elapsedMs: IdGenerator.now() - startedAt,
       templateId: config?.write_prompt_template_id,
     });

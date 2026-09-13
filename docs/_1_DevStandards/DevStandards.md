@@ -20,12 +20,17 @@
 6. 外键ID默认值约定
      1. 所有引用外部资源的ID字段（如 `llm_id`、`prompt_template_id`、`soul_id` 等），当无法确定具体值时保持为空字符串，由下层的 Provider 在运行时解析默认值；
      2. 严禁在配置表或业务代码中硬编码 `"default"` 等占位字符串作为有效的资源ID；任何无法解析的ID应在 Provider 层抛出明确的错误，而非静默失败；
-7. 日志记录规范（2026-09-05 修订：Metrics 日志网关）
-      1. **Metrics 是日志的唯一保存网关**：Metrics 封装 LogProvider 调用接口，方法内日志与 AOP 切面日志都通过 Metrics 对象保存，不能直接使用 `console.log` 等函数；
-      2. **方法内日志**：5 参方法体内记录日志使用第 4 参 metrics（`metrics.debug/info/warn/error`，自动携带 category/trace_id/elapsed_ms）；调用方未传时由 AopProxy 自动创建默认实例（注入 wrap 时配置的 LogProvider logger）；
-      3. **AOP 切面日志**：由内置日志切面在方法**返回或抛异常**时（切入点 4）经 `Metrics.saveInvocation` 保存，级别为 **DEBUG**（调用 LogProvider 时通过 **级别参数** 显式携带：`logger.log(level, message, meta)`；logger 未实现 `log` 时按级别回退到 debug/info/warn/error）——采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，以 **JSON 格式**写入 LogProvider（log_record.metadata.invocation_json；参数内容序列化为函数/循环引用安全，超长截断）；默认 `min_level=INFO` 时 DEBUG 记录自动过滤，排查问题将 log 配置 `min_level` 调整为 `DEBUG` 即可开启全量调用记录；
-      4. 日志记录的级别（debug/info/warn/error）需要根据日志内容进行选择；每次方法调用会产生 1 条 AOP 调用记录，体量由 log_rule 白名单、min_level 过滤与日志老化共同约束；
-      5. **trace_id 属维护字段（2026-09-11 修订）**：唯一承载点 = **Metrics**（`metrics.trace_id`，由 AOP 自动生成/回填/传播）；Context / Input / Output 均为业务承载对象，不得持有 trace_id；个别领域 Input 上的 trace_id 字段（如 `GetTraceInput.trace_id` 业务查询键）是业务字段，不受此限；调试用的 `console.log` 一律改为 Metrics/LogProvider 通道。
+7. 日志记录与流程计时规范（2026-09-05 修订：Metrics 日志网关；2026-09-13 修订：全链路流程计时）
+      1. **Metrics 是日志与计时的唯一保存网关**：Metrics 封装 LogProvider 调用接口与计时体系，方法内日志、AOP 切面日志与全流程计时都通过 Metrics 对象保存，不能直接使用 `console.log` 等函数；
+      2. **全流程计时规范（2026-09-13 新增）**：
+         - 计时的逻辑存放在 Metrics 对象中（`metrics.timings`），按照 `<层名>.<模块名>.<类名>.<方法名>.start` 和 `<层名>.<模块名>.<类名>.<方法名>.end` 为 key，以时间戳（毫秒）为 value，由 AopProxy 切面与业务调用自动记录所有流程的开始和结束时间。
+         - 例如：`Base.LLMProvider.LLMService.soLLM.start: 12345568999` 和 `Base.LLMProvider.LLMService.soLLM.end: 12345569999`，可用于统计各个子流程耗时及问答总耗时（`getTotalDuration()`）；
+         - 每一次问答使用同一个 Metrics 对象贯穿整个调用链，保证问答环境相互隔离；
+         - 问答结束时，Metrics 计时信息落地持久化至 SQLite 数据库（`runtime_run.metrics_json` 列与 `runtime_metrics` 专门表），供思考过程时间线回溯与监控审计；
+      3. **方法内日志**：5 参方法体内记录日志使用第 4 参 metrics（`metrics.debug/info/warn/error`，自动携带 category/trace_id/elapsed_ms）；调用方未传时由 AopProxy 自动创建默认实例（注入 wrap 时配置的 LogProvider logger）；
+      4. **AOP 切面日志**：由内置日志切面在方法**返回或抛异常**时（切入点 4）经 `Metrics.saveInvocation` 保存，级别为 **DEBUG**（调用 LogProvider 时通过 **级别参数** 显式携带：`logger.log(level, message, meta)`；logger 未实现 `log` 时按级别回退到 debug/info/warn/error）——采集方法调用的全部参数（Input/Output/Context/Metrics/Report）及参数内容，以 **JSON 格式**写入 LogProvider（log_record.metadata.invocation_json；参数内容序列化为函数/循环引用安全，超长截断）；默认 `min_level=INFO` 时 DEBUG 记录自动过滤，排查问题将 log 配置 `min_level` 调整为 `DEBUG` 即可开启全量调用记录；
+      5. 日志记录的级别（debug/info/warn/error）需要根据日志内容进行选择；每次方法调用会产生 1 条 AOP 调用记录，体量由 log_rule 白名单、min_level 过滤与日志老化共同约束；
+      6. **trace_id 属维护字段（2026-09-11 修订）**：唯一承载点 = **Metrics**（`metrics.trace_id`，由 AOP 自动生成/回填/传播）；Context / Input / Output 均为业务承载对象，不得持有 trace_id；个别领域 Input 上的 trace_id 字段（如 `GetTraceInput.trace_id` 业务查询键）是业务字段，不受此限；调试用的 `console.log` 一律改为 Metrics/LogProvider 通道。
 8. 外部资源接入点唯一性原则
       1. 系统中调用外部资源（如 LLM、Skill、MCP、Prompts 等）必须通过对应的 Provider/Access 接入层进行调用，不允许各层绕过 Provider 直接访问底层资源；
       2. 各业务模块向内聚合至核心模块，由核心模块统一接管对外部资源的管理和调度，避免出现多个模块各自维护独立的外部资源连接；

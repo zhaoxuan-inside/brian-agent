@@ -2,7 +2,7 @@
  * @fileoverview Tools 模块单元测试（Runtime v2 · 阶段2）。
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { z } from 'zod';
 import { RelationDBAccess, SkillContext, ExecSkillInput, ExecSkillOutput } from '@brian-agent/base';
 import { ToolAccess } from '../Tools/access/ToolAccess';

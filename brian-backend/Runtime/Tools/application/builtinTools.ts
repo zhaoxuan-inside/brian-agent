@@ -84,7 +84,7 @@ export function skillExecTool(deps: BuiltinToolDeps): ToolDef<{ skill_id: string
       }
       const input = Object.assign(new ExecSkillInput(), { id: args.skill_id, params: args.params ?? {} });
       const output = new ExecSkillOutput();
-      const ok = await deps.skillAccess.execSkill(input, output, new SkillContext());
+      const ok = await deps.skillAccess.execSkill(input, output, new SkillContext(), _ctx.metrics, _ctx.report);
       if (!ok) {
         throw new ValidationError(output.error || 'Skill 执行失败');
       }
@@ -120,7 +120,7 @@ export function mcpExecTool(deps: BuiltinToolDeps): ToolDef<{ mcp_id: string; to
         params: args.params ?? {},
       });
       const output = new ExecMcpOutput();
-      const ok = await deps.mcpAccess.execMcp(input, output, new McpContext());
+      const ok = await deps.mcpAccess.execMcp(input, output, new McpContext(), _ctx.metrics, _ctx.report);
       if (!ok) {
         throw new ValidationError(output.error || 'MCP 执行失败');
       }
@@ -149,7 +149,7 @@ export function cdtBrowserTool(deps: BuiltinToolDeps): ToolDef<{ operation: stri
       if (!deps.cdtCore) {
         throw new ValidationError('CDT Provider 未注入（cdtCore 为空）');
       }
-      return execCdtOperation(deps.cdtCore, args);
+      return execCdtOperation(deps.cdtCore, args, _ctx.metrics, _ctx.report);
     },
   };
 }
@@ -158,28 +158,30 @@ export function cdtBrowserTool(deps: BuiltinToolDeps): ToolDef<{ operation: stri
 async function execCdtOperation(
   cdt: CDTCoreAccess,
   args: { operation: string; url?: string; selector?: string; text?: string; pixels?: number; to_bottom?: boolean; expression?: string; wait_for_load?: boolean },
+  metrics?: import('@brian-agent/base').Metrics,
+  report?: import('@brian-agent/base').Report,
 ): Promise<ToolResult> {
   const op = args.operation.trim().toLowerCase();
   switch (op) {
     case 'navigate':
-      return cdtNavigate(cdt, args);
+      return cdtNavigate(cdt, args, metrics, report);
     case 'get_content':
-      return cdtGetContent(cdt);
+      return cdtGetContent(cdt, metrics, report);
     case 'type_text':
-      return cdtTypeText(cdt, args);
+      return cdtTypeText(cdt, args, metrics, report);
     case 'click':
-      return cdtClick(cdt, args);
+      return cdtClick(cdt, args, metrics, report);
     case 'scroll':
-      return cdtScroll(cdt, args);
+      return cdtScroll(cdt, args, metrics, report);
     case 'evaluate':
-      return cdtEvaluate(cdt, args);
+      return cdtEvaluate(cdt, args, metrics, report);
     default:
       throw new ValidationError(`CDT 不支持的操作: ${op}`);
   }
 }
 
 /** navigate（数据处理） */
-async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_load?: boolean }): Promise<ToolResult> {
+async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_load?: boolean }, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   if (!args.url) {
     throw new ValidationError('CDT navigate 需要 url 参数');
   }
@@ -188,6 +190,8 @@ async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_lo
     Object.assign(new CDTCoreNavigateInput(), { url: args.url, waitForLoad: args.wait_for_load !== false }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT navigate 执行失败');
@@ -196,12 +200,14 @@ async function cdtNavigate(cdt: CDTCoreAccess, args: { url?: string; wait_for_lo
 }
 
 /** get_content（数据处理；evaluate body.innerText 截断） */
-async function cdtGetContent(cdt: CDTCoreAccess): Promise<ToolResult> {
+async function cdtGetContent(cdt: CDTCoreAccess, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   const output = new CDTCoreEvaluateOutput();
   const ok = await cdt.evaluate(
     Object.assign(new CDTCoreEvaluateInput(), { expression: 'document.body ? document.body.innerText : ""' }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT get_content 执行失败');
@@ -210,7 +216,7 @@ async function cdtGetContent(cdt: CDTCoreAccess): Promise<ToolResult> {
 }
 
 /** type_text（数据处理） */
-async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?: string }): Promise<ToolResult> {
+async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?: string }, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   if (!args.selector || args.text === undefined) {
     throw new ValidationError('CDT type_text 需要 selector 与 text 参数');
   }
@@ -219,6 +225,8 @@ async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?:
     Object.assign(new CDTCoreTypeTextInput(), { selector: args.selector, text: args.text }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT type_text 执行失败');
@@ -227,7 +235,7 @@ async function cdtTypeText(cdt: CDTCoreAccess, args: { selector?: string; text?:
 }
 
 /** click（数据处理） */
-async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promise<ToolResult> {
+async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   if (!args.selector) {
     throw new ValidationError('CDT click 需要 selector 参数');
   }
@@ -236,6 +244,8 @@ async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promis
     Object.assign(new CDTCoreClickInput(), { selector: args.selector }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT click 执行失败');
@@ -244,12 +254,14 @@ async function cdtClick(cdt: CDTCoreAccess, args: { selector?: string }): Promis
 }
 
 /** scroll（数据处理） */
-async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?: boolean }): Promise<ToolResult> {
+async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?: boolean }, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   const output = new CDTCoreScrollOutput();
   const ok = await cdt.scroll(
     Object.assign(new CDTCoreScrollInput(), { pixels: args.pixels, toBottom: args.to_bottom }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT scroll 执行失败');
@@ -258,7 +270,7 @@ async function cdtScroll(cdt: CDTCoreAccess, args: { pixels?: number; to_bottom?
 }
 
 /** evaluate（数据处理） */
-async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }): Promise<ToolResult> {
+async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }, metrics?: import('@brian-agent/base').Metrics, report?: import('@brian-agent/base').Report): Promise<ToolResult> {
   if (!args.expression) {
     throw new ValidationError('CDT evaluate 需要 expression 参数');
   }
@@ -267,6 +279,8 @@ async function cdtEvaluate(cdt: CDTCoreAccess, args: { expression?: string }): P
     Object.assign(new CDTCoreEvaluateInput(), { expression: args.expression }),
     output,
     new CDTCoreContext(),
+    metrics,
+    report,
   );
   if (!ok) {
     throw new ValidationError(output.error || 'CDT evaluate 执行失败');

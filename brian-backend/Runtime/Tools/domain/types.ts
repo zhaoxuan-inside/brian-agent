@@ -7,6 +7,7 @@
  */
 
 import { Input, Context, Output } from '@brian-agent/base';
+import type { Metrics, Report } from '@brian-agent/base';
 import type { z } from 'zod';
 
 /**
@@ -61,6 +62,10 @@ export interface ToolExecutionContext {
   emitEvent?: (type: string, payload: unknown) => void;
   /** 组件选择范围（本 run 选定的 Skill/MCP id；缺省=未绑定任何组件，skill_exec/mcp_exec 拒执行） */
   component_scope?: ComponentScope;
+  /** 问答全流程衡量对象（用于耗时统计与日志追踪） */
+  metrics?: Metrics;
+  /** 问答全流程上报对象 */
+  report?: Report;
 }
 
 /**

@@ -232,6 +232,8 @@ function startResize(e: MouseEvent) {
                 :citing-info-ids="getCitingIds(entry.message)"
                 :trace-id="entry.message.traceId"
                 :work-id="entry.message.workId"
+                :interact-id="entry.message.interactId"
+                :session-id="sessionStore.currentSessionId"
                 mode="timeline"
                 :node-map="nodeMap"
                 :is-streaming="false"

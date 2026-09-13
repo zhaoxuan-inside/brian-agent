@@ -38,7 +38,7 @@ export class AgentsSchemaInitializer {
         "id"                 TEXT    NOT NULL PRIMARY KEY,
         "created"            INTEGER NOT NULL,
         "updated"            INTEGER NOT NULL,
-        "name"               TEXT    NOT NULL UNIQUE,
+        "name"               TEXT    NOT NULL,
         "mode"               TEXT    NOT NULL DEFAULT 'primary',
         "agent_ref"          TEXT    NOT NULL DEFAULT '',
         "task_signature"     TEXT    NOT NULL DEFAULT '',

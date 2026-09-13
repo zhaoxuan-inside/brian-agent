@@ -8,6 +8,7 @@ import type {
   VisualizedMessage, MessageGraphNode, MessageGraphEdge, AgentDAG, AgentTrace,
   McpUsageRecord,
   Block, AgentDagData,
+  FeedbackProcessLogRecord, FeedbackProcessLogDetail, FeedbackConfig,
 } from './types'
 
 const API_BASE = '/api'
@@ -328,8 +329,26 @@ export const monitorApi = {
 }
 
 export const feedbackApi = {
-  submit: (msgId: string, rating: number, type: 'rating' | 'like' | 'dislike') =>
-    request<void>('/feedback', { method: 'POST', body: JSON.stringify({ msg_id: msgId, score: rating, type }) }),
+  submit: (data: {
+    rating?: number; score?: number; comment?: string; interact_id?: string;
+    interactId?: string; work_id?: string; workId?: string; session_id?: string;
+    agent_id?: string; agentId?: string;
+  }) =>
+    request<{ feedback_id: string; disbanded_agent_id?: string }>('/feedback', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  records: (limit = 50) =>
+    request<{ logs: FeedbackProcessLogRecord[]; total: number }>(`/feedback/records?limit=${limit}`),
+  recordDetail: (processId: string) =>
+    request<FeedbackProcessLogDetail>(`/feedback/records/${encodeURIComponent(processId)}`),
+  getConfig: () =>
+    request<{ config: FeedbackConfig | null }>('/feedback/config'),
+  updateConfig: (data: { disband_threshold?: number; enable_auto_disband?: boolean }) =>
+    request<{ config: FeedbackConfig | null }>('/feedback/config', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 }
 
 export const libraryApi = {

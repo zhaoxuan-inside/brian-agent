@@ -390,3 +390,19 @@
 **可能存在的问题**：
   - `agent_usage_daily` 是新增表，旧库首次启动自动建表+回填；若 `agent_usage` 数据量极大，首次回填会占用一些启动时间（本项目当前 85 行，可忽略）。
   - 时区口径：`usage_date` 使用本地时区（`IdGenerator.today()` / `dateOf()` 均为本地），跨时区部署时历史回填与实时写入保持一致（都走本地）。
+
+### [2026-09-13] Agent 实例去重合并与中文命名规范治理
+**变更原因**："配置中心 > Agent 配置 > Agent 实例"页面共 43 个 Agent，存在大量同领域一次性任务副本（8 个 general、4 个 coding、4 个 travel、2 个 devops 等，签名多为 "hi"/"你是谁？"/具体子任务），且命名带英文前缀（`general-`/`coding-`）与"助手"后缀，不符合命名规范。执行去重合并 + 统一中文命名。
+**修改的方法**：
+  - 数据治理（无代码改动），执行脚本 `agent_merge_20260913.py`，备份 `brian-backend/data/brian.db.bak-agentmerge-20260913-230950`：
+    - 删除 25 个重复/一次性 Agent（architecture→并入 ai；4 个 coding 副本→并入 coding；2 个 devops 副本→并入 devops；evaluation→并入 testing；12 个 general 副本 + math→并入 通用问答；1 个 research 副本→并入 research；3 个 travel 副本→并入 travel）；级联清理 `agent_llm`/`agent_usage`/`agent_skill`/`agent_soul`（口径对齐 `delAgent`），历史 `agent_evaluation`/trace 保留。
+    - 保留 18 个并统一改名（10-30 个汉字、纯中文核心功能名、无 `general-` 前缀/随机后缀/"助手"后缀）：EVOLUTOR→执行结果质量评估与组件自动进化；INTENT→用户需求理解与意图识别；PLANNER→复杂任务拆解与执行规划；SUMMARY→内容摘要提炼与上下文压缩；WRITER→执行结果汇总与最终回答生成；WORKER 每领域保留 1 个代表（人工智能模型选型与智能体架构设计 / 数据分析研判与风险论证 / 软件编码开发与测试部署 / 视觉物料与创意方案设计 / 环境部署上线与运维监控 / 测试用例设计与评测基准建设 / 日常问答与知识科普咨询 / 品牌定位与营销活动策划 / 目标方案规划与执行编排 / 资料检索调研与综述报告 / 旅行行程规划与票务住宿预订 / 出行天气信息查询与播报 / 文稿撰写与内容创作润色），同步泛化被并入领域的 `agent_purpose` 与 `task_signature`。
+**影响的端点**：
+  - `GET /api/agent` — 数量 43→18，名称全部为中文核心功能名。
+  - `AgentBuilder.buildSystemAgent` — 系统 Agent 按 `agent_type` 查找复用，改名不影响命中；仅当库中不存在时才会用 `defaultName`（任务规划/写作汇总等短名）新建，与现存名称不一致属兜底路径。
+  - Worker 匹配复用 — 各任务签名域前缀（`[ai]`/`[coding]`/…）唯一化，同域任务将命中领域代表 Agent，不再命中一次性副本。
+  - `DELETE /api/agent/{id}` 的 user 资产守卫 — 本次为 DB 层人工治理（非系统自动删除），不走 `delAgent` 守卫，与 2026-08-19 全量检查口径一致。
+**可能存在的问题**：
+  - 被删除 Agent 的 `agent_evaluation`/`agent_execution_trace` 历史保留但指向已不存在的 agent_id，历史页面按名称快照展示不受影响。
+  - 一次性任务签名（如 "[general] 什么是 AI ？"）不再有可复用实例，后续同类任务会由 AgentBuilder 重新匹配领域代表或新建实例（usage 高的热门一次性任务可能触发一次新建）。
+  - 系统级 Agent 新建兜底名（`SYSTEM_AGENT_CONFIG.defaultName`，如"任务规划"）短于 10 字，与本次命名规范不完全一致；如需完全对齐可后续统一 defaultName。

@@ -74,6 +74,7 @@ export const MODULE_LABELS: Record<string, { label: string; desc: string }> = {
   self_learning: { label: 'SelfLearning', desc: '自学习' },
   user_profile: { label: 'UserProfile', desc: '用户画像' },
   config: { label: 'Config', desc: '配置应用自配置' },
+  feedback_handler: { label: 'FeedbackHandler', desc: '反馈处理模块配置' },
 };
 
 export const CATEGORY_LABELS: Record<string, { label: string; desc: string }> = {
@@ -166,6 +167,10 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
 
   // --- ToolProvider ---
   base('tool_provider', 'basic', 'http_timeout_ms', 'HTTP 请求超时 (ms)', 'INT', 60000, '全局 HTTP 请求默认超时时间，单位毫秒'),
+
+  // --- FeedbackHandler ---
+  base('feedback_handler', 'basic', 'enable_auto_disband', '启用自动解散', 'BOOLEAN', true, '用户评分低于解散阈值时，是否自动解散运行时创建的系统 Agent'),
+  base('feedback_handler', 'basic', 'disband_threshold', '解散阈值（百分制）', 'INT', 30, '用户评分低于该值时触发系统 Agent 自动解散；用户创建的 Agent 不受影响'),
 
   // =========================================================================
   // CORE layer

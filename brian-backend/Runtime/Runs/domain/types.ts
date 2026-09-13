@@ -259,5 +259,8 @@ export interface Waiter {
 /** runtime_run 表名 */
 export const RUNTIME_RUN_TABLE = 'runtime_run';
 
+/** runtime_metrics 表名（落地问答执行时间线与耗时） */
+export const RUNTIME_METRICS_TABLE = 'runtime_metrics';
+
 /** runtime_runs_config 配置表名 */
 export const RUNTIME_RUNS_CONFIG_TABLE = 'runtime_runs_config';

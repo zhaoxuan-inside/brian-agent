@@ -124,4 +124,38 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     const errParsed = JSON.parse(errLog!.meta!.invocation_json as string) as { error?: string };
     expect(errParsed.error).toBe('boom-message');
   });
+
+  it('Metrics 应按 <层名>.<模块名>.<类名>.<方法名>.start/end 记录时间戳并统计耗时', async () => {
+    const { logger } = makeLogger();
+    class LLMService {
+      async soLLM(input: Input, output: Output, _context: Context, _metrics?: Metrics, _report?: Report): Promise<boolean> {
+        await new Promise((r) => setTimeout(r, 10));
+        return true;
+      }
+    }
+    const proxy = AopProxy.wrap(new LLMService(), { layer: 'Base', module: 'LLMProvider', logger }) as LLMService;
+    const sharedMetrics = new Metrics(logger, 'TestContext');
+
+    await proxy.soLLM(new Input(), new Output(), new Context(), sharedMetrics, undefined);
+
+    expect(typeof sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.start']).toBe('number');
+    expect(typeof sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.end']).toBe('number');
+    expect(sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.end']).toBeGreaterThanOrEqual(
+      sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.start']
+    );
+
+    const duration = sharedMetrics.getDuration('Base', 'LLMProvider', 'LLMService', 'soLLM');
+    expect(duration).toBeGreaterThanOrEqual(5);
+
+    const totalDuration = sharedMetrics.getTotalDuration();
+    expect(totalDuration).toBeGreaterThanOrEqual(5);
+
+    const processDurations = sharedMetrics.getProcessDurations();
+    expect(processDurations).toHaveLength(1);
+    expect(processDurations[0].key).toBe('Base.LLMProvider.LLMService.soLLM');
+    expect(processDurations[0].layer).toBe('Base');
+    expect(processDurations[0].module).toBe('LLMProvider');
+    expect(processDurations[0].className).toBe('LLMService');
+    expect(processDurations[0].methodName).toBe('soLLM');
+  });
 });

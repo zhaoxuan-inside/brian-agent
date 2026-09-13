@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
-import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator } from '@brian-agent/base';
+import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator, TimelineItemKind, Metrics } from '@brian-agent/base';
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import {
   SessionAccess,
@@ -69,6 +69,18 @@ import {
 } from './Base/StreamProvider';
 import { Report } from './Base/shared/base/Report';
 import {
+  FeedbackAccess,
+  FeedbackContext,
+  SubmitFeedbackInput, SubmitFeedbackOutput,
+  QueryFeedbackInput, QueryFeedbackOutput,
+  AnalyzeFeedbackInput, AnalyzeFeedbackOutput,
+  QueryProcessLogsInput, QueryProcessLogsOutput,
+  GetProcessLogDetailInput, GetProcessLogDetailOutput,
+  GetFeedbackConfigInput, GetFeedbackConfigOutput,
+  UpdateFeedbackConfigInput, UpdateFeedbackConfigOutput,
+  RecordProcessLogInput, RecordProcessLogOutput,
+} from './Base/FeedbackHandler';
+import {
   CronContext, ListCronTasksInput, ListCronTasksOutput,
   GetCronTaskInput, GetCronTaskOutput,
   SetCronTaskInput, SetCronTaskOutput,
@@ -76,7 +88,7 @@ import {
   TriggerCronTaskInput, TriggerCronTaskOutput,
   ListCronTaskRunsInput, ListCronTaskRunsOutput,
 } from './Base/CronProvider';
-import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, DelInfoGraphInput, DelInfoGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ClearGraphInput, ClearGraphOutput } from './Core/InfoCoreProvider';
+import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, DelInfoGraphInput, DelInfoGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ClearGraphInput, ClearGraphOutput, SaveInfoInput, SaveInfoOutput } from './Core/InfoCoreProvider';
 import { LLMCoreAccess } from './Core/LLMCoreProvider';
 import { MCPCoreAccess } from './Core/MCPCoreProvider';
 import { SkillCoreAccess, SkillCoreContext, AgeSkillInput, AgeSkillOutput } from './Core/SkillCoreProvider';
@@ -656,6 +668,10 @@ async function buildContext() {
 
   const cdtCore = new CDTCoreAccess(relationDb, cdtAccess, logger);
 
+  // ---- FeedbackHandler（需在 Agent 层之前初始化，供 EvolutorAgent 等注入）----
+  const feedbackAccess = new FeedbackAccess(relationDb, logger);
+  await feedbackAccess.initialize();
+
   // ---- Agent Layer ----
   const agentLibrary = new AgentLibraryAccess(relationDb, llmAccess, promptsAccess, logger);
   await agentLibrary.initialize();
@@ -671,7 +687,7 @@ async function buildContext() {
   await writerAgent.initialize();
   const plannerAgent = new PlannerAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, agentBuilder, agentLibrary, llmCore, logger);
   await plannerAgent.initialize();
-  const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, llmCore, logger);
+  const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, llmCore, feedbackAccess, logger);
   await evolutorAgent.initialize();
   const summaryAgent = new SummaryAgentAccess(relationDb, llmAccess, promptsAccess, soulAccess, agentBuilder, agentLibrary, infoCore, llmCore, logger);
   await summaryAgent.initialize();
@@ -1032,6 +1048,7 @@ async function buildContext() {
     systemMonitorAccess,
     cronAccess,
     streamAccess,
+    feedbackAccess,
     infoCore, llmCore, mcpCore, skillCore, soulCore, mqCore,
     cdtCore,
     agentLibrary, agentStrategy, agentContext, agentBuilder,
@@ -1160,13 +1177,261 @@ async function buildThinkingBlocksAndDag(
  * - 每轮输入输出：think.delta / reply.delta（流式增量）、tool.started / tool.result（工具配对）
  * - 保存：stream_event（事件流持久化）+ runtime_message_part（reasoning/text/tool Part 全量）
  */
+// ===== 原始方法（保留作为参考）：buildThinkingBlocksFromRuntime =====
+// async function buildThinkingBlocksFromRuntime(
+//   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
+//   runId: string,
+// ): Promise<{ blocks: any[]; dag: any; trace?: any } | null> {
+//   // 1. run 记录 → 会话键与时间窗
+//   const runRows = relationDb.queryRaw<Record<string, unknown>>(
+//     `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used
+//      FROM runtime_run WHERE id = ? LIMIT 1`,
+//     [runId],
+//   );
+//   if (runRows.length === 0) return null;
+//   const run = runRows[0];
+//   const sessionKey = String(run.session_key ?? '');
+//   if (!sessionKey) return null;
+//   const startTs = Number(run.started_at ?? run.accepted_at ?? 0) - 5000;
+//   const settleTs = Math.max(Number(run.settled_at ?? 0), Number(run.accepted_at ?? 0)) + 5000;
+// 
+//   // 2. 事件流 → V2 全量执行轨迹（优先按 run_id 精确过滤，兼容老数据回退时间窗）
+//   const evRows = relationDb.queryRaw<{ seq: number; run_id: string; event_type: string; payload_json: string; ts: number }>(
+//     `SELECT seq, run_id, event_type, payload_json, ts FROM stream_event
+//      WHERE session_key = ? AND ts >= ? AND ts <= ? ORDER BY seq ASC`,
+//     [sessionKey, startTs, settleTs],
+//   );
+//   // 同一会话时间窗内可能混入相邻 run 的事件：run_id 非空时只保留本 run 与全局事件（run_id 为空的 run 级事件）
+//   const runEvRows = evRows.filter((r) => !r.run_id || r.run_id === runId || !runId);
+//   let selected: any = null;
+//   let components: any = null;
+//   const builtContexts: any[] = [];
+//   // V2 全量时间线：按 seq 顺序记录每个关键事件（高频 delta 做聚合，避免时间线爆炸）
+//   const timeline: any[] = [];
+//   let thinkDeltaCount = 0;
+//   let thinkDeltaChars = 0;
+//   let replyDeltaCount = 0;
+//   let replyDeltaChars = 0;
+//   let toolEventIdx = 0;
+//   // target：执行时间线节点 → 执行内容卡片的跳转锚点（data-anchor；无跳转目标为空串）
+//   const pushTimeline = (ev: { seq: number; ts: number }, event: string, title: string, detail?: string, kind?: string, target?: string) => {
+//     timeline.push({ seq: ev.seq, ts: ev.ts, event, title, detail: detail ?? '', kind: kind ?? 'info', target: target ?? '' });
+//   };
+//   // 运行节点详情：意图分析/Agent 选择/组件装配/模型与提示词等过程节点的结构化明细，
+//   // 供「执行内容」中的「运行节点」卡片展示（每个时间线节点都有可点开的结构化详情）
+//   const nodes: any[] = [];
+//   const pushNode = (ev: { seq: number }, kind: string, title: string, fields: Array<{ label: string; value: string }>, detail?: string) => {
+//     const targetKey = `node-${ev.seq}`;
+//     nodes.push({ seq: ev.seq, targetKey, title, kind, detail: detail ?? '', fields });
+//     return targetKey;
+//   };
+//   for (const ev of runEvRows) {
+//     let payload: any;
+//     try { payload = JSON.parse(String(ev.payload_json ?? '{}')); } catch { continue; }
+//     if (ev.event_type === 'agent.selected') selected = payload;
+//     else if (ev.event_type === 'agent.components') components = payload;
+//     else if (ev.event_type === 'context.built') builtContexts.push(payload);
+//     switch (ev.event_type) {
+//       case 'run.accepted':
+//         pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', 'lifecycle');
+//         break;
+//       case 'run.started':
+//         {
+//           const agentLabel = String(payload.agent_name ?? payload.agent_id ?? '');
+//           const target = pushNode(ev, 'lifecycle', '开始执行', [
+//             { label: 'Agent', value: agentLabel || '（默认）' },
+//           ]);
+//           pushTimeline(ev, ev.event_type, '开始执行', agentLabel, 'lifecycle', target);
+//         }
+//         break;
+//       case 'agent.selected':
+//         {
+//           const target = pushNode(ev, 'agent', 'Agent 选择', [
+//             { label: 'Agent 名称', value: String(payload.agent_name ?? '') },
+//             { label: '定义 ID', value: String(payload.def_id ?? '') },
+//             { label: '匹配方式', value: String(payload.matched_by ?? '') },
+//           ]);
+//           pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', 'agent', target);
+//         }
+//         break;
+//       case 'agent.components':
+//         {
+//           const skillList = Array.isArray(payload.skills) && payload.skills.length
+//             ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、')
+//             : '';
+//           const mcpList = Array.isArray(payload.mcps) && payload.mcps.length
+//             ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、')
+//             : '';
+//           const target = pushNode(ev, 'agent', '组件装配', [
+//             { label: 'Soul', value: payload.soul_id ? String(payload.soul_id) : '（无）' },
+//             { label: 'Prompt', value: payload.prompt_template_id ? String(payload.prompt_template_id) : '（默认身份模板）' },
+//             { label: 'LLM', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
+//             { label: 'Skill', value: skillList || '（无）' },
+//             { label: 'MCP', value: mcpList || '（无）' },
+//           ]);
+//           const bits: string[] = [];
+//           if (payload.soul_id) bits.push(`Soul ${String(payload.soul_id)}`);
+//           if (Array.isArray(payload.skills) && payload.skills.length) bits.push(`Skill×${payload.skills.length}`);
+//           if (Array.isArray(payload.mcps) && payload.mcps.length) bits.push(`MCP×${payload.mcps.length}`);
+//           if (payload.llm_id) bits.push(`LLM ${String(payload.llm_id)}`);
+//           if (payload.prompt_template_id) bits.push(`Prompt ${String(payload.prompt_template_id)}`);
+//           const summary = bits.join(' · ');
+//           pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', 'agent', target);
+//         }
+//         break;
+//       case 'agent.built':
+//         {
+//           const target = pushNode(ev, 'agent', '构建 Agent', [
+//             { label: 'Agent 名称', value: String(payload.name ?? payload.agent_id ?? '') },
+//             { label: '用途', value: String(payload.purpose ?? '') },
+//           ]);
+//           pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? payload.agent_id ?? 'agent')}`, String(payload.purpose ?? ''), 'agent', target);
+//         }
+//         break;
+//       case 'context.built':
+//         pushTimeline(ev, ev.event_type, `构建上下文：第 ${Number(payload.round ?? 0)} 轮 · ${Number(payload.message_count ?? (Array.isArray(payload.messages) ? payload.messages.length : 0))} 条消息`, payload.system ? '含 system 提示词（模型输入侧）' : '', 'context', `ctx-${Number(payload.round ?? 0)}`);
+//         break;
+//       case 'intent.analyzed':
+//         {
+//           const target = pushNode(ev, 'intent', '需求确认 / 意图分析', [
+//             { label: '匹配得分', value: String(payload.score ?? 0) },
+//             { label: '是否采纳', value: payload.adopted ? '采纳' : '未达阈值' },
+//             { label: '候选 Agent', value: `${payload.candidates_count ?? 0} 个` },
+//             { label: '命中 Agent', value: String(payload.agent_id ?? payload.agent_name ?? '（无）') },
+//             { label: '理由', value: String(payload.reason ?? '（无）') },
+//           ]);
+//           pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, 'intent', target);
+//         }
+//         break;
+//       case 'llm.selected':
+//         {
+//           const target = pushNode(ev, 'model', 'LLM 模型选定', [
+//             { label: '模型', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
+//           ]);
+//           pushTimeline(ev, ev.event_type, `选定模型：${String(payload.llm_id || '默认模型')}`, '', 'model', target);
+//         }
+//         break;
+//       case 'prompt.selected':
+//         {
+//           const target = pushNode(ev, 'model', '提示词选定', [
+//             { label: '模板', value: String(payload.template_id ?? '（默认身份模板）') },
+//             { label: 'Soul 注入', value: payload.soul_selected ? '已注入' : '未注入' },
+//             { label: '工具数', value: String(payload.tools_count ?? 0) },
+//           ]);
+//           pushTimeline(ev, ev.event_type, `选定提示词：${String(payload.template_id ?? '默认身份模板')}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', 'model', target);
+//         }
+//         break;
+//       case 'skill.selected': {
+//         const n = Array.isArray(payload.skills) ? payload.skills.length : 0;
+//         const target = pushNode(ev, 'model', 'Skill 选定', [
+//           { label: '数量', value: String(n) },
+//           { label: '明细', value: n ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、') : '（无）' },
+//         ]);
+//         pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', '', 'model', target);
+//         break;
+//       }
+//       case 'mcp.selected': {
+//         const n = Array.isArray(payload.mcps) ? payload.mcps.length : 0;
+//         const target = pushNode(ev, 'model', 'MCP 选定', [
+//           { label: '数量', value: String(n) },
+//           { label: '明细', value: n ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、') : '（无）' },
+//         ]);
+//         pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', '', 'model', target);
+//         break;
+//       }
+//       case 'think.created':
+//         pushTimeline(ev, ev.event_type, '开始思考（Agent 推理）', String(payload.agent_name ?? ''), 'think', 'agent-0');
+//         break;
+//       case 'think.delta':
+//         thinkDeltaCount += 1;
+//         thinkDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
+//         break;
+//       case 'reply.created':
+//         pushTimeline(ev, ev.event_type, '开始组织回复（Agent 输出）', String(payload.agent_name ?? ''), 'reply', 'agent-0');
+//         break;
+//       case 'reply.delta':
+//         replyDeltaCount += 1;
+//         replyDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
+//         break;
+//       case 'tool.started':
+//       case 'tool.launch':
+//         toolEventIdx += 1;
+//         pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), 'tool', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
+//         break;
+//       case 'tool.result':
+//         pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? 'tool-ok' : 'tool-fail', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
+//         break;
+//       case 'plan.updated': {
+//         const n = Array.isArray(payload.steps) ? payload.steps.length : 0;
+//         const target = pushNode(ev, 'plan', '计划更新', [
+//           { label: '步骤数', value: String(n) },
+//           { label: '明细', value: n ? (payload.steps as any[]).map((s: any) => String(s.title || s.label || s.content || s)).filter(Boolean).join(' · ') : '（无）' },
+//         ]);
+//         pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', 'plan', target);
+//         break;
+//       }
+//       case 'permission.asked':
+//         pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', 'permission', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
+//         break;
+//       case 'permission.answered':
+//         pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? 'permission-deny' : 'permission-ok', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
+//         break;
+//       case 'evaluation.completed': {
+//         const scores = (payload.scores && typeof payload.scores === 'object' ? payload.scores : {}) as Record<string, unknown>;
+//         const scoreFields = Object.entries(scores as Record<string, unknown>)
+//           .slice(0, 12)
+//           .map(([k, v]) => ({ label: k, value: String(v) }));
+//         const target = pushNode(ev, 'eval', '评估', [
+//           { label: '类型', value: String(payload.eval_type ?? '') },
+//           ...scoreFields,
+//           { label: '需优化', value: payload.need_optimize ? '是' : '否' },
+//         ]);
+//         pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), 'eval', target);
+//         break;
+//       }
+//       case 'writer.completed': {
+//         const target = pushNode(ev, 'writer', '写作排版', [
+//           { label: '格式', value: String(payload.format ?? 'MARKDOWN') },
+//           { label: '字数', value: String(payload.length ?? 0) },
+//           { label: '流程图', value: payload.has_mermaid ? '包含 Mermaid 流程图' : '无' },
+//         ]);
+//         pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, 'writer', target);
+//         break;
+//       }
+//       case 'run.finished':
+//         pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), 'lifecycle-ok');
+//         break;
+//       case 'run.failed':
+//         pushTimeline(ev, ev.event_type, `执行失败：${String(payload.stop_reason ?? payload.error ?? '')}`, '', 'lifecycle-fail');
+//         break;
+//       case 'error.occurred':
+//         pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', 'lifecycle-fail');
+//         break;
+//       default:
+//         break;
+//     }
+//   }
+//   // 高频增量汇总为两条时间线节点，保证“整个执行过程”可追溯又不刷屏
+//   // 组件事件已在循环内采集到 components/selected，此处可解析出展示用 Agent 名
+//   const rawAgentNameEarly = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
+//   const displayAgentName = rawAgentNameEarly.replace(/^w2-/i, '').replace(/-[0-9a-f]{8}$/i, '') || rawAgentNameEarly;
+//   if (thinkDeltaCount > 0) {
+//     timeline.push({ seq: -1, ts: startTs, event: 'think.delta#summary', title: `深度思考：${thinkDeltaCount} 个增量 · 共 ${thinkDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', kind: 'think', target: 'agent-0' });
+//   }
+//   if (replyDeltaCount > 0) {
+//     timeline.push({ seq: -1, ts: settleTs, event: 'reply.delta#summary', title: `组织回复：${replyDeltaCount} 个增量 · 共 ${replyDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', kind: 'reply', target: 'agent-0' });
+//   }
+//   timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+//   nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+
+// ===== 修改后的方法（2026-09-13）：时间线严格按因果与时序排序，消除 seq:-1 倒置与技术黑话 =====
 async function buildThinkingBlocksFromRuntime(
   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
   runId: string,
 ): Promise<{ blocks: any[]; dag: any; trace?: any } | null> {
-  // 1. run 记录 → 会话键与时间窗
+  // 1. run 记录 → 会话键与时间窗及持久化 metrics
   const runRows = relationDb.queryRaw<Record<string, unknown>>(
-    `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used
+    `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used, metrics_json
      FROM runtime_run WHERE id = ? LIMIT 1`,
     [runId],
   );
@@ -1176,6 +1441,34 @@ async function buildThinkingBlocksFromRuntime(
   if (!sessionKey) return null;
   const startTs = Number(run.started_at ?? run.accepted_at ?? 0) - 5000;
   const settleTs = Math.max(Number(run.settled_at ?? 0), Number(run.accepted_at ?? 0)) + 5000;
+
+  // 读取持久化的 metrics 时间戳字典（按 <层名>.<模块名>.<类名>.<方法名>.start/end）
+  let timings: Record<string, number> = {};
+  try {
+    if (run.metrics_json) {
+      timings = JSON.parse(String(run.metrics_json));
+    }
+  } catch { timings = {}; }
+  if (!timings || Object.keys(timings).length === 0) {
+    try {
+      const metricRows = relationDb.queryRaw<{ timings_json: string }>(
+        `SELECT timings_json FROM runtime_metrics WHERE run_id = ? ORDER BY created DESC LIMIT 1`,
+        [runId],
+      );
+      if (metricRows.length > 0 && metricRows[0].timings_json) {
+        timings = JSON.parse(metricRows[0].timings_json);
+      }
+    } catch { /* degrade */ }
+  }
+
+  const getTimingDuration = (layer: string, module: string, className: string, methodName: string): number => {
+    const start = timings[`${layer}.${module}.${className}.${methodName}.start`];
+    const end = timings[`${layer}.${module}.${className}.${methodName}.end`];
+    if (typeof start === 'number' && typeof end === 'number' && end >= start) {
+      return end - start;
+    }
+    return 0;
+  };
 
   // 2. 事件流 → V2 全量执行轨迹（优先按 run_id 精确过滤，兼容老数据回退时间窗）
   const evRows = relationDb.queryRaw<{ seq: number; run_id: string; event_type: string; payload_json: string; ts: number }>(
@@ -1190,23 +1483,79 @@ async function buildThinkingBlocksFromRuntime(
   const builtContexts: any[] = [];
   // V2 全量时间线：按 seq 顺序记录每个关键事件（高频 delta 做聚合，避免时间线爆炸）
   const timeline: any[] = [];
-  let thinkDeltaCount = 0;
   let thinkDeltaChars = 0;
-  let replyDeltaCount = 0;
+  let thinkCreatedEv: { seq: number; ts: number } | null = null;
+  let firstThinkDeltaEv: { seq: number; ts: number } | null = null;
+
   let replyDeltaChars = 0;
+  let replyCreatedEv: { seq: number; ts: number } | null = null;
+  let firstReplyDeltaEv: { seq: number; ts: number } | null = null;
+
   let toolEventIdx = 0;
   // target：执行时间线节点 → 执行内容卡片的跳转锚点（data-anchor；无跳转目标为空串）
-  const pushTimeline = (ev: { seq: number; ts: number }, event: string, title: string, detail?: string, kind?: string, target?: string) => {
-    timeline.push({ seq: ev.seq, ts: ev.ts, event, title, detail: detail ?? '', kind: kind ?? 'info', target: target ?? '' });
+  // tooltip：悬浮展示的原始组件 ID 等机器标识（展示名称友好、ID 悬浮可见）
+  // elapsedMs：优先从 metrics 计时对象中获取准确耗时
+  const pushTimeline = (ev: { seq: number; ts: number }, event: string, title: string, detail?: string, kind?: TimelineItemKind | string, target?: string, tooltip?: string, elapsedMs?: number) => {
+    timeline.push({ seq: ev.seq, ts: ev.ts, event, title, detail: detail ?? '', kind: kind ?? TimelineItemKind.Lifecycle, target: target ?? '', tooltip: tooltip ?? '', elapsedMs: elapsedMs !== undefined ? elapsedMs : 0 });
   };
   // 运行节点详情：意图分析/Agent 选择/组件装配/模型与提示词等过程节点的结构化明细，
   // 供「执行内容」中的「运行节点」卡片展示（每个时间线节点都有可点开的结构化详情）
   const nodes: any[] = [];
-  const pushNode = (ev: { seq: number }, kind: string, title: string, fields: Array<{ label: string; value: string }>, detail?: string) => {
+  const pushNode = (ev: { seq: number }, kind: TimelineItemKind | string, title: string, fields: Array<{ label: string; value: string; id?: string }>, detail?: string) => {
     const targetKey = `node-${ev.seq}`;
     nodes.push({ seq: ev.seq, targetKey, title, kind, detail: detail ?? '', fields });
     return targetKey;
   };
+  // ===== 新增（2026-09-13）：组件 ID → 展示名称解析（Soul/Prompt/LLM/Skill/MCP）。
+  // 时间线与运行节点统一展示组件名称（用户可读），原始 ID 随字段/时间线 tooltip 下发供悬浮查看 =====
+  const componentNameCache = new Map<string, string>();
+  const resolveComponentName = (id: string, table: string, nameCol: string): string => {
+    if (!id) return '';
+    const key = `${table}:${id}`;
+    if (componentNameCache.has(key)) return componentNameCache.get(key) ?? '';
+    let name = '';
+    try {
+      const rows = relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT "${nameCol}" AS "n" FROM "${table}" WHERE "id" = ? LIMIT 1`,
+        [id],
+      );
+      const raw = rows?.[0]?.n;
+      name = raw != null ? String(raw).trim() : '';
+    } catch { name = ''; }
+    componentNameCache.set(key, name);
+    return name;
+  };
+  const soulName = (id: string) => resolveComponentName(id, 'soul', 'soul_brief');
+  const promptName = (id: string) => resolveComponentName(id, 'prompt_template', 'prompt_template_title');
+  const llmName = (id: string) => resolveComponentName(id, 'llm_available', 'llm_title');
+  // Skill 展示名称：skill 表 name 列为技能名称（如「网页搜索」），skill_brief 列为简述（描述），展示优先名称
+  const skillName = (id: string) => resolveComponentName(id, 'skill', 'name') || resolveComponentName(id, 'skill', 'skill_brief');
+  const mcpName = (id: string) => resolveComponentName(id, 'mcp_install', 'mcp_title');
+  // Agent 名称解析：优先 runtime_agent_def.name，其次 V1 agent.agent_name（intent.analyzed 命中 Agent 等场景）
+  const agentNameOf = (id: string): string => {
+    if (!id) return '';
+    const key = `agent:${id}`;
+    if (componentNameCache.has(key)) return componentNameCache.get(key) ?? '';
+    let name = '';
+    try {
+      const defRows = relationDb.queryRaw<{ n: string }>(
+        `SELECT "name" AS "n" FROM "runtime_agent_def" WHERE "id" = ? LIMIT 1`,
+        [id],
+      );
+      name = String(defRows?.[0]?.n ?? '');
+      if (!name) {
+        const agentRows = relationDb.queryRaw<{ n: string }>(
+          `SELECT "agent_name" AS "n" FROM "agent" WHERE "agent_id" = ? LIMIT 1`,
+          [id],
+        );
+        name = String(agentRows?.[0]?.n ?? '');
+      }
+    } catch { name = ''; }
+    componentNameCache.set(key, name);
+    return name;
+  };
+  // 展示值：名称优先，无名称回退原 ID（此时 ID 即唯一可读标识）
+  const displayValue = (id: string, name: string) => name || id || '';
   for (const ev of runEvRows) {
     let payload: any;
     try { payload = JSON.parse(String(ev.payload_json ?? '{}')); } catch { continue; }
@@ -1215,196 +1564,249 @@ async function buildThinkingBlocksFromRuntime(
     else if (ev.event_type === 'context.built') builtContexts.push(payload);
     switch (ev.event_type) {
       case 'run.accepted':
-        pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', 'lifecycle');
+        pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', TimelineItemKind.Lifecycle, undefined, undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'submitRun'));
         break;
       case 'run.started':
         {
           const agentLabel = String(payload.agent_name ?? payload.agent_id ?? '');
-          const target = pushNode(ev, 'lifecycle', '开始执行', [
+          const target = pushNode(ev, TimelineItemKind.Lifecycle, '开始执行', [
             { label: 'Agent', value: agentLabel || '（默认）' },
           ]);
-          pushTimeline(ev, ev.event_type, '开始执行', agentLabel, 'lifecycle', target);
+          pushTimeline(ev, ev.event_type, '开始执行', agentLabel, TimelineItemKind.Lifecycle, target, undefined, getTimingDuration('Runtime', 'Loop', 'AgentLoopService', 'execAgentLoop') || getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'executeRun'));
         }
         break;
       case 'agent.selected':
         {
-          const target = pushNode(ev, 'agent', 'Agent 选择', [
+          const target = pushNode(ev, TimelineItemKind.Agent, 'Agent 选择', [
             { label: 'Agent 名称', value: String(payload.agent_name ?? '') },
             { label: '定义 ID', value: String(payload.def_id ?? '') },
             { label: '匹配方式', value: String(payload.matched_by ?? '') },
           ]);
-          pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', 'agent', target);
+          pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', TimelineItemKind.Agent, target, undefined, getTimingDuration('Runtime', 'Agents', 'AgentDefService', 'matchAgentDef'));
         }
         break;
       case 'agent.components':
         {
-          const skillList = Array.isArray(payload.skills) && payload.skills.length
-            ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、')
-            : '';
-          const mcpList = Array.isArray(payload.mcps) && payload.mcps.length
-            ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、')
-            : '';
-          const target = pushNode(ev, 'agent', '组件装配', [
-            { label: 'Soul', value: payload.soul_id ? String(payload.soul_id) : '（无）' },
-            { label: 'Prompt', value: payload.prompt_template_id ? String(payload.prompt_template_id) : '（默认身份模板）' },
-            { label: 'LLM', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
+          const soulId = payload.soul_id ? String(payload.soul_id) : '';
+          const promptId = payload.prompt_template_id ? String(payload.prompt_template_id) : '';
+          const llmId = payload.llm_id ? String(payload.llm_id) : '';
+          const skillEntries = Array.isArray(payload.skills) ? (payload.skills as any[]) : [];
+          const mcpEntries = Array.isArray(payload.mcps) ? (payload.mcps as any[]) : [];
+          // 组件名优先取载荷携带的名称（soul_name/prompt_name/llm_name/brief），缺失回退 DB 解析
+          const skillList = skillEntries
+            .map((s) => {
+              const id = String(s.id || s || '');
+              const brief = String(s.brief || '') || skillName(id);
+              return brief || id;
+            })
+            .filter(Boolean).join('、');
+          const mcpList = mcpEntries
+            .map((m) => {
+              const id = String(m.id || m.server_name || m || '');
+              const brief = String(m.brief || '') || mcpName(id);
+              return brief || id;
+            })
+            .filter(Boolean).join('、');
+          const target = pushNode(ev, TimelineItemKind.Agent, '组件装配', [
+            { label: 'Soul', value: displayValue(soulId, String(payload.soul_name || '') || soulName(soulId)) || '（无）', id: soulId || undefined },
+            { label: 'Prompt', value: displayValue(promptId, String(payload.prompt_name || '') || promptName(promptId)) || '（默认身份模板）', id: promptId || undefined },
+            { label: 'LLM', value: displayValue(llmId, String(payload.llm_name || '') || llmName(llmId)) || '（默认模型）', id: llmId || undefined },
             { label: 'Skill', value: skillList || '（无）' },
             { label: 'MCP', value: mcpList || '（无）' },
           ]);
           const bits: string[] = [];
-          if (payload.soul_id) bits.push(`Soul ${String(payload.soul_id)}`);
-          if (Array.isArray(payload.skills) && payload.skills.length) bits.push(`Skill×${payload.skills.length}`);
-          if (Array.isArray(payload.mcps) && payload.mcps.length) bits.push(`MCP×${payload.mcps.length}`);
-          if (payload.llm_id) bits.push(`LLM ${String(payload.llm_id)}`);
-          if (payload.prompt_template_id) bits.push(`Prompt ${String(payload.prompt_template_id)}`);
+          if (soulId) bits.push(`Soul ${displayValue(soulId, String(payload.soul_name || '') || soulName(soulId))}`);
+          if (skillEntries.length) bits.push(`Skill×${skillEntries.length}`);
+          if (mcpEntries.length) bits.push(`MCP×${mcpEntries.length}`);
+          if (llmId) bits.push(`LLM ${displayValue(llmId, String(payload.llm_name || '') || llmName(llmId))}`);
+          if (promptId) bits.push(`Prompt ${displayValue(promptId, String(payload.prompt_name || '') || promptName(promptId))}`);
           const summary = bits.join(' · ');
-          pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', 'agent', target);
+          const tooltipBits: string[] = [];
+          if (soulId) tooltipBits.push(`Soul: ${soulId}`);
+          if (promptId) tooltipBits.push(`Prompt: ${promptId}`);
+          if (llmId) tooltipBits.push(`LLM: ${llmId}`);
+          if (skillEntries.length) tooltipBits.push(`Skill: ${skillEntries.map((s) => String(s.id || s || '')).filter(Boolean).join(', ')}`);
+          if (mcpEntries.length) tooltipBits.push(`MCP: ${mcpEntries.map((m) => String(m.id || m || '')).filter(Boolean).join(', ')}`);
+          pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', TimelineItemKind.Agent, target, tooltipBits.join('\n'), getTimingDuration('Runtime', 'Agents', 'AgentDefService', 'soAgentSnapshot'));
         }
         break;
       case 'agent.built':
         {
-          const target = pushNode(ev, 'agent', '构建 Agent', [
+          const target = pushNode(ev, TimelineItemKind.Agent, '构建 Agent', [
             { label: 'Agent 名称', value: String(payload.name ?? payload.agent_id ?? '') },
             { label: '用途', value: String(payload.purpose ?? '') },
           ]);
-          pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? payload.agent_id ?? 'agent')}`, String(payload.purpose ?? ''), 'agent', target);
+          pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? payload.agent_id ?? 'agent')}`, String(payload.purpose ?? ''), TimelineItemKind.Agent, target, undefined, getTimingDuration('Agent', 'AgentBuilder', 'AgentBuilderService', 'buildAgent'));
         }
         break;
       case 'context.built':
-        pushTimeline(ev, ev.event_type, `构建上下文：第 ${Number(payload.round ?? 0)} 轮 · ${Number(payload.message_count ?? (Array.isArray(payload.messages) ? payload.messages.length : 0))} 条消息`, payload.system ? '含 system 提示词（模型输入侧）' : '', 'context', `ctx-${Number(payload.round ?? 0)}`);
+        {
+          const roundNum = Number(payload.round ?? 0);
+          const msgCount = Number(payload.message_count ?? (Array.isArray(payload.messages) ? payload.messages.length : 0));
+          const ctxElapsed = getTimingDuration('Runtime', 'Session', 'SessionService', 'soMessages')
+            || getTimingDuration('Core', 'InfoCoreProvider', 'InfoCoreService', 'context')
+            || 1;
+          pushTimeline(
+            ev,
+            ev.event_type,
+            `构建上下文：第 ${roundNum} 轮 · ${msgCount} 条消息`,
+            payload.system ? '含 system 提示词（模型输入侧）' : '',
+            TimelineItemKind.Context,
+            `ctx-${roundNum}`,
+            undefined,
+            ctxElapsed,
+          );
+        }
         break;
       case 'intent.analyzed':
         {
-          const target = pushNode(ev, 'intent', '需求确认 / 意图分析', [
+          const agentId = payload.agent_id ? String(payload.agent_id) : '';
+          const agentDisp = String(payload.agent_name || '') || agentNameOf(agentId);
+          const target = pushNode(ev, TimelineItemKind.Intent, '需求确认 / 意图分析', [
             { label: '匹配得分', value: String(payload.score ?? 0) },
             { label: '是否采纳', value: payload.adopted ? '采纳' : '未达阈值' },
             { label: '候选 Agent', value: `${payload.candidates_count ?? 0} 个` },
-            { label: '命中 Agent', value: String(payload.agent_id ?? payload.agent_name ?? '（无）') },
+            { label: '命中 Agent', value: agentDisp || '（无）', id: agentId || undefined },
             { label: '理由', value: String(payload.reason ?? '（无）') },
           ]);
-          pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, 'intent', target);
+          pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, TimelineItemKind.Intent, target, agentId || '', getTimingDuration('Agent', 'IntentAgent', 'IntentAgentService', 'analyzeIntent'));
         }
         break;
       case 'llm.selected':
         {
-          const target = pushNode(ev, 'model', 'LLM 模型选定', [
-            { label: '模型', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
+          const llmId = payload.llm_id ? String(payload.llm_id) : '';
+          const name = String(payload.llm_name || '') || llmName(llmId);
+          const target = pushNode(ev, TimelineItemKind.Model, 'LLM 模型选定', [
+            { label: '模型', value: displayValue(llmId, name) || '（默认模型）', id: llmId || undefined },
           ]);
-          pushTimeline(ev, ev.event_type, `选定模型：${String(payload.llm_id || '默认模型')}`, '', 'model', target);
+          pushTimeline(ev, ev.event_type, `选定模型：${displayValue(llmId, name) || '默认模型'}`, '', TimelineItemKind.Model, target, llmId || '', getTimingDuration('Core', 'LLMCoreProvider', 'LLMCoreService', 'matchLLM'));
         }
         break;
       case 'prompt.selected':
         {
-          const target = pushNode(ev, 'model', '提示词选定', [
-            { label: '模板', value: String(payload.template_id ?? '（默认身份模板）') },
+          const templateId = payload.template_id ? String(payload.template_id) : '';
+          const name = String(payload.prompt_name || '') || promptName(templateId);
+          const target = pushNode(ev, TimelineItemKind.Model, '提示词选定', [
+            { label: '模板', value: displayValue(templateId, name) || '（默认身份模板）', id: templateId || undefined },
             { label: 'Soul 注入', value: payload.soul_selected ? '已注入' : '未注入' },
             { label: '工具数', value: String(payload.tools_count ?? 0) },
           ]);
-          pushTimeline(ev, ev.event_type, `选定提示词：${String(payload.template_id ?? '默认身份模板')}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', 'model', target);
+          pushTimeline(ev, ev.event_type, `选定提示词：${displayValue(templateId, name) || '默认身份模板'}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', TimelineItemKind.Model, target, templateId || '', getTimingDuration('Base', 'PromptsProvider', 'PromptsService', 'soPrompt'));
         }
         break;
       case 'skill.selected': {
         const n = Array.isArray(payload.skills) ? payload.skills.length : 0;
-        const target = pushNode(ev, 'model', 'Skill 选定', [
+        const detailList = n
+          ? (payload.skills as any[]).map((s) => { const id = String(s.id || s || ''); const brief = String(s.brief || '') || skillName(id); return brief || id; }).filter(Boolean).join('、')
+          : '';
+        const target = pushNode(ev, TimelineItemKind.Model, 'Skill 选定', [
           { label: '数量', value: String(n) },
-          { label: '明细', value: n ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、') : '（无）' },
+          { label: '明细', value: detailList || '（无）' },
         ]);
-        pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', '', 'model', target);
+        pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', '', TimelineItemKind.Model, target, undefined, getTimingDuration('Core', 'SkillCoreProvider', 'SkillCoreService', 'matchSkill'));
         break;
       }
       case 'mcp.selected': {
         const n = Array.isArray(payload.mcps) ? payload.mcps.length : 0;
-        const target = pushNode(ev, 'model', 'MCP 选定', [
+        const detailList = n
+          ? (payload.mcps as any[]).map((m) => { const id = String(m.id || m.server_name || m || ''); const brief = String(m.brief || '') || mcpName(id); return brief || id; }).filter(Boolean).join('、')
+          : '';
+        const target = pushNode(ev, TimelineItemKind.Model, 'MCP 选定', [
           { label: '数量', value: String(n) },
-          { label: '明细', value: n ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、') : '（无）' },
+          { label: '明细', value: detailList || '（无）' },
         ]);
-        pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', '', 'model', target);
+        pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', '', TimelineItemKind.Model, target, undefined, getTimingDuration('Core', 'MCPCoreProvider', 'MCPCoreService', 'matchMcp'));
         break;
       }
       case 'think.created':
-        pushTimeline(ev, ev.event_type, '开始思考（Agent 推理）', String(payload.agent_name ?? ''), 'think', 'agent-0');
+        thinkCreatedEv = ev;
         break;
       case 'think.delta':
-        thinkDeltaCount += 1;
+        if (!firstThinkDeltaEv) firstThinkDeltaEv = ev;
         thinkDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
         break;
       case 'reply.created':
-        pushTimeline(ev, ev.event_type, '开始组织回复（Agent 输出）', String(payload.agent_name ?? ''), 'reply', 'agent-0');
+        replyCreatedEv = ev;
         break;
       case 'reply.delta':
-        replyDeltaCount += 1;
+        if (!firstReplyDeltaEv) firstReplyDeltaEv = ev;
         replyDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
         break;
       case 'tool.started':
       case 'tool.launch':
         toolEventIdx += 1;
-        pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), 'tool', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
+        pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), TimelineItemKind.Tool, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, getTimingDuration('Runtime', 'Tools', 'ToolService', 'execTool'));
         break;
       case 'tool.result':
-        pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? 'tool-ok' : 'tool-fail', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
+        pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? TimelineItemKind.ToolOk : TimelineItemKind.ToolFail, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, getTimingDuration('Runtime', 'Tools', 'ToolService', 'execTool'));
         break;
       case 'plan.updated': {
         const n = Array.isArray(payload.steps) ? payload.steps.length : 0;
-        const target = pushNode(ev, 'plan', '计划更新', [
+        const target = pushNode(ev, TimelineItemKind.Plan, '计划更新', [
           { label: '步骤数', value: String(n) },
           { label: '明细', value: n ? (payload.steps as any[]).map((s: any) => String(s.title || s.label || s.content || s)).filter(Boolean).join(' · ') : '（无）' },
         ]);
-        pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', 'plan', target);
+        pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', TimelineItemKind.Plan, target, undefined, getTimingDuration('Agent', 'PlannerAgent', 'PlannerAgentService', 'planAgent'));
         break;
       }
       case 'permission.asked':
-        pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', 'permission', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
+        pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', TimelineItemKind.Permission, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'waitPermission'));
         break;
       case 'permission.answered':
-        pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? 'permission-deny' : 'permission-ok', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
+        pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? TimelineItemKind.PermissionDeny : TimelineItemKind.PermissionOk, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'answerPermission'));
         break;
       case 'evaluation.completed': {
         const scores = (payload.scores && typeof payload.scores === 'object' ? payload.scores : {}) as Record<string, unknown>;
         const scoreFields = Object.entries(scores as Record<string, unknown>)
           .slice(0, 12)
           .map(([k, v]) => ({ label: k, value: String(v) }));
-        const target = pushNode(ev, 'eval', '评估', [
+        const target = pushNode(ev, TimelineItemKind.Eval, '评估', [
           { label: '类型', value: String(payload.eval_type ?? '') },
           ...scoreFields,
           { label: '需优化', value: payload.need_optimize ? '是' : '否' },
         ]);
-        pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), 'eval', target);
+        pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), TimelineItemKind.Eval, target, undefined, getTimingDuration('Agent', 'EvolutorAgent', 'EvolutorAgentService', 'evalWorkAgent'));
         break;
       }
       case 'writer.completed': {
-        const target = pushNode(ev, 'writer', '写作排版', [
+        const target = pushNode(ev, TimelineItemKind.Writer, '写作排版', [
           { label: '格式', value: String(payload.format ?? 'MARKDOWN') },
           { label: '字数', value: String(payload.length ?? 0) },
           { label: '流程图', value: payload.has_mermaid ? '包含 Mermaid 流程图' : '无' },
         ]);
-        pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, 'writer', target);
+        pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, TimelineItemKind.Writer, target, undefined, getTimingDuration('Agent', 'WriterAgent', 'WriterAgentService', 'execWrite'));
         break;
       }
       case 'run.finished':
-        pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), 'lifecycle-ok');
+        pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), TimelineItemKind.LifecycleOk, undefined, undefined, getTimingDuration('Application', 'Chat', 'ChatService', 'openChatStream') || (Number(run.settled_at ?? 0) > Number(run.started_at ?? 0) ? Number(run.settled_at) - Number(run.started_at) : 0));
         break;
       case 'run.failed':
-        pushTimeline(ev, ev.event_type, `执行失败：${String(payload.stop_reason ?? payload.error ?? '')}`, '', 'lifecycle-fail');
+        pushTimeline(ev, ev.event_type, `执行失败：${String(payload.stop_reason ?? payload.error ?? '')}`, '', TimelineItemKind.LifecycleFail);
         break;
       case 'error.occurred':
-        pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', 'lifecycle-fail');
+        pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', TimelineItemKind.LifecycleFail);
         break;
       default:
         break;
     }
   }
-  // 高频增量汇总为两条时间线节点，保证“整个执行过程”可追溯又不刷屏
-  // 组件事件已在循环内采集到 components/selected，此处可解析出展示用 Agent 名
+  // 思考与回复增量节点：挂载在真实发生的事件序列（thinkAnchor / replyAnchor）上，保持因果与时间线严密自洽
   const rawAgentNameEarly = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
   const displayAgentName = rawAgentNameEarly.replace(/^w2-/i, '').replace(/-[0-9a-f]{8}$/i, '') || rawAgentNameEarly;
-  if (thinkDeltaCount > 0) {
-    timeline.push({ seq: -1, ts: startTs, event: 'think.delta#summary', title: `深度思考：${thinkDeltaCount} 个增量 · 共 ${thinkDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', kind: 'think', target: 'agent-0' });
+  const thinkAnchor = thinkCreatedEv ?? firstThinkDeltaEv;
+  if (thinkAnchor) {
+    const thinkTitle = thinkDeltaChars > 0 ? `Agent 深度推理思考（${thinkDeltaChars} 字）` : 'Agent 深度推理思考';
+    pushTimeline(thinkAnchor, 'think.delta#summary', thinkTitle, displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', TimelineItemKind.Think, 'agent-0', undefined, getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLMEvents') || getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLM'));
   }
-  if (replyDeltaCount > 0) {
-    timeline.push({ seq: -1, ts: settleTs, event: 'reply.delta#summary', title: `组织回复：${replyDeltaCount} 个增量 · 共 ${replyDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', kind: 'reply', target: 'agent-0' });
+  const replyAnchor = replyCreatedEv ?? firstReplyDeltaEv;
+  if (replyAnchor) {
+    const replyTitle = replyDeltaChars > 0 ? `生成回答内容（${replyDeltaChars} 字）` : '生成回答内容';
+    pushTimeline(replyAnchor, 'reply.delta#summary', replyTitle, displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', TimelineItemKind.Reply, 'agent-0', undefined, getTimingDuration('Agent', 'WriterAgent', 'WriterAgentService', 'execWrite') || getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLMEvents'));
   }
-  timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
+  nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
+  timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
+  nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
 
   // 3. 消息与 Part（轮次输入输出全量）
   const msgRows = relationDb.queryRaw<{ id: string; role: string; content: string; seq: number; token_count: number }>(
@@ -1503,10 +1905,10 @@ async function buildThinkingBlocksFromRuntime(
   const rawAgentName = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
   const agentName = rawAgentName.replace(/^w2-/i, '').replace(/-[0-9a-f]{8}$/i, '') || rawAgentName;
   const skills = Array.isArray(components?.skills)
-    ? (components.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean)
+    ? (components.skills as any[]).map((s) => { const id = String(s.id || s || ''); const brief = String(s.brief || '') || skillName(id); return brief || id; }).filter(Boolean)
     : [];
   const mcps = Array.isArray(components?.mcps)
-    ? (components.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean)
+    ? (components.mcps as any[]).map((m) => { const id = String(m.id || m.server_name || m || ''); const brief = String(m.brief || '') || mcpName(id); return brief || id; }).filter(Boolean)
     : [];
   // Token 用量：LLMProvider 明细账（llm_call_log）按 work_id=runId 求和，均为提供商返回真实值；
   // 明细账为空（历史 run 或明细账写入失败）时回退估算：输入侧按 prompt 字符数/4 预估，
@@ -3657,9 +4059,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           stream_endpoint_id: registerOutput.endpoint_id,
         });
         const streamOutput = new OpenChatStreamOutput();
+        const traceId = IdGenerator.generate();
+        const chatMetrics = new Metrics(ctx.logAccess, 'ChatService.openChatStream', traceId);
 
         try {
-          await ctx.chatAccess.openChatStream(streamInput, streamOutput, new ChatContext(), undefined, undefined, onEvent);
+          await ctx.chatAccess.openChatStream(streamInput, streamOutput, new ChatContext(), chatMetrics, undefined, onEvent);
         } catch (err: any) {
           await ctx.streamAccess.pushEvent(sessionId, 'error', 'CONTROL', {
             error_message: err?.message || 'Stream failed',
@@ -4436,7 +4840,133 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         });
 
       // ===== Feedback Routes =====
-      } else if (method === 'POST' && pathname === '/api/feedback') { sendJson(res, 200, { success: true });
+      } else if (method === 'POST' && pathname === '/api/feedback') {
+        const rating = body.rating !== undefined ? Number(body.rating) : (body.score !== undefined ? Number(body.score) : undefined);
+        const interactId = body.interact_id || body.interactId || undefined;
+        const workId = body.work_id || body.workId || undefined;
+        const agentId = body.agent_id || body.agentId || undefined;
+
+        const input = Object.assign(new SubmitFeedbackInput(), {
+          rating,
+          comment: body.comment || undefined,
+          category: body.category || undefined,
+          work_id: workId,
+          interact_id: interactId,
+          metadata: body.metadata || undefined,
+        });
+        const output = new SubmitFeedbackOutput();
+        await ctx.feedbackAccess.submitFeedback(input, output, new FeedbackContext());
+
+        // 将用户评分保存到 info_raw，以便通过 interact_id 关联查询
+        if (interactId && rating !== undefined) {
+          try {
+            const saveRatingInput = Object.assign(new SaveInfoInput(), {
+              session_id: body.session_id || '',
+              work_id: workId || '',
+              interact_id: interactId,
+              info_type: 'USER_FEEDBACK',
+              info_creator_role: 'user',
+              info: JSON.stringify({ rating, comment: body.comment || '', agent_id: agentId || '' }),
+            });
+            await ctx.infoCore.saveInfo(saveRatingInput, new SaveInfoOutput(), new InfoCoreContext());
+          } catch { /* info_raw may not exist yet */ }
+        }
+
+        // 获取反馈配置并检查是否需要解散 Agent
+        const configOut = new GetFeedbackConfigOutput();
+        await ctx.feedbackAccess.getFeedbackConfig(new GetFeedbackConfigInput(), configOut, new FeedbackContext());
+        const threshold = configOut.config?.disband_threshold ?? 30;
+        const enableDisband = configOut.config?.enable_auto_disband ?? true;
+
+        const shouldDisband = enableDisband && rating !== undefined && rating < threshold && interactId;
+        let disbandedAgentId = '';
+
+        if (shouldDisband) {
+          try {
+            const linkedRows = ctx.relationDb.queryRaw<{ agent_id: string }>(
+              'SELECT DISTINCT a.agent_id FROM agent_usage a WHERE a.interact_id = ? AND a.agent_id LIKE \'agent-%\' LIMIT 1',
+              [interactId],
+            );
+            if (linkedRows.length > 0) {
+              const targetAgentId = linkedRows[0].agent_id;
+              const agentCtx = new AgentLibraryContext();
+              const getOut = new GetAgentOutput();
+              await ctx.agentLibrary.soAgent(
+                Object.assign(new GetAgentInput(), { agent_id: targetAgentId }),
+                getOut, agentCtx,
+              );
+              const agent = getOut.agents?.[0] as { agent_type?: string } | undefined;
+              if (agent && agent.agent_type !== 'system') {
+                try {
+                  await ctx.agentLibrary.delAgent(
+                    Object.assign(new DelAgentInput(), { agent_id: targetAgentId }),
+                    new DelAgentOutput(),
+                    agentCtx,
+                  );
+                  disbandedAgentId = targetAgentId;
+                } catch { /* agent may be user-created, guarded */ }
+              }
+            }
+          } catch { /* best-effort disband */ }
+        }
+
+        // 记录处理日志
+        await ctx.feedbackAccess.recordProcessLog(
+          Object.assign(new RecordProcessLogInput(), {
+            feedback_id: output.feedback_id,
+            action: disbandedAgentId ? 'disbanded' : 'submitted',
+            agent_id: disbandedAgentId || agentId || '',
+            interact_id: interactId,
+            work_id: workId,
+            rating: rating ?? 0,
+            details: { threshold, enable_disband: enableDisband, disbanded: !!disbandedAgentId },
+          }),
+          new RecordProcessLogOutput(),
+          new FeedbackContext(),
+        );
+
+        sendJson(res, 200, { ...output, disbanded_agent_id: disbandedAgentId || undefined });
+      } else if (method === 'GET' && pathname === '/api/feedback') {
+        const input = new QueryFeedbackInput();
+        const output = new QueryFeedbackOutput();
+        await ctx.feedbackAccess.soFeedback(input, output, new FeedbackContext());
+        sendJson(res, 200, output);
+      } else if (method === 'GET' && pathname === '/api/feedback/analysis') {
+        const input = Object.assign(new AnalyzeFeedbackInput(), {
+          source: params.get('source') || undefined,
+          agent_id: params.get('agent_id') || undefined,
+          category: params.get('category') || undefined,
+          time_range_days: params.get('time_range_days') ? parseInt(params.get('time_range_days')!, 10) : undefined,
+        });
+        const output = new AnalyzeFeedbackOutput();
+        await ctx.feedbackAccess.analyzeFeedback(input, output, new FeedbackContext());
+        sendJson(res, 200, output);
+      } else if (method === 'GET' && pathname === '/api/feedback/records') {
+        const limit = params.get('limit') ? parseInt(params.get('limit')!, 10) : 50;
+        const input = new QueryProcessLogsInput();
+        input.page = { current: 1, size: limit };
+        input.order_by = [{ field: 'created', direction: 'DESC' }];
+        const output = new QueryProcessLogsOutput();
+        await ctx.feedbackAccess.getProcessLogs(input, output, new FeedbackContext());
+        sendJson(res, 200, output);
+      } else if (method === 'GET' && pathname.startsWith('/api/feedback/records/')) {
+        const processId = pathname.split('/api/feedback/records/')[1];
+        const input = Object.assign(new GetProcessLogDetailInput(), { process_id: processId });
+        const output = new GetProcessLogDetailOutput();
+        await ctx.feedbackAccess.getProcessLogDetail(input, output, new FeedbackContext());
+        sendJson(res, 200, output);
+      } else if (method === 'GET' && pathname === '/api/feedback/config') {
+        const output = new GetFeedbackConfigOutput();
+        await ctx.feedbackAccess.getFeedbackConfig(new GetFeedbackConfigInput(), output, new FeedbackContext());
+        sendJson(res, 200, output);
+      } else if (method === 'PUT' && pathname === '/api/feedback/config') {
+        const input = Object.assign(new UpdateFeedbackConfigInput(), {
+          disband_threshold: body.disband_threshold !== undefined ? Number(body.disband_threshold) : undefined,
+          enable_auto_disband: body.enable_auto_disband !== undefined ? Boolean(body.enable_auto_disband) : undefined,
+        });
+        const output = new UpdateFeedbackConfigOutput();
+        await ctx.feedbackAccess.updateFeedbackConfig(input, output, new FeedbackContext());
+        sendJson(res, 200, output);
 
       // ===== Profile Routes =====
       } else if (method === 'GET' && pathname === '/api/profile') {

@@ -9,7 +9,7 @@ import {
   Lightbulb, Library, RefreshCw, ClipboardList, Briefcase, PenLine,
   Settings, FileText, Network, User, MessageCircle, Sparkles,
   Layers, BarChart3, Zap, Plug, Radio, Monitor, Globe, Terminal, MessageSquare, Send,
-  Play, Eye, Code2,
+  Play, Eye, Code2, Star,
 } from '@lucide/vue'
 import type { ConfigTreeItem } from '@/api/types'
 
@@ -135,6 +135,9 @@ export const NAV_SECTIONS: NavSection[] = [
   { key: 'maintenance', label: '维护', icon: RefreshCw, desc: '配置重置与快照管理', subsections: [
     { key: 'snapshot', label: '重置与快照', icon: RefreshCw, type: 'snapshot' },
   ]},
+  { key: 'feedback', label: '反馈设置', icon: Star, desc: '用户反馈处理的阈值与自动解散策略', subsections: [
+    { key: 'feedback-config', label: '解散与阈值', icon: Settings, type: 'params', configModule: 'feedback_handler', configCategories: ['basic'] },
+  ]},
 ]
 
 // ============================================================
@@ -152,6 +155,7 @@ export const MODULE_NAMES: Record<string, string> = {
   agent_execution: 'Agent Execution', agent_strategy: 'Agent Strategy', agent_context: 'Agent Context',
   entry: 'Entry', strategy: 'Strategy', execution: 'Execution', visualization: 'Visualization', jsonnode: 'JSON Node',
   chat: 'Chat', self_learning: 'Self Learning', user_profile: 'User Profile', config: 'Config',
+  feedback_handler: 'Feedback Handler',
 }
 const MODULE_ICONS: Record<string, typeof Cpu> = {
   llm_provider: Cpu, mcp_provider: Plug, soul_provider: Heart, skill_provider: Wand2, prompts_provider: MessageSquare, log_provider: FileText, mq_provider: Send,
@@ -159,6 +163,7 @@ const MODULE_ICONS: Record<string, typeof Cpu> = {
   agent_library: Library, agent_builder: Bot, agent_execution: Play, agent_strategy: GitBranch, agent_context: Layers,
   entry: Workflow, strategy: GitBranch, execution: Play, visualization: Eye, jsonnode: Code2,
   chat: MessageCircle, self_learning: GraduationCap, user_profile: User, config: Settings,
+  feedback_handler: Star,
 }
 const CATEGORY_NAMES: Record<string, string> = { basic: '基础设置', quota: '配额设置', aging: '老化设置', config: '配置', tag_config: '标签配置', summary_config: '摘要配置', vector_config: '向量配置', context_config: '上下文配置', opt_rule: '优化规则', weight: '权重设置', interval: '间隔设置' }
 

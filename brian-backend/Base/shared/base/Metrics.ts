@@ -66,6 +66,12 @@ export class Metrics {
   elapsed_ms?: number;
 
   /**
+   * 流程计时记录：以 `<层名>.<模块名>.<类名>.<方法名>.start/end` 为 key，时间戳（毫秒）为 value。
+   * 统计所有流程的耗时以及总耗时。
+   */
+  timings: Record<string, number> = {};
+
+  /**
    * LLM 调用统计（2026-09-11 新增）：按调用次序累积每次 LLM 调用的
    * token 用量与单次调用耗时，由 LLMProvider 调用侧回填；
    * AOP 落 log_record 时随 Metrics 序列化自动携带。
@@ -78,6 +84,99 @@ export class Metrics {
     this.logger = logger;
     this.category = category;
     this.trace_id = trace_id;
+    this.timings = {};
+  }
+
+  /**
+   * 记录流程时间戳（按 `<层名>.<模块名>.<类名>.<方法名>.start/end` 为 key）。
+   * @param key 计时键，例如 `Base.LLMProvider.LLMService.soLLM.start`
+   * @param timestamp 时间戳（毫秒），缺省为 Date.now()
+   */
+  recordTiming(key: string, timestamp: number = Date.now()): void {
+    if (!this.timings) {
+      this.timings = {};
+    }
+    this.timings[key] = timestamp;
+  }
+
+  /**
+   * 记录方法开始时间。
+   */
+  recordStart(layer: string, module: string, className: string, methodName: string, timestamp: number = Date.now()): string {
+    const key = `${layer}.${module}.${className}.${methodName}.start`;
+    this.recordTiming(key, timestamp);
+    return key;
+  }
+
+  /**
+   * 记录方法结束时间。
+   */
+  recordEnd(layer: string, module: string, className: string, methodName: string, timestamp: number = Date.now()): string {
+    const key = `${layer}.${module}.${className}.${methodName}.end`;
+    this.recordTiming(key, timestamp);
+    return key;
+  }
+
+  /**
+   * 获取指定流程的耗时（毫秒）。若无对应 start/end 则返回 0。
+   */
+  getDuration(layer: string, module: string, className: string, methodName: string): number {
+    const startKey = `${layer}.${module}.${className}.${methodName}.start`;
+    const endKey = `${layer}.${module}.${className}.${methodName}.end`;
+    const start = this.timings[startKey];
+    const end = this.timings[endKey];
+    if (typeof start === 'number' && typeof end === 'number' && end >= start) {
+      return end - start;
+    }
+    return 0;
+  }
+
+  /**
+   * 汇总所有流程的耗时明细。
+   */
+  getProcessDurations(): Array<{ key: string; layer: string; module: string; className: string; methodName: string; start: number; end: number; duration: number }> {
+    const result: Array<{ key: string; layer: string; module: string; className: string; methodName: string; start: number; end: number; duration: number }> = [];
+    const visited = new Set<string>();
+    for (const key of Object.keys(this.timings)) {
+      if (key.endsWith('.start')) {
+        const baseKey = key.slice(0, -6);
+        if (visited.has(baseKey)) continue;
+        visited.add(baseKey);
+        const endKey = `${baseKey}.end`;
+        const start = this.timings[key];
+        const end = this.timings[endKey];
+        const parts = baseKey.split('.');
+        const layer = parts[0] || '';
+        const module = parts[1] || '';
+        const className = parts[2] || '';
+        const methodName = parts.slice(3).join('.');
+        const duration = (typeof end === 'number' && end >= start) ? end - start : 0;
+        result.push({
+          key: baseKey,
+          layer,
+          module,
+          className,
+          methodName,
+          start,
+          end: typeof end === 'number' ? end : 0,
+          duration,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 统计总耗时（毫秒）：所有已记录流程的最早 start 到最晚 end 的跨度。
+   */
+  getTotalDuration(): number {
+    const timestamps = Object.values(this.timings);
+    if (timestamps.length === 0) {
+      return this.elapsed_ms ?? 0;
+    }
+    const minStart = Math.min(...timestamps);
+    const maxEnd = Math.max(...timestamps);
+    return maxEnd >= minStart ? maxEnd - minStart : 0;
   }
 
   /**
@@ -123,6 +222,29 @@ export class Metrics {
     this.logger?.error(this.prefix(message), this.merge(meta));
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // saveInvocation(record: {
+  //   targetName: string;
+  //   methodName: string;
+  //   status: 'ok' | 'error';
+  //   error?: string;
+  //   args: Record<string, unknown>;
+  // }): void {
+  //   const invocation = {
+  //     method: `${record.targetName}.${record.methodName}`,
+  //     status: record.status,
+  //     error: record.error,
+  //     elapsed_ms: this.elapsed_ms,
+  //     args: Metrics.safeSerialize(record.args),
+  //   };
+  //   const message = `${record.methodName} ${record.status === 'ok' ? 'completed' : 'failed'}`;
+  //   this.logAt('DEBUG', message, {
+  //     log_source: 'AOP',
+  //     invocation_json: JSON.stringify(invocation),
+  //   });
+  // }
+
+  // ===== 修改后的方法 =====
   /**
    * 保存方法调用记录（AOP 切面在方法返回或抛异常时调用；JSON 格式）。
    *
@@ -147,6 +269,7 @@ export class Metrics {
       status: record.status,
       error: record.error,
       elapsed_ms: this.elapsed_ms,
+      timings: this.timings,
       args: Metrics.safeSerialize(record.args),
     };
     const message = `${record.methodName} ${record.status === 'ok' ? 'completed' : 'failed'}`;

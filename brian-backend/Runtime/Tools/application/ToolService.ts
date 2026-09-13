@@ -161,7 +161,7 @@ export class ToolService {
     if (!def) {
       throw new NotFoundError('Tool', input.tool_id);
     }
-    const ctx = this.prepareToolContext(input);
+    const ctx = this.prepareToolContext(input, _metrics, _report);
     const parsed = this.prepareToolArgs(def, input.raw_args);
     if (!parsed.ok) {
       output.result = this.toFeedbackError(def.id, parsed.error);
@@ -171,9 +171,17 @@ export class ToolService {
     return true;
   }
 
-  /** 工具执行上下文组装（数据处理；emitEvent 为工具→事件流出口；component_scope 贯穿执行门） */
-  private prepareToolContext(input: ExecToolInput): ToolExecutionContext {
-    return { run_id: input.run_id, session_key: input.session_key, signal: input.signal, emitEvent: input.emitEvent, component_scope: input.component_scope };
+  /** 工具执行上下文组装（数据处理；emitEvent 为工具→事件流出口；component_scope 贯穿执行门；透传 metrics/report） */
+  private prepareToolContext(input: ExecToolInput, metrics?: Metrics, report?: Report): ToolExecutionContext {
+    return {
+      run_id: input.run_id,
+      session_key: input.session_key,
+      signal: input.signal,
+      emitEvent: input.emitEvent,
+      component_scope: input.component_scope,
+      metrics,
+      report,
+    };
   }
 
   /** 参数解析与 zod 校验（数据处理；失败不抛错，转配对回流） */

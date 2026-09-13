@@ -83,3 +83,6 @@ export * from './CronProvider';
 // StreamProvider
 export * from './StreamProvider';
 
+// FeedbackHandler
+export * from './FeedbackHandler';
+

@@ -62,8 +62,9 @@ export interface LLMEventsRunnerOptions {
   logger?: Logger;
 }
 
-/** 空闲看门狗默认值 */
-export const DEFAULT_IDLE_WATCHDOG_MS = 30000;
+// ===== 修改后（2026-09-13）：看门狗默认提升至 120s（OpenClaw 2.0 / V2 PRD 标准），并在 readLoop 接收 chunk 时真实重置 =====
+/** 空闲看门狗默认值（120s，OpenClaw / V2 PRD 标准） */
+export const DEFAULT_IDLE_WATCHDOG_MS = 120000;
 
 /**
  * LLMEventsRunner。
@@ -74,6 +75,7 @@ export class LLMEventsRunner {
   private readonly controller = new AbortController();
   private readonly aborted: Promise<never>;
   private emittedCount = 0;
+  private resetIdle: () => void = () => {};
 
   constructor(options: LLMEventsRunnerOptions) {
     this.opts = options;
@@ -112,19 +114,44 @@ export class LLMEventsRunner {
     }
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private setupAbortWiring(): () => void {
+  //   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  //   const resetIdle = (): void => {
+  //     clearTimeout(idleTimer);
+  //     idleTimer = setTimeout(
+  //       () => this.abortLocal('timeout'),
+  //       this.opts.idle_watchdog_ms || DEFAULT_IDLE_WATCHDOG_MS,
+  //     );
+  //   };
+  //   resetIdle();
+  //   const external = this.opts.signal;
+  //   const forwardExternal = (): void =>
+  //     this.abortLocal(this.resolveExternalReason(external));
+  //   if (external) {
+  //     if (external.aborted) {
+  //       forwardExternal();
+  //     } else {
+  //       external.addEventListener('abort', forwardExternal, { once: true });
+  //     }
+  //   }
+  //   return () => clearTimeout(idleTimer);
+  // }
+
+  // ===== 修改后的方法（2026-09-13）：保留 resetIdle 句柄并在收到数据帧时重置 =====
   /**
    * 中止接线（逻辑控制）：外部 signal → controller；空闲看门狗逐帧重置。
    */
   private setupAbortWiring(): () => void {
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
-    const resetIdle = (): void => {
+    this.resetIdle = (): void => {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(
         () => this.abortLocal('timeout'),
         this.opts.idle_watchdog_ms || DEFAULT_IDLE_WATCHDOG_MS,
       );
     };
-    resetIdle();
+    this.resetIdle();
     const external = this.opts.signal;
     const forwardExternal = (): void =>
       this.abortLocal(this.resolveExternalReason(external));
@@ -183,11 +210,38 @@ export class LLMEventsRunner {
     return res;
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private async readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<LLMEventsRunResult> {
+  //   const decoder = new TextDecoder();
+  //   let buffer = '';
+  //   let lastFrame: unknown = null;
+  //   try {
+  //     while (true) { // eslint-disable-line no-constant-condition
+  //       const read = reader.read();
+  //       const { done, value } = await Promise.race([read, this.aborted]);
+  //       if (done) {
+  //         break;
+  //       }
+  //       buffer += decoder.decode(value, { stream: true });
+  //       const lines = buffer.split('\n');
+  //       buffer = lines.pop() || '';
+  //       lastFrame = this.dispatchLines(lines, lastFrame);
+  //     }
+  //     this.dispatchLines(buffer.split('\n'), lastFrame);
+  //     return this.buildResult(lastFrame, undefined);
+  //   } catch (err) {
+  //     throw this.toAbortOrConnectError(err);
+  //   } finally {
+  //     reader.releaseLock();
+  //   }
+  // }
+
+  // ===== 修改后的方法（2026-09-13）：每读取到有效 chunk 帧重置看门狗 =====
   /**
    * SSE 读循环（逻辑控制）：逐行派发，[DONE] 或连接关闭结束。
    *
    * 每次 read 与 aborted promise 竞速 —— 保证外部 signal / 看门狗取消
-   * 对任何流实现（含未接线 signal 的流）都能真取消。
+   * 对任何流实现（含未接线 signal 的流）都能真取消。每帧数据到达均刷新空闲计时器。
    */
   private async readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<LLMEventsRunResult> {
     const decoder = new TextDecoder();
@@ -200,6 +254,7 @@ export class LLMEventsRunner {
         if (done) {
           break;
         }
+        this.resetIdle();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';

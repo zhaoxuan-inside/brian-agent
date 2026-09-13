@@ -1406,80 +1406,99 @@ export class LLMService {
     const strategy = LLMStrategyFactory.soStrategyById(provider);
     const req = strategy.buildChatRequest(provider, llm, input);
 
-    // 流式调用：使用 SSE 解析逐 token 推送
+    // ===== 原始方法（保留作为参考）：旧版 manual fetch 流式解析器只监听 delta.content，且在 HTTP 响应头到达后立即 clearTimeout =====
+    // if (input.stream && typeof input.onDelta === 'function') {
+    //   try {
+    //     const streamBody = JSON.parse(req.body as string);
+    //     streamBody.stream = true;
+    //     const streamBodyStr = JSON.stringify(streamBody);
+    //     const controller = new AbortController();
+    //     const timer = setTimeout(() => controller.abort(), this.execTimeoutMs);
+    //     const res = await fetch(req.url, { method: req.method || 'POST', headers: req.headers, body: streamBodyStr, signal: controller.signal });
+    //     clearTimeout(timer);
+    //     if (!res.ok) {
+    //       const errorText = await res.text().catch(() => '');
+    //       output.error = `LLM 调用失败: HTTP ${res.status} ${errorText}`;
+    //       output.error_code = 'REMOTE_ERROR';
+    //       output.duration_ms = Date.now() - startTime;
+    //       return false;
+    //     }
+    //     const reader = res.body?.getReader();
+    //     if (!reader) {
+    //       output.error = 'LLM 流式响应无 body';
+    //       output.error_code = 'CONNECT_ERROR';
+    //       output.duration_ms = Date.now() - startTime;
+    //       return false;
+    //     }
+    //     const decoder = new TextDecoder();
+    //     let buffer = '';
+    //     let fullContent = '';
+    //     while (true) {
+    //       const { done, value } = await reader.read();
+    //       if (done) break;
+    //       buffer += decoder.decode(value, { stream: true });
+    //       const lines = buffer.split('\n');
+    //       buffer = lines.pop() || '';
+    //       for (const line of lines) {
+    //         if (!line.startsWith('data: ')) continue;
+    //         const data = line.slice(6).trim();
+    //         if (data === '[DONE]') continue;
+    //         try {
+    //           const parsed = JSON.parse(data);
+    //           const delta = parsed?.choices?.[0]?.delta?.content;
+    //           if (delta) {
+    //             fullContent += delta;
+    //             input.onDelta!(delta);
+    //           }
+    //         } catch {}
+    //       }
+    //     }
+    //     output.raw_response = fullContent;
+    //     output.result = fullContent;
+    //     output.input_prompt = prompt;
+    //     output.input_tokens = 0;
+    //     output.output_tokens = 0;
+    //     output.duration_ms = Date.now() - startTime;
+    //   } catch (err) {
+    //     output.error = err instanceof Error ? err.message : String(err);
+    //     output.error_code = 'CONNECT_ERROR';
+    //     output.duration_ms = Date.now() - startTime;
+    //     return false;
+    //   }
+    // }
+
+    // ===== 修改后的流式处理：无缝委托统一的 LLMEventsRunner 引擎（支持 reasoning、看门狗保活与 Token 统计） =====
     if (input.stream && typeof input.onDelta === 'function') {
-      try {
-        const streamBody = JSON.parse(req.body as string);
-        streamBody.stream = true;
-        const streamBodyStr = JSON.stringify(streamBody);
-
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.execTimeoutMs);
-
-        const res = await fetch(req.url, {
-          method: req.method || 'POST',
-          headers: req.headers,
-          body: streamBodyStr,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-
-        if (!res.ok) {
-          const errorText = await res.text().catch(() => '');
-          output.error = `LLM 调用失败: HTTP ${res.status} ${errorText}`;
-          output.error_code = 'REMOTE_ERROR';
-          output.duration_ms = Date.now() - startTime;
-          return false;
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) {
-          output.error = 'LLM 流式响应无 body';
-          output.error_code = 'CONNECT_ERROR';
-          output.duration_ms = Date.now() - startTime;
-          return false;
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullContent = '';
-
-        while (true) { // eslint-disable-line no-constant-condition
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed?.choices?.[0]?.delta?.content;
-              if (delta) {
-                fullContent += delta;
-                input.onDelta!(delta);
-              }
-            } catch {
-              /* 忽略半包/心跳帧 */
-            }
+      const eventsInput = Object.assign(new ExecLLMEventsInput(), {
+        id: llmId,
+        prompt: input.prompt,
+        system: input.system,
+        temperature: input.temperature,
+        max_tokens: input.max_tokens,
+        no_fallback: true,
+        extra: input.extra,
+        session_id: input.session_id,
+        interact_id: input.interact_id,
+        work_id: input.work_id,
+        on_event: (ev: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
+          if (ev.type === 'text_delta' && ev.delta) {
+            input.onDelta!(ev.delta);
           }
-        }
-
-        output.raw_response = fullContent;
-        output.result = fullContent;
-        output.input_prompt = prompt;
-        output.input_tokens = 0;
-        output.output_tokens = 0;
-        output.duration_ms = Date.now() - startTime;
-      } catch (err) {
-        output.error = err instanceof Error ? err.message : String(err);
-        output.error_code = 'CONNECT_ERROR';
+        },
+      });
+      const single = await this.executeEventsSingle(llmId, eventsInput);
+      if (!single.ok) {
+        output.error = single.error || 'LLM 流式调用失败';
+        output.error_code = single.error_code || 'EXEC_FAILED';
         output.duration_ms = Date.now() - startTime;
         return false;
       }
+      output.raw_response = single.result;
+      output.result = single.result;
+      output.input_prompt = prompt;
+      output.input_tokens = single.token_usage?.input_tokens ?? 0;
+      output.output_tokens = single.token_usage?.output_tokens ?? 0;
+      output.duration_ms = Date.now() - startTime;
     } else {
       // 非流式调用（原有逻辑）
       try {

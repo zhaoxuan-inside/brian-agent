@@ -15,7 +15,7 @@ async function submitRating(score: number) {
   if (submitted.value) return
   rating.value = score
   try {
-    await feedbackApi.submit(props.block.msgId, score, 'rating')
+    await feedbackApi.submit({ rating: score })
     submitted.value = true
   } catch { /* ignore */ }
 }
@@ -23,7 +23,7 @@ async function submitRating(score: number) {
 async function submitLike(type: 'like' | 'dislike') {
   if (submitted.value) return
   try {
-    await feedbackApi.submit(props.block.msgId, type === 'like' ? 1 : 0, type)
+    await feedbackApi.submit({ rating: type === 'like' ? 5 : 1 })
     submitted.value = true
   } catch { /* ignore */ }
 }

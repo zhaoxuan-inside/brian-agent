@@ -93,8 +93,8 @@ export class AgentBuilderService {
     }
 
     // 先通过 Core 为该 agent 匹配 LLM，供任务分析使用（禁止 llm_model LIMIT 1）
-    const analysisLlm = await this.matchLlmForAgent(agentId, input.interact_id);
-    const analysis = await this.analyzeTask(input, config, analysisLlm);
+    const analysisLlm = await this.matchLlmForAgent(agentId, input.interact_id, _metrics, _report);
+    const analysis = await this.analyzeTask(input, config, analysisLlm, _metrics, _report);
     const signature = analysis.signature;
     const complexity = analysis.complexity;
     const domain = analysis.domain;
@@ -109,6 +109,8 @@ export class AgentBuilderService {
         }),
         matchOut,
         libCtx,
+        _metrics,
+        _report,
       );
       if (matchOut.matched && !matchOut.regenerate && matchOut.agent_id) {
         await this.agentLibrary.recordAgentUsage(
@@ -119,6 +121,8 @@ export class AgentBuilderService {
           }),
           new RecordAgentUsageOutput(),
           libCtx,
+          _metrics,
+          _report,
         );
         output.agent_id = matchOut.agent_id;
 
@@ -144,6 +148,8 @@ export class AgentBuilderService {
       }),
       strategyOut,
       new AgentStrategyContext(),
+      _metrics,
+      _report,
     );
     if (!strategyOut.strategy_id) {
       throw new ValidationError('Failed to match strategy');
@@ -158,6 +164,8 @@ export class AgentBuilderService {
       }),
       llmOut,
       new LLMCoreContext(),
+      _metrics,
+      _report,
     );
     const llmId = llmOut.llm_id || analysisLlm || '';
 
@@ -170,6 +178,8 @@ export class AgentBuilderService {
       }),
       skillOut,
       new SkillCoreContext(),
+      _metrics,
+      _report,
     );
 
     const mcpOut = new MatchMcpOutput();
@@ -181,6 +191,8 @@ export class AgentBuilderService {
       }),
       mcpOut,
       new McpCoreContext(),
+      _metrics,
+      _report,
     );
 
     const soulOut = new MatchSoulOutput();
@@ -194,6 +206,8 @@ export class AgentBuilderService {
       }),
       soulOut,
       new SoulCoreContext(),
+      _metrics,
+      _report,
     );
 
     const agentName = this.generateAgentName(
@@ -205,7 +219,7 @@ export class AgentBuilderService {
 
     // Prompt 选择：经 PromptsAccess 资源选择（纯选择，无绑定持久化；绑定落 agent 表）
     const promptTemplateId = await this.matchPromptForAgent(
-      input.task_content || analysis.signature, analysis.domain,
+      input.task_content || analysis.signature, analysis.domain, _metrics, _report,
     );
 
     // 为新 Agent 生成说明（LLM 基于任务与选定组件生成；该说明是后续 matchAgent 的匹配依据）
@@ -215,6 +229,8 @@ export class AgentBuilderService {
       String(soulOut.soul?.soul_brief ?? ''),
       (skillOut.skills ?? []).map((s) => s.skill_brief),
       mcpOut.mcp_ids ?? [],
+      _metrics,
+      _report,
     );
 
     const addOut = new AddAgentOutput();
@@ -540,13 +556,22 @@ export class AgentBuilderService {
     return true;
   }
 
-  // ===== 系统 Agent 配置映射 =====
+  // ===== 原始方法/配置（保留作为参考）=====
+  // private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
+  //   PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '系统-Planner' },
+  //   WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '系统-Writer' },
+  //   EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor', defaultName: '系统-Evolutor' },
+  //   SUMMARY: { strategyLabel: 'CoT', signatureKey: 'summary', defaultName: '系统-Summary' },
+  //   INTENT: { strategyLabel: 'CoT', signatureKey: 'intent', defaultName: '需求理解 Agent' },
+  // };
+
+  // ===== 修改后的系统 Agent 配置映射（纯汉字功能名称，不含助手后缀，系统属性由 created_by/agent_type 独立保存） =====
   private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
-    PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '系统-Planner' },
-    WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '系统-Writer' },
-    EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor', defaultName: '系统-Evolutor' },
-    SUMMARY: { strategyLabel: 'CoT', signatureKey: 'summary', defaultName: '系统-Summary' },
-    INTENT: { strategyLabel: 'CoT', signatureKey: 'intent', defaultName: '需求理解 Agent' },
+    PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '任务规划' },
+    WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '写作汇总' },
+    EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor', defaultName: '进化评估' },
+    SUMMARY: { strategyLabel: 'CoT', signatureKey: 'summary', defaultName: '内容摘要' },
+    INTENT: { strategyLabel: 'CoT', signatureKey: 'intent', defaultName: '需求理解' },
   };
 
   async buildSystemAgent(input: BuildSystemAgentInput, output: BuildSystemAgentOutput, ctx: AgentBuilderContext, _metrics?: Metrics, _report?: Report,
@@ -660,7 +685,7 @@ export class AgentBuilderService {
     return true;
   }
 
-  private async matchLlmForAgent(agentId: string, interactId: string): Promise<string> {
+  private async matchLlmForAgent(agentId: string, interactId: string, metrics?: Metrics, report?: Report): Promise<string> {
     const llmOut = new MatchLLMOutput();
     try {
       await this.llmCore.matchLLM(
@@ -671,6 +696,8 @@ export class AgentBuilderService {
         }),
         llmOut,
         new LLMCoreContext(),
+        metrics,
+        report,
       );
     } catch {
       return '';
@@ -682,6 +709,8 @@ export class AgentBuilderService {
     input: BuildAgentInput,
     config: AgentBuilderConfigRecord | null,
     llmId: string,
+    metrics?: Metrics,
+    report?: Report,
   ): Promise<{ complexity: number; domain: string; signature: string }> {
     let complexity = input.task_complexity ?? 50;
     let domain = input.task_domain ?? 'general';
@@ -698,6 +727,8 @@ export class AgentBuilderService {
           }),
           promptOut,
           new PromptContext(),
+          metrics,
+          report,
         );
         // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
         const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
@@ -710,6 +741,8 @@ export class AgentBuilderService {
             Object.assign(new ExecLLMInput(), { id: llmId, prompt }),
             llmOut,
             new LLMContext(),
+            metrics,
+            report,
           );
           const analysis = parseJsonObject(llmOut.result);
           if (analysis) {
@@ -776,36 +809,90 @@ export class AgentBuilderService {
     });
   }
 
-  /**
-   * Prompt 选择（纯选择，无绑定持久化）：经 PromptsAccess 取启用模板，
-   * simpleSimilarity 对任务文本与 模板名+摘要 打分取最优；无候选或低分回退空串（执行侧内置兜底）。
-   */
-  private async matchPromptForAgent(taskText: string, domain: string): Promise<string> {
+  // ===== 原始方法（保留作为参考）=====
+  // /**
+  //  * Prompt 选择（纯选择，无绑定持久化）：经 PromptsAccess 取启用模板，
+  //  * simpleSimilarity 对任务文本与 模板名+摘要 打分取最优；无候选或低分回退空串（执行侧内置兜底；透传 metrics/report）。
+  //  */
+  // private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
+  //   try {
+  //     const out = new SoPromptOutput();
+  //     await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext(), metrics, report);
+  //     let bestId = '';
+  //     let bestScore = 0;
+  //     for (const t of out.list ?? []) {
+  //       if (t.enable === false) continue;
+  //       const haystack = `${t.prompt_template_title ?? ''} ${t.prompt_template_brief ?? ''}`;
+  //       const score = Math.max(
+  //         simpleSimilarity(taskText, haystack),
+  //         simpleSimilarity(domain, haystack),
+  //       );
+  //       if (score > bestScore) {
+  //         bestScore = score;
+  //         bestId = t.id;
+  //       }
+  //     }
+  //     return bestScore > 0 ? bestId : '';
+  //   } catch {
+  //     return '';
+  //   }
+  // }
+
+  // ===== 修改后的方法（大模型语义评判，统一百分制 0-100，过滤内部系统模板，无强匹配回退空串） =====
+  private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
     try {
       const out = new SoPromptOutput();
-      await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext());
-      let bestId = '';
-      let bestScore = 0;
-      for (const t of out.list ?? []) {
-        if (t.enable === false) continue;
-        const haystack = `${t.prompt_template_title ?? ''} ${t.prompt_template_brief ?? ''}`;
-        const score = Math.max(
-          simpleSimilarity(taskText, haystack),
-          simpleSimilarity(domain, haystack),
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          bestId = t.id;
+      await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext(), metrics, report);
+      // 过滤系统内部流转组件模板（Planner DAG、Evolutor 评估、Writer 响应、Think/Reflect 阶段等）
+      const candidates = (out.list ?? []).filter((t) => {
+        if (!t.enable) return false;
+        const title = t.prompt_template_title ?? '';
+        if (t.is_system && (title.includes('任务拆解') || title.includes('评估') || title.includes('汇总') || title.includes('阶段') || title.includes('Think') || title.includes('Reflect') || title.includes('Answer') || title.includes('匹配'))) {
+          return false;
         }
+        return true;
+      });
+
+      if (candidates.length === 0) return '';
+
+      // 大模型语义评判（百分制 0-100，采纳阈值 75 分）
+      const execInput = new ExecLLMInput();
+      execInput.prompt = [
+        '为以下用户任务评估最匹配的特定提示词模板（如无高度契合的专业模板，请给出低于 70 的分数）：',
+        `任务内容：${taskText.slice(0, 300)}`,
+        `任务领域：${domain}`,
+        '',
+        '候选模板列表：',
+        ...candidates.map((c, i) => `${i + 1}. ID: ${c.id}, 标题: ${c.prompt_template_title}, 说明: ${c.prompt_template_brief ?? ''}`),
+        '',
+        '请以 JSON 格式输出评估结果（score 为 0-100 的整数，表示匹配契合度；若无高度匹配的特定模板请给出低于 70 的分数）：',
+        '{"template_id": "...", "score": 85, "reason": "..."}',
+        '只输出 JSON，不要任何其他文本。',
+      ].join('\n');
+      execInput.max_tokens = 200;
+
+      const execOutput = new ExecLLMOutput();
+      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
+      if (!ok || !execOutput.result) return '';
+
+      const parsed = parseJsonObject(execOutput.result);
+      if (!parsed) return '';
+
+      const score = Number(parsed.score ?? 0);
+      const normalizedScore = score > 0 && score <= 1 ? Math.round(score * 100) : Math.round(score);
+      const templateId = String(parsed.template_id ?? '');
+
+      if (normalizedScore >= 75 && templateId && candidates.some((c) => c.id === templateId)) {
+        return templateId;
       }
-      return bestScore > 0 ? bestId : '';
+      return '';
     } catch {
       return '';
     }
   }
 
   /**
-   * 为新 Agent 生成说明（LLM；说明是后续 matchAgent 的匹配依据，需概括领域/职责/组件能力）。
+   * 为新 Agent 生成说明（LLM；说明是后续 matchAgent 的匹配依据，需概括领域/职责/组件能力；透传 metrics/report）。
    * LLM 失败时回退为任务拼串兜底。
    */
   private async generateAgentPurpose(
@@ -814,6 +901,8 @@ export class AgentBuilderService {
     soulBrief: string,
     skillBriefs: string[],
     mcpIds: string[],
+    metrics?: Metrics,
+    report?: Report,
   ): Promise<string> {
     const fallback = `负责 ${domain} 领域任务处理: ${taskText.slice(0, 120)}`;
     try {
@@ -829,7 +918,7 @@ export class AgentBuilderService {
         '只输出说明文本，不要任何前缀或引号。',
       ].filter(Boolean).join('\n');
       const execOutput = new ExecLLMOutput();
-      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
+      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
       const text = (execOutput.result ?? '').trim();
       return ok && text ? text.slice(0, 200) : fallback;
     } catch {
@@ -837,18 +926,63 @@ export class AgentBuilderService {
     }
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private generateAgentName(
+  //   soul: Record<string, unknown> | null,
+  //   skills: Array<{ skill_id: string; skill_brief: string; relevance: number }>,
+  //   domain: string,
+  //   agentId: string,
+  // ): string {
+  //   const parts: string[] = []
+  //   if (domain) parts.push(domain)
+  //   const soulBrief = (soul as Record<string, string> | null)?.soul_brief || ''
+  //   if (soulBrief) parts.push(soulBrief)
+  //   else if (skills.length > 0 && skills[0].skill_brief) parts.push(skills[0].skill_brief)
+  //   if (parts.length === 0) return `Agent-${agentId.slice(0, 8)}`
+  //   return parts.join('-')
+  // }
+
+  // ===== 修改后的方法（全汉字功能名称，不含"助手"后缀，属性独立保存） =====
   private generateAgentName(
     soul: Record<string, unknown> | null,
     skills: Array<{ skill_id: string; skill_brief: string; relevance: number }>,
     domain: string,
-    agentId: string,
+    _agentId: string,
   ): string {
-    const parts: string[] = []
-    if (domain) parts.push(domain)
-    const soulBrief = (soul as Record<string, string> | null)?.soul_brief || ''
-    if (soulBrief) parts.push(soulBrief)
-    else if (skills.length > 0 && skills[0].skill_brief) parts.push(skills[0].skill_brief)
-    if (parts.length === 0) return `Agent-${agentId.slice(0, 8)}`
-    return parts.join('-')
+    const cleanChinese = (text: string): string => {
+      if (!text) return '';
+      return text
+        .replace(/[a-zA-Z0-9_-]/g, '')
+        .replace(/智能助手$/g, '')
+        .replace(/助手$/g, '')
+        .replace(/Agent$/gi, '')
+        .trim();
+    };
+
+    const soulBrief = cleanChinese(String((soul as Record<string, string> | null)?.soul_brief ?? ''));
+    if (soulBrief) return soulBrief;
+
+    if (skills.length > 0 && skills[0].skill_brief) {
+      const skillName = cleanChinese(skills[0].skill_brief);
+      if (skillName) return skillName;
+    }
+
+    const domainMap: Record<string, string> = {
+      general: '通用问答',
+      weather: '气象天气',
+      travel: '旅游规划',
+      math: '数学计算',
+      coding: '编码开发',
+      research: '调研研究',
+      analysis: '分析研判',
+      design: '设计创作',
+      writing: '写作总结',
+      planning: '任务规划',
+      devops: '运维部署',
+      testing: '测试评测',
+      marketing: '市场营销',
+    };
+
+    return domainMap[domain.toLowerCase().trim()] || cleanChinese(domain) || '通用问答';
   }
 }

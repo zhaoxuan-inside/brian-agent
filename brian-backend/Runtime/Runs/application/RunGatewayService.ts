@@ -77,6 +77,7 @@ import {
   SessionLane,
   Waiter,
   RUNTIME_RUN_TABLE,
+  RUNTIME_METRICS_TABLE,
   RUNTIME_RUNS_CONFIG_TABLE,
 } from '../domain/types';
 
@@ -270,12 +271,55 @@ export class RunGatewayService {
     return input;
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private async insertQueuedRun(input: SubmitRunInput, mode: QueueMode, runtimeSessionId: string): Promise<string> {
+  //   const record = newRecord({
+  //     session_key: input.session_key,
+  //     session_id: runtimeSessionId,
+  //     lane: 'session',
+  //     status: RunStatus.Queued,
+  //     queue_mode: mode,
+  //     budget_total: input.budget_total ?? DEFAULT_BUDGET_TOTAL,
+  //     accepted_at: IdGenerator.now(),
+  //   });
+  //   await this.relationDb.insert(RUNTIME_RUN_TABLE, record);
+  //   return String(record[0].value);
+  // }
+  // private async startRun(input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }, runId?: string): Promise<string> {
+  //   const activeRunId = runId ?? IdGenerator.generate();
+  //   const laneKey = `${input.lane_kind ?? LaneKind.Session}:${input.session_key}`;
+  //   const lane = this.soLane(laneKey);
+  //   lane.activeRunId = activeRunId;
+  //   this.laneRunning.set(laneKey, (this.laneRunning.get(laneKey) ?? 0) + 1);
+  //   if (runId) {
+  //     await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
+  //       status: RunStatus.Running,
+  //       started_at: IdGenerator.now(),
+  //     }), [{ field: 'id', operator: Operator.EQ, value: runId }]);
+  //   } else {
+  //     const record = newRecord({
+  //       id: activeRunId,
+  //       session_key: input.session_key,
+  //       session_id: runtimeSessionId,
+  //       lane: 'session',
+  //       status: RunStatus.Running,
+  //       budget_total: input.budget_total ?? DEFAULT_BUDGET_TOTAL,
+  //       accepted_at: IdGenerator.now(),
+  //       started_at: IdGenerator.now(),
+  //     });
+  //     await this.relationDb.insert(RUNTIME_RUN_TABLE, record);
+  //   }
+  //   void this.executeRun(activeRunId, input, runtimeSessionId, parent);
+  //   return activeRunId;
+  // }
+
+  // ===== 修改后的方法（2026-09-13）：lane 字段真实反映 input.lane_kind（支持 subagent/main/background）=====
   /** 插入排队 run 记录（逻辑控制；结算后复用同一 run_id 转 running，见 §4.1） */
   private async insertQueuedRun(input: SubmitRunInput, mode: QueueMode, runtimeSessionId: string): Promise<string> {
     const record = newRecord({
       session_key: input.session_key,
       session_id: runtimeSessionId,
-      lane: 'session',
+      lane: input.lane_kind ?? 'session',
       status: RunStatus.Queued,
       queue_mode: mode,
       budget_total: input.budget_total ?? DEFAULT_BUDGET_TOTAL,
@@ -288,7 +332,8 @@ export class RunGatewayService {
   /** 启动运行（逻辑控制；fire-and-forget，结算内部保证；runId 复用排队记录时走 patch） */
   private async startRun(input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }, runId?: string): Promise<string> {
     const activeRunId = runId ?? IdGenerator.generate();
-    const laneKey = `${input.lane_kind ?? LaneKind.Session}:${input.session_key}`;
+    const laneKind = input.lane_kind ?? LaneKind.Session;
+    const laneKey = `${laneKind}:${input.session_key}`;
     const lane = this.soLane(laneKey);
     lane.activeRunId = activeRunId;
     this.laneRunning.set(laneKey, (this.laneRunning.get(laneKey) ?? 0) + 1);
@@ -302,7 +347,7 @@ export class RunGatewayService {
         id: activeRunId,
         session_key: input.session_key,
         session_id: runtimeSessionId,
-        lane: 'session',
+        lane: laneKind,
         status: RunStatus.Running,
         budget_total: input.budget_total ?? DEFAULT_BUDGET_TOTAL,
         accepted_at: IdGenerator.now(),
@@ -314,11 +359,134 @@ export class RunGatewayService {
     return activeRunId;
   }
 
-  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；异常必收敛 */
+  // ===== 原始方法（保留作为参考）=====
+  // private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
+  //   let matchOut: MatchAgentDefOutput | undefined;
+  //   try {
+  //     matchOut = await this.matchAgent(input, parent?.report);
+  //     parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
+  //       def_id: matchOut.def_id,
+  //       agent_name: matchOut.def.name,
+  //       matched_by: matchOut.matched_by,
+  //     });
+  //     const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.report);
+  //     const soulId = matchOut.def.soul_id ?? '';
+  //     const promptId = matchOut.def.prompt_template_id ?? '';
+  //     const llmId = snapshot.llm_id ?? '';
+  //     const skillEntries = (snapshot.tools ?? [])
+  //       .filter((t) => t.kind === 'skill')
+  //       .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id) }));
+  //     const mcpEntries = (snapshot.tools ?? [])
+  //       .filter((t) => t.kind === 'mcp')
+  //       .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install', 'mcp_title') }));
+  //     parent?.report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
+  //       agent_name: snapshot.name,
+  //       soul_id: soulId,
+  //       soul_name: this.soComponentName(soulId, 'soul', 'soul_brief'),
+  //       prompt_template_id: promptId,
+  //       prompt_name: this.soComponentName(promptId, 'prompt_template', 'prompt_template_title'),
+  //       llm_id: llmId,
+  //       llm_name: this.soComponentName(llmId, 'llm_available', 'llm_title'),
+  //       skills: skillEntries,
+  //       mcps: mcpEntries,
+  //     });
+  //     const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
+  //     if (this.writer) {
+  //       loopInput.defer_final_reply = true;
+  //     }
+  //     const loopOutput = new ExecAgentLoopOutput();
+  //     await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
+  //     let finalResult = loopOutput.result;
+  //     if (loopOutput.stop_reason === LoopStopReason.Stop && loopOutput.result) {
+  //       if (this.evaluator) {
+  //         try {
+  //           const evalOut: Record<string, unknown> = {};
+  //           const evalCtx: Record<string, unknown> = { session_id: input.session_key, work_id: runId, interact_id: input.interact_id ?? '' };
+  //           await this.evaluator.evalWorkAgent({
+  //             work_id: runId,
+  //             interact_id: input.interact_id ?? '',
+  //             agent_id: matchOut.def.agent_ref || matchOut.def_id,
+  //             task_content: input.user_message,
+  //             agent_output: loopOutput.result,
+  //           }, evalOut, evalCtx, parent?.metrics, parent?.report);
+  //         } catch (err) {
+  //           this.logger?.warn?.('评估 Agent 执行失败（不阻断主流程）', { error: err instanceof Error ? err.message : String(err) });
+  //         }
+  //       }
+  //       if (this.writer) {
+  //         try {
+  //           const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
+  //           const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: runId, interact_id: input.interact_id ?? '' };
+  //           const writeOk = await this.writer.execWrite({
+  //             work_id: runId,
+  //             interact_id: input.interact_id ?? '',
+  //             user_query: input.user_message,
+  //             agent_results: [{
+  //               agent_id: matchOut.def.name,
+  //               task_content: input.user_message,
+  //               result: loopOutput.result,
+  //             }],
+  //           }, writeOut, writeCtx, parent?.metrics, parent?.report);
+  //           if (writeOk && writeOut.response) {
+  //             finalResult = writeOut.response;
+  //             parent?.report?.pushBusinessEvent(BusinessEvent.WriterCompleted, {
+  //               format: writeOut.response_format || 'MARKDOWN',
+  //               length: finalResult.length,
+  //               has_mermaid: finalResult.includes('```mermaid'),
+  //             });
+  //             parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
+  //             if (loopOutput.message_id) {
+  //               await this.updateAssistantMessageContent(loopOutput.message_id, finalResult);
+  //             }
+  //           } else {
+  //             parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+  //           }
+  //         } catch (err) {
+  //           this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
+  //           parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+  //         }
+  //       }
+  //     }
+  //     if (loopInput.defer_final_reply && loopOutput.stop_reason === LoopStopReason.Stop) {
+  //       parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+  //     }
+  //     await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.report, loopOutput.error);
+  //     if (loopOutput.stop_reason === LoopStopReason.Error) {
+  //       this.logger?.error?.('run 执行失败', {
+  //         run_id: runId,
+  //         interact_id: input.interact_id,
+  //         session_key: input.session_key,
+  //         stop_reason: loopOutput.stop_reason,
+  //         error: loopOutput.error,
+  //         iterations: loopOutput.iterations,
+  //       });
+  //       await this.killErroredAgent(runId, matchOut, input, parent?.report, loopOutput.error ?? '');
+  //     } else if (loopOutput.stop_reason === LoopStopReason.Aborted) {
+  //       this.logger?.warn?.('run 执行中止（外部信号取消/超时）', {
+  //         run_id: runId,
+  //         interact_id: input.interact_id,
+  //         session_key: input.session_key,
+  //         stop_reason: loopOutput.stop_reason,
+  //         iterations: loopOutput.iterations,
+  //       });
+  //     }
+  //   } catch (err) {
+  //     const errMessage = err instanceof Error ? err.message : String(err);
+  //     this.logger?.error?.('run 执行异常（未捕获错误）', { run_id: runId, interact_id: input.interact_id, session_key: input.session_key, error: errMessage });
+  //     parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: errMessage });
+  //     await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.report, errMessage);
+  //     if (matchOut?.def?.agent_ref) {
+  //       await this.killErroredAgent(runId, matchOut, input, parent?.report, errMessage);
+  //     }
+  //   }
+  // }
+
+  // ===== 修改后的方法 =====
+  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；透传 metrics 并在结束时落地入库；异常必收敛 */
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
     let matchOut: MatchAgentDefOutput | undefined;
     try {
-      matchOut = await this.matchAgent(input, parent?.report);
+      matchOut = await this.matchAgent(input, parent?.metrics, parent?.report);
       // ===== 修改后（2026-09-12）：选择 Agent 先于组件装配上报，时间线顺序符合
       // 「需求确认 → 选择 Agent → 组件写作（LLM/Soul/Prompt/Skill/MCP）」 =====
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
@@ -327,15 +495,28 @@ export class RunGatewayService {
         matched_by: matchOut.matched_by,
       });
       // ===== 修改后（2026-09-11 收敛版）：def 命中即复用绑定，不再传 regen 绕过缓存 =====
-      const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.report);
-      // 组件装配完成清单（LLM/Soul/Prompt/Skill/MCP 在 snapshot 中解析完成）
+      const snapshot = await this.soSnapshot(matchOut.def_id, input, parent?.metrics, parent?.report);
+      // ===== 修改后（2026-09-13）：组件装配完成清单补充组件名称（soul_name/prompt_name/llm_name、
+      // Skill/MCP 的 brief 兜底解析），供「思考过程」时间线与执行内容展示名称、悬浮可见 ID =====
+      const soulId = matchOut.def.soul_id ?? '';
+      const promptId = matchOut.def.prompt_template_id ?? '';
+      const llmId = snapshot.llm_id ?? '';
+      const skillEntries = (snapshot.tools ?? [])
+        .filter((t) => t.kind === 'skill')
+        .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id) }));
+      const mcpEntries = (snapshot.tools ?? [])
+        .filter((t) => t.kind === 'mcp')
+        .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install', 'mcp_title') }));
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
         agent_name: snapshot.name,
-        soul_id: matchOut.def.soul_id,
-        prompt_template_id: matchOut.def.prompt_template_id,
-        llm_id: snapshot.llm_id,
-        skills: (snapshot.tools ?? []).filter((t) => t.kind === 'skill'),
-        mcps: (snapshot.tools ?? []).filter((t) => t.kind === 'mcp'),
+        soul_id: soulId,
+        soul_name: this.soComponentName(soulId, 'soul', 'soul_brief'),
+        prompt_template_id: promptId,
+        prompt_name: this.soComponentName(promptId, 'prompt_template', 'prompt_template_title'),
+        llm_id: llmId,
+        llm_name: this.soComponentName(llmId, 'llm_available', 'llm_title'),
+        skills: skillEntries,
+        mcps: mcpEntries,
       });
       const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
       // 注入 Writer 时由外部统一排版输出，延迟 Loop 的原始 reply.delta
@@ -408,26 +589,73 @@ export class RunGatewayService {
         parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
       }
 
-      // ===== 修改后（2026-09-11）：错误 run 结算后立即杀死 Agent（错误立即杀死 / 正确自然凋亡） =====
-      await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.report);
+      // ===== 修改后（2026-09-13）：结算落账并落地 metrics 时间线 =====
+      await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
       if (loopOutput.stop_reason === LoopStopReason.Error) {
-        await this.killErroredAgent(runId, matchOut, input, parent?.report, loopOutput.error ?? '');
+        this.logger?.error?.('run 执行失败', {
+          run_id: runId,
+          interact_id: input.interact_id,
+          session_key: input.session_key,
+          stop_reason: loopOutput.stop_reason,
+          error: loopOutput.error,
+          iterations: loopOutput.iterations,
+        });
+        await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, loopOutput.error ?? '');
+      } else if (loopOutput.stop_reason === LoopStopReason.Aborted) {
+        this.logger?.warn?.('run 执行中止（外部信号取消/超时）', {
+          run_id: runId,
+          interact_id: input.interact_id,
+          session_key: input.session_key,
+          stop_reason: loopOutput.stop_reason,
+          iterations: loopOutput.iterations,
+        });
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err);
+      this.logger?.error?.('run 执行异常（未捕获错误）', { run_id: runId, interact_id: input.interact_id, session_key: input.session_key, error: errMessage });
       parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: errMessage });
-      await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.report, errMessage);
+      await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.metrics, parent?.report, errMessage);
       if (matchOut?.def?.agent_ref) {
-        await this.killErroredAgent(runId, matchOut, input, parent?.report, errMessage);
+        await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, errMessage);
       }
     }
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private async killErroredAgent(
+  //   runId: string,
+  //   matchOut: MatchAgentDefOutput,
+  //   input: SubmitRunInput,
+  //   report?: Report,
+  //   errorMessage?: string,
+  // ): Promise<void> {
+  //   try {
+  //     await this.agents.killErroredAgent(
+  //       Object.assign(new KillErroredAgentInput(), {
+  //         agent_ref: matchOut.def.agent_ref,
+  //         work_id: runId,
+  //         interact_id: input.interact_id ?? '',
+  //         trace_id: input.interact_id ?? '',
+  //         task_content: input.user_message,
+  //         error: errorMessage ?? '',
+  //       }),
+  //       new KillErroredAgentOutput(),
+  //       new AgentDefContext(),
+  //       undefined,
+  //       report,
+  //     );
+  //   } catch (err) {
+  //     report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, error: err instanceof Error ? err.message : String(err) });
+  //   }
+  // }
+
+  // ===== 修改后的方法 =====
   /** 错误 Agent 立即杀死（逻辑控制；错误 run 结算后触发；与正确 Agent 自然凋亡分离） */
   private async killErroredAgent(
     runId: string,
     matchOut: MatchAgentDefOutput,
     input: SubmitRunInput,
+    metrics?: Metrics,
     report?: Report,
     errorMessage?: string,
   ): Promise<void> {
@@ -443,7 +671,7 @@ export class RunGatewayService {
         }),
         new KillErroredAgentOutput(),
         new AgentDefContext(),
-        undefined,
+        metrics,
         report,
       );
     } catch (err) {
@@ -471,30 +699,67 @@ export class RunGatewayService {
     }
   }
 
-  /** 外部会话键 → runtime 会话 ID（逻辑控制；幂等） */
-  private async soRuntimeSessionId(sessionKey: string): Promise<string> {
+  // ===== 原始方法（保留作为参考）=====
+  // private async soRuntimeSessionId(sessionKey: string): Promise<string> {
+  //   const addIn = new AddSessionInput();
+  //   addIn.session_key = sessionKey;
+  //   const addOut = new AddSessionOutput();
+  //   await this.session.addSession(addIn, addOut, new SessionContext());
+  //   return addOut.session_id;
+  // }
+  //
+  // private async matchAgent(input: SubmitRunInput, report?: Report): Promise<MatchAgentDefOutput> {
+  //   const matchInput = new MatchAgentDefInput();
+  //   matchInput.task_content = input.user_message;
+  //   matchInput.interact_id = input.interact_id ?? '';
+  //   matchInput.context_id = input.context_id ?? '';
+  //   const matchOutput = new MatchAgentDefOutput();
+  //   await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), undefined, report);
+  //   return matchOutput;
+  // }
+  //
+  // private async soSnapshot(
+  //   defId: string,
+  //   input: SubmitRunInput,
+  //   report?: Report,
+  // ): Promise<SoAgentSnapshotOutput['snapshot']> {
+  //   const snapInput = new SoAgentSnapshotInput();
+  //   snapInput.def_id = defId;
+  //   snapInput.task_content = input.user_message;
+  //   snapInput.user_message = input.user_message;
+  //   snapInput.interact_id = input.interact_id ?? '';
+  //   snapInput.context_id = input.context_id ?? '';
+  //   const snapOutput = new SoAgentSnapshotOutput();
+  //   await this.agents.soAgentSnapshot(snapInput, snapOutput, new AgentDefContext(), undefined, report);
+  //   return snapOutput.snapshot;
+  // }
+
+  // ===== 修改后的方法 =====
+  /** 外部会话键 → runtime 会话 ID（逻辑控制；幂等；透传 metrics） */
+  private async soRuntimeSessionId(sessionKey: string, metrics?: Metrics): Promise<string> {
     const addIn = new AddSessionInput();
     addIn.session_key = sessionKey;
     const addOut = new AddSessionOutput();
-    await this.session.addSession(addIn, addOut, new SessionContext());
+    await this.session.addSession(addIn, addOut, new SessionContext(), metrics);
     return addOut.session_id;
   }
 
-  /** 确定性匹配（逻辑控制） */
-  private async matchAgent(input: SubmitRunInput, report?: Report): Promise<MatchAgentDefOutput> {
+  /** 确定性匹配（逻辑控制；透传 metrics） */
+  private async matchAgent(input: SubmitRunInput, metrics?: Metrics, report?: Report): Promise<MatchAgentDefOutput> {
     const matchInput = new MatchAgentDefInput();
     matchInput.task_content = input.user_message;
     matchInput.interact_id = input.interact_id ?? '';
     matchInput.context_id = input.context_id ?? '';
     const matchOutput = new MatchAgentDefOutput();
-    await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), undefined, report);
+    await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), metrics, report);
     return matchOutput;
   }
 
-  /** 组件快照（逻辑控制；2026-09-11 收敛版：只读 def 显式绑定，无 regen 绕过） */
+  /** 组件快照（逻辑控制；2026-09-11 收敛版：只读 def 显式绑定，无 regen 绕过；透传 metrics） */
   private async soSnapshot(
     defId: string,
     input: SubmitRunInput,
+    metrics?: Metrics,
     report?: Report,
   ): Promise<SoAgentSnapshotOutput['snapshot']> {
     const snapInput = new SoAgentSnapshotInput();
@@ -504,7 +769,7 @@ export class RunGatewayService {
     snapInput.interact_id = input.interact_id ?? '';
     snapInput.context_id = input.context_id ?? '';
     const snapOutput = new SoAgentSnapshotOutput();
-    await this.agents.soAgentSnapshot(snapInput, snapOutput, new AgentDefContext(), undefined, report);
+    await this.agents.soAgentSnapshot(snapInput, snapOutput, new AgentDefContext(), metrics, report);
     return snapOutput.snapshot;
   }
 
@@ -576,7 +841,36 @@ export class RunGatewayService {
   //   await this.drainFollowups(runId);
   // }
 
-  /** 结算落账（2026-09-11：补充 agent_ref/任务/错误信息参数；错误 Agent 杀死由 executeRun 在结算后触发） */
+  // ===== 原始方法（保留作为参考）=====
+  // private async settleRun(
+  //   runId: string,
+  //   stopReason: string,
+  //   budgetUsed: number,
+  //   agentDefId: string,
+  //   agentRef?: string,
+  //   _taskContent?: string,
+  //   report?: Report,
+  //   errorMessage?: string,
+  // ): Promise<void> {
+  //   const status: RunStatus = stopReason === 'stop' || stopReason === 'budget' ? RunStatus.Finished : (stopReason as RunStatus);
+  //   await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
+  //     status,
+  //     stop_reason: stopReason,
+  //     settled_at: IdGenerator.now(),
+  //     budget_used: budgetUsed,
+  //     agent_def_id: agentDefId,
+  //   }), [{ field: 'id', operator: Operator.EQ, value: runId }]);
+  //   const waiter = this.waiters.get(runId);
+  //   this.waiters.delete(runId);
+  //   waiter?.resolve({ status, stop_reason: stopReason });
+  //   if (agentRef && errorMessage) {
+  //     report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, agent_id: agentRef, error: errorMessage.slice(0, 300) });
+  //   }
+  //   await this.drainFollowups(runId);
+  // }
+
+  // ===== 修改后的方法 =====
+  /** 结算落账（2026-09-11：补充 agent_ref/任务/错误信息参数；2026-09-13：落地 metrics 时间线与耗时入库） */
   private async settleRun(
     runId: string,
     stopReason: string,
@@ -584,17 +878,46 @@ export class RunGatewayService {
     agentDefId: string,
     agentRef?: string,
     _taskContent?: string,
+    metrics?: Metrics,
     report?: Report,
     errorMessage?: string,
   ): Promise<void> {
     const status: RunStatus = stopReason === 'stop' || stopReason === 'budget' ? RunStatus.Finished : (stopReason as RunStatus);
+    const timings = metrics?.timings ?? {};
+    const timingsJson = JSON.stringify(timings);
+    const totalDuration = typeof metrics?.getTotalDuration === 'function' ? metrics.getTotalDuration() : 0;
+    const now = IdGenerator.now();
+
     await this.relationDb.update(RUNTIME_RUN_TABLE, newPatch({
       status,
       stop_reason: stopReason,
-      settled_at: IdGenerator.now(),
+      settled_at: now,
       budget_used: budgetUsed,
       agent_def_id: agentDefId,
+      metrics_json: timingsJson,
     }), [{ field: 'id', operator: Operator.EQ, value: runId }]);
+
+    try {
+      const runRow = await this.soRunRow(runId);
+      const sessionKey = String(runRow?.session_key ?? '');
+      const traceId = metrics?.trace_id || '';
+      await this.relationDb.insert(RUNTIME_METRICS_TABLE, newRecord({
+        id: IdGenerator.generate(),
+        created: now,
+        updated: now,
+        run_id: runId,
+        session_key: sessionKey,
+        trace_id: traceId,
+        timings_json: timingsJson,
+        total_duration_ms: totalDuration,
+      }));
+    } catch (err) {
+      this.logger?.warn?.('落地 runtime_metrics 失败（非阻断）', {
+        run_id: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const waiter = this.waiters.get(runId);
     this.waiters.delete(runId);
     waiter?.resolve({ status, stop_reason: stopReason });
@@ -884,6 +1207,28 @@ export class RunGatewayService {
   private async soPermissionWaitTimeout(): Promise<number> {
     const value = await this.config.getInt('permission_wait_timeout_ms', RunGatewayService.PERMISSION_WAIT_DEFAULT_MS);
     return value > 0 ? value : RunGatewayService.PERMISSION_WAIT_DEFAULT_MS;
+  }
+
+  // ===== 新增（2026-09-13）：组件 ID → 展示名称解析（Soul/Prompt/LLM/Skill/MCP），
+  // 事件载荷携带名称供前端实时时间线展示、ID 随悬浮可见 =====
+  /** 组件名称解析（数据处理）：按 id 查表取展示名，查无回退空串（由调用方兜底回退 ID） */
+  private soComponentName(id: string, table: string, nameCol: string): string {
+    if (!id) return '';
+    try {
+      const rows = this.relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT "${nameCol}" AS "n" FROM "${table}" WHERE "id" = ? LIMIT 1`,
+        [id],
+      );
+      const raw = rows?.[0]?.n;
+      return raw != null ? String(raw).trim() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Skill 展示名称解析（数据处理）：优先 name 列（技能名称），回退 skill_brief 简述 */
+  private soSkillName(id: string): string {
+    return this.soComponentName(id, 'skill', 'name') || this.soComponentName(id, 'skill', 'skill_brief');
   }
 
   // -------------------------------------------------------------------------

@@ -103,3 +103,25 @@ export enum SseTransportEvent {
   Loading = 'session.loading',
   Done = 'session.done',
 }
+
+/** 执行时间线样式分类枚举（后端控制业务分类，前端按枚举绑定样式与图标） */
+export enum TimelineItemKind {
+  Lifecycle = 'lifecycle',
+  LifecycleOk = 'lifecycle-ok',
+  LifecycleFail = 'lifecycle-fail',
+  Intent = 'intent',
+  Agent = 'agent',
+  Model = 'model',
+  Context = 'context',
+  Think = 'think',
+  Reply = 'reply',
+  Tool = 'tool',
+  ToolOk = 'tool-ok',
+  ToolFail = 'tool-fail',
+  Plan = 'plan',
+  Permission = 'permission',
+  PermissionOk = 'permission-ok',
+  PermissionDeny = 'permission-deny',
+  Eval = 'eval',
+  Writer = 'writer',
+}

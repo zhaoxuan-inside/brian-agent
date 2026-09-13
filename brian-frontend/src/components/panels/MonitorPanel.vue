@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
-import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2 } from '@lucide/vue'
-import { monitorApi } from '@/api'
-import type { SystemHealth } from '@/api/types'
+import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2, MessageSquare, X, Loader2 } from '@lucide/vue'
+import { monitorApi, feedbackApi } from '@/api'
+import type { SystemHealth, FeedbackProcessLogRecord, FeedbackProcessLogDetail } from '@/api/types'
 import { copyToClipboard } from '@/utils/clipboard'
 
 const health = ref<SystemHealth>({ status: 'healthy', components: [], uptime: 0 })
@@ -35,6 +35,43 @@ const LOG_SOURCE_OPTIONS = [
   { value: 'SYSTEM', label: 'SYSTEM' },
   { value: 'MANUAL', label: 'MANUAL' },
 ]
+
+const fbRecords = ref<FeedbackProcessLogRecord[]>([])
+const fbLoading = ref(false)
+const fbDetailOpen = ref(false)
+const fbDetail = ref<FeedbackProcessLogDetail | null>(null)
+const fbDetailLoading = ref(false)
+
+async function fetchFeedbackRecords() {
+  fbLoading.value = true
+  try { fbRecords.value = (await feedbackApi.records(50)).logs } catch { fbRecords.value = [] }
+  fbLoading.value = false
+}
+
+async function openFeedbackDetail(processId: string) {
+  fbDetailOpen.value = true
+  fbDetailLoading.value = true
+  fbDetail.value = null
+  try { fbDetail.value = await feedbackApi.recordDetail(processId) } catch { /* */ }
+  fbDetailLoading.value = false
+}
+
+function closeFeedbackDetail() {
+  fbDetailOpen.value = false
+  fbDetail.value = null
+}
+
+const actionLabels: Record<string, string> = {
+  submitted: '已提交',
+  disbanded: '已解散',
+  skipped: '已跳过',
+}
+
+const actionColors: Record<string, string> = {
+  submitted: 'text-brian-blue bg-brian-blue/10',
+  disbanded: 'text-error-red bg-error-red/10',
+  skipped: 'text-apple-gray-400 bg-apple-gray-100 dark:bg-apple-gray-800',
+}
 
 function buildLogQuery() {
   const startTs = logStartTime.value ? new Date(logStartTime.value).getTime() : undefined
@@ -166,9 +203,10 @@ async function clearAllLogs() {
 }
 
 onMounted(() => {
-  fetchAll(true) // 首次进入页面：含日志查询
+  fetchAll(true)
   loadLogSources()
-  pollTimer.value = setInterval(() => fetchAll(false), 10000) // 轮询不含日志
+  fetchFeedbackRecords()
+  pollTimer.value = setInterval(() => { fetchAll(false); fetchFeedbackRecords() }, 10000)
 })
 onUnmounted(() => {
   if (pollTimer.value) clearInterval(pollTimer.value)
@@ -591,5 +629,94 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
         </table>
       </div>
     </div>
+
+    <!-- 反馈处理记录 -->
+    <div class="block-card rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold flex items-center gap-2">
+          <MessageSquare :size="16" class="text-warning-orange" /> 反馈处理记录
+        </h3>
+        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" @click="fetchFeedbackRecords">
+          <RefreshCw :size="14" />
+        </button>
+      </div>
+      <div v-if="fbLoading" class="text-center py-4 text-apple-gray-400 text-sm">加载中...</div>
+      <div v-else-if="fbRecords.length === 0" class="text-center py-6 text-apple-gray-400 text-sm">暂无反馈处理记录</div>
+      <div v-else class="max-h-80 overflow-y-auto rounded-lg border border-apple-gray-100 dark:border-apple-gray-700">
+        <table class="w-full table-fixed text-xs">
+          <colgroup>
+            <col class="w-24" /><col class="w-36" /><col class="w-14" /><col class="w-14" /><col class="w-20" /><col />
+          </colgroup>
+          <thead class="sticky top-0 bg-apple-gray-50 dark:bg-apple-gray-800 z-10">
+            <tr class="text-left text-apple-gray-400 border-b border-apple-gray-100 dark:border-apple-gray-700">
+              <th class="py-2 px-2 font-medium">时间</th>
+              <th class="py-2 px-2 font-medium">Process ID</th>
+              <th class="py-2 px-2 font-medium">评分</th>
+              <th class="py-2 px-2 font-medium">动作</th>
+              <th class="py-2 px-2 font-medium">Agent ID</th>
+              <th class="py-2 px-2 font-medium">Interact ID</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-apple-gray-50 dark:divide-apple-gray-800/50">
+            <tr v-for="r in fbRecords" :key="r.id" class="hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50">
+              <td class="py-1.5 px-2 text-apple-gray-400 whitespace-nowrap">{{ new Date(r.created).toLocaleString('zh-CN') }}</td>
+              <td class="py-1.5 px-2">
+                <button
+                  class="text-brian-blue hover:underline font-mono text-[11px]"
+                  @click="openFeedbackDetail(r.process_id)"
+                >{{ r.process_id.slice(0, 12) }}...</button>
+              </td>
+              <td class="py-1.5 px-2">{{ r.rating }}</td>
+              <td class="py-1.5 px-2">
+                <span class="px-1 rounded text-[10px] font-medium" :class="actionColors[r.action] || ''">{{ actionLabels[r.action] || r.action }}</span>
+              </td>
+              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.agent_id">{{ r.agent_id ? r.agent_id.slice(0, 12) + '...' : '-' }}</td>
+              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.interact_id">{{ r.interact_id ? r.interact_id.slice(0, 12) + '...' : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 反馈详情弹窗 -->
+    <Teleport to="body">
+      <div
+        v-if="fbDetailOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        @click.self="closeFeedbackDetail"
+      >
+        <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-apple-gray-100 dark:border-apple-gray-700">
+            <h3 class="text-base font-semibold">反馈处理详情</h3>
+            <button class="p-1 rounded-lg text-apple-gray-400 hover:text-apple-gray-600 dark:hover:text-apple-gray-200" @click="closeFeedbackDetail">
+              <X :size="18" />
+            </button>
+          </div>
+          <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div v-if="fbDetailLoading" class="flex items-center justify-center py-8">
+              <Loader2 :size="20" class="animate-spin text-brian-blue" />
+            </div>
+            <template v-else-if="fbDetail">
+              <div class="grid grid-cols-2 gap-3 text-sm">
+                <div><span class="text-apple-gray-400">Process ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.process_id }}</span></div>
+                <div><span class="text-apple-gray-400">反馈 ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.feedback_id?.slice(0, 16) }}...</span></div>
+                <div><span class="text-apple-gray-400">动作:</span> <span class="px-1 rounded text-xs font-medium" :class="actionColors[fbDetail.log?.action || '']">{{ actionLabels[fbDetail.log?.action || ''] }}</span></div>
+                <div><span class="text-apple-gray-400">评分:</span> {{ fbDetail.log?.rating }}</div>
+                <div><span class="text-apple-gray-400">Interact ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.interact_id || '-' }}</span></div>
+                <div><span class="text-apple-gray-400">Agent ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.agent_id || '-' }}</span></div>
+              </div>
+              <div v-if="fbDetail.user_question" class="border-t border-apple-gray-100 dark:border-apple-gray-700 pt-3">
+                <h4 class="text-xs font-medium text-apple-gray-400 mb-1">用户提问</h4>
+                <div class="p-3 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 text-sm whitespace-pre-wrap">{{ fbDetail.user_question }}</div>
+              </div>
+              <div v-if="fbDetail.system_answer" class="border-t border-apple-gray-100 dark:border-apple-gray-700 pt-3">
+                <h4 class="text-xs font-medium text-apple-gray-400 mb-1">系统回答</h4>
+                <div class="p-3 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">{{ fbDetail.system_answer }}</div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

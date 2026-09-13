@@ -46,10 +46,26 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // 纯映射辅助（无状态，模块级）
 // ============================================================
 
-/** Agent 名称展示格式化：uuid 或与 agent_id 相同的原始名视为"无名称"，按类型给默认标题 */
+// ===== 原始方法（保留作为参考）：formatAgentTitle =====
+// function formatAgentTitle(rawName?: string, agId?: string, agType?: string): string {
+//   if (rawName && !UUID_RE.test(rawName) && rawName !== agId) {
+//     return rawName
+//   }
+//   const typeUpper = (agType || '').toUpperCase()
+//   if (typeUpper === 'PLANNER') return '规划 Agent (Planner)'
+//   if (typeUpper === 'WRITER') return '表达 Agent (Writer)'
+//   if (typeUpper === 'EVOLUTOR') return '进化 Agent (Evolutor)'
+//   return '执行 Agent'
+// }
+
+// ===== 修改后的方法（2026-09-13）：仅纯 UUID 视为无名称，真实名称或有意义的 ID 均完整展示 =====
+/** Agent 名称展示格式化：仅纯 uuid 视为"无名称"，按类型给默认标题 */
 function formatAgentTitle(rawName?: string, agId?: string, agType?: string): string {
-  if (rawName && !UUID_RE.test(rawName) && rawName !== agId) {
+  if (rawName && !UUID_RE.test(rawName)) {
     return rawName
+  }
+  if (agId && !UUID_RE.test(agId)) {
+    return agId
   }
   const typeUpper = (agType || '').toUpperCase()
   if (typeUpper === 'PLANNER') return '规划 Agent (Planner)'
@@ -109,10 +125,61 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   // 后端经 ToolProvider 生成的 trace_id 由 connected 事件回传，供 Feedback/Error 块缺省引用
   let currentTraceId = ''
 
-  /** 快捷辅助：获取或创建某 Agent 的 ThinkingBlock（按 agentId 复用，回填非 uuid 的真实名称） */
+  // ===== 原始方法（保留作为参考）：getOrCreateThinkBlock =====
+  // function getOrCreateThinkBlock(ctx: StreamEventCtx, agId: string, defaultName?: string, defaultType?: string): ThinkingBlock {
+  //   const key = agId ? `block-think-${ctx.botMsgId}-${agId}` : `block-think-${ctx.botMsgId}`
+  //   let existing = ctx.chat.blocks.find(b => b.id === key) as ThinkingBlock | undefined
+  //   const formattedName = formatAgentTitle(defaultName, agId, defaultType)
+  //
+  //   if (!existing) {
+  //     existing = {
+  //       id: key,
+  //       msgId: ctx.botMsgId,
+  //       role: 'assistant',
+  //       type: 'ThinkingChain',
+  //       content: '',
+  //       summary: '',
+  //       durationMs: 0,
+  //       agentInfo: {
+  //         id: agId,
+  //         name: formattedName,
+  //         type: defaultType || 'WORKER',
+  //       },
+  //       context: {
+  //         userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
+  //         citingMessages: [],
+  //       },
+  //       steps: [],
+  //       meta: { status: 'streaming', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
+  //     }
+  //     chat.addBlock(existing as Block)
+  //   } else if (defaultName && !UUID_RE.test(defaultName) && defaultName !== agId) {
+  //     if (!existing.agentInfo) {
+  //       existing.agentInfo = { name: defaultName, type: defaultType || 'WORKER' }
+  //     } else {
+  //       existing.agentInfo.name = defaultName
+  //     }
+  //     chat.updateBlock(existing.id, { agentInfo: existing.agentInfo })
+  //   }
+  //   return existing
+  // }
+
+  // ===== 修改后的方法（2026-09-13）：复用并升级轮次思考块，避免意图/选定阶段创建多个割裂块 =====
+  /** 快捷辅助：获取或创建某 Agent 的 ThinkingBlock（同轮次优先复用未绑定块，回填非 uuid 真实名称） */
   function getOrCreateThinkBlock(ctx: StreamEventCtx, agId: string, defaultName?: string, defaultType?: string): ThinkingBlock {
     const key = agId ? `block-think-${ctx.botMsgId}-${agId}` : `block-think-${ctx.botMsgId}`
     let existing = ctx.chat.blocks.find(b => b.id === key) as ThinkingBlock | undefined
+    if (!existing) {
+      // 优先复用当前消息已有的思考块（如 intent.analyzed 早期创建的单思考块）
+      const sameMsgBlocks = ctx.chat.blocks.filter(
+        b => b.msgId === ctx.botMsgId && b.type === 'ThinkingChain',
+      ) as ThinkingBlock[]
+      if (sameMsgBlocks.length === 1) {
+        existing = sameMsgBlocks[0]
+      } else if (agId) {
+        existing = sameMsgBlocks.find(b => !b.agentInfo?.id || b.agentInfo.id === agId)
+      }
+    }
     const formattedName = formatAgentTitle(defaultName, agId, defaultType)
 
     if (!existing) {
@@ -137,13 +204,28 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
         meta: { status: 'streaming', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
       }
       chat.addBlock(existing as Block)
-    } else if (defaultName && !UUID_RE.test(defaultName) && defaultName !== agId) {
-      if (!existing.agentInfo) {
-        existing.agentInfo = { name: defaultName, type: defaultType || 'WORKER' }
-      } else {
-        existing.agentInfo.name = defaultName
+    } else {
+      const patch: Partial<ThinkingBlock> = {}
+      if (defaultName && !UUID_RE.test(defaultName)) {
+        if (!existing.agentInfo) {
+          existing.agentInfo = { id: agId || '', name: formattedName, type: defaultType || 'WORKER' }
+        } else {
+          existing.agentInfo.name = formattedName
+          if (agId) existing.agentInfo.id = agId
+          if (defaultType) existing.agentInfo.type = defaultType
+        }
+        patch.agentInfo = existing.agentInfo
+      } else if (agId && (!existing.agentInfo?.id || existing.agentInfo.id === '')) {
+        if (!existing.agentInfo) {
+          existing.agentInfo = { id: agId, name: formattedName, type: defaultType || 'WORKER' }
+        } else {
+          existing.agentInfo.id = agId
+        }
+        patch.agentInfo = existing.agentInfo
       }
-      chat.updateBlock(existing.id, { agentInfo: existing.agentInfo })
+      if (Object.keys(patch).length > 0) {
+        chat.updateBlock(existing.id, patch)
+      }
     }
     return existing
   }
@@ -257,6 +339,18 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       lastStep.content = (lastStep.content || '') + chunk
     }
     chat.updateBlock(thinkBlock.id, { content: thinkBlock.content, steps: thinkBlock.steps, input: thinkBlock.input, prompt: thinkBlock.prompt, rawResponse: thinkBlock.rawResponse })
+
+    const charCount = (thinkBlock.content || '').length
+    const agTitle = rawAgName || (thinkBlock.agentInfo?.name && thinkBlock.agentInfo.name !== '执行 Agent' ? thinkBlock.agentInfo.name : '')
+    ui.updateOrPushLiveTimelineItem('think.live', {
+      seq: 5,
+      ts: ctx.serverTime,
+      event: 'think.live',
+      title: charCount > 0 ? `Agent 深度推理思考（${charCount} 字）` : 'Agent 深度推理思考中…',
+      detail: agTitle ? `Agent：${agTitle}` : '推理见「深度思考」卡片',
+      kind: 'think',
+      target: 'agent-0',
+    })
   }
 
   /** Agent 工具调用：追加 ACT 步骤，并为真实外部工具生成独立 ToolInvocation 块（过滤 NONE 占位） */
@@ -360,6 +454,30 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     const count = Number(ctx.payload.message_count || 0)
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += `\n[—— 第 ${round} 轮 · 上下文 ${count} 条消息 ——]\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 4,
+      ts: ctx.serverTime,
+      event: 'context.built',
+      title: `构建上下文：第 ${round} 轮 · ${count} 条消息`,
+      detail: ctx.payload.system ? '含 system 提示词（模型输入侧）' : '',
+      kind: 'context',
+      target: `ctx-${round}`,
+      elapsedMs: Number(ctx.payload.elapsed_ms || 1),
+    })
+    // 实时上下文轮次落库：与后端 trace.contextRounds 同构（round/targetKey/messageCount/messages），
+    // 供思考面板「基础上下文」轮次卡片定位（data-anchor=ctx-N），否则时间线点击无跳转目标
+    const msgs = Array.isArray(ctx.payload.messages)
+      ? (ctx.payload.messages as Array<Record<string, unknown>>)
+          .map((m) => ({ role: String(m.role ?? ''), content: String(m.content ?? '').slice(0, 2000) }))
+          .filter((m) => m.role || m.content)
+      : []
+    ui.pushLiveContextRound({
+      round,
+      targetKey: `ctx-${round}`,
+      messageCount: count,
+      messages: msgs,
+    })
   }
 
   /** agent.selected：Agent 选择完成 → 思考面板标注命中信息 */
@@ -369,31 +487,91 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     ui.setAgentStatus(ctx.agentId || name, 'RUNNING', name)
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId || name, name)
     thinkBlock.content += `[Agent 匹配] ${name}（${matchedBy}）\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 2,
+      ts: ctx.serverTime,
+      event: 'agent.selected',
+      title: `选中 Agent：${name}`,
+      detail: matchedBy ? `匹配方式：${matchedBy}` : '',
+      kind: 'agent',
+      target: 'agent-0',
+    })
   }
 
-  /** agent.components：组件选定清单 → 思考面板友好展示（Soul/Skill/MCP/Prompt/LLM） */
+  /** agent.components：组件选定清单 → 思考面板友好展示（Soul/Skill/MCP/Prompt/LLM 展示名称、悬浮可见 ID） */
   function onAgentComponents(ctx: StreamEventCtx) {
+    const soulId = String(ctx.payload.soul_id || '')
+    const soulDisp = String(ctx.payload.soul_name || '') || soulId
+    const promptId = String(ctx.payload.prompt_template_id || '')
+    const promptDisp = String(ctx.payload.prompt_name || '') || promptId
+    const llmId = String(ctx.payload.llm_id || '')
+    const llmDisp = String(ctx.payload.llm_name || '') || llmId
     const lines: string[] = ['[组件选定]']
-    if (ctx.payload.soul_id) lines.push(`· Soul: ${ctx.payload.soul_id}`)
+    if (soulId) lines.push(`· Soul: ${soulDisp}`)
     const skills = Array.isArray(ctx.payload.skills) ? ctx.payload.skills as Array<{ id?: string; brief?: string }> : []
-    for (const s of skills) lines.push(`· Skill: ${s.id}${s.brief ? ' — ' + s.brief : ''}`)
-    const mcps = Array.isArray(ctx.payload.mcps) ? ctx.payload.mcps as Array<{ id?: string }> : []
-    for (const mcp of mcps) lines.push(`· MCP: ${mcp.id}`)
-    if (ctx.payload.prompt_template_id) lines.push(`· Prompt: ${ctx.payload.prompt_template_id}`)
-    if (ctx.payload.llm_id) lines.push(`· LLM: ${ctx.payload.llm_id}`)
+    for (const s of skills) {
+      const id = String(s.id || '')
+      const disp = String(s.brief || '') || id
+      lines.push(`· Skill: ${disp}`)
+    }
+    const mcps = Array.isArray(ctx.payload.mcps) ? ctx.payload.mcps as Array<{ id?: string; brief?: string }> : []
+    for (const mcp of mcps) {
+      const id = String(mcp.id || '')
+      const disp = String(mcp.brief || '') || id
+      lines.push(`· MCP: ${disp}`)
+    }
+    if (promptId) lines.push(`· Prompt: ${promptDisp}`)
+    if (llmId) lines.push(`· LLM: ${llmDisp}`)
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += lines.join('\n') + '\n'
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+
+    const bits: string[] = []
+    if (soulId) bits.push(`Soul ${soulDisp}`)
+    if (skills.length) bits.push(`Skill×${skills.length}`)
+    if (mcps.length) bits.push(`MCP×${mcps.length}`)
+    if (llmId) bits.push(`LLM ${llmDisp}`)
+    if (promptId) bits.push(`Prompt ${promptDisp}`)
+    const tooltipBits: string[] = []
+    if (soulId) tooltipBits.push(`Soul: ${soulId}`)
+    if (promptId) tooltipBits.push(`Prompt: ${promptId}`)
+    if (llmId) tooltipBits.push(`LLM: ${llmId}`)
+    if (skills.length) tooltipBits.push(`Skill: ${skills.map((s) => String(s.id || '')).filter(Boolean).join(', ')}`)
+    if (mcps.length) tooltipBits.push(`MCP: ${mcps.map((m) => String(m.id || '')).filter(Boolean).join(', ')}`)
+    ui.pushLiveTimelineItem({
+      seq: 3,
+      ts: ctx.serverTime,
+      event: 'agent.components',
+      title: '组件装配完成',
+      detail: bits.join(' · ') || '无 Soul/Prompt/LLM/Skill/MCP 显式绑定',
+      tooltip: tooltipBits.join('\n') || undefined,
+      kind: 'agent',
+      target: 'agent-0',
+    })
   }
 
-  /** intent.analyzed：意图识别结果 → 思考面板 */
+  /** intent.analyzed：意图识别结果 → 思考面板（命中 Agent 展示名称，ID 悬浮可见） */
   function onIntentAnalyzed(ctx: StreamEventCtx) {
     const score = Number(ctx.payload.score ?? 0)
     const reason = String(ctx.payload.reason || '')
-    const matchedAgent = String(ctx.payload.agent_id || '')
+    const agentId = String(ctx.payload.agent_id || '')
+    const agentDisp = String(ctx.payload.agent_name || '') || agentId
     const adopted = Boolean(ctx.payload.adopted)
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
-    thinkBlock.content += `[意图分析] 打分 ${score}（${adopted ? '采纳' : '未达阈值'}）${matchedAgent ? ' → ' + matchedAgent : ''}\n`
+    thinkBlock.content += `[意图分析] 打分 ${score}（${adopted ? '采纳' : '未达阈值'}）${agentDisp ? ' → ' + agentDisp : ''}\n`
     if (reason) thinkBlock.content += `· ${reason}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 1,
+      ts: ctx.serverTime,
+      event: 'intent.analyzed',
+      title: `需求确认 / 意图分析：打分 ${score}（${adopted ? '采纳' : '未达阈值'}）`,
+      detail: reason ? reason.slice(0, 200) : (agentDisp ? `目标 Agent: ${agentDisp}` : ''),
+      tooltip: agentId || undefined,
+      kind: 'intent',
+      target: 'agent-0',
+    })
   }
 
   /** agent.built：Agent 构建完成 → 思考面板 */
@@ -402,39 +580,55 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     const purpose = String(ctx.payload.purpose || '')
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += `[Agent 构建] ${name}${purpose ? ' — ' + purpose : ''}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 2,
+      ts: ctx.serverTime,
+      event: 'agent.built',
+      title: `构建 Agent：${name}`,
+      detail: purpose,
+      kind: 'agent',
+      target: 'agent-0',
+    })
   }
 
-  /** llm.selected：LLM 选定 → 思考面板 */
+  /** llm.selected：LLM 选定 → 思考面板（展示模型名称，ID 保留于内容） */
   function onLlmSelected(ctx: StreamEventCtx) {
     const llmId = String(ctx.payload.llm_id || '')
     if (!llmId) return
+    const name = String(ctx.payload.llm_name || '') || llmId
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
-    thinkBlock.content += `[LLM 选定] ${llmId}\n`
+    thinkBlock.content += `[LLM 选定] ${name}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
   }
 
-  /** prompt.selected：Prompt 选定（模板渲染出 system prompt）→ 思考面板 */
+  /** prompt.selected：Prompt 选定（模板渲染出 system prompt）→ 思考面板（展示模板名称） */
   function onPromptSelected(ctx: StreamEventCtx) {
     const templateId = String(ctx.payload.template_id || 'builtin.identity')
+    const name = String(ctx.payload.prompt_name || '') || templateId
     const system = String(ctx.payload.system || '')
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
-    thinkBlock.content += `[Prompt 选定] ${templateId}\n`
+    thinkBlock.content += `[Prompt 选定] ${name}\n`
     if (system) thinkBlock.prompt = system
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content, prompt: thinkBlock.prompt })
   }
 
-  /** skill.selected：Skill 选定 → 思考面板 */
+  /** skill.selected：Skill 选定 → 思考面板（展示技能名称） */
   function onSkillSelected(ctx: StreamEventCtx) {
     const skills = Array.isArray(ctx.payload.skills) ? ctx.payload.skills as Array<{ id?: string; brief?: string }> : []
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += `[Skill 选定]${skills.length ? '' : '（无）'}\n`
-    for (const s of skills) thinkBlock.content += `· ${s.id}${s.brief ? ' — ' + s.brief : ''}\n`
+    for (const s of skills) thinkBlock.content += `· ${String(s.brief || '') || String(s.id || '')}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
   }
 
-  /** mcp.selected：MCP 选定 → 思考面板 */
+  /** mcp.selected：MCP 选定 → 思考面板（展示 MCP 名称） */
   function onMcpSelected(ctx: StreamEventCtx) {
     const mcps = Array.isArray(ctx.payload.mcps) ? ctx.payload.mcps as Array<{ id?: string; brief?: string }> : []
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += `[MCP 选定]${mcps.length ? '' : '（无）'}\n`
-    for (const m of mcps) thinkBlock.content += `· ${m.id}${m.brief ? ' — ' + m.brief : ''}\n`
+    for (const m of mcps) thinkBlock.content += `· ${String(m.brief || '') || String(m.id || '')}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
   }
 
   /** evaluation.completed：Evolutor 评估结论 → 思考面板 */
@@ -446,11 +640,46 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += `[评估] ${evalType} overall=${overall}${ctx.payload.need_optimize ? '（需优化）' : ''}\n`
     for (const s of suggestions) thinkBlock.content += `· ${s}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 8,
+      ts: ctx.serverTime,
+      event: 'evaluation.completed',
+      title: `评估完成：overall=${overall}${ctx.payload.need_optimize ? '（需优化）' : ''}`,
+      detail: evalType,
+      kind: 'eval',
+      target: 'agent-0',
+    })
+  }
+
+  /** writer.completed：表达/排版 Agent 完成 → 记录时间线 */
+  function onWriterCompleted(ctx: StreamEventCtx) {
+    const fmt = String(ctx.payload.format || 'MARKDOWN')
+    const len = Number(ctx.payload.length || 0)
+    ui.pushLiveTimelineItem({
+      seq: 9,
+      ts: ctx.serverTime,
+      event: 'writer.completed',
+      title: `写作排版：${fmt}`,
+      detail: `字数：${len}`,
+      kind: 'writer',
+      target: 'agent-0',
+    })
   }
 
   /** tool.started：工具开始执行 → 动作轨迹（载荷 {part_id, tool_id, input}，归一化后建块） */
   function onToolStarted(ctx: StreamEventCtx) {
     onAgentAction(ctx)
+    const { toolName, params, partId } = normalizeToolPayload(ctx.payload)
+    ui.pushLiveTimelineItem({
+      seq: 6,
+      ts: ctx.serverTime,
+      event: 'tool.started',
+      title: `调用工具：${toolName}`,
+      detail: JSON.stringify(params).slice(0, 200),
+      kind: 'tool',
+      target: partId ? `tool-${partId}` : 'agent-0',
+    })
   }
 
   /** tool.launch（v2 协议）→ 动作轨迹（同 started；同 part_id 命中同一块做更新，不重复建块） */
@@ -463,7 +692,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   // 现按 part_id 定位同一块回填 result 并收敛状态；思考块回填保留（onAgentOutput）。
   /** tool.result（v2 协议）→ 输出面板（工具块回填 + 思考块回填） */
   function onToolResult(ctx: StreamEventCtx) {
-    const { partId } = normalizeToolPayload(ctx.payload)
+    const { toolName, partId } = normalizeToolPayload(ctx.payload)
     if (partId) {
       const toolBlockId = `block-tool-${ctx.botMsgId}-${partId}`
       const existed = ctx.chat.blocks.find(b => b.id === toolBlockId)
@@ -475,7 +704,17 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
         })
       }
     }
-    onAgentOutput({ ...ctx, payload: { output: ctx.payload.output, status: ctx.payload.status === 'ok' ? 'done' : 'error' } })
+    const isOk = ctx.payload.status === 'ok'
+    ui.pushLiveTimelineItem({
+      seq: 7,
+      ts: ctx.serverTime,
+      event: 'tool.result',
+      title: `工具返回：${toolName}（${isOk ? 'ok' : 'error'}）`,
+      detail: String(ctx.payload.output || '').slice(0, 200),
+      kind: isOk ? 'tool-ok' : 'tool-fail',
+      target: partId ? `tool-${partId}` : 'agent-0',
+    })
+    onAgentOutput({ ...ctx, payload: { output: ctx.payload.output, status: isOk ? 'done' : 'error' } })
   }
 
   /** plan.updated：过程性计划 → 规划面板 */
@@ -560,14 +799,32 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
 
   /** run.finished：正常收敛 → 收尾 */
   function onRunFinished(ctx: StreamEventCtx) {
+    ui.setRunActive(false)
     chat.finalizeBlocks(ctx.botMsgId)
     ui.updatePlanning({ status: 'done' })
+    ui.pushLiveTimelineItem({
+      seq: 10,
+      ts: ctx.serverTime,
+      event: 'run.finished',
+      title: '执行完成',
+      detail: String(ctx.payload.stop_reason || 'stop'),
+      kind: 'lifecycle-ok',
+    })
     tryAutoCloseThinking()
     textBlockId = null
   }
 
   /** run.failed：异常/取消收敛 → 错误块 */
   function onRunFailed(ctx: StreamEventCtx) {
+    ui.setRunActive(false)
+    ui.pushLiveTimelineItem({
+      seq: 10,
+      ts: ctx.serverTime,
+      event: 'run.failed',
+      title: '执行失败',
+      detail: String(ctx.payload.stop_reason || ctx.payload.error || 'run failed'),
+      kind: 'lifecycle-fail',
+    })
     onError({ ...ctx, payload: { error_message: String(ctx.payload.stop_reason || 'run failed'), error_code: 'RUN_FAILED' } })
   }
 
@@ -576,7 +833,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     chat.finalizeThinkingBlocks(ctx.botMsgId)
     appendAssistantChunk(ctx, chunk)
   }
-
 
   /** 一轮回复流式输出完成：收敛全部块、标记 Planning 完成，并追加 Feedback 块 */
   function onDone(ctx: StreamEventCtx) {
@@ -631,8 +887,17 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   }
 
   /** run 开始 / 受理：问答任务进行中自动弹出思考过程 */
-  function onRunStarted() {
+  function onRunStarted(ctx: StreamEventCtx) {
+    ui.setRunActive(true)
     ensureLiveThinkingOpen()
+    ui.pushLiveTimelineItem({
+      seq: 0,
+      ts: ctx.serverTime,
+      event: 'run.accepted',
+      title: '开始受理请求',
+      detail: ctx.payload.run_id ? `run ${String(ctx.payload.run_id).slice(0, 8)}` : '',
+      kind: 'lifecycle',
+    })
   }
 
   /** 事件分发表（键 = sseEventTypes 的线上事件全集；样式映射见 EVENT_UI_STYLE） */
@@ -663,6 +928,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.SkillSelected]: onSkillSelected,
     [BusinessEvent.McpSelected]: onMcpSelected,
     [BusinessEvent.EvaluationCompleted]: onEvaluationCompleted,
+    [BusinessEvent.WriterCompleted]: onWriterCompleted,
     [BusinessEvent.ErrorOccurred]: onError,
     [BusinessEvent.MessageBlock]: () => { /* 阶段4 块流 */ },
     [SseTransportEvent.Done]: onDone,
@@ -682,6 +948,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     },
     reset(clearTrace = false) {
       textBlockId = null
+      ui.resetLiveTimeline()
       if (clearTrace) currentTraceId = ''
     },
   }

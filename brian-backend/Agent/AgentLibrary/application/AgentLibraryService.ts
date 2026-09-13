@@ -127,7 +127,9 @@ export class AgentLibraryService {
   async matchAgent(input: MatchAgentInput, output: MatchAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
-    const threshold = input.similarity_threshold ?? config?.similarity_threshold ?? 0.7;
+    // 统一百分制阈值（0-100）
+    const rawThreshold = input.similarity_threshold ?? config?.similarity_threshold ?? 70;
+    const threshold = rawThreshold > 0 && rawThreshold <= 1 ? Math.round(rawThreshold * 100) : Math.round(rawThreshold);
 
     const conditions: Condition[] = [
       { field: 'enable', operator: Operator.EQ, value: 1 },
@@ -144,18 +146,59 @@ export class AgentLibraryService {
       return true;
     }
 
-    // ===== 1. 第一层匹配：简单算法匹配 (simpleSimilarity) + 概率复用判定 =====
-    // 匹配面 = 任务签名 + agent_purpose（说明）：说明是为后续 matchAgent 沉淀的匹配依据
-    const queryText = input.task_content || input.task_signature;
+    // ===== 原始方法（保留作为参考）=====
+    // const queryText = input.task_content || input.task_signature;
+    // let bestScore = 0;
+    // let bestId = '';
+    // for (const c of candidates) {
+    //   const score = Math.max(
+    //     simpleSimilarity(input.task_signature, c.task_signature),
+    //     simpleSimilarity(queryText, c.agent_purpose ?? ''),
+    //   );
+    //   if (score > bestScore) {
+    //     bestScore = score;
+    //     bestId = c.agent_id;
+    //   }
+    // }
+    // const regenRate = config?.regen_rate ?? 75;
+    // if (bestScore >= threshold && bestId) {
+    //   if (shouldReuseByRegenRate(regenRate)) {
+    //     output.agent_id = bestId;
+    //     output.similarity_score = bestScore;
+    //     output.matched_by = 'SIMILARITY';
+    //     output.matched = true;
+    //     return true;
+    //   }
+    //   output.matched = true;
+    //   output.regenerate = true;
+    //   output.similarity_score = bestScore;
+    //   output.agent_id = '';
+    //   return true;
+    // }
+
+    // ===== 修改后的方法（弃用 2-gram 关键词匹配，保留 领域匹配/语义裁判，统一百分制 0-100） =====
+    // 1. 第一层匹配：领域与特征精确/包含匹配 (百分制)
+    const queryText = (input.task_content || input.task_signature || '').trim();
+    const domainA = input.task_signature.match(/^\[(.*?)\]/)?.[1] || '';
     let bestScore = 0;
     let bestId = '';
     for (const c of candidates) {
-      const score = Math.max(
-        simpleSimilarity(input.task_signature, c.task_signature),
-        simpleSimilarity(queryText, c.agent_purpose ?? ''),
-      );
-      if (score > bestScore) {
-        bestScore = score;
+      const domainB = c.task_signature.match(/^\[(.*?)\]/)?.[1] || '';
+      if (domainA && domainB && domainA.trim() !== domainB.trim()) continue;
+      if (c.task_signature === input.task_signature) {
+        bestScore = 100;
+        bestId = c.agent_id;
+        break;
+      }
+      const cleanA = input.task_signature.replace(/^\[.*?\]/, '').trim();
+      const cleanB = c.task_signature.replace(/^\[.*?\]/, '').trim();
+      if (cleanA && cleanB && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
+        bestScore = 100;
+        bestId = c.agent_id;
+        break;
+      }
+      if (c.agent_purpose && queryText && (queryText.includes(c.agent_purpose) || c.agent_purpose.includes(queryText))) {
+        bestScore = 90;
         bestId = c.agent_id;
       }
     }
@@ -169,7 +212,6 @@ export class AgentLibraryService {
         output.matched = true;
         return true;
       }
-      // 命中但失效概率命中：不再尝试复用，交由调用方重构（Agent 重构会重新 match 四组件并生成新说明）
       output.matched = true;
       output.regenerate = true;
       output.similarity_score = bestScore;
@@ -177,7 +219,7 @@ export class AgentLibraryService {
       return true;
     }
 
-    // ===== 2. 第二层匹配：提交给大模型，由 LLM 基于 Agent 列表用途/名称与提问进行评估打分 =====
+    // 2. 第二层匹配：提交给大模型，由 LLM 基于 Agent 列表用途/名称与提问进行语义评估打分（百分制 0-100）
     const promptTemplateId = config?.prompt_template_id ?? '';
     const llmMatched = await this.llmMatchAgent(
       input.task_content || input.task_signature,
@@ -185,20 +227,23 @@ export class AgentLibraryService {
       promptTemplateId,
     );
 
-    if (llmMatched && llmMatched.score >= threshold && llmMatched.agent_id) {
+    const parsedScore = Number(llmMatched?.score ?? 0);
+    const normalizedLlmScore = parsedScore > 0 && parsedScore <= 1 ? Math.round(parsedScore * 100) : Math.round(parsedScore);
+
+    if (llmMatched && normalizedLlmScore >= threshold && llmMatched.agent_id) {
       const found = candidates.find((c) => c.agent_id === llmMatched.agent_id && toBool(c.enable));
       if (found) {
         output.agent_id = found.agent_id;
-        output.similarity_score = llmMatched.score;
+        output.similarity_score = normalizedLlmScore;
         output.matched_by = 'LLM';
         output.matched = true;
         return true;
       }
     }
 
-    // ===== 3. 两层匹配均未命中，触发 Agent 重构 =====
+    // 3. 两层匹配均未命中，触发 Agent 重构
     output.agent_id = '';
-    output.similarity_score = Math.max(bestScore, llmMatched?.score ?? 0);
+    output.similarity_score = Math.max(bestScore, normalizedLlmScore);
     output.matched_by = '';
     output.matched = false;
     return true;

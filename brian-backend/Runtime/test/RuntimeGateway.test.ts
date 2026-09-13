@@ -105,6 +105,10 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       '${identityPromptId}', 1, 1, 'Brian 身份声明', '主代理身份声明',
       '# 身份\n\n你是 Brian，用户的智能个人助理。\n\n{{#if soul}}\n# 人格\n\n{{soul}}\n\n{{/if}}\n# 任务\n\n{{task_directive}}', 1, 1
     )`);
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+      '22222222-3333-4444-5555-666666666666', 1, 1, 'Agent 匹配评估', 'Agent 匹配评估提示词',
+      '评估候选 Agent 与任务的匹配度，输出 JSON: {"score": 80, "reason": "匹配"}', 1, 1
+    )`);
 
     // mock LLM：收到 system 后直接给出 stop（捕获入参供断言）
     execLLMEventsMock = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -543,5 +547,57 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(types).toContain('reply.delta');
     const replyDelta = (rows ?? []).find((r) => r.event_type === 'reply.delta');
     expect(replyDelta?.payload_json).toContain('```mermaid');
+  });
+
+  it('Metrics 计时时间线按 <层名>.<模块名>.<类名>.<方法名>.start/end 记录并落地数据库', async () => {
+    const { Metrics } = await import('@brian-agent/base');
+    const qaMetrics = new Metrics(undefined, 'TestQA', 'trace-qa-123');
+
+    execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+      output.finish_reason = 'stop';
+      output.result = '回答完成';
+      return true;
+    });
+
+    const submitIn = new SubmitRunInput();
+    submitIn.session_key = 'sess-metrics-test';
+    submitIn.user_message = '测试 Metrics 计时落地';
+    const submitOut = new SubmitRunOutput();
+    const report = new Report({ session_id: 'sess-metrics-test', session_key: 'sess-metrics-test' });
+
+    await gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), qaMetrics, report);
+    const waitIn = new WaitRunInput();
+    waitIn.run_id = submitOut.run_id;
+    await gateway.waitRun(waitIn, new WaitRunOutput(), new RunGatewayContext(), qaMetrics, report);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // 验证 metrics timings 中包含规范 key
+    expect(qaMetrics.timings['Runtime.Runs.RunGatewayService.submitRun.start']).toBeDefined();
+    expect(qaMetrics.timings['Runtime.Runs.RunGatewayService.submitRun.end']).toBeDefined();
+    expect(qaMetrics.timings['Runtime.Agents.AgentDefService.matchAgentDef.start']).toBeDefined();
+    expect(qaMetrics.timings['Runtime.Agents.AgentDefService.matchAgentDef.end']).toBeDefined();
+    expect(qaMetrics.timings['Runtime.Loop.AgentLoopService.execAgentLoop.start']).toBeDefined();
+    expect(qaMetrics.timings['Runtime.Loop.AgentLoopService.execAgentLoop.end']).toBeDefined();
+
+    // 验证数据库 runtime_run.metrics_json 落地
+    const runRows = relationDb.queryRaw<{ metrics_json: string }>(
+      'SELECT metrics_json FROM runtime_run WHERE id = ?',
+      [submitOut.run_id],
+    );
+    expect(runRows).toHaveLength(1);
+    const dbTimings = JSON.parse(runRows[0].metrics_json);
+    expect(dbTimings['Runtime.Runs.RunGatewayService.submitRun.start']).toBeDefined();
+    expect(dbTimings['Runtime.Agents.AgentDefService.matchAgentDef.start']).toBeDefined();
+
+    // 验证 runtime_metrics 表记录落地
+    const metricRows = relationDb.queryRaw<{ run_id: string; session_key: string; trace_id: string; timings_json: string; total_duration_ms: number }>(
+      'SELECT run_id, session_key, trace_id, timings_json, total_duration_ms FROM runtime_metrics WHERE run_id = ?',
+      [submitOut.run_id],
+    );
+    expect(metricRows).toHaveLength(1);
+    expect(metricRows[0].session_key).toBe('sess-metrics-test');
+    expect(metricRows[0].trace_id).toBe('trace-qa-123');
+    const tableTimings = JSON.parse(metricRows[0].timings_json);
+    expect(tableTimings['Runtime.Loop.AgentLoopService.execAgentLoop.start']).toBeDefined();
   });
 });

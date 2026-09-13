@@ -106,14 +106,14 @@ export class IntentAgentService {
       },
     });
     const promptOut = new ExecPromptOutput();
-    await this.promptsAccess.execPrompt(promptIn, promptOut, new PromptContext());
+    await this.promptsAccess.execPrompt(promptIn, promptOut, new PromptContext(), _metrics, _report);
     output.prompt = promptOut.prompt;
 
     const llmIn = Object.assign(new ExecLLMInput(), {
       prompt: promptOut.prompt,
     });
     const llmOut = new ExecLLMOutput();
-    await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext());
+    await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext(), _metrics, _report);
 
     // 回填输入 / 输出 Token 用量，供前端"思考过程"弹窗展示
     output.input_tokens = llmOut.input_tokens ?? 0;

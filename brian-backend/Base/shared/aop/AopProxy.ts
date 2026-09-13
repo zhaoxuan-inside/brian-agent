@@ -69,9 +69,73 @@ export class ConsoleLogger implements Logger {
 }
 
 /**
+ * 默认类名 → 层名与模块名映射表。
+ * 当 options 未显式传入 layer/module 时作为自动推断表。
+ */
+const CLASS_LAYER_MODULE_MAP: Record<string, { layer: string; module: string }> = {
+  // Base 层
+  BookmarkService: { layer: 'Base', module: 'BookmarkProvider' },
+  CDTService: { layer: 'Base', module: 'CDTProvider' },
+  ChunkService: { layer: 'Base', module: 'ChunkProvider' },
+  CronService: { layer: 'Base', module: 'CronProvider' },
+  FeedbackService: { layer: 'Base', module: 'FeedbackHandler' },
+  GraphDBService: { layer: 'Base', module: 'GraphDBProvider' },
+  LLMService: { layer: 'Base', module: 'LLMProvider' },
+  LogService: { layer: 'Base', module: 'LogProvider' },
+  MCPService: { layer: 'Base', module: 'MCPProvider' },
+  MQService: { layer: 'Base', module: 'MQProvider' },
+  PromptsService: { layer: 'Base', module: 'PromptsProvider' },
+  RelationDBService: { layer: 'Base', module: 'RelationDBProvider' },
+  SkillService: { layer: 'Base', module: 'SkillProvider' },
+  SoulService: { layer: 'Base', module: 'SoulProvider' },
+  StreamService: { layer: 'Base', module: 'StreamProvider' },
+  VectorDBService: { layer: 'Base', module: 'VectorDBProvider' },
+  ToolProviderService: { layer: 'Base', module: 'ToolProvider' },
+
+  // Core 层
+  CDTCoreService: { layer: 'Core', module: 'CDTCoreProvider' },
+  InfoCoreService: { layer: 'Core', module: 'InfoCoreProvider' },
+  LLMCoreService: { layer: 'Core', module: 'LLMCoreProvider' },
+  MCPCoreService: { layer: 'Core', module: 'MCPCoreProvider' },
+  MQCoreService: { layer: 'Core', module: 'MQCoreProvider' },
+  SkillCoreService: { layer: 'Core', module: 'SkillCoreProvider' },
+  SoulCoreService: { layer: 'Core', module: 'SoulCoreProvider' },
+
+  // Agent 层
+  AgentBuilderService: { layer: 'Agent', module: 'AgentBuilder' },
+  AgentContextService: { layer: 'Agent', module: 'AgentContext' },
+  AgentExecutionService: { layer: 'Agent', module: 'AgentExecution' },
+  AgentLibraryService: { layer: 'Agent', module: 'AgentLibrary' },
+  AgentStrategyService: { layer: 'Agent', module: 'AgentStrategy' },
+  EvolutorAgentService: { layer: 'Agent', module: 'EvolutorAgent' },
+  IntentAgentService: { layer: 'Agent', module: 'IntentAgent' },
+  PlannerAgentService: { layer: 'Agent', module: 'PlannerAgent' },
+  SummaryAgentService: { layer: 'Agent', module: 'SummaryAgent' },
+  WriterAgentService: { layer: 'Agent', module: 'WriterAgent' },
+
+  // Runtime 层
+  AgentDefService: { layer: 'Runtime', module: 'Agents' },
+  AgentLoopService: { layer: 'Runtime', module: 'Loop' },
+  RunGatewayService: { layer: 'Runtime', module: 'Runs' },
+  SessionService: { layer: 'Runtime', module: 'Session' },
+  ToolService: { layer: 'Runtime', module: 'Tools' },
+
+  // Application 层
+  ChatService: { layer: 'Application', module: 'Chat' },
+  ConfigService: { layer: 'Application', module: 'Config' },
+  SelfLearningService: { layer: 'Application', module: 'SelfLearning' },
+  UserProfileService: { layer: 'Application', module: 'UserProfile' },
+  VisualizationService: { layer: 'Application', module: 'Visualization' },
+};
+
+/**
  * AOP 代理选项。
  */
 export interface AopProxyOptions {
+  /** 层名，例如 Base / Core / Agent / Runtime / Application */
+  layer?: string;
+  /** 模块名，例如 LLMProvider / SkillCoreProvider / Loop / Chat */
+  module?: string;
   /** 日志记录器（向后兼容，若提供 interceptors 则忽略） */
   logger?: Logger;
   /** 是否启用 AOP（默认 true） */
@@ -127,6 +191,9 @@ export class AopProxy {
         }
         const methodName = String(prop);
         const targetName = obj.constructor.name;
+        const layer = options?.layer || CLASS_LAYER_MODULE_MAP[targetName]?.layer || 'Base';
+        const module = options?.module || CLASS_LAYER_MODULE_MAP[targetName]?.module || targetName.replace(/Service$/, 'Provider');
+        const timingPrefix = `${layer}.${module}.${targetName}.${methodName}`;
         const fn = value as (...args: unknown[]) => unknown;
 
         return function wrapped(this: unknown, ...args: unknown[]): unknown {
@@ -174,7 +241,12 @@ export class AopProxy {
 
           const startedAt = Date.now();
           const metricsArg = isNewStyle ? (args[3] as Metrics | undefined) : undefined;
-          if (metricsArg) metricsArg.started_at = startedAt;
+          if (metricsArg) {
+            metricsArg.started_at = startedAt;
+            if (typeof metricsArg.recordTiming === 'function') {
+              metricsArg.recordTiming(`${timingPrefix}.start`, startedAt);
+            }
+          }
           const ctx: InterceptContext = {
             targetName,
             methodName,
@@ -200,7 +272,11 @@ export class AopProxy {
             if (result instanceof Promise) {
               return result
                 .then((res: unknown) => {
-                  ctx.elapsedMs = Date.now() - startedAt;
+                  const finishedAt = Date.now();
+                  ctx.elapsedMs = finishedAt - startedAt;
+                  if (metricsArg && typeof metricsArg.recordTiming === 'function') {
+                    metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
+                  }
                   AopProxy.fillElapsed(args, ctx.elapsedMs);
                   // 切入点 3：postExecute（方法执行后 #1，仅成功）
                   AopProxy.runPostExecute(interceptors, ctx, res);
@@ -209,7 +285,11 @@ export class AopProxy {
                   return res;
                 })
                 .catch((err: unknown) => {
-                  ctx.elapsedMs = Date.now() - startedAt;
+                  const finishedAt = Date.now();
+                  ctx.elapsedMs = finishedAt - startedAt;
+                  if (metricsArg && typeof metricsArg.recordTiming === 'function') {
+                    metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
+                  }
                   AopProxy.fillElapsed(args, ctx.elapsedMs);
                   const error = err instanceof Error ? err : new Error(String(err));
                   // 切入点 4：afterExecute（方法执行后 #2，始终）
@@ -219,7 +299,11 @@ export class AopProxy {
             }
 
             // 同步方法
-            ctx.elapsedMs = Date.now() - startedAt;
+            const finishedAt = Date.now();
+            ctx.elapsedMs = finishedAt - startedAt;
+            if (metricsArg && typeof metricsArg.recordTiming === 'function') {
+              metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
+            }
             AopProxy.fillElapsed(args, ctx.elapsedMs);
             // 切入点 3：postExecute（方法执行后 #1，仅成功）
             AopProxy.runPostExecute(interceptors, ctx, result);
@@ -227,7 +311,11 @@ export class AopProxy {
             AopProxy.runAfterExecute(interceptors, ctx);
             return result;
           } catch (err) {
-            ctx.elapsedMs = Date.now() - startedAt;
+            const finishedAt = Date.now();
+            ctx.elapsedMs = finishedAt - startedAt;
+            if (metricsArg && typeof metricsArg.recordTiming === 'function') {
+              metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
+            }
             AopProxy.fillElapsed(args, ctx.elapsedMs);
             const error = err instanceof Error ? err : new Error(String(err));
             // 切入点 4：afterExecute（方法执行后 #2，始终）

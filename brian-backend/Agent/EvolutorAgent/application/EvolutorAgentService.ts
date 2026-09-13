@@ -32,6 +32,11 @@ import {
 import {
   GetTraceInput, GetTraceOutput, AgentExecutionContext,
 } from '../../AgentExecution/domain/types';
+import {
+  FeedbackContext,
+  SubmitAgentFeedbackInput, SubmitAgentFeedbackOutput,
+} from '@brian-agent/base';
+import type { FeedbackAccess } from '@brian-agent/base';
 import { TraceStore } from '../../AgentExecution/application/trace/TraceStore';
 import { buildSingleAnswerTrace } from '../../AgentExecution/application/trace/TraceCodec';
 import { parseJsonObject } from '../../shared/signature';
@@ -72,6 +77,7 @@ export class EvolutorAgentService {
     private readonly agentLibrary: AgentLibraryAccess,
     private readonly agentExecution: AgentExecutionAccess,
     private readonly llmCore?: LLMCoreAccess,
+    private readonly feedbackAccess?: FeedbackAccess,
   ) {
     this.traceStore = new TraceStore(relationDb);
   }
@@ -284,6 +290,8 @@ export class EvolutorAgentService {
         Object.assign(new ExecLLMInput(), { id: targetLlmId, prompt }),
         llmOut,
         new LLMContext(),
+        _metrics,
+        report,
       );
       if (ok && llmOut.result) {
         const parsed = parseJsonObject(llmOut.result);
@@ -351,6 +359,22 @@ export class EvolutorAgentService {
         }),
         new SendMQOutput(),
         new MQContext(),
+      );
+    }
+
+    // 上报 Agent 评估反馈至反馈处理模块（统一存储与分析）
+    if (this.feedbackAccess && suggestions.length > 0) {
+      await this.feedbackAccess.submitAgentFeedback(
+        Object.assign(new SubmitAgentFeedbackInput(), {
+          agent_id: input.agent_id,
+          work_id: input.work_id,
+          interact_id: input.interact_id,
+          rating: scores.overall,
+          suggestions,
+          category: 'WORK_AGENT_EVAL',
+        }),
+        new SubmitAgentFeedbackOutput(),
+        new FeedbackContext(),
       );
     }
 

@@ -98,3 +98,27 @@ export const EVENT_UI_STYLE: Record<SseEventName, EventUiStyle> = {
   [SseTransportEvent.Loading]: { area: 'lifecycle', tone: 'muted' },
   [SseTransportEvent.Done]: { area: 'lifecycle', tone: 'success' },
 }
+
+/** 执行时间线样式分类枚举（与后端 Base/shared/base/BusinessEvent.ts TimelineItemKind 同构） */
+export const TimelineItemKind = {
+  Lifecycle: 'lifecycle',
+  LifecycleOk: 'lifecycle-ok',
+  LifecycleFail: 'lifecycle-fail',
+  Intent: 'intent',
+  Agent: 'agent',
+  Model: 'model',
+  Context: 'context',
+  Think: 'think',
+  Reply: 'reply',
+  Tool: 'tool',
+  ToolOk: 'tool-ok',
+  ToolFail: 'tool-fail',
+  Plan: 'plan',
+  Permission: 'permission',
+  PermissionOk: 'permission-ok',
+  PermissionDeny: 'permission-deny',
+  Eval: 'eval',
+  Writer: 'writer',
+} as const
+
+export type TimelineItemKind = (typeof TimelineItemKind)[keyof typeof TimelineItemKind]

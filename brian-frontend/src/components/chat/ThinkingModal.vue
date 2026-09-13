@@ -44,8 +44,23 @@ const contextBlocks = computed<ThinkingBlock[]>(() => {
 
 // 执行时间线节点 → 执行内容卡片跳转（smooth 滚动 + 短暂高亮）
 const jumpTarget = ref('')
-function scrollToAnchor(target?: string) {
+async function scrollToAnchor(target?: string) {
   if (!target) return
+  // 目标锚点可能位于折叠分区内（v-if 未渲染，querySelector 查不到）：
+  // 先展开对应分区并等待 DOM 渲染完成，再执行定位与高亮
+  const shouldExpand = (target.startsWith('ctx-') && !secContext.value)
+    || (target.startsWith('tool-') && !secTools.value)
+    || (target.startsWith('perm-') && !secPermissions.value)
+    || (target.startsWith('node-') && !secNodes.value)
+    || (target === 'agent-0' && !secAgent.value)
+  if (shouldExpand) {
+    if (target.startsWith('ctx-')) secContext.value = true
+    else if (target.startsWith('tool-')) secTools.value = true
+    else if (target.startsWith('perm-')) secPermissions.value = true
+    else if (target.startsWith('node-')) secNodes.value = true
+    else if (target === 'agent-0') secAgent.value = true
+    await nextTick()
+  }
   const el = document.querySelector(`[data-anchor="${target}"]`) as HTMLElement | null
   if (!el) return
   jumpTarget.value = target
@@ -61,17 +76,79 @@ interface LiveTimelineItem extends ThinkingTimelineItem {
   key: string
 }
 
-// 任务进行中的实时时间线：思考增量 / 工具块 / 授权按时间归一
+// ===== 原始方法（保留作为参考）：liveTimeline =====
+// const liveTimeline = computed<LiveTimelineItem[]>(() => {
+//   if (targetMsgId.value) return []
+//   const items: LiveTimelineItem[] = []
+//   for (const b of sessionStore.blocks) {
+//     if (b.type === 'ThinkingChain') {
+//       const tb = b as ThinkingBlock
+//       items.push({
+//         key: `think-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
+//         event: 'think.live', title: `思考：${tb.agentInfo?.name || 'Agent'}`,
+//         detail: (tb.content || '').slice(0, 220), kind: 'think', target: 'agent-0',
+//       })
+//       for (const s of tb.steps || []) {
+//         if (s.phase === 'ACT' && s.toolCalls?.length) {
+//           for (const tc of s.toolCalls) {
+//             items.push({
+//               key: `act-${b.id}-${s.iteration}-${tc.toolName}`, seq: b.meta.updatedAt, ts: b.meta.updatedAt,
+//               event: 'tool.live', title: `调用工具：${tc.toolName || 'Tool'}`,
+//               detail: JSON.stringify(tc.params ?? {}).slice(0, 200), kind: 'tool',
+//             })
+//           }
+//         }
+//       }
+//     } else if (b.type === 'ToolInvocation') {
+//       const tb = b as unknown as { toolName?: string; meta: { createdAt: number }; result?: unknown }
+//       const done = b.meta.status === 'done'
+//       const failed = b.meta.status === 'error'
+//       items.push({
+//         key: `tool-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
+//         event: 'tool.live-result', title: `工具${failed ? '失败' : done ? '完成' : '执行中'}：${tb.toolName || 'Tool'}`,
+//         detail: done ? String(JSON.stringify(tb.result ?? '')).slice(0, 220) : '执行中…',
+//         kind: failed ? 'tool-fail' : done ? 'tool-ok' : 'tool', target: `tool-${b.id}`,
+//       })
+//     }
+//   }
+//   for (const m of sessionStore.messages) {
+//     if (m.permission) {
+//       const p = m.permission
+//       const answered = p.status !== 'pending'
+//       items.push({
+//         key: `perm-${p.permissionId}`, seq: m.timestamp, ts: m.timestamp,
+//         event: answered ? 'permission.live-answered' : 'permission.live-asked',
+//         title: answered
+//           ? `授权${p.status === 'allowed' ? '已通过' : '已拒绝'}：${p.toolId}`
+//           : `等待授权：${p.toolId}`,
+//         detail: '', kind: answered ? (p.status === 'allowed' ? 'permission-ok' : 'permission-deny') : 'permission', target: `perm-${p.permissionId}`,
+//       })
+//     }
+//   }
+//   return items.sort((a, b) => a.ts - b.ts)
+// })
+
+// ===== 修改后的方法（2026-09-13）：实时时间线展示业务友好的深度思考与字数统计 =====
 const liveTimeline = computed<LiveTimelineItem[]>(() => {
   if (targetMsgId.value) return []
   const items: LiveTimelineItem[] = []
   for (const b of sessionStore.blocks) {
     if (b.type === 'ThinkingChain') {
       const tb = b as ThinkingBlock
+      const rawName = tb.agentInfo?.name
+      const agName = rawName && rawName !== '执行 Agent' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawName)
+        ? rawName
+        : ''
+      const charCount = (tb.content || '').length
+      const isStreaming = b.meta.status === 'streaming'
+      const title = isStreaming
+        ? (charCount > 0 ? `Agent 深度推理思考（${charCount} 字）` : 'Agent 深度推理思考中…')
+        : (charCount > 0 ? `Agent 深度推理思考（${charCount} 字）` : `Agent 思考完成`)
+
       items.push({
         key: `think-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
-        event: 'think.live', title: `思考：${tb.agentInfo?.name || 'Agent'}`,
-        detail: (tb.content || '').slice(0, 220), kind: 'think', target: 'agent-0',
+        event: 'think.live', title,
+        detail: agName ? `Agent：${agName}` : (tb.content || '').slice(0, 220), kind: 'think', target: 'agent-0',
       })
       for (const s of tb.steps || []) {
         if (s.phase === 'ACT' && s.toolCalls?.length) {
@@ -113,10 +190,21 @@ const liveTimeline = computed<LiveTimelineItem[]>(() => {
   return items.sort((a, b) => a.ts - b.ts)
 })
 
-// 统一时间线：历史用 trace.timeline，任务进行中用实时归约
+// 统一时间线：历史用 trace.timeline，任务进行中优先用 chatUi.liveTimeline 实时队列（回退 liveTimeline）
 const timeline = computed<ThinkingTimelineItem[]>(() => {
   if (historyTrace.value?.timeline?.length) return historyTrace.value.timeline
+  if (chatUi.liveTimeline && chatUi.liveTimeline.length > 0) return chatUi.liveTimeline
   return liveTimeline.value
+})
+
+// 执行时间线每步耗时：优先使用由 Metrics 精确记录的流程耗时（item.elapsedMs），不再做跨节点盲目时间相减
+const timelineWithElapsed = computed<Array<ThinkingTimelineItem & { elapsedMs: number }>>(() => {
+  const list = timeline.value
+  if (list.length === 0) return []
+  return list.map((item) => {
+    const elapsed = typeof item.elapsedMs === 'number' && item.elapsedMs > 0 ? item.elapsedMs : 0
+    return { ...item, elapsedMs: elapsed }
+  })
 })
 
 // 统一工具 / 授权：历史用 trace，任务进行中用实时 blocks/messages
@@ -155,7 +243,8 @@ const pendingPermissions = computed(() => permissionTraces.value.filter((p) => p
 const answeredPermissions = computed(() => permissionTraces.value.filter((p) => p.status !== 'pending'))
 
 const runOverview = computed(() => historyTrace.value?.run ?? null)
-const contextRounds = computed(() => historyTrace.value?.contextRounds ?? [])
+// 上下文轮次：历史取 trace.contextRounds（回放），任务进行中取实时 context.built 累积的轮次
+const contextRounds = computed(() => historyTrace.value?.contextRounds ?? chatUi.liveContextRounds ?? [])
 const runNodes = computed(() => historyTrace.value?.nodes ?? [])
 
 // 整体的"思考中"状态：任一思考块流式中或任一 Agent 执行中
@@ -523,11 +612,13 @@ watch(
                   <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">思考过程</h3>
                   <Loader2 v-if="thinkingLoading || overallStreaming" :size="13" class="animate-spin text-brian-blue" />
                   <span v-else-if="pendingPermissions.length > 0" class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
+                  <span v-else-if="!targetMsgId && chatUi.runActive" class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-brian-blue/10 text-brian-blue">思考中</span>
                   <span v-else class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-success-green/10 text-success-green">已完成</span>
                 </div>
                 <p class="text-[11px] text-apple-gray-400 truncate">
                   <span v-if="thinkingLoading">正在加载思考过程…</span>
                   <span v-else-if="overallStreaming">正在思考，内容实时更新…</span>
+                  <span v-else-if="!targetMsgId && chatUi.runActive">正在思考，内容即将展现…</span>
                   <span v-else-if="timeline.length">{{ timeline.length }} 个环节 · {{ toolTraces.length }} 次工具调用 · {{ permissionTraces.length }} 次授权</span>
                   <span v-else>暂无可展示的思考内容</span>
                 </p>
@@ -665,7 +756,7 @@ watch(
                   <ListTree :size="14" class="text-brian-blue flex-shrink-0" />
                   <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行时间线</h4>
                   <span class="text-[11px] text-apple-gray-400">{{ timeline.length }} 个环节</span>
-                  <Loader2 v-if="overallStreaming" :size="12" class="animate-spin text-brian-blue" />
+                  <Loader2 v-if="overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue" />
                 </div>
                 <div class="px-4 pb-4">
                   <div
@@ -677,7 +768,7 @@ watch(
                       class="relative ml-2 border-l-2 border-apple-gray-100 dark:border-apple-gray-700/80 space-y-1"
                     >
                       <li
-                        v-for="(item, idx) in timeline"
+                        v-for="(item, idx) in timelineWithElapsed"
                         :key="`${item.event}-${item.seq}-${idx}`"
                         class="group relative pl-6 pb-3 last:pb-0"
                         :class="item.target ? 'cursor-pointer' : ''"
@@ -688,8 +779,12 @@ watch(
                           <component :is="kindIcon(item.kind)" :size="13" class="mt-0.5 flex-shrink-0 text-apple-gray-400" />
                           <div class="min-w-0 flex-1">
                             <div class="flex items-baseline gap-2 flex-wrap">
-                              <p class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 leading-relaxed">{{ item.title }}</p>
+                              <p
+                                class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 leading-relaxed"
+                                :title="item.tooltip || undefined"
+                              >{{ item.title }}</p>
                               <span v-if="item.ts" class="text-[10px] tabular-nums text-apple-gray-300">{{ formatTs(item.ts) }}</span>
+                              <span v-if="item.elapsedMs" class="text-[10px] tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(item.elapsedMs) }}</span>
                               <span v-if="item.target" class="text-[10px] text-brian-blue opacity-0 group-hover:opacity-100 transition-opacity">查看详情 →</span>
                             </div>
                             <p v-if="item.detail" class="mt-0.5 text-[11px] leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words line-clamp-3">{{ item.detail }}</p>
@@ -699,9 +794,10 @@ watch(
                     </ol>
                   </div>
                   <div v-else class="flex items-center gap-2 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 px-3 py-3 text-[11px] text-apple-gray-400">
-                    <Loader2 v-if="thinkingLoading || overallStreaming" :size="12" class="animate-spin text-brian-blue flex-shrink-0" />
+                    <Loader2 v-if="thinkingLoading || overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue flex-shrink-0" />
                     <span v-if="thinkingLoading">正在加载执行时间线…</span>
                     <span v-else-if="overallStreaming">执行环节将实时追加…</span>
+                    <span v-else-if="!targetMsgId && chatUi.runActive">等待执行环节…</span>
                     <span v-else>暂无执行环节</span>
                   </div>
                 </div>
@@ -744,7 +840,7 @@ watch(
                             class="grid grid-cols-[96px_1fr] gap-2 text-[11px]"
                           >
                             <span class="text-apple-gray-400">{{ f.label }}</span>
-                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words font-mono">{{ f.value }}</span>
+                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words font-mono" :title="f.id || undefined">{{ f.value }}</span>
                           </div>
                         </div>
                       </div>
@@ -847,14 +943,11 @@ watch(
                     </button>
                     <div v-if="secAgent" class="mt-2.5">
                       <div
-                        v-for="(block, idx) in agentDetailBlocks"
+                        v-for="block in agentDetailBlocks"
                         :key="block.id"
                         class="rounded-xl transition-shadow"
                       >
-                        <div class="flex items-center gap-1.5 px-1 py-1">
-                          <span class="w-5 h-5 rounded-md text-[10px] font-mono font-bold bg-brian-blue/10 text-brian-blue flex items-center justify-center">{{ idx + 1 }}</span>
-                          <span class="text-[11px] text-apple-gray-400">{{ block.agentInfo?.name || 'Agent' }}</span>
-                        </div>
+                        <!-- Agent 名称/序号已由卡片内部展示，不再重复 -->
                         <ThinkingBlockView
                           :block="block"
                           hide-context

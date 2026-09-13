@@ -209,8 +209,8 @@ export class AgentLoopService {
     this.runControllers.set(input.run_id, controller);
     try {
       this.wireExternalSignal(input, controller);
-      const specs = await this.soLoopToolSpecs(input.tools);
-      await this.persistUserMessage(input);
+      const specs = await this.soLoopToolSpecs(input.tools, metrics);
+      await this.persistUserMessage(input, metrics);
       await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key, report }, RunPhase.Start);
       return this.prepareContextFields(input, budget, controller, specs, metrics, report);
     } catch (err) {
@@ -271,22 +271,22 @@ export class AgentLoopService {
     }, { once: true });
   }
 
-  /** 会话内写入用户消息（逻辑控制） */
-  private async persistUserMessage(input: ExecAgentLoopInput): Promise<void> {
+  /** 会话内写入用户消息（逻辑控制；透传 metrics） */
+  private async persistUserMessage(input: ExecAgentLoopInput, metrics?: Metrics): Promise<void> {
     const add = new AddMessageInput();
     add.session_id = input.session_id;
     add.role = MessageRole.User;
     add.content = input.user_message;
     add.run_id = input.run_id;
-    await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx());
+    await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx(), metrics);
   }
 
-  /** 解析本轮可见工具规格（逻辑控制） */
-  private async soLoopToolSpecs(toolIds?: string[]): Promise<ToolSpecJson[]> {
+  /** 解析本轮可见工具规格（逻辑控制；透传 metrics） */
+  private async soLoopToolSpecs(toolIds?: string[], metrics?: Metrics): Promise<ToolSpecJson[]> {
     const soIn = new SoToolsInput();
     soIn.tool_ids = toolIds;
     const soOut = new SoToolsOutput();
-    await this.tool.soTools(soIn, soOut, new ToolCtx());
+    await this.tool.soTools(soIn, soOut, new ToolCtx(), metrics);
     return soOut.specs;
   }
 
@@ -309,7 +309,7 @@ export class AgentLoopService {
     }
   }
 
-  /** 注入排队消息为 user 消息（逻辑控制；下一轮 wire 派生自动包含） */
+  /** 注入排队消息为 user 消息（逻辑控制；下一轮 wire 派生自动包含；透传 metrics） */
   private async persistInjectedMessages(ctx: LoopRunContext, messages: string[]): Promise<void> {
     for (const message of messages) {
       const add = new AddMessageInput();
@@ -317,7 +317,7 @@ export class AgentLoopService {
       add.role = MessageRole.User;
       add.content = message;
       add.run_id = ctx.runId;
-      await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx());
+      await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx(), ctx.metrics);
     }
   }
 
@@ -355,6 +355,16 @@ export class AgentLoopService {
     if (!turn.ok) {
       // ===== 修改后（2026-09-12）：失败轮残留文本进 thinking，不进对话框 =====
       // 原实现无条件按 reply 刷新，异常中断的中间轮叙述会残留为用户可见文本。
+      this.logger?.warn?.('Agent 循环单轮执行失败', {
+        run_id: ctx.runId,
+        interact_id: ctx.interactId,
+        session_key: ctx.sessionKey,
+        round: ctx.iterations + 1,
+        stop_reason: turn.verdict,
+        error: turn.error,
+        input_tokens: turn.inputTokens,
+        output_tokens: turn.outputTokens,
+      });
       this.flushDeltaBuffer(ctx, 'think');
       return turn.verdict ?? LoopStopReason.Error;
     }
@@ -400,6 +410,13 @@ export class AgentLoopService {
       return this.fillTurnResult(output);
     } catch (err) {
       if (err instanceof AbortedError) {
+        this.logger?.warn?.('LLM 调用被中止（AbortedError）', {
+          run_id: ctx.runId,
+          interact_id: ctx.interactId,
+          session_key: ctx.sessionKey,
+          round: ctx.iterations + 1,
+          error: err.message,
+        });
         return { ok: false, verdict: LoopStopReason.Aborted, error: err.message };
       }
       throw err;
@@ -462,7 +479,7 @@ export class AgentLoopService {
     input.interact_id = ctx.interactId;
     input.work_id = ctx.runId;
     input.system = ctx.system;
-    input.messages = await this.prepareModelMessages(ctx.sessionId);
+    input.messages = await this.prepareModelMessages(ctx.sessionId, ctx.metrics);
     if (!ctx.finalTurn) {
       input.tools = ctx.specs.map((spec) => ({
         tool_id: spec.id,
@@ -476,6 +493,7 @@ export class AgentLoopService {
     input.idle_watchdog_ms = ctx.idleWatchdogMs;
     input.signal = ctx.controller.signal;
     input.on_event = (event) => this.streamHandler(ctx, event);
+
     // 过程可观测：当轮上下文构建完成（system prompt + wire 消息即当轮 prompt 输入侧）
     const round = ctx.iterations + 1;
     ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
@@ -540,13 +558,13 @@ export class AgentLoopService {
   // 持久化派生（消息中心）
   // -------------------------------------------------------------------------
 
-  /** 会话持久化消息 → wire 消息（逻辑控制；Part 派生） */
-  private async prepareModelMessages(sessionId: string): Promise<LLMMessage[]> {
+  /** 会话持久化消息 → wire 消息（逻辑控制；Part 派生；透传 metrics） */
+  private async prepareModelMessages(sessionId: string, metrics?: Metrics): Promise<LLMMessage[]> {
     const soIn = new SoMessagesInput();
     soIn.session_id = sessionId;
     soIn.limit = LOOP_MESSAGE_LIMIT;
     const soOut = new SoMessagesOutput();
-    await this.session.soMessages(soIn, soOut, new SessionCtx());
+    await this.session.soMessages(soIn, soOut, new SessionCtx(), metrics);
     const wire: LLMMessage[] = [];
     for (const message of soOut.messages) {
       if (message.role === MessageRole.User) {
@@ -598,7 +616,7 @@ export class AgentLoopService {
     };
   }
 
-  /** 持久化 assistant 轮（逻辑控制）：消息 + reasoning/text/tool Parts + 事件 */
+  /** 持久化 assistant 轮（逻辑控制）：消息 + reasoning/text/tool Parts + 事件；透传 metrics */
   private async persistAssistantTurn(ctx: LoopRunContext, turn: LLMTurnResult): Promise<void> {
     ctx.iterations += 1;
     ctx.inputTokens += turn.inputTokens ?? 0;
@@ -610,7 +628,7 @@ export class AgentLoopService {
     add.content = turn.text ?? '';
     add.run_id = ctx.runId;
     add.token_count = turn.outputTokens;
-    await this.session.addMessage(add, messageOut, new SessionCtx());
+    await this.session.addMessage(add, messageOut, new SessionCtx(), ctx.metrics);
     ctx.lastMessageId = messageOut.message_id;
     await this.persistTurnParts(ctx, messageOut.message_id, turn);
   }
@@ -644,7 +662,7 @@ export class AgentLoopService {
   // ===== 修改后的方法（2026-09-09）：reasoning/text Part 直接收敛为 completed 终态 =====
   // 原实现在 turn 结束时直存 Part，状态停留 pending（与 tool Part 的状态机不一致），
   // 导致 runtime_message_part 中思考/回复 Part 恒为 pending；直存即完成，无需经过 running。
-  /** 新增 Part 并发布 part.created（逻辑控制）；直存 Part 落库即终态 completed */
+  /** 新增 Part 并发布 part.created（逻辑控制）；直存 Part 落库即终态 completed；透传 metrics */
   private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
     const input = new AddPartInput();
     input.message_id = messageId;
@@ -652,15 +670,15 @@ export class AgentLoopService {
     input.part_type = partType;
     input.content = content;
     const output = new AddPartOutput();
-    await this.session.addPart(input, output, new SessionCtx());
+    await this.session.addPart(input, output, new SessionCtx(), ctx.metrics);
     await this.publishPartCreated(ctx, messageId, output.part_id, partType);
     const upd = new UpdatePartInput();
     upd.part_id = output.part_id;
     upd.status = PartStatus.Completed;
-    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
+    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx(), ctx.metrics);
   }
 
-  /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制） */
+  /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制；透传 metrics） */
   private async addToolPart(ctx: LoopRunContext, messageId: string, call: ParsedToolCall): Promise<void> {
     const input = new AddPartInput();
     input.message_id = messageId;
@@ -669,7 +687,7 @@ export class AgentLoopService {
     input.tool_id = call.tool_id;
     input.input_json = JSON.stringify({ tool_call_id: call.id, arguments: call.arguments });
     const output = new AddPartOutput();
-    await this.session.addPart(input, output, new SessionCtx());
+    await this.session.addPart(input, output, new SessionCtx(), ctx.metrics);
     await this.publishPartCreated(ctx, messageId, output.part_id, PartType.Tool, call.tool_id);
   }
 
@@ -787,16 +805,16 @@ export class AgentLoopService {
     }
   }
 
-  /** 标记 tool Part running 并发布 tool.launch（逻辑控制） */
+  /** 标记 tool Part running 并发布 tool.launch（逻辑控制；透传 metrics） */
   private async markPartRunning(ctx: LoopRunContext, partId: string, call: ParsedToolCall): Promise<void> {
     const upd = new UpdatePartInput();
     upd.part_id = partId;
     upd.status = PartStatus.Running;
-    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
+    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx(), ctx.metrics);
     ctx.report?.pushBusinessEvent(BusinessEvent.ToolStarted, { part_id: partId, tool_id: call.tool_id, input: call.arguments });
   }
 
-  /** 执行工具（逻辑控制；execTool 配对结果语义） */
+  /** 执行工具（逻辑控制；execTool 配对结果语义；透传 metrics） */
   private async execLoopTool(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number }> {
     const input = new ExecToolInput();
     input.tool_id = call.tool_id;
@@ -810,11 +828,11 @@ export class AgentLoopService {
       ctx.report?.pushBusinessEvent(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });
     };
     const output = new ExecToolOutput();
-    await this.tool.execTool(input, output, new ToolCtx());
+    await this.tool.execTool(input, output, new ToolCtx(), ctx.metrics, ctx.report);
     return output.result;
   }
 
-  /** 完成配对：Part 状态机 + tool.result 事件（逻辑控制） */
+  /** 完成配对：Part 状态机 + tool.result 事件（逻辑控制；透传 metrics） */
   private async completeToolPart(ctx: LoopRunContext, partId: string, call: ParsedToolCall, result: { status: string; output: string; elapsed_ms?: number },
   ): Promise<void> {
     const upd = new UpdatePartInput();
@@ -822,7 +840,7 @@ export class AgentLoopService {
     upd.status = result.status === 'ok' ? PartStatus.Completed : PartStatus.Error;
     upd.output_json = result.output;
     upd.elapsed_ms = result.elapsed_ms;
-    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx());
+    await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx(), ctx.metrics);
     ctx.report?.pushBusinessEvent(BusinessEvent.ToolResult, { part_id: partId, tool_id: call.tool_id, status: result.status, output: result.output, elapsed_ms: result.elapsed_ms });
   }
 
@@ -864,6 +882,18 @@ export class AgentLoopService {
     this.flushDeltaBuffer(ctx);
     this.runControllers.delete(ctx.runId);
     const phase = ctx.stopReason === LoopStopReason.Stop ? RunPhase.End : RunPhase.Error;
+    if (phase === RunPhase.Error) {
+      this.logger?.warn?.('Agent 循环异常结束', {
+        run_id: ctx.runId,
+        interact_id: ctx.interactId,
+        session_key: ctx.sessionKey,
+        stop_reason: ctx.stopReason,
+        iterations: ctx.iterations,
+        error: ctx.error,
+        input_tokens: ctx.inputTokens,
+        output_tokens: ctx.outputTokens,
+      });
+    }
     // 启用 deferFinalReply 时，正常完成的 run.finished 延迟由 RunGateway 在 评估+写作 全部执行完成后发布
     if (ctx.deferFinalReply && phase === RunPhase.End) {
       return;

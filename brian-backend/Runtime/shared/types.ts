@@ -18,8 +18,8 @@ export type {
   TokenUsage,
 } from '@brian-agent/base';
 
-// 业务事件枚举（全库唯一注册点在 Base/shared/base/BusinessEvent.ts）
-export { BusinessEvent } from '@brian-agent/base';
+// 业务事件枚举与时间线样式枚举（全库唯一注册点在 Base/shared/base/BusinessEvent.ts）
+export { BusinessEvent, TimelineItemKind } from '@brian-agent/base';
 
 // 类型化取消（OpenClaw turn-interruption 范式）
 export { AbortedError } from '@brian-agent/base';
