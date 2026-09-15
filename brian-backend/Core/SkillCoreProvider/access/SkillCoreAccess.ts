@@ -47,7 +47,7 @@ import {
  *
  * const output = new MatchSkillOutput();
  * await skillCore.matchSkill(
- *   { agent_id: '...', context_id: '...', interact_id: '...' },
+ *   { agent_id: '...', context_id: '...', run_id: '...' },
  *   output, new SkillCoreContext(),
  * );
  * ```

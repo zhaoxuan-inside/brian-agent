@@ -33,7 +33,7 @@ describe('PlannerAgent', () => {
     it('TC-PA-001: 生成单节点 DAG', async () => {
       const out = new PlanOutput();
       await planner.execPlan(Object.assign(new PlanInput(), {
-        work_id: `w-${Math.random().toString(36).slice(2, 8)}`, interact_id: 'i1', task_content: 'simple task',
+        work_id: `w-${Math.random().toString(36).slice(2, 8)}`, run_id: 'i1', task_content: 'simple task',
       }), out, new PlannerAgentContext());
       expect(out.plan_id).toBeTruthy();
       expect(out.task_dag.nodes.length).toBeGreaterThanOrEqual(1);
@@ -41,8 +41,8 @@ describe('PlannerAgent', () => {
 
     it('TC-PA-002: plan_id 唯一', async () => {
       const o1 = new PlanOutput(); const o2 = new PlanOutput();
-      await planner.execPlan(Object.assign(new PlanInput(), { work_id: `wa-${Math.random().toString(36).slice(2, 8)}`, interact_id: 'i1', task_content: 'a' }), o1, new PlannerAgentContext());
-      await planner.execPlan(Object.assign(new PlanInput(), { work_id: `wb-${Math.random().toString(36).slice(2, 8)}`, interact_id: 'i2', task_content: 'b' }), o2, new PlannerAgentContext());
+      await planner.execPlan(Object.assign(new PlanInput(), { work_id: `wa-${Math.random().toString(36).slice(2, 8)}`, run_id: 'i1', task_content: 'a' }), o1, new PlannerAgentContext());
+      await planner.execPlan(Object.assign(new PlanInput(), { work_id: `wb-${Math.random().toString(36).slice(2, 8)}`, run_id: 'i2', task_content: 'b' }), o2, new PlannerAgentContext());
       expect(o1.plan_id).not.toBe(o2.plan_id);
     });
   });
@@ -74,7 +74,7 @@ describe('PlannerAgent', () => {
       const p = makePlannerWithLlm({ nodes, edges: [] });
       const out = new PlanHierarchicalOutput();
       await p.planHierarchical(Object.assign(new PlanHierarchicalInput(), {
-        work_id: 'w-ph-1', interact_id: 'i1', task_content: '研究Agent',
+        work_id: 'w-ph-1', run_id: 'i1', task_content: '研究Agent',
       }), out, new PlannerAgentContext());
 
       expect(out.plan_id).toBeTruthy();
@@ -100,7 +100,7 @@ describe('PlannerAgent', () => {
       });
       const out = new PlanHierarchicalOutput();
       await p.planHierarchical(Object.assign(new PlanHierarchicalInput(), {
-        work_id: 'w-ph-2', interact_id: 'i2', task_content: '研究Agent',
+        work_id: 'w-ph-2', run_id: 'i2', task_content: '研究Agent',
       }), out, new PlannerAgentContext());
 
       expect(out.plan_id).toBeTruthy();

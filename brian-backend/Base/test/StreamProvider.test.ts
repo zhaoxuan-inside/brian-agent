@@ -76,14 +76,14 @@ describe('StreamProvider', () => {
       recent_works_count: 3,
       user_profile_matched: true,
     }, {
-      interact_id: 'interact-1',
+      run_id: 'interact-1',
       work_id: 'work-1',
     });
 
     expect(frames.length).toBe(1);
     const msg = frames[0];
     expect(msg.session_id).toBe('s-100');
-    expect(msg.interact_id).toBe('interact-1');
+    expect(msg.run_id).toBe('interact-1');
     expect(msg.work_id).toBe('work-1');
     expect(msg.event).toBe('context_build');
     expect(msg.msg_type).toBe('CONTEXT');
@@ -107,7 +107,7 @@ describe('StreamProvider', () => {
 
     const testText = '通用人工智能（AGI）是指具有与人类相当或超越人类智力水平的机器智能。';
     await streamAccess.pushText('s-200', 'text_chunk', testText, {
-      interact_id: 'i-200',
+      run_id: 'i-200',
       work_id: 'w-200',
       agent_id: 'writer-1',
     });

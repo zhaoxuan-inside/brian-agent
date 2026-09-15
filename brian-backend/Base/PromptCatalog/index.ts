@@ -12,5 +12,5 @@ export {
 } from './catalog';
 export type { BuiltinPromptDef, PromptId } from './catalog';
 
-export { formatContextCategories } from './contextFormatter';
+export { formatContextCategories, formatDynamicContext } from './contextFormatter';
 export type { ContextItemLike, ContextCategoriesLike, ContextOutputLike } from './contextFormatter';

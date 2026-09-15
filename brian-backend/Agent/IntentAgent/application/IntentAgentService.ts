@@ -111,6 +111,11 @@ export class IntentAgentService {
 
     const llmIn = Object.assign(new ExecLLMInput(), {
       prompt: promptOut.prompt,
+      // Token 归因维度：意图识别 Agent 的 LLM 调用入账（work_id 为意图识别执行标识）
+      session_id: input.session_id || '',
+      run_id: input.run_id || input.work_id || '',
+      work_id: input.work_id || '',
+      caller: 'IntentAgentService.understandRequirement',
     });
     const llmOut = new ExecLLMOutput();
     await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext(), _metrics, _report);

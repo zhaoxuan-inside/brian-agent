@@ -14,9 +14,6 @@ import type {
   LLMCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess, InfoCoreAccess,
 } from '@brian-agent/core';
 import {
-  simpleSimilarity,
-} from '@brian-agent/core';
-import {
   AgeSkillInput, AgeSkillOutput, AgeSoulInput, AgeSoulOutput,
 } from '@brian-agent/core';
 import {
@@ -79,21 +76,21 @@ export class AgentBuilderService {
   async buildAgent(input: BuildAgentInput, output: BuildAgentOutput, ctx: AgentBuilderContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
-    const libCtx = this.toLibCtx(ctx, input.interact_id);
+    const libCtx = this.toLibCtx(ctx, input.run_id);
     const agentId = IdGenerator.generate();
     const sessionId = ctx.session_id || '';
     const workId = ctx.work_id || '';
-    const interactId = input.interact_id || ctx.interact_id || '';
+    const runId = input.run_id || ctx.run_id || '';
 
     if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
       await this.streamAccess.pushEvent(sessionId, 'agent_building', 'AGENT_SPEC', {
         status: 'ANALYZING',
         task_content: input.task_content,
-      }, { work_id: workId, interact_id: interactId, agent_id: agentId });
+      }, { work_id: workId, run_id: runId, agent_id: agentId });
     }
 
     // 先通过 Core 为该 agent 匹配 LLM，供任务分析使用（禁止 llm_model LIMIT 1）
-    const analysisLlm = await this.matchLlmForAgent(agentId, input.interact_id, _metrics, _report);
+    const analysisLlm = await this.matchLlmForAgent(agentId, input.run_id, _metrics, _report);
     const analysis = await this.analyzeTask(input, config, analysisLlm, _metrics, _report);
     const signature = analysis.signature;
     const complexity = analysis.complexity;
@@ -117,7 +114,7 @@ export class AgentBuilderService {
           Object.assign(new RecordAgentUsageInput(), {
             agent_id: matchOut.agent_id,
             work_id: ctx.work_id || '',
-            interact_id: input.interact_id || ctx.interact_id || '',
+            run_id: input.run_id || ctx.run_id || '',
           }),
           new RecordAgentUsageOutput(),
           libCtx,
@@ -133,7 +130,7 @@ export class AgentBuilderService {
             matched_agent_id: matchOut.agent_id,
             reused: true,
             matched_by: matchOut.matched_by || 'SIMILARITY',
-          }, { work_id: workId, interact_id: interactId, agent_id: agentId });
+          }, { work_id: workId, run_id: runId, agent_id: agentId });
         }
         return true;
       }
@@ -160,7 +157,7 @@ export class AgentBuilderService {
       Object.assign(new MatchLLMInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || ctx.interact_id || '',
+        run_id: input.run_id || ctx.run_id || '',
       }),
       llmOut,
       new LLMCoreContext(),
@@ -174,7 +171,7 @@ export class AgentBuilderService {
       Object.assign(new MatchSkillInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
       }),
       skillOut,
       new SkillCoreContext(),
@@ -187,7 +184,7 @@ export class AgentBuilderService {
       Object.assign(new MatchMcpInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
       }),
       mcpOut,
       new McpCoreContext(),
@@ -200,7 +197,7 @@ export class AgentBuilderService {
       Object.assign(new MatchSoulInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
         task_content: input.task_content,
         task_domain: analysis.domain,
       }),
@@ -260,7 +257,7 @@ export class AgentBuilderService {
         Object.assign(new OptSkillInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: input.interact_id || '',
+          run_id: input.run_id || '',
           skill_id: sid.skill_id,
         }),
         new OptSkillOutput(),
@@ -272,7 +269,7 @@ export class AgentBuilderService {
         Object.assign(new OptMcpInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: input.interact_id || '',
+          run_id: input.run_id || '',
           mcp_id: mid,
         }),
         new OptMcpOutput(),
@@ -284,7 +281,7 @@ export class AgentBuilderService {
         Object.assign(new OptSoulInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: input.interact_id || '',
+          run_id: input.run_id || '',
           soul_id: soulOut.soul_id,
         }),
         new OptSoulOutput(),
@@ -298,7 +295,7 @@ export class AgentBuilderService {
         const saveIn = Object.assign(new SaveInfoInput(), {
           session_id: sessionId,
           work_id: workId,
-          interact_id: interactId,
+          run_id: runId,
           info_type: InfoType.AGENT,
           info_creator_role: 'LEARNING',
           info_creator_id: agentId,
@@ -336,7 +333,7 @@ export class AgentBuilderService {
         soul: soulOut.soul,
         skills: (skillOut.skills || []).map(s => s.skill_brief || s.skill_id),
         mcps: mcpOut.mcp_ids || [],
-      }, { work_id: workId, interact_id: interactId, agent_id: agentId });
+      }, { work_id: workId, run_id: runId, agent_id: agentId });
     }
 
     // 自动优化由 Evolutor 评估后经 MQ 触发 optimizeAgent，auto_optimize 开关在 optimizeAgent 入口读取
@@ -356,7 +353,7 @@ export class AgentBuilderService {
       return true;
     }
 
-    const libCtx = this.toLibCtx(ctx, input.interact_id);
+    const libCtx = this.toLibCtx(ctx, input.run_id);
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(
       Object.assign(new GetAgentInput(), { agent_id: input.agent_id }),
@@ -435,7 +432,7 @@ export class AgentBuilderService {
       Object.assign(new MatchLLMInput(), {
         agent_id: input.agent_id,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
       }),
       llmOut,
       new LLMCoreContext(),
@@ -449,7 +446,7 @@ export class AgentBuilderService {
       Object.assign(new OptSoulInput(), {
         agent_id: input.agent_id,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
         soul_id: agent.soul_id,
       }),
       soulOut,
@@ -475,7 +472,7 @@ export class AgentBuilderService {
       Object.assign(new MatchSkillInput(), {
         agent_id: input.agent_id,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
       }),
       skillMatchOut,
       new SkillCoreContext(),
@@ -503,7 +500,7 @@ export class AgentBuilderService {
         Object.assign(new OptSkillInput(), {
           agent_id: input.agent_id,
           context_id: ctx.session_id || '',
-          interact_id: input.interact_id || '',
+          run_id: input.run_id || '',
           skill_id: skillId,
         }),
         new OptSkillOutput(),
@@ -516,7 +513,7 @@ export class AgentBuilderService {
       Object.assign(new MatchMcpInput(), {
         agent_id: input.agent_id,
         context_id: ctx.session_id || '',
-        interact_id: input.interact_id || '',
+        run_id: input.run_id || '',
       }),
       mcpMatchOut,
       new McpCoreContext(),
@@ -544,7 +541,7 @@ export class AgentBuilderService {
         Object.assign(new OptMcpInput(), {
           agent_id: input.agent_id,
           context_id: ctx.session_id || '',
-          interact_id: input.interact_id || '',
+          run_id: input.run_id || '',
           mcp_id: mcpId,
         }),
         new OptMcpOutput(),
@@ -598,7 +595,7 @@ export class AgentBuilderService {
     const agentId = IdGenerator.generate();
     // LLM 绑定只存在于 LLMProvider 的 agent_llm，构建时经 matchLLM 写入（此处解析仅用于任务分析）
     // matchLLM 有副作用：写入 agent_llm 绑定（返回值此处不使用）
-    await this.matchLlmForAgent(agentId, ctx.interact_id || '');
+    await this.matchLlmForAgent(agentId, ctx.run_id || '');
     let soulId = '';
     if (agentType !== 'SUMMARY' && agentType !== 'INTENT') {
       const soulOut = new MatchSoulOutput();
@@ -606,7 +603,7 @@ export class AgentBuilderService {
         Object.assign(new MatchSoulInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: ctx.interact_id || '',
+          run_id: ctx.run_id || '',
         }),
         soulOut,
         new SoulCoreContext(),
@@ -636,7 +633,7 @@ export class AgentBuilderService {
         Object.assign(new OptSoulInput(), {
           agent_id: agentId,
           context_id: '',
-          interact_id: '',
+          run_id: '',
           soul_id: soulId,
         }),
         new OptSoulOutput(),
@@ -685,14 +682,14 @@ export class AgentBuilderService {
     return true;
   }
 
-  private async matchLlmForAgent(agentId: string, interactId: string, metrics?: Metrics, report?: Report): Promise<string> {
+  private async matchLlmForAgent(agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<string> {
     const llmOut = new MatchLLMOutput();
     try {
       await this.llmCore.matchLLM(
         Object.assign(new MatchLLMInput(), {
           agent_id: agentId,
           context_id: '',
-          interact_id: interactId || '',
+          run_id: runId || '',
         }),
         llmOut,
         new LLMCoreContext(),
@@ -738,7 +735,7 @@ export class AgentBuilderService {
         if (prompt) {
           const llmOut = new ExecLLMOutput();
           await this.llmAccess.execLLM(
-            Object.assign(new ExecLLMInput(), { id: llmId, prompt }),
+            Object.assign(new ExecLLMInput(), { id: llmId, prompt, caller: 'AgentBuilderService.buildAgent.taskAnalysis' }),
             llmOut,
             new LLMContext(),
             metrics,
@@ -801,11 +798,11 @@ export class AgentBuilderService {
     };
   }
 
-  private toLibCtx(ctx: AgentBuilderContext, interactId: string): AgentLibraryContext {
+  private toLibCtx(ctx: AgentBuilderContext, runId: string): AgentLibraryContext {
     return Object.assign(new AgentLibraryContext(), {
       session_id: ctx.session_id,
       work_id: ctx.work_id,
-      interact_id: interactId || ctx.interact_id,
+      run_id: runId || ctx.run_id,
     });
   }
 
@@ -872,6 +869,7 @@ export class AgentBuilderService {
       execInput.max_tokens = 200;
 
       const execOutput = new ExecLLMOutput();
+      execInput.caller = 'AgentBuilderService.matchPromptTemplate.llmScore';
       const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
       if (!ok || !execOutput.result) return '';
 
@@ -918,6 +916,7 @@ export class AgentBuilderService {
         '只输出说明文本，不要任何前缀或引号。',
       ].filter(Boolean).join('\n');
       const execOutput = new ExecLLMOutput();
+      execInput.caller = 'AgentBuilderService.generateAgentPurpose';
       const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
       const text = (execOutput.result ?? '').trim();
       return ok && text ? text.slice(0, 200) : fallback;

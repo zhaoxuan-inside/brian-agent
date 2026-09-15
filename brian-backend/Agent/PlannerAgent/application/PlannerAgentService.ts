@@ -50,7 +50,7 @@ function mapPlan(row: Record<string, unknown>): AgentPlanRecord {
     updated: Number(row.updated),
     plan_id: String(row.plan_id),
     work_id: String(row.work_id),
-    interact_id: String(row.interact_id),
+    run_id: String(row.run_id),
     task_dag: String(row.task_dag),
     parent_plan_id: String(row.parent_plan_id ?? ''),
   };
@@ -69,7 +69,7 @@ export class PlannerAgentService {
 
   async execPlan(input: PlanInput, output: PlanOutput, ctx: PlannerAgentContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
     const planCtx = await this.decomposeOnce(input, ctx);
-    output.plan_id = await this.persistPlan(planCtx.dag, input.work_id, input.interact_id, ctx, '');
+    output.plan_id = await this.persistPlan(planCtx.dag, input.work_id, input.run_id, ctx, '');
     output.task_dag = planCtx.dag;
     output.clarifications = planCtx.clarifications;
     return true;
@@ -97,7 +97,7 @@ export class PlannerAgentService {
       dag = this.limitDagSize(dag, planCtx.maxSub);
     }
     this.validateDag(dag, planCtx.maxSub);
-    output.plan_id = await this.persistPlan(dag, input.work_id, input.interact_id, ctx, '');
+    output.plan_id = await this.persistPlan(dag, input.work_id, input.run_id, ctx, '');
     output.task_dag = dag;
     output.clarifications = planCtx.clarifications;
     return true;
@@ -121,7 +121,7 @@ export class PlannerAgentService {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
-      interact_id: input.interact_id || ctx.interact_id,
+      run_id: input.run_id || ctx.run_id,
     });
     const buildOut = new BuildSystemAgentOutput();
     await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), buildOut, builderCtx);
@@ -182,13 +182,13 @@ export class PlannerAgentService {
   private async persistPlan(
     dag: TaskDag,
     workId: string,
-    interactId: string,
+    runId: string,
     ctx: PlannerAgentContext,
     parentPlanId: string,
   ): Promise<string> {
     const planId = IdGenerator.generate();
-    await this.insertPlan(planId, workId, interactId, dag, parentPlanId);
-    await this.savePlanInfo(ctx, workId, interactId, planId, dag);
+    await this.insertPlan(planId, workId, runId, dag, parentPlanId);
+    await this.savePlanInfo(ctx, workId, runId, planId, dag);
     return planId;
   }
 
@@ -406,8 +406,8 @@ export class PlannerAgentService {
     this.validateDag(newDag, 100);
 
     const newPlanId = IdGenerator.generate();
-    await this.insertPlan(newPlanId, old.work_id, old.interact_id, newDag, input.plan_id);
-    await this.savePlanInfo(ctx, old.work_id, old.interact_id, newPlanId, newDag);
+    await this.insertPlan(newPlanId, old.work_id, old.run_id, newDag, input.plan_id);
+    await this.savePlanInfo(ctx, old.work_id, old.run_id, newPlanId, newDag);
 
     output.new_plan_id = newPlanId;
     output.task_dag = newDag;
@@ -509,6 +509,7 @@ export class PlannerAgentService {
           id: llmId,
           prompt,
           ...(system ? { system } : {}),
+          caller: 'PlannerAgent.execPlan',
         }),
         llmOut,
         new LLMContext(),
@@ -602,7 +603,7 @@ export class PlannerAgentService {
   private async insertPlan(
     planId: string,
     workId: string,
-    interactId: string,
+    runId: string,
     dag: TaskDag,
     parentPlanId: string,
   ): Promise<void> {
@@ -613,7 +614,7 @@ export class PlannerAgentService {
       { field: 'updated', value: now },
       { field: 'plan_id', value: planId },
       { field: 'work_id', value: workId },
-      { field: 'interact_id', value: interactId },
+      { field: 'run_id', value: runId },
       { field: 'task_dag', value: JSON.stringify({ ...dag, total_task_count: dag.nodes.length }) },
       { field: 'parent_plan_id', value: parentPlanId },
     ]);
@@ -622,7 +623,7 @@ export class PlannerAgentService {
   private async savePlanInfo(
     ctx: PlannerAgentContext,
     workId: string,
-    interactId: string,
+    runId: string,
     planId: string,
     dag: TaskDag,
   ): Promise<void> {
@@ -632,7 +633,7 @@ export class PlannerAgentService {
         Object.assign(new SaveInfoInput(), {
           session_id: ctx.session_id,
           work_id: workId,
-          interact_id: interactId,
+          run_id: runId,
           info_type: InfoType.ACT,
           info_creator_role: 'AGENT',
           info_creator_id: planId,
@@ -644,8 +645,8 @@ export class PlannerAgentService {
     } catch { /* best-effort */ }
   }
 
-  private async assertPrompt(id: string): Promise<void> {
-    await assertPromptExists(this.promptsAccess, id);
+  private async assertPrompt(id: string, metrics?: Metrics): Promise<void> {
+    await assertPromptExists(this.promptsAccess, id, metrics);
   }
 
   /**
@@ -655,15 +656,16 @@ export class PlannerAgentService {
     templateId: string | undefined,
     builtinId: string,
     variables: Record<string, unknown>,
+    metrics?: Metrics,
   ): Promise<string> {
-    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables);
+    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables, metrics);
   }
 
   /**
    * 通过 Core.matchLLM 解析 PlannerAgent 绑定的 LLM（agent_llm）。
    */
-  private async resolveLlm(agentId: string): Promise<string> {
-    return resolveAgentLlm(this.llmCore, agentId);
+  private async resolveLlm(agentId: string, metrics?: Metrics): Promise<string> {
+    return resolveAgentLlm(this.llmCore, agentId, metrics);
   }
 
   private async getConfig(): Promise<PlannerAgentConfigRecord | null> {

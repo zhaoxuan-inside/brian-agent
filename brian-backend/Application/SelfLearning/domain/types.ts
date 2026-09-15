@@ -1,7 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class SelfLearningContext extends Context {
-  session_id?: string;
   library_id?: string;
 }
 

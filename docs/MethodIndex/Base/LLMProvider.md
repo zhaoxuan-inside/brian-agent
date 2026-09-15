@@ -26,3 +26,4 @@
 | `genLLMAttr` | `input: GenLLMAttrInput, output: GenLLMAttrOutput, context: LLMContext, metrics?: Metric...` | `Promise<boolean>` | 一键补全模型属性（生成简介与模型用途） |
 | `visualizedLLM` | `input: VisualizedLLMInput, output: VisualizedLLMOutput, context: LLMContext, metrics?: ...` | `Promise<boolean>` | 可视化数据 |
 | `enableLLM` | `input: EnableLLMInput, output: EnableLLMOutput, context: LLMContext, metrics?: Metrics,...` | `Promise<boolean>` | 启用/禁用 LLM 组件 |
+| `soTokenUsage` | `input: SoTokenUsageInput, output: SoTokenUsageOutput, context: LLMContext` | `Promise<boolean>` | 按 session / interact / work 分级统计 Token（LLMProvider 明细账求和） |

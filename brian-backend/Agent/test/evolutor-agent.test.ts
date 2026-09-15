@@ -58,7 +58,7 @@ describe('EvolutorAgent', () => {
       await addTestAgent(agentId);
       const out = new EvalWorkAgentOutput();
       await evolutor.evalWorkAgent(Object.assign(new EvalWorkAgentInput(), {
-        agent_id: agentId, work_id: 'w', interact_id: 'i', task_content: 'test', agent_output: 'result', trace_id: 'tr-1',
+        agent_id: agentId, work_id: 'w', run_id: 'i', task_content: 'test', agent_output: 'result', trace_id: 'tr-1',
       }), out, new EvolutorAgentContext());
       expect(out.eval_id).toBeTruthy();
     });
@@ -70,7 +70,7 @@ describe('EvolutorAgent', () => {
         new ConfigEvolutorAgentOutput(), new EvolutorAgentContext());
       const out = new EvalWorkAgentOutput();
       await evolutor.evalWorkAgent(Object.assign(new EvalWorkAgentInput(), {
-        agent_id: agentId, work_id: 'w', interact_id: 'i', task_content: 't', agent_output: 'o', trace_id: 'tr',
+        agent_id: agentId, work_id: 'w', run_id: 'i', task_content: 't', agent_output: 'o', trace_id: 'tr',
       }), out, new EvolutorAgentContext());
       expect(out.need_optimize).toBe(false);
     });
@@ -82,11 +82,11 @@ describe('EvolutorAgent', () => {
         new UpdateAgentOutput(), new AgentLibraryContext());
       for (let i = 0; i < 5; i++) {
         await libSvc.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
-          agent_id: agentId, work_id: `w-${i}`, interact_id: 'i', usage_context: '{}',
+          agent_id: agentId, work_id: `w-${i}`, run_id: 'i', usage_context: '{}',
         }), new RecordAgentUsageOutput(), new AgentLibraryContext());
       }
       await evolutor.evalWorkAgent(Object.assign(new EvalWorkAgentInput(), {
-        agent_id: agentId, work_id: 'w-x', interact_id: 'i', task_content: 't', agent_output: 'o', trace_id: 'tr',
+        agent_id: agentId, work_id: 'w-x', run_id: 'i', task_content: 't', agent_output: 'o', trace_id: 'tr',
       }), new EvalWorkAgentOutput(), new EvolutorAgentContext());
       // (70*5 + 50) / 6 = 400/6 = 66.67 → 67
       const getOut = new GetAgentOutput();
@@ -165,7 +165,7 @@ describe('EvolutorAgent', () => {
         makeAccess(builder), makeAccess(libSvc), NOOP_AGENT_EXECUTION);
       const out = new EvalWriterAgentOutput();
       await traceEvolutor.evalWriterAgent(Object.assign(new EvalWriterAgentInput(), {
-        agent_id: 'writer-1', work_id: 'w-1', interact_id: 'i-1',
+        agent_id: 'writer-1', work_id: 'w-1', run_id: 'i-1',
         user_query: '帮我汇总', final_response: '最终回复',
         agent_results: [{ agent_id: 'a1', task_content: 't1', result: 'r1' }],
       }), out, new EvolutorAgentContext());

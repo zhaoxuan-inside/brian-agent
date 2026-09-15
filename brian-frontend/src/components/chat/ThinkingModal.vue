@@ -2,13 +2,13 @@
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   X, Brain, Loader2, ChevronRight, ChevronDown, Clock3, Zap, Wrench,
-  ShieldCheck, MessagesSquare, ListTree, Check, Bot,
+  ShieldCheck, MessagesSquare, ListTree, Check, Bot, Cpu, FileText, Sparkles, Layers,
   CheckCircle2, XCircle, CircleDot,
 } from '@lucide/vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
 import { answerPermission } from '@/api'
-import type { ThinkingBlock, ThinkingTrace, ThinkingTimelineItem } from '@/api/types'
+import type { ThinkingBlock, ThinkingTrace, ThinkingTimelineItem, ThinkingToolTrace, ThinkingPermissionTrace } from '@/api/types'
 import ThinkingBlockView from '@/components/blocks/ThinkingBlock.vue'
 import ThinkingContext from './ThinkingContext.vue'
 import { renderMarkdown } from '@/utils/markdown'
@@ -76,59 +76,6 @@ interface LiveTimelineItem extends ThinkingTimelineItem {
   key: string
 }
 
-// ===== 原始方法（保留作为参考）：liveTimeline =====
-// const liveTimeline = computed<LiveTimelineItem[]>(() => {
-//   if (targetMsgId.value) return []
-//   const items: LiveTimelineItem[] = []
-//   for (const b of sessionStore.blocks) {
-//     if (b.type === 'ThinkingChain') {
-//       const tb = b as ThinkingBlock
-//       items.push({
-//         key: `think-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
-//         event: 'think.live', title: `思考：${tb.agentInfo?.name || 'Agent'}`,
-//         detail: (tb.content || '').slice(0, 220), kind: 'think', target: 'agent-0',
-//       })
-//       for (const s of tb.steps || []) {
-//         if (s.phase === 'ACT' && s.toolCalls?.length) {
-//           for (const tc of s.toolCalls) {
-//             items.push({
-//               key: `act-${b.id}-${s.iteration}-${tc.toolName}`, seq: b.meta.updatedAt, ts: b.meta.updatedAt,
-//               event: 'tool.live', title: `调用工具：${tc.toolName || 'Tool'}`,
-//               detail: JSON.stringify(tc.params ?? {}).slice(0, 200), kind: 'tool',
-//             })
-//           }
-//         }
-//       }
-//     } else if (b.type === 'ToolInvocation') {
-//       const tb = b as unknown as { toolName?: string; meta: { createdAt: number }; result?: unknown }
-//       const done = b.meta.status === 'done'
-//       const failed = b.meta.status === 'error'
-//       items.push({
-//         key: `tool-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
-//         event: 'tool.live-result', title: `工具${failed ? '失败' : done ? '完成' : '执行中'}：${tb.toolName || 'Tool'}`,
-//         detail: done ? String(JSON.stringify(tb.result ?? '')).slice(0, 220) : '执行中…',
-//         kind: failed ? 'tool-fail' : done ? 'tool-ok' : 'tool', target: `tool-${b.id}`,
-//       })
-//     }
-//   }
-//   for (const m of sessionStore.messages) {
-//     if (m.permission) {
-//       const p = m.permission
-//       const answered = p.status !== 'pending'
-//       items.push({
-//         key: `perm-${p.permissionId}`, seq: m.timestamp, ts: m.timestamp,
-//         event: answered ? 'permission.live-answered' : 'permission.live-asked',
-//         title: answered
-//           ? `授权${p.status === 'allowed' ? '已通过' : '已拒绝'}：${p.toolId}`
-//           : `等待授权：${p.toolId}`,
-//         detail: '', kind: answered ? (p.status === 'allowed' ? 'permission-ok' : 'permission-deny') : 'permission', target: `perm-${p.permissionId}`,
-//       })
-//     }
-//   }
-//   return items.sort((a, b) => a.ts - b.ts)
-// })
-
-// ===== 修改后的方法（2026-09-13）：实时时间线展示业务友好的深度思考与字数统计 =====
 const liveTimeline = computed<LiveTimelineItem[]>(() => {
   if (targetMsgId.value) return []
   const items: LiveTimelineItem[] = []
@@ -207,42 +154,88 @@ const timelineWithElapsed = computed<Array<ThinkingTimelineItem & { elapsedMs: n
   })
 })
 
+// 实时工具/授权所属组件解析（与后端 toolComponentOf 同规则）：skill_exec → Skill、mcp_exec → MCP；
+// 实时路径无 DB 名称解析，名称回退原始 ID（历史 trace 由后端下发解析后的名称）
+const REALTIME_BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate'])
+function realtimeToolComponentOf(toolId: string, params: Record<string, unknown>): { builtin: boolean; kind: 'skill' | 'mcp' | ''; id: string; name: string; subTool: string } {
+  const builtin = REALTIME_BUILTIN_TOOL_IDS.has(toolId)
+  if (toolId === 'skill_exec') {
+    const id = String(params?.skill_id ?? '').trim()
+    return { builtin, kind: 'skill', id, name: id, subTool: '' }
+  }
+  if (toolId === 'mcp_exec') {
+    const id = String(params?.mcp_id ?? '').trim()
+    return { builtin, kind: 'mcp', id, name: id, subTool: String(params?.tool_name ?? '') }
+  }
+  return { builtin, kind: '', id: '', name: '', subTool: '' }
+}
+
 // 统一工具 / 授权：历史用 trace，任务进行中用实时 blocks/messages
-const toolTraces = computed(() => {
+const toolTraces = computed<Array<ThinkingToolTrace>>(() => {
   if (historyTrace.value?.tools?.length) return historyTrace.value.tools
   return sessionStore.blocks
     .filter((b) => b.type === 'ToolInvocation')
     .map((b, i) => {
       const t = b as unknown as { toolName?: string; params?: unknown; result?: unknown; meta: { status: string } }
+      const toolId = String(t.toolName || 'Tool')
+      const params = (t.params ?? {}) as Record<string, unknown>
+      const comp = realtimeToolComponentOf(toolId, params)
       return {
         index: i + 1, partId: b.id, targetKey: `tool-${b.id}`,
-        toolId: String(t.toolName || 'Tool'),
-        params: t.params ?? {}, result: t.result ?? '',
+        toolId,
+        params, result: t.result ?? '',
         status: String(t.meta.status), elapsedMs: 0, tokenCount: 0,
+        builtin: comp.builtin,
+        componentKind: comp.kind,
+        componentId: comp.id,
+        componentName: comp.name,
+        componentSubTool: comp.subTool,
       }
     })
 })
 
-const permissionTraces = computed(() => {
+const permissionTraces = computed<Array<ThinkingPermissionTrace>>(() => {
   if (historyTrace.value?.permissions?.length) return historyTrace.value.permissions
   return sessionStore.messages
     .filter((m) => m.permission)
-    .map((m) => ({
-      permissionId: m.permission!.permissionId,
-      targetKey: `perm-${m.permission!.permissionId}`,
-      toolId: m.permission!.toolId,
-      input: m.permission!.input ?? {},
-      status: m.permission!.status,
-      askedAt: m.permission!.askedAt ?? m.timestamp,
-      answeredAt: m.permission!.answeredAt ?? 0,
-      autoApproved: false,
-    }))
+    .map((m) => {
+      const permInput = (m.permission!.input ?? {}) as Record<string, unknown>
+      const comp = realtimeToolComponentOf(m.permission!.toolId, permInput)
+      return {
+        permissionId: m.permission!.permissionId,
+        targetKey: `perm-${m.permission!.permissionId}`,
+        toolId: m.permission!.toolId,
+        input: permInput,
+        status: m.permission!.status,
+        askedAt: m.permission!.askedAt ?? m.timestamp,
+        answeredAt: m.permission!.answeredAt ?? 0,
+        autoApproved: false,
+        builtin: comp.builtin,
+        componentKind: comp.kind,
+        componentId: comp.id,
+        componentName: comp.name,
+        componentSubTool: comp.subTool,
+      }
+    })
 })
 
 const pendingPermissions = computed(() => permissionTraces.value.filter((p) => p.status === 'pending'))
 const answeredPermissions = computed(() => permissionTraces.value.filter((p) => p.status !== 'pending'))
 
 const runOverview = computed(() => historyTrace.value?.run ?? null)
+// 运行概览「组件清单」：本次问答用到的 Agent/LLM/Prompt/Soul/Skill/MCP（名称显示、悬浮可见 ID）
+const overviewComponents = computed<Array<{ kind: string; id: string; name: string; icon: unknown }>>(() => {
+  const c = runOverview.value?.components
+  if (!c) return []
+  const list: Array<{ kind: string; id: string; name: string; icon: unknown }> = []
+  if (c.agent?.id || c.agent?.name) list.push({ kind: 'Agent', id: c.agent.id, name: c.agent.name, icon: Bot })
+  if (c.llm?.id || c.llm?.name) list.push({ kind: 'LLM', id: c.llm.id, name: c.llm.name, icon: Cpu })
+  if (c.prompt?.id || c.prompt?.name) list.push({ kind: 'Prompt', id: c.prompt.id, name: c.prompt.name, icon: FileText })
+  if (c.soul?.id || c.soul?.name) list.push({ kind: 'Soul', id: c.soul.id, name: c.soul.name, icon: Sparkles })
+  for (const s of c.skills || []) list.push({ kind: 'Skill', id: s.id, name: s.name, icon: Wrench })
+  for (const m of c.mcps || []) list.push({ kind: 'MCP', id: m.id, name: m.name, icon: Layers })
+  return list
+})
 // 上下文轮次：历史取 trace.contextRounds（回放），任务进行中取实时 context.built 累积的轮次
 const contextRounds = computed(() => historyTrace.value?.contextRounds ?? chatUi.liveContextRounds ?? [])
 const runNodes = computed(() => historyTrace.value?.nodes ?? [])
@@ -719,6 +712,22 @@ watch(
                     <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mt-0.5">{{ runOverview.permissionCount }} 次</p>
                   </div>
                 </div>
+                <!-- 本次问答组件清单：Agent/LLM/Prompt/Soul/Skill/MCP 名称+ID（观测本次执行用到了哪些组件） -->
+                <div v-if="overviewComponents" class="mt-3 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-800">
+                  <p class="text-[10px] font-medium text-apple-gray-400 mb-1.5">组件清单</p>
+                  <div class="flex items-center gap-1.5 flex-wrap text-[11px]">
+                    <span
+                      v-for="c in overviewComponents"
+                      :key="`${c.kind}-${c.id || c.name}`"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300"
+                      :title="c.id ? `${c.kind}：${c.name}（ID：${c.id}）` : c.kind"
+                    >
+                      <component :is="c.icon" :size="11" class="text-apple-gray-400" />
+                      <span class="font-medium">{{ c.name || '（未知）' }}</span>
+                    </span>
+                    <span v-if="overviewComponents.length === 0" class="text-apple-gray-300">（无组件绑定）</span>
+                  </div>
+                </div>
               </section>
 
               <!-- 基础上下文（ContextProvider 提供）：引用消息/画像/策略 + 每轮上下文轮次 -->
@@ -866,6 +875,15 @@ watch(
                           <span class="w-5 h-5 rounded-md bg-brian-blue/10 text-brian-blue text-[10px] font-bold flex items-center justify-center flex-shrink-0">{{ t.index }}</span>
                           <span class="text-xs font-mono font-medium text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ t.toolId }}</span>
                           <span
+                            v-if="t.componentName"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
+                            :title="`${t.componentKind === 'skill' ? 'Skill' : 'MCP'}：${t.componentName}（ID：${t.componentId}）${t.componentSubTool ? ` · 工具：${t.componentSubTool}` : ''}`"
+                          >{{ t.componentName }}<template v-if="t.componentSubTool"> · {{ t.componentSubTool }}</template></span>
+                          <span
+                            v-else-if="t.builtin"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
+                          >内置</span>
+                          <span
                             class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
                             :class="toolStatusMeta(t.status).cls"
                           >
@@ -875,6 +893,12 @@ watch(
                           <ChevronRight :size="13" class="ml-auto text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedTools.has(String(t.partId || t.index)) }" />
                         </button>
                         <div v-if="expandedTools.has(String(t.partId || t.index))" class="px-3 py-2.5 space-y-2 border-t border-apple-gray-100 dark:border-apple-gray-800">
+                          <div v-if="t.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-[11px]">
+                            <span class="text-apple-gray-400">所属{{ t.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
+                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${t.componentId}`">
+                              {{ t.componentName }}<span v-if="t.componentId" class="ml-1.5 font-mono text-[10px] text-apple-gray-400">{{ t.componentId }}</span>
+                            </span>
+                          </div>
                           <div>
                             <p class="text-[10px] font-medium text-apple-gray-400 mb-1">输入参数</p>
                             <pre v-if="formatJson(t.params)" class="text-[11px] font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(t.params) }}</pre>
@@ -909,6 +933,15 @@ watch(
                           <ShieldCheck :size="13" class="flex-shrink-0" :class="permStatusMeta(p.status).iconCls" />
                           <span class="text-xs font-mono text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ p.toolId }}</span>
                           <span
+                            v-if="p.componentName"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
+                            :title="`${p.componentKind === 'skill' ? 'Skill' : 'MCP'}：${p.componentName}（ID：${p.componentId}）${p.componentSubTool ? ` · 工具：${p.componentSubTool}` : ''}`"
+                          >{{ p.componentName }}<template v-if="p.componentSubTool"> · {{ p.componentSubTool }}</template></span>
+                          <span
+                            v-else-if="p.builtin"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
+                          >内置</span>
+                          <span
                             class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
                             :class="permStatusMeta(p.status).cls"
                           >
@@ -919,6 +952,12 @@ watch(
                           <ChevronRight :size="13" class="text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`) }" />
                         </button>
                         <div v-if="expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800 text-[11px]">
+                          <div v-if="p.componentName" class="grid grid-cols-[96px_1fr] gap-2">
+                            <span class="text-apple-gray-400">所属{{ p.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
+                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${p.componentId}`">
+                              {{ p.componentName }}<span v-if="p.componentId" class="ml-1.5 font-mono text-[10px] text-apple-gray-400">{{ p.componentId }}</span>
+                            </span>
+                          </div>
                           <div class="flex items-center gap-3 text-apple-gray-400">
                             <span>询问：{{ formatTs(p.askedAt) || '—' }}</span>
                             <span>应答：{{ formatTs(p.answeredAt) || '—' }}</span>

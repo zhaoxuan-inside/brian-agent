@@ -16,6 +16,8 @@ import {
   GraphInfoInput, GraphInfoOutput,
   SoCitationEdgesInput, SoCitationEdgesOutput,
   DelInfoGraphInput, DelInfoGraphOutput,
+  // ===== 新增（2026-09-15 记忆集中）：会话级记忆删除统一走 InfoCore =====
+  DelInfoBySessionInput, DelInfoBySessionOutput,
   KeywordKInfoInput, KeywordKInfoOutput,
   PinInfoInput, PinInfoOutput,
   SaveInfoInput, SaveInfoOutput,
@@ -50,6 +52,10 @@ import {
   AddSessionInput,
   AddSessionOutput,
   SessionContext,
+  RUNTIME_SESSION_TABLE,
+  RUNTIME_MESSAGE_TABLE,
+  RUNTIME_MESSAGE_PART_TABLE,
+  RUNTIME_RUN_TABLE,
 } from '@brian-agent/runtime';
 
 /** Chat v2 运行时依赖（Runtime v2 接线；缺省走旧编排链路） */
@@ -164,9 +170,26 @@ export class ChatService {
     submitIn.session_key = sessionId;
     submitIn.session_id = sessionId;
     submitIn.user_message = input.msg_content;
-    submitIn.interact_id = traceId;
     const submitOut = new SubmitRunOutput();
     await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report2);
+    // ===== 修改后（2026-09-14 业务/可观测 ID 分离）：run_id 属问答业务维度（= runtime_run.id，一次问答），
+    // 不再借用 traceId；trace_id 属可观测体系，仍由 traceId 单独承载 =====
+    const runId = submitOut.run_id;
+    // ===== 新增（2026-09-15 分析 trace 1a688f04 修复①）：用户消息 REQUEST 立即落 info_raw。
+    //      原先 REQUEST 只在 run 结算后随 syncRuntimeMessagesToInfoRaw 补齐，Writer 构建上下文
+    //      （run 内最后一步）时时间线恒空 → 快照无 TIMELINE/CURRENT，本次输入缺失。
+    //      运行结束后的同步仍执行，靠 work_id|info_type|info 去重键幂等，不会落双行 =====
+    try {
+      const earlySaveInput = new SaveInfoInput();
+      earlySaveInput.session_id = sessionId;
+      earlySaveInput.work_id = runId;
+      earlySaveInput.run_id = runId;
+      earlySaveInput.info_type = 'REQUEST';
+      earlySaveInput.info_creator_role = 'USER';
+      earlySaveInput.info = input.msg_content;
+      earlySaveInput.trace_id = traceId;
+      await this.infoCore.saveInfo(earlySaveInput, new SaveInfoOutput(), new InfoCoreContext(), metrics);
+    } catch { /* best-effort：失败不影响问答，稍后由同步补齐 */ }
     const waitIn = new WaitRunInput();
     waitIn.run_id = submitOut.run_id;
     waitIn.timeout_ms = 300_000;
@@ -177,11 +200,10 @@ export class ChatService {
     // 复制的 TraceId 在监控页查不到任何记录，id 失去关联语义。
     this.logger?.info?.('openChatStreamV2: run settled', {
       session_id: sessionId,
-      run_id: submitOut.run_id,
+      run_id: runId,
       status: waitOut.status,
       stop_reason: waitOut.stop_reason,
       trace_id: traceId,
-      interact_id: traceId,
       work_id: submitOut.run_id,
     });
 
@@ -192,7 +214,7 @@ export class ChatService {
     if (waitOut.status === 'running') {
       emit('error.occurred', { error_message: '系统问答超时（5 分钟），请稍后重试', error_code: 'RUN_TIMEOUT', run_id: submitOut.run_id });
     } else {
-      emit(SseTransportEvent.Done, { work_id: submitOut.run_id, interact_id: traceId, trace_id: traceId, elapsed_ms: totalElapsed, token_usage: {}, paused: false });
+      emit(SseTransportEvent.Done, { run_id: runId, trace_id: traceId, elapsed_ms: totalElapsed, token_usage: {}, paused: false });
     }
     output.events = events;
     return true;
@@ -207,7 +229,7 @@ export class ChatService {
    * 1. 原实现按 session 全量重读 runtime_message，每轮结束都把历史消息重抄一遍；
    *    去重条件 (session_id, info, created=保存时刻) 与 runtime_message.created 恒不相等，
    *    判重必然失败 → 历史问答被重复插入 info_raw，对话区反复出现上一轮内容，
-   *    且旧消息被盖上本轮 traceId（interact_id 污染）。
+   *    且旧消息被盖上本轮 traceId（run_id 污染）。
    * 2. 空内容占位行（run 未回复完成时 assistant 行 content=''）会令 saveInfo 抛
    *    ValidationError，异常中断整个同步循环，后续消息漏同步。
    * 修改后：
@@ -216,9 +238,11 @@ export class ChatService {
    *    也能正确判重，不再产生重复行；读取上限 200 条防成本膨胀。
    * 2. 跳过空内容行（continue 而非中断）。
    * 3. 已落库集合一次查询载入内存，避免逐条 COUNT 的 N+1 查询。
-   * 注：迟到补齐的历史行会带上当轮 traceId（interact_id），work_id 仍为其原 run，
-   * 历史按 work_id 分组展示不受影响。
-   */
+    * 注：迟到补齐的历史行会带上当轮 traceId（run_id），work_id 仍为其原 run，
+    * 历史按 work_id 分组展示不受影响。
+    * ===== 修改后（2026-09-14 业务/可观测 ID 分离）：run_id 属问答业务维度（= runtime_run.id），
+    * 落库时取 workId（其原 run），不再借用 traceId；trace_id 仍按源头治理规则取 runtime_run.trace_id。
+    */
   private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics): Promise<void> {
     try {
       // ===== 原始代码（保留作为参考）=====
@@ -259,6 +283,14 @@ export class ChatService {
       // assistant 消息兜底保留（预算耗尽/异常导致无纯文本最终轮时仍有 RESPONSE）。
       // wire 历史走 runtime_* 表，不受此显示侧过滤影响。
       const runIds = Array.from(new Set(rows.map((r) => r.run_id).filter(Boolean)));
+      // ===== 修改后（2026-09-14 trace 源头治理）：历史行不再盖当轮 traceId =====
+      // 原行为：迟到补齐的历史行（本轮之外的 run）也被盖上当轮 traceId，造成
+      // "两次提问 traceId 相同"的污染（事故 trace 989acae9：上一轮 run 因进程重启
+      // 未及自身同步，本轮补齐时被盖上本轮 trace）。
+      // 修改后：每行按其原 run 反查 runtime_run.trace_id（run 受理时已持久化源头
+      // trace），查不到则留空，绝不伪造当轮 trace。
+      // ===== 原始代码（保留作为参考）=====
+      // 仅令牌化 runIds 查询，无 run 级 trace 反查；补齐行统一 stamp 当轮 traceId
       let toolMsgIds = new Set<string>();
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
@@ -267,6 +299,17 @@ export class ChatService {
           runIds,
         );
         toolMsgIds = new Set((partRows ?? []).map((r) => r.message_id));
+      }
+      const runTraceMap = new Map<string, string>();
+      if (runIds.length > 0) {
+        const placeholders = runIds.map(() => '?').join(',');
+        const runRows = this.relationDb.queryRaw<{ id: string; trace_id: string }>(
+          `SELECT "id", "trace_id" FROM "runtime_run" WHERE "id" IN (${placeholders})`,
+          runIds,
+        );
+        for (const r of runRows ?? []) {
+          if (r.trace_id) runTraceMap.set(String(r.id), String(r.trace_id));
+        }
       }
       const lastAssistantIdxByRun = new Map<string, number>();
       rows.forEach((m, i) => {
@@ -290,7 +333,12 @@ export class ChatService {
         const saveInput = new SaveInfoInput();
         saveInput.session_id = chatSessionId;
         saveInput.work_id = workId;
-        saveInput.interact_id = traceId;
+        // 源头 trace 治理：行 trace 一律取其所属 run 受理时落库的 runtime_run.trace_id
+        //（含 steer 合流 run：全部消息归因到受理源头 trace）；runtime_run 无记录时，
+        // 当轮 run 行沿用本轮 trace 兜底，历史 run 补齐行显式置 ''，绝不盖当轮 trace。
+        const rowTraceId = runTraceMap.get(workId) ?? (workId === runId ? traceId : '');
+        saveInput.trace_id = rowTraceId;
+        saveInput.run_id = workId;
         saveInput.info_type = infoType;
         saveInput.info_creator_role = infoCreatorRole;
         saveInput.info = msg.content;
@@ -304,7 +352,7 @@ export class ChatService {
       this.logger?.warn?.('syncRuntimeMessagesToInfoRaw: 同步失败（不影响 SSE 流）', {
         session_id: chatSessionId,
         trace_id: traceId,
-        interact_id: traceId,
+        run_id: runId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -360,38 +408,62 @@ export class ChatService {
 
     for (const sessionId of input.session_ids) {
       try {
-        // 1. 收集该会话下所有 info_id
-        const infoRows = await this.relationDb.select('info_raw', {
-          conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
-          fields: ['info_id'],
-        });
-        const infoIds = infoRows.map((r) => String(r.info_id ?? '')).filter(Boolean);
+        // ===== 原始代码（保留作为参考；2026-09-15 记忆集中）=====
+        // 1. 收集该会话下所有 info_id → 2. 内联直写删除派生表（info_tag/info_summary/info_keyword/info_vector）
+        //    3. 直接调 delInfoGraph + 直删 info_raw —— 与 InfoCore.delInfoByWork 重复的第二条删除路径
+        // ===== 修改后：记忆删除统一收敛 InfoCoreProvider.delInfoBySession（含派生表 / 上下文快照 / GraphDB 级联），
+        //      chat_session / runtime_ / stream_event 等非记忆表仍由本层负责 =====
+        const delInput = new DelInfoBySessionInput();
+        delInput.session_id = sessionId;
+        const delOutput = new DelInfoBySessionOutput();
+        await this.infoCore.delInfoBySession(delInput, delOutput, new InfoCoreContext(), _metrics);
 
-        // 2. 删除按 info_id 关联的派生表（info_tag_vector 为全局标签向量，交由 orphan_tag_check 定时任务清理）
-        if (infoIds.length > 0) {
-          await this.relationDb.delete('info_tag', [
-            { field: 'info_id', operator: Operator.IN, value: infoIds },
-          ]);
-          await this.relationDb.delete('info_summary', [
-            { field: 'info_id', operator: Operator.IN, value: infoIds },
-          ]);
-          await this.relationDb.delete('info_keyword', [
-            { field: 'info_id', operator: Operator.IN, value: infoIds },
-          ]);
-          await this.relationDb.delete('info_vector', [
-            { field: 'info_id', operator: Operator.IN, value: infoIds },
-          ]);
-        }
-
-        // 3. 删除主表与 GraphDB 引用节点/边
-        await this.infoCore.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), new InfoCoreContext());
-        await this.relationDb.delete('info_raw', [
-          { field: 'session_id', operator: Operator.EQ, value: sessionId },
-        ]);
         const affected = await this.relationDb.delete('chat_session', [
           { field: 'session_id', operator: Operator.EQ, value: sessionId },
         ]);
         deletedCount += affected;
+
+        // ===== 新增（2026-09-15）：思考过程/耗时统计生命周期跟随问答 —— 删除会话时
+        // 一并清理事件流（stream_event，思考过程时间线的持久事实源）与 Runtime 派生表
+        // （runtime_run / runtime_message_part / runtime_message / runtime_session，
+        //  Part 含 elapsed_ms 耗时与思考内容）；不存在时静默跳过 =====
+        try {
+          await this.relationDb.delete('stream_event', [
+            { field: 'session_key', operator: Operator.EQ, value: sessionId },
+          ]);
+          await this.relationDb.delete(RUNTIME_RUN_TABLE, [
+            { field: 'session_key', operator: Operator.EQ, value: sessionId },
+          ]);
+          // Runtime 派生数据以 runtime_session.session_key = 问答会话 id 关联
+          const runtimeSessions = await this.relationDb.select(RUNTIME_SESSION_TABLE, {
+            conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
+            fields: ['id'],
+          });
+          const runtimeSessionIds = runtimeSessions.map((r) => String(r.id ?? '')).filter(Boolean);
+          if (runtimeSessionIds.length > 0) {
+            const runtimeMessages = await this.relationDb.select(RUNTIME_MESSAGE_TABLE, {
+              conditions: [{ field: 'session_id', operator: Operator.IN, value: runtimeSessionIds }],
+              fields: ['id'],
+            });
+            const runtimeMessageIds = runtimeMessages.map((r) => String(r.id ?? '')).filter(Boolean);
+            if (runtimeMessageIds.length > 0) {
+              await this.relationDb.delete(RUNTIME_MESSAGE_PART_TABLE, [
+                { field: 'message_id', operator: Operator.IN, value: runtimeMessageIds },
+              ]);
+            }
+            await this.relationDb.delete(RUNTIME_MESSAGE_TABLE, [
+              { field: 'session_id', operator: Operator.IN, value: runtimeSessionIds },
+            ]);
+            await this.relationDb.delete(RUNTIME_SESSION_TABLE, [
+              { field: 'session_key', operator: Operator.EQ, value: sessionId },
+            ]);
+          }
+        } catch (cleanupErr: unknown) {
+          this.logger?.warn?.('deleteSession: runtime/stream 思考过程数据清理失败（已跳过）', {
+            session_id: sessionId,
+            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          });
+        }
       } catch (err: unknown) {
         this.logger?.error?.('deleteSession: failed to delete session', {
           session_id: sessionId,
@@ -775,7 +847,7 @@ export class ChatService {
     const lastNInput = Object.assign(new LastNInfoInput(), {
       session_id: input.session_id,
       work_id: input.work_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       lastN,
     });
     const lastNOutput = new LastNInfoOutput();
@@ -830,7 +902,7 @@ export class ChatService {
         created: row.created,
         pin: row.pin === 1,
         work_id: row.work_id,
-        interact_id: row.interact_id,
+        run_id: row.run_id,
         trace_id: row.trace_id,
         citing_count: citingInfoIds.length,
         cited_count: citedInfoIds.length,

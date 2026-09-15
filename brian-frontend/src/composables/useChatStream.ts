@@ -12,6 +12,7 @@ import { answerPermission } from '@/api'
 import type { Block, ChatMessage } from '@/api/types'
 import { readSSE } from './useSSE'
 import { createChatStreamEventHandler } from './chatStreamEvents'
+import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
 
 /** 历史消息与 DAG 刷新使用的固定用户标识（与后端 demo 用户一致） */
 const USER_ID = 'default-user'
@@ -63,9 +64,20 @@ export function useChatStream() {
       const abortCtrl = new AbortController()
       sessionStore.setCancelController(abortCtrl)
 
+      // ===== 修改后（2026-09-14 trace 溯源治理）：SSE 请求同样在源头生成 X-Trace-Id =====
+      // ===== 原始方法（保留作为参考）=====
+      // const res = await fetch(opts.url, {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify(opts.body),
+      //   signal: abortCtrl.signal,
+      // })
       const res = await fetch(opts.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          [TRACE_ID_HEADER]: newTraceId(),
+        },
         body: JSON.stringify(opts.body),
         signal: abortCtrl.signal,
       })

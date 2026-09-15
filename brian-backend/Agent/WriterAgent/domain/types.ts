@@ -1,9 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class WriterAgentContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
   selected_msg_ids?: string[];
 }
 
@@ -33,7 +30,7 @@ export interface WriterAgentUserProfileRecord {
 
 export class WriteInput extends Input {
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   user_query!: string;
   agent_results!: Array<{ agent_id: string; task_content?: string; result?: string; answer?: string; handle_result_type?: string }>;
   user_preferences?: { language?: string; style?: string; depth?: string; format?: string };

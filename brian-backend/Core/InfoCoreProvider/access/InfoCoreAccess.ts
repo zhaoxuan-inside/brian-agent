@@ -85,6 +85,8 @@ import {
   UpdateInfoOutput,
   DelInfoByWorkInput,
   DelInfoByWorkOutput,
+  DelInfoBySessionInput,
+  DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
 } from '../domain/types';
@@ -102,7 +104,7 @@ import {
  *
  * const output = new SaveInfoOutput();
  * await infoCore.saveInfo(
- *   { session_id: 's1', work_id: '', interact_id: '', info_type: 'REQUEST', info_creator_role: 'USER', info_creator_id: '', info: '...' },
+ *   { session_id: 's1', work_id: '', run_id: '', info_type: 'REQUEST', info_creator_role: 'USER', info_creator_id: '', info: '...' },
  *   output, new InfoCoreContext(),
  * );
  * console.log(output.info_id);
@@ -361,6 +363,12 @@ export class InfoCoreAccess {
   async delInfoByWork(input: DelInfoByWorkInput, output: DelInfoByWorkOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.delInfoByWork(input, output, context, metrics, report);
+  }
+
+  /** ===== 新增（2026-09-15 记忆集中）：删除指定 session 的全部记忆信息与派生数据（快照/摘要/标签/关键词/向量），级联 GraphDB ===== */
+  async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.delInfoBySession(input, output, context, metrics, report);
   }
 
   // -------------------------------------------------------------------------

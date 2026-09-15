@@ -1,6 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
-export class UserProfileContext extends Context { session_id?: string; }
+export class UserProfileContext extends Context {}
 
 export class ConfigProfileDirectionInput extends Input {
   directions!: Array<{

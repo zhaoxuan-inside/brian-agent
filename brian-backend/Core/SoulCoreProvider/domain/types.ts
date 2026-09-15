@@ -75,7 +75,7 @@ export class MatchSoulInput extends Input {
   /** 上下文 ID */
   context_id!: string;
   /** 交互 ID */
-  interact_id!: string;
+  run_id!: string;
   /** 当前任务/工作内容（用于 LLM 依据任务领域推荐最合适的 Soul） */
   task_content?: string;
   /** 当前任务领域（由任务分析得出，如 general / coding / travel，可选） */
@@ -107,7 +107,7 @@ export class OptSoulInput extends Input {
   /** 上下文 ID */
   context_id!: string;
   /** 交互 ID */
-  interact_id!: string;
+  run_id!: string;
   /** 候选 Soul ID */
   soul_id!: string;
   /** Agent 当前绑定的 Soul ID（Agent 表读取；传入时做 A/B 比较裁决，缺省只记 usage） */

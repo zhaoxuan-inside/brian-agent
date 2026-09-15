@@ -506,6 +506,12 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       mockWriter,
     );
     await refinedGateway.initialize();
+    // ===== 2026-09-14：评估执行策略新增低风险跳过（默认开），本用例验证评估链路，显式关闭跳过 =====
+    await refinedGateway.configRuns(
+      Object.assign(new ConfigRunsInput(), { eval_skip_low_risk: false, eval_async: false }),
+      new ConfigRunsOutput(),
+      new RunGatewayContext(),
+    );
 
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
       output.finish_reason = 'stop';
@@ -549,7 +555,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(replyDelta?.payload_json).toContain('```mermaid');
   });
 
-  it('Metrics 计时时间线按 <层名>.<模块名>.<类名>.<方法名>.start/end 记录并落地数据库', async () => {
+  it('Metrics Span 树自动记录切面调用并供事件耗时盖章（不再落库）', async () => {
     const { Metrics } = await import('@brian-agent/base');
     const qaMetrics = new Metrics(undefined, 'TestQA', 'trace-qa-123');
 
@@ -561,7 +567,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
     const submitIn = new SubmitRunInput();
     submitIn.session_key = 'sess-metrics-test';
-    submitIn.user_message = '测试 Metrics 计时落地';
+    submitIn.user_message = '测试 Metrics 计时';
     const submitOut = new SubmitRunOutput();
     const report = new Report({ session_id: 'sess-metrics-test', session_key: 'sess-metrics-test' });
 
@@ -571,33 +577,15 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(waitIn, new WaitRunOutput(), new RunGatewayContext(), qaMetrics, report);
     await new Promise((r) => setTimeout(r, 100));
 
-    // 验证 metrics timings 中包含规范 key
-    expect(qaMetrics.timings['Runtime.Runs.RunGatewayService.submitRun.start']).toBeDefined();
-    expect(qaMetrics.timings['Runtime.Runs.RunGatewayService.submitRun.end']).toBeDefined();
-    expect(qaMetrics.timings['Runtime.Agents.AgentDefService.matchAgentDef.start']).toBeDefined();
-    expect(qaMetrics.timings['Runtime.Agents.AgentDefService.matchAgentDef.end']).toBeDefined();
-    expect(qaMetrics.timings['Runtime.Loop.AgentLoopService.execAgentLoop.start']).toBeDefined();
-    expect(qaMetrics.timings['Runtime.Loop.AgentLoopService.execAgentLoop.end']).toBeDefined();
+    // Span 树（切面自动记录）：受编排的关键调用全部有闭合 span，且同 run 共享同一 Metrics 实例
+    const spans = qaMetrics.spans;
+    const keyOf = (k: string) => spans.filter((sp) => sp.key === k && sp.end !== undefined);
+    expect(keyOf('Runtime.Runs.RunGatewayService.submitRun').length).toBeGreaterThan(0);
+    expect(keyOf('Runtime.Agents.AgentDefService.matchAgentDef').length).toBeGreaterThan(0);
+    expect(keyOf('Runtime.Loop.AgentLoopService.execAgentLoop').length).toBeGreaterThan(0);
 
-    // 验证数据库 runtime_run.metrics_json 落地
-    const runRows = relationDb.queryRaw<{ metrics_json: string }>(
-      'SELECT metrics_json FROM runtime_run WHERE id = ?',
-      [submitOut.run_id],
-    );
-    expect(runRows).toHaveLength(1);
-    const dbTimings = JSON.parse(runRows[0].metrics_json);
-    expect(dbTimings['Runtime.Runs.RunGatewayService.submitRun.start']).toBeDefined();
-    expect(dbTimings['Runtime.Agents.AgentDefService.matchAgentDef.start']).toBeDefined();
-
-    // 验证 runtime_metrics 表记录落地
-    const metricRows = relationDb.queryRaw<{ run_id: string; session_key: string; trace_id: string; timings_json: string; total_duration_ms: number }>(
-      'SELECT run_id, session_key, trace_id, timings_json, total_duration_ms FROM runtime_metrics WHERE run_id = ?',
-      [submitOut.run_id],
-    );
-    expect(metricRows).toHaveLength(1);
-    expect(metricRows[0].session_key).toBe('sess-metrics-test');
-    expect(metricRows[0].trace_id).toBe('trace-qa-123');
-    const tableTimings = JSON.parse(metricRows[0].timings_json);
-    expect(tableTimings['Runtime.Loop.AgentLoopService.execAgentLoop.start']).toBeDefined();
+    // 总耗时（根 span 包络）可用
+    expect(qaMetrics.getTotalDuration()).toBeGreaterThan(0);
   });
 });
+

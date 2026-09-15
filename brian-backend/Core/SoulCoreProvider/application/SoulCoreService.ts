@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SoulAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SoulContext, AddSoulInput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
+import { SoulContext, AddSoulInput, Context, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SoulCoreContext,
@@ -98,9 +98,9 @@ export class SoulCoreService {
   /**
    * 为 Agent 匹配 Soul（persona，三层统一匹配/选择逻辑）。
    */
-  async matchSoul(input: MatchSoulInput, output: MatchSoulOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchSoul(input: MatchSoulInput, output: MatchSoulOutput, context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const { agent_id, context_id, interact_id, task_content, task_domain } = input;
+    const { agent_id, context_id, run_id, task_content, task_domain } = input;
     if (!agent_id) {
       throw new ValidationError('matchSoul 需要提供 agent_id');
     }
@@ -116,8 +116,8 @@ export class SoulCoreService {
 
     // ===== 缓存命中水合（MD5 精确 → 余弦 >= vector_similarity_threshold；重复任务零 LLM；bypass_cache 强制全量） =====
     const cached = input.bypass_cache
-      ? { record: null, query: await this.matchCache.embedOf(task_content ?? '', (t) => this.embedTask(t)) }
-      : await this.matchCache.lookup(task_content ?? '', (t) => this.embedTask(t));
+      ? { record: null, query: await this.matchCache.embedOf(task_content ?? '', (t) => this.embedTask(t, context)) }
+      : await this.matchCache.lookup(task_content ?? '', (t) => this.embedTask(t, context));
     const cachedSoulId = cached.record?.result[0]?.id ?? '';
     if (cachedSoulId) {
       const soulRecord = await this.hydrateSoulOrClear(cachedSoulId);
@@ -144,17 +144,17 @@ export class SoulCoreService {
     let selectedSoulId = '';
     if (availableSouls.length > 0) {
       selectedSoulId = await this.rankSoulsByLLM(
-        agent_id, context_id, interact_id, task_content, task_domain, availableSouls, config,
+        agent_id, context_id, run_id, task_content, task_domain, availableSouls, config, context,
       );
     }
     if (!selectedSoulId) {
-      selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, interact_id, task_content, task_domain);
+      selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, run_id, task_content, task_domain, context);
     }
 
     const soulRecord = await this.getSoulById(selectedSoulId);
     // ===== 匹配结果入缓存（MD5 + 任务向量；commit 复用 lookup 期向量；空结果不入缓存） =====
     if (selectedSoulId) {
-      await this.commitMatchCache(task_content ?? '', cached.query, selectedSoulId);
+      await this.commitMatchCache(task_content ?? '', cached.query, selectedSoulId, context);
     }
     output.soul_id = selectedSoulId;
     output.soul = soulRecord;
@@ -465,9 +465,10 @@ export class SoulCoreService {
   private async generateAndAddSoul(
     agentId: string,
     contextId: string,
-    interactId: string,
+    runId: string,
     taskContent?: string,
     taskDomain?: string,
+    matchCtx?: Context,
   ): Promise<string> {
     const config = await this.getCoreConfig();
     const llmId = config?.llm_id || '';
@@ -477,7 +478,7 @@ export class SoulCoreService {
       '',
       `Agent ID: ${agentId}`,
       `Context ID: ${contextId}`,
-      `Interaction ID: ${interactId}`,
+      `Interaction ID: ${runId}`,
       `任务领域: ${taskDomain || '未指定'}`,
       `当前任务内容: ${taskContent || '未指定'}`,
       '',
@@ -491,12 +492,18 @@ export class SoulCoreService {
     ].join('\n');
 
     // 最多重试 3 次，容忍 LLM 偶发失败 / 返回格式异常（callLLMJson 公共封装）
+    // Token 归因维度：Soul 自生成 LLM 调用入账（业务维度随 Context 传播，caller 供分来源统计）
     const parsed = await callLLMJson<Record<string, unknown>>(this.llmAccess, {
       llmId,
       prompt: generationPrompt,
       retries: 2,
+      extra: {
+        max_tokens: 800,
+        session_id: matchCtx?.session_id || '',
+        run_id: matchCtx?.run_id || runId || '',
+        caller: 'SoulCoreService.generateAndAddSoul',
+      },
       /// ===== 2026-09-11：生成加 max_tokens 上限；执行 disabled thinking（CallLLMJson 内部统一） =====
-      extra: { max_tokens: 800 },
       parse: (text) => JsonParser.parseObject(text),
     }).then((res) => {
       if (res === null) {
@@ -542,16 +549,17 @@ export class SoulCoreService {
   private async rankSoulsByLLM(
     agentId: string,
     contextId: string,
-    interactId: string,
+    runId: string,
     taskContent: string | undefined,
     taskDomain: string | undefined,
     availableSouls: Array<{ id: string; soul_brief: string; soul_usage?: string }>,
     config: SoulCoreConfigRecord | null,
+    matchCtx?: Context,
   ): Promise<string> {
     const selectionVariables = {
       agent_id: agentId,
       context_id: contextId,
-      interact_id: interactId,
+      run_id: runId,
       task_content: taskContent || '',
       task_domain: taskDomain || '',
       available_souls: JSON.stringify(availableSouls.map((s) => ({
@@ -571,7 +579,7 @@ export class SoulCoreService {
       prompt: selectionPrompt,
       temperature: 0.1,
       max_tokens: 256,
-    });
+    }, matchCtx);
     const threshold = config?.score_threshold ?? ScoreThreshold.Default;
     const candidates = parseRankingCandidates(result);
     const filtered = filterByThreshold(candidates, threshold);
@@ -610,12 +618,17 @@ export class SoulCoreService {
   /**
    * 排序 LLM 调用（逻辑控制；失败返回空串 → 调用方走 threshold 兜底语义）。
    */
-    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    private async soRankLLM(input: ExecLLMInput, matchCtx?: Context): Promise<string> {
+    // Token 归因维度：Soul 选择 LLM 打分入账（业务维度随 Context 传播，caller 供分来源统计）
+    input.session_id = input.session_id || matchCtx?.session_id || '';
+    input.run_id = input.run_id || matchCtx?.run_id || '';
+    input.work_id = input.work_id || matchCtx?.work_id || '';
+    input.caller = 'SoulCoreService.rankSouls';
     // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
     input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const execLLMOutput = new ExecLLMOutput();
     try {
-      const ok = await this.llmAccess.execLLM(input, execLLMOutput, new LLMContext());
+      const ok = await this.llmAccess.execLLM(input, execLLMOutput, matchCtx ?? new LLMContext());
       return ok ? (execLLMOutput.result ?? '') : '';
     } catch {
       return '';
@@ -623,11 +636,11 @@ export class SoulCoreService {
   }
 
   /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
-  private async commitMatchCache(taskContent: string, embedding: number[] | null, soulId: string): Promise<void> {
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, soulId: string, matchCtx?: Context): Promise<void> {
     if (!soulId) {
       return;
     }
-    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t, matchCtx).catch(() => [] as number[]));
     this.matchCache.commit(
       buildCacheKey(taskContent),
       query ?? [],
@@ -636,10 +649,10 @@ export class SoulCoreService {
   }
 
   /** 任务向量化（数据处理；走系统默认 embedding 模型） */
-  private async embedTask(task: string): Promise<number[]> {
+  private async embedTask(task: string, context?: Context): Promise<number[]> {
     const output = new EmbedLLMOutput();
     const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
-    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    const ok = await this.llmAccess.embedLLM(input, output, context ?? new LLMContext());
     if (!ok || !output.embedding?.length) {
       throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
     }
@@ -687,7 +700,7 @@ export class SoulCoreService {
 
     const llmOutput = new ExecLLMOutput();
     const ok = await this.llmAccess.execLLM(
-      { id: llmId, prompt, temperature: 0.1, max_tokens: 256 },
+      { id: llmId, prompt, temperature: 0.1, max_tokens: 256, caller: 'SoulCoreService.compareSouls' },
       llmOutput, new LLMContext(),
     );
     if (!ok) {

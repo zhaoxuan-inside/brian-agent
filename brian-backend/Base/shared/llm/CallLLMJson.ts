@@ -36,6 +36,8 @@ export interface CallLLMJsonOptions<T> {
   onError?: (error: unknown, attempt: number) => void;
   /** 额外入参透传（max_tokens / temperature 等；thinking 已由本工具统一禁用） */
   extra?: Partial<ExecLLMInput>;
+  /** 调用方来源标识（Token 归因到 caller 维度，供分来源统计） */
+  caller?: string;
 }
 
 /**
@@ -59,6 +61,7 @@ export async function callLLMJson<T>(
       const input = Object.assign(new ExecLLMInput(), {
         id: opts.llmId ?? '',
         prompt: opts.prompt,
+        caller: opts.caller ?? '',
         ...(opts.extra ?? {}),
         extra: { ...(opts.extra?.extra ?? {}), thinking: { type: 'disabled' } },
         ...(opts.system !== undefined ? { system: opts.system } : {}),

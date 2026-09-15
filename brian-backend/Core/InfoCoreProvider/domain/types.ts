@@ -25,7 +25,7 @@ export interface InfoRawRecord {
   updated: number;
   session_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   info_id: string;
   info_type: InfoType | string;
   info_creator_role: string;
@@ -156,7 +156,13 @@ export interface InfoContextConfigRecord {
 export class SaveInfoInput extends Input {
   session_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
+  /**
+   * 源头 trace 治理（2026-09-14）：唯一链路标识，与 work_id / run_id 独立。
+   * 显式传入（含 ''，表示该行无已知源头 trace）时按传入值落库；
+   * 未传入（undefined）才回落 metrics.trace_id（调用方链路 trace）。
+   */
+  trace_id?: string;
   info_type!: string;
   info_creator_role?: string;
   info_creator_id?: string;
@@ -257,7 +263,7 @@ export class RebuildCooccurGraphOutput extends Output {
 export class LastNInfoInput extends Input {
   session_id?: string;
   work_id?: string;
-  interact_id?: string;
+  run_id?: string;
   info_type?: string;
   info_creator_role?: string;
   info_creator_id?: string;
@@ -432,7 +438,7 @@ export interface ContextInfoAttribute {
   info_id: string;
   session_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   info_type: InfoType | string;
   info_creator_role: string;
   info_creator_id: string;
@@ -450,7 +456,7 @@ export interface ContextInfoItem {
   info_id: string;
   session_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   info_type: InfoType | string;
   info_creator_role?: string;
   info_creator_id?: string;
@@ -692,6 +698,18 @@ export class DelInfoByWorkInput extends Input {
 /** delInfoByWork 出参 */
 export class DelInfoByWorkOutput extends Output {
   deleted_count = 0;
+}
+
+// ===== 新增（2026-09-15 记忆集中）：会话级信息管理 =====
+/** delInfoBySession 入参：sessions_info 表 session_id 维度删除 */
+export class DelInfoBySessionInput extends Input {
+  session_id!: string;
+}
+
+/** delInfoBySession 出参 */
+export class DelInfoBySessionOutput extends Output {
+  deleted_count = 0;
+  deleted_work_ids: string[] = [];
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { Metrics, Report } from '@brian-agent/base';
+import { Metrics, Report, Context } from '@brian-agent/base';
 import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
 import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
 import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
@@ -79,7 +79,7 @@ export class MCPCoreService {
   /**
    * 为 Agent 匹配 MCP（三层统一匹配/选择逻辑，第3层除外：MCP 没有匹配不可用 MCP）。
    */
-  async matchMCP(input: MatchMcpInput, output: MatchMcpOutput, _context: McpCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchMCP(input: MatchMcpInput, output: MatchMcpOutput, context: McpCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
 
@@ -95,8 +95,8 @@ export class MCPCoreService {
 
     // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排） =====
     const cached = input.bypass_cache
-      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t)) }
-      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t));
+      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t, context)) }
+      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
     if (cached.record) {
       const ids = cached.record.result.map((r) => r.id);
       output.mcp_ids = ids;
@@ -112,12 +112,13 @@ export class MCPCoreService {
         input,
         config.prompt_template_id,
         config.score_threshold,
+        context,
       );
     }
 
     // ===== 匹配结果入缓存（MD5 + 任务向量；复用 lookup 阶段向量） =====
     if (availableMcps.length > 0) {
-      await this.commitMatchCache(input.task_content ?? '', cached.query, rankedIds);
+      await this.commitMatchCache(input.task_content ?? '', cached.query, rankedIds, context);
     }
     output.mcp_ids = rankedIds;
     output.mcp_details = this.toMcpDetails(rankedIds, availableMcps);
@@ -256,17 +257,18 @@ export class MCPCoreService {
     input: MatchMcpInput,
     promptTemplateId: string,
     scoreThreshold: number,
+    matchCtx?: Context,
   ): Promise<string[]> {
     const variables = {
       agent_id: input.agent_id,
       context_id: input.context_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       task_content: input.task_content ?? '',
       available_mcps: JSON.stringify(mcps.map((m) => ({ id: m.id, title: m.mcp_title, brief: m.mcp_brief ?? '' }))),
     };
     const templateId = promptTemplateId || await this.soMatchPromptTemplateId();
     const prompt = await this.renderMatchPrompt(templateId, variables);
-    const text = await this.soRankLLM({ id: '', prompt, temperature: 0.1, max_tokens: 300 } as ExecLLMInput);
+    const text = await this.soRankLLM({ id: '', prompt, temperature: 0.1, max_tokens: 300 } as ExecLLMInput, matchCtx);
     const threshold = Number.isFinite(scoreThreshold) ? scoreThreshold : ScoreThreshold.Default;
     const mcpIds = new Set(mcps.map((m) => m.id));
     return filterByThreshold(parseRankingCandidates(text), threshold)
@@ -303,12 +305,17 @@ export class MCPCoreService {
   }
 
   /** 排序 LLM 调用（逻辑控制；失败返回空串 → threshold 过滤取空语义） */
-    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    private async soRankLLM(input: ExecLLMInput, matchCtx?: Context): Promise<string> {
+    // Token 归因维度：MCP 选择 LLM 打分入账（业务维度随 Context 传播，caller 供分来源统计）
+    input.session_id = input.session_id || matchCtx?.session_id || '';
+    input.run_id = input.run_id || matchCtx?.run_id || '';
+    input.work_id = input.work_id || matchCtx?.work_id || '';
+    input.caller = 'MCPCoreService.rankMcps';
     // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
     input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const execOutput = new ExecLLMOutput();
     try {
-      const ok = await this.llmAccess.execLLM(input, execOutput, new LLMContext());
+      const ok = await this.llmAccess.execLLM(input, execOutput, matchCtx ?? new LLMContext());
       return ok ? (execOutput.result ?? '') : '';
     } catch {
       return '';
@@ -323,20 +330,20 @@ export class MCPCoreService {
   }
 
   /** 匹配缓存提交（数据处理；复用 lookup 阶段的任务向量，缺失时补算） */
-  private async commitMatchCache(taskContent: string, embedding: number[] | null, rankedIds: string[]): Promise<void> {
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, rankedIds: string[], matchCtx?: Context): Promise<void> {
     if (!taskContent || rankedIds.length === 0) {
       return;
     }
     const key = buildCacheKey(taskContent);
-    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t, matchCtx).catch(() => [] as number[]));
     this.matchCache.commit(key, query ?? [], rankedIds.map((id) => ({ id, score: ScoreThreshold.Max })));
   }
 
   /** 任务向量化（数据处理；走系统默认 embedding 模型） */
-  private async embedTask(task: string): Promise<number[]> {
+  private async embedTask(task: string, context?: Context): Promise<number[]> {
     const output = new EmbedLLMOutput();
     const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
-    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    const ok = await this.llmAccess.embedLLM(input, output, context ?? new LLMContext());
     if (!ok || !output.embedding?.length) {
       throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
     }

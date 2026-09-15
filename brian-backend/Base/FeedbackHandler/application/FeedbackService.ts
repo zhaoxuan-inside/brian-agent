@@ -30,7 +30,7 @@ function mapRecord(row: Record<string, unknown>): FeedbackRecord {
     source: String(row.source) as FeedbackRecord['source'],
     agent_id: String(row.agent_id ?? ''),
     work_id: String(row.work_id ?? ''),
-    interact_id: String(row.interact_id ?? ''),
+    run_id: String(row.run_id ?? ''),
     rating: Number(row.rating ?? 0),
     comment: String(row.comment ?? ''),
     suggestions: String(row.suggestions ?? '[]'),
@@ -48,7 +48,7 @@ function mapProcessLog(row: Record<string, unknown>): FeedbackProcessLogRecord {
     feedback_id: String(row.feedback_id ?? ''),
     action: String(row.action ?? 'submitted') as ProcessAction,
     agent_id: String(row.agent_id ?? ''),
-    interact_id: String(row.interact_id ?? ''),
+    run_id: String(row.run_id ?? ''),
     work_id: String(row.work_id ?? ''),
     rating: Number(row.rating ?? 0),
     details: String(row.details ?? '{}'),
@@ -79,7 +79,7 @@ export class FeedbackService {
       source: 'user',
       agent_id: '',
       work_id: input.work_id || '',
-      interact_id: input.interact_id || '',
+      run_id: input.run_id || '',
       rating: input.rating ?? 0,
       comment: input.comment || '',
       suggestions: '[]',
@@ -88,7 +88,7 @@ export class FeedbackService {
     }));
 
     await this.recordProcessLogInternal(feedbackId, 'submitted', {
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       work_id: input.work_id,
       rating: input.rating ?? 0,
     });
@@ -118,7 +118,7 @@ export class FeedbackService {
       source: 'agent',
       agent_id: input.agent_id,
       work_id: input.work_id || '',
-      interact_id: input.interact_id || '',
+      run_id: input.run_id || '',
       rating: input.rating ?? 0,
       comment: input.comment || '',
       suggestions: JSON.stringify(input.suggestions ?? []),
@@ -137,7 +137,7 @@ export class FeedbackService {
     const processId = await this.recordProcessLogInternal(
       input.feedback_id, input.action, {
         agent_id: input.agent_id,
-        interact_id: input.interact_id,
+        run_id: input.run_id,
         work_id: input.work_id,
         rating: input.rating ?? 0,
         details: input.details,
@@ -185,10 +185,10 @@ export class FeedbackService {
       output.feedback = fbRow ? mapRecord(fbRow) : null;
     }
 
-    if (log.interact_id) {
+    if (log.run_id) {
       const questions = await this.relationDb.select('info_raw', {
         conditions: [
-          { field: 'interact_id', operator: Operator.EQ, value: log.interact_id },
+          { field: 'run_id', operator: Operator.EQ, value: log.run_id },
           { field: 'info_creator_role', operator: Operator.EQ, value: 'user' },
         ],
         order_by: [{ field: 'created', direction: 'ASC' }],
@@ -200,7 +200,7 @@ export class FeedbackService {
 
       const answers = await this.relationDb.select('info_raw', {
         conditions: [
-          { field: 'interact_id', operator: Operator.EQ, value: log.interact_id },
+          { field: 'run_id', operator: Operator.EQ, value: log.run_id },
           { field: 'info_creator_role', operator: Operator.EQ, value: 'assistant' },
         ],
         order_by: [{ field: 'created', direction: 'ASC' }],
@@ -365,7 +365,7 @@ export class FeedbackService {
   private async recordProcessLogInternal(
     feedbackId: string,
     action: ProcessAction,
-    meta: { agent_id?: string; interact_id?: string; work_id?: string; rating?: number; details?: Record<string, unknown> },
+    meta: { agent_id?: string; run_id?: string; work_id?: string; rating?: number; details?: Record<string, unknown> },
   ): Promise<string> {
     const processId = IdGenerator.generate();
     await this.relationDb.insert(FEEDBACK_PROCESS_LOG_TABLE, newRecord({
@@ -373,7 +373,7 @@ export class FeedbackService {
       feedback_id: feedbackId,
       action,
       agent_id: meta.agent_id || '',
-      interact_id: meta.interact_id || '',
+      run_id: meta.run_id || '',
       work_id: meta.work_id || '',
       rating: meta.rating ?? 0,
       details: meta.details ? JSON.stringify(meta.details) : '{}',

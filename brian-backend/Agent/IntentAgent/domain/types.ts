@@ -1,9 +1,6 @@
 import { Context, Input, Output } from '@brian-agent/base';
 
 export class IntentAgentContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export const INTENT_SOUL_BRIEF = '内置需求理解与意图比对专家';
@@ -17,7 +14,7 @@ export class UnderstandRequirementInput extends Input {
   user_query!: string;
   citing_msg_ids?: string[];
   selected_msg_ids?: string[];
-  interact_id?: string;
+  run_id?: string;
 }
 
 // ===== 修改后的 UnderstandRequirementOutput 定义：追加 PromptProvider 返回的完整 Prompt 与 Token 用量 =====

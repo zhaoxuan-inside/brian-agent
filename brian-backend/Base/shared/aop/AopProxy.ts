@@ -212,14 +212,22 @@ export class AopProxy {
           // Context/Input 均为业务承载，不得回填 trace_id）。
           // 有效 trace_id 优先级：Metrics.trace_id（已有链路，显式传播）→ 新生成；
           // 生成结果仅回填 Metrics 与 Report（事件流关联日志用），不污染业务对象。
+          // ===== 修改后（2026-09-14 trace 源头治理 · AOP 兜底强化）：进入方法即检查 ——
+          // 凡 Metrics 实例可检测（显式传入 / 自动创建 / 后续修正为实例），缺 trace_id 时
+          // 立即生成并回填；兜底 trace 同时进入 InterceptContext（ctx.traceId），供
+          // LogInterceptor 旧式 3 参签名失败日志兜底盖章，不再依赖业务对象携带 =====
+          // ===== 原始代码（保留作为参考）：兜底仅覆盖"Metrics 实例非空且 instanceof"单一路径 =====
+          // const metricsInstance = isNewStyle ? args[3] : undefined;
+          // let effectiveTraceId = metricsInstance instanceof Metrics ? metricsInstance.trace_id : undefined;
+          // if (!effectiveTraceId) effectiveTraceId = IdGenerator.generate();
+          // if (metricsInstance instanceof Metrics) {
+          //   const metrics = metricsInstance as Metrics;
+          //   if (!metrics.trace_id) metrics.trace_id = effectiveTraceId;
+          //   if (!metrics.category) metrics.category = `${targetName}.${methodName}`;
+          // }
           const metricsInstance = isNewStyle ? args[3] : undefined;
           let effectiveTraceId = metricsInstance instanceof Metrics ? metricsInstance.trace_id : undefined;
           if (!effectiveTraceId) effectiveTraceId = IdGenerator.generate();
-          if (metricsInstance instanceof Metrics) {
-            const metrics = metricsInstance as Metrics;
-            if (!metrics.trace_id) metrics.trace_id = effectiveTraceId;
-            if (!metrics.category) metrics.category = `${targetName}.${methodName}`;
-          }
 
           // 新式调用：Metrics / Report 未传时自动创建默认实例（调用方无需手工构造）。
           if (isNewStyle) {
@@ -233,19 +241,35 @@ export class AopProxy {
                 session_key: AopProxy.pickField(args[0], 'session_key') || AopProxy.pickField(args[0], 'session_id'),
                 run_id: AopProxy.pickField(args[0], 'run_id'),
                 stream_endpoint_id: AopProxy.pickField(args[0], 'stream_endpoint_id'),
-                interact_id: AopProxy.pickField(args[0], 'interact_id'),
                 work_id: AopProxy.pickField(args[0], 'work_id'),
               });
+            }
+            // AOP 兜底（统一收口）：在自动创建之后再次校验 —— 凡 Metrics 实例（含调用方传入的
+            // 实例与后期被修正的实例）缺 trace_id 时立即生成回填，保证方法体执行前 trace_id 必不缺
+            const fallbackMetrics = args[3] instanceof Metrics ? (args[3] as Metrics) : undefined;
+            if (fallbackMetrics && !fallbackMetrics.trace_id) {
+              fallbackMetrics.trace_id = effectiveTraceId;
+            }
+            if (fallbackMetrics && !fallbackMetrics.category) {
+              fallbackMetrics.category = fallbackMetrics.category || `${targetName}.${methodName}`;
             }
           }
 
           const startedAt = Date.now();
           const metricsArg = isNewStyle ? (args[3] as Metrics | undefined) : undefined;
-          if (metricsArg) {
-            metricsArg.started_at = startedAt;
-            if (typeof metricsArg.recordTiming === 'function') {
-              metricsArg.recordTiming(`${timingPrefix}.start`, startedAt);
-            }
+          const reportArg = isNewStyle ? (args[4] as unknown) : undefined;
+          // ===== 修改后（2026-09-14 框架化）：每个经由切面的服务方法自动成为 Span ——
+          // 父关系由 Metrics 未闭合 span 栈顶自动解析（调用拓扑天然成树），
+          // 父节点耗时（self 时间）由框架自动扣除子 span，包含关系在数据层消除；
+          // 同 run 的 Report 绑定 Metrics，业务事件发射点自动携带最近闭合 span 的 self 耗时 =====
+          const span = metricsArg ? metricsArg.beginSpan(timingPrefix) : undefined;
+          if (
+            isNewStyle &&
+            metricsArg instanceof Metrics &&
+            reportArg instanceof (Report as unknown as { new (): unknown }) &&
+            typeof (reportArg as Report).bindMetrics === 'function'
+          ) {
+            (reportArg as Report).bindMetrics(metricsArg);
           }
           const ctx: InterceptContext = {
             targetName,
@@ -255,6 +279,7 @@ export class AopProxy {
             output: outputArg,
             metrics: metricsArg,
             report: isNewStyle ? (args[4] as unknown) : undefined,
+            traceId: effectiveTraceId,
             startedAt,
             elapsedMs: 0,
           };
@@ -274,9 +299,7 @@ export class AopProxy {
                 .then((res: unknown) => {
                   const finishedAt = Date.now();
                   ctx.elapsedMs = finishedAt - startedAt;
-                  if (metricsArg && typeof metricsArg.recordTiming === 'function') {
-                    metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
-                  }
+                  if (metricsArg && span) metricsArg.endSpan(span);
                   AopProxy.fillElapsed(args, ctx.elapsedMs);
                   // 切入点 3：postExecute（方法执行后 #1，仅成功）
                   AopProxy.runPostExecute(interceptors, ctx, res);
@@ -287,9 +310,7 @@ export class AopProxy {
                 .catch((err: unknown) => {
                   const finishedAt = Date.now();
                   ctx.elapsedMs = finishedAt - startedAt;
-                  if (metricsArg && typeof metricsArg.recordTiming === 'function') {
-                    metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
-                  }
+                  if (metricsArg && span) metricsArg.endSpan(span);
                   AopProxy.fillElapsed(args, ctx.elapsedMs);
                   const error = err instanceof Error ? err : new Error(String(err));
                   // 切入点 4：afterExecute（方法执行后 #2，始终）
@@ -301,9 +322,7 @@ export class AopProxy {
             // 同步方法
             const finishedAt = Date.now();
             ctx.elapsedMs = finishedAt - startedAt;
-            if (metricsArg && typeof metricsArg.recordTiming === 'function') {
-              metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
-            }
+            if (metricsArg && span) metricsArg.endSpan(span);
             AopProxy.fillElapsed(args, ctx.elapsedMs);
             // 切入点 3：postExecute（方法执行后 #1，仅成功）
             AopProxy.runPostExecute(interceptors, ctx, result);
@@ -313,9 +332,7 @@ export class AopProxy {
           } catch (err) {
             const finishedAt = Date.now();
             ctx.elapsedMs = finishedAt - startedAt;
-            if (metricsArg && typeof metricsArg.recordTiming === 'function') {
-              metricsArg.recordTiming(`${timingPrefix}.end`, finishedAt);
-            }
+            if (metricsArg && span) metricsArg.endSpan(span);
             AopProxy.fillElapsed(args, ctx.elapsedMs);
             const error = err instanceof Error ? err : new Error(String(err));
             // 切入点 4：afterExecute（方法执行后 #2，始终）

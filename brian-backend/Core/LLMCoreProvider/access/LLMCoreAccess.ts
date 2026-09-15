@@ -51,7 +51,7 @@ import {
  *
  * const output = new MatchLLMOutput();
  * await llmCore.matchLLM(
- *   { agent_id: 'xxx', context_id: 'yyy', interact_id: 'zzz' },
+ *   { agent_id: 'xxx', context_id: 'yyy', run_id: 'zzz' },
  *   output, new LLMCoreContext(),
  * );
  * ```

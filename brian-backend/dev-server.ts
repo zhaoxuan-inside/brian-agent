@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
-import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator, TimelineItemKind, Metrics } from '@brian-agent/base';
+import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator, TimelineItemKind, Metrics, type MetricsLogger } from '@brian-agent/base';
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import {
   SessionAccess,
@@ -273,14 +273,14 @@ function createLogger(logAccess?: LogAccess): any {
     let metadata: Record<string, unknown> | undefined;
     let elapsed: number | undefined;
     let workId: string | undefined;
-    let interactId: string | undefined;
+    let runId: string | undefined;
     let traceId: string | undefined;
     if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
       const m = meta as Record<string, unknown>;
       if (typeof m.source === 'string') source = m.source;
       if (typeof m.elapsed_ms === 'number') elapsed = m.elapsed_ms;
       if (typeof m.work_id === 'string') workId = m.work_id;
-      if (typeof m.interact_id === 'string') interactId = m.interact_id;
+      if (typeof m.run_id === 'string') runId = m.run_id;
       if (typeof m.trace_id === 'string') traceId = m.trace_id;
       metadata = { ...m, log_source: 'AOP' };
     } else if (meta !== undefined && meta !== null) {
@@ -290,7 +290,7 @@ function createLogger(logAccess?: LogAccess): any {
     }
     try {
       rawService.addLog(
-        { data: { level, source, message, metadata, elapsed_ms: elapsed, work_id: workId, interact_id: interactId, trace_id: traceId } },
+        { data: { level, source, message, metadata, elapsed_ms: elapsed, work_id: workId, run_id: runId, trace_id: traceId } },
         {} as any,
         {} as any,
       ).catch(() => {});
@@ -799,7 +799,7 @@ async function buildContext() {
         // { field: 'session_id', value: input.session_id },
         { field: 'session_id', value: input.session_key || input.session_id },
           { field: 'work_id', value: '' },
-          { field: 'interact_id', value: '' },
+          { field: 'run_id', value: '' },
           { field: 'info_id', value: infoId },
           { field: 'info_creator_id', value: '' },
           { field: 'info_creator_role', value: 'SYSTEM' },
@@ -858,6 +858,9 @@ async function buildContext() {
     logger,
     evolutorAgent,
     writerAgent,
+    // ===== 新增（2026-09-15）：注入 InfoCore —— 主 Loop 每次问答构建多层静态记忆
+    //（<static-memory-context> 不可变块入 system，执行新信息保持消息序列可变演进）=====
+    infoCore,
   );
   await runtimeGateway.initialize();
   runtimeGatewayRef = runtimeGateway;
@@ -962,9 +965,12 @@ async function buildContext() {
     midnight.setHours(24, 0, 0, 0);
     const msUntilMidnight = midnight.getTime() - now.getTime();
     setTimeout(() => {
+      // 源头 trace 治理：每次触发生成触发级 trace（cleanupExpiredMessages 暂无 Metrics 透传口，
+      // 先落日志 meta 保证可追溯）
+      const triggerTrace = cronTrace('cron.mqcleanup');
       try {
         mqAccess.cleanupExpiredMessages().then((cleaned) => {
-          if (cleaned > 0) logger.info('[cron] MQ cleanup', `删除了 ${cleaned} 条过期消息`);
+          if (cleaned > 0) logger.info('[cron] MQ cleanup', { detail: `删除了 ${cleaned} 条过期消息`, trace_id: triggerTrace.trace_id, source: 'cron.mqcleanup' });
         }).catch(() => {});
       } catch { /* ignore */ }
       scheduleMidnightCleanup(); // 调度下一天
@@ -973,9 +979,14 @@ async function buildContext() {
   scheduleMidnightCleanup();
 
   // 启动时清理过期信息（InfoCore.delInfo，清空超过 alive_max_days 的 info 内容，保留记录用于摘要回退）
+  // ===== 修改后（2026-09-14 trace 源头治理）：定时任务触发即源头 —— 每次触发生成 traceId，
+  // 作为该次触发的全链路 trace 传入任务（Metrics）与日志 meta，日志不再出现空 trace =====
+  function cronTrace(category: string) {
+    return new Metrics(logger as unknown as MetricsLogger, category, IdGenerator.generate());
+  }
   try {
     const delOut = new DelInfoOutput();
-    await infoCore.delInfo(new DelInfoInput(), delOut, new InfoCoreContext());
+    await infoCore.delInfo(new DelInfoInput(), delOut, new InfoCoreContext(), cronTrace('cron.infocleanup.startup'));
     if (delOut.deleted_count > 0) logger.info('[startup] Info cleanup', `清理了 ${delOut.deleted_count} 条过期信息`);
   } catch (e) {
     logger.warn('[startup] Info cleanup failed', String(e));
@@ -988,10 +999,11 @@ async function buildContext() {
     midnight.setHours(24, 0, 0, 0);
     const msUntilMidnight = midnight.getTime() - now.getTime();
     setTimeout(() => {
+      const triggerTrace = cronTrace('cron.infocleanup.midnight');
       try {
         const delOut = new DelInfoOutput();
-        infoCore.delInfo(new DelInfoInput(), delOut, new InfoCoreContext()).then(() => {
-          if (delOut.deleted_count > 0) logger.info('[cron] Info cleanup', `清理了 ${delOut.deleted_count} 条过期信息`);
+        infoCore.delInfo(new DelInfoInput(), delOut, new InfoCoreContext(), triggerTrace).then(() => {
+          if (delOut.deleted_count > 0) logger.info('[cron] Info cleanup', { detail: `清理了 ${delOut.deleted_count} 条过期信息`, trace_id: triggerTrace.trace_id, source: 'cron' });
         }).catch(() => {});
       } catch { /* ignore */ }
       scheduleInfoCleanup(); // 调度下一天
@@ -1001,9 +1013,10 @@ async function buildContext() {
 
   // 周期性同步 MCP 安装状态（每 1 小时通过 npm list -g 清理全局已卸载的 npm 记录）
   setInterval(() => {
+    const triggerTrace = cronTrace('cron.mcpinstallsync');
     try {
       mcpAccess.syncInstallStatus().then((removed) => {
-        if (removed > 0) logger.info('[cron] MCP install sync', `清理了 ${removed} 条已卸载的 npm 安装记录`);
+        if (removed > 0) logger.info('[cron] MCP install sync', { detail: `清理了 ${removed} 条已卸载的 npm 安装记录`, trace_id: triggerTrace.trace_id, source: 'cron.mcpinstallsync' });
       }).catch(() => {});
     } catch { /* ignore */ }
   }, 60 * 60 * 1000);
@@ -1024,14 +1037,15 @@ async function buildContext() {
     midnight.setHours(24, 0, 0, 0);
     const msUntilMidnight = midnight.getTime() - now.getTime();
     setTimeout(() => {
+      const triggerTrace = cronTrace('cron.skill-soul-aging');
       try {
         const skillOut = new AgeSkillOutput();
-        skillCore.ageSkill(new AgeSkillInput(), skillOut, new SkillCoreContext()).then(() => {
-          if (skillOut.aged_count > 0) logger.info('[cron] Skill aging', `老化 ${skillOut.aged_count} 个 Skill`);
+        skillCore.ageSkill(new AgeSkillInput(), skillOut, new SkillCoreContext(), triggerTrace).then(() => {
+          if (skillOut.aged_count > 0) logger.info('[cron] Skill aging', { detail: `老化 ${skillOut.aged_count} 个 Skill`, trace_id: triggerTrace.trace_id, source: 'cron.skill-soul-aging' });
         }).catch(() => {});
         const soulOut = new AgeSoulOutput();
-        soulCore.ageSoul(new AgeSoulInput(), soulOut, new SoulCoreContext()).then(() => {
-          if (soulOut.aged_count > 0) logger.info('[cron] Soul aging', `老化 ${soulOut.aged_count} 个 Soul`);
+        soulCore.ageSoul(new AgeSoulInput(), soulOut, new SoulCoreContext(), triggerTrace).then(() => {
+          if (soulOut.aged_count > 0) logger.info('[cron] Soul aging', { detail: `老化 ${soulOut.aged_count} 个 Soul`, trace_id: triggerTrace.trace_id, source: 'cron.skill-soul-aging' });
         }).catch(() => {});
       } catch { /* ignore */ }
       scheduleDailyAging(); // 调度下一天
@@ -1057,6 +1071,17 @@ async function buildContext() {
   };
 }
 
+// ===== 修改后（2026-09-14 trace 源头治理）：traceId 唯一产生点 = 请求源头 =====
+// 前端/调用方每次请求生成并经 X-Trace-Id 头显式携带；服务端只消费：
+// 头合法（UUID v4）即采用，不携带或非法时才兜底生成（保证任意来源仍可追踪）。
+// ===== 原始方法（保留作为参考）：/api/chat/stream 入口处 direct IdGenerator.generate()（见 3863 行注释） =====
+const TRACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function soReqTraceId(req: http.IncomingMessage): string {
+  const raw = String(req.headers['x-trace-id'] ?? '').trim().toLowerCase();
+  if (raw && TRACE_ID_RE.test(raw)) return raw;
+  return IdGenerator.generate();
+}
+
 function jsonBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB 上限
@@ -1080,7 +1105,7 @@ function sendJson(res: http.ServerResponse, status: number, data: any) {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Trace-Id',
     'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(data));
@@ -1155,7 +1180,8 @@ async function buildThinkingBlocksAndDag(
     const existing = workBlocksMap.get(wid);
     if (existing && existing.length > 0) continue;
     try {
-      const rebuilt = await buildThinkingBlocksFromRuntime(relationDb, wid);
+      // ===== 修改后（2026-09-15 记忆集中）：传入 InfoCore 接入层，快照读取统一走 soContextByWork =====
+      const rebuilt = await buildThinkingBlocksFromRuntime(relationDb, infoCore, wid);
       if (rebuilt) {
         workBlocksMap.set(wid, rebuilt.blocks);
         if (rebuilt.dag) workDagMap.set(wid, rebuilt.dag);
@@ -1177,261 +1203,120 @@ async function buildThinkingBlocksAndDag(
  * - 每轮输入输出：think.delta / reply.delta（流式增量）、tool.started / tool.result（工具配对）
  * - 保存：stream_event（事件流持久化）+ runtime_message_part（reasoning/text/tool Part 全量）
  */
-// ===== 原始方法（保留作为参考）：buildThinkingBlocksFromRuntime =====
-// async function buildThinkingBlocksFromRuntime(
-//   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
-//   runId: string,
-// ): Promise<{ blocks: any[]; dag: any; trace?: any } | null> {
-//   // 1. run 记录 → 会话键与时间窗
-//   const runRows = relationDb.queryRaw<Record<string, unknown>>(
-//     `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used
-//      FROM runtime_run WHERE id = ? LIMIT 1`,
-//     [runId],
-//   );
-//   if (runRows.length === 0) return null;
-//   const run = runRows[0];
-//   const sessionKey = String(run.session_key ?? '');
-//   if (!sessionKey) return null;
-//   const startTs = Number(run.started_at ?? run.accepted_at ?? 0) - 5000;
-//   const settleTs = Math.max(Number(run.settled_at ?? 0), Number(run.accepted_at ?? 0)) + 5000;
-// 
-//   // 2. 事件流 → V2 全量执行轨迹（优先按 run_id 精确过滤，兼容老数据回退时间窗）
-//   const evRows = relationDb.queryRaw<{ seq: number; run_id: string; event_type: string; payload_json: string; ts: number }>(
-//     `SELECT seq, run_id, event_type, payload_json, ts FROM stream_event
-//      WHERE session_key = ? AND ts >= ? AND ts <= ? ORDER BY seq ASC`,
-//     [sessionKey, startTs, settleTs],
-//   );
-//   // 同一会话时间窗内可能混入相邻 run 的事件：run_id 非空时只保留本 run 与全局事件（run_id 为空的 run 级事件）
-//   const runEvRows = evRows.filter((r) => !r.run_id || r.run_id === runId || !runId);
-//   let selected: any = null;
-//   let components: any = null;
-//   const builtContexts: any[] = [];
-//   // V2 全量时间线：按 seq 顺序记录每个关键事件（高频 delta 做聚合，避免时间线爆炸）
-//   const timeline: any[] = [];
-//   let thinkDeltaCount = 0;
-//   let thinkDeltaChars = 0;
-//   let replyDeltaCount = 0;
-//   let replyDeltaChars = 0;
-//   let toolEventIdx = 0;
-//   // target：执行时间线节点 → 执行内容卡片的跳转锚点（data-anchor；无跳转目标为空串）
-//   const pushTimeline = (ev: { seq: number; ts: number }, event: string, title: string, detail?: string, kind?: string, target?: string) => {
-//     timeline.push({ seq: ev.seq, ts: ev.ts, event, title, detail: detail ?? '', kind: kind ?? 'info', target: target ?? '' });
-//   };
-//   // 运行节点详情：意图分析/Agent 选择/组件装配/模型与提示词等过程节点的结构化明细，
-//   // 供「执行内容」中的「运行节点」卡片展示（每个时间线节点都有可点开的结构化详情）
-//   const nodes: any[] = [];
-//   const pushNode = (ev: { seq: number }, kind: string, title: string, fields: Array<{ label: string; value: string }>, detail?: string) => {
-//     const targetKey = `node-${ev.seq}`;
-//     nodes.push({ seq: ev.seq, targetKey, title, kind, detail: detail ?? '', fields });
-//     return targetKey;
-//   };
-//   for (const ev of runEvRows) {
-//     let payload: any;
-//     try { payload = JSON.parse(String(ev.payload_json ?? '{}')); } catch { continue; }
-//     if (ev.event_type === 'agent.selected') selected = payload;
-//     else if (ev.event_type === 'agent.components') components = payload;
-//     else if (ev.event_type === 'context.built') builtContexts.push(payload);
-//     switch (ev.event_type) {
-//       case 'run.accepted':
-//         pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', 'lifecycle');
-//         break;
-//       case 'run.started':
-//         {
-//           const agentLabel = String(payload.agent_name ?? payload.agent_id ?? '');
-//           const target = pushNode(ev, 'lifecycle', '开始执行', [
-//             { label: 'Agent', value: agentLabel || '（默认）' },
-//           ]);
-//           pushTimeline(ev, ev.event_type, '开始执行', agentLabel, 'lifecycle', target);
-//         }
-//         break;
-//       case 'agent.selected':
-//         {
-//           const target = pushNode(ev, 'agent', 'Agent 选择', [
-//             { label: 'Agent 名称', value: String(payload.agent_name ?? '') },
-//             { label: '定义 ID', value: String(payload.def_id ?? '') },
-//             { label: '匹配方式', value: String(payload.matched_by ?? '') },
-//           ]);
-//           pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', 'agent', target);
-//         }
-//         break;
-//       case 'agent.components':
-//         {
-//           const skillList = Array.isArray(payload.skills) && payload.skills.length
-//             ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、')
-//             : '';
-//           const mcpList = Array.isArray(payload.mcps) && payload.mcps.length
-//             ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、')
-//             : '';
-//           const target = pushNode(ev, 'agent', '组件装配', [
-//             { label: 'Soul', value: payload.soul_id ? String(payload.soul_id) : '（无）' },
-//             { label: 'Prompt', value: payload.prompt_template_id ? String(payload.prompt_template_id) : '（默认身份模板）' },
-//             { label: 'LLM', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
-//             { label: 'Skill', value: skillList || '（无）' },
-//             { label: 'MCP', value: mcpList || '（无）' },
-//           ]);
-//           const bits: string[] = [];
-//           if (payload.soul_id) bits.push(`Soul ${String(payload.soul_id)}`);
-//           if (Array.isArray(payload.skills) && payload.skills.length) bits.push(`Skill×${payload.skills.length}`);
-//           if (Array.isArray(payload.mcps) && payload.mcps.length) bits.push(`MCP×${payload.mcps.length}`);
-//           if (payload.llm_id) bits.push(`LLM ${String(payload.llm_id)}`);
-//           if (payload.prompt_template_id) bits.push(`Prompt ${String(payload.prompt_template_id)}`);
-//           const summary = bits.join(' · ');
-//           pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', 'agent', target);
-//         }
-//         break;
-//       case 'agent.built':
-//         {
-//           const target = pushNode(ev, 'agent', '构建 Agent', [
-//             { label: 'Agent 名称', value: String(payload.name ?? payload.agent_id ?? '') },
-//             { label: '用途', value: String(payload.purpose ?? '') },
-//           ]);
-//           pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? payload.agent_id ?? 'agent')}`, String(payload.purpose ?? ''), 'agent', target);
-//         }
-//         break;
-//       case 'context.built':
-//         pushTimeline(ev, ev.event_type, `构建上下文：第 ${Number(payload.round ?? 0)} 轮 · ${Number(payload.message_count ?? (Array.isArray(payload.messages) ? payload.messages.length : 0))} 条消息`, payload.system ? '含 system 提示词（模型输入侧）' : '', 'context', `ctx-${Number(payload.round ?? 0)}`);
-//         break;
-//       case 'intent.analyzed':
-//         {
-//           const target = pushNode(ev, 'intent', '需求确认 / 意图分析', [
-//             { label: '匹配得分', value: String(payload.score ?? 0) },
-//             { label: '是否采纳', value: payload.adopted ? '采纳' : '未达阈值' },
-//             { label: '候选 Agent', value: `${payload.candidates_count ?? 0} 个` },
-//             { label: '命中 Agent', value: String(payload.agent_id ?? payload.agent_name ?? '（无）') },
-//             { label: '理由', value: String(payload.reason ?? '（无）') },
-//           ]);
-//           pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, 'intent', target);
-//         }
-//         break;
-//       case 'llm.selected':
-//         {
-//           const target = pushNode(ev, 'model', 'LLM 模型选定', [
-//             { label: '模型', value: payload.llm_id ? String(payload.llm_id) : '（默认模型）' },
-//           ]);
-//           pushTimeline(ev, ev.event_type, `选定模型：${String(payload.llm_id || '默认模型')}`, '', 'model', target);
-//         }
-//         break;
-//       case 'prompt.selected':
-//         {
-//           const target = pushNode(ev, 'model', '提示词选定', [
-//             { label: '模板', value: String(payload.template_id ?? '（默认身份模板）') },
-//             { label: 'Soul 注入', value: payload.soul_selected ? '已注入' : '未注入' },
-//             { label: '工具数', value: String(payload.tools_count ?? 0) },
-//           ]);
-//           pushTimeline(ev, ev.event_type, `选定提示词：${String(payload.template_id ?? '默认身份模板')}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', 'model', target);
-//         }
-//         break;
-//       case 'skill.selected': {
-//         const n = Array.isArray(payload.skills) ? payload.skills.length : 0;
-//         const target = pushNode(ev, 'model', 'Skill 选定', [
-//           { label: '数量', value: String(n) },
-//           { label: '明细', value: n ? (payload.skills as any[]).map((s) => String(s.brief || s.id || s)).filter(Boolean).join('、') : '（无）' },
-//         ]);
-//         pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', '', 'model', target);
-//         break;
-//       }
-//       case 'mcp.selected': {
-//         const n = Array.isArray(payload.mcps) ? payload.mcps.length : 0;
-//         const target = pushNode(ev, 'model', 'MCP 选定', [
-//           { label: '数量', value: String(n) },
-//           { label: '明细', value: n ? (payload.mcps as any[]).map((m) => String(m.brief || m.id || m.server_name || m)).filter(Boolean).join('、') : '（无）' },
-//         ]);
-//         pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', '', 'model', target);
-//         break;
-//       }
-//       case 'think.created':
-//         pushTimeline(ev, ev.event_type, '开始思考（Agent 推理）', String(payload.agent_name ?? ''), 'think', 'agent-0');
-//         break;
-//       case 'think.delta':
-//         thinkDeltaCount += 1;
-//         thinkDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
-//         break;
-//       case 'reply.created':
-//         pushTimeline(ev, ev.event_type, '开始组织回复（Agent 输出）', String(payload.agent_name ?? ''), 'reply', 'agent-0');
-//         break;
-//       case 'reply.delta':
-//         replyDeltaCount += 1;
-//         replyDeltaChars += String((payload as any).delta ?? (payload as any).chunk ?? '').length;
-//         break;
-//       case 'tool.started':
-//       case 'tool.launch':
-//         toolEventIdx += 1;
-//         pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), 'tool', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
-//         break;
-//       case 'tool.result':
-//         pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? 'tool-ok' : 'tool-fail', payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`);
-//         break;
-//       case 'plan.updated': {
-//         const n = Array.isArray(payload.steps) ? payload.steps.length : 0;
-//         const target = pushNode(ev, 'plan', '计划更新', [
-//           { label: '步骤数', value: String(n) },
-//           { label: '明细', value: n ? (payload.steps as any[]).map((s: any) => String(s.title || s.label || s.content || s)).filter(Boolean).join(' · ') : '（无）' },
-//         ]);
-//         pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', 'plan', target);
-//         break;
-//       }
-//       case 'permission.asked':
-//         pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', 'permission', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
-//         break;
-//       case 'permission.answered':
-//         pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? 'permission-deny' : 'permission-ok', payload.permission_id ? `perm-${String(payload.permission_id)}` : '');
-//         break;
-//       case 'evaluation.completed': {
-//         const scores = (payload.scores && typeof payload.scores === 'object' ? payload.scores : {}) as Record<string, unknown>;
-//         const scoreFields = Object.entries(scores as Record<string, unknown>)
-//           .slice(0, 12)
-//           .map(([k, v]) => ({ label: k, value: String(v) }));
-//         const target = pushNode(ev, 'eval', '评估', [
-//           { label: '类型', value: String(payload.eval_type ?? '') },
-//           ...scoreFields,
-//           { label: '需优化', value: payload.need_optimize ? '是' : '否' },
-//         ]);
-//         pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), 'eval', target);
-//         break;
-//       }
-//       case 'writer.completed': {
-//         const target = pushNode(ev, 'writer', '写作排版', [
-//           { label: '格式', value: String(payload.format ?? 'MARKDOWN') },
-//           { label: '字数', value: String(payload.length ?? 0) },
-//           { label: '流程图', value: payload.has_mermaid ? '包含 Mermaid 流程图' : '无' },
-//         ]);
-//         pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, 'writer', target);
-//         break;
-//       }
-//       case 'run.finished':
-//         pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), 'lifecycle-ok');
-//         break;
-//       case 'run.failed':
-//         pushTimeline(ev, ev.event_type, `执行失败：${String(payload.stop_reason ?? payload.error ?? '')}`, '', 'lifecycle-fail');
-//         break;
-//       case 'error.occurred':
-//         pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', 'lifecycle-fail');
-//         break;
-//       default:
-//         break;
-//     }
-//   }
-//   // 高频增量汇总为两条时间线节点，保证“整个执行过程”可追溯又不刷屏
-//   // 组件事件已在循环内采集到 components/selected，此处可解析出展示用 Agent 名
-//   const rawAgentNameEarly = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
-//   const displayAgentName = rawAgentNameEarly.replace(/^w2-/i, '').replace(/-[0-9a-f]{8}$/i, '') || rawAgentNameEarly;
-//   if (thinkDeltaCount > 0) {
-//     timeline.push({ seq: -1, ts: startTs, event: 'think.delta#summary', title: `深度思考：${thinkDeltaCount} 个增量 · 共 ${thinkDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', kind: 'think', target: 'agent-0' });
-//   }
-//   if (replyDeltaCount > 0) {
-//     timeline.push({ seq: -1, ts: settleTs, event: 'reply.delta#summary', title: `组织回复：${replyDeltaCount} 个增量 · 共 ${replyDeltaChars} 字`, detail: displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', kind: 'reply', target: 'agent-0' });
-//   }
-//   timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-//   nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-
 // ===== 修改后的方法（2026-09-13）：时间线严格按因果与时序排序，消除 seq:-1 倒置与技术黑话 =====
+type ContextTriples = { source_ids_map: Record<string, string[]>; content_map: Record<string, string>; attribute_map: Record<string, Record<string, unknown>> };
+
+// ===== 原始代码（保留作为参考；2026-09-15 记忆集中删除）：dev-server 内只读 SQL 复刻 InfoCoreProvider.soContextByWork =====
+// function soContextByWorkRaw(relationDb: AllRelationDb, workId: string): ContextTriples {
+//   ...（info_context_source / info_raw / info_summary 直接 SQL 查询，与 Core 层实现重复）
+// }
+// ===== 修改后：快照三对象统一经 InfoCoreProvider.soContextByWork 读取（唯一路径）=====
+async function soContextByWorkShared(infoCore: InfoCoreLike, workId: string): Promise<ContextTriples> {
+  const soOut = { source_ids_map: {} as Record<string, string[]>, content_map: {} as Record<string, string>, attribute_map: {} as Record<string, Record<string, unknown>> };
+  try { await infoCore.soContextByWork({ work_id: workId }, soOut); } catch { /* ignore */ }
+  return soOut;
+}
+
+// InfoCoreAccess 结构鸭子类型（避免 dev-server 顶层类型耦合）
+interface InfoCoreLike {
+  soContextByWork(input: { work_id: string }, output: unknown): Promise<unknown>;
+}
+
+/**
+ * V2 runtime 直连分支的思考过程上下文（数据处理）：
+ * 1. 静态记忆快照：本 run 内产生快照的 work（经 llm_call_log 反查 work_id）→ info_context_source
+ *    三对象 → 各来源 *Messages / categoryIds（与编排分支 contextData 同构）；
+ * 2. 动态 wire 消息（loop 每轮 ContextBuilt）：保留为 wireMessages，与静态记忆区分。
+ */
+async function buildRuntimeWorkContext(
+  infoCore: InfoCoreLike,
+  relationDb: AllRelationDb,
+  runId: string,
+  lastBuilt: any,
+): Promise<Record<string, unknown>> {
+  const context: Record<string, unknown> = {
+    strategy: 'Runtime 直连执行 (Agent 精确匹配)',
+    userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
+    citingMessages: [],
+  };
+  context.timelineMessages = lastBuilt && Array.isArray(lastBuilt.messages)
+    ? (lastBuilt.messages as any[]).map((m) => ({ role: m.role, content: String(m.content ?? '') }))
+    : undefined;
+
+  let workIds: string[] = [];
+  try {
+    const rows = relationDb.queryRaw<{ work_id: string }>(
+      `SELECT DISTINCT "l"."work_id" AS "work_id" FROM "llm_call_log" "l"
+       JOIN "info_context_source" "s" ON "s"."work_id" = "l"."work_id"
+       WHERE "l"."run_id" = ?`,
+      [runId],
+    );
+    // ===== 修改后（2026-09-15 记忆集中）：主 Loop 快照即 runId（权威快照），不再排除 =====
+    workIds = (rows ?? []).map((r) => String(r.work_id)).filter(Boolean);
+  } catch { workIds = []; }
+
+  const triplesByWork = new Map<string, ContextTriples>();
+  for (const wid of workIds.slice(0, 5)) {
+    // ===== 修改后（2026-09-15 记忆集中）：统一经 InfoCoreProvider.soContextByWork =====
+    try { triplesByWork.set(wid, await soContextByWorkShared(infoCore, wid)); } catch { /* ignore */ }
+  }
+
+  if (triplesByWork.size > 0) {
+    const mergedCategories: Record<string, Array<{ info_id: string; content: string }>> = {};
+    const sourceIdsMap: Record<string, string[]> = {};
+    const contentMap: Record<string, string> = {};
+    for (const [, triples] of triplesByWork) {
+      Object.assign(sourceIdsMap, triples.source_ids_map);
+      Object.assign(contentMap, triples.content_map);
+      for (const [source, ids] of Object.entries(triples.source_ids_map)) {
+        const bucket = mergedCategories[source] ?? (mergedCategories[source] = []);
+        for (const id of ids) {
+          const content = triples.content_map[id];
+          if (content && !bucket.some((x) => x.info_id === id)) bucket.push({ info_id: id, content });
+        }
+      }
+    }
+    const toMessages = (sourceKey: string) => {
+      const msgs = mergedCategories[sourceKey];
+      return msgs && msgs.length > 0 ? msgs : undefined;
+    };
+    context.staticMemoryWorkIds = [...triplesByWork.keys()];
+    context.source_ids_map = sourceIdsMap;
+    context.categoryIds = {
+      selected: sourceIdsMap.CUSTOM ?? sourceIdsMap.SELECTED ?? [],
+      citing: sourceIdsMap.CITING ?? [],
+      timeline: sourceIdsMap.TIMELINE ?? [],
+      pinned: sourceIdsMap.PINNED ?? [],
+      similarity: sourceIdsMap.SIMILARITY ?? [],
+      tag_relative: sourceIdsMap.TAG_RELATIVE ?? [],
+      keyword: sourceIdsMap.KEYWORD ?? [],
+      random: sourceIdsMap.RANDOM ?? [],
+    };
+    context.selectedMessages = toMessages('CUSTOM');
+    context.citingMessages = toMessages('CITING');
+    context.timelineMessages = toMessages('TIMELINE');
+    context.pinnedMessages = toMessages('PINNED');
+    context.similarityMessages = toMessages('SIMILARITY');
+    context.tagRelativeMessages = toMessages('TAG_RELATIVE');
+    context.keywordMessages = toMessages('KEYWORD');
+    context.randomMessages = toMessages('RANDOM');
+  }
+  return context;
+}
+
+type AllRelationDb = Parameters<typeof buildThinkingBlocksFromRuntime>[0];
+
+// ===== 修改后（2026-09-15 记忆集中）：新增 infoCore 参数，上下文快照读取统一走 InfoCoreProvider =====
 async function buildThinkingBlocksFromRuntime(
   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
+  infoCore: InfoCoreLike,
   runId: string,
 ): Promise<{ blocks: any[]; dag: any; trace?: any } | null> {
-  // 1. run 记录 → 会话键与时间窗及持久化 metrics
+  // ===== 修改后（2026-09-14 Span 框架）：旧统一计持久化（runtime_run.metrics_json / runtime_metrics 表）
+  // 及其消费代码整体删除（不保留旧数据兼容）；时间线环节耗时唯一数据源 = stream_event payload 自带的
+  // elapsed_ms（最近闭合 span 的 self 时间，Report/Metrics 框架自动盖章），实时与历史口径一致 =====
   const runRows = relationDb.queryRaw<Record<string, unknown>>(
-    `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used, metrics_json
+    `SELECT id, session_key, agent_def_id, status, accepted_at, started_at, settled_at, budget_used
      FROM runtime_run WHERE id = ? LIMIT 1`,
     [runId],
   );
@@ -1442,33 +1327,19 @@ async function buildThinkingBlocksFromRuntime(
   const startTs = Number(run.started_at ?? run.accepted_at ?? 0) - 5000;
   const settleTs = Math.max(Number(run.settled_at ?? 0), Number(run.accepted_at ?? 0)) + 5000;
 
-  // 读取持久化的 metrics 时间戳字典（按 <层名>.<模块名>.<类名>.<方法名>.start/end）
-  let timings: Record<string, number> = {};
-  try {
-    if (run.metrics_json) {
-      timings = JSON.parse(String(run.metrics_json));
-    }
-  } catch { timings = {}; }
-  if (!timings || Object.keys(timings).length === 0) {
-    try {
-      const metricRows = relationDb.queryRaw<{ timings_json: string }>(
-        `SELECT timings_json FROM runtime_metrics WHERE run_id = ? ORDER BY created DESC LIMIT 1`,
-        [runId],
-      );
-      if (metricRows.length > 0 && metricRows[0].timings_json) {
-        timings = JSON.parse(metricRows[0].timings_json);
-      }
-    } catch { /* degrade */ }
-  }
-
-  const getTimingDuration = (layer: string, module: string, className: string, methodName: string): number => {
-    const start = timings[`${layer}.${module}.${className}.${methodName}.start`];
-    const end = timings[`${layer}.${module}.${className}.${methodName}.end`];
-    if (typeof start === 'number' && typeof end === 'number' && end >= start) {
-      return end - start;
-    }
-    return 0;
+  // 环节耗时（消费端）：事件 payload 自带的 elapsed_ms（span self 时间）；display=false 的
+  // 瞬时/生命周期节点（受理/开始执行/调用工具等）不展示任何环节耗时；无 stamp 的节点显示空白 = 真实语义
+  const eventElapsed = (payload: any, display: boolean = true): number => {
+    if (!display) return 0;
+    const v = Number(payload?.elapsed_ms);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
   };
+  // 总耗时（消费端）：run 行 started_at ~ settled_at 包络
+  const totalElapsed = Number(run.settled_at ?? 0) > Number(run.started_at ?? 0)
+    ? Number(run.settled_at) - Number(run.started_at) : 0;
+  // 汇总耗时（消费端）：多轮 LLM 推理求和（loop.turn.completed 每轮自带该轮 span self 耗时）、写作排版耗时
+  let llmTurnsMs = 0;
+  let writerElapsed = 0;
 
   // 2. 事件流 → V2 全量执行轨迹（优先按 run_id 精确过滤，兼容老数据回退时间窗）
   const evRows = relationDb.queryRaw<{ seq: number; run_id: string; event_type: string; payload_json: string; ts: number }>(
@@ -1531,6 +1402,43 @@ async function buildThinkingBlocksFromRuntime(
   // Skill 展示名称：skill 表 name 列为技能名称（如「网页搜索」），skill_brief 列为简述（描述），展示优先名称
   const skillName = (id: string) => resolveComponentName(id, 'skill', 'name') || resolveComponentName(id, 'skill', 'skill_brief');
   const mcpName = (id: string) => resolveComponentName(id, 'mcp_install', 'mcp_title');
+  // 逐组件「名称 + ID」字段构造器：组件条目列表 → 运行节点字段（名称行带 id 悬浮、ID 行明文）+ 名称/ID 清单。
+  // 组件条目兼容 {id} / {server_name} / 裸字符串；名称回退链：载荷 name → DB 名称列 → 载荷 brief → 原始 ID
+  const componentEntryFields = (
+    kindLabel: string,
+    entries: any[],
+    resolveName: (id: string) => string,
+  ): { fields: Array<{ label: string; value: string; id?: string }>; names: string[]; ids: string[] } => {
+    const fields: Array<{ label: string; value: string; id?: string }> = [];
+    const names: string[] = [];
+    const ids: string[] = [];
+    (entries ?? []).forEach((s, i) => {
+      const id = String(s?.id ?? s?.server_name ?? (typeof s === 'string' ? s : '')).trim();
+      if (id) ids.push(id);
+      const name = String(s?.name || '') || resolveName(id) || String(s?.brief || '') || id;
+      names.push(name);
+      const prefix = (entries ?? []).length > 1 ? `${kindLabel} ${i + 1}` : kindLabel;
+      fields.push({ label: `${prefix} 名称`, value: name || '（未知）', id: id || undefined });
+      if (id) fields.push({ label: `${prefix} ID`, value: id });
+    });
+    return { fields, names: names.filter(Boolean), ids };
+  };
+  // 工具/授权卡片所属组件解析：skill_exec → Skill（input.skill_id）、mcp_exec → MCP（input.mcp_id + tool_name）；
+  // 其余内置工具（cdt_browser/update_plan/delegate 等）仅标 builtin，不做组件解析
+  const BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate']);
+  const toolComponentOf = (toolId: string, params: any): { builtin: boolean; kind: 'skill' | 'mcp' | ''; id: string; name: string; subTool: string } => {
+    const builtin = BUILTIN_TOOL_IDS.has(toolId);
+    if (toolId === 'skill_exec') {
+      const id = String(params?.skill_id ?? '').trim();
+      return { builtin, kind: 'skill', id, name: skillName(id) || id, subTool: '' };
+    }
+    if (toolId === 'mcp_exec') {
+      const id = String(params?.mcp_id ?? '').trim();
+      return { builtin, kind: 'mcp', id, name: mcpName(id) || id, subTool: String(params?.tool_name ?? '') };
+    }
+    return { builtin, kind: '', id: '', name: '', subTool: '' };
+  };
+
   // Agent 名称解析：优先 runtime_agent_def.name，其次 V1 agent.agent_name（intent.analyzed 命中 Agent 等场景）
   const agentNameOf = (id: string): string => {
     if (!id) return '';
@@ -1564,7 +1472,7 @@ async function buildThinkingBlocksFromRuntime(
     else if (ev.event_type === 'context.built') builtContexts.push(payload);
     switch (ev.event_type) {
       case 'run.accepted':
-        pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', TimelineItemKind.Lifecycle, undefined, undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'submitRun'));
+        pushTimeline(ev, ev.event_type, '开始受理请求', payload.run_id ? `run ${String(payload.run_id).slice(0, 8)}` : '', TimelineItemKind.Lifecycle, undefined, undefined, eventElapsed(payload, false));
         break;
       case 'run.started':
         {
@@ -1572,7 +1480,8 @@ async function buildThinkingBlocksFromRuntime(
           const target = pushNode(ev, TimelineItemKind.Lifecycle, '开始执行', [
             { label: 'Agent', value: agentLabel || '（默认）' },
           ]);
-          pushTimeline(ev, ev.event_type, '开始执行', agentLabel, TimelineItemKind.Lifecycle, target, undefined, getTimingDuration('Runtime', 'Loop', 'AgentLoopService', 'execAgentLoop') || getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'executeRun'));
+          // 开始执行为瞬时节点（run 启动回执）：不展示环节耗时（Span 框架显示口径：生命周期节点无子环节）
+          pushTimeline(ev, ev.event_type, '开始执行', agentLabel, TimelineItemKind.Lifecycle, target, undefined, eventElapsed(payload, false));
         }
         break;
       case 'agent.selected':
@@ -1582,7 +1491,7 @@ async function buildThinkingBlocksFromRuntime(
             { label: '定义 ID', value: String(payload.def_id ?? '') },
             { label: '匹配方式', value: String(payload.matched_by ?? '') },
           ]);
-          pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', TimelineItemKind.Agent, target, undefined, getTimingDuration('Runtime', 'Agents', 'AgentDefService', 'matchAgentDef'));
+          pushTimeline(ev, ev.event_type, `选中 Agent：${String(payload.agent_name ?? payload.def_id ?? 'agent')}`, payload.matched_by ? `匹配方式：${String(payload.matched_by)}` : '', TimelineItemKind.Agent, target, undefined, eventElapsed(payload));
         }
         break;
       case 'agent.components':
@@ -1592,27 +1501,17 @@ async function buildThinkingBlocksFromRuntime(
           const llmId = payload.llm_id ? String(payload.llm_id) : '';
           const skillEntries = Array.isArray(payload.skills) ? (payload.skills as any[]) : [];
           const mcpEntries = Array.isArray(payload.mcps) ? (payload.mcps as any[]) : [];
-          // 组件名优先取载荷携带的名称（soul_name/prompt_name/llm_name/brief），缺失回退 DB 解析
-          const skillList = skillEntries
-            .map((s) => {
-              const id = String(s.id || s || '');
-              const brief = String(s.brief || '') || skillName(id);
-              return brief || id;
-            })
-            .filter(Boolean).join('、');
-          const mcpList = mcpEntries
-            .map((m) => {
-              const id = String(m.id || m.server_name || m || '');
-              const brief = String(m.brief || '') || mcpName(id);
-              return brief || id;
-            })
-            .filter(Boolean).join('、');
+          // Skill/MCP 逐项「名称 + ID」字段（组件名优先取载荷携带的名称，缺失回退 DB 解析）
+          const skillParsed = componentEntryFields('Skill', skillEntries, skillName);
+          const mcpParsed = componentEntryFields('MCP', mcpEntries, mcpName);
           const target = pushNode(ev, TimelineItemKind.Agent, '组件装配', [
             { label: 'Soul', value: displayValue(soulId, String(payload.soul_name || '') || soulName(soulId)) || '（无）', id: soulId || undefined },
             { label: 'Prompt', value: displayValue(promptId, String(payload.prompt_name || '') || promptName(promptId)) || '（默认身份模板）', id: promptId || undefined },
             { label: 'LLM', value: displayValue(llmId, String(payload.llm_name || '') || llmName(llmId)) || '（默认模型）', id: llmId || undefined },
-            { label: 'Skill', value: skillList || '（无）' },
-            { label: 'MCP', value: mcpList || '（无）' },
+            ...skillParsed.fields,
+            ...mcpParsed.fields,
+            { label: 'Skill 数量', value: String(skillEntries.length) },
+            { label: 'MCP 数量', value: String(mcpEntries.length) },
           ]);
           const bits: string[] = [];
           if (soulId) bits.push(`Soul ${displayValue(soulId, String(payload.soul_name || '') || soulName(soulId))}`);
@@ -1625,27 +1524,29 @@ async function buildThinkingBlocksFromRuntime(
           if (soulId) tooltipBits.push(`Soul: ${soulId}`);
           if (promptId) tooltipBits.push(`Prompt: ${promptId}`);
           if (llmId) tooltipBits.push(`LLM: ${llmId}`);
-          if (skillEntries.length) tooltipBits.push(`Skill: ${skillEntries.map((s) => String(s.id || s || '')).filter(Boolean).join(', ')}`);
-          if (mcpEntries.length) tooltipBits.push(`MCP: ${mcpEntries.map((m) => String(m.id || m || '')).filter(Boolean).join(', ')}`);
-          pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', TimelineItemKind.Agent, target, tooltipBits.join('\n'), getTimingDuration('Runtime', 'Agents', 'AgentDefService', 'soAgentSnapshot'));
+          if (skillParsed.ids.length) tooltipBits.push(`Skill: ${skillParsed.ids.join(', ')}`);
+          if (mcpParsed.ids.length) tooltipBits.push(`MCP: ${mcpParsed.ids.join(', ')}`);
+          pushTimeline(ev, ev.event_type, '组件装配完成', summary ? summary : '无 Soul/Prompt/LLM/Skill/MCP 显式绑定', TimelineItemKind.Agent, target, tooltipBits.join('\n'), eventElapsed(payload));
         }
         break;
       case 'agent.built':
         {
+          const builtAgentId = payload.agent_id ? String(payload.agent_id) : '';
+          const builtDefId = payload.def_id ? String(payload.def_id) : '';
           const target = pushNode(ev, TimelineItemKind.Agent, '构建 Agent', [
-            { label: 'Agent 名称', value: String(payload.name ?? payload.agent_id ?? '') },
+            { label: 'Agent 名称', value: String(payload.name ?? '') || '（未知）', id: builtAgentId || undefined },
+            { label: 'Agent ID', value: builtAgentId || '（无）' },
+            { label: '定义 ID', value: builtDefId || '（无）' },
             { label: '用途', value: String(payload.purpose ?? '') },
           ]);
-          pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? payload.agent_id ?? 'agent')}`, String(payload.purpose ?? ''), TimelineItemKind.Agent, target, undefined, getTimingDuration('Agent', 'AgentBuilder', 'AgentBuilderService', 'buildAgent'));
+          pushTimeline(ev, ev.event_type, `构建 Agent：${String(payload.name ?? builtAgentId ?? 'agent')}`, String(payload.purpose ?? ''), TimelineItemKind.Agent, target, builtAgentId || builtDefId || '', eventElapsed(payload));
         }
         break;
       case 'context.built':
         {
           const roundNum = Number(payload.round ?? 0);
           const msgCount = Number(payload.message_count ?? (Array.isArray(payload.messages) ? payload.messages.length : 0));
-          const ctxElapsed = getTimingDuration('Runtime', 'Session', 'SessionService', 'soMessages')
-            || getTimingDuration('Core', 'InfoCoreProvider', 'InfoCoreService', 'context')
-            || 1;
+          const ctxElapsed = eventElapsed(payload);
           pushTimeline(
             ev,
             ev.event_type,
@@ -1658,6 +1559,10 @@ async function buildThinkingBlocksFromRuntime(
           );
         }
         break;
+      case 'intent.started':
+        // ===== 修改后（2026-09-14）：意图分析开始节点（LLM 打分期时间线不再静止于受理节点）=====
+        pushTimeline(ev, ev.event_type, '需求确认 / 意图分析中…', payload.candidates_count ? `候选 ${payload.candidates_count} 个 Agent` : '', TimelineItemKind.Intent);
+        break;
       case 'intent.analyzed':
         {
           const agentId = payload.agent_id ? String(payload.agent_id) : '';
@@ -1669,7 +1574,7 @@ async function buildThinkingBlocksFromRuntime(
             { label: '命中 Agent', value: agentDisp || '（无）', id: agentId || undefined },
             { label: '理由', value: String(payload.reason ?? '（无）') },
           ]);
-          pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, TimelineItemKind.Intent, target, agentId || '', getTimingDuration('Agent', 'IntentAgent', 'IntentAgentService', 'analyzeIntent'));
+          pushTimeline(ev, ev.event_type, `需求确认 / 意图分析：打分 ${Number(payload.score ?? 0)}（${payload.adopted ? '采纳' : '未达阈值'}）`, payload.reason ? String(payload.reason).slice(0, 200) : `候选 ${payload.candidates_count ?? 0} 个 Agent`, TimelineItemKind.Intent, target, agentId || '', eventElapsed(payload));
         }
         break;
       case 'llm.selected':
@@ -1679,7 +1584,7 @@ async function buildThinkingBlocksFromRuntime(
           const target = pushNode(ev, TimelineItemKind.Model, 'LLM 模型选定', [
             { label: '模型', value: displayValue(llmId, name) || '（默认模型）', id: llmId || undefined },
           ]);
-          pushTimeline(ev, ev.event_type, `选定模型：${displayValue(llmId, name) || '默认模型'}`, '', TimelineItemKind.Model, target, llmId || '', getTimingDuration('Core', 'LLMCoreProvider', 'LLMCoreService', 'matchLLM'));
+          pushTimeline(ev, ev.event_type, `选定模型：${displayValue(llmId, name) || '默认模型'}`, '', TimelineItemKind.Model, target, llmId || '', eventElapsed(payload));
         }
         break;
       case 'prompt.selected':
@@ -1691,31 +1596,25 @@ async function buildThinkingBlocksFromRuntime(
             { label: 'Soul 注入', value: payload.soul_selected ? '已注入' : '未注入' },
             { label: '工具数', value: String(payload.tools_count ?? 0) },
           ]);
-          pushTimeline(ev, ev.event_type, `选定提示词：${displayValue(templateId, name) || '默认身份模板'}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', TimelineItemKind.Model, target, templateId || '', getTimingDuration('Base', 'PromptsProvider', 'PromptsService', 'soPrompt'));
+          pushTimeline(ev, ev.event_type, `选定提示词：${displayValue(templateId, name) || '默认身份模板'}`, payload.tools_count ? `注入 ${payload.tools_count} 个工具` : '', TimelineItemKind.Model, target, templateId || '', eventElapsed(payload));
         }
         break;
       case 'skill.selected': {
-        const n = Array.isArray(payload.skills) ? payload.skills.length : 0;
-        const detailList = n
-          ? (payload.skills as any[]).map((s) => { const id = String(s.id || s || ''); const brief = String(s.brief || '') || skillName(id); return brief || id; }).filter(Boolean).join('、')
-          : '';
-        const target = pushNode(ev, TimelineItemKind.Model, 'Skill 选定', [
-          { label: '数量', value: String(n) },
-          { label: '明细', value: detailList || '（无）' },
-        ]);
-        pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', '', TimelineItemKind.Model, target, undefined, getTimingDuration('Core', 'SkillCoreProvider', 'SkillCoreService', 'matchSkill'));
+        const skillParsed = componentEntryFields('Skill', Array.isArray(payload.skills) ? (payload.skills as any[]) : [], skillName);
+        const n = skillParsed.names.length;
+        const fields: Array<{ label: string; value: string; id?: string }> = [{ label: '数量', value: String(n) }, ...skillParsed.fields];
+        if (!n) fields.push({ label: '明细', value: '（无）' });
+        const target = pushNode(ev, TimelineItemKind.Model, 'Skill 选定', fields);
+        pushTimeline(ev, ev.event_type, n ? `选定 Skill×${n}` : '无需 Skill', skillParsed.names.join('、'), TimelineItemKind.Model, target, skillParsed.ids.join(', '), eventElapsed(payload));
         break;
       }
       case 'mcp.selected': {
-        const n = Array.isArray(payload.mcps) ? payload.mcps.length : 0;
-        const detailList = n
-          ? (payload.mcps as any[]).map((m) => { const id = String(m.id || m.server_name || m || ''); const brief = String(m.brief || '') || mcpName(id); return brief || id; }).filter(Boolean).join('、')
-          : '';
-        const target = pushNode(ev, TimelineItemKind.Model, 'MCP 选定', [
-          { label: '数量', value: String(n) },
-          { label: '明细', value: detailList || '（无）' },
-        ]);
-        pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', '', TimelineItemKind.Model, target, undefined, getTimingDuration('Core', 'MCPCoreProvider', 'MCPCoreService', 'matchMcp'));
+        const mcpParsed = componentEntryFields('MCP', Array.isArray(payload.mcps) ? (payload.mcps as any[]) : [], mcpName);
+        const n = mcpParsed.names.length;
+        const fields: Array<{ label: string; value: string; id?: string }> = [{ label: '数量', value: String(n) }, ...mcpParsed.fields];
+        if (!n) fields.push({ label: '明细', value: '（无）' });
+        const target = pushNode(ev, TimelineItemKind.Model, 'MCP 选定', fields);
+        pushTimeline(ev, ev.event_type, n ? `选定 MCP×${n}` : '无需 MCP', mcpParsed.names.join('、'), TimelineItemKind.Model, target, mcpParsed.ids.join(', '), eventElapsed(payload));
         break;
       }
       case 'think.created':
@@ -1735,10 +1634,10 @@ async function buildThinkingBlocksFromRuntime(
       case 'tool.started':
       case 'tool.launch':
         toolEventIdx += 1;
-        pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), TimelineItemKind.Tool, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, getTimingDuration('Runtime', 'Tools', 'ToolService', 'execTool'));
+        pushTimeline(ev, ev.event_type, `调用工具：${String(payload.tool_id ?? payload.tool_name ?? 'tool')}`, typeof payload.input === 'string' ? (payload.input as string).slice(0, 200) : JSON.stringify(payload.input ?? payload.params ?? {}).slice(0, 200), TimelineItemKind.Tool, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, eventElapsed(payload, false));
         break;
       case 'tool.result':
-        pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? TimelineItemKind.ToolOk : TimelineItemKind.ToolFail, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, getTimingDuration('Runtime', 'Tools', 'ToolService', 'execTool'));
+        pushTimeline(ev, ev.event_type, `工具返回：${String(payload.tool_id ?? 'tool')}（${String(payload.status ?? '')}）`, String(payload.output ?? '').slice(0, 300), payload.status === 'ok' ? TimelineItemKind.ToolOk : TimelineItemKind.ToolFail, payload.part_id ? `tool-${String(payload.part_id)}` : `tool-idx-${toolEventIdx}`, undefined, eventElapsed(payload));
         break;
       case 'plan.updated': {
         const n = Array.isArray(payload.steps) ? payload.steps.length : 0;
@@ -1746,14 +1645,18 @@ async function buildThinkingBlocksFromRuntime(
           { label: '步骤数', value: String(n) },
           { label: '明细', value: n ? (payload.steps as any[]).map((s: any) => String(s.title || s.label || s.content || s)).filter(Boolean).join(' · ') : '（无）' },
         ]);
-        pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', TimelineItemKind.Plan, target, undefined, getTimingDuration('Agent', 'PlannerAgent', 'PlannerAgentService', 'planAgent'));
+        pushTimeline(ev, ev.event_type, n ? `计划更新：${n} 个步骤` : '计划更新', '', TimelineItemKind.Plan, target, undefined, eventElapsed(payload));
         break;
       }
       case 'permission.asked':
-        pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', TimelineItemKind.Permission, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'waitPermission'));
+        pushTimeline(ev, ev.event_type, `请求授权：${String(payload.tool_id ?? 'tool')}`, '', TimelineItemKind.Permission, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, eventElapsed(payload, false));
         break;
       case 'permission.answered':
-        pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? TimelineItemKind.PermissionDeny : TimelineItemKind.PermissionOk, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, getTimingDuration('Runtime', 'Runs', 'RunGatewayService', 'answerPermission'));
+        pushTimeline(ev, ev.event_type, `授权${(payload as any).approved === false ? '被拒绝' : '已通过'}${(payload as any).auto_approved ? '（信任表自动放行）' : ''}：${String(payload.tool_id ?? '')}`, '', (payload as any).approved === false ? TimelineItemKind.PermissionDeny : TimelineItemKind.PermissionOk, payload.permission_id ? `perm-${String(payload.permission_id)}` : '', undefined, eventElapsed(payload));
+        break;
+      case 'evaluation.started':
+        // ===== 修改后（2026-09-14）：评估开始节点（评估 LLM 期时间线不再静止）=====
+        pushTimeline(ev, ev.event_type, '评估中…', '', TimelineItemKind.Eval, 'agent-0', undefined, eventElapsed(payload, false));
         break;
       case 'evaluation.completed': {
         const scores = (payload.scores && typeof payload.scores === 'object' ? payload.scores : {}) as Record<string, unknown>;
@@ -1765,26 +1668,40 @@ async function buildThinkingBlocksFromRuntime(
           ...scoreFields,
           { label: '需优化', value: payload.need_optimize ? '是' : '否' },
         ]);
-        pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), TimelineItemKind.Eval, target, undefined, getTimingDuration('Agent', 'EvolutorAgent', 'EvolutorAgentService', 'evalWorkAgent'));
+        pushTimeline(ev, ev.event_type, `评估完成：overall=${Number((scores as any).overall ?? 0)}${payload.need_optimize ? '（需优化）' : ''}`, String(payload.eval_type ?? ''), TimelineItemKind.Eval, target, undefined, eventElapsed(payload));
         break;
       }
+      case 'writer.started':
+        // ===== 修改后（2026-09-14）：写作开始节点（写作 LLM 期时间线不再静止）=====
+        pushTimeline(ev, ev.event_type, '写作排版中…', '', TimelineItemKind.Writer, 'agent-0', undefined, eventElapsed(payload, false));
+        break;
       case 'writer.completed': {
+        // ===== 修改后（2026-09-15 lint：与文末兜底段重复 case 合并，耗时段并入首个 case；原第二个重复 case 删除）=====
+        writerElapsed = eventElapsed(payload);
         const target = pushNode(ev, TimelineItemKind.Writer, '写作排版', [
           { label: '格式', value: String(payload.format ?? 'MARKDOWN') },
           { label: '字数', value: String(payload.length ?? 0) },
           { label: '流程图', value: payload.has_mermaid ? '包含 Mermaid 流程图' : '无' },
         ]);
-        pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, TimelineItemKind.Writer, target, undefined, getTimingDuration('Agent', 'WriterAgent', 'WriterAgentService', 'execWrite'));
+        pushTimeline(ev, ev.event_type, `写作排版：${payload.format ?? 'Markdown'}${payload.has_mermaid ? '（含 Mermaid 流程图）' : ''}`, `字数：${payload.length ?? 0}`, TimelineItemKind.Writer, target, undefined, eventElapsed(payload));
         break;
       }
       case 'run.finished':
-        pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), TimelineItemKind.LifecycleOk, undefined, undefined, getTimingDuration('Application', 'Chat', 'ChatService', 'openChatStream') || (Number(run.settled_at ?? 0) > Number(run.started_at ?? 0) ? Number(run.settled_at) - Number(run.started_at) : 0));
+        pushTimeline(ev, ev.event_type, '执行完成', String(payload.stop_reason ?? ''), TimelineItemKind.LifecycleOk, undefined, undefined, totalElapsed);
         break;
       case 'run.failed':
         pushTimeline(ev, ev.event_type, `执行失败：${String(payload.stop_reason ?? payload.error ?? '')}`, '', TimelineItemKind.LifecycleFail);
         break;
       case 'error.occurred':
         pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', TimelineItemKind.LifecycleFail);
+        break;
+      // ===== 原始代码（保留作为参考）：重复的 'writer.completed' case（dead code）已并入上方首个 case，
+      //      'loop.turn.completed' 累计耗时保留 =====
+      // case 'writer.completed':
+      //   writerElapsed = eventElapsed(payload);
+      //   break;
+      case 'loop.turn.completed':
+        llmTurnsMs += eventElapsed(payload);
         break;
       default:
         break;
@@ -1796,12 +1713,12 @@ async function buildThinkingBlocksFromRuntime(
   const thinkAnchor = thinkCreatedEv ?? firstThinkDeltaEv;
   if (thinkAnchor) {
     const thinkTitle = thinkDeltaChars > 0 ? `Agent 深度推理思考（${thinkDeltaChars} 字）` : 'Agent 深度推理思考';
-    pushTimeline(thinkAnchor, 'think.delta#summary', thinkTitle, displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', TimelineItemKind.Think, 'agent-0', undefined, getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLMEvents') || getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLM'));
+    pushTimeline(thinkAnchor, 'think.delta#summary', thinkTitle, displayAgentName ? `Agent：${displayAgentName}（推理见「深度思考」卡片）` : '', TimelineItemKind.Think, 'agent-0', undefined, llmTurnsMs);
   }
   const replyAnchor = replyCreatedEv ?? firstReplyDeltaEv;
   if (replyAnchor) {
     const replyTitle = replyDeltaChars > 0 ? `生成回答内容（${replyDeltaChars} 字）` : '生成回答内容';
-    pushTimeline(replyAnchor, 'reply.delta#summary', replyTitle, displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', TimelineItemKind.Reply, 'agent-0', undefined, getTimingDuration('Agent', 'WriterAgent', 'WriterAgentService', 'execWrite') || getTimingDuration('Base', 'LLMProvider', 'LLMService', 'execLLMEvents'));
+    pushTimeline(replyAnchor, 'reply.delta#summary', replyTitle, displayAgentName ? `Agent：${displayAgentName}（最终回复见「深度思考」卡片「输入与回复」页签）` : '', TimelineItemKind.Reply, 'agent-0', undefined, writerElapsed);
   }
   timeline.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
   nodes.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.ts ?? 0) - (b.ts ?? 0));
@@ -1904,20 +1821,27 @@ async function buildThinkingBlocksFromRuntime(
   // 运行时 Agent 名形如 w2-{名称}-{8位hex}（Runtime v2 内部 def 名），仅做展示用途，去掉前缀与随机后缀
   const rawAgentName = String(components?.agent_name ?? selected?.agent_name ?? 'Runtime Agent');
   const agentName = rawAgentName.replace(/^w2-/i, '').replace(/-[0-9a-f]{8}$/i, '') || rawAgentName;
-  const skills = Array.isArray(components?.skills)
-    ? (components.skills as any[]).map((s) => { const id = String(s.id || s || ''); const brief = String(s.brief || '') || skillName(id); return brief || id; }).filter(Boolean)
+  // 组件信息结构化：{id, name}[]（名称回退链：载荷 name/brief → DB 名称列 → 原始 ID），供深度思考胶囊与运行概览组件清单
+  const skillItems = Array.isArray(components?.skills)
+    ? (components.skills as any[]).map((s) => { const id = String(s?.id ?? s ?? '').trim(); return { id, name: String(s?.name || '') || skillName(id) || String(s?.brief || '') || id }; }).filter((x) => x.id || x.name)
     : [];
-  const mcps = Array.isArray(components?.mcps)
-    ? (components.mcps as any[]).map((m) => { const id = String(m.id || m.server_name || m || ''); const brief = String(m.brief || '') || mcpName(id); return brief || id; }).filter(Boolean)
+  const mcpItems = Array.isArray(components?.mcps)
+    ? (components.mcps as any[]).map((m) => { const id = String(m?.id ?? m?.server_name ?? m ?? '').trim(); return { id, name: String(m?.name || '') || mcpName(id) || String(m?.brief || '') || id }; }).filter((x) => x.id || x.name)
     : [];
-  // Token 用量：LLMProvider 明细账（llm_call_log）按 work_id=runId 求和，均为提供商返回真实值；
+  const soulItem = components?.soul_id ? { id: String(components.soul_id), name: String(components.soul_name || '') || soulName(String(components.soul_id)) || String(components.soul_id) } : null;
+  const promptItem = components?.prompt_template_id ? { id: String(components.prompt_template_id), name: String(components.prompt_name || '') || promptName(String(components.prompt_template_id)) || String(components.prompt_template_id) } : null;
+  const llmItem = components?.llm_id ? { id: String(components.llm_id), name: String(components.llm_name || '') || llmName(String(components.llm_id)) || String(components.llm_id) } : null;
+  const agentItem = { id: String(selected?.def_id ?? run.agent_def_id ?? ''), name: agentName };
+  // Token 用量：LLMProvider 明细账（llm_call_log）按 run_id=runId 求和——该次问答下
+  // 全部 Agent/Tool 执行（Work Agent Loop、意图识别、Agent 选择、评估、写作、向量化等）
+  // 的真实调用均入账；均为提供商返回真实值；
   // 明细账为空（历史 run 或明细账写入失败）时回退估算：输入侧按 prompt 字符数/4 预估，
   // 输出侧回退 runtime_message.token_count 求和（输出侧真实值）。
   let inputTokens = 0;
   let outputTokens = 0;
   try {
     const tokenRows = relationDb.queryRaw<{ input_tokens: number; output_tokens: number }>(
-      `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens" FROM "llm_call_log" WHERE "work_id" = ?`,
+      `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens" FROM "llm_call_log" WHERE "run_id" = ?`,
       [runId],
     );
     inputTokens = Number(tokenRows?.[0]?.input_tokens ?? 0) || 0;
@@ -1950,20 +1874,18 @@ async function buildThinkingBlocksFromRuntime(
       id: String(selected?.def_id ?? run.agent_def_id ?? ''),
       name: agentName,
       type: 'WORKER',
-      llmId: components?.llm_id ? String(components.llm_id) : undefined,
-      soulId: components?.soul_id ? String(components.soul_id) : undefined,
-      promptId: components?.prompt_template_id ? String(components.prompt_template_id) : undefined,
-      skills,
-      mcps,
+      llm: llmItem ?? undefined,
+      soul: soulItem ?? undefined,
+      prompt: promptItem ?? undefined,
+      skills: skillItems,
+      mcps: mcpItems,
     },
-    context: {
-      strategy: 'Runtime 直连执行 (Agent 精确匹配)',
-      userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
-      citingMessages: [],
-      timelineMessages: lastBuilt && Array.isArray(lastBuilt.messages)
-        ? (lastBuilt.messages as any[]).map((m) => ({ role: m.role, content: String(m.content ?? '') }))
-        : undefined,
-    },
+    // ===== 修改后（2026-09-15 分析 trace 1a688f04 修复②）：V2 直连上下文不再只展示 loop 侧时间线。
+    //      原实现 context 仅含 ContextBuilt 的 wire 消息（timelineMessages），而 Writer 阶段构建的
+    //      多源静态记忆快照落在 writer work 的 info_context_source（本 run 内 work 经 llm_call_log
+    //      反查），历史分支（orchestration）用 soContextByWork 还原，V2 分支从未查询。
+    //      现按 run 关联 work 查询快照三对象并合并进 context 展示；无快照时保持原时间线兜底 =====
+    context: await buildRuntimeWorkContext(infoCore, relationDb, runId, lastBuilt),
     input: String(userMsg?.content ?? ''),
     output: outputAnswer,
     steps,
@@ -2007,6 +1929,8 @@ async function buildThinkingBlocksFromRuntime(
       } catch { params = {}; }
       let result: any = p.output_json || '';
       try { result = JSON.parse(String(p.output_json || 'null')) ?? String(p.output_json ?? ''); } catch { /* 原文 */ }
+      // skill_exec/mcp_exec 解析所属组件（名称+ID），供「工具调用」卡片展示本次调用用到哪个 Skill/MCP
+      const comp = toolComponentOf(String(p.tool_id || ''), params);
       return {
         index: idx + 1,
         partId: String((p as any).id ?? ''),
@@ -2017,6 +1941,11 @@ async function buildThinkingBlocksFromRuntime(
         status: String(p.status ?? ''),
         elapsedMs: Number((p as any).elapsed_ms ?? 0),
         tokenCount: Number((p as any).token_count ?? 0),
+        builtin: comp.builtin,
+        componentKind: comp.kind,
+        componentId: comp.id,
+        componentName: comp.name,
+        componentSubTool: comp.subTool,
       };
     });
   // 授权记录：info_raw PERMISSION 行按 run_id 归属（payload.run_id），含 asked/answered 状态
@@ -2031,16 +1960,25 @@ async function buildThinkingBlocksFromRuntime(
         try { return JSON.parse(String(r.info ?? '{}')); } catch { return null; }
       })
       .filter((p) => p && String((p as any).run_id ?? '') === runId)
-      .map((p: any, idx: number) => ({
-        permissionId: String(p.permission_id ?? ''),
-        targetKey: `perm-${String(p.permission_id ?? `idx-${idx + 1}`)}`,
-        toolId: String(p.tool_id ?? 'tool'),
-        input: p.input ?? {},
-        status: String(p.status ?? 'pending'),
-        askedAt: Number(p.asked_at ?? 0),
-        answeredAt: Number(p.answered_at ?? 0),
-        autoApproved: Boolean(p.auto_approved),
-      }));
+      .map((p: any, idx: number) => {
+        const permInput = p.input ?? {};
+        const comp = toolComponentOf(String(p.tool_id ?? ''), permInput);
+        return {
+          permissionId: String(p.permission_id ?? ''),
+          targetKey: `perm-${String(p.permission_id ?? `idx-${idx + 1}`)}`,
+          toolId: String(p.tool_id ?? 'tool'),
+          input: permInput,
+          status: String(p.status ?? 'pending'),
+          askedAt: Number(p.asked_at ?? 0),
+          answeredAt: Number(p.answered_at ?? 0),
+          autoApproved: Boolean(p.auto_approved),
+          builtin: comp.builtin,
+          componentKind: comp.kind,
+          componentId: comp.id,
+          componentName: comp.name,
+          componentSubTool: comp.subTool,
+        };
+      });
   } catch { permissions = []; }
   // 事件流中的授权回执可能携带 auto_approved / tool_id，回填到授权记录
   for (const t of timeline) {
@@ -2071,6 +2009,15 @@ async function buildThinkingBlocksFromRuntime(
       replyChars: String(outputAnswer ?? '').length,
       startedAt: Number(run.started_at ?? run.accepted_at ?? 0),
       settledAt: Number(run.settled_at ?? 0),
+      // 本次问答组件清单：Agent/LLM/Prompt/Soul/Skill/MCP 名称+ID（运行概览「组件清单」汇总区）
+      components: {
+        agent: agentItem.id || agentItem.name ? agentItem : null,
+        llm: llmItem,
+        prompt: promptItem,
+        soul: soulItem,
+        skills: skillItems,
+        mcps: mcpItems,
+      },
     },
     timeline,
     tools,
@@ -2956,6 +2903,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             max_tokens: typeof body.max_tokens === 'number' && body.max_tokens > 0 ? body.max_tokens : 2048,
             // 模拟测试仅调用当前指定模型，不走模型降级逻辑
             no_fallback: true,
+            caller: 'dev-server.modelChatTest',
           });
           const execOutput = new ExecLLMOutput();
           await ctx.llmAccess.execLLM(execInput, execOutput, new LLMContext());
@@ -2977,7 +2925,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (!input) { sendJson(res, 400, { error: 'input is required' }); return; }
         try {
           const { EmbedLLMInput, EmbedLLMOutput, LLMContext } = await import('./Base/LLMProvider/domain/types');
-          const embedInput = Object.assign(new EmbedLLMInput(), { id, input });
+          const embedInput = Object.assign(new EmbedLLMInput(), { id, input, caller: 'dev-server.modelEmbedTest' });
           const embedOutput = new EmbedLLMOutput();
           await ctx.llmAccess.embedLLM(embedInput, embedOutput, new LLMContext());
           sendJson(res, 200, {
@@ -3874,21 +3822,21 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         // 思考过程采集接口：从数据表重建指定消息 / 工作 / 交互的思考过程（ThinkingChain Blocks）
         // 数据来源：orchestration_agent_execution / agent / agent_execution_trace / orchestration_agent_dag_record / agent_plan
         const infoId = String(params.get('info_id') ?? '');
-        const interactId = String(params.get('interact_id') ?? '');
+        const runId = String(params.get('run_id') ?? '');
         let workId = String(params.get('work_id') ?? '');
 
-        if (!workId && !infoId && !interactId) {
-          sendJson(res, 400, { error: '请至少提供 work_id / info_id / interact_id 中的一个参数' });
+        if (!workId && !infoId && !runId) {
+          sendJson(res, 400, { error: '请至少提供 work_id / info_id / run_id 中的一个参数' });
           return;
         }
 
-        // 未显式提供 work_id 时，按 info_id / interact_id 反查 info_raw 得到 work_id
-        if (!workId && (infoId || interactId)) {
+        // 未显式提供 work_id 时，按 info_id / run_id 反查 info_raw 得到 work_id
+        if (!workId && (infoId || runId)) {
           try {
             const conds: string[] = [];
             const args: string[] = [];
             if (infoId) { conds.push('"info_id" = ?'); args.push(infoId); }
-            if (interactId) { conds.push('"interact_id" = ?'); args.push(interactId); }
+            if (runId) { conds.push('"run_id" = ?'); args.push(runId); }
             const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
               `SELECT "work_id" FROM "info_raw" WHERE ${conds.join(' AND ')} LIMIT 1`,
               args,
@@ -3907,7 +3855,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const trace = (reqModule === 'dag' || reqModule === 'blocks') ? (workTraceMap.get(workId) ?? null) : (workTraceMap.get(workId) ?? null);
         sendJson(res, 200, {
           work_id: workId,
-          interact_id: interactId,
+          run_id: runId,
           count: blocks.length,
           blocks,
           dag,
@@ -4059,8 +4007,12 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           stream_endpoint_id: registerOutput.endpoint_id,
         });
         const streamOutput = new OpenChatStreamOutput();
-        const traceId = IdGenerator.generate();
-        const chatMetrics = new Metrics(ctx.logAccess, 'ChatService.openChatStream', traceId);
+        // ===== 修改后（2026-09-14 trace 源头治理）：traceId 不再由端点生成，从请求源头
+        // （前端 X-Trace-Id 头）消费；无携带时才由 soReqTraceId 兜底生成 =====
+        // ===== 原始代码（保留作为参考）=====
+        // const traceId = IdGenerator.generate();
+        const traceId = soReqTraceId(req);
+        const chatMetrics = new Metrics(ctx.logAccess as unknown as MetricsLogger, 'ChatService.openChatStream', traceId);
 
         try {
           await ctx.chatAccess.openChatStream(streamInput, streamOutput, new ChatContext(), chatMetrics, undefined, onEvent);
@@ -4842,7 +4794,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       // ===== Feedback Routes =====
       } else if (method === 'POST' && pathname === '/api/feedback') {
         const rating = body.rating !== undefined ? Number(body.rating) : (body.score !== undefined ? Number(body.score) : undefined);
-        const interactId = body.interact_id || body.interactId || undefined;
+        const runId = body.run_id || body.runId || undefined;
         const workId = body.work_id || body.workId || undefined;
         const agentId = body.agent_id || body.agentId || undefined;
 
@@ -4851,19 +4803,19 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           comment: body.comment || undefined,
           category: body.category || undefined,
           work_id: workId,
-          interact_id: interactId,
+          run_id: runId,
           metadata: body.metadata || undefined,
         });
         const output = new SubmitFeedbackOutput();
         await ctx.feedbackAccess.submitFeedback(input, output, new FeedbackContext());
 
-        // 将用户评分保存到 info_raw，以便通过 interact_id 关联查询
-        if (interactId && rating !== undefined) {
+        // 将用户评分保存到 info_raw，以便通过 run_id 关联查询
+        if (runId && rating !== undefined) {
           try {
             const saveRatingInput = Object.assign(new SaveInfoInput(), {
               session_id: body.session_id || '',
               work_id: workId || '',
-              interact_id: interactId,
+              run_id: runId,
               info_type: 'USER_FEEDBACK',
               info_creator_role: 'user',
               info: JSON.stringify({ rating, comment: body.comment || '', agent_id: agentId || '' }),
@@ -4878,14 +4830,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const threshold = configOut.config?.disband_threshold ?? 30;
         const enableDisband = configOut.config?.enable_auto_disband ?? true;
 
-        const shouldDisband = enableDisband && rating !== undefined && rating < threshold && interactId;
+        const shouldDisband = enableDisband && rating !== undefined && rating < threshold && runId;
         let disbandedAgentId = '';
 
         if (shouldDisband) {
           try {
             const linkedRows = ctx.relationDb.queryRaw<{ agent_id: string }>(
-              'SELECT DISTINCT a.agent_id FROM agent_usage a WHERE a.interact_id = ? AND a.agent_id LIKE \'agent-%\' LIMIT 1',
-              [interactId],
+              'SELECT DISTINCT a.agent_id FROM agent_usage a WHERE a.run_id = ? AND a.agent_id LIKE \'agent-%\' LIMIT 1',
+              [runId],
             );
             if (linkedRows.length > 0) {
               const targetAgentId = linkedRows[0].agent_id;
@@ -4916,7 +4868,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             feedback_id: output.feedback_id,
             action: disbandedAgentId ? 'disbanded' : 'submitted',
             agent_id: disbandedAgentId || agentId || '',
-            interact_id: interactId,
+            run_id: runId,
             work_id: workId,
             rating: rating ?? 0,
             details: { threshold, enable_disband: enableDisband, disbanded: !!disbandedAgentId },
@@ -5176,9 +5128,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { models: (rows || []).map(r => ({ model: r.model, type: r.type || 'deleted', tokens: Number(r.tokens) || 0, input_tokens: Number(r.input_tokens) || 0, output_tokens: Number(r.output_tokens) || 0, deleted: !!r.deleted })) });
 
       } else if (method === 'GET' && pathname === '/api/llm/token-usage') {
-        // Token 分级统计（LLMProvider 明细账）：session_id → interact_id → work_id，均为提供商返回真实值求和
+        // Token 分级统计（LLMProvider 明细账）：session_id → run_id → work_id → caller，均为提供商返回真实值求和
         const sessionId = params.get('session_id') || undefined;
-        const interactId = params.get('interact_id') || undefined;
+        const runId = params.get('run_id') || undefined;
         const workId = params.get('work_id') || undefined;
         const conds: string[] = [];
         const condParams: unknown[] = [];
@@ -5186,13 +5138,19 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           conds.push('"session_id" = ?');
           condParams.push(sessionId);
         }
-        if (interactId) {
-          conds.push('"interact_id" = ?');
-          condParams.push(interactId);
+        if (runId) {
+          conds.push('"run_id" = ?');
+          condParams.push(runId);
         }
         if (workId) {
           conds.push('"work_id" = ?');
           condParams.push(workId);
+        }
+        // caller 维度：按调用方来源分维度统计（如 evolutor / writer / loop）
+        const caller = params.get('caller') || undefined;
+        if (caller) {
+          conds.push('"caller" = ?');
+          condParams.push(caller);
         }
         const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
         let inputTokens = 0;
@@ -5227,14 +5185,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const keyword = params.get('keyword') || undefined;
         const traceId = params.get('trace_id') || undefined;
         const workId = params.get('work_id') || undefined;
-        const interactId = params.get('interact_id') || undefined;
+        const runId = params.get('run_id') || undefined;
         const logSource = params.get('log_source') || undefined;
         const startTime = params.get('start_time') ? Number(params.get('start_time')) : undefined;
         const endTime = params.get('end_time') ? Number(params.get('end_time')) : undefined;
         const page = params.get('page') ? Number(params.get('page')) : 1;
         const pageSize = params.get('pageSize') ? Number(params.get('pageSize')) : (params.get('limit') ? Number(params.get('limit')) : 50);
         try {
-          const result = await ctx.logAccess.queryLogs({ level, source, keyword, trace_id: traceId, work_id: workId, interact_id: interactId, log_source: logSource, start_time: startTime, end_time: endTime, page, pageSize });
+          const result = await ctx.logAccess.queryLogs({ level, source, keyword, trace_id: traceId, work_id: workId, run_id: runId, log_source: logSource, start_time: startTime, end_time: endTime, page, pageSize });
           sendJson(res, 200, {
             entries: (result.logs || []).map(l => ({
               id: l.id,
@@ -5245,7 +5203,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               trace_id: l.trace_id || '',
               caller: l.caller || '',
               work_id: l.work_id || '',
-              interact_id: l.interact_id || '',
+              run_id: l.run_id || '',
             })),
             total: result.total,
             page,
@@ -5438,7 +5396,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const i = Object.assign(new GetVisualizedMessagesInput(), {
           session_id: params.get('session_id') || undefined,
           work_id: params.get('work_id') || undefined,
-          interact_id: params.get('interact_id') || undefined,
+          run_id: params.get('run_id') || undefined,
           lastN: params.get('lastN') ? parseInt(params.get('lastN')!, 10) : undefined,
           include_citing_info: params.get('include_citing_info') !== 'false',
           include_context_source: params.get('include_context_source') === 'true',
@@ -5546,7 +5504,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               created: r.created,
               session_id: r.session_id,
               work_id: r.work_id,
-              interact_id: r.interact_id,
+              run_id: r.run_id,
               score: r.score,
               matched_chunks: r.matched_chunks,
             })),

@@ -10,10 +10,12 @@ export class EvolutorAgentSchemaInitializer {
       `CREATE TABLE IF NOT EXISTS ${AGENT_EVALUATION_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
         eval_id TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL, eval_type TEXT NOT NULL,
-        work_id TEXT NOT NULL, interact_id TEXT NOT NULL,
+        work_id TEXT NOT NULL, run_id TEXT NOT NULL,
         scores TEXT NOT NULL, suggestions TEXT, need_optimize INTEGER NOT NULL DEFAULT 0
       )`,
     );
+        // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id =====
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_EVALUATION_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_agent ON ${AGENT_EVALUATION_TABLE}(agent_id)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_type ON ${AGENT_EVALUATION_TABLE}(eval_type)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_created ON ${AGENT_EVALUATION_TABLE}(created)`);

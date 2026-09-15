@@ -1,3 +1,5 @@
+# Dev Standards
+
 1. 整个项目内相同的定义使用同一个英文单词；
 2. 接口名的设计采用动词+名词；例如：addSkill；查询/搜索类方法统一使用 `so` 前缀（so 为"搜"的音译），例如 soInfo、soConfigDetail；
 3. 接口的设计 Boolean值的返回表示是否完成执行，方法签名统一为五参：`Boolean methodName(XxxInput input, XxxOutput output, XxxContext context, XxxMetrics metrics, XxxReport report)`，例如 `Boolean addSkill(SkillInput input, SkillOutput output, SkillContext context, SkillMetrics metrics, SkillReport report)`；
@@ -16,7 +18,7 @@
 5. 表设计规范
     1. 表名唯一；
     2. 必须包含id，created，updated三个字段；
-     3. id 为表的主键，表A要建立和任意表B的关联在表A中引用表B的id，字段格式为表B_id；
+    3. id 为表的主键，表A要建立和任意表B的关联在表A中引用表B的id，字段格式为表B_id；
 6. 外键ID默认值约定
      1. 所有引用外部资源的ID字段（如 `llm_id`、`prompt_template_id`、`soul_id` 等），当无法确定具体值时保持为空字符串，由下层的 Provider 在运行时解析默认值；
      2. 严禁在配置表或业务代码中硬编码 `"default"` 等占位字符串作为有效的资源ID；任何无法解析的ID应在 Provider 层抛出明确的错误，而非静默失败；

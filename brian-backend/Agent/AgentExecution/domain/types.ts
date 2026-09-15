@@ -2,9 +2,6 @@ import { Input, Context, Output } from '@brian-agent/base';
 import type { TraceIterationRecord } from './trace';
 
 export class AgentExecutionContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
   declare trace_id?: string;
   selected_msg_ids?: string[];
 }
@@ -27,7 +24,7 @@ export interface AgentExecutionConfigRecord {
 export class ExecAgentInput extends Input {
   agent_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
   max_iterations?: number;
   task_id?: string;
@@ -46,7 +43,7 @@ export class ExecAgentOutput extends Output {
 export class ExecAgentAsyncInput extends Input {
   agent_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
   callback_queue?: string;
   max_iterations?: number;

@@ -125,45 +125,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   // 后端经 ToolProvider 生成的 trace_id 由 connected 事件回传，供 Feedback/Error 块缺省引用
   let currentTraceId = ''
 
-  // ===== 原始方法（保留作为参考）：getOrCreateThinkBlock =====
-  // function getOrCreateThinkBlock(ctx: StreamEventCtx, agId: string, defaultName?: string, defaultType?: string): ThinkingBlock {
-  //   const key = agId ? `block-think-${ctx.botMsgId}-${agId}` : `block-think-${ctx.botMsgId}`
-  //   let existing = ctx.chat.blocks.find(b => b.id === key) as ThinkingBlock | undefined
-  //   const formattedName = formatAgentTitle(defaultName, agId, defaultType)
-  //
-  //   if (!existing) {
-  //     existing = {
-  //       id: key,
-  //       msgId: ctx.botMsgId,
-  //       role: 'assistant',
-  //       type: 'ThinkingChain',
-  //       content: '',
-  //       summary: '',
-  //       durationMs: 0,
-  //       agentInfo: {
-  //         id: agId,
-  //         name: formattedName,
-  //         type: defaultType || 'WORKER',
-  //       },
-  //       context: {
-  //         userProfile: { language: 'zh-CN', format: 'MARKDOWN', style: 'clear' },
-  //         citingMessages: [],
-  //       },
-  //       steps: [],
-  //       meta: { status: 'streaming', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
-  //     }
-  //     chat.addBlock(existing as Block)
-  //   } else if (defaultName && !UUID_RE.test(defaultName) && defaultName !== agId) {
-  //     if (!existing.agentInfo) {
-  //       existing.agentInfo = { name: defaultName, type: defaultType || 'WORKER' }
-  //     } else {
-  //       existing.agentInfo.name = defaultName
-  //     }
-  //     chat.updateBlock(existing.id, { agentInfo: existing.agentInfo })
-  //   }
-  //   return existing
-  // }
-
   // ===== 修改后的方法（2026-09-13）：复用并升级轮次思考块，避免意图/选定阶段创建多个割裂块 =====
   /** 快捷辅助：获取或创建某 Agent 的 ThinkingBlock（同轮次优先复用未绑定块，回填非 uuid 真实名称） */
   function getOrCreateThinkBlock(ctx: StreamEventCtx, agId: string, defaultName?: string, defaultType?: string): ThinkingBlock {
@@ -437,6 +398,13 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     // 修改后：用户可见最终回复仅由 reply.delta / text_chunk 提供，工具输出只进思考块。
   }
 
+  // ===== 修改后（2026-09-14）：实时时间线环节耗时直读事件 payload 自带的 elapsed_ms
+  // （后端在真实执行点测量并随事件下发，实时/历史口径一致）；无计时的事件不伪造耗时 =====
+  function stampedElapsed(payload: Record<string, unknown>): number | undefined {
+    const v = Number(payload.elapsed_ms)
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : undefined
+  }
+
   /** 最终回复流式文本：开始输出即收敛思考块为 done，避免弹窗在回复已展示后仍显示「思考中...」 */
   /** reply.delta：回复正文增量 → 打字机追加 */
   function onReplyDelta(ctx: StreamEventCtx) {
@@ -463,7 +431,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       detail: ctx.payload.system ? '含 system 提示词（模型输入侧）' : '',
       kind: 'context',
       target: `ctx-${round}`,
-      elapsedMs: Number(ctx.payload.elapsed_ms || 1),
+      elapsedMs: stampedElapsed(ctx.payload),
     })
     // 实时上下文轮次落库：与后端 trace.contextRounds 同构（round/targetKey/messageCount/messages），
     // 供思考面板「基础上下文」轮次卡片定位（data-anchor=ctx-N），否则时间线点击无跳转目标
@@ -496,6 +464,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       detail: matchedBy ? `匹配方式：${matchedBy}` : '',
       kind: 'agent',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -525,7 +494,15 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     if (llmId) lines.push(`· LLM: ${llmDisp}`)
     const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
     thinkBlock.content += lines.join('\n') + '\n'
-    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    // 组件信息同步进思考块 agentInfo（深度思考「构建组件」胶囊实时可见：名称显示、ID 悬浮、点击查详情）
+    const compInfo: NonNullable<ThinkingBlock['agentInfo']> = { ...(thinkBlock.agentInfo ?? { name: '' }) }
+    if (soulId) compInfo.soul = { id: soulId, name: soulDisp }
+    if (promptId) compInfo.prompt = { id: promptId, name: promptDisp }
+    if (llmId) compInfo.llm = { id: llmId, name: llmDisp }
+    compInfo.skills = skills.map((s) => { const id = String(s.id || ''); return { id, name: String(s.brief || '') || id } }).filter((x) => x.id || x.name)
+    compInfo.mcps = mcps.map((m) => { const id = String(m.id || ''); return { id, name: String(m.brief || '') || id } }).filter((x) => x.id || x.name)
+    thinkBlock.agentInfo = compInfo
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content, agentInfo: thinkBlock.agentInfo })
 
     const bits: string[] = []
     if (soulId) bits.push(`Soul ${soulDisp}`)
@@ -548,6 +525,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       tooltip: tooltipBits.join('\n') || undefined,
       kind: 'agent',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -571,6 +549,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       tooltip: agentId || undefined,
       kind: 'intent',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -589,6 +568,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       detail: purpose,
       kind: 'agent',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -649,6 +629,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       detail: evalType,
       kind: 'eval',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -664,6 +645,7 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       detail: `字数：${len}`,
       kind: 'writer',
       target: 'agent-0',
+      elapsedMs: stampedElapsed(ctx.payload),
     })
   }
 
@@ -886,8 +868,9 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     tryAutoCloseThinking()
   }
 
-  /** run 开始 / 受理：问答任务进行中自动弹出思考过程 */
-  function onRunStarted(ctx: StreamEventCtx) {
+  // ===== 修改后（2026-09-14）：run.started 直发不再复用受理分支 —— 此前 run.accepted 与 run.started
+  // 都走 onRunStarted，实时时间线会推入两条「开始受理请求」节点；现在 run.started 推「开始执行」 =====
+  function onRunAccepted(ctx: StreamEventCtx) {
     ui.setRunActive(true)
     ensureLiveThinkingOpen()
     ui.pushLiveTimelineItem({
@@ -900,12 +883,63 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     })
   }
 
+  function onRunStartedEvent(ctx: StreamEventCtx) {
+    ui.setRunActive(true)
+    ensureLiveThinkingOpen()
+    const agentLabel = String(ctx.payload.agent_name ?? ctx.payload.agent_id ?? '')
+    ui.pushLiveTimelineItem({
+      seq: 0,
+      ts: ctx.serverTime,
+      event: 'run.started',
+      title: '开始执行',
+      detail: agentLabel,
+      kind: 'lifecycle',
+    })
+  }
+
+  /** intent.started：意图打分 LLM 开始（实测 19s+）→ 时间线立刻推进到「意图分析中」 */
+  function onIntentStarted(ctx: StreamEventCtx) {
+    ui.pushLiveTimelineItem({
+      seq: 1,
+      ts: ctx.serverTime,
+      event: 'intent.started',
+      title: '需求确认 / 意图分析中…',
+      detail: ctx.payload.candidates_count ? `候选 ${ctx.payload.candidates_count} 个 Agent` : '',
+      kind: 'intent',
+      target: 'agent-0',
+    })
+  }
+
+  /** evaluation.started：评估 LLM 开始（实测 18s+）→ 时间线推进到「评估中」 */
+  function onEvaluationStarted(ctx: StreamEventCtx) {
+    ui.pushLiveTimelineItem({
+      seq: 8,
+      ts: ctx.serverTime,
+      event: 'evaluation.started',
+      title: '评估中…',
+      kind: 'eval',
+      target: 'agent-0',
+    })
+  }
+
+  /** writer.started：写作 LLM 开始（实测 7s+）→ 时间线推进到「写作排版中」 */
+  function onWriterStarted(ctx: StreamEventCtx) {
+    ui.pushLiveTimelineItem({
+      seq: 9,
+      ts: ctx.serverTime,
+      event: 'writer.started',
+      title: '写作排版中…',
+      kind: 'writer',
+      target: 'agent-0',
+    })
+  }
+
   /** 事件分发表（键 = sseEventTypes 的线上事件全集；样式映射见 EVENT_UI_STYLE） */
   const handlers: Record<string, (ctx: StreamEventCtx) => void> = {
     [SseTransportEvent.Connected]: onConnected,
     [SseTransportEvent.Loading]: () => { /* 心跳占位帧 */ },
-    [BusinessEvent.RunAccepted]: onRunStarted,
-    [BusinessEvent.RunStarted]: onRunStarted,
+    [BusinessEvent.RunAccepted]: onRunAccepted,
+    [BusinessEvent.RunStarted]: onRunStartedEvent,
     [BusinessEvent.RunFinished]: onRunFinished,
     [BusinessEvent.RunFailed]: onRunFailed,
     [BusinessEvent.PartUpdated]: () => { /* 阶段4 预留 */ },
@@ -922,15 +956,19 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.AgentSelected]: onAgentSelected,
     [BusinessEvent.AgentComponents]: onAgentComponents,
     [BusinessEvent.IntentAnalyzed]: onIntentAnalyzed,
+    [BusinessEvent.IntentStarted]: onIntentStarted,
     [BusinessEvent.AgentBuilt]: onAgentBuilt,
     [BusinessEvent.LlmSelected]: onLlmSelected,
     [BusinessEvent.PromptSelected]: onPromptSelected,
     [BusinessEvent.SkillSelected]: onSkillSelected,
     [BusinessEvent.McpSelected]: onMcpSelected,
     [BusinessEvent.EvaluationCompleted]: onEvaluationCompleted,
+    [BusinessEvent.EvaluationStarted]: onEvaluationStarted,
     [BusinessEvent.WriterCompleted]: onWriterCompleted,
+    [BusinessEvent.WriterStarted]: onWriterStarted,
     [BusinessEvent.ErrorOccurred]: onError,
     [BusinessEvent.MessageBlock]: () => { /* 阶段4 块流 */ },
+    [BusinessEvent.LoopTurnCompleted]: () => { /* 轮耗时经历史 trace 聚合，实时不需要处理 */ },
     [SseTransportEvent.Done]: onDone,
   }
 

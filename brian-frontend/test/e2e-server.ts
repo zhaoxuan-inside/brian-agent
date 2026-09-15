@@ -358,7 +358,7 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         // const output: any = {};
         // const context: any = {};
         // await ctx.chatAccess.submitWork(input, context, output);
-        // sendJson(res, 200, { msgId: output.interact_id, workId: output.work_id });
+        // sendJson(res, 200, { msgId: output.run_id, workId: output.work_id });
         sendJson(res, 501, { error: 'chat send 已迁移 Runtime v2（RunGateway），e2e 装配未覆盖，见 TR-对话页面' });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/chat/session/')) {

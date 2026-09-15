@@ -1,9 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class ChatContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export class SubmitWorkInput extends Input {
@@ -16,7 +13,7 @@ export class SubmitWorkInput extends Input {
 
 export class SubmitWorkOutput extends Output {
   work_id = '';
-  interact_id = '';
+  run_id = '';
 }
 
 export class CreateSessionInput extends Input {
@@ -93,7 +90,7 @@ export class CheckSessionOverflowOutput extends Output {
 export class GetChatHistoryInput extends Input {
   session_id?: string;
   work_id?: string;
-  interact_id?: string;
+  run_id?: string;
   lastN?: number;
   page_current?: number;
   page_size?: number;
@@ -108,7 +105,7 @@ export class GetChatHistoryOutput extends Output {
     created: number;
     pin: boolean;
     work_id?: string;
-    interact_id?: string;
+    run_id?: string;
     trace_id?: string;
     citing_count: number;
     cited_count: number;
@@ -175,7 +172,7 @@ export class ConfirmIntentOutput extends Output {
   action_applied = '';
   next_status = '';
   final_response = '';
-  interact_id = '';
+  run_id = '';
 }
 
 export class SubmitClarificationInput extends Input {
@@ -187,7 +184,7 @@ export class SubmitClarificationInput extends Input {
 export class SubmitClarificationOutput extends Output {
   success = false;
   final_response = '';
-  interact_id = '';
+  run_id = '';
   clarifications: Array<{ question: string; domain?: string }> = [];
 }
 

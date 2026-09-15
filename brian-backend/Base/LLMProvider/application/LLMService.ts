@@ -15,6 +15,7 @@
 
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
+import { Context } from '../../shared/base/Context';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import type { Logger } from '../../shared/aop/AopProxy';
 import type { PromptsAccess } from '../../PromptsProvider/access/PromptsAccess';
@@ -215,22 +216,32 @@ export class LLMService {
 
   /**
    * Token 明细账落账（LLMProvider 统一管理）。
-   * 每次 LLM 成功调用记一条，只记提供商返回真实值，不做预测。
+   * 每次 LLM 调用记一条（成功 status=ok / 失败 status=error），
+   * 只记提供商返回真实值，不做预测；附带调用方来源与模型快照。
    * best-effort：失败不阻断主流程。
    */
   private async logCall(args: {
-    llmId: string; session_id?: string; interact_id?: string;
-    work_id?: string; input_tokens?: number; output_tokens?: number;
-    duration_ms?: number;
+    llmId: string; session_id?: string; run_id?: string; work_id?: string; caller?: string;
+    input_tokens?: number; output_tokens?: number; duration_ms?: number;
+    status?: string; error_code?: string;
   }): Promise<void> {
     try {
+      const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: args.llmId },
+      ]);
+      const llm = llmRow as unknown as { llm_title?: string; llm_type?: string } | null;
       await this.relationDb.insert(
         LLM_CALL_LOG_TABLE,
         newRecord({
           llm_available_id: args.llmId,
           session_id: args.session_id ?? '',
-          interact_id: args.interact_id ?? '',
+          run_id: args.run_id ?? '',
           work_id: args.work_id ?? '',
+          caller: args.caller ?? '',
+          llm_title: String(llm?.llm_title ?? ''),
+          llm_type: String(llm?.llm_type ?? ''),
+          status: args.status ?? 'ok',
+          error_code: args.error_code ?? '',
           input_tokens: Number(args.input_tokens ?? 0) || 0,
           output_tokens: Number(args.output_tokens ?? 0) || 0,
           duration_ms: Number(args.duration_ms ?? 0) || 0,
@@ -242,7 +253,21 @@ export class LLMService {
   }
 
   /**
-   * 按 session / interact / work 分级统计 Token（均为明细账求和）。
+   * 业务维度回填（数据处理）：session_id / run_id / work_id / caller
+   * 优先取 Context（问答业务维度随 Context 传播），回退 Input 显式值。
+   */
+  private applyDims(
+    input: { session_id?: string; run_id?: string; work_id?: string; caller?: string },
+    context?: Context,
+  ): void {
+    input.session_id = input.session_id || context?.session_id || '';
+    input.run_id = input.run_id || context?.run_id || '';
+    input.work_id = input.work_id || context?.work_id || '';
+    input.caller = input.caller || context?.caller || '';
+  }
+
+  /**
+   * 按 session / interact / work 分级统计 Token（均为明细账求和；run_id = 一次问答，work_id = 一次 Agent/Tool 执行）。
    */
   async soTokenUsage(
     input: SoTokenUsageInput, output: SoTokenUsageOutput,
@@ -254,9 +279,9 @@ export class LLMService {
       conds.push('"session_id" = ?');
       params.push(input.session_id);
     }
-    if (input.interact_id) {
-      conds.push('"interact_id" = ?');
-      params.push(input.interact_id);
+    if (input.run_id) {
+      conds.push('"run_id" = ?');
+      params.push(input.run_id);
     }
     if (input.work_id) {
       conds.push('"work_id" = ?');
@@ -983,9 +1008,10 @@ export class LLMService {
   // ===== 修改后的方法：支持模型故障自动降级回退（指定模型 -> 默认模型 -> 启用模型1 -> 启用模型2 ...） =====
   // 当 input.no_fallback 为 true 时，仅尝试指定模型，不降级到其他模型
   // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
-  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
+  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
+    this.applyDims(input, context);
     const prompt = String(input.prompt ?? '');
     if (!prompt) {
       throw new ValidationError('prompt 不能为空');
@@ -1080,9 +1106,10 @@ export class LLMService {
    *    空闲看门狗（默认 30s 连续无 chunk）→ AbortedError('timeout') 同样上抛。
    */
   // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
-  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
+  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
+    this.applyDims(input, context);
     this.validateEventsInput(input);
     const candidateIds = await this.resolveCandidateModels(input.id);
     if (candidateIds.length === 0) {
@@ -1147,6 +1174,7 @@ export class LLMService {
     signal?: AbortSignal,
   ): Promise<EventsSingleResult> {
     let emitted = false;
+    const startedAt = Date.now();
     // 修复②：包装 on_event 记录产出标志（成功与异常路径均可判定是否禁止降级）
     const onEvent = input.on_event
       ? (event: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
@@ -1155,7 +1183,6 @@ export class LLMService {
         }
       : undefined;
     try {
-      const startedAt = Date.now();
       const request = await this.buildEventsRequest(llmId, input);
       const runner = new LLMEventsRunner({
         request,
@@ -1169,8 +1196,10 @@ export class LLMService {
       await this.logCall({
         llmId,
         session_id: input.session_id,
-        interact_id: input.interact_id,
+        run_id: input.run_id,
         work_id: input.work_id,
+        caller: input.caller,
+        status: 'ok',
         input_tokens: result.input_tokens,
         output_tokens: result.output_tokens,
         duration_ms: Date.now() - startedAt,
@@ -1187,12 +1216,21 @@ export class LLMService {
       };
     } catch (err) {
       if (err instanceof AbortedError) {
+        await this.logCall({
+          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+          duration_ms: Date.now() - startedAt, status: 'error', error_code: err.error_code,
+        });
         return { ok: false, error: err.message, error_code: err.error_code, aborted_reason: err.reason, emitted_events: emitted };
       }
+      const errorCode = err instanceof ProviderError ? err.error_code : 'CONNECT_ERROR';
+      await this.logCall({
+        llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+        duration_ms: Date.now() - startedAt, status: 'error', error_code: errorCode,
+      });
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
-        error_code: err instanceof ProviderError ? err.error_code : 'CONNECT_ERROR',
+        error_code: errorCode,
         emitted_events: emitted,
       };
     }
@@ -1478,7 +1516,7 @@ export class LLMService {
         no_fallback: true,
         extra: input.extra,
         session_id: input.session_id,
-        interact_id: input.interact_id,
+        run_id: input.run_id,
         work_id: input.work_id,
         on_event: (ev: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
           if (ev.type === 'text_delta' && ev.delta) {
@@ -1493,11 +1531,11 @@ export class LLMService {
         output.duration_ms = Date.now() - startTime;
         return false;
       }
-      output.raw_response = single.result;
-      output.result = single.result;
+      output.raw_response = single.text ?? '';
+      output.result = single.text ?? '';
       output.input_prompt = prompt;
-      output.input_tokens = single.token_usage?.input_tokens ?? 0;
-      output.output_tokens = single.token_usage?.output_tokens ?? 0;
+      output.input_tokens = single.input_tokens ?? 0;
+      output.output_tokens = single.output_tokens ?? 0;
       output.duration_ms = Date.now() - startTime;
     } else {
       // 非流式调用（原有逻辑）
@@ -1512,13 +1550,17 @@ export class LLMService {
         const httpOutput = new ExecRequestOutput();
         await this.http.execRequest(httpInput, httpOutput, new HttpContext());
         const res = httpOutput.response;
-        if (!res.ok) {
-          const text = res.bodyText;
-          output.error = `LLM 调用失败: HTTP ${res.status} ${text}`;
-          output.error_code = 'REMOTE_ERROR';
-          output.duration_ms = Date.now() - startTime;
-          return false;
-        }
+    if (!res.ok) {
+        const text = res.bodyText;
+        output.error = `LLM 调用失败: HTTP ${res.status} ${text}`;
+        output.error_code = 'REMOTE_ERROR';
+        output.duration_ms = Date.now() - startTime;
+        await this.logCall({
+          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+        });
+        return false;
+      }
         const rawText = res.bodyText;
         output.raw_response = rawText;
         let json: unknown = {};
@@ -1537,6 +1579,10 @@ export class LLMService {
         output.error = err instanceof Error ? err.message : String(err);
         output.error_code = 'CONNECT_ERROR';
         output.duration_ms = Date.now() - startTime;
+        await this.logCall({
+          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+        });
         return false;
       }
     }
@@ -1546,8 +1592,10 @@ export class LLMService {
     await this.logCall({
       llmId,
       session_id: input.session_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       work_id: input.work_id,
+      caller: input.caller,
+      status: 'ok',
       input_tokens: output.input_tokens,
       output_tokens: output.output_tokens,
       duration_ms: output.duration_ms,
@@ -1568,9 +1616,10 @@ export class LLMService {
    * 4. 调用向量化 API，解析 data[0].embedding 作为结果；
    * 5. 更新 llm_usage 表当天 usage_count。
    */
-  async embedLLM(input: EmbedLLMInput, output: EmbedLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  async embedLLM(input: EmbedLLMInput, output: EmbedLLMOutput, context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
+    this.applyDims(input, context);
     if (!input.id) {
       const defaultEmbedding = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
         { field: 'llm_type', operator: Operator.EQ, value: 'embedding' },
@@ -1633,6 +1682,10 @@ export class LLMService {
         output.error = `向量化调用失败: HTTP ${res.status} ${errText}`;
         output.error_code = 'REMOTE_ERROR';
         output.duration_ms = Date.now() - startTime;
+        await this.logCall({
+          llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+        });
         return false;
       }
       const rawText = res.bodyText;
@@ -1651,6 +1704,10 @@ export class LLMService {
       output.error = err instanceof Error ? err.message : String(err);
       output.error_code = 'CONNECT_ERROR';
       output.duration_ms = Date.now() - startTime;
+      await this.logCall({
+        llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+        duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+      });
       return false;
     }
 
@@ -1658,7 +1715,7 @@ export class LLMService {
     await this.logCall({
       llmId: input.id,
       session_id: input.session_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       work_id: input.work_id,
       input_tokens: output.input_tokens,
       output_tokens: 0,
@@ -1737,7 +1794,7 @@ export class LLMService {
     }
 
     // 4. 调用大模型生成属性（空 id 复用 execLLM 的默认模型 → 启用模型降级顺序）
-    const execInput = Object.assign(new ExecLLMInput(), { id: '', prompt });
+    const execInput = Object.assign(new ExecLLMInput(), { id: '', prompt, caller: 'LLMService.genLLMAttr' });
     const execOutput = new ExecLLMOutput();
     const ok = await this.execLLM(execInput, execOutput, new LLMContext());
     if (!ok || !execOutput.result) {

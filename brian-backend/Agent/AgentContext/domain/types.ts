@@ -1,9 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class AgentContextContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export interface AgentContextConfigRecord {

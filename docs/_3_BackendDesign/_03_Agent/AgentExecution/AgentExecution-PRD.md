@@ -43,7 +43,7 @@
 
 3. **构建初始上下文**
    a. 调用 InfoCore.context({ session_id, work_id, selected_msg_ids, info }) 构建当前问答的上下文数据（work_id 必填，上下文来源关系由 InfoCore 内部落盘 `info_context_source` 表）；
-   b. 上下文结构化渲染：通过 `formatContextCategories` 将 InfoCore 多路召回的结果脱敏数据库非内容属性（剔除 `info_id`、`created` 等），并按来源打上 XML 分类标签节点包装（`<指定消息>`、`<钉住的消息>`、`<时间线消息>`、`<引用关联消息>`、`<标签关联消息>`、`<向量语义消息>`、`<关键词匹配消息>`、`<探查随机消息>`），组装为结构化 Prompt 上下文；
+   b. 上下文结构化渲染：通过 `formatContextCategories` 将 InfoCore 多路召回的结果脱敏数据库非内容属性（剔除 `info_id`、`created` 等），并按记忆来源打上 XML 分类标签节点包装，组装为静态记忆上下文（`<static-memory-context>`，整体声明为任务开始前注入的既定事实，不可被模型修改/续写）。每个分区标签为「模型可理解的功能说明」而非来源直译名（2026-09-15 起为 `<user-selected-messages>`、`<user-pinned-messages>`、`<conversation-history>`、`<cited-messages>`、`<related-memories>`、`<similar-experiences>`、`<keyword-memories>`、`<background-messages>`，各自附 `<what-this-is>` 说明该类记忆如何产生、回答时应如何使用）；
    c. 将 task_content 拼接到上下文前端；
    d. 调用 SoulProvider.getSoul(soul_id) 获取 Soul 内容，作为系统 prompt 头部；
 

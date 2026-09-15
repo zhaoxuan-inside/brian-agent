@@ -12,8 +12,9 @@
  * `BusinessEvent` 枚举（全库唯一注册点），禁止散落裸字符串。
  */
 
-import { BusinessEvent, businessEventMsgType } from './BusinessEvent';
-export { BusinessEvent, businessEventMsgType } from './BusinessEvent';
+import type { Metrics } from './Metrics';
+import { BusinessEvent, TIMELINE_POINT_EVENTS, businessEventMsgType } from './BusinessEvent';
+export { BusinessEvent, TIMELINE_POINT_EVENTS, businessEventMsgType } from './BusinessEvent';
 export type { BusinessEventKind } from './BusinessEvent';
 
 /**
@@ -53,7 +54,6 @@ export interface ReportMeta {
   run_id?: string;
   /** SSE 端点 ID（前端创建 SSE 端点时生成，请求时携带；上报经 StreamProvider 按此定位端点） */
   stream_endpoint_id?: string;
-  interact_id?: string;
   work_id?: string;
   trace_id?: string;
   agent_id?: string;
@@ -78,9 +78,8 @@ export class Report {
   session_id?: string;
   /** 外部会话标识（事件流 session_key；缺省回退 session_id） */
   session_key?: string;
-  /** 运行 ID（事件流 run_id） */
+  /** 运行 ID（事件流 run_id；一次问答，= runtime_run.id） */
   run_id?: string;
-  interact_id?: string;
   work_id?: string;
   trace_id?: string;
   agent_id?: string;
@@ -90,6 +89,18 @@ export class Report {
   task_id?: string;
 
   protected channel?: ReportChannel;
+
+  /**
+   * 绑定的 Metrics（2026-09-14 框架化计时）：
+   * AopProxy 在同一次新式调用中发现 Metrics + Report 配对时自动绑定；
+   * pushBusinessEvent 发射点即"刚完成的步骤"，据此自动携带最近闭合 span 的 self 耗时。
+   */
+  private metrics?: Metrics;
+
+  /** 绑定 Metrics（幂等；AopProxy 框架接线，业务层一般无需手动绑定） */
+  bindMetrics(metrics: Metrics): void {
+    this.metrics = metrics;
+  }
 
   /** SSE 端点 ID（前端创建 SSE 端点时生成，请求时携带；上报时 StreamProvider 按此定位端点） */
   stream_endpoint_id?: string;
@@ -137,6 +148,25 @@ export class Report {
    * - 两者皆无：静默 no-op（无流会话降级）。
    */
   pushBusinessEvent(event: BusinessEvent, data: unknown, meta?: Record<string, unknown>): void {
+    // ===== 新增（2026-09-14 框架化计时）：事件 payload 自动携带最近闭合 span 的 self 耗时 =====
+    // 发射点即真实执行位置（约定的框架级语义）：耗时由框架保证正确，业务代码零感知；
+    // payload 已显式携带 elapsed_ms 时不覆盖（业务可直接指定口径）。
+    // ===== 修改后（2026-09-15）：时间点类事件（开始/结束）不盖章 —— 开始与结束是时间点
+    // 而非动作，没有耗时语义；「…中」环节的耗时由对应完成事件携带（TIMELINE_POINT_EVENTS） =====
+    let stamped: unknown = data;
+    if (this.metrics && data && typeof data === 'object' && !Array.isArray(data) && !TIMELINE_POINT_EVENTS.has(event)) {
+      const span = this.metrics.lastClosedSpan();
+      if (span && span.end !== undefined) {
+        const payload = data as Record<string, unknown>;
+        if (payload['elapsed_ms'] === undefined) {
+          stamped = Object.assign({}, payload, {
+            elapsed_ms: this.metrics.spanSelfMs(span),
+            span_key: span.key,
+            span_seq: span.id,
+          });
+        }
+      }
+    }
     if (Report.eventStream && this.stream_endpoint_id) {
       void Report.eventStream
         .pushToEndpoint({
@@ -144,7 +174,7 @@ export class Report {
           session_key: this.session_key || this.session_id,
           run_id: this.run_id || this.work_id || undefined,
           type: event,
-          payload: data,
+          payload: stamped,
         })
         .catch((err: unknown) => {
           Report.logger?.error?.('pushBusinessEvent: pushToEndpoint 失败', {
@@ -156,7 +186,7 @@ export class Report {
         });
       return;
     }
-    this.pushEvent(event, businessEventMsgType(event), data, meta);
+    this.pushEvent(event, businessEventMsgType(event), stamped, meta);
   }
 
   /**
@@ -166,7 +196,7 @@ export class Report {
   child(meta?: ReportMeta): Report {
     const merged: ReportMeta = {
       session_id: this.session_id,
-      interact_id: this.interact_id,
+      run_id: this.run_id,
       work_id: this.work_id,
       trace_id: this.trace_id,
       agent_id: this.agent_id,
@@ -181,7 +211,7 @@ export class Report {
 
   private mergeMeta(meta?: Record<string, unknown>): Record<string, unknown> {
     const base: Record<string, unknown> = {};
-    for (const key of ['session_key', 'run_id', 'stream_endpoint_id', 'interact_id', 'work_id', 'trace_id', 'agent_id', 'agent_name', 'agent_type', 'node_id', 'task_id'] as const) {
+    for (const key of ['session_key', 'run_id', 'stream_endpoint_id', 'work_id', 'trace_id', 'agent_id', 'agent_name', 'agent_type', 'node_id', 'task_id'] as const) {
       const value = this[key];
       if (value) base[key] = value;
     }

@@ -9,10 +9,12 @@ export class PlannerAgentSchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_PLAN_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-        plan_id TEXT NOT NULL UNIQUE, work_id TEXT NOT NULL, interact_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL UNIQUE, work_id TEXT NOT NULL, run_id TEXT NOT NULL,
         task_dag TEXT NOT NULL, parent_plan_id TEXT
       )`,
     );
+        // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id =====
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_PLAN_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_plan_work ON ${AGENT_PLAN_TABLE}(work_id)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_plan_created ON ${AGENT_PLAN_TABLE}(created)`);
 

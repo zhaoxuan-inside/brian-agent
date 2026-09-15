@@ -7,14 +7,14 @@ import { Operator } from '../../../shared/query';
 import type { LogRecord } from '../types';
 
 /**
- * 组装日志查询条件：level / source / trace_id / work_id / interact_id /
+ * 组装日志查询条件：level / source / trace_id / work_id / run_id /
  * keyword（message LIKE）/ start_time / end_time（created 区间）。
  *
  * @param input 已过滤为非空字段的查询入参
  * @returns 条件数组；无有效条件时返回 undefined（表示全表查询）
  */
 export function buildLogConditions(
-  input: Partial<Pick<LogRecord, 'level' | 'source' | 'trace_id' | 'work_id' | 'interact_id'>> & {
+  input: Partial<Pick<LogRecord, 'level' | 'source' | 'trace_id' | 'work_id' | 'run_id'>> & {
     keyword?: string;
     start_time?: number;
     end_time?: number;
@@ -25,7 +25,7 @@ export function buildLogConditions(
   if (input.source) conditions.push({ field: 'source', operator: Operator.EQ, value: input.source });
   if (input.trace_id) conditions.push({ field: 'trace_id', operator: Operator.EQ, value: input.trace_id });
   if (input.work_id) conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
-  if (input.interact_id) conditions.push({ field: 'interact_id', operator: Operator.EQ, value: input.interact_id });
+  if (input.run_id) conditions.push({ field: 'run_id', operator: Operator.EQ, value: input.run_id });
   if (input.keyword) conditions.push({ field: 'message', operator: Operator.LIKE, value: `%${input.keyword}%` });
   if (input.start_time !== undefined) conditions.push({ field: 'created', operator: Operator.GE, value: input.start_time });
   if (input.end_time !== undefined) conditions.push({ field: 'created', operator: Operator.LE, value: input.end_time });
@@ -55,7 +55,7 @@ export function rowToLogRecord(row: Record<string, unknown>): LogRecord {
     trace_id: row.trace_id ? String(row.trace_id) : undefined,
     caller: row.caller ? String(row.caller) : undefined,
     work_id: row.work_id ? String(row.work_id) : undefined,
-    interact_id: row.interact_id ? String(row.interact_id) : undefined,
+    run_id: row.run_id ? String(row.run_id) : undefined,
     metadata,
     elapsed_ms: row.elapsed_ms ? Number(row.elapsed_ms) : undefined,
   };

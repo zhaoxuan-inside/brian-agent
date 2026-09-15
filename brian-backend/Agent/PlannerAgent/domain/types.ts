@@ -1,9 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class PlannerAgentContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
   selected_msg_ids?: string[];
 }
 
@@ -13,7 +10,7 @@ export interface AgentPlanRecord {
   updated: number;
   plan_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   task_dag: string;
   parent_plan_id: string;
 }
@@ -77,7 +74,7 @@ export interface PlanClarification {
 
 export class PlanInput extends Input {
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
 }
 
@@ -94,7 +91,7 @@ export class PlanOutput extends Output {
 
 export class PlanHierarchicalInput extends Input {
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
   /** 递归拆解最大深度（在 LLM 单次层级拆解基础上额外递归），默认 2 */
   max_depth?: number;

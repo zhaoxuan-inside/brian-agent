@@ -9,6 +9,8 @@ import { RunGatewayService, OutputEvaluator, OutputWriter } from '../application
 import type { SessionAccess } from '../../Session';
 import type { LoopAccess } from '../../Loop';
 import type { AgentDefAccess } from '../../Agents';
+// ===== 新增（2026-09-15）：InfoCore 访问类型（主 Loop 多层静态记忆注入）=====
+import type { InfoCoreAccess } from '@brian-agent/core';
 import {
   RunGatewayContext,
   SubmitRunInput,
@@ -43,9 +45,11 @@ export class RunGatewayAccess {
     logger?: Logger,
     evaluator?: OutputEvaluator,
     writer?: OutputWriter,
+    // ===== 新增（2026-09-15）：InfoCore 访问透传（可选），主 Loop 多层静态记忆注入（2026-09-15）=====
+    infoCore?: InfoCoreAccess,
   ) {
     new RunsSchemaInitializer(relationDb).init();
-    const rawService = new RunGatewayService(relationDb, session, agents, loop, logger, evaluator, writer);
+    const rawService = new RunGatewayService(relationDb, session, agents, loop, logger, evaluator, writer, infoCore);
     this.service = AopProxy.wrap(rawService, { logger }) as RunGatewayService;
   }
 

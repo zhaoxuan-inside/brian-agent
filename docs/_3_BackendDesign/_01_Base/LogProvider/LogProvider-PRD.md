@@ -354,3 +354,16 @@ const soulAccess = new SoulAccess(relationDb, {
   - 日志文件 `data/logs/*.log` —— 新增启动/定时/调试日志输出。
 - **可能存在的问题**：
   - 业务 `logger.debug` 调用（如 `DagScheduler`、`StreamService`）随 AOP 切面日志一并丢弃，如需保留需显式提升为 `info`/`warn`。
+
+### [2026-09-14] AOP 兜底强化：Metrics 缺 trace_id 立即生成回填 + 失败日志 ctx.traceId 第三优先级
+**变更原因**：traceId 源头治理收尾（见 CHANGELOG 2026-09-14）：兜底网点收敛到 AOP 单点 —— Metrics 实例缺 trace_id 时须在方法体执行前立即生成回填；旧式 3 参签名无 Metrics，失败日志此前无兜底 trace。
+
+**修改的方法**：
+- `AopProxy` — 新式调用自动创建 Metrics 后统一收口校验：Metrics 实例缺 `trace_id` 立即生成回填（已有链路 trace 不覆盖）；`InterceptContext` 新增 `traceId`；
+- `LogInterceptor` — 旧式失败日志 trace 提取：`metricsTraceId || inputTraceId || ctx.traceId`。
+
+**影响的端点**：
+- 全部 AOP 切面方法 — trace_id 兜底保证；旧式失败日志可按 trace 检索。
+
+**可能存在的问题**：
+- 兜底 trace 为现场生成，非源头传播（保证可关联性，不伪造归属）。

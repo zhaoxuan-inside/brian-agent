@@ -25,7 +25,7 @@ export interface McpCoreConfigRecord {
 export class MatchMcpInput extends Input {
   agent_id!: string;
   context_id?: string;
-  interact_id?: string;
+  run_id?: string;
   /** 当前任务内容（2026-09-11 新增；供匹配缓存键，不参与 LLM prompt 必填） */
   task_content?: string;
   /** 调用方传入的既有绑定（agent 表为唯一绑定事实源）；传入时确定性水合，不再按任务重选 */
@@ -42,7 +42,7 @@ export class MatchMcpOutput extends Output {
 export class OptMcpInput extends Input {
   agent_id!: string;
   context_id?: string;
-  interact_id?: string;
+  run_id?: string;
   mcp_id!: string;
 }
 export class OptMcpOutput extends Output {

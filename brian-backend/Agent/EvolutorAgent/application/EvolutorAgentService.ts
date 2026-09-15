@@ -55,7 +55,7 @@ function mapEval(row: Record<string, unknown>): AgentEvaluationRecord {
     agent_id: String(row.agent_id),
     eval_type: String(row.eval_type),
     work_id: String(row.work_id),
-    interact_id: String(row.interact_id),
+    run_id: String(row.run_id),
     scores: String(row.scores),
     suggestions: String(row.suggestions),
     need_optimize: row.need_optimize === true || row.need_optimize === 1 || row.need_optimize === '1',
@@ -92,7 +92,7 @@ export class EvolutorAgentService {
   //   const builderCtx = Object.assign(new AgentBuilderContext(), {
   //     session_id: ctx.session_id,
   //     work_id: input.work_id || ctx.work_id,
-  //     interact_id: input.interact_id || ctx.interact_id,
+  //     run_id: input.run_id || ctx.run_id,
   //   });
   //   const buildOut = new BuildSystemAgentOutput();
   //   await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), buildOut, builderCtx);
@@ -191,7 +191,7 @@ export class EvolutorAgentService {
   //     { field: 'agent_id', value: input.agent_id },
   //     { field: 'eval_type', value: 'WORK_AGENT' },
   //     { field: 'work_id', value: input.work_id },
-  //     { field: 'interact_id', value: input.interact_id },
+  //     { field: 'run_id', value: input.run_id },
   //     { field: 'scores', value: JSON.stringify(scores) },
   //     { field: 'suggestions', value: JSON.stringify(suggestions) },
   //     { field: 'need_optimize', value: needOptimize ? 1 : 0 },
@@ -207,7 +207,7 @@ export class EvolutorAgentService {
   //           queue: OPTIMIZE_QUEUE,
   //           payload: {
   //             agent_id: input.agent_id,
-  //             interact_id: input.interact_id,
+  //             run_id: input.run_id,
   //             usage_feedback: suggestions.join('; '),
   //           },
   //         },
@@ -235,7 +235,7 @@ export class EvolutorAgentService {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
-      interact_id: input.interact_id || ctx.interact_id,
+      run_id: input.run_id || ctx.run_id,
     });
     const buildOut = new BuildSystemAgentOutput();
     await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), buildOut, builderCtx);
@@ -252,7 +252,7 @@ export class EvolutorAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let targetLlmId = config?.llm_id || '';
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
-      targetLlmId = await this.resolveLlm(evolutor.agent_id);
+      targetLlmId = await this.resolveLlm(evolutor.agent_id, _metrics);
     }
     const threshold = config?.optimize_threshold ?? 60;
 
@@ -282,12 +282,23 @@ export class EvolutorAgentService {
         agent_output: input.agent_output,
         trace: traceData ? JSON.stringify(traceData) : '',
       },
+      _metrics,
     );
 
     try {
+      // ===== 修改后（2026-09-14 Span 框架）：评估 LLM 打分经切面自动成为子 span，
+      // evaluation.completed 事件由框架自动携带其 self 耗时 =====
       const llmOut = new ExecLLMOutput();
       const ok = await this.llmAccess.execLLM(
-        Object.assign(new ExecLLMInput(), { id: targetLlmId, prompt }),
+        Object.assign(new ExecLLMInput(), {
+          id: targetLlmId,
+          prompt,
+          // Token 归因维度：评估 Agent 的 LLM 调用入账（work_id 为评估执行标识）
+          session_id: ctx.session_id || '',
+          run_id: input.run_id || ctx.run_id || '',
+          work_id: input.work_id || ctx.work_id || '',
+          caller: 'EvolutorAgent.evalWorkAgent',
+        }),
         llmOut,
         new LLMContext(),
         _metrics,
@@ -336,7 +347,7 @@ export class EvolutorAgentService {
       { field: 'agent_id', value: input.agent_id },
       { field: 'eval_type', value: 'WORK_AGENT' },
       { field: 'work_id', value: input.work_id },
-      { field: 'interact_id', value: input.interact_id },
+      { field: 'run_id', value: input.run_id },
       { field: 'scores', value: JSON.stringify(scores) },
       { field: 'suggestions', value: JSON.stringify(suggestions) },
       { field: 'need_optimize', value: needOptimize ? 1 : 0 },
@@ -352,7 +363,7 @@ export class EvolutorAgentService {
             queue: OPTIMIZE_QUEUE,
             payload: {
               agent_id: input.agent_id,
-              interact_id: input.interact_id,
+              run_id: input.run_id,
               usage_feedback: suggestions.join('; '),
             },
           },
@@ -368,7 +379,7 @@ export class EvolutorAgentService {
         Object.assign(new SubmitAgentFeedbackInput(), {
           agent_id: input.agent_id,
           work_id: input.work_id,
-          interact_id: input.interact_id,
+          run_id: input.run_id,
           rating: scores.overall,
           suggestions,
           category: 'WORK_AGENT_EVAL',
@@ -392,13 +403,13 @@ export class EvolutorAgentService {
     output.scores = scores;
     output.suggestions = suggestions;
     output.need_optimize = needOptimize;
-    // 评估完成即上报（无流会话静默降级 no-op）
+    // 评估完成即上报（无流会话静默降级 no-op）；2026-09-14：事件 payload 携带评估环节真实耗时 elapsed_ms
     report?.pushBusinessEvent(BusinessEvent.EvaluationCompleted, {
       eval_type: 'WORK_AGENT',
       eval_id: evalId,
       agent_id: input.agent_id,
       work_id: input.work_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       scores,
       suggestions,
       need_optimize: needOptimize,
@@ -452,7 +463,7 @@ export class EvolutorAgentService {
   //   const builderCtx = Object.assign(new AgentBuilderContext(), {
   //     session_id: ctx.session_id,
   //     work_id: input.work_id || ctx.work_id,
-  //     interact_id: input.interact_id || ctx.interact_id,
+  //     run_id: input.run_id || ctx.run_id,
   //   });
   //   const buildOut = new BuildSystemAgentOutput();
   //   await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), buildOut, builderCtx);
@@ -533,7 +544,7 @@ export class EvolutorAgentService {
   //     { field: 'agent_id', value: input.agent_id },
   //     { field: 'eval_type', value: 'WRITER_AGENT' },
   //     { field: 'work_id', value: input.work_id },
-  //     { field: 'interact_id', value: input.interact_id },
+  //     { field: 'run_id', value: input.run_id },
   //     { field: 'scores', value: JSON.stringify(scores) },
   //     { field: 'suggestions', value: JSON.stringify(suggestions) },
   //     { field: 'need_optimize', value: needOptimize ? 1 : 0 },
@@ -544,7 +555,7 @@ export class EvolutorAgentService {
   //       Object.assign(new SendMQInput(), {
   //         data: {
   //           queue: OPTIMIZE_QUEUE,
-  //           payload: { agent_id: input.agent_id, interact_id: input.interact_id },
+  //           payload: { agent_id: input.agent_id, run_id: input.run_id },
   //         },
   //       }),
   //       new SendMQOutput(),
@@ -583,7 +594,7 @@ export class EvolutorAgentService {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
-      interact_id: input.interact_id || ctx.interact_id,
+      run_id: input.run_id || ctx.run_id,
     });
     const buildOut = new BuildSystemAgentOutput();
     await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), buildOut, builderCtx);
@@ -599,7 +610,7 @@ export class EvolutorAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let targetLlmId = config?.llm_id || '';
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
-      targetLlmId = await this.resolveLlm(evolutor.agent_id);
+      targetLlmId = await this.resolveLlm(evolutor.agent_id, _metrics);
     }
     const threshold = config?.optimize_threshold ?? 60;
 
@@ -616,6 +627,7 @@ export class EvolutorAgentService {
         final_response: input.final_response,
         agent_results: JSON.stringify(input.agent_results),
       },
+      _metrics,
     );
 
     let inputTokens = 0;
@@ -623,11 +635,22 @@ export class EvolutorAgentService {
     let rawResponse = '';
 
     try {
+      // ===== 修改后（2026-09-14 Span 框架）：评估 LLM 打分经切面自动成为子 span =====
       const llmOut = new ExecLLMOutput();
       const ok = await this.llmAccess.execLLM(
-        Object.assign(new ExecLLMInput(), { id: targetLlmId, prompt }),
+        Object.assign(new ExecLLMInput(), {
+          id: targetLlmId,
+          prompt,
+          // Token 归因维度：Writer 评估 Agent 的 LLM 调用入账（work_id 为评估执行标识）
+          session_id: ctx.session_id || '',
+          run_id: input.run_id || ctx.run_id || '',
+          work_id: input.work_id || ctx.work_id || '',
+          caller: 'EvolutorAgent.evalWriterAgent',
+        }),
         llmOut,
         new LLMContext(),
+        _metrics,
+        report,
       );
       inputTokens = Number(llmOut.input_tokens ?? 0);
       outputTokens = Number(llmOut.output_tokens ?? 0);
@@ -664,7 +687,7 @@ export class EvolutorAgentService {
       { field: 'agent_id', value: input.agent_id },
       { field: 'eval_type', value: 'WRITER_AGENT' },
       { field: 'work_id', value: input.work_id },
-      { field: 'interact_id', value: input.interact_id },
+      { field: 'run_id', value: input.run_id },
       { field: 'scores', value: JSON.stringify(scores) },
       { field: 'suggestions', value: JSON.stringify(suggestions) },
       { field: 'need_optimize', value: needOptimize ? 1 : 0 },
@@ -675,7 +698,7 @@ export class EvolutorAgentService {
         Object.assign(new SendMQInput(), {
           data: {
             queue: OPTIMIZE_QUEUE,
-            payload: { agent_id: input.agent_id, interact_id: input.interact_id },
+            payload: { agent_id: input.agent_id, run_id: input.run_id },
           },
         }),
         new SendMQOutput(),
@@ -688,13 +711,13 @@ export class EvolutorAgentService {
     output.scores = scores;
     output.suggestions = suggestions;
     output.need_optimize = needOptimize;
-    // 评估完成即上报（无流会话静默降级 no-op）
+    // 评估完成即上报（无流会话静默降级 no-op）；2026-09-14：事件 payload 携带评估环节真实耗时 elapsed_ms
     report?.pushBusinessEvent(BusinessEvent.EvaluationCompleted, {
       eval_type: 'WRITER_AGENT',
       eval_id: evalId,
       agent_id: input.agent_id,
       work_id: input.work_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       scores,
       suggestions,
       need_optimize: needOptimize,
@@ -786,7 +809,7 @@ export class EvolutorAgentService {
             await this.agentBuilder.optimizeAgent(
               Object.assign(new OptimizeAgentInput(), {
                 agent_id: payload.agent_id,
-                interact_id: payload.interact_id ?? '',
+                run_id: payload.run_id ?? '',
                 usage_feedback: payload.usage_feedback,
               }),
               new OptimizeAgentOutput(),
@@ -813,7 +836,7 @@ export class EvolutorAgentService {
                 Object.assign(new EvalWorkAgentInput(), {
                   agent_id: payload.agent_id,
                   work_id: payload.work_id,
-                  interact_id: payload.interact_id,
+                  run_id: payload.run_id,
                   task_content: payload.task_content,
                   agent_output: payload.agent_output,
                   trace_id: payload.trace_id,
@@ -910,8 +933,8 @@ export class EvolutorAgentService {
       for (const a of agg ?? []) {
         if (Number(a.cnt) < threshold) continue;
         scannedAgents++;
-        const usages = this.relationDb.queryRaw<{ agent_id: string; work_id: string; interact_id: string; usage_context: string }>(
-          `SELECT u.agent_id, u.work_id, u.interact_id, u.usage_context
+        const usages = this.relationDb.queryRaw<{ agent_id: string; work_id: string; run_id: string; usage_context: string }>(
+          `SELECT u.agent_id, u.work_id, u.run_id, u.usage_context
            FROM ${AGENT_USAGE_TABLE} u
            LEFT JOIN ${AGENT_EVALUATION_TABLE} e
              ON e.agent_id = u.agent_id AND e.work_id = u.work_id
@@ -940,7 +963,7 @@ export class EvolutorAgentService {
                     type: 'eval_work_agent',
                     agent_id: u.agent_id,
                     work_id: u.work_id,
-                    interact_id: u.interact_id,
+                    run_id: u.run_id,
                     task_content: taskContent,
                     agent_output: agentOutput,
                     trace_id: traceId,
@@ -956,7 +979,7 @@ export class EvolutorAgentService {
               Object.assign(new EvalWorkAgentInput(), {
                 agent_id: u.agent_id,
                 work_id: u.work_id,
-                interact_id: u.interact_id,
+                run_id: u.run_id,
                 task_content: taskContent,
                 agent_output: agentOutput,
                 trace_id: traceId,
@@ -1177,8 +1200,8 @@ export class EvolutorAgentService {
   /**
    * 通过 Core.matchLLM 解析 EvolutorAgent 绑定的 LLM（agent_llm）。
    */
-  private async resolveLlm(agentId: string): Promise<string> {
-    return resolveAgentLlm(this.llmCore, agentId);
+  private async resolveLlm(agentId: string, metrics?: Metrics): Promise<string> {
+    return resolveAgentLlm(this.llmCore, agentId, metrics);
   }
 
   /**
@@ -1188,8 +1211,9 @@ export class EvolutorAgentService {
     templateId: string | undefined,
     builtinId: string,
     variables: Record<string, unknown>,
+    metrics?: Metrics,
   ): Promise<string> {
-    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables);
+    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables, metrics);
   }
 
   private async getConfig(): Promise<EvolutorAgentConfigRecord | null> {

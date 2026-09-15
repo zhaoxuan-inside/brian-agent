@@ -60,7 +60,7 @@ describe('LLMCoreProvider', () => {
       const input = new MatchLLMInput();
       input.agent_id = '';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
 
       await expect(
         llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
@@ -99,7 +99,7 @@ describe('LLMCoreProvider', () => {
       const input = new MatchLLMInput();
       input.agent_id = 'agent-cached';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
       const output = new MatchLLMOutput();
       await llmCore.matchLLM(input, output, new LLMCoreContext());
       expect(output.from_cache).toBe(true);
@@ -130,7 +130,7 @@ describe('LLMCoreProvider', () => {
       const input = new MatchLLMInput();
       input.agent_id = 'agent-stale';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
       // 无可用 LLM 时重新匹配抛 NotFoundError（证明未走合成记录缓存返回）
       await expect(
         llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
@@ -146,7 +146,7 @@ describe('LLMCoreProvider', () => {
       const input = new MatchLLMInput();
       input.agent_id = 'agent-unknown';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
 
       await expect(
         llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),

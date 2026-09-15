@@ -74,9 +74,13 @@ export class LogSchemaInitializer {
         `ALTER TABLE "${LOG_RECORD_TABLE}" ADD COLUMN "work_id" TEXT`,
       );
     } catch { /* 列已存在 */ }
+    // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id；新库直接补 run_id 列 =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${LOG_RECORD_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`);
+    } catch { /* 已重命名或原列不存在 */ }
     try {
       this.relationDb.executeRaw(
-        `ALTER TABLE "${LOG_RECORD_TABLE}" ADD COLUMN "interact_id" TEXT`,
+        `ALTER TABLE "${LOG_RECORD_TABLE}" ADD COLUMN "run_id" TEXT`,
       );
     } catch { /* 列已存在 */ }
     try {
@@ -86,7 +90,12 @@ export class LogSchemaInitializer {
     } catch { /* ignore */ }
     try {
       this.relationDb.executeRaw(
-        `CREATE INDEX IF NOT EXISTS "idx_${LOG_RECORD_TABLE}_interact_id" ON "${LOG_RECORD_TABLE}" ("interact_id")`,
+        `DROP INDEX IF EXISTS "idx_${LOG_RECORD_TABLE}_interact_id"`,
+      );
+    } catch { /* ignore */ }
+    try {
+      this.relationDb.executeRaw(
+        `CREATE INDEX IF NOT EXISTS "idx_${LOG_RECORD_TABLE}_run_id" ON "${LOG_RECORD_TABLE}" ("run_id")`,
       );
     } catch { /* ignore */ }
   }

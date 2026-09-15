@@ -1269,11 +1269,11 @@ describe('LogProvider', () => {
       expect(ql.logs[0].metadata).toEqual({ log_source: 'AOP' });
     });
 
-    it('失败日志应提取 work_id / interact_id', async () => {
+    it('失败日志应提取 work_id / run_id', async () => {
       const ctx: InterceptContext = {
         targetName: 'WorkIdService',
         methodName: 'workMethod',
-        input: { work_id: 'w-1', interact_id: 'i-1' },
+        input: { work_id: 'w-1', run_id: 'i-1' },
         context: undefined,
         output: undefined,
         startedAt: Date.now(),
@@ -1285,7 +1285,7 @@ describe('LogProvider', () => {
 
       const ql = await logAccess.queryLogs({ source: 'WorkIdService' });
       expect(ql.logs[0].work_id).toBe('w-1');
-      expect(ql.logs[0].interact_id).toBe('i-1');
+      expect(ql.logs[0].run_id).toBe('i-1');
     });
 
     it('应遵循 enableLog 规则（未启用的模块失败也不记录）', async () => {

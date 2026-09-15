@@ -32,10 +32,12 @@ export enum AgentDefStatus {
   Disabled = 'disabled',
 }
 
-/** matchAgentDef 命中层（确定性：exact → signature → llm → built，无随机重建） */
+/** matchAgentDef 命中层（确定性：exact → vector 召回 → llm → built，无随机重建；
+ *  2026-09-14 新增 Vector 层：向量召回置信度达标时直接采纳，跳过 LLM 语义裁判） */
 export enum AgentMatchLayer {
   Exact = 'exact',
   Signature = 'signature',
+  Vector = 'vector',
   LLM = 'llm',
   Built = 'built',
 }
@@ -106,8 +108,12 @@ export class MatchAgentDefInput extends Input {
   task_content!: string;
   /** 任务领域（可选；进入签名 `[domain]` 段） */
   task_domain?: string;
-  /** 交互 ID（组件 match / 构建透传） */
-  interact_id?: string;
+  /** 一次问答标识（= runtime_run.id，Token 归因到 run 维度） */
+  run_id?: string;
+  /** 本次 Agent 选择执行标识（执行框架生成，Token 归因到 work 维度） */
+  work_id?: string;
+  /** 会话标识（chat session_key，Token 归因到 session 维度） */
+  session_id?: string;
   /** 上下文 ID（组件 match 透传） */
   context_id?: string;
   /** 强制新建（跳过复用层） */
@@ -142,7 +148,7 @@ export class SoAgentSnapshotInput extends Input {
   /** 任务领域（可选） */
   task_domain?: string;
   /** 交互 ID（组件 match 透传） */
-  interact_id?: string;
+  run_id?: string;
   /** 上下文 ID */
   context_id?: string;
   /** 用户消息（任务指令段引用） */
@@ -225,8 +231,8 @@ export class KillErroredAgentInput extends Input {
   /** 引用 runtime_run.id */
   work_id?: string;
   /** 交互 id */
-  interact_id?: string;
-  /** 追踪 id（= interact_id） */
+  run_id?: string;
+  /** 追踪 id（= run_id） */
   trace_id?: string;
   /** 任务内容（错误 usage 回溯） */
   task_content?: string;

@@ -561,7 +561,7 @@ export class SelfLearningService {
           Object.assign(new MatchLLMInput(), {
             agent_id: 'document_query',
             context_id: 'document_query',
-            interact_id: IdGenerator.generate(),
+            run_id: IdGenerator.generate(),
           }),
           matchOut,
           new LLMCoreContext(),
@@ -586,6 +586,7 @@ export class SelfLearningService {
           prompt,
           temperature: 0.3,
           max_tokens: 1024,
+          caller: 'SelfLearningService.readDocument',
         }),
         llmOut,
         new LLMContext(),
@@ -1259,6 +1260,7 @@ export class SelfLearningService {
     ].join('\n');
     try {
       const parsed = await callLLMJson<Array<{ content?: string; tags?: string[] }>>(this.llmAccess, {
+      caller: 'SelfLearningService.summarize',
         prompt,
         llmId: '',
         parse: (text) => {

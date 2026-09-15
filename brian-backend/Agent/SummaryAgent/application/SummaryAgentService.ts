@@ -182,6 +182,7 @@ export class SummaryAgentService {
         id: llmId,
         prompt,
         ...(system ? { system } : {}),
+        caller: 'SummaryAgentService.execSummary',
       }),
       llmOut,
       new LLMContext(),

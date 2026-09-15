@@ -241,7 +241,7 @@ export class LLMSchemaInitializer {
         "updated"          INTEGER NOT NULL,
         "llm_available_id" TEXT    NOT NULL,
         "session_id"       TEXT    NOT NULL DEFAULT '',
-        "interact_id"      TEXT    NOT NULL DEFAULT '',
+        "run_id"      TEXT    NOT NULL DEFAULT '',
         "work_id"          TEXT    NOT NULL DEFAULT '',
         "input_tokens"     INTEGER NOT NULL DEFAULT 0,
         "output_tokens"    INTEGER NOT NULL DEFAULT 0,
@@ -253,11 +253,25 @@ export class LLMSchemaInitializer {
         `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "updated" INTEGER NOT NULL DEFAULT 0`,
       );
     } catch { /* 已存在 updated 列时忽略（存量库迁移：CREATE TABLE IF NOT EXISTS 不会补列） */ }
+    // ===== 2026-09-14 明细账增强列：caller（调用方来源）/ llm_title / llm_type（模型快照，删模型后仍可读）/
+    // status（ok / error）/ error_code；存量库经 ALTER TABLE 迁移 =====
+    for (const col of ['caller', 'llm_title', 'llm_type', 'status', 'error_code']) {
+      try {
+        this.relationDb.executeRaw(`ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "${col}" TEXT NOT NULL DEFAULT ''`);
+      } catch { /* 列已存在 */ }
+    }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_session" ON "${LLM_CALL_LOG_TABLE}" ("session_id")`,
     );
+    // ===== 2026-09-14 三级维度最终定名：session_id → run_id（一次问答，= runtime_run.id）→ work_id（一次 Agent/Tool 执行），
+    // 原 interact_id 维度名已废弃；存量库经 RENAME COLUMN 迁移 =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${LLM_CALL_LOG_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`);
+    } catch { /* 列已重命名或不存在 */ }
+    try { this.relationDb.executeRaw(`DROP INDEX IF EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact"`); } catch { }
+    try { this.relationDb.executeRaw(`DROP INDEX IF EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact_id"`); } catch { }
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact" ON "${LLM_CALL_LOG_TABLE}" ("interact_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_run" ON "${LLM_CALL_LOG_TABLE}" ("run_id")`,
     );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_work" ON "${LLM_CALL_LOG_TABLE}" ("work_id")`,

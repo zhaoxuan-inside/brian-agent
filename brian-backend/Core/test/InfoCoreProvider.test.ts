@@ -104,7 +104,7 @@ describe('InfoCoreProvider', () => {
     const input = new SaveInfoInput();
     input.session_id = overrides?.session_id ?? `session-${IdGenerator.generate()}`;
     input.work_id = overrides?.work_id ?? `work-${IdGenerator.generate()}`;
-    input.interact_id = overrides?.interact_id ?? `interact-${IdGenerator.generate()}`;
+    input.run_id = overrides?.run_id ?? `interact-${IdGenerator.generate()}`;
     input.info_creator_id = overrides?.info_creator_id ?? 'user-1';
     input.info_creator_role = overrides?.info_creator_role ?? 'user';
     input.info = overrides?.info ?? '这是一条测试信息 This is a test information message for testing purposes';
@@ -159,13 +159,13 @@ describe('InfoCoreProvider', () => {
       expect(childOut.info_id).not.toBe(parentOut.info_id);
     });
 
-    it('should reject empty work_id but allow empty interact_id', async () => {
+    it('should reject empty work_id but allow empty run_id', async () => {
       const input = makeSaveInput({ work_id: '' });
       await expect(
         infoCore.saveInfo(input, new SaveInfoOutput(), new InfoCoreContext()),
       ).rejects.toThrow(ValidationError);
 
-      const okInput = makeSaveInput({ interact_id: '' });
+      const okInput = makeSaveInput({ run_id: '' });
       const output = new SaveInfoOutput();
       await infoCore.saveInfo(okInput, output, new InfoCoreContext());
       expect(output.info_id).toBeTruthy();
@@ -577,14 +577,14 @@ describe('InfoCoreProvider', () => {
       expect(output.list.length).toBe(1);
     });
 
-    it('should filter by interact_id', async () => {
+    it('should filter by run_id', async () => {
       const sid = 's-interact';
-      await infoCore.saveInfo(makeSaveInput({ session_id: sid, interact_id: 'i-1' }), new SaveInfoOutput(), new InfoCoreContext());
-      await infoCore.saveInfo(makeSaveInput({ session_id: sid, interact_id: 'i-2' }), new SaveInfoOutput(), new InfoCoreContext());
+      await infoCore.saveInfo(makeSaveInput({ session_id: sid, run_id: 'i-1' }), new SaveInfoOutput(), new InfoCoreContext());
+      await infoCore.saveInfo(makeSaveInput({ session_id: sid, run_id: 'i-2' }), new SaveInfoOutput(), new InfoCoreContext());
 
       const input = new LastNInfoInput();
       input.session_id = sid;
-      input.interact_id = 'i-1';
+      input.run_id = 'i-1';
       input.lastN = 10;
       const output = new LastNInfoOutput();
       await infoCore.lastNInfo(input, output, new InfoCoreContext());

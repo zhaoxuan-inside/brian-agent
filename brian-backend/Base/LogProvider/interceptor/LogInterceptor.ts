@@ -88,12 +88,16 @@ export class LogInterceptor implements Interceptor {
       metadata: { log_source: LogSource.AOP },
     };
 
-    // trace_id 属维护字段（唯一存放点 = Metrics）；Input 上仅为领域级 trace_id（业务查询键）时兜底提取
     const metricsTraceId = (ctx.metrics as { trace_id?: string } | undefined)?.trace_id;
     const inputTraceId = ctx.input && typeof ctx.input === 'object' && 'trace_id' in ctx.input
       ? (ctx.input as { trace_id?: string }).trace_id
       : undefined;
-    const traceId = metricsTraceId || inputTraceId;
+    // trace_id 属维护字段（唯一存放点 = Metrics）；Input 上仅为领域级 trace_id（业务查询键）时兜底提取；
+    // AOP 兜底（2026-09-14 第三优先级）：ctx.traceId（Metrics 缺 trace 时 AOP 立即生成的兜底值），
+    // 覆盖旧式 3 参签名无 Metrics 实例的场景
+    // ===== 原始代码（保留作为参考）=====
+    // const traceId = metricsTraceId || inputTraceId;
+    const traceId = metricsTraceId || inputTraceId || ctx.traceId || undefined;
     if (traceId) {
       data.trace_id = traceId;
     }
@@ -106,11 +110,11 @@ export class LogInterceptor implements Interceptor {
       }
     }
 
-    // 从 input 中提取 work_id 和 interact_id
+    // 从 input 中提取 work_id 和 run_id
     if (ctx.input && typeof ctx.input === 'object') {
-      const input = ctx.input as { work_id?: string; interact_id?: string };
+      const input = ctx.input as { work_id?: string; run_id?: string };
       if (input.work_id) data.work_id = input.work_id;
-      if (input.interact_id) data.interact_id = input.interact_id;
+      if (input.run_id) data.run_id = input.run_id;
     }
 
     // fire-and-forget：不阻塞业务方法

@@ -654,7 +654,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
               <th class="py-2 px-2 font-medium">评分</th>
               <th class="py-2 px-2 font-medium">动作</th>
               <th class="py-2 px-2 font-medium">Agent ID</th>
-              <th class="py-2 px-2 font-medium">Interact ID</th>
+              <th class="py-2 px-2 font-medium">Run ID</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-apple-gray-50 dark:divide-apple-gray-800/50">
@@ -671,7 +671,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
                 <span class="px-1 rounded text-[10px] font-medium" :class="actionColors[r.action] || ''">{{ actionLabels[r.action] || r.action }}</span>
               </td>
               <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.agent_id">{{ r.agent_id ? r.agent_id.slice(0, 12) + '...' : '-' }}</td>
-              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.interact_id">{{ r.interact_id ? r.interact_id.slice(0, 12) + '...' : '-' }}</td>
+              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.run_id">{{ r.run_id ? r.run_id.slice(0, 12) + '...' : '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -702,7 +702,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
                 <div><span class="text-apple-gray-400">反馈 ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.feedback_id?.slice(0, 16) }}...</span></div>
                 <div><span class="text-apple-gray-400">动作:</span> <span class="px-1 rounded text-xs font-medium" :class="actionColors[fbDetail.log?.action || '']">{{ actionLabels[fbDetail.log?.action || ''] }}</span></div>
                 <div><span class="text-apple-gray-400">评分:</span> {{ fbDetail.log?.rating }}</div>
-                <div><span class="text-apple-gray-400">Interact ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.interact_id || '-' }}</span></div>
+                <div><span class="text-apple-gray-400">Run ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.run_id || '-' }}</span></div>
                 <div><span class="text-apple-gray-400">Agent ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.agent_id || '-' }}</span></div>
               </div>
               <div v-if="fbDetail.user_question" class="border-t border-apple-gray-100 dark:border-apple-gray-700 pt-3">

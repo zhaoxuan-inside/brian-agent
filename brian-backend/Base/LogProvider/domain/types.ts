@@ -48,7 +48,7 @@ export interface LogData {
   /** 工作 ID */
   work_id?: string;
   /** 交互 ID */
-  interact_id?: string;
+  run_id?: string;
   /** 附加元数据 */
   metadata?: Record<string, unknown>;
   /** 耗时（毫秒），AOP 切面使用 */
@@ -99,7 +99,7 @@ export class SoLogInput extends Input {
   source?: string;
   // trace_id 继承自 Input 基类
   work_id?: string;
-  interact_id?: string;
+  run_id?: string;
   start_time?: number;
   end_time?: number;
   order_by?: OrderBy[];

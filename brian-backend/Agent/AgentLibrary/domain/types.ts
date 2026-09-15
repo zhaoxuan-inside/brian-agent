@@ -2,9 +2,6 @@ import { Input, Context, Output } from '@brian-agent/base';
 import type { Condition, OrderBy, Page, Operation } from '@brian-agent/base';
 
 export class AgentLibraryContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export interface AgentRecord {
@@ -38,7 +35,7 @@ export interface AgentUsageRecord {
   updated: number;
   agent_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   usage_context: string;
 }
 
@@ -99,6 +96,10 @@ export class MatchAgentInput extends Input {
   task_content?: string;
   agent_type?: string;
   similarity_threshold?: number;
+  /** 一次问答标识（= runtime_run.id，Token 归因到 run 维度；缺省时经 Context 读取） */
+  run_id?: string;
+  /** 本次 Agent/Tool 执行标识（执行框架生成，Token 归因到 work 维度；缺省时经 Context 读取） */
+  work_id?: string;
 }
 
 export class MatchAgentOutput extends Output {
@@ -144,7 +145,7 @@ export class ToggleAgentOutput extends Output {
 export class RecordAgentUsageInput extends Input {
   agent_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   usage_context?: string;
 }
 

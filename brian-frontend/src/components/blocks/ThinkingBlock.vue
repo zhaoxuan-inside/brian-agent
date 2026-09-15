@@ -105,16 +105,16 @@ const thinkingStrategy = computed(() => {
   return 'CoT'
 })
 
-// ===== Agent 构建组件：名称化 + 可点击查看详情 =====
+// ===== Agent 构建组件：胶囊显示名称、悬浮显示 ID、点击传 ID 查看详情 =====
 const componentChips = computed<Array<{ kind: ComponentKind; label: string; ref: string; icon: unknown }>>(() => {
   const info = props.block.agentInfo
   if (!info) return []
   const chips: Array<{ kind: ComponentKind; label: string; ref: string; icon: unknown }> = []
-  if (info.promptId) chips.push({ kind: 'prompt', label: String(info.promptId), ref: String(info.promptId), icon: FileText })
-  if (info.soulId) chips.push({ kind: 'soul', label: String(info.soulId), ref: String(info.soulId), icon: Sparkles })
-  if (info.llmId) chips.push({ kind: 'llm', label: String(info.llmId), ref: String(info.llmId), icon: Cpu })
-  for (const s of info.skills || []) chips.push({ kind: 'skill', label: String(s), ref: String(s), icon: Wrench })
-  for (const m of info.mcps || []) chips.push({ kind: 'mcp', label: String(m), ref: String(m), icon: Layers })
+  if (info.prompt?.id) chips.push({ kind: 'prompt', label: info.prompt.name || info.prompt.id, ref: info.prompt.id, icon: FileText })
+  if (info.soul?.id) chips.push({ kind: 'soul', label: info.soul.name || info.soul.id, ref: info.soul.id, icon: Sparkles })
+  if (info.llm?.id) chips.push({ kind: 'llm', label: info.llm.name || info.llm.id, ref: info.llm.id, icon: Cpu })
+  for (const s of info.skills || []) if (s.id || s.name) chips.push({ kind: 'skill', label: s.name || s.id, ref: s.id || s.name, icon: Wrench })
+  for (const m of info.mcps || []) if (m.id || m.name) chips.push({ kind: 'mcp', label: m.name || m.id, ref: m.id || m.name, icon: Layers })
   return chips
 })
 
@@ -215,9 +215,9 @@ function msgContent(val: unknown): string {
             {{ thinkingStrategy }}
           </span>
 
-          <span v-if="block.agentInfo?.llmId" class="hidden md:inline-flex items-center gap-1 text-[10px] text-apple-gray-500 dark:text-apple-gray-400">
+          <span v-if="block.agentInfo?.llm?.id" class="hidden md:inline-flex items-center gap-1 text-[10px] text-apple-gray-500 dark:text-apple-gray-400" :title="`LLM ID：${block.agentInfo.llm.id}`">
             <Cpu :size="11" />
-            {{ block.agentInfo.llmId }}
+            {{ block.agentInfo.llm.name || block.agentInfo.llm.id }}
           </span>
 
           <span class="px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0" :class="STATUS_CHIP[runtimeStatus]?.cls">
@@ -273,7 +273,7 @@ function msgContent(val: unknown): string {
             v-for="chip in componentChips"
             :key="`${chip.kind}-${chip.ref}`"
             class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-brian-blue/10 hover:text-brian-blue transition-colors cursor-pointer"
-            :title="`查看 ${chip.label} 组件信息`"
+            :title="`${chip.label}（ID：${chip.ref}）`"
             @click="openComponent(chip.kind, chip.ref)"
           >
             <component :is="chip.icon" :size="11" />

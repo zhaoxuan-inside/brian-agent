@@ -28,8 +28,8 @@ export interface FeedbackRecord {
   agent_id: string;
   /** 关联 work_id */
   work_id: string;
-  /** 关联 interact_id */
-  interact_id: string;
+  /** 关联 run_id */
+  run_id: string;
   /** 评分（0-100，可选） */
   rating: number;
   /** 评论文本 */
@@ -46,11 +46,7 @@ export interface FeedbackRecord {
 // Context
 // ---------------------------------------------------------------------------
 
-export class FeedbackContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
-}
+export class FeedbackContext extends Context {}
 
 // ---------------------------------------------------------------------------
 // submitFeedback（用户提交反馈）
@@ -65,8 +61,8 @@ export class SubmitFeedbackInput extends Input {
   category?: string;
   /** 关联 work_id */
   work_id?: string;
-  /** 关联 interact_id */
-  interact_id?: string;
+  /** 关联 run_id */
+  run_id?: string;
   /** 扩展元数据 */
   declare metadata?: Record<string, unknown>;
 }
@@ -84,8 +80,8 @@ export class SubmitAgentFeedbackInput extends Input {
   agent_id!: string;
   /** 关联 work_id */
   work_id?: string;
-  /** 关联 interact_id */
-  interact_id?: string;
+  /** 关联 run_id */
+  run_id?: string;
   /** 评分（0-100） */
   rating?: number;
   /** 评论文本 */
@@ -168,7 +164,7 @@ export interface FeedbackProcessLogRecord {
   feedback_id: string;
   action: ProcessAction;
   agent_id: string;
-  interact_id: string;
+  run_id: string;
   work_id: string;
   rating: number;
   details: string;
@@ -178,7 +174,7 @@ export class RecordProcessLogInput extends Input {
   feedback_id!: string;
   action!: ProcessAction;
   agent_id?: string;
-  interact_id?: string;
+  run_id?: string;
   work_id?: string;
   rating?: number;
   details?: Record<string, unknown>;
@@ -206,7 +202,7 @@ export class GetProcessLogDetailInput extends Input {
 export class GetProcessLogDetailOutput extends Output {
   log: FeedbackProcessLogRecord | null = null;
   feedback: FeedbackRecord | null = null;
-  /** 关联的用户提问与系统回答（通过 interact_id 查 info_raw） */
+  /** 关联的用户提问与系统回答（通过 run_id 查 info_raw） */
   user_question = '';
   system_answer = '';
 }

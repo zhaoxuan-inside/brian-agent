@@ -47,7 +47,7 @@ async function insertInfoRawRow(db: RelationDBAccess, sessionId: string, infoId:
     { field: 'updated', value: now },
     { field: 'session_id', value: sessionId },
     { field: 'work_id', value: 'test-work-id' },
-    { field: 'interact_id', value: 'test-interact-id' },
+    { field: 'run_id', value: 'test-interact-id' },
     { field: 'info_id', value: infoId },
     { field: 'info_type', value: 'REQUEST' },
     { field: 'info_creator_role', value: 'USER' },
@@ -224,7 +224,7 @@ describe('ChatService', () => {
       await makeV2Service().openChatStream(input, output, new ChatContext());
       const last = output.events[output.events.length - 1];
       expect(last.event).toBe('session.done');
-      expect(last.data.work_id).toBe('run-v2');
+      expect(last.data.run_id).toBe('run-v2');
       expect(last.data.paused).toBe(false);
     });
 

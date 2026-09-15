@@ -54,7 +54,7 @@ export class ConfigAgentDefInput extends Input { snapshot_ttl_ms?: number; match
 | 方法 | 签名要点 | 拆分（≤40 行） |
 |------|---------|---------------|
 | `declareAgent` | 声明式定义 CRUD（幂等 upsert by name；内置名仅提示改模式不可删） | `handleDeclareAgent` + `prepareAgentDefRecord` |
-| `matchAgentDef` | 组件匹配复用（三层：exact → 签名相似度 → LLM 打分 → new；**无随机重建**） | `handleMatchAgentDef` + `soSignatureCandidates` + `soLLMRankedCandidate` |
+| `matchAgentDef` | 组件匹配复用（四层：exact → 向量召回（余弦≥`match_vector_threshold` 直接采纳）→ LLM 打分 → new；**无随机重建**；向量置信度不足回退 LLM 裁判） | `handleMatchAgentDef` + `soSignatureCandidates` + `soVectorRankedDef` + `soLLMRankedCandidate` |
 | `soAgentSnapshot` | 会话级快照（进程内 LRU 缓存 + TTL；组件解析：model/tools/permissions/soul 组装） | `handleSoAgentSnapshot` + `prepareSnapshotComponents` + `resolveDefaultModel` |
 | `configAgentDef` | 配置 | `handleConfigAgentDef` |
 
@@ -62,7 +62,7 @@ export class ConfigAgentDefInput extends Input { snapshot_ttl_ms?: number; match
 
 1. **快照组装顺序**：`prepareSnapshotComponents`（数据，≤40 行）：解析 model（空串→`resolveDefaultModel` 经 `LLMCore.matchLLM`）→ 组装 tools（`soTools`，Wildcard 末条匹配）→ 组装 permissions → soul/system（`prompt_template_id` 空串→内置模板回退渲染）→ budget。任一组件解析失败 **fail-loud**。
 2. **分层 system prompt**（prompt 缓存边界）：`stable`（persona/工作区说明）| `context`（会话上下文/工具清单）| `volatile`（时序上下文/本轮说明）——组装由 `prepareLayeredSystem` 完成，切界固定。
-3. **匹配打分**：`soLLMRankedCandidate` 复用旧 `builtin.agent_match` 提示（PromptCatalog）；阈值 `match_similarity_threshold`（默认 0.7）。
+3. **匹配打分**：`soLLMRankedCandidate` 复用旧 `builtin.agent_match` 提示（PromptCatalog）；阈值 `match_similarity_threshold`（默认 0.7）。**2026-09-14 新增向量召回层**：`soVectorRankedDef` 对任务内容与 def 用途/签名代理文本分别向量化（`LLMAccess.embedLLM`，def 向量惰性缓存随 active def 缓存失效清空），余弦相似度 ≥ `match_vector_threshold`（`runtime_agents_config.match_vector_threshold`，默认 0.85）→ 直接采纳（`matched_by=vector`，上报 `intent.analyzed` 带 `matched_via: 'vector'`），**跳过一次 5-20s 的意图打分 LLM**；置信度不足或 embedding 不可用时回退 `soLLMRankedDef`（LLM 裁判 payload 补 `matched_via: 'llm'`）。
 4. **快照失效**：`declareAgent` 写入时失效对应 LRU 项；活跃 run 的快照经 TTL 惰性重建（陈旧快照不中断进行中 run）。
 
 ## 7. 与旧模型的关系

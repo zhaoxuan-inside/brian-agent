@@ -23,9 +23,9 @@ import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, ExistInfoInput, ExistInfoOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
-import { ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
+import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
   VectorObject,
   VectorRecord,
@@ -165,7 +165,7 @@ export class InfoCoreService {
       { field: 'updated', value: createdAt },
       { field: 'session_id', value: input.session_id },
       { field: 'work_id', value: input.work_id },
-      { field: 'interact_id', value: input.interact_id || '' },
+      { field: 'run_id', value: input.run_id || '' },
       { field: 'info_id', value: infoId },
       { field: 'info_type', value: input.info_type || '' },
       { field: 'info_creator_role', value: input.info_creator_role || '' },
@@ -173,7 +173,12 @@ export class InfoCoreService {
       { field: 'info', value: input.info },
       { field: 'info_length', value: input.info.length },
       { field: 'pin', value: 0 },
-      { field: 'trace_id', value: (input as { trace_id?: string }).trace_id || metrics?.trace_id || '' },
+      // ===== 修改后（2026-09-14 trace 源头治理）：trace_id 显式传入（含 ''，表示该行
+      // 无已知源头 trace）优先落库；未传入才回落调用方链路（Metrics）trace —— 防止
+      // 历史补齐行无 trace 时被错误盖上调用方当轮 trace =====
+      // ===== 原始代码（保留作为参考）=====
+      // { field: 'trace_id', value: (input as { trace_id?: string }).trace_id || metrics?.trace_id || '' },
+      { field: 'trace_id', value: input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '') },
       { field: 'handle_result_type', value: handleResultType },
     ]);
 
@@ -208,11 +213,18 @@ export class InfoCoreService {
           await Promise.all([
             this.vectorInfo(processInput, new VectorInfoOutput(), _context, metrics, report),
             this.tagInfo(processInput, new TagInfoOutput(), _context, metrics, report),
-            // this.summaryInfo(processInput, new SummaryInfoOutput(), _context, metrics, report),  // 摘要改由上层 SummaryAgent 生成后经 input.summary 传入
+            // ===== 修改后（2026-09-15 记忆集中）：摘要生成恢复为 InfoCore 内建路径 ——
+            // 原实现（长文本 return true）与上层 SummaryAgent 均不触发摘要，info_summary 长期空置；
+            // 现 saveInfo 后统一入本方法：短文本原文即摘要，长文本经 config.llm_id 调 LLM 生成 =====
+            this.summaryInfo(processInput, new SummaryInfoOutput(), _context, metrics, report),
             this.keywordInfo(processInput, new KeywordInfoOutput(), _context, metrics, report),
           ]);
         } catch (err) {
-          // 异步处理错误仅记录，不影响保存
+          // ===== 原始代码（保留作为参考）=====
+          // } catch (err) { /* 异步处理错误仅记录，不影响保存 */ }
+          // ===== 修改后（2026-09-15）："仅记录"原来是无输出静默吞掉，
+          //      异步自学习（关键词/标签/向量）失败完全不可见，输出可见诊断 =====
+          console.warn(`[InfoCoreProvider] saveInfo 异步自学习处理失败（info_id=${processInput.info_id}）: ${err instanceof Error ? err.message : String(err)}`);
         }
       });
     }
@@ -255,7 +267,7 @@ export class InfoCoreService {
    * 向量化信息：按 chunk_size 分块（考虑分隔符与重叠覆盖率）后逐块生成 embedding，
    * 写入 LanceDB（向量唯一存储，不再落 SQLite）。
    */
-  async vectorInfo(input: ProcessInfoInput, output: VectorInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async vectorInfo(input: ProcessInfoInput, output: VectorInfoOutput, context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
       throw new ValidationError('vectorInfo 需要提供 info_id');
@@ -277,7 +289,7 @@ export class InfoCoreService {
     // 逐块生成 embedding；任一块失败则整体放弃（保持幂等，后续可重试）
     const embeddings: number[][] = [];
     for (const chunk of chunks) {
-      const embedding = await this.generateEmbedding(chunk, vectorConfig);
+      const embedding = await this.generateEmbedding(chunk, vectorConfig, context);
       if (!embedding || embedding.length === 0) return true;
       embeddings.push(embedding);
     }
@@ -353,7 +365,12 @@ export class InfoCoreService {
 
   /**
    * 使用 LLM 生成摘要。
+   * ===== 修改后（2026-09-15 采纳"记忆集中"要求）：摘要生成能力收敛至 InfoProvider ——
+   * 短文本（≤ threshold）仍直接以原文为摘要；长文本改为本方法内经 config.llm_id +
+   * config.prompt_template_id 调用 LLM 生成（原实现返回空、依赖上层 SummaryAgent 补齐，
+   * 而 SummaryAgent 实际无调用方，导致 info_summary 长期空置）。原始逻辑注释保留 =====
    */
+  // ===== 修改后（2026-09-15 记忆集中）：签名保留 metrics/report（与 InfoCore 其余用例一致），当前仅内部复用不再透传 =====
   async summaryInfo(input: ProcessInfoInput, output: SummaryInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -365,9 +382,9 @@ export class InfoCoreService {
       return true;
     }
 
-    const existing = await this.getInfoSummaryRow(input.info_id);
-    if (existing) {
-      output.summary_id = existing.id;
+    const existingRow = await this.getInfoSummaryRow(input.info_id);
+    if (existingRow) {
+      output.summary_id = existingRow.id;
       return true;
     }
 
@@ -376,10 +393,23 @@ export class InfoCoreService {
       throw new NotFoundError('信息', input.info_id);
     }
 
-    // ===== 修改后的代码：统一摘要生成逻辑，InfoCore 不再自行调用 LLM 生成摘要（由 SummaryAgent 统一生成） =====
+    // 类型过滤：仅作用于 LLM 生成阶段（info_types，默认 RESPONSE；短文本原文即摘要不受限，保持既有行为）
+    const now = IdGenerator.now();
     let summary: string;
+
+    // ===== 原始代码（保留作为参考）=====
+    // if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
+    //   summary = infoRow.info;
+    // } else {
+    //   return true;   ← 长文本不生成（摘要生成依赖上层 SummaryAgent，实际无调用方，info_summary 长期为空）
+    // }
+    // ===== 修改后：长文本由 InfoCore 自身承担 LLM 摘要生成（集中路径：config.llm_id =
+    // 摘要模型、prompt_template_id=摘要模板，均可经配置更新接口调整）=====
     if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
       summary = infoRow.info;
+    } else if (this.isSummaryEligibleType(String(infoRow.info_type ?? ''), summaryConfig)) {
+      summary = await this.generateSummaryText(infoRow.info, summaryConfig);
+      if (!summary) return true; // LLM 不可用/未配置时无摘要落库，不阻塞保存链路
     } else {
       return true;
     }
@@ -387,7 +417,6 @@ export class InfoCoreService {
       return true;
     }
 
-    const now = IdGenerator.now();
     const id = IdGenerator.generate();
 
     await this.relationDb.insert(INFO_SUMMARY_TABLE, [
@@ -400,6 +429,36 @@ export class InfoCoreService {
 
     output.summary_id = id;
     return true;
+  }
+
+  /** 摘要生成类型过滤（数据处理）：info_types 为空视为全部类型 */
+  private isSummaryEligibleType(infoType: string, summaryConfig: InfoSummaryConfigRecord): boolean {
+    const types = String(summaryConfig.info_types ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    if (types.length === 0) return true;
+    return types.includes(infoType);
+  }
+
+  /** 经 LLM 生成摘要（数据处理；config.llm_id / prompt_template_id 可选，缺失或失败返回空串） */
+  private async generateSummaryText(
+    info: string,
+    summaryConfig: InfoSummaryConfigRecord,
+  ): Promise<string> {
+    if (!summaryConfig.llm_id) {
+      console.warn('[InfoCoreProvider] summaryInfo 未配置 llm_id，长文本摘要跳过（请在配置中设置摘要模型）');
+      return '';
+    }
+    try {
+      const execInput = new ExecLLMInput();
+      execInput.id = summaryConfig.llm_id;
+      execInput.prompt = `请将以下内容浓缩为一条简洁、准确、保留关键信息与结论的摘要（不超过 15% 原文长度，不要添加任何评论或前缀）：\n\n${info}`;
+      const execOutput = new ExecLLMOutput();
+      await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
+      return String(execOutput.result ?? '').trim();
+    } catch (err) {
+      console.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${summaryConfig.llm_id}）: ${err instanceof Error ? err.message : String(err)}`);
+      return '';
+    }
   }
 
   /**
@@ -598,8 +657,8 @@ export class InfoCoreService {
     if (input.work_id) {
       conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
     }
-    if (input.interact_id) {
-      conditions.push({ field: 'interact_id', operator: Operator.EQ, value: input.interact_id });
+    if (input.run_id) {
+      conditions.push({ field: 'run_id', operator: Operator.EQ, value: input.run_id });
     }
     if (input.info_creator_id) {
       conditions.push({ field: 'info_creator_id', operator: Operator.EQ, value: input.info_creator_id });
@@ -698,7 +757,7 @@ export class InfoCoreService {
    * 返回语义最相似的 topK 条信息记录（含归一化相似度分数 score）。
    * 阈值 similarity_threshold 为归一化值 0-100。
    */
-  async similarKInfo(input: SimilarKInfoInput, output: SimilarKInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async similarKInfo(input: SimilarKInfoInput, output: SimilarKInfoOutput, context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info || !input.topK) {
       throw new ValidationError('similarKInfo 需要提供 info 和 topK');
@@ -710,7 +769,7 @@ export class InfoCoreService {
       return true;
     }
 
-    const embedding = await this.generateEmbedding(input.info, vectorConfig);
+    const embedding = await this.generateEmbedding(input.info, vectorConfig, context);
     if (!embedding || embedding.length === 0) {
       output.list = [];
       return true;
@@ -978,23 +1037,23 @@ export class InfoCoreService {
         edge_type: 'CITATION',
       }));
 
-    // 问答边（同 interact_id 的 REQUEST → RESPONSE）
+    // 问答边（同 run_id 的 REQUEST → RESPONSE）
     const byInteract = new Map<string, { request?: string; response?: string }>();
     for (const r of infoRows) {
-      const interactId = r['interact_id'] as string;
+      const runId = r['run_id'] as string;
       const infoId = r['info_id'] as string;
       const infoType = (r['info_type'] as string) || '';
-      if (!interactId) continue;
-      if (!byInteract.has(interactId)) byInteract.set(interactId, {});
-      const g = byInteract.get(interactId)!;
+      if (!runId) continue;
+      if (!byInteract.has(runId)) byInteract.set(runId, {});
+      const g = byInteract.get(runId)!;
       if (infoType === 'REQUEST') g.request = infoId;
       else if (infoType === 'RESPONSE') g.response = infoId;
     }
     const replyEdges: Array<{ id: string; from: string; to: string; citing_info_id: string; cited_info_id: string; edge_type: string }> = [];
-    for (const [interactId, g] of byInteract) {
+    for (const [runId, g] of byInteract) {
       if (g.request && g.response) {
         replyEdges.push({
-          id: `reply-${interactId}`,
+          id: `reply-${runId}`,
           from: g.request,
           to: g.response,
           citing_info_id: g.request,
@@ -1186,7 +1245,7 @@ export class InfoCoreService {
         info_id: raw.info_id,
         session_id: raw.session_id,
         work_id: raw.work_id || '',
-        interact_id: raw.interact_id || '',
+        run_id: raw.run_id || '',
         info_type: raw.info_type || InfoType.REQUEST,
         info_creator_role: raw.info_creator_role,
         info_creator_id: raw.info_creator_id,
@@ -1335,8 +1394,44 @@ export class InfoCoreService {
     const kwCandidates: InfoRawRecord[] = kwResult;
 
     // RANDOM (随机采样消息：优先抽取未在前面维度被选中的新消息；限额已按基础上下文动态收缩)
+    // ===== 原始实现（保留作为参考）：仅在会话消息数为 0 时才从全局随机兜底 =====
+    // let randCandidates: InfoRawRecord[] = [];
+    // if (randLimit > 0) {
+    //   try {
+    //     const existingIds = new Set<string>([
+    //       ...pinnedCandidates.map((c) => c.info_id),
+    //       ...citingCandidates.map((c) => c.info_id),
+    //       ...timelineCandidates.map((c) => c.info_id),
+    //     ]);
+    //     const count = await this.relationDb.count(INFO_RAW_TABLE, [
+    //       { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+    //     ]);
+    //     if (count > 0) {
+    //       const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+    //         `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
+    //         [input.session_id, Math.min(randLimit * 3, count)],
+    //       );
+    //       const sessionCandidates = randomRows
+    //         .map((r) => this.toInfoRawRecord(r))
+    //         .filter((c) => !existingIds.has(c.info_id))
+    //         .filter((c) => this.isCorrectInfo(c));
+    //       randCandidates = sessionCandidates.slice(0, randLimit);
+    //     } else if (enableCrossSession) {
+    //       const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+    //         `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
+    //         [Math.min(randLimit * 3, 100)],
+    //       );
+    //       const globalCandidates = randomRows
+    //         .map((r) => this.toInfoRawRecord(r))
+    //         .filter((c) => !existingIds.has(c.info_id))
+    //         .filter((c) => this.isCorrectInfo(c));
+    //       randCandidates = globalCandidates.slice(0, randLimit);
+    //     }
+    //   } catch { /* ignore */ }
+    // }
+    // ===== 修改后的实现：会话内候选不足 randLimit 时，允许跨会话从全局随机补充（对齐 PRD「会话内不足时从全局」） =====
     let randCandidates: InfoRawRecord[] = [];
-    if (randLimit > 0) {
+    if (randLimit > 0 && enableCrossSession) {
       try {
         const existingIds = new Set<string>([
           ...pinnedCandidates.map((c) => c.info_id),
@@ -1344,11 +1439,11 @@ export class InfoCoreService {
           ...timelineCandidates.map((c) => c.info_id),
         ]);
 
-        // 使用 ORDER BY RANDOM() LIMIT 避免全表扫描
         const count = await this.relationDb.count(INFO_RAW_TABLE, [
           { field: 'session_id', operator: Operator.EQ, value: input.session_id },
         ]);
         if (count > 0) {
+          // 使用 ORDER BY RANDOM() LIMIT 避免全表扫描
           const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
             `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
             [input.session_id, Math.min(randLimit * 3, count)],
@@ -1358,16 +1453,23 @@ export class InfoCoreService {
             .filter((c) => !existingIds.has(c.info_id))
             .filter((c) => this.isCorrectInfo(c));
           randCandidates = sessionCandidates.slice(0, randLimit);
-        } else if (enableCrossSession) {
-          const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+        }
+        // 会话内候选不足以填满限额时，从全局随机补充剩余名额（enableCrossSession 已在上方校验）
+        if (randCandidates.length < randLimit) {
+          const remaining = randLimit - randCandidates.length;
+          const filledIds = new Set([
+            ...existingIds,
+            ...randCandidates.map((c) => c.info_id),
+          ]);
+          const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
             `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
-            [Math.min(randLimit * 3, 100)],
+            [Math.min(remaining * 3, 100)],
           );
-          const globalCandidates = randomRows
+          const globalCandidates = globalRows
             .map((r) => this.toInfoRawRecord(r))
-            .filter((c) => !existingIds.has(c.info_id))
+            .filter((c) => !filledIds.has(c.info_id))
             .filter((c) => this.isCorrectInfo(c));
-          randCandidates = globalCandidates.slice(0, randLimit);
+          randCandidates = [...randCandidates, ...globalCandidates].slice(0, randLimit);
         }
       } catch { /* ignore */ }
     }
@@ -1549,7 +1651,7 @@ const rawPriority = priorityOrderStr
           info_id: record.info_id,
           session_id: record.session_id,
           work_id: record.work_id || '',
-          interact_id: record.interact_id || '',
+          run_id: record.run_id || '',
           info_type: record.info_type || '',
           info_creator_role: record.info_creator_role || '',
           info_creator_id: record.info_creator_id || '',
@@ -1773,7 +1875,7 @@ const rawPriority = priorityOrderStr
         keyword_score_threshold: 95,
         total: 1000,
         enable_snapshot_persistence: 1,
-        priority_order: 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM',
+        priority_order: 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM',
       },
     });
     return true;
@@ -1910,6 +2012,43 @@ const rawPriority = priorityOrderStr
     await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
 
     output.deleted_count = affected;
+    return true;
+  }
+
+  /** 删除指定 session 落库的全部信息及派生数据（数据/摘要/标签/关键词/向量/上下文快照），并级联 GraphDB 引用。
+   * ===== 新增（2026-09-15 记忆集中）：ChatService.deleteSession 原先内联直写 info_* 派生表，
+   * 属会话级记忆管理的第二条写入路径，收敛至 InfoProvider；chat_session / runtime_ / stream_event
+   * 等非记忆表仍由上层负责 ===== */
+  async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.session_id) {
+      throw new ValidationError('delInfoBySession 需要提供 session_id');
+    }
+
+    const rawRows = await this.relationDb.select(INFO_RAW_TABLE, {
+      conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
+      fields: ['info_id', 'work_id'],
+    });
+    const infoIds = rawRows.map((r) => String(r['info_id'] ?? '')).filter(Boolean);
+    const workIds = Array.from(new Set(rawRows.map((r) => String(r['work_id'] ?? '')).filter(Boolean)));
+
+    if (infoIds.length > 0) {
+      await this.relationDb.delete(INFO_TAG_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_SUMMARY_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_KEYWORD_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), _context);
+    }
+    if (workIds.length > 0) {
+      await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.IN, value: workIds }]);
+    }
+
+    const affected = await this.relationDb.delete(INFO_RAW_TABLE, [
+      { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+    ]);
+
+    output.deleted_count = affected;
+    output.deleted_work_ids = workIds;
     return true;
   }
 
@@ -2068,21 +2207,33 @@ const rawPriority = priorityOrderStr
   // Private: LLM helpers
   // =========================================================================
 
+  /** 业务维度（session/interact/work）随 Context 透传至 LLMProvider 明细账（2026-09-14） */
   private async generateEmbedding(
     text: string,
     vectorConfig: InfoVectorConfigRecord,
+    bizCtx?: Context,
   ): Promise<number[]> {
     try {
       const embedOutput = new EmbedLLMOutput();
       await this.llmAccess.embedLLM(
         Object.assign(new EmbedLLMInput(), { id: vectorConfig.llm_id, input: text }),
-        embedOutput, new LLMContext(),
+        embedOutput, bizCtx ?? new LLMContext(),
       );
       if (!embedOutput.embedding || embedOutput.embedding.length === 0) {
+        // ===== 原始代码（保留作为参考）=====
+        // return [];
+        // ===== 修改后（2026-09-15）：空 embedding 不再静默返回，输出可见诊断。
+        //      实测 embedding 服务（如本地 LLamaCPP）不可用时 SIMILARITY 维度整条失效，
+        //      且零日志，只能靠翻 llm_available/手动 curl 排查 =====
+        console.warn(`[InfoCoreProvider] generateEmbedding 返回空向量（llm_id=${vectorConfig.llm_id}），SIMILARITY 召回将退化为空；请检查 embedding 服务可用性`);
         return [];
       }
       return embedOutput.embedding;
-    } catch {
+    } catch (err) {
+      // ===== 原始代码（保留作为参考）=====
+      // } catch { return []; }
+      // ===== 修改后（2026-09-15）：向量化失败可见化，避免静默丢数据 =====
+      console.warn(`[InfoCoreProvider] generateEmbedding 调用失败（llm_id=${vectorConfig.llm_id}）: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
   }
@@ -2467,6 +2618,7 @@ const rawPriority = priorityOrderStr
           prompt: promptOut.prompt,
           temperature: 0.1,
           max_tokens: 256,
+          caller: 'InfoCoreService.extractTags',
         }),
         execOutput, new LLMContext(),
       );
@@ -2644,7 +2796,7 @@ const rawPriority = priorityOrderStr
           info_id: item.info_id,
           session_id: item.session_id,
           work_id: item.work_id || workId || '',
-          interact_id: item.interact_id || '',
+          run_id: item.run_id || '',
           info_type: item.info_type || '',
           info_creator_role: item.info_creator_role || '',
           info_creator_id: item.info_creator_id || '',
@@ -2890,7 +3042,7 @@ const rawPriority = priorityOrderStr
       updated: raw['updated'] as number,
       session_id: raw['session_id'] as string,
       work_id: raw['work_id'] as string,
-      interact_id: raw['interact_id'] as string,
+      run_id: raw['run_id'] as string,
       info_id: raw['info_id'] as string,
       info_type: raw['info_type'] as string,
       info_creator_role: raw['info_creator_role'] as string,
@@ -2977,7 +3129,7 @@ const rawPriority = priorityOrderStr
       keyword_score_threshold: Number(raw['keyword_score_threshold'] ?? 95),
       total: Number(raw['total'] ?? 1000),
       enable_snapshot_persistence: Number(raw['enable_snapshot_persistence'] ?? 1),
-      priority_order: String(raw['priority_order'] ?? 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'),
+      priority_order: String(raw['priority_order'] ?? 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'),
     };
   }
 }

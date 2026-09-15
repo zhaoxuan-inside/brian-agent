@@ -1,14 +1,12 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class VisualizationContext extends Context {
-  session_id?: string;
-  work_id?: string;
 }
 
 export class GetVisualizedMessagesInput extends Input {
   session_id?: string;
   work_id?: string;
-  interact_id?: string;
+  run_id?: string;
   lastN?: number;
   include_citing_info?: boolean;
   include_context_source?: boolean;

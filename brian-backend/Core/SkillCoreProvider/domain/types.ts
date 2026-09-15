@@ -75,7 +75,7 @@ export class MatchSkillInput extends Input {
   /** 交互上下文 ID */
   context_id!: string;
   /** 交互记录 ID */
-  interact_id!: string;
+  run_id!: string;
   /** 当前任务内容（2026-09-11 新增；供匹配缓存键与相似度排序，不参与 LLM prompt 必填） */
   task_content?: string;
   /** 调用方传入的既有绑定（agent 表为唯一绑定事实源，Agent 模块评估后写入）；传入时确定性水合，不再按任务重选 */
@@ -108,7 +108,7 @@ export class OptSkillInput extends Input {
   /** 交互上下文 ID */
   context_id!: string;
   /** 交互记录 ID */
-  interact_id!: string;
+  run_id!: string;
   /** Skill ID */
   skill_id!: string;
 }

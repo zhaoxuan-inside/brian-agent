@@ -577,3 +577,22 @@ Chat 模块的配置通过 Config Application 统一管理（`/api/config/update
 
 **影响的端点**：
   - `POST /api/chat/stream` — 每次问答少 1 次冗余 DB 查询往返；title 自动生成行为不变（首次空名为关键字截断 50 字符）。
+
+### [2026-09-14] traceId 源头治理：前端请求源头生成 + X-Trace-Id 全链路传播 + 迟到补齐按原 run 反查
+**变更原因**：事故 trace 989acae9（会话 fb3efe8f 系列延续）：上一轮 run 因进程重启未及执行自身 `syncRuntimeMessagesToInfoRaw`，下一轮补齐时历史行被盖上当轮 traceId，监控/「复制 TraceId」出现"两次提问 traceId 相同"。traceId 此前在链路中途（AOP 兜底、端点处）多处产生，归属混乱；按「所有 traceId 从请求源头产生」原则从源头治理，不做单点修补。
+
+**修改的方法**：
+  - 前端 `src/utils/trace.ts`（新增）— `newTraceId()`（crypto.randomUUID + 非 UUID fallback，原始问题即"非安全上下文 fallback 非法格式"由此消除）与 `TRACE_ID_HEADER`；
+  - 前端 `src/api/index.ts` — `request()` 与 CDT fire-and-forget 请求（内联 fetch 收敛为 `cdtFire`）均每次请求生成 `X-Trace-Id` 头传下游；
+  - 前端 `src/composables/useChatStream.ts` — `runSseInteraction` SSE fetch 同样携带源头 `X-Trace-Id`（原始代码已注释保留）；
+  - `dev-server.ts` — 新增 `soReqTraceId(req)`：`POST /api/chat/stream` 消费 `X-Trace-Id` 头（UUID 校验，非法忽略兜底生成），`Metrics` 以其为 trace_id（原 `IdGenerator.generate()` 已注释保留）；CORS 允许 `X-Trace-Id`；稍后/定时任务（Info cleanup / Skill-Soul aging / MCP sync / MQ cleanup）每次触发生成触发级 trace（`cronTrace`）计入任务 Metrics 与日志 meta；
+  - `ChatService.syncRuntimeMessagesToInfoRaw` — 历史行 trace 一律按其原 run 反查 `runtime_run.trace_id`（run 受理时已持久化），当轮 run 兜底本轮 trace，查不到显式置 `''`（原始"统一盖当轮 traceId"代码已保留注释）；
+  - `InfoCoreService.saveInfo` — `trace_id` 显式传入（含 `''`）优先落库，未传才回落调用方 `metrics.trace_id`；`SaveInfoInput` 新增 `trace_id?: string` 字段声明。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — `connected`/`done` 事件 trace 与前端请求头同源；两轮提问 trace 天然不同；
+  - `GET /api/chat/history/:session_id` — 历史行 trace 为其所属 run 的受理源头 trace，迟到补齐不再污染。
+
+**可能存在的问题**：
+  - steer 合流进同一 run 的后续提问无独立 run/trace（本轮只治理产生与归属，合流消息统一归因受理源头 trace；按消息级细分归因需 steer 携带 trace，阶段4）；
+  - 进程重启导致 run 从未 settle 时，该轮全部消息归因 `''`（原 run 受理 trace 仍在 runtime_run 可反查，仅信息行兜底为空）。

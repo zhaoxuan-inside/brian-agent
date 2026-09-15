@@ -83,8 +83,8 @@ interface LoopRunContext {
   runId: string;
   sessionKey: string;
   sessionId: string;
-  /** 交互标识（= trace_id，透传 LLM 做 Token 归因） */
-  interactId?: string;
+  /** 本次 Agent 执行标识（执行框架生成；Token 归因到 work 维度，缺省回退 runId） */
+  workId?: string;
   system?: string;
   llmId?: string;
   temperature?: number;
@@ -232,7 +232,7 @@ export class AgentLoopService {
       runId: input.run_id,
       sessionKey: input.session_key,
       sessionId: input.session_id,
-      interactId: input.interact_id,
+      workId: input.work_id || input.run_id,
       system: input.system,
       llmId: input.llm_id || undefined,
       temperature: input.temperature,
@@ -357,7 +357,6 @@ export class AgentLoopService {
       // 原实现无条件按 reply 刷新，异常中断的中间轮叙述会残留为用户可见文本。
       this.logger?.warn?.('Agent 循环单轮执行失败', {
         run_id: ctx.runId,
-        interact_id: ctx.interactId,
         session_key: ctx.sessionKey,
         round: ctx.iterations + 1,
         stop_reason: turn.verdict,
@@ -407,12 +406,18 @@ export class AgentLoopService {
         ctx.error = output.error;
         return { ok: false, verdict: LoopStopReason.Error, error: output.error };
       }
-      return this.fillTurnResult(output);
+      // ===== 新增（2026-09-14 Span 框架）：每轮 LLM 调用 span 闭合即上报轮耗时
+      // （Report 框架自动盖章 elapsed_ms = execLLMEvents span self 时间），多轮求和供
+      // 时间线「深度推理思考」汇总节点口径 =====
+      const turnResult = this.fillTurnResult(output);
+      ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnCompleted, {
+        round: ctx.iterations + 1,
+      });
+      return turnResult;
     } catch (err) {
       if (err instanceof AbortedError) {
         this.logger?.warn?.('LLM 调用被中止（AbortedError）', {
           run_id: ctx.runId,
-          interact_id: ctx.interactId,
           session_key: ctx.sessionKey,
           round: ctx.iterations + 1,
           error: err.message,
@@ -470,16 +475,20 @@ export class AgentLoopService {
   //   return input;
   // }
 
-  // ===== 修改后的方法（2026-09-09）：context.built 补报 system prompt（模型调用输入的 system 侧）=====
+  // ===== 修改后的方法（2026-09-09）：context.built 补报 system prompt（模型调用输入的 system 侧）；
+  // 修改后（2026-09-14 Span 框架）：上下文构建为显式子段 span（prepareModelMessages 私有不经切面） =====
   /** LLM 入参组装（逻辑控制；finalTurn 收掉工具） */
   private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
     const input = new ExecLLMEventsInput();
     input.id = ctx.llmId ?? '';
     input.session_id = ctx.sessionKey;
-    input.interact_id = ctx.interactId;
-    input.work_id = ctx.runId;
+    input.run_id = ctx.runId;
+    input.work_id = ctx.workId;
+    input.caller = 'AgentLoopService.callLLMTurn';
     input.system = ctx.system;
+    const ctxSpan = ctx.metrics ? ctx.metrics.beginSpan('Runtime.Loop.AgentLoopService.prepareModelMessages') : undefined;
     input.messages = await this.prepareModelMessages(ctx.sessionId, ctx.metrics);
+    if (ctx.metrics && ctxSpan) ctx.metrics.endSpan(ctxSpan);
     if (!ctx.finalTurn) {
       input.tools = ctx.specs.map((spec) => ({
         tool_id: spec.id,
@@ -875,6 +884,7 @@ export class AgentLoopService {
     output.token_usage = { input_tokens: ctx.inputTokens, output_tokens: ctx.outputTokens };
     output.message_id = ctx.lastMessageId;
     output.error = ctx.error;
+    output.work_id = ctx.workId;
   }
 
   /** 收尾（逻辑控制）：刷新缓冲 + 注销 run controller + run.status 结算事件 */
@@ -885,7 +895,6 @@ export class AgentLoopService {
     if (phase === RunPhase.Error) {
       this.logger?.warn?.('Agent 循环异常结束', {
         run_id: ctx.runId,
-        interact_id: ctx.interactId,
         session_key: ctx.sessionKey,
         stop_reason: ctx.stopReason,
         iterations: ctx.iterations,

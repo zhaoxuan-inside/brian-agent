@@ -58,6 +58,11 @@ describe('SoulCoreProvider', () => {
     await promptsAccess.initialize();
     soulCore = new SoulCoreAccess(relationDb, soulAccess, llmAccess, promptsAccess);
     await soulCore.initialize();
+    // Seed the builtin 'Soul Match Selection' prompt template so that the matchSoul LLM scoring path is executable (the production prompt comes from the PromptCatalog built-in table, so the test database is seeded in sync)
+    const seedIn = new AddPromptInput();
+    seedIn.data = { prompt_template_title: 'Soul Match Selection', prompt_template: 'Task: {{task_content}}\nSouls: {{available_souls}}' };
+    const seedOut = new AddPromptOutput();
+    await promptsAccess.addPrompt(seedIn, seedOut, new PromptContext());
   });
 
   afterEach(async () => {
@@ -169,7 +174,7 @@ describe('SoulCoreProvider', () => {
       const input = new MatchSoulInput();
       input.agent_id = 'agent-sc';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
       input.bound_soul_id = 'soul-cached';
       const output = new MatchSoulOutput();
       await soulCore.matchSoul(input, output, new SoulCoreContext());
@@ -195,7 +200,7 @@ describe('SoulCoreProvider', () => {
       const input = new MatchSoulInput();
       input.agent_id = agentId;
       input.context_id = 'c-gen';
-      input.interact_id = 'i-gen';
+      input.run_id = 'i-gen';
       return input;
     };
 

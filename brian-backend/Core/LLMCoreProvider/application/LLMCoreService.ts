@@ -91,7 +91,7 @@ export class LLMCoreService {
   /**
    * 为指定 Agent 匹配合适的 LLM 提供商（三层统一匹配/选择逻辑）。
    */
-  async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.agent_id) {
       throw new ValidationError('matchLLM 需要提供 agent_id');
@@ -140,7 +140,7 @@ export class LLMCoreService {
     const selectionVariables = {
       agent_id: input.agent_id,
       context_id: input.context_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       available_llms: this.buildLlmList(availableLLMs),
     };
     const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
@@ -156,6 +156,10 @@ export class LLMCoreService {
         prompt: selectionPrompt,
         temperature: 0.1,
         max_tokens: 256,
+        session_id: context.session_id || '',
+        run_id: input.run_id || context.run_id || '',
+        work_id: context.work_id || input.work_id || '',
+        caller: 'LLMCoreService.matchLLM',
       } as ExecLLMInput,
       execLLMOutput, new LLMContext(),
     );

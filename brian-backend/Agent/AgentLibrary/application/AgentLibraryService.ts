@@ -32,7 +32,6 @@ import {
   ComponentKind,
 } from '../domain/types';
 import {
-  simpleSimilarity,
   shouldReuseByRegenRate,
 } from '@brian-agent/core';
 import { parseJsonObject } from '../../shared/signature';
@@ -124,7 +123,7 @@ export class AgentLibraryService {
     return true;
   }
 
-  async matchAgent(input: MatchAgentInput, output: MatchAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
+  async matchAgent(input: MatchAgentInput, output: MatchAgentOutput, ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
     // 统一百分制阈值（0-100）
@@ -225,6 +224,7 @@ export class AgentLibraryService {
       input.task_content || input.task_signature,
       candidates,
       promptTemplateId,
+      { session_id: ctx.session_id, run_id: input.run_id || ctx.run_id || '', work_id: input.work_id || ctx.work_id || '' },
     );
 
     const parsedScore = Number(llmMatched?.score ?? 0);
@@ -452,7 +452,7 @@ export class AgentLibraryService {
 
     const now = IdGenerator.now();
     const workId = input.work_id || ctx.work_id || '';
-    const interactId = input.interact_id || ctx.interact_id || '';
+    const runId = input.run_id || ctx.run_id || '';
 
     await this.relationDb.insert(AGENT_USAGE_TABLE, [
       { field: 'id', value: IdGenerator.generate() },
@@ -460,7 +460,7 @@ export class AgentLibraryService {
       { field: 'updated', value: now },
       { field: 'agent_id', value: input.agent_id },
       { field: 'work_id', value: workId },
-      { field: 'interact_id', value: interactId },
+      { field: 'run_id', value: runId },
       { field: 'usage_context', value: input.usage_context ?? '' },
     ]);
 
@@ -807,6 +807,7 @@ export class AgentLibraryService {
     taskContent: string,
     candidates: AgentRecord[],
     promptTemplateId?: string,
+    biz?: { session_id?: string; run_id?: string; work_id?: string },
   ): Promise<{ agent_id: string; score: number } | null> {
     // 排序 LLM 从 llm_available 解析（默认文本模型优先），不再依赖 agent 表 llm_id
     const llmId = await this.resolveRankerLlm();
@@ -839,7 +840,14 @@ export class AgentLibraryService {
 
     const llmOut = new ExecLLMOutput();
     const okLlm = await this.llmAccess.execLLM(
-      Object.assign(new ExecLLMInput(), { id: llmId, prompt }),
+      Object.assign(new ExecLLMInput(), {
+        id: llmId,
+        prompt,
+        session_id: biz?.session_id || '',
+        run_id: biz?.run_id || '',
+        work_id: biz?.work_id || '',
+        caller: 'AgentLibraryService.matchAgent.llmMatch',
+      }),
       llmOut,
       new LLMContext(),
     );

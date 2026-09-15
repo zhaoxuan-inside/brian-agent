@@ -128,9 +128,22 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     }, botMsgId)
     expect(ui.liveTimeline.length).toBe(5)
     expect(ui.liveTimeline[4].title).toBe('构建上下文：第 1 轮 · 1 条消息')
-    expect(ui.liveTimeline[4].elapsedMs).toBe(1)
+    // ===== 修改后（2026-09-14）：环节耗时直读事件 payload 自带 elapsed_ms；
+    // 无计时的旧事件不伪造耗时（|| 1 假数据兜底已删除）；payload 携带时原样透传 =====
+    expect(ui.liveTimeline[4].elapsedMs).toBeUndefined()
+    handler.handle({
+      event: 'context.built',
+      round: 2,
+      message_count: 2,
+      system: '你是 Brian，一个专业助手。',
+      elapsed_ms: 23,
+      messages: [{ role: 'user', content: '推荐去哪散步？' }, { role: 'assistant', content: '去公园' }],
+    }, botMsgId)
+    expect(ui.liveTimeline.length).toBe(6)
+    expect(ui.liveTimeline[5].elapsedMs).toBe(23)
     // 实时上下文轮次应落库（供「基础上下文」轮次卡片定位 data-anchor=ctx-1）
-    expect(ui.liveContextRounds.length).toBe(1)
+    // ===== 修改后（2026-09-14）：第 2 轮 context.built（带 elapsed_ms）追加，共 2 个轮次 =====
+    expect(ui.liveContextRounds.length).toBe(2)
     expect(ui.liveContextRounds[0]).toMatchObject({
       round: 1,
       targetKey: 'ctx-1',
@@ -140,13 +153,13 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
 
     // 6. think.delta 深度思考
     handler.handle({ event: 'think.delta', delta: '推荐去奥林匹克森林公园散步。' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(6)
-    expect(ui.liveTimeline[5].title).toContain('Agent 深度推理思考')
+    expect(ui.liveTimeline.length).toBe(7)
+    expect(ui.liveTimeline[6].title).toContain('Agent 深度推理思考')
 
     // 7. run.finished 完成
     handler.handle({ event: 'run.finished', stop_reason: 'stop' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(7)
-    expect(ui.liveTimeline[6].title).toBe('执行完成')
+    expect(ui.liveTimeline.length).toBe(8)
+    expect(ui.liveTimeline[7].title).toBe('执行完成')
   })
 
   it('intent.analyzed 命中 Agent 应展示名称、tooltip 携带原始 ID', () => {

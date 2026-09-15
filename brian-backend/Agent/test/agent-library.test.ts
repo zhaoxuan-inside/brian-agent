@@ -201,7 +201,7 @@ describe('AgentLibrary', () => {
         agent_id: id, agent_type: 'WORKER', strategy_id: 's-1',
       }), new AddAgentOutput(), new AgentLibraryContext());
       await service.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
-        agent_id: id, work_id: 'w', interact_id: 'i',
+        agent_id: id, work_id: 'w', run_id: 'i',
       }), new RecordAgentUsageOutput(), new AgentLibraryContext());
       const o = new GetAgentOutput();
       await service.soAgent(Object.assign(new GetAgentInput(), { agent_id: id }), o, new AgentLibraryContext());
@@ -215,7 +215,7 @@ describe('AgentLibrary', () => {
       }), new AddAgentOutput(), new AgentLibraryContext());
       for (let i = 0; i < 3; i++) {
         await service.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
-          agent_id: id, work_id: 'w', interact_id: 'i',
+          agent_id: id, work_id: 'w', run_id: 'i',
         }), new RecordAgentUsageOutput(), new AgentLibraryContext());
       }
       const daily = db.queryRaw<{ usage_date: string; usage_count: number }>(
@@ -228,7 +228,7 @@ describe('AgentLibrary', () => {
 
     it('TC-AL-030: agent_id 为空抛异常', async () => {
       await expect(service.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
-        agent_id: '', work_id: 'w', interact_id: 'i',
+        agent_id: '', work_id: 'w', run_id: 'i',
       }), new RecordAgentUsageOutput(), new AgentLibraryContext())).rejects.toThrow(ValidationError);
     });
   });

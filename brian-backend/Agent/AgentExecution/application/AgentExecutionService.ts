@@ -163,7 +163,7 @@ export class AgentExecutionService {
     const config = await this.getConfig();
     const traceId = IdGenerator.generate();
     const maxIter = input.max_iterations ?? config?.default_max_iterations ?? 10;
-    const libCtx = this.toLibCtx(ctx, input.work_id, input.interact_id);
+    const libCtx = this.toLibCtx(ctx, input.work_id, input.run_id);
 
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(
@@ -349,7 +349,7 @@ export class AgentExecutionService {
       Object.assign(new RecordAgentUsageInput(), {
         agent_id: input.agent_id,
         work_id: input.work_id || ctx.work_id || '',
-        interact_id: input.interact_id || ctx.interact_id || '',
+        run_id: input.run_id || ctx.run_id || '',
         usage_context: JSON.stringify({
           trace_id: traceId,
           task_content: input.task_content,
@@ -376,7 +376,7 @@ export class AgentExecutionService {
           Object.assign(new SaveInfoInput(), {
             session_id: sessionId,
             work_id: input.work_id || ctx.work_id,
-            interact_id: input.interact_id || ctx.interact_id || '',
+            run_id: input.run_id || ctx.run_id || '',
             info_type: InfoType.ACT,
             info_creator_role: 'AGENT',
             info_creator_id: input.agent_id,
@@ -433,7 +433,7 @@ export class AgentExecutionService {
             job_id: jobId,
             agent_id: input.agent_id,
             work_id: input.work_id,
-            interact_id: input.interact_id,
+            run_id: input.run_id,
             task_content: input.task_content,
             max_iterations: input.max_iterations,
             callback_queue: input.callback_queue,
@@ -456,13 +456,13 @@ export class AgentExecutionService {
             const execCtx = Object.assign(new AgentExecutionContext(), {
               session_id: payload.session_id as string | undefined,
               work_id: payload.work_id as string | undefined,
-              interact_id: payload.interact_id as string | undefined,
+              run_id: payload.run_id as string | undefined,
             });
             await this.execAgent(
               Object.assign(new ExecAgentInput(), {
                 agent_id: payload.agent_id,
                 work_id: payload.work_id,
-                interact_id: payload.interact_id,
+                run_id: payload.run_id,
                 task_content: payload.task_content,
                 max_iterations: payload.max_iterations,
               }),
@@ -502,6 +502,7 @@ export class AgentExecutionService {
     prompt: string,
     stepName: string,
     system?: string,
+    biz?: { session_id?: string; run_id?: string; work_id?: string },
   ): Promise<ExecLLMOutput> {
     const llmOut = new ExecLLMOutput();
     const ok = await this.llmAccess.execLLM(
@@ -509,6 +510,10 @@ export class AgentExecutionService {
         id: llmId,
         prompt,
         ...(system ? { system } : {}),
+        session_id: biz?.session_id || '',
+        run_id: biz?.run_id || '',
+        work_id: biz?.work_id || '',
+        caller: `AgentExecutionService.${stepName}`,
       }),
       llmOut,
       new LLMContext(),
@@ -539,7 +544,11 @@ export class AgentExecutionService {
       },
     );
 
-    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'think', system);
+    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'think', system, {
+      session_id: ctx.session_id,
+      run_id: ctx.run_id || '',
+      work_id: ctx.work_id || '',
+    });
 
     const parsed = parseJsonObject(llmOut.result);
     output.prompt = prompt;
@@ -672,7 +681,11 @@ export class AgentExecutionService {
       },
     );
 
-    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'reflect', system);
+    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'reflect', system, {
+      session_id: ctx.session_id,
+      run_id: ctx.run_id || '',
+      work_id: ctx.work_id || '',
+    });
 
     const parsed = parseJsonObject(llmOut.result);
     output.prompt = prompt;
@@ -704,7 +717,11 @@ export class AgentExecutionService {
       },
     );
 
-    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'answer', system);
+    const llmOut = await this.execLLMOrThrow(input.llm_id, prompt, 'answer', system, {
+      session_id: _ctx.session_id,
+      run_id: _ctx.run_id || '',
+      work_id: _ctx.work_id || '',
+    });
     output.prompt = prompt;
     output.raw_response = llmOut.result || '';
     output.answer = llmOut.result || '';
@@ -1232,7 +1249,7 @@ export class AgentExecutionService {
       raw_response: thinkOut.raw_response,
       iteration,
     }, {
-      work_id: input.work_id || ctx.work_id || '', interact_id: input.interact_id || ctx.interact_id || '',
+      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
       agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
     } as any).catch(() => {});
@@ -1246,7 +1263,7 @@ export class AgentExecutionService {
       tool_type: actOut.tool_type, tool_id: actOut.tool_id, result: actOut.result,
       params: actOut.params, next_action: actOut.next_action, iteration,
     }, {
-      work_id: input.work_id || ctx.work_id || '', interact_id: input.interact_id || ctx.interact_id || '',
+      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
       agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
     } as any).catch(() => {});
@@ -1260,7 +1277,7 @@ export class AgentExecutionService {
       passed: !reflectOut.should_continue, reflection: reflectOut.reflection,
       prompt: reflectOut.prompt, raw_response: reflectOut.raw_response, iteration,
     }, {
-      work_id: input.work_id || ctx.work_id || '', interact_id: input.interact_id || ctx.interact_id || '',
+      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
       agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
     } as any).catch(() => {});
@@ -1279,7 +1296,7 @@ export class AgentExecutionService {
       Object.assign(new MatchLLMInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
-        interact_id: ctx.interact_id || '',
+        run_id: ctx.run_id || '',
       }),
       llmOut,
       new LLMCoreContext(),
@@ -1378,7 +1395,7 @@ export class AgentExecutionService {
         Object.assign(new MatchSkillInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: ctx.interact_id || '',
+          run_id: ctx.run_id || '',
           bound_skill_ids: boundSkillIds,
         }),
         out,
@@ -1411,7 +1428,7 @@ export class AgentExecutionService {
         Object.assign(new MatchMcpInput(), {
           agent_id: agentId,
           context_id: ctx.session_id || '',
-          interact_id: ctx.interact_id || '',
+          run_id: ctx.run_id || '',
           bound_mcp_ids: boundMcpIds,
         }),
         out,
@@ -1562,7 +1579,7 @@ export class AgentExecutionService {
         Object.assign(new SaveInfoInput(), {
           session_id: ctx.session_id,
           work_id: ctx.work_id,
-          interact_id: ctx.interact_id || '',
+          run_id: ctx.run_id || '',
           info_type: infoType,
           info_creator_role: creatorRole,
           info_creator_id: creatorId,
@@ -1596,11 +1613,11 @@ export class AgentExecutionService {
     };
   }
 
-  private toLibCtx(ctx: AgentExecutionContext, workId: string, interactId: string): AgentLibraryContext {
+  private toLibCtx(ctx: AgentExecutionContext, workId: string, runId: string): AgentLibraryContext {
     return Object.assign(new AgentLibraryContext(), {
       session_id: ctx.session_id,
       work_id: workId || ctx.work_id,
-      interact_id: interactId || ctx.interact_id,
+      run_id: runId || ctx.run_id,
     });
   }
 

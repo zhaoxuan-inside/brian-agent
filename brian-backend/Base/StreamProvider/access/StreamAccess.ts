@@ -89,7 +89,7 @@ export class StreamAccess {
     event: string,
     text: string,
     meta?: {
-      interact_id?: string;
+      run_id?: string;
       work_id?: string;
       agent_id?: string;
       agent_name?: string;
@@ -104,7 +104,7 @@ export class StreamAccess {
       event,
       msg_type: 'TEXT' as SSEMessageType,
       data: text,
-      interact_id: meta?.interact_id,
+      run_id: meta?.run_id,
       work_id: meta?.work_id,
       agent_id: meta?.agent_id,
       agent_name: meta?.agent_name,
@@ -127,7 +127,7 @@ export class StreamAccess {
     msgType: SSEMessageType,
     data: T,
     meta?: {
-      interact_id?: string;
+      run_id?: string;
       work_id?: string;
       agent_id?: string;
       agent_name?: string;
@@ -141,7 +141,7 @@ export class StreamAccess {
       event,
       msg_type: msgType,
       data,
-      interact_id: meta?.interact_id,
+      run_id: meta?.run_id,
       work_id: meta?.work_id,
       agent_id: meta?.agent_id,
       agent_name: meta?.agent_name,

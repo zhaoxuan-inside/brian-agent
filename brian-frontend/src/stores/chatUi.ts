@@ -58,7 +58,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     intentConfirmation.value = {
       session_id: String(data.session_id ?? ''),
       work_id: String(data.work_id ?? ''),
-      interact_id: String(data.interact_id ?? ''),
+      run_id: String(data.run_id ?? ''),
       original_query: String(data.original_query ?? ''),
       understood_requirement: String(data.understood_requirement ?? ''),
       match_score: Number(data.match_score ?? 0),
@@ -86,7 +86,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     clarificationRequest.value = {
       session_id: String(data.session_id ?? ''),
       work_id: String(data.work_id ?? ''),
-      interact_id: String(data.interact_id ?? ''),
+      run_id: String(data.run_id ?? ''),
       original_query: String(data.original_query ?? ''),
       clarifications: raw
         .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object'))

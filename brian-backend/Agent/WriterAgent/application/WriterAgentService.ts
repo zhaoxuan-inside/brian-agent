@@ -28,7 +28,7 @@ import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
   AgentLibraryContext,
 } from '../../AgentLibrary/domain/types';
-import { formatContextCategories } from '@brian-agent/base';
+import { formatContextCategories, formatDynamicContext } from '@brian-agent/base';
 import { TraceStore } from '../../AgentExecution/application/trace/TraceStore';
 import { buildSingleAnswerTrace } from '../../AgentExecution/application/trace/TraceCodec';
 import { renderPromptWithFallback, resolveAgentLlm } from '../../shared/AgentKit';
@@ -61,7 +61,7 @@ export class WriterAgentService {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
-      interact_id: input.interact_id || ctx.interact_id,
+      run_id: input.run_id || ctx.run_id,
     });
     const buildOut = new BuildSystemAgentOutput();
     await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'WRITER' }), buildOut, builderCtx);
@@ -102,14 +102,20 @@ export class WriterAgentService {
     if (ctx.session_id) {
       try {
         const ctxOut = new ContextInfoOutput();
-        // ===== 修改后的代码：传入 info: input.user_query =====
+        // ===== 原始代码（保留作为参考）=====
+        //        persist_snapshot: false,
+        // ===== 修改后（2026-09-15 采纳分析建议）：恢复快照持久化（默认 true）。
+        //      原先关闭导致 info_context_source 无本 work 记录，可视化经 soContextByWork
+        //      查不到多源上下文，只能降级展示 loop 侧时间线，造成"只见单一时间线上下文"。
+        //      多源上下文（PINNED/TIMELINE/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）
+        //      现将随 work 落库，供 trace/可视化完整还原上下文来源 =====
         await this.infoCore.context(
           Object.assign(new ContextInfoInput(), {
             session_id: ctx.session_id,
             work_id: ctx.work_id || '',
             selected_msg_ids: ctx.selected_msg_ids,
             info: input.user_query,
-            persist_snapshot: false,
+            persist_snapshot: true,
           }),
           ctxOut,
           new InfoCoreContext(),
@@ -119,6 +125,7 @@ export class WriterAgentService {
       } catch { /* best-effort */ }
     }
 
+    // agent results — 子 Agent 执行产物
     const agentResults = input.agent_results ?? [];
     const isErrorResult = (r: { handle_result_type?: string }) =>
       r.handle_result_type === HandleResultType.CALL_ERROR
@@ -128,7 +135,20 @@ export class WriterAgentService {
       const taskContent = r.task_content ?? '';
       return `[${r.agent_id}] ${taskContent}: ${text}`;
     };
+    // ===== 原始代码（保留作为参考）=====
+    // const results = agentResults.filter((r) => !isErrorResult(r)).map(formatResult).join('\n');
+    // ===== 修改后（2026-09-15）：子 Agent 执行结果按「动态执行上下文」语义包装注入。
+    //      与 formatContextCategories 渲染的静态记忆上下文（任务开始前检索的历史，不可修改）
+    //      明确区分：前者描述功能与使用方式，本动态块声明为本轮执行新产生的信息，
+    //      时效最高、与记忆冲突时以其为准；原始纯拼接文本仍保留在 results，
+    //      供 LLM 失败降级兜底使用 =====
     const results = agentResults.filter((r) => !isErrorResult(r)).map(formatResult).join('\n');
+    const agentResultsContext = formatDynamicContext(
+      '以下内容是本次任务执行过程中由各个执行 Agent 实时产出的工作结果，属于动态执行上下文：'
+      + '它们反映本次任务的真实执行进展，时效性最高、可直接引用；'
+      + '请与 static-memory-context（历史记忆）区分使用——执行结果与记忆冲突时，以执行结果为准。',
+      agentResults.filter((r) => !isErrorResult(r)).map(formatResult),
+    );
 
     // 错误信息不参与 Writer 汇总：结果全为错误时跳过 LLM，直接透传错误信息
     const errorResults = agentResults.filter(isErrorResult);
@@ -165,7 +185,7 @@ export class WriterAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let llmId = config?.llm_id || '';
     if (!llmId && agent?.agent_id && this.llmCore) {
-      llmId = await this.resolveLlm(agent.agent_id);
+      llmId = await this.resolveLlm(agent.agent_id, _metrics);
     }
 
     let system = '';
@@ -202,7 +222,7 @@ export class WriterAgentService {
     //   ...(hasStreamAccess ? {
     //     stream: true,
     //     onDelta: (delta: string) => {
-    //       this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', delta, { work_id: input.work_id || ctx.work_id, interact_id: input.interact_id || ctx.interact_id, chunk_delay_ms: 0 });
+    //       this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', delta, { work_id: input.work_id || ctx.work_id, run_id: input.run_id || ctx.run_id, chunk_delay_ms: 0 });
     //     },
     //   } : {}),
     // });
@@ -218,6 +238,10 @@ export class WriterAgentService {
     // }
 
     // ===== 修改后的方法（补全 user_query/context 占位符变量，采用 execLLMEvents 原生流式与全链路看门狗） =====
+    // ===== 原始代码（保留作为参考）=====
+    //        agent_results: results,
+    // ===== 修改后（2026-09-15）：注入动态执行上下文包装版（agentResultsContext），
+    //      与静态记忆上下文在模板内可视区分（见 formatDynamicContext 与 writer_protocol 模板）=====
     const prompt = await this.renderPrompt(
       config?.write_prompt_template_id,
       'Writer',
@@ -227,9 +251,10 @@ export class WriterAgentService {
         preferences: JSON.stringify(preferences),
         context: contextExtra,
         context_data: contextExtra,
-        agent_results: results,
+        agent_results: agentResultsContext || results,
         soul: system,
       },
+      _metrics,
     );
 
     const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
@@ -241,8 +266,9 @@ export class WriterAgentService {
       ],
       temperature: 0.3,
       session_id: ctx.session_id || '',
-      interact_id: input.interact_id || ctx.interact_id || '',
+      run_id: input.run_id || ctx.run_id || '',
       work_id: input.work_id || ctx.work_id || '',
+      caller: 'WriterAgent.execWrite',
       on_event: (ev: LLMEvent) => {
         if (ev.type === 'text_delta' && ev.delta && hasStreamAccess) {
           this.streamAccess!.pushText(
@@ -251,7 +277,7 @@ export class WriterAgentService {
             ev.delta,
             {
               work_id: input.work_id || ctx.work_id,
-              interact_id: input.interact_id || ctx.interact_id,
+              run_id: input.run_id || ctx.run_id,
               chunk_delay_ms: 0,
             },
           );
@@ -274,6 +300,10 @@ export class WriterAgentService {
         id: llmId,
         prompt,
         ...(system ? { system } : {}),
+        session_id: ctx.session_id || '',
+        run_id: input.run_id || ctx.run_id || '',
+        work_id: input.work_id || ctx.work_id || '',
+        caller: 'WriterAgent.execWrite',
       });
       const execOut = new ExecLLMOutput();
       ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), _metrics, _report);
@@ -306,7 +336,7 @@ export class WriterAgentService {
       Object.assign(new RecordAgentUsageInput(), {
         agent_id: buildOut.agent_id,
         work_id: input.work_id || ctx.work_id || '',
-        interact_id: input.interact_id || ctx.interact_id || '',
+        run_id: input.run_id || ctx.run_id || '',
       }),
       new RecordAgentUsageOutput(),
       libCtx,
@@ -547,15 +577,16 @@ export class WriterAgentService {
     templateId: string | undefined,
     builtinId: string,
     variables: Record<string, unknown>,
+    metrics?: Metrics,
   ): Promise<string> {
-    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables);
+    return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables, metrics);
   }
 
   /**
    * 通过 Core.matchLLM 解析 WriterAgent 绑定的 LLM（agent_llm）。
    */
-  private async resolveLlm(agentId: string): Promise<string> {
-    return resolveAgentLlm(this.llmCore, agentId);
+  private async resolveLlm(agentId: string, metrics?: Metrics): Promise<string> {
+    return resolveAgentLlm(this.llmCore, agentId, metrics);
   }
 
   private async getConfig(): Promise<WriterAgentConfigRecord | null> {

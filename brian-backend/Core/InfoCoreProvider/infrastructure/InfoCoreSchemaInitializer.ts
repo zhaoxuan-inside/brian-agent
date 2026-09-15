@@ -46,7 +46,7 @@ export class InfoCoreSchemaInitializer {
         "updated"           INTEGER NOT NULL,
         "session_id"        TEXT    NOT NULL,
         "work_id"           TEXT    NOT NULL,
-        "interact_id"       TEXT    NOT NULL,
+        "run_id"       TEXT    NOT NULL,
         "info_id"           TEXT    NOT NULL,
         "info_type"         TEXT    NOT NULL,
         "info_creator_role" TEXT    NOT NULL DEFAULT '',
@@ -74,8 +74,15 @@ export class InfoCoreSchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_session_id" ON "${INFO_RAW_TABLE}" ("session_id")`,
     );
+    // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id（一次问答，= runtime_run.id） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${INFO_RAW_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`);
+    } catch { /* 已重命名或原列不存在 */ }
+    try {
+      this.relationDb.executeRaw(`DROP INDEX IF EXISTS "idx_${INFO_RAW_TABLE}_interact_id"`);
+    } catch { /* ignore */ }
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_interact_id" ON "${INFO_RAW_TABLE}" ("interact_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_run_id" ON "${INFO_RAW_TABLE}" ("run_id")`,
     );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_type" ON "${INFO_RAW_TABLE}" ("info_type")`,
@@ -237,7 +244,7 @@ export class InfoCoreSchemaInitializer {
         "keyword_score_threshold"  INTEGER NOT NULL DEFAULT 95,
         "total"                   INTEGER NOT NULL DEFAULT 1000,
         "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1,
-        "priority_order"          TEXT    NOT NULL DEFAULT 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'
+        "priority_order"          TEXT    NOT NULL DEFAULT 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'
       )
     `);
 
@@ -248,7 +255,7 @@ export class InfoCoreSchemaInitializer {
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_max_percent" INTEGER NOT NULL DEFAULT 10`,
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_score_threshold" INTEGER NOT NULL DEFAULT 95`,
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "priority_order" TEXT NOT NULL DEFAULT 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'`,
+      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "priority_order" TEXT NOT NULL DEFAULT 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'`,
       `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "threshold" INTEGER NOT NULL DEFAULT 100`,
       `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "info_types" TEXT NOT NULL DEFAULT 'RESPONSE'`,
       `ALTER TABLE "${INFO_VECTOR_CONFIG_TABLE}" ADD COLUMN "chunk_size" INTEGER NOT NULL DEFAULT 512`,

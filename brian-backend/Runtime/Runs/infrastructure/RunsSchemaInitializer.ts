@@ -3,7 +3,7 @@
  */
 
 import type { RelationDBAccess } from '@brian-agent/base';
-import { RUNTIME_RUN_TABLE, RUNTIME_METRICS_TABLE, RUNTIME_RUNS_CONFIG_TABLE } from '../domain/types';
+import { RUNTIME_RUN_TABLE, RUNTIME_RUNS_CONFIG_TABLE } from '../domain/types';
 
 /**
  * RunsSchemaInitializer。
@@ -69,9 +69,13 @@ export class RunsSchemaInitializer {
         "accepted_at"   INTEGER NOT NULL DEFAULT 0,
         "started_at"    INTEGER,
         "settled_at"    INTEGER,
-        "metrics_json"  TEXT    NOT NULL DEFAULT '{}'
+        "trace_id"      TEXT    NOT NULL DEFAULT ''
       )
     `);
+    // ===== 修改后（2026-09-14 trace 源头治理）：runtime_run 增加 trace_id 列 ——
+    // run 受理时持久化请求源头 traceId，供迟到补齐/恢复等任何延后路径按 run 反查
+    // 原始 trace，杜绝"历史行盖上当轮 traceId"的污染（旧库自动迁移） =====
+    try { this.relationDb.executeRaw(`ALTER TABLE "${RUNTIME_RUN_TABLE}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`); } catch { /* 列已存在 */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_RUN_TABLE}_session" ON "${RUNTIME_RUN_TABLE}" ("session_key", "created")`,
     );
@@ -79,35 +83,8 @@ export class RunsSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_RUN_TABLE}_status" ON "${RUNTIME_RUN_TABLE}" ("status")`,
     );
 
-    // 存量表增加 metrics_json 列
-    try {
-      this.relationDb.executeRaw(
-        `ALTER TABLE "${RUNTIME_RUN_TABLE}" ADD COLUMN "metrics_json" TEXT NOT NULL DEFAULT '{}'`,
-      );
-    } catch { /* 列已存在 */ }
-
-    // runtime_metrics 表：落地问答全流程计时 metrics（以 <层名>.<模块名>.<类名>.<方法名>.start/end 为 key）
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${RUNTIME_METRICS_TABLE}" (
-        "id"                 TEXT    NOT NULL PRIMARY KEY,
-        "created"            INTEGER NOT NULL,
-        "updated"            INTEGER NOT NULL,
-        "run_id"             TEXT    NOT NULL,
-        "session_key"        TEXT    NOT NULL,
-        "trace_id"           TEXT    NOT NULL DEFAULT '',
-        "timings_json"       TEXT    NOT NULL DEFAULT '{}',
-        "total_duration_ms"  INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_METRICS_TABLE}_run" ON "${RUNTIME_METRICS_TABLE}" ("run_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_METRICS_TABLE}_session" ON "${RUNTIME_METRICS_TABLE}" ("session_key")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_METRICS_TABLE}_trace" ON "${RUNTIME_METRICS_TABLE}" ("trace_id")`,
-    );
+    // ===== 修改后（2026-09-14 Span 框架）：旧统一计落库方案删除（runtime_run.metrics_json 列与
+    // runtime_metrics 重复表）；时间线耗时唯一数据源 = 业务事件 payload 自带（span self 时间） =====
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_RUNS_CONFIG_TABLE}" (

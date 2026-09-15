@@ -1,9 +1,6 @@
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class AgentBuilderContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export interface AgentBuilderConfigRecord {
@@ -19,7 +16,7 @@ export interface AgentBuilderConfigRecord {
 // ---------------------------------------------------------------------------
 
 export class BuildAgentInput extends Input {
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
   task_complexity?: number;
   task_domain?: string;
@@ -36,7 +33,7 @@ export class BuildAgentOutput extends Output {
 
 export class OptimizeAgentInput extends Input {
   agent_id!: string;
-  interact_id!: string;
+  run_id!: string;
   usage_feedback?: string;
 }
 

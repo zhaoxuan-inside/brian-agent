@@ -13,7 +13,7 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SkillContext, SoSkillOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
+import { SkillContext, SoSkillOutput, Context, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SkillCoreContext,
@@ -80,9 +80,9 @@ export class SkillCoreService {
   /**
    * 为 Agent 匹配 Skill（三层统一匹配/选择/自生成逻辑）。
    */
-  async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, _context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const { agent_id, context_id, interact_id } = input;
+    const { agent_id, context_id, run_id } = input;
     if (!agent_id) {
       throw new ValidationError('agent_id 为必填');
     }
@@ -95,8 +95,8 @@ export class SkillCoreService {
 
     // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排） =====
     const cached = input.bypass_cache
-      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t)) }
-      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t));
+      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t, context)) }
+      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
     const cachedIds = (cached.record?.result ?? []).map((r) => r.id);
     if (cachedIds.length > 0) {
       const hydrated = await this.hydrateSkillsOrNone(cachedIds);
@@ -122,14 +122,14 @@ export class SkillCoreService {
     // Layer-3 自生成仅在库内无可启用 Skill 时进行 =====
     let ranked: Array<{ skill_id: string; skill_brief: string; relevance: number }> = [];
     if (availableSkills.length === 0) {
-      ranked = await this.generateSkill(agent_id);
+      ranked = await this.generateSkill(agent_id, context);
     } else {
-      ranked = await this.rankSkillsByLLM(agent_id, context_id, interact_id, availableSkills, config, input.task_content ?? '');
+      ranked = await this.rankSkillsByLLM(agent_id, context_id, run_id, availableSkills, config, input.task_content ?? '', context);
     }
 
     // ===== 匹配结果入缓存（MD5 + 任务向量；复用 lookup 阶段向量） =====
     if (availableSkills.length > 0 && ranked.length > 0) {
-      await this.commitMatchCache(input.task_content ?? '', cached.query, ranked);
+      await this.commitMatchCache(input.task_content ?? '', cached.query, ranked, context);
     }
     output.skills = ranked;
     return true;
@@ -424,12 +424,17 @@ export class SkillCoreService {
 
   // ===== 修改后的方法（2026-09-11）：统一 LLM 排序调用（shutdown 快、max_tokens 上限、返回文本给 RankingParser） =====
   /** 排序 LLM 调用（逻辑控制；失败返回空串 → 调用方走 threshold 兜底语义） */
-    private async soRankLLM(input: ExecLLMInput): Promise<string> {
+    private async soRankLLM(input: ExecLLMInput, matchCtx?: Context): Promise<string> {
+    // Token 归因维度：Skill 选择 LLM 打分入账（业务维度随 Context 传播，caller 供分来源统计）
+    input.session_id = input.session_id || matchCtx?.session_id || '';
+    input.run_id = input.run_id || matchCtx?.run_id || '';
+    input.work_id = input.work_id || matchCtx?.work_id || '';
+    input.caller = 'SkillCoreService.rankSkills';
     // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
     input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const llmOutput = new ExecLLMOutput();
     try {
-      const ok = await this.llmAccess.execLLM(input, llmOutput, new LLMContext());
+      const ok = await this.llmAccess.execLLM(input, llmOutput, matchCtx ?? new LLMContext());
       return ok ? (llmOutput.result ?? '') : '';
     } catch {
       return '';
@@ -442,10 +447,11 @@ export class SkillCoreService {
   private async rankSkillsByLLM(
     agentId: string,
     contextId: string,
-    interactId: string,
+    runId: string,
     availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
     config: SkillCoreConfigRecord,
     taskContent: string,
+    matchCtx?: Context,
   ): Promise<MatchedSkillEntry[]> {
     const skillsJson = JSON.stringify(
       availableSkills.map((s) => ({ id: s.id, name: s.name ?? '', skill_brief: s.skill_brief })),
@@ -453,7 +459,7 @@ export class SkillCoreService {
     const promptText = await this.renderPrompt(config.prompt_template_id, {
       agent_id: agentId,
       context_id: contextId,
-      interact_id: interactId,
+      run_id: runId,
       task_content: taskContent,
       skills: skillsJson,
     });
@@ -462,7 +468,7 @@ export class SkillCoreService {
       prompt: promptText,
       temperature: 0.1,
       max_tokens: 300,
-    } as ExecLLMInput);
+    } as ExecLLMInput, matchCtx);
     const threshold = config.score_threshold ?? ScoreThreshold.Default;
     return filterByThreshold(parseRankingCandidates(result), threshold)
       .map((c) => this.toSkillEntry(c, availableSkills))
@@ -479,9 +485,9 @@ export class SkillCoreService {
   }
 
   /** 第 3 层 Skill 自生成（逻辑控制；原 matchSkill 内联生成逻辑抽出复用） */
-  private async generateSkill(agentId: string): Promise<MatchedSkillEntry[]> {
+  private async generateSkill(agentId: string, matchCtx?: Context): Promise<MatchedSkillEntry[]> {
     const genPrompt = `Based on agent_id: ${agentId}, please generate a new skill name, brief description, and markdown code block for this task. Return JSON: {"name": "...", "skill_brief": "...", "skill_md": "..."}`;
-    const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: 600 } as ExecLLMInput);
+    const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: 600 } as ExecLLMInput, matchCtx);
     const parsed = JsonParser.parseObject(genRes);
     if (!parsed || !parsed.name) {
       return [];
@@ -506,11 +512,11 @@ export class SkillCoreService {
   }
 
   /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
-  private async commitMatchCache(taskContent: string, embedding: number[] | null, ranked: MatchedSkillEntry[]): Promise<void> {
+  private async commitMatchCache(taskContent: string, embedding: number[] | null, ranked: MatchedSkillEntry[], matchCtx?: Context): Promise<void> {
     if (!taskContent || ranked.length === 0) {
       return;
     }
-    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t).catch(() => [] as number[]));
+    const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t, matchCtx).catch(() => [] as number[]));
     this.matchCache.commit(
       buildCacheKey(taskContent),
       query ?? [],
@@ -519,10 +525,10 @@ export class SkillCoreService {
   }
 
   /** 任务向量化（数据处理；走系统默认 embedding 模型） */
-  private async embedTask(task: string): Promise<number[]> {
+  private async embedTask(task: string, context?: Context): Promise<number[]> {
     const output = new EmbedLLMOutput();
     const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
-    const ok = await this.llmAccess.embedLLM(input, output, new LLMContext());
+    const ok = await this.llmAccess.embedLLM(input, output, context ?? new LLMContext());
     if (!ok || !output.embedding?.length) {
       throw new ProcessingError('任务向量化失败（embedLLM 无返回）');
     }

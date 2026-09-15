@@ -31,7 +31,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
     `CREATE TABLE IF NOT EXISTS "agent_usage" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "agent_id" TEXT NOT NULL, "work_id" TEXT NOT NULL DEFAULT '',
-      "interact_id" TEXT NOT NULL DEFAULT '', "usage_context" TEXT NOT NULL DEFAULT ''
+      "run_id" TEXT NOT NULL DEFAULT '', "usage_context" TEXT NOT NULL DEFAULT ''
     )`,
     `CREATE TABLE IF NOT EXISTS "agent_usage_daily" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
@@ -82,7 +82,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
     `CREATE TABLE IF NOT EXISTS "agent_plan" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "plan_id" TEXT NOT NULL, "work_id" TEXT NOT NULL DEFAULT '',
-      "interact_id" TEXT NOT NULL DEFAULT '', "task_dag" TEXT NOT NULL DEFAULT '{}',
+      "run_id" TEXT NOT NULL DEFAULT '', "task_dag" TEXT NOT NULL DEFAULT '{}',
       "parent_plan_id" TEXT NOT NULL DEFAULT ''
     )`,
     `CREATE TABLE IF NOT EXISTS "planner_agent_config" (
@@ -106,7 +106,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
     `CREATE TABLE IF NOT EXISTS "agent_evaluation" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "eval_id" TEXT NOT NULL, "agent_id" TEXT NOT NULL DEFAULT '', "eval_type" TEXT NOT NULL DEFAULT '',
-      "work_id" TEXT NOT NULL DEFAULT '', "interact_id" TEXT NOT NULL DEFAULT '',
+      "work_id" TEXT NOT NULL DEFAULT '', "run_id" TEXT NOT NULL DEFAULT '',
       "scores" TEXT NOT NULL DEFAULT '{}', "suggestions" TEXT NOT NULL DEFAULT '[]',
       "need_optimize" INTEGER NOT NULL DEFAULT 0
     )`,

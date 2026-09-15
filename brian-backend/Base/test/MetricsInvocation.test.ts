@@ -125,7 +125,30 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     expect(errParsed.error).toBe('boom-message');
   });
 
-  it('Metrics 应按 <层名>.<模块名>.<类名>.<方法名>.start/end 记录时间戳并统计耗时', async () => {
+  // ===== 修改后的方法（2026-09-14 trace 源头治理）：AOP 兜底 —— Metrics 可检测但缺 trace_id 时立即生成回填 =====
+  // ===== 原始代码（保留作为参考）：无该用例 =====
+  it('AopProxy 兜底：Metrics 已传但无 trace_id 时立即生成回填（UUID v4），已有 trace 不覆盖', async () => {
+    const { logger } = makeLogger();
+    class DemoService {
+      async run(_input: Input, _output: Output, _context: Context, metrics?: Metrics): Promise<boolean> {
+        return metrics!.trace_id !== undefined;
+      }
+    }
+    const proxy = AopProxy.wrap(new DemoService(), { logger }) as DemoService;
+
+    // 场景 1：已传 Metrics 但缺 trace_id → AOP 立即生成回填
+    const fresh = new Metrics(logger, 'Demo');
+    await proxy.run(new Input(), new Output(), new Context(), fresh, undefined);
+    expect(fresh.trace_id).toBeTruthy();
+    expect(fresh.trace_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+
+    // 场景 2：已有链路 trace_id 显式传播，AOP 不覆盖
+    const seeded = new Metrics(logger, 'Demo', '0a0a0a0a-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    await proxy.run(new Input(), new Output(), new Context(), seeded, undefined);
+    expect(seeded.trace_id).toBe('0a0a0a0a-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+  });
+
+  it('Metrics Span 树按 <层名>.<模块名>.<类名>.<方法名> 键记录 span 并统计耗时与 self 时间', async () => {
     const { logger } = makeLogger();
     class LLMService {
       async soLLM(input: Input, output: Output, _context: Context, _metrics?: Metrics, _report?: Report): Promise<boolean> {
@@ -138,24 +161,56 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
 
     await proxy.soLLM(new Input(), new Output(), new Context(), sharedMetrics, undefined);
 
-    expect(typeof sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.start']).toBe('number');
-    expect(typeof sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.end']).toBe('number');
-    expect(sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.end']).toBeGreaterThanOrEqual(
-      sharedMetrics.timings['Base.LLMProvider.LLMService.soLLM.start']
-    );
+    const spans = sharedMetrics.spans;
+    const span = spans.find((sp) => sp.key === 'Base.LLMProvider.LLMService.soLLM');
+    expect(span).toBeTruthy();
+    expect(span!.end).toBeDefined();
+    expect(span!.end!).toBeGreaterThanOrEqual(span!.start);
 
-    const duration = sharedMetrics.getDuration('Base', 'LLMProvider', 'LLMService', 'soLLM');
-    expect(duration).toBeGreaterThanOrEqual(5);
+    expect(sharedMetrics.spanDuration(span!)).toBeGreaterThanOrEqual(5);
+    expect(sharedMetrics.spanSelfMs(span!)).toBeGreaterThanOrEqual(5);
 
-    const totalDuration = sharedMetrics.getTotalDuration();
-    expect(totalDuration).toBeGreaterThanOrEqual(5);
+    expect(sharedMetrics.getTotalDuration()).toBeGreaterThanOrEqual(5);
+  });
 
-    const processDurations = sharedMetrics.getProcessDurations();
-    expect(processDurations).toHaveLength(1);
-    expect(processDurations[0].key).toBe('Base.LLMProvider.LLMService.soLLM');
-    expect(processDurations[0].layer).toBe('Base');
-    expect(processDurations[0].module).toBe('LLMProvider');
-    expect(processDurations[0].className).toBe('LLMService');
-    expect(processDurations[0].methodName).toBe('soLLM');
+  it('Metrics Span 父子树自动解析：嵌套调用父 self 耗时扣除子 span（包含关系在数据层消除）', async () => {
+    const { logger } = makeLogger();
+    class ChildService {
+      async buildAgent(..._args: unknown[]): Promise<boolean> {
+        await new Promise((r) => setTimeout(r, 10));
+        return true;
+      }
+    }
+    class ParentService {
+      constructor(private readonly child: ChildService) {}
+      async matchAgentDef(...args: unknown[]): Promise<boolean> {
+        await new Promise((r) => setTimeout(r, 10));
+        await this.child.buildAgent(...args);
+        await new Promise((r) => setTimeout(r, 10));
+        return true;
+      }
+    }
+    const childProxy = AopProxy.wrap(new ChildService(), { layer: 'Agent', module: 'AgentBuilder', logger }) as never;
+    const parentProxy = AopProxy.wrap(new ParentService(childProxy), { layer: 'Runtime', module: 'Agents', logger }) as {
+      matchAgentDef: (...args: unknown[]) => Promise<boolean>;
+    };
+    const metrics = new Metrics(logger, 'TestNest');
+    await parentProxy.matchAgentDef({}, {}, {}, metrics, undefined);
+
+    const parent = metrics.spans.find((sp) => sp.key === 'Runtime.Agents.ParentService.matchAgentDef');
+    const child = metrics.spans.find((sp) => sp.key === 'Agent.AgentBuilder.ChildService.buildAgent');
+    expect(parent).toBeTruthy();
+    expect(child).toBeTruthy();
+    expect(child!.parent).toBe(parent!.id);
+
+    const parentDur = metrics.spanDuration(parent!);
+    const childDur = metrics.spanDuration(child!);
+    expect(parentDur).toBeGreaterThanOrEqual(childDur + 20);
+    // 父 self 时间 = 包络 − 子 span（框架自动扣除）→ 不构成包含关系
+    const parentSelf = metrics.spanSelfMs(parent!);
+    expect(parentSelf).toBeGreaterThanOrEqual(15);
+    // 单子 span 场景：self = 包络 − 子段（严格相等；父节点不再包含子步骤耗时）
+    expect(parentSelf).toBe(parentDur - childDur);
   });
 });
+

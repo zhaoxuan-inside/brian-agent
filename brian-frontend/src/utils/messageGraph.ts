@@ -60,7 +60,7 @@ export function buildMessageGraph(
     citingInfoIds: (n.citing_info_ids as string[]) ?? [],
     citedInfoIds: (n.cited_info_ids as string[]) ?? [],
     workId: n.work_id ? String(n.work_id) : undefined,
-    interactId: n.interact_id ? String(n.interact_id) : undefined,
+    runId: n.run_id ? String(n.run_id) : undefined,
     traceId: n.trace_id ? String(n.trace_id) : undefined,
     handleResultType: n.handle_result_type ? String(n.handle_result_type) : undefined,
     x: 0,

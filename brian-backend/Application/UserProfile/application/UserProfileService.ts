@@ -1031,7 +1031,7 @@ export class UserProfileService {
           Object.assign(new MatchLLMInput(), {
             agent_id: 'user_profile_generation',
             context_id: 'user_profile',
-            interact_id: IdGenerator.generate(),
+            run_id: IdGenerator.generate(),
           }),
           matchOut,
           new LLMCoreContext(),
@@ -1052,6 +1052,7 @@ export class UserProfileService {
           prompt,
           temperature,
           max_tokens: maxTokens,
+          caller: 'UserProfileService.analyzeDirection',
         }),
         llmOut,
         new LLMContext(),

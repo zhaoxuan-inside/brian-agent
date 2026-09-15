@@ -52,7 +52,7 @@ import {
  *
  * const output = new MatchSoulOutput();
  * await soulCore.matchSoul(
- *   { agent_id: '...', context_id: '...', interact_id: '...' },
+ *   { agent_id: '...', context_id: '...', run_id: '...' },
  *   output, new SoulCoreContext(),
  * );
  * ```

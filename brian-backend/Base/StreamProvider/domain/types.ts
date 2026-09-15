@@ -10,11 +10,7 @@
 import { Input, Context, Output } from '../../shared/base';
 
 /** StreamProvider 上下文 */
-export class StreamContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
-}
+export class StreamContext extends Context {}
 
 /** SSE 消息类型 */
 export type SSEMessageType = 'TEXT' | 'DAG' | 'CONTEXT' | 'AGENT_SPEC' | 'TRACE' | 'CONTROL';
@@ -28,7 +24,7 @@ export interface BrianSSEMessage<T = unknown> {
   /** 会话 ID */
   session_id: string;
   /** 单轮交互 ID */
-  interact_id: string;
+  run_id: string;
   /** 编排工作 ID */
   work_id: string;
   /** 产出该消息的 Agent ID (用于多 Agent 并发隔离) */
@@ -83,7 +79,7 @@ export class PushStreamInput<T = unknown> extends Input {
   event!: string;
   msg_type: SSEMessageType = 'TEXT';
   data!: T;
-  interact_id?: string;
+  run_id?: string;
   work_id?: string;
   agent_id?: string;
   agent_name?: string;

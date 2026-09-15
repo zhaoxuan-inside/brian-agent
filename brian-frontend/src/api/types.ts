@@ -79,11 +79,11 @@ export interface ThinkingBlock extends BlockBase {
     name: string
     type?: string
     role?: string
-    llmId?: string
-    soulId?: string
-    promptId?: string
-    skills?: string[]
-    mcps?: string[]
+    llm?: { id: string; name: string }
+    soul?: { id: string; name: string }
+    prompt?: { id: string; name: string }
+    skills?: Array<{ id: string; name: string }>
+    mcps?: Array<{ id: string; name: string }>
   }
   context?: {
     userProfile?: Record<string, unknown>
@@ -236,7 +236,7 @@ export interface FeedbackProcessLogRecord {
   feedback_id: string
   action: 'submitted' | 'disbanded' | 'skipped'
   agent_id: string
-  interact_id: string
+  run_id: string
   work_id: string
   rating: number
   details: string
@@ -246,7 +246,7 @@ export interface FeedbackProcessLogDetail {
   log: FeedbackProcessLogRecord | null
   feedback: {
     id: string; created: number; feedback_id: string
-    source: string; agent_id: string; work_id: string; interact_id: string
+    source: string; agent_id: string; work_id: string; run_id: string
     rating: number; comment: string; suggestions: string; category: string
   } | null
   user_question: string
@@ -289,7 +289,7 @@ export interface BrianSSEMessage<T = unknown> {
   msg_id: string
   seq: number
   session_id: string
-  interact_id: string
+  run_id: string
   work_id: string
   agent_id?: string
   node_id?: string
@@ -312,7 +312,7 @@ export interface ChatMessage {
   agentDag?: AgentDagData
   sessionId?: string
   workId?: string
-  interactId?: string
+  runId?: string
   traceId?: string
   citingIds?: string[]
   citedCount?: number
@@ -367,6 +367,16 @@ export interface ThinkingToolTrace {
   status: string
   elapsedMs: number
   tokenCount: number
+  /** 是否内置工具（skill_exec/mcp_exec/cdt_browser/update_plan/delegate） */
+  builtin?: boolean
+  /** 所属组件类型（skill_exec → skill、mcp_exec → mcp，其余为空） */
+  componentKind?: 'skill' | 'mcp' | ''
+  /** 所属组件 ID（skill_id / mcp_id） */
+  componentId?: string
+  /** 所属组件名称（DB 解析，缺失回退原始 ID） */
+  componentName?: string
+  /** mcp_exec 的二级工具名（input.tool_name） */
+  componentSubTool?: string
 }
 
 export interface ThinkingPermissionTrace {
@@ -379,6 +389,16 @@ export interface ThinkingPermissionTrace {
   askedAt: number
   answeredAt: number
   autoApproved?: boolean
+  /** 是否内置工具 */
+  builtin?: boolean
+  /** 所属组件类型（skill_exec → skill、mcp_exec → mcp，其余为空） */
+  componentKind?: 'skill' | 'mcp' | ''
+  /** 所属组件 ID（skill_id / mcp_id） */
+  componentId?: string
+  /** 所属组件名称（DB 解析，缺失回退原始 ID） */
+  componentName?: string
+  /** mcp_exec 的二级工具名（input.tool_name） */
+  componentSubTool?: string
 }
 
 export interface ThinkingRunTrace {
@@ -401,6 +421,15 @@ export interface ThinkingRunTrace {
   replyChars: number
   startedAt: number
   settledAt: number
+  /** 本次问答组件清单（名称+ID），运行概览「组件清单」汇总区 */
+  components?: {
+    agent?: { id: string; name: string } | null
+    llm?: { id: string; name: string } | null
+    prompt?: { id: string; name: string } | null
+    soul?: { id: string; name: string } | null
+    skills: Array<{ id: string; name: string }>
+    mcps: Array<{ id: string; name: string }>
+  }
 }
 
 export interface ThinkingContextRound {
@@ -441,7 +470,7 @@ export interface ThinkingTrace {
 export interface IntentConfirmation {
   session_id: string
   work_id: string
-  interact_id: string
+  run_id: string
   original_query: string
   understood_requirement: string
   match_score: number
@@ -453,7 +482,7 @@ export interface IntentConfirmation {
 export interface ClarificationRequest {
   session_id: string
   work_id: string
-  interact_id: string
+  run_id: string
   original_query: string
   clarifications: Array<{ question: string; domain?: string; answer: string }>
 }
@@ -513,7 +542,7 @@ export interface ChatMapNode {
   citingInfoIds: string[]
   citedInfoIds: string[]
   workId?: string
-  interactId?: string
+  runId?: string
   traceId?: string
   handleResultType?: string
   x: number

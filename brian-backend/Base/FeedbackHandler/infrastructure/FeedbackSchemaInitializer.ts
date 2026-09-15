@@ -16,7 +16,7 @@ export class FeedbackSchemaInitializer {
         source TEXT NOT NULL DEFAULT 'user',
         agent_id TEXT NOT NULL DEFAULT '',
         work_id TEXT NOT NULL DEFAULT '',
-        interact_id TEXT NOT NULL DEFAULT '',
+        run_id TEXT NOT NULL DEFAULT '',
         rating INTEGER NOT NULL DEFAULT 0,
         comment TEXT NOT NULL DEFAULT '',
         suggestions TEXT NOT NULL DEFAULT '[]',
@@ -24,6 +24,8 @@ export class FeedbackSchemaInitializer {
         metadata TEXT NOT NULL DEFAULT '{}'
       )`,
     );
+    // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id（一次问答，= runtime_run.id） =====
+    try { this.relationDb.executeRaw(`ALTER TABLE ${FEEDBACK_RECORD_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS idx_feedback_record_created ON ${FEEDBACK_RECORD_TABLE}(created)`,
     );
@@ -41,12 +43,13 @@ export class FeedbackSchemaInitializer {
         feedback_id TEXT NOT NULL DEFAULT '',
         action TEXT NOT NULL DEFAULT 'submitted',
         agent_id TEXT NOT NULL DEFAULT '',
-        interact_id TEXT NOT NULL DEFAULT '',
+        run_id TEXT NOT NULL DEFAULT '',
         work_id TEXT NOT NULL DEFAULT '',
         rating INTEGER NOT NULL DEFAULT 0,
         details TEXT NOT NULL DEFAULT '{}'
       )`,
     );
+    try { this.relationDb.executeRaw(`ALTER TABLE ${FEEDBACK_PROCESS_LOG_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS idx_feedback_process_log_created ON ${FEEDBACK_PROCESS_LOG_TABLE}(created)`,
     );

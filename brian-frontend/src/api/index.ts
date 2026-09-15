@@ -10,13 +10,32 @@ import type {
   Block, AgentDagData,
   FeedbackProcessLogRecord, FeedbackProcessLogDetail, FeedbackConfig,
 } from './types'
+import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
 
 const API_BASE = '/api'
 
+// ===== 修改后（2026-09-14 trace 源头治理）：traceId 在请求源头（前端每次请求）生成，
+// 经 X-Trace-Id 头向下游全链路传播；后端只消费、不重复生成 =====
+// ===== 原始方法（保留作为参考）=====
+// async function request<T>(path: string, options?: RequestInit): Promise<T> {
+//   const res = await fetch(`${API_BASE}${path}`, {
+//     headers: { 'Content-Type': 'application/json', ...options?.headers },
+//     ...options
+//   })
+//   if (!res.ok) {
+//     const err = await res.json().catch(() => ({ message: res.statusText }))
+//     throw new Error(err.error || err.message || `HTTP ${res.status}`)
+//   }
+//   return res.json()
+// }
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      [TRACE_ID_HEADER]: newTraceId(),
+      ...((options?.headers ?? {}) as Record<string, string>),
+    },
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }))
@@ -66,7 +85,7 @@ export const chatApi = {
   // ===== 修改后：支持模块化独立的思考过程数据采集 (module='all'|'dag'|'blocks') =====
   // ===== 修改后（V2）：同时返回完整执行轨迹 trace（timeline/tools/permissions/run），供思考过程弹窗完整追溯 =====
   thinking: (infoId: string, module: 'all' | 'dag' | 'blocks' = 'all') =>
-    request<{ work_id: string; interact_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; trace?: import('./types').ThinkingTrace | null; module?: string }>(
+    request<{ work_id: string; run_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; trace?: import('./types').ThinkingTrace | null; module?: string }>(
       `/chat/thinking?info_id=${encodeURIComponent(infoId)}&module=${module}`,
     ).then(r => r),
   evalResult: (infoId: string) =>
@@ -297,10 +316,10 @@ export const monitorApi = {
   resources: () => request<{ cpu: number; memory: number; disk: number }>('/monitor/resources'),
   tokenTrend: () => request<{ points: { date: string; tokens: number }[] }>('/analytics/token-trend').then(r => r.points),
   modelDistribution: () => request<{ models: { model: string; tokens: number; input_tokens: number; output_tokens: number; deleted?: boolean; type?: string }[] }>('/analytics/model-distribution').then(r => r.models),
-  tokenUsage: (params?: { session_id?: string; interact_id?: string; work_id?: string }) => {
+  tokenUsage: (params?: { session_id?: string; run_id?: string; work_id?: string }) => {
     const q = new URLSearchParams()
     if (params?.session_id) q.set('session_id', params.session_id)
-    if (params?.interact_id) q.set('interact_id', params.interact_id)
+    if (params?.run_id) q.set('run_id', params.run_id)
     if (params?.work_id) q.set('work_id', params.work_id)
     const qs = q.toString()
     return request<{ input_tokens: number; output_tokens: number; total_tokens: number; call_count: number }>(
@@ -330,8 +349,8 @@ export const monitorApi = {
 
 export const feedbackApi = {
   submit: (data: {
-    rating?: number; score?: number; comment?: string; interact_id?: string;
-    interactId?: string; work_id?: string; workId?: string; session_id?: string;
+    rating?: number; score?: number; comment?: string; run_id?: string;
+    runId?: string; work_id?: string; workId?: string; session_id?: string;
     agent_id?: string; agentId?: string;
   }) =>
     request<{ feedback_id: string; disbanded_agent_id?: string }>('/feedback', {
@@ -412,7 +431,7 @@ export const userProfileApi = {
 }
 
 export const visualizationApi = {
-  messages: (query: { session_id?: string; work_id?: string; interact_id?: string; lastN?: number; include_citing_info?: boolean; include_context_source?: boolean; page_current?: number; page_size?: number }) =>
+  messages: (query: { session_id?: string; work_id?: string; run_id?: string; lastN?: number; include_citing_info?: boolean; include_context_source?: boolean; page_current?: number; page_size?: number }) =>
     request<{ messages: VisualizedMessage[]; total: number }>(`/visualization/messages?${new URLSearchParams(
       Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
     ).toString()}`),
@@ -447,7 +466,7 @@ export interface VectorSearchInfo {
   created: number;
   session_id: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   score: number;
 }
 
@@ -479,6 +498,16 @@ export const mqApi = {
 
 export interface CDTStatus { running: boolean; pid: number; port: number; endpoint?: string }
 
+// ===== 修改后（2026-09-14 trace 治理）：fire-and-forget 请求同样在源头携带 X-Trace-Id =====
+// ===== 原始方法（保留作为参考）：以下各方法内联 fetch，headers 无 X-Trace-Id =====
+function cdtFire(path: string, body?: string) {
+  return fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', [TRACE_ID_HEADER]: newTraceId() },
+    body,
+  })
+}
+
 export const cdtApi = {
   start: () => request<CDTStatus>('/cdt/start', { method: 'POST' }),
   stop: () => request<void>('/cdt/stop', { method: 'POST' }),
@@ -491,22 +520,23 @@ export const cdtApi = {
   screencastStart: (w = 1920, h = 1080, q = 80) =>
     request<{ started: boolean }>(`/cdt/screencast/start?w=${w}&h=${h}&q=${q}`),
   frame: () => request<{ dataUrl: string; width: number; height: number }>('/cdt/frame'),
+  // ===== 修改后（2026-09-14 trace 治理）：fire-and-forget 请求统一走源头携带 X-Trace-Id 的 cdtFire =====
   mouse: (type: string, x: number, y: number, button = 'left', clickCount = 1, deltaX = 0, deltaY = 0, ctrl = false, alt = false, shift = false, meta = false) =>
-    fetch(`${API_BASE}/cdt/mouse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, x, y, button, clickCount, deltaX, deltaY, ctrl, alt, shift, meta }) }),
+    cdtFire('/cdt/mouse', JSON.stringify({ type, x, y, button, clickCount, deltaX, deltaY, ctrl, alt, shift, meta })),
   click: (x: number, y: number, ctrl = false, alt = false, shift = false, meta = false) =>
-    fetch(`${API_BASE}/cdt/click`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y, ctrl, alt, shift, meta }) }),
+    cdtFire('/cdt/click', JSON.stringify({ x, y, ctrl, alt, shift, meta })),
   rightclick: (x: number, y: number) =>
-    fetch(`${API_BASE}/cdt/rightclick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y }) }),
+    cdtFire('/cdt/rightclick', JSON.stringify({ x, y })),
   dblclick: (x: number, y: number, ctrl = false, alt = false, shift = false, meta = false) =>
-    fetch(`${API_BASE}/cdt/dblclick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y, ctrl, alt, shift, meta }) }),
+    cdtFire('/cdt/dblclick', JSON.stringify({ x, y, ctrl, alt, shift, meta })),
   key: (type: string, text = '', key = '', ctrl = false, alt = false, shift = false, meta = false) =>
-    fetch(`${API_BASE}/cdt/key`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, text, key, ctrl, alt, shift, meta }) }),
+    cdtFire('/cdt/key', JSON.stringify({ type, text, key, ctrl, alt, shift, meta })),
   keyBatch: (events: Array<{ type: string; text?: string; key?: string; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean }>) =>
-    fetch(`${API_BASE}/cdt/key-batch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) }),
+    cdtFire('/cdt/key-batch', JSON.stringify({ events })),
   insertText: (text: string) =>
-    fetch(`${API_BASE}/cdt/insert-text`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }),
+    cdtFire('/cdt/insert-text', JSON.stringify({ text })),
   spoofEnv: (env: Record<string, unknown>) =>
-    fetch(`${API_BASE}/cdt/spoof-env`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(env) }),
+    cdtFire('/cdt/spoof-env', JSON.stringify(env)),
   cookies: () => request<{ cookiesJson: string }>('/cdt/cookies'),
 }
 

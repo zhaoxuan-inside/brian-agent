@@ -23,7 +23,7 @@ const props = withDefaults(
     citingInfoIds?: string[]
     traceId?: string
     workId?: string
-    interactId?: string
+    runId?: string
     sessionId?: string
     mode?: 'map' | 'timeline'
     active?: boolean
@@ -42,7 +42,7 @@ const props = withDefaults(
     citingInfoIds: () => [],
     traceId: '',
     workId: '',
-    interactId: '',
+    runId: '',
     sessionId: '',
     mode: 'timeline',
     active: false,
@@ -76,7 +76,7 @@ async function submitRating(score: number) {
   try {
     await feedbackApi.submit({
       rating: score,
-      interact_id: props.interactId || undefined,
+      run_id: props.runId || undefined,
       work_id: props.workId || undefined,
       session_id: props.sessionId || undefined,
     })

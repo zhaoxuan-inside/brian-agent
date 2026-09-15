@@ -239,7 +239,7 @@ export class LogService {
           trace_id: data.trace_id ?? null,
           caller: data.caller ?? null,
           work_id: data.work_id ?? null,
-          interact_id: data.interact_id ?? null,
+          run_id: data.run_id ?? null,
           metadata: data.metadata ? JSON.stringify(data.metadata) : null,
           elapsed_ms: data.elapsed_ms ?? null,
         }),
@@ -553,7 +553,7 @@ export class LogService {
     keyword?: string;
     trace_id?: string;
     work_id?: string;
-    interact_id?: string;
+    run_id?: string;
     log_source?: string;
     start_time?: number;
     end_time?: number;
@@ -577,8 +577,8 @@ export class LogService {
     if (options.work_id) {
       conditions.push({ field: 'work_id', operator: Operator.EQ, value: options.work_id });
     }
-    if (options.interact_id) {
-      conditions.push({ field: 'interact_id', operator: Operator.EQ, value: options.interact_id });
+    if (options.run_id) {
+      conditions.push({ field: 'run_id', operator: Operator.EQ, value: options.run_id });
     }
     if (options.log_source) {
       conditions.push({ field: 'metadata', operator: Operator.LIKE, value: `%"log_source":"${options.log_source}"%` });

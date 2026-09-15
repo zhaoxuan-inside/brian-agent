@@ -94,8 +94,10 @@ export class MatchLLMInput extends Input {
   agent_id!: string;
   /** 上下文 ID */
   context_id!: string;
-  /** 交互 ID */
-  interact_id!: string;
+  /** 一次问答标识（= runtime_run.id，Token 归因到 run 维度；缺省时经 Context 读取） */
+  run_id?: string;
+  /** 本次 Agent/Tool 执行标识（执行框架生成，Token 归因到 work 维度；缺省时经 Context 读取） */
+  work_id?: string;
 }
 
 /** matchLLM 出参 */

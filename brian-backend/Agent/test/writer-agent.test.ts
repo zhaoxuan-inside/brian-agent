@@ -125,7 +125,7 @@ describe('WriterAgent', () => {
       const traceWriter = new WriterAgentService(db, mockLLM, NOOP_PROMPTS_ACCESS, NOOP_INFO_CORE, makeAccess(builder), makeAccess(libSvc));
       const out = new WriteOutput();
       await traceWriter.execWrite(Object.assign(new WriteInput(), {
-        work_id: 'w-1', interact_id: 'i-1', user_query: '帮我汇总',
+        work_id: 'w-1', run_id: 'i-1', user_query: '帮我汇总',
         agent_results: [{ agent_id: 'a1', task_content: 't1', result: 'r1' }],
       }), out, new WriterAgentContext());
       expect(out.trace_id).toBeTruthy();

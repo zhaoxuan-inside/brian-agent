@@ -45,7 +45,7 @@ function insInfoRaw(db: RelationDBAccess, o: Record<string, unknown>) {
   const fields: InsField[] = [];
   const defaults: Record<string, unknown> = {
     id: genId(), created: now(), updated: now(),
-    session_id: 'sess-1', work_id: 'work-1', interact_id: 'inter-1',
+    session_id: 'sess-1', work_id: 'work-1', run_id: 'inter-1',
     info_id: genId(), info_type: 'REQUEST', info_creator_role: 'USER', info_creator_id: 'creator-1',
     info: 'Hello world', info_length: 11, pin: 0,
   };
@@ -184,14 +184,14 @@ describe('VisualizationService', () => {
       expect((out.messages[0] as any).work_id).toBe('work-A');
     });
 
-    it('TC-VIS-003: by interact_id', async () => {
-      insInfoRaw(ctxEnv.db, { interact_id: 'inter-X', info_id: 'info-ix' });
+    it('TC-VIS-003: by run_id', async () => {
+      insInfoRaw(ctxEnv.db, { run_id: 'inter-X', info_id: 'info-ix' });
       const input = new GetVisualizedMessagesInput();
-      input.interact_id = 'inter-X';
+      input.run_id = 'inter-X';
       const out = new GetVisualizedMessagesOutput();
       await svc.soVisualizedMessages(input, out, ctx());
       expect(out.total).toBe(1);
-      expect((out.messages[0] as any).interact_id).toBe('inter-X');
+      expect((out.messages[0] as any).run_id).toBe('inter-X');
     });
 
     it('TC-VIS-004: lastN=20 limited to 20', async () => {
@@ -403,10 +403,10 @@ describe('VisualizationService', () => {
       expect(edges.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('TC-VIS-024: REPLY edges (same interact_id, REQUEST→RESPONSE)', async () => {
+    it('TC-VIS-024: REPLY edges (same run_id, REQUEST→RESPONSE)', async () => {
       const sessId = 'sess-reply';
-      insInfoRaw(ctxEnv.db, { session_id: sessId, work_id: 'work-s', interact_id: 'inter-s', info_id: 'info-1', info_type: 'REQUEST', info: 'R1' });
-      insInfoRaw(ctxEnv.db, { session_id: sessId, work_id: 'work-s', interact_id: 'inter-s', info_id: 'info-2', info_type: 'RESPONSE', info: 'R2' });
+      insInfoRaw(ctxEnv.db, { session_id: sessId, work_id: 'work-s', run_id: 'inter-s', info_id: 'info-1', info_type: 'REQUEST', info: 'R1' });
+      insInfoRaw(ctxEnv.db, { session_id: sessId, work_id: 'work-s', run_id: 'inter-s', info_id: 'info-2', info_type: 'RESPONSE', info: 'R2' });
 
       const input = new GetVisualizedMessageGraphInput();
       input.session_id = sessId;
@@ -1075,7 +1075,7 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-106: Nodes have all properties', async () => {
-      insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1', interact_id: 'inter-1',
+      insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1', run_id: 'inter-1',
         info_id: 'info-1', info_type: 'REQUEST', info: 'Hello', info_length: 5 });
 
       const input = new GetVisualizedMessageDAGInput();
@@ -1087,7 +1087,7 @@ describe('VisualizationService', () => {
       expect(node).toHaveProperty('label');
       expect(node).toHaveProperty('info_id', 'info-1');
       expect(node).toHaveProperty('work_id', 'work-1');
-      expect(node).toHaveProperty('interact_id', 'inter-1');
+      expect(node).toHaveProperty('run_id', 'inter-1');
       expect(node).toHaveProperty('info_type', 'REQUEST');
       expect(node).toHaveProperty('info_summary');
     });

@@ -173,7 +173,7 @@ describe('SkillCoreProvider', () => {
       const input = new MatchSkillInput();
       input.agent_id = '';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
 
       await expect(
         skillCore.matchSkill(input, new MatchSkillOutput(), new SkillCoreContext()),
@@ -184,7 +184,7 @@ describe('SkillCoreProvider', () => {
       const input = new MatchSkillInput();
       input.agent_id = 'agent-no-skills';
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
       const output = new MatchSkillOutput();
 
       const result = await skillCore.matchSkill(input, output, new SkillCoreContext());
@@ -208,7 +208,7 @@ describe('SkillCoreProvider', () => {
       const input = new MatchSkillInput();
       input.agent_id = agentId;
       input.context_id = 'c1';
-      input.interact_id = 'i1';
+      input.run_id = 'i1';
       input.bound_skill_ids = ['skill-c1'];
       const output = new MatchSkillOutput();
       await skillCore.matchSkill(input, output, new SkillCoreContext());

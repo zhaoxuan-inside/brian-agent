@@ -30,6 +30,12 @@ export interface InterceptContext {
   output: unknown;
   /** 衡量对象（Metrics，仅新式 5 参签名时存在） */
   metrics?: unknown;
+  /**
+   * AOP 兜底 traceId（2026-09-14 trace 源头治理）：
+   * Metrics.trace_id（显式传播）或 AOP 立即生成的新 traceId；
+   * Context/Input 不回填该值，仅供日志拦截器兜底盖章。
+   */
+  traceId?: string;
   /** 上报对象（Report，仅新式 5 参签名时存在） */
   report?: unknown;
   /** 方法开始执行的时间戳（毫秒） */

@@ -46,8 +46,8 @@ export class ExecAgentLoopInput extends Input {
   session_key!: string;
   /** 引用 runtime_session.id（消息/Part 持久化） */
   session_id!: string;
-  /** 交互标识（= trace_id，用于 Token 归因到 interact 维度） */
-  interact_id?: string;
+  /** 本次 Agent 执行标识（执行框架在执行前生成；Token 归因到 work 维度，缺省回退 run_id） */
+  work_id?: string;
   /** 用户消息（写入会话后作为首条 wire 消息） */
   user_message!: string;
   /** 系统提示（Agents 声明式快照阶段3 接入前显式传入） */
@@ -76,6 +76,8 @@ export class ExecAgentLoopInput extends Input {
 export class ExecAgentLoopOutput extends Output {
   /** 终止原因 */
   stop_reason!: LoopStopReason;
+  /** 本次 Agent 执行标识（执行框架生成，存入 Response 保证 work_id 存在） */
+  work_id?: string;
   /** 最终回复文本（finish_reason=stop 的 text 聚合） */
   result!: string;
   /** Token 用量 */

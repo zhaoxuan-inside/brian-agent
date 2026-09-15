@@ -10,7 +10,7 @@
  *   agent_name / domain / iteration / max_iterations / max_subtask_count /
  *   agent_results / candidates / agent_output / final_response / trace /
  *   preferences / threshold / available_llms / available_mcps / available_souls /
- *   skills / agent_id / context_id / interact_id /
+ *   skills / agent_id / context_id / run_id /
  *   selection / context_before / context_after / question /
  *   direction_key / direction_name / conversation_sample
  */
@@ -117,11 +117,14 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     brief: 'WriterAgent 将各 WorkAgent 结果汇总为结构化内容块',
     variables: ['task_content', 'preferences', 'context_data', 'agent_results', 'soul'],
     template: [
+      // ===== 修改后（2026-09-15）：context_data 明确为静态记忆上下文（formatContextCategories 渲染，
+      // 带 what-this-is 功能说明与不可变声明），agent_results 为动态执行上下文
+      // （formatDynamicContext 渲染），引导模型区分两类上下文的可信度与用法 =====
       'User query: {{task_content}}',
       'Preferences: {{preferences}}',
-      'Context:',
+      'Static memory context（静态记忆，不可修改，仅供参照）:',
       '{{context_data}}',
-      'Results:',
+      'Dynamic execution context（本轮执行产物，时效最高）:',
       '{{agent_results}}',
       'Generate a structured, beautifully formatted final response based on the above results. Rules:',
       '1. Organize with clear Markdown hierarchy (headings, bullet points, bold text for key terms, tables where suitable).',
@@ -263,14 +266,14 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     id: PROMPT_IDS.llmMatch,
     title: 'LLM 匹配选择',
     brief: 'LLMCore 在候选 LLM 中为 Agent 选出最合适的模型（百分制打分）',
-    variables: ['agent_id', 'context_id', 'interact_id', 'available_llms'],
+    variables: ['agent_id', 'context_id', 'run_id', 'available_llms'],
     template: [
       '你是一个 LLM 选型评估助手。请评估候选 LLM 与该 Agent 任务的适配度，',
       '并为每一个候选 LLM 打分（0~100 整数，100 表示完美适配）。',
       '',
       'Agent ID: {{agent_id}}',
       'Context ID: {{context_id}}',
-      'Interaction ID: {{interact_id}}',
+      'Interaction ID: {{run_id}}',
       '',
       '候选 LLM 列表（JSON，含 id 与标题/描述）:',
       '{{available_llms}}',
@@ -284,14 +287,14 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     id: PROMPT_IDS.soulMatch,
     title: 'Soul 匹配选择',
     brief: 'SoulCore 在候选 Soul 中为 Agent 的当前任务选出最合适的角色（百分制打分）',
-    variables: ['agent_id', 'context_id', 'interact_id', 'task_content', 'task_domain', 'available_souls'],
+    variables: ['agent_id', 'context_id', 'run_id', 'task_content', 'task_domain', 'available_souls'],
     template: [
       '你是一个 Soul（人设）匹配评估助手。请根据当前任务判断候选 Soul 与任务的匹配度，',
       '并为每一个候选 Soul 打分（0~100 整数，100 表示完美匹配）。',
       '',
       'Agent ID: {{agent_id}}',
       'Context ID: {{context_id}}',
-      'Interaction ID: {{interact_id}}',
+      'Interaction ID: {{run_id}}',
       '',
       'Task domain: {{task_domain}}',
       'Task content: {{task_content}}',

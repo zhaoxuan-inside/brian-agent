@@ -60,6 +60,12 @@ export enum BusinessEvent {
   AgentComponents = 'agent.components',
   /** 意图识别完成（LLM 需求/意图匹配评估打分） */
   IntentAnalyzed = 'intent.analyzed',
+  /** 意图分析开始（2026-09-14：意图打分 LLM 调用可达 20s，开始事件供时间线实时推进，避免静止在上一节点） */
+  IntentStarted = 'intent.started',
+  /** 评估开始（2026-09-14：评估 LLM 调用可达 20s，开始事件供时间线实时推进） */
+  EvaluationStarted = 'evaluation.started',
+  /** 写作排版开始（2026-09-14：写作 LLM 调用可达 10s，开始事件供时间线实时推进） */
+  WriterStarted = 'writer.started',
   /** Agent 构建完成（未命中既有 Agent 时新建） */
   AgentBuilt = 'agent.built',
   /** LLM 选定（快照解析出模型） */
@@ -76,6 +82,9 @@ export enum BusinessEvent {
   WriterCompleted = 'writer.completed',
   /** Agent 解散（2026-09-11 新增；低分 < DisbandThreshold.Critical 且 system 归属时执行） */
   AgentDisbanded = 'agent.disbanded',
+  /** Loop 单轮完成（2026-09-14 Span 框架；payload 自带该轮 LLM 调用 span self 耗时，
+   *  供「深度推理思考」汇总节点的多轮求和口径） */
+  LoopTurnCompleted = 'loop.turn.completed',
 
   // —— 错误与块流 ——
   /** 错误（规范化失败消息） */
@@ -86,6 +95,31 @@ export enum BusinessEvent {
 
 /** 业务事件名（字符串字面量联合，供既有 string 参数位渐进迁移） */
 export type BusinessEventKind = `${BusinessEvent}`;
+
+/**
+ * 时间点类事件（开始/结束时间点，非动作）：仅标记时间线推进，无耗时语义。
+ * Report 框架对此类事件不自动盖章 elapsed_ms（2026-09-15 约定：
+ * 开始与结束是时间点，不是动作；「…中」的耗时由对应完成事件携带）。
+ */
+export const TIMELINE_POINT_EVENTS: ReadonlySet<BusinessEvent> = new Set([
+  // —— run 生命周期始末 ——
+  BusinessEvent.RunAccepted,
+  BusinessEvent.RunStarted,
+  BusinessEvent.RunFinished,
+  BusinessEvent.RunFailed,
+  // —— 各环节开始（耗时由对应完成事件携带）——
+  BusinessEvent.IntentStarted,
+  BusinessEvent.EvaluationStarted,
+  BusinessEvent.WriterStarted,
+  // —— 部分/内容创建点 ——
+  BusinessEvent.ReplyCreated,
+  BusinessEvent.ThinkCreated,
+  // —— 工具开始（耗时由 tool.result 携带）——
+  BusinessEvent.ToolStarted,
+  // —— 权限询问/应答（等待用户操作，不属执行耗时）——
+  BusinessEvent.PermissionAsked,
+  BusinessEvent.PermissionAnswered,
+]);
 
 /**
  * 业务事件 → BrianSSEMessage.msg_type 映射。

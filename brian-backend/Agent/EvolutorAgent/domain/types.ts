@@ -2,9 +2,6 @@ import { Input, Context, Output } from '@brian-agent/base';
 import type { Condition, OrderBy, Page } from '@brian-agent/base';
 
 export class EvolutorAgentContext extends Context {
-  session_id?: string;
-  work_id?: string;
-  interact_id?: string;
 }
 
 export interface AgentEvaluationRecord {
@@ -15,7 +12,7 @@ export interface AgentEvaluationRecord {
   agent_id: string;
   eval_type: string;
   work_id: string;
-  interact_id: string;
+  run_id: string;
   scores: string;
   suggestions: string;
   need_optimize: boolean;
@@ -43,7 +40,7 @@ export interface EvolutorAgentConfigRecord {
 export class EvalWorkAgentInput extends Input {
   agent_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   task_content!: string;
   agent_output!: string;
   /** 被评估输出的处理结果类型：错误信息（call_error / internal_error）跳过评分 */
@@ -78,7 +75,7 @@ export class EvalWorkAgentOutput extends Output {
 export class EvalWriterAgentInput extends Input {
   agent_id!: string;
   work_id!: string;
-  interact_id!: string;
+  run_id!: string;
   user_query!: string;
   final_response!: string;
   agent_results!: Array<{ agent_id: string; task_content: string; result: string; handle_result_type?: string }>;

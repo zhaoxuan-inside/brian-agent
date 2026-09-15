@@ -51,10 +51,12 @@ export class AgentLibrarySchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_USAGE_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-        agent_id TEXT NOT NULL, work_id TEXT NOT NULL, interact_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL, work_id TEXT NOT NULL, run_id TEXT NOT NULL,
         usage_context TEXT
       )`,
     );
+        // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id =====
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_USAGE_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_usage_created ON ${AGENT_USAGE_TABLE}(created)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_usage_agent ON ${AGENT_USAGE_TABLE}(agent_id)`);
 

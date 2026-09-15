@@ -178,7 +178,7 @@ export interface LLMAvailableRecord {
  *
  * LLMProvider 统一管理的 Token 明细账：每次 LLM 调用一条记录，
  * 真实值只从模型提供商返回的 usage 中提取，不做字符数预测。
- * 分级统计维度：session_id（会话）→ interact_id（交互）→ work_id（问答=run_id）。
+ * 分级统计维度：session_id（会话）→ run_id（一次问答，= runtime_run.id）→ work_id（一次 Agent/Tool 执行）。
  */
 export interface LLMCallLogRecord {
   /** 数据唯一标识 */
@@ -189,10 +189,20 @@ export interface LLMCallLogRecord {
   llm_available_id: string;
   /** 会话标识（chat session_key，与 info_raw.session_id 对齐） */
   session_id: string;
-  /** 交互标识（= trace_id，一次用户提问） */
-  interact_id: string;
-  /** 问答标识（= run_id，单次 run） */
+  /** 一次问答标识（= runtime_run.id） */
+  run_id: string;
+  /** 一次 Agent/Tool 执行标识（执行框架生成） */
   work_id: string;
+  /** 调用方来源标识（哪个组件发起的调用） */
+  caller: string;
+  /** 被调用模型名称快照（llm_available.llm_title，删模型后仍可读） */
+  llm_title: string;
+  /** 被调用模型类型快照（text / vision / embedding） */
+  llm_type: string;
+  /** 调用状态（ok / error） */
+  status: string;
+  /** 错误码（status=error 时记录） */
+  error_code: string;
   /** 输入 Token 数（提供商返回） */
   input_tokens: number;
   /** 输出 Token 数（提供商返回） */
@@ -456,12 +466,14 @@ export class ExecLLMInput extends Input {
   stream?: boolean;
   /** 流式回调：每收到一个 delta token 时调用 */
   onDelta?: (delta: string) => void;
-  /** Token 归因维度：会话标识（chat session_key） */
+  /** Token 归因维度：会话标识（chat session_key；缺省时经 Context 读取） */
   session_id?: string;
-  /** Token 归因维度：交互标识（= trace_id） */
-  interact_id?: string;
-  /** Token 归因维度：问答标识（= run_id） */
+  /** Token 归因维度：一次问答标识（= runtime_run.id；缺省时经 Context 读取） */
+  run_id?: string;
+  /** Token 归因维度：一次 Agent/Tool 执行标识（执行框架生成；缺省时经 Context 读取） */
   work_id?: string;
+  /** 调用方来源标识（缺省时经 Context.caller 读取），供明细账分来源统计 */
+  caller?: string;
 }
 
 /** execLLM 出参 */
@@ -512,12 +524,14 @@ export class ExecLLMEventsInput extends Input {
   idle_watchdog_ms?: number;
   /** 流事件回调：每个归一化 LLMEvent 触发一次 */
   on_event?: (event: LLMEvent) => void;
-  /** Token 归因维度：会话标识（chat session_key） */
+  /** Token 归因维度：会话标识（chat session_key；缺省时经 Context 读取） */
   session_id?: string;
-  /** Token 归因维度：交互标识（= trace_id） */
-  interact_id?: string;
-  /** Token 归因维度：问答标识（= run_id） */
+  /** Token 归因维度：一次问答标识（= runtime_run.id；缺省时经 Context 读取） */
+  run_id?: string;
+  /** Token 归因维度：一次 Agent/Tool 执行标识（执行框架生成；缺省时经 Context 读取） */
   work_id?: string;
+  /** 调用方来源标识（缺省时经 Context.caller 读取），供明细账分来源统计 */
+  caller?: string;
 }
 
 /** execLLMEvents 出参 */
@@ -550,12 +564,14 @@ export class EmbedLLMInput extends Input {
   id!: string;
   /** 待向量化的文本 */
   input!: string;
-  /** Token 归因维度：会话标识（chat session_key） */
+  /** Token 归因维度：会话标识（chat session_key；缺省时经 Context 读取） */
   session_id?: string;
-  /** Token 归因维度：交互标识（= trace_id） */
-  interact_id?: string;
-  /** Token 归因维度：问答标识（= run_id） */
+  /** Token 归因维度：一次问答标识（= runtime_run.id；缺省时经 Context 读取） */
+  run_id?: string;
+  /** Token 归因维度：一次 Agent/Tool 执行标识（执行框架生成；缺省时经 Context 读取） */
   work_id?: string;
+  /** 调用方来源标识（缺省时经 Context.caller 读取），供明细账分来源统计 */
+  caller?: string;
 }
 
 /** embedLLM 出参 */
@@ -618,9 +634,9 @@ export class EnableLLMOutput extends Output {}
 export class SoTokenUsageInput extends Input {
   /** 会话标识（chat session_key） */
   session_id?: string;
-  /** 交互标识（= trace_id） */
-  interact_id?: string;
-  /** 问答标识（= run_id） */
+  /** 一次问答标识（= runtime_run.id） */
+  run_id?: string;
+  /** 一次 Agent/Tool 执行标识 */
   work_id?: string;
 }
 

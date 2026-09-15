@@ -137,7 +137,7 @@ export class VisualizationService {
     const lastNInput = Object.assign(new LastNInfoInput(), {
       session_id: input.session_id,
       work_id: input.work_id,
-      interact_id: input.interact_id,
+      run_id: input.run_id,
       lastN,
     });
 
@@ -154,7 +154,7 @@ export class VisualizationService {
       updated: Number(row.updated ?? 0),
       session_id: String(row.session_id ?? ''),
       work_id: String(row.work_id ?? ''),
-      interact_id: String(row.interact_id ?? ''),
+      run_id: String(row.run_id ?? ''),
       info_id: String(row.info_id ?? ''),
       info_type: String(row.info_type ?? ''),
       info_creator_id: String(row.info_creator_id ?? ''),
@@ -427,7 +427,7 @@ export class VisualizationService {
       rawRows = await this.relationDb.select(INFO_RAW_TABLE, {
         conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
         order_by: [{ field: 'created', direction: 'DESC' as const }],
-        fields: ['id', 'created', 'session_id', 'work_id', 'interact_id', 'info_id', 'info_type', 'info_creator_id', 'info_creator_role', 'info', 'info_length', 'pin', 'trace_id', 'handle_result_type'],
+        fields: ['id', 'created', 'session_id', 'work_id', 'run_id', 'info_id', 'info_type', 'info_creator_id', 'info_creator_role', 'info', 'info_length', 'pin', 'trace_id', 'handle_result_type'],
       });
     } catch (err) {
       this.logWarn('query info_raw failed', err);
@@ -480,7 +480,7 @@ export class VisualizationService {
       label: infoId.slice(0, 16),
       info_id: infoId,
       work_id: String(row.work_id ?? ''),
-      interact_id: String(row.interact_id ?? ''),
+      run_id: String(row.run_id ?? ''),
       info_type: String(row.info_type ?? ''),
       info_creator_role: String(row.info_creator_role ?? ''),
       trace_id: String(row.trace_id ?? ''),

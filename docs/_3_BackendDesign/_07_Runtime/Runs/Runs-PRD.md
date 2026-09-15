@@ -115,20 +115,105 @@ submitRun ──ack──► accepted(queued)
   - `POST /api/chat/permission/answer/{permission_id}` — 120s 后回答幂等失效（waiter 已删），返回 answered=false。
   - 所有权限门 run — 挂起不再可能无限期（≤120s）；重启不再遗留永久 running run。
 
-### [2026-09-13] 流程计时体系与 Metrics 持久化落地
+### [2026-09-14] 可观测计时框架化：Span 树（父子互斥 self 时间）+ 事件自动盖章 —— 旧计时方案整体删除
 
-**变更原因**：问答执行时间线中记录的耗时不对。需将计时逻辑集中存放在 Metrics 对象中，按 `<层名>.<模块名>.<类名>.<方法名>.start/end` 为 key 记录所有流程时间戳，并在问答结束结算时持久化到数据库。
+**变更原因**：执行时间线曾出现两类结构性缺陷：(1) 父子包含——编排方法（如 matchAgentDef 内含 buildAgent）整段耗时被子步骤吸收，「选中 Agent」包含「构建 Agent」；(2) 扁平键覆盖——同 key 多次调用（多轮 LLM）末次覆盖、键名随方法重命名静默失配、`||1` 假兜底。均为架构缺陷，不在单点上修补；按「编排/路由与步骤内部逻辑拆分」原则框架化解决。
 
-**修改的方法**：
-  - `Base/shared/base/Metrics.ts` — 新增 `timings` 字段与 `recordTiming` / `recordStart` / `recordEnd` / `getDuration` / `getProcessDurations` / `getTotalDuration` 统计方法；
-  - `Base/shared/aop/AopProxy.ts` — 在方法进入与返回/异常切面自动按 `<层名>.<模块名>.<类名>.<方法名>.start` 和 `.end` 记录时间戳；
-  - `Runtime/Runs/infrastructure/RunsSchemaInitializer.ts` — `runtime_run` 表新增 `metrics_json` 列，并创建 `runtime_metrics` 专门表存储全链路流程计时；
-  - `Runtime/Runs/application/RunGatewayService.ts` — `settleRun` 将 `metrics.timings` 落地写入 `runtime_run.metrics_json` 与 `runtime_metrics` 表，执行链全链路透传同一个 `Metrics` 实例保证问答环境隔离；
-  - `dev-server.ts` & `ThinkingModal.vue` — 时间线构建从持久化 metrics 读取各环节真实精确耗时。
+**框架设计（Span 模型，对标 OpenTelemetry）**：
+  - **一切耗时都是 span，span 构成树；时间线节点耗时 = span 的 self 时间（duration − 直接子 span 之和），父节点天然不包含子步骤**；
+  - `Metrics` 内建 Span 树：`beginSpan(key)` / `endSpan(span)` / `lastClosedSpan()` / `spanSelfMs` / `sumSpanSelfMs` / `getTotalDuration`（根 span 包络）；
+  - `AopProxy` 每个新式 5 参调用自动 begin/end 一个 span（键 = `<层名>.<模块名>.<类名>.<方法名>`），父关系由未闭合 span 栈顶自动解析 —— 服务调用拓扑自动成树，业务代码零改动；
+  - `Report.bindMetrics`（AopProxy 发现 Metrics+Report 配对时自动绑定）+ `pushBusinessEvent` 统一自动盖章 `elapsed_ms`（最近闭合 span 的 self 时间）、`span_key`、`span_seq` —— **发射点即真实执行位置**，事件耗时由框架保证正确，业务零感知；
+  - 私有不经切面的关键段落（快照 system 组装、上下文构建）经 `beginSpan/endSpan` 显式成 span；Loop 每轮 `loop.turn.completed` 事件自带该轮 LLM span 耗时（供「深度推理」多轮求和）。
+
+**旧统计方案删除（不保留兼容）**：
+  - `Metrics.timings` 扁平键与 `recordTiming / recordStart / recordEnd / getDuration / getProcessDurations` API 及 `Base/shared/base/TimingKeys.ts` 注册表 → 删除；
+  - `runtime_run.metrics_json` 列与 `runtime_metrics` 重复表（建表/索引/settleRun 写入）→ 删除；
+  - `dev-server` 的 metrics 字典解析、注册表回退查询、`||1` 假兜底 → 删除；时间线环节耗时唯一数据源 = 业务事件 payload 自带 elapsed_ms（历史/实时一致），总耗时 = run 行 started_at ~ settled_at 包络。
 
 **影响的端点**：
-  - `POST /api/chat/stream` — 问答全流程使用独立隔离的 Metrics 实例，结束时完成落库；
-  - `GET /api/chat/thinking` — 执行时间线展示准确的各个环节耗时与总耗时。
+  - `GET /api/chat/thinking` — 各节点耗时为 span self 时间（父子互斥，选择 Agent 与构建 Agent 不再互相包含），受理/开始执行等生命周期瞬时节点不再展示伪耗时；
+  - `POST /api/chat/stream` — 实时时间线同口径。
 
 **可能存在的问题**：
-  - 存量历史 run 若在升级前产生，其 `metrics_json` 为空，前端展示自动回退兼容旧时间差计算逻辑。
+  - Span 树仅驻留内存（审计价值足够；如需落库审计后续纳入 Run 流程，不作为时间线数据源）；
+  - 并发内嵌执行需以 AsyncLocalStorage 扩展 span 上下文传播（预留）。
+
+### [2026-09-15] Span 框架收口修复 + 时间点事件不盖章 + 思考/耗时数据生命周期跟随会话删除
+
+**变更原因**：本地问答执行时间线仍出现部分环节缺失耗时。复盘定位三个框架级静默漏盖路径（此前历次均为单事件点修复，根因未除，逐次复现）：
+  1. `Metrics.endSpan(handle)` 忽略传入句柄、永远收口"栈顶"（LIFO 假设）：异步交错（begin 在方法入口同步执行、end 在 Promise then 中异步执行）时 begin/end 非栈序，会关错 span 且遗留永不闭合的 span；
+  2. `lastClosedSpan()` 按数组序（创建序）倒扫，交错时创建序 ≠ 闭合序，事件可能盖到较早闭合的无关 span；
+  3. `spanSelfMs` 子项之和 > 父 duration 时 self 被 clamp 成 0 —— 前端 `elapsedMs > 0` 才展示（不伪造耗时），表现为"该步骤没统计到"。
+
+**修改的行为**：
+  - `Metrics.endSpan(handle)`：按 handle.id 显式配对收口（begin/end 句柄配对校验），不再依赖栈顶；已闭合/未知 handle 为 no-op（防止关错其他 span）；缺省（无 handle）仍收口栈顶（兼容缺省语义）；原始实现注释保留；
+  - `Metrics.lastClosedSpan()`：按 end 时间戳取最近闭合（max end），不依赖创建序；
+  - `Metrics.spanSelfMs`：子项之和超过父 duration（交叠时间轴）时不再 clamp 0，回退取整段 duration；
+  - `Report.pushBusinessEvent`：新增 `TIMELINE_POINT_EVENTS`（Base/shared/base/BusinessEvent.ts 注册表）——开始/结束是**时间点而非动作**，没有耗时语义，一律不盖章：`run.accepted/run.started/run.finished/run.failed`、`intent.started/evaluation.started/writer.started`、`reply.created/think.created/tool.started`、`permission.asked/answered`；环节耗时由对应完成事件携带；
+  - `ChatService.deleteSession`：删除会话时同步清理思考过程与耗时统计的持久事实源（生命周期跟随问答）：`stream_event`（session_key）、`runtime_run`（session_key）、`runtime_message_part`/`runtime_message`/`runtime_session`（经 session_key 关联）；Runtime/stream 表不存在或清理失败时静默跳过（warn 日志），不阻塞会话删除主体流程。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — 开始/结束类节点不再携带伪耗时；其余节点耗时由按句柄配对收口后的 span self 时间保证归属正确，不再出现"没统计到"/错位；
+  - `POST /api/chat/stream` — 实时时间线同口径；
+  - `DELETE /api/chat/session/{session_id}` — 删除会话联动清理 `stream_event`/runtime 派生表（思考内容与 elapsed_ms 一并清除）。
+
+**可能存在的问题**：
+  - span 父子关系仍由"begin 时栈顶"近似解析，极端并发的父子归属可能不精确（根治需 AsyncLocalStorage 上下文传播，预留）；
+  - 历史存量 stream_event 无 elapsed_ms 的节点不再回填（按约定不做兼容）；
+  - 会话删除的 stream/runtime 清理与 info 主表删除非同一事务，中途失败以 warn 日志暴露（可后续引入孤儿清理任务）。
+
+### [2026-09-14] run 级源头 trace 持久化（runtime_run.trace_id）
+
+**变更原因**：traceId 源头治理（见 Chat-PRD 2026-09-14）：run 只在受理时刻与源头 trace 关联，此后任何延后路径（迟到补齐、断线恢复、审计）都需要"按 run 反查源头 trace"；此前该信息只存在于调用方 Metrics 内存对象，进程重启即丢失，导致历史消息被后续轮次 trace 污染（事故 989acae9）。
+
+**修改的方法**：
+  - `RunsSchemaInitializer.init` — `runtime_run` 新增 `trace_id` 列（建表 + 旧库 ALTER 迁移，列已存在时忽略）；
+  - `RunGatewayService` — 新增 `soRunTraceId`（优先级 `input.interact_id` → `metrics.trace_id` → `''`，不伪造）；`startRun`（新建 run）与 `insertQueuedRun`（排队 run）受理即落库 `trace_id`；排队转 running 复用原记录不覆盖。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（经 gateway.submitRun）— 每条 `runtime_run` 记录持久化请求源头 traceId；
+  - 消费方：`ChatService.syncRuntimeMessagesToInfoRaw` 迟到补齐按原 run 反查归因。
+
+**可能存在的问题**：
+  - steer 注入的后续消息仍归因 run 受理 trace（无消息级 trace，阶段4 扩展）。
+
+### [2026-09-14] 业务/可观测 ID 分离 + 维度最终定名：session_id / run_id / work_id 三级
+
+**变更原因**：原实现把 work_id 当 run_id 用（llm_call_log.work_id=runId、评估/写作收到 work_id=runId），token 统计按单一 run_id 聚合，导致意图识别、Agent 选择、评估、写作、组件选择/向量化等 LLM 消耗（落库维度为空）全部漏统计；且 `SubmitRunInput.interact_id` 传 traceId，把业务维度与可观测维度混用。
+
+**修改的方法**：
+  - `RunGatewayService.matchAgent` / `prepareLoopInput` / 评估、写作阶段 — 执行框架在每次 Agent 执行前生成其私有 `work_id`；`run_id` 维度统一 = runtime_run.id（一次问答）；
+  - `RunGatewayService.soRunTraceId` — 收敛为仅取 `metrics.trace_id`（trace_id 属可观测体系，不再借用业务维度承载）；
+  - `SubmitRunInput` — 删除原 `interact_id` 字段（维度最终定名 run_id，业务入口不再传）；
+  - `AgentLoopService.prepareLLMTurnInput` — Token 归因维度 `work_id = ctx.workId`（缺省回退 runId 兼容旧调用）、`run_id = runId`；
+  - `AgentDefService.soLLMRankedDef` — Agent 选择 LLM 打分携带 session/run/work 维度；
+  - 运行概览 token 统计（`GET /api/chat/thinking`）改按 `llm_call_log.run_id` 求和，覆盖该次问答全部 Agent/Tool 执行。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — Done 事件 `run_id = runtime_run.id`（trace_id 保持独立，不再混用）；
+  - `GET /api/chat/thinking` — 运行概览 Token 统计口径扩为 run 维度求和（含评估/写作/选择等系统 Agent）；
+  - `log`/`trace` 类端点 — trace_id 归因不变（源头治理规则保持）。
+
+### [2026-09-14] 评估 Agent 异步化 + 低风险跳过（run 首延时不因评估 LLM 拉长）
+
+**变更原因**：问答 trace 7fc0147f 实测全程 41.1s：意图/Agent 匹配 LLM 5.2s → Loop 轮 10.3s → **评估 LLM 19.7s（同步 await，阻塞写作与结算）** → 写作 5.8s。评估是对"Agent 长期质量"的后台反馈，不构成用户拿到回复的关键路径；且单轮直答类低风险问答评估收益极低。
+
+**修改的方法**：
+  - `RunGatewayService.executeRun` — 评估 Agent 段重写为两级策略（原同步段注释保留）：
+    1. **低风险跳过**（`eval_skip_low_risk`，默认开）：单轮直答（stop 且 iterations≤1）直接跳过评估；
+    2. **异步后台执行**（`eval_async`，默认开）：需评估时 fire-and-forget（`runWorkEvaluation` 拆分自同步段，异常自吞），评估与写作 LLM 并行，不再阻塞 writer 阶段与 `settleRun`；
+  - `RunGatewayService.configRuns` / `ConfigRunsInput / ConfigRunsOutput` — 新增 `eval_async / eval_skip_low_risk`（runtime_runs_config 持久化，出参回显当前值）；
+  - `evaluation.started` 事件 payload 新增 `mode: 'async' | 'sync'`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 正常 run 总耗时预计降 ~20s（写作即可与评估并行/评估跳过）；`run.finished` 提前于评估完成；
+  - `configRuns` 接口 — 可回滚同步评估 / 关闭跳过（`eval_async=false, eval_skip_low_risk=false`）。
+
+**可能存在的问题**：
+  - 异步评估的 `evaluation.completed` 事件可能晚于 `run.finished` 到达（SSE 流已收尾时前端历史时间线以 stream_event 落库为准，`GET /api/chat/thinking` 可查）；评估结论落账（agent_evaluation / llm_call_log / MQ 优化触发）不受影响。
+
+**可能存在的问题**：
+  - ~~业务表 work_id 仍承载"问答锚点"语义~~ → 已收敛：**三级维度全量定名**——业务维度最终为 `session_id → run_id → work_id`，interact_id 已在前后端代码与数据库列（llm_call_log/info_raw/log_record/feedback_record/feedback_process_log/agent_usage/agent_plan/agent_evaluation）全部以 RENAME COLUMN 迁移为 run_id，前后端契约同步；
+  - 系统级后台流调用 LLM 本无 session/run（业务维度空属正确语义），已全部落 `caller` 来源归因；
+  - 

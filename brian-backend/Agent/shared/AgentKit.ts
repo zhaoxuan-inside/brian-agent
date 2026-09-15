@@ -7,7 +7,7 @@
  * 模式：Facade —— 对"模板渲染 + 内置兜底"与"Agent LLM 绑定解析"的高频组合提供单一入口。
  */
 
-import type { PromptsAccess, SoulAccess, SkillAccess, MCPAccess, LLMAccess } from '@brian-agent/base';
+import type { PromptsAccess, SoulAccess, SkillAccess, MCPAccess, LLMAccess, Metrics } from '@brian-agent/base';
 import {
   ExecPromptInput,
   ExecPromptOutput,
@@ -48,6 +48,7 @@ export async function renderPromptWithFallback(
   templateId: string | undefined,
   fallbackTitle: string,
   variables: Record<string, unknown>,
+  metrics?: Metrics,
 ): Promise<string> {
   let id = templateId;
   if (!id) {
@@ -57,6 +58,7 @@ export async function renderPromptWithFallback(
         Object.assign(new SoPromptInput(), { keyword: fallbackTitle }),
         soOut,
         new PromptContext(),
+        metrics,
       );
       const hit = soOut.list?.find((p) => p.enable !== false && (p.prompt_template_title?.includes(fallbackTitle) || p.prompt_template_brief?.includes(fallbackTitle)));
       if (hit) {
@@ -77,6 +79,7 @@ export async function renderPromptWithFallback(
     Object.assign(new ExecPromptInput(), { id, variables }),
     promptOut,
     new PromptContext(),
+    metrics,
   );
   if (promptOut.prompt) return promptOut.prompt;
   throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
@@ -92,6 +95,7 @@ export async function renderPromptWithFallback(
 export async function resolveAgentLlm(
   llmCore: LLMCoreAccess | undefined,
   agentId: string,
+  metrics?: Metrics,
 ): Promise<string> {
   if (!llmCore) return '';
   try {
@@ -100,6 +104,7 @@ export async function resolveAgentLlm(
       Object.assign(new MatchLLMInput(), { agent_id: agentId }),
       llmOut,
       new LLMCoreContext(),
+      metrics,
     );
     return llmOut.llm_id || '';
   } catch {
@@ -114,7 +119,7 @@ export async function resolveAgentLlm(
  * @param id 模板 ID
  * @throws ValidationError 当模板不存在
  */
-export async function assertPromptExists(promptsAccess: PromptsAccess, id: string): Promise<void> {
+export async function assertPromptExists(promptsAccess: PromptsAccess, id: string, metrics?: Metrics): Promise<void> {
   const out = new SoPromptOutput();
   await promptsAccess.soPrompt(
     Object.assign(new SoPromptInput(), {
@@ -122,6 +127,7 @@ export async function assertPromptExists(promptsAccess: PromptsAccess, id: strin
     }),
     out,
     new PromptContext(),
+    metrics,
   );
   if (!out.list?.length) throw new ValidationError(`prompt_template_id 不存在: ${id}`);
 }
@@ -132,7 +138,7 @@ export async function assertPromptExists(promptsAccess: PromptsAccess, id: strin
  * @param soulAccess SoulProvider 接入层
  * @param soulId Soul ID（可为空）
  */
-export async function getSoulSystemPrompt(soulAccess: SoulAccess, soulId: string): Promise<string> {
+export async function getSoulSystemPrompt(soulAccess: SoulAccess, soulId: string, metrics?: Metrics): Promise<string> {
   if (!soulId) return '';
   try {
     const soulOut = new GetSoulOutput();
@@ -140,6 +146,7 @@ export async function getSoulSystemPrompt(soulAccess: SoulAccess, soulId: string
       Object.assign(new GetSoulInput(), { id: soulId }),
       soulOut,
       new SoulContext(),
+      metrics,
     );
     return soulOut.soul?.soul_content || soulOut.soul?.soul_brief || '';
   } catch {
@@ -174,7 +181,7 @@ export interface AgentResourceValidationResult {
 /**
  * 校验 Agent 绑定的 Soul（经 SoulProvider DB 校验：存在且启用）。
  */
-export async function validateAgentSoul(soulAccess: SoulAccess, soulId: string): Promise<boolean> {
+export async function validateAgentSoul(soulAccess: SoulAccess, soulId: string, metrics?: Metrics): Promise<boolean> {
   if (!soulId) return false;
   try {
     const out = new GetSoulOutput();
@@ -182,6 +189,7 @@ export async function validateAgentSoul(soulAccess: SoulAccess, soulId: string):
       Object.assign(new GetSoulInput(), { id: soulId }),
       out,
       new SoulContext(),
+      metrics,
     );
     return Boolean(out.soul?.enable);
   } catch {
@@ -192,7 +200,7 @@ export async function validateAgentSoul(soulAccess: SoulAccess, soulId: string):
 /**
  * 校验 Agent 绑定的 Prompt 模板（经 PromptsProvider DB 校验：存在且启用）。
  */
-export async function validateAgentPrompt(promptsAccess: PromptsAccess, promptId: string): Promise<boolean> {
+export async function validateAgentPrompt(promptsAccess: PromptsAccess, promptId: string, metrics?: Metrics): Promise<boolean> {
   if (!promptId) return false;
   try {
     const out = new SoPromptOutput();
@@ -202,6 +210,7 @@ export async function validateAgentPrompt(promptsAccess: PromptsAccess, promptId
       }),
       out,
       new PromptContext(),
+      metrics,
     );
     const row = out.list?.[0];
     return Boolean(row && row.enable);
@@ -218,6 +227,7 @@ export async function validateAgentPrompt(promptsAccess: PromptsAccess, promptId
 export async function validateAgentSkills(
   skillAccess: SkillAccess,
   skillIds: string[],
+  metrics?: Metrics,
 ): Promise<{ valid: string[]; invalid: string[] }> {
   const valid: string[] = [];
   const invalid: string[] = [];
@@ -228,6 +238,7 @@ export async function validateAgentSkills(
         Object.assign(new GetSkillInput(), { id }),
         out,
         new SkillContext(),
+        metrics,
       );
       if (out.skill?.enable) valid.push(id);
       else invalid.push(id);
@@ -246,6 +257,7 @@ export async function validateAgentSkills(
 export async function validateAgentMcps(
   mcpAccess: MCPAccess,
   mcpIds: string[],
+  metrics?: Metrics,
 ): Promise<{ valid: string[]; invalid: string[] }> {
   const valid: string[] = [];
   const invalid: string[] = [];
@@ -256,6 +268,7 @@ export async function validateAgentMcps(
         Object.assign(new GetMcpInput(), { id }),
         out,
         new McpContext(),
+        metrics,
       );
       if (out.mcp?.enable) valid.push(id);
       else invalid.push(id);
@@ -272,7 +285,7 @@ export async function validateAgentMcps(
  * @param llmAccess LLMProvider 接入层
  * @param llmId 待校验的 LLM ID（来自 Core.matchLLM 解析结果）
  */
-export async function validateAgentLlm(llmAccess: LLMAccess, llmId: string): Promise<boolean> {
+export async function validateAgentLlm(llmAccess: LLMAccess, llmId: string, metrics?: Metrics): Promise<boolean> {
   if (!llmId) return false;
   try {
     const out = new GetLLMOutput();
@@ -280,6 +293,7 @@ export async function validateAgentLlm(llmAccess: LLMAccess, llmId: string): Pro
       Object.assign(new GetLLMInput(), { id: llmId }),
       out,
       new LLMContext(),
+      metrics,
     );
     return Boolean(out.llm?.enable);
   } catch {
@@ -309,26 +323,27 @@ export async function validateAgentResources(deps: {
   promptsAccess: PromptsAccess;
   skillAccess: SkillAccess;
   mcpAccess: MCPAccess;
+  metrics?: Metrics;
 }): Promise<AgentResourceValidationResult> {
   const issues: string[] = [];
-  const { agentId, soulAccess, promptsAccess, skillAccess, mcpAccess } = deps;
+  const { agentId, soulAccess, promptsAccess, skillAccess, mcpAccess, metrics } = deps;
 
-  const soulOk = await validateAgentSoul(soulAccess, deps.soulId || '');
+  const soulOk = await validateAgentSoul(soulAccess, deps.soulId || '', metrics);
   if (!soulOk && deps.soulId) {
     issues.push(`Agent ${agentId} 绑定的 Soul 不存在或已禁用: ${deps.soulId}`);
   }
 
-  const promptOk = await validateAgentPrompt(promptsAccess, deps.promptId || '');
+  const promptOk = await validateAgentPrompt(promptsAccess, deps.promptId || '', metrics);
   if (!promptOk && deps.promptId) {
     issues.push(`Agent ${agentId} 绑定的 Prompt 模板不存在或已禁用: ${deps.promptId}`);
   }
 
-  const skills = await validateAgentSkills(skillAccess, deps.skillIds ?? []);
+  const skills = await validateAgentSkills(skillAccess, deps.skillIds ?? [], metrics);
   for (const id of skills.invalid) {
     issues.push(`Agent ${agentId} 绑定的 Skill 不存在或已禁用: ${id}`);
   }
 
-  const mcps = await validateAgentMcps(mcpAccess, deps.mcpIds ?? []);
+  const mcps = await validateAgentMcps(mcpAccess, deps.mcpIds ?? [], metrics);
   for (const id of mcps.invalid) {
     issues.push(`Agent ${agentId} 绑定的 MCP 不存在或已禁用: ${id}`);
   }

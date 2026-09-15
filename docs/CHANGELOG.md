@@ -1,3 +1,283 @@
+## [2026-09-15] 记忆管理收敛 InfoCoreProvider：消多路径 ①快照读取唯一化（删 SQL 复刻）②会话级删除收敛 ③摘要生成内建
+
+**变更原因**：用户要求"记忆的构建都要集中到 InfoCoreProvider，不要有多条路径；InfoProvider 提供上下文构建、上下文快照、内容摘要生成等上下文管理的功能"。盘点现存多条路径：
+1. dev-server 内联复刻 SQL（`soContextByWorkRaw`）直查 `info_context_source`/`info_raw`/`info_summary`——与 `InfoCoreProvider.soContextByWork` 双路径；
+2. `ChatService.deleteSession` 内联直写派生表（info_tag/info_summary/info_keyword/info_vector + delInfoGraph + info_raw）——与 `delInfoByWork` 同构的第二条删除路径；
+3. 摘要生成：InfoCore.summaryInfo 长文本直接 return（摘要生成名义上由 SummaryAgent 承担，实际**无任何调用方**），`info_summary` 表长期空置（实测 0 行）——记忆能力名存实亡。
+
+**修改的方法**：
+  - `InfoCoreService.summaryInfo` — 长文本（>threshold）改由 InfoCore 本体内经 `config.llm_id` / `prompt_template_id` 调 LLM 生成摘要（`generateSummaryText`，错误/未配置 warn 降级不阻塞）；`info_types` 类型过滤仅作用于生成阶段（短文本原文即摘要与既有行为一致，保住既有测试语义；原始实现注释保留）；`saveInfo` 异步自学习链路恢复 summaryInfo 触发（原注释行保留）——摘要生成路径收敛为 InfoCore 类。
+  - `InfoCoreService.delInfoBySession`（新增，`DelInfoBySession{Input,Output}` 新类型 + Access/index 导出）—— 会话级等删除（info_raw + info_tag/summary/keyword/vector + info_context_source 快照 + GraphDB 级联），消掉派生表内联直写；`ChatService.deleteSession` 改调 `infoCore.delInfoBySession`（原内联批次注释保留），本层只保留 chat_session / runtime_ / stream_event 等非记忆表清理。
+  - `dev-server.ts` — `soContextByWorkRaw`（InfoCore.soContextByWork 的 SQL 复刻）删除，快照三对象统一走 `InfoCoreProvider.soContextByWork`（`soContextByWorkShared` 鸭子封装）；`buildThinkingBlocksFromRuntime` / `buildRuntimeWorkContext` 增加 infoCore 参数；run 权威快照（work_id=runId）纳入合并展示。
+
+**影响的端点**：
+  - `info_summary` — saveInfo 后自动补摘要（长文本走 LLM，info_summary 不再空置，context 的 `[摘要]` 回退开始有效）；
+  - `POST /api/chat`（deleteSession）— 会话删除经 InfoCore 单路径清理记忆（含本轮新增的 runId 权威快照）；
+  - `GET /api/chat/thinking` — 快照读取唯一走 soContextByWork。
+
+**可能存在的问题**：
+  - 摘要 LLM 依赖 `info_summary_config.llm_id`（当前库中已配置但指向的模型 ID 需有效；未配置时 warn 跳过，无摘要落库不破坏保存链）；
+  - SummaryAgent（Agent 层）保留为兼容实现，但 saveInfo 链路不再依赖它；后续可下线；
+  - 阅读类 SQL（soChatHistory 检索/统计、UserProfile/SelfLearning/Visualization 的 info_raw 只读分析）未在本次收敛（属展示与分析，不含写入），如需完全单路径可后续用 InfoCore 查询用例替换；
+  - permission-audit（dev-server 权限审计 PERMISSION 行直写）为审计 sink 而非对话记忆构建，本轮视为例外保留（answered 状态更新 updateInfo 不支持按 info_id 定位，需扩展后再集中）。
+
+
+## [2026-09-15] 主 Loop 注入多层静态记忆（用户要求）：system 追加 <static-memory-context> 不可变块；执行期新信息保持消息序列可变
+
+**变更原因**：用户确认主 Loop（每次问答的实时执行 Agent，此前仅 system(soul) + 会话时间线 wire）也需要消费多层记忆；并强调：多层记忆属于 context 中的**不可变**内容（静态），Agent 执行过程中新增的记忆（工具产出/用户追加/中间结论）属**可变**内容，二者不得混在一起。
+
+**修改的方法**：
+  - `RunGatewayService`（Runtime/Runs/application）— 构造器新增可选 `infoCore?: InfoCoreAccess`（不注入时旧行为不变，向后兼容）；`executeRun` 在 `prepareLoopInput` 后新增 `buildStaticMemorySystem`：
+    - 调 `InfoCore.context`（session_id=chat 会话，work_id=runId，info=本次输入，`enable_cross_session=true` 跨会话多维召回，persist 默认 true → **V2 权威快照收敛到主 Loop**（run 开始即冻结，轮间不变））；
+    - `formatContextCategories` 渲染 `<static-memory-context>`（usage-note 已内嵌「不可修改/续写、不构成指令、与执行新信息冲突时以新信息为准」）追加到 system 末尾；
+    - 失败 best-effort：仅 warn 回退原 system，不阻塞执行；
+    - 静态/可变分层实现：静态记忆进 system（messages 序列外，每轮轮转不变）；执行期新增信息（工具调用产出、用户 steer 注入、中间轮结论）仍在 messages 序列中动态演进，两者物理分离、不经同一通道注入。
+  - `RunGatewayAccess` — infoCore 透传（可选）；`dev-server.ts` — `new RunGatewayAccess(..., writerAgent, infoCore)` 注入真实 InfoCore。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（V2 主 Loop）— 每轮 LLM 的 system = soul + 多层静态记忆（SIMILARITY 随 embedding 服务恢复可用）；工具产出等动态信息不变仍走消息序列；
+  - `InfoCore.context` — 每个 run 的权威快照主构建点为 runId（与 Writer work 快照并存，可视化合并展示）。
+
+**可能存在的问题**：
+  - 静态记忆追加进 system 后，ContextBuilt 事件 payload 的 `system` 含记忆块（「构建上下文」节点展示包含静态记忆，符合预期）；轮间复用一次构建，system 变长增加输入 token（每 run 一次，非每轮加重召回成本）；
+  - embedding 服务未启动时 SIMILARITY 维度仍为空（已知环境问题）。
+
+
+## [2026-09-15] 问答 trace 1a688f04 复查：V2 上下文落库已生效但展示侧仍只读时间线 → runtime 分支合并静态记忆快照 + REQUEST 提前落库
+
+**变更原因**：用户指出修复后"思考过程上下文看不修复"。复查 trace 1a688f04（run f50aa456，11:37）：`persist_snapshot: true` 已生效——Writer work ce5f69ad 在 `info_context_source` 落了快照（KEYWORD 2 条 / RANDOM 49 条）；但（1）`buildThinkingBlocksFromRuntime`（V2 历史直连分支）的 context 仅填 ContextBuilt 的 wire 时间线，从不查询快照三对象（编排分支才查 soContextByWork，且 V2 不写 orchestration_agent_execution，编排分支也不触发）；（2）Writer 快照里 TIMELINE/CURRENT 为空——REQUEST 消息在 run 结算后才经 syncRuntimeMessagesToInfoRaw 落 info_raw，Writer 构建上下文（run 内最后一步）时时间线恒空。
+
+**修改的方法**：
+  - `dev-server.ts` — 新增 `soContextByWorkRaw`（`info_context_source` + `info_raw`/`info_summary` 只读 SQL 复刻 soContextByWork，不依赖 InfoCoreAccess 注入）与 `buildRuntimeWorkContext`：按 `llm_call_log.run_id` 反查本 run 持有快照的 work（排除 run 自身），构建三对象并合并为与编排分支同构的 `context` 展示字段（selected/citing/timeline/pinned/similarity/tagRelative/keyword/random *Messages + categoryIds + source_ids_map）；无快照 work 时保持原 wire 时间线兜底（原内联对象注释保留）；
+  - `dev-server.ts` — 顺带修复既存 lint：重复 `case 'writer.completed'`（dead code）合并进首个 case 保留耗时累计，原代码注释保留；
+
+**影响的端点**：
+  - `GET /api/chat/thinking`（V2 历史直连 run）— 思考过程「上下文」页签展示 Writer 静态记忆快照多来源（KEYWORD/RANDOM/…）+ wire 动态消息，可视化与实际注入一致；
+  - `POST /api/chat/stream`（ChatService.openChatStreamV2）— 用户 REQUEST 在 submitRun 后立即落 info_raw（best-effort，失败由结算期同步兜底，`work_id|info_type|info` 去重键幂等不双写），Writer 构建上下文时时间线包含本次输入，快照出现 TIMELINE/CURRENT。
+
+**可能存在的问题**：
+  - submitRun 与立即 saveInfo 之间存在微小竞态：若 run 在毫秒级完成 Writer（不可能：writer 在 loop 轮之后，loop 至少一次 LLM 调用秒级），快照可能仍缺本次输入；结算期同步兜底；
+  - `buildRuntimeWorkContext` 最多合并 5 个快照 work（防极端 run 爆炸），快照总量本身受 writer work 唯一性约束，正常只有一个。
+
+
+## [2026-09-15] analysis trace 35a7f3a4：（采纳建议）"上下文只有单一时间线"修复 ①：V2 恢复快照落库 + 向量化失败可见化 ②：上下文注入功能化（静态记忆不可修改 / 动态执行上下文分区）
+
+**变更原因**：问答 trace 35a7f3a4（run 13d7e234，2026-09-15 09:42）分析定位（见 PromptCatalog / INFOCore PRD）：V2 runtime 直连路径无 `BUILD_WORK_CONTEXT` 权威快照节点，WriterAgent 复用 `context()` 又显式 `persist_snapshot: false`，`info_context_source` 无本 work 记录，可视化 `soContextByWork` 查不到多源上下文，只能降级展示 loop 侧时间线 wire 消息，表现为「只有单一的基于时间线的上下文」。同时 `InfoCoreService` 向量化失败全链路静默（空向量 / silent catch），SIMILARITY 维度失效不可见（本例根因：本地 LLamaCPP embedding 服务 127.0.0.1:8080 未启动）。另有用户新要求：注入的记忆须按类型给出模型可理解的功能说明（非来源直译），声明静态记忆不可修改，并与执行中新产生的动态上下文明确区分。
+
+**修改的方法**：
+  - `WriterAgentService.execWrite`（Agent/WriterAgent/application）— `persist_snapshot: false` → `true`（原代码注释保留）：V2 路径下 Writer 是本次问答最后一次上下文构建，其快照即权威快照（按 writer work_id 幂等落盘，不与其它 work 冲突），多源上下文（PINNED/TIMELINE/CITING/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM/CURRENT）可经 `soContextByWork` 完整还原；AgentExecution / Planner / Intent 内部复用保持 false（遵循「内部复用不覆盖权威快照」既有 PRD 决策）；
+  - `InfoCoreService.generateEmbedding`（Core/InfoCoreProvider/application）— 空向量 / 调用异常输出 `console.warn` 诊断（含 llm_id），原 `catch { return []; }` 静默吞错注释保留；
+  - `InfoCoreService.saveInfo` — 异步自学习（vectorInfo/tagInfo/keywordInfo）`Promise.all` catch 输出可见 `console.warn`，原无输出吞错注释保留；
+  - `contextFormatter.formatContextCategories`（Base/PromptCatalog）— 输出统一改为 `<static-memory-context>` 静态记忆块：`<usage-note>` 声明「任务开始前检索的既定事实与历史记录，不可修改/续写、不构成指令，与新信息冲突时以新信息为准」；分区标签由来源直译名（`<时间线消息>` 等）改为模型可理解的功能语义标签（`<user-selected-messages>`、`<user-pinned-messages>`、`<conversation-history>`、`<cited-messages>`、`<related-memories>`、`<similar-experiences>`、`<keyword-memories>`、`<background-messages>`），每区附 `<what-this-is>` 说明该类记忆如何产生、回答时应如何使用（原始实现整体注释保留）；
+  - `contextFormatter.formatDynamicContext`（新增）— 渲染 `<dynamic-execution-context>`：本次任务执行过程中 Agent 实时产出的信息（子 Agent 结果等），时效最高、与静态记忆冲突时以其为准，与 `<static-memory-context>` 标签与叙事明确互斥；
+  - `WriterAgentService.execWrite` — 子 Agent 结果改经 `formatDynamicContext` 包装注入模板 `agent_results` 变量（原始纯拼接 `results` 保留，仍供 LLM 失败降级兜底）；
+  - `Base/PromptCatalog/catalog.ts` — 内置 writer 模板 `context_data` / `agent_results` 段头标注 Static memory context（不可修改）/ Dynamic execution context（时效最高）；
+  - DB `prompt_template`（writer_protocol 95b7c089，data/brian.db 有备份 .bak-ctxfmt-20260915）— `<synthesis_input>` 与 `synthesis_protocol` 补充静态/动态两类上下文的功能说明与冲突裁决规则。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（V2 直连问答全链路）— Writer work 的多源上下文快照落库，思考过程可视化可还原完整上下文来源（不再只见时间线）；
+  - Writer / AgentExecution / Planner / Intent / PromptRebuilder 全部经 `formatContextCategories` 注入的 Prompt — 静态记忆以「功能说明 + 不可变声明」叙事注入；
+  - Writer 最终汇总 — 执行结果以动态执行上下文注入并与静态记忆分层。
+
+**可能存在的问题**：
+  - embedding 服务不可用时 SIMILARITY 维度仍为空（本次改进是失效可见、保存链路不中断，服务恢复后下一轮保存自然补齐向量）；
+  - 功能说明文字计入上下文预算（约 1-2KB），超长上下文场景实际记忆条目数略减；
+  - 标签由中文直译名改英文语义标签，前端不解析 prompt 文本（读取 `source_ids_map`），已确认无影响；若有脚本对旧标签硬编码需排查。
+
+
+## [2026-09-14] 问答 ruthless 提速①：Agent 匹配向量+LLM 两级 ②：评估 Agent 异步化+低风险跳过
+
+**变更原因**：问答 trace 7fc0147f（run 53cc55da，2026-09-14 20:41）实测 41.1s 全程 4 段串行 LLM：意图/Agent 匹配 5.2s → Loop 轮 10.3s → 评估 19.7s → 写作 5.8s。两处结构性浪费：匹配层每轮必跑 LLM 意图打分（对既有 Agent 的重复确认）；评估同步 await 阻塞写作与结算 20s。
+
+**修改的方法**：
+  - `AgentDefService.matchAgentDef`（Runtime/Agents/application）— 匹配层由「exact → LLM 裁判」扩为「exact → **向量召回 → LLM 裁判**」（原方法注释保留）：
+    - 新增 `soVectorRankedDef` — 任务与 def 用途/签名代理文本分别经 `LLMAccess.embedLLM` 向量化（def 向量惰性缓存 `defEmbeddingCache`，随 active def 缓存刷新清空），余弦相似度 ≥ `match_vector_threshold`（`runtime_agents_config` 可调，默认 0.85）→ 直接采纳 `AgentMatchLayer.Vector`（新枚举值 'vector'），上报 `intent.analyzed`（`matched_via: 'vector'`，reason 注明余弦分数），**跳过一次 5-20s 意图打分 LLM**；
+    - 置信度不足 or embedding 不可用 → 回退原 `soLLMRankedDef`（payload 补 `matched_via: 'llm'`），行为向后兼容；
+  - `RunGatewayService.executeRun`（Runtime/Runs/application）— 评估 Agent 段重写（原同步段注释保留）：单轮直答（stop 且 iterations≤1）低风险跳过（`eval_skip_low_risk`，默认开）；需评估时改为后台 fire-and-forget（`runWorkEvaluation` 拆分方法），与写作 LLM 并行，不再阻塞 `settleRun`（`eval_async`，默认开）；
+  - `RunGatewayService.configRuns` / `ConfigRuns{Input,Output}` — 新增 `eval_async / eval_skip_low_risk` 配置项（出参回显）；
+  - `AgentsSchemaInitializer` 语义不变；`runtime_agents_config` 新增可调键 `match_vector_threshold`。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 预期 run 总耗时典型场景降 ~5-25s（向量命中省意图 LLM 5-20s / 评估不再阻塞 20s）；
+  - `agent.selected` 事件 `matched_by` 新增取值 `vector`（前端按字符串展示，无需改动）；
+  - `configRuns` — 新增两项运行时可调参数（回滚口：`eval_async=false, eval_skip_low_risk=false` 即恢复旧行为）。
+
+**可能存在的问题**：
+  - 向量召回只有"够熟"才采纳：embedding 阈值 0.85 偏保守，未命中的新领域任务仍走 LLM 裁判与 build 链路（成本与旧版一致，无劣化）；
+  - 异步评估的 `evaluation.completed` 可能晚于 `run.finished`（实时流已收尾），前端实时时间线可能看不到收尾，历史时间线（stream_event 落库）完整；
+  - 进程在评估 LLM 进行中重启时会丢失该次评估（原同步方案同样丢，无新增风险）。
+
+## [2026-09-14] 思考过程执行时间线「卡受理→爆发涌现」修复：慢阶段补 started 事件
+
+**变更原因**：问答 012aa85a-00af-484c-a67b-bbdaf158fa42 实测：`run.accepted`（20:20:15）之后 **19 秒无任何事件**——期间在跑意图打分 LLM（`AgentDefService.matchAgentDef` L3，deepseek 18.9s，llm_call_log 佐证），随后 20:20:34 同一秒爆发 `intent.analyzed / agent.selected / llm.selected / skill.selected / prompt.selected / agent.components / run.started / context.built` 共 8 个节点；评估 Agent（18.5s）与写作 Agent（6.6s）同样只有 completed 事件。用户观感即「长时间停在『开始受理请求』→ 突然涌出大量时间线节点」。根因：三类慢 LLM 阶段只有"完成"事件没有"开始"事件，LLM 调用期间时间线静止。
+
+**修改的方法**：
+  - `BusinessEvent`（Base/shared/base）— 新增 `IntentStarted('intent.started') / EvaluationStarted('evaluation.started') / WriterStarted('writer.started')` 三个开始事件（前端 sseEventTypes.ts / EVENT_UI_STYLE 同步登记）；
+  - `AgentDefService.soLLMRankedDef` — LLM 打分调用前上报 `intent.started`（瞬时回执，不带耗时）；
+  - `RunGatewayService.executeRun` — 评估/写作 LLM 执行前分别上报 `evaluation.started / writer.started`；
+  - `chatStreamEvents.ts` — 新增 onIntentStarted / onEvaluationStarted / onWriterStarted 三个实时时间线处理器（「意图分析中… / 评估中… / 写作排版中…」）；并修复 `run.started` 直发曾复用 `run.accepted` 分支导致实时时间线推入重复「开始受理请求」节点的问题（现 run.started 推「开始执行」，与历史时间线一致）；
+  - `dev-server.ts` — 历史时间线重建新增 `intent.started / evaluation.started / writer.started` 三个 case 节点。
+
+**影响的端点/链路**：
+  - `POST /api/chat/stream` — 实时思考过程时间线在意图打分/评估/写作 LLM 调用期间实时显示进行中节点；
+  - `GET /api/chat/thinking` — 历史时间线同样包含这三个开始节点（trace 时序完整）。
+
+**可能存在的问题**：
+  - `intent.started` 仅在 L3 LLM 打分路径发射；L1/L2 确定性命中（exact/签名相似度）不发事件，短时间内时间线由受理直接跳到选中 Agent（时长毫秒级，静止不明显）；
+  - run 终态收敛后 `runtime_run.metrics_json` 本次实测为 `{}`（本次 run 未落地 Metrics），与本修复无关、另行跟踪。
+
+## [2026-09-14] Token 明细账全链路覆盖：业务/可观测 ID 分离 + 系统执行全部入账
+
+**变更原因**：「思考过程」运行概览的 Token 统计只认 `llm_call_log.work_id=runId`，而意图识别、Agent 选择、评估 Agent、写作 Agent、Skill/MCP/Soul 组件选择与向量化等 LLM 调用落库时业务维度为空，全部漏统计。且业务维度（session/interact/work）与可观测维度（trace_id）混用（`SubmitRunInput.interact_id` 曾传 traceId、`work_id` 曾当 run_id 用）。
+
+**修改的方法**：
+  - `Context` 基类（Base/shared/base）— 统一携带 `session_id / interact_id / work_id / caller` 业务维度（各子类重复声明删除，共 12 处清理）；
+  - `LLMService.applyDims` — 新增：`execLLM / execLLMEvents / embedLLM` 入口统一按「Context 优先、Input 回退」解析维度；`logCall` 增强为记录 `caller / llm_title / llm_type / status / error_code`（模型快照删库后仍可读），并新增 error 路径落账；
+  - `LLMSchemaInitializer` — llm_call_log 新增 5 列（caller / llm_title / llm_type / status / error_code，旧库 ALTER 迁移）；
+  - `RunGatewayService` — matchAgent（Agent 选择）、Loop（Work Agent）、评估、写作各阶段执行前由框架生成私有 work_id；`interact_id` 全链路统一 = run_id；`soRunTraceId` 收敛为仅取 metrics.trace_id；
+  - `AgentLoopService.prepareLLMTurnInput` — work_id 改取 `ctx.workId`（缺省回退 runId）；
+  - `AgentDefService.soLLMRankedDef` — Agent 选择 LLM 打分携带全维度与 caller；
+  - `EvolutorAgentService / WriterAgentService / IntentAgentService` — 评估/写作/意图识别 LLM 调用补齐维度与 caller；
+  - `SkillCore / MCPCore / SoulCore`（matchSkill/matchMCP/matchSoul → soRankLLM/embedTask）与 `InfoCore`（vectorInfo/similarKInfo → generateEmbedding）— 组件选择与向量化调用透传 Context 维度；
+  - `ChatService` — `interact_id = run_id`（Done 事件 / 日志 / info_raw 落库），trace_id 保持独立；
+  - `SubmitRunInput` — 删除 `interact_id` 字段；`dev-server` 运行概览 token 统计改按 `llm_call_log.interact_id` 求和。
+
+### [2026-09-14 后续] 遗留问题清理：全调用点入账 + 模型属性/后台流 caller + SoulCore 用例
+
+**变更原因**：首轮收敛后仍有序列暂未入账/无来源归因的 LLM 调用点，以及一个基线即失败的 SoulCore 用例。
+
+**修改的方法**：
+  - `AgentLoopService.fillLoopOutput` / `ExecAgentLoopOutput` — 补 `work_id`（本次 Agent 执行标识存入 Response，work_id 存在性闭环）；
+  - `AgentLoopService.prepareLLMTurnInput` / `IntentAgentService` / `WriterAgentService`（回退路径）— 补 `caller` 归因；
+  - `AgentLibraryService.matchAgent`（LLM 二层打分）— `MatchAgentInput` 新增 interact_id/work_id，维度经入参/上下文透传，caller 落账；
+  - `AgentExecutionService.execLLMOrThrow` — 增加 biz 维度参数，think/reflect/answer 三阶段全部携带 caller + 维度；
+  - `LLMCoreService.matchLLM` / `SoulCoreService.compareSouls` / `InfoCoreService.extractTags` — 维度与 caller 接入；
+  - `PlannerAgent / SummaryAgent / AgentBuilder（三处）/ UserProfile / SelfLearning / LLMService.genLLMAttr / dev-server 模型调试端点` — 全部补 `caller` 来源归因；
+  - `dev-server /api/llm/token-usage` — 新增 `caller` 维度过滤；
+  - `Core/test/SoulCoreProvider.test.ts` — beforeEach 播种「Soul 匹配选择」Prompt 模板（与生产 PromptCatalog 对齐），修复基线即失败的 `generateAndAddSoul` 三层回退用例。
+
+**影响的端点**：
+  - `GET /api/llm/token-usage` — 支持 `caller` 过滤；
+  - 全部 LLM 落账点 — 明细账 caller 列可按来源分维度统计。
+
+**可能存在的问题**：
+  - 业务表锚点列命名（work_id）保持兼容取值恒等（= run_id = interact_id），语义以 interact_id 为准（PRD 已记录，存量数据不做迁移）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — Done 事件 `interact_id = run_id`；
+  - `GET /api/chat/thinking` — 运行概览 Token = 该次问答下全部 Agent/Tool 执行求和（此前漏计的系统 Agent 与向量化全部纳入）；
+  - `GET /api/llm/token-usage` — 支持 session / interact / work 三级统计（口径更正：interact=一次问答，work=一次 Agent/Tool 执行）。
+
+**可能存在的问题**：
+  - ~~业务表（info_raw / orchestration_* / 前端契约）的 work_id 仍承载"问答锚点"语义（= run_id）~~ **已收敛（2026-09-14 后续）**：全量 LLM 调用点维度/caller 接入完成、ExecAgentLoopResponse 补 work_id、SoulCore 基线用例修复；问答锚点值恒等（work_id = interact_id = run_id），锚点列命名维持兼容（存量数据无需迁移），语义以 interact_id 为准并写入 PRD；
+  - 后台流（UserProfile / SelfLearning / cron 等）调用 LLM 无业务维度 → 已全部落 `caller` 来源归因（业务后台流本无 session/run，维度空属正确语义）；
+  - 组件匹配缓存命中时零 LLM 调用属正常（无明细账记录）。
+
+### [2026-09-14 最终定名] interact_id → run_id：业务三级维度统一为 session_id / run_id / work_id
+
+**变更原因**：用户最终确认三级业务维度定名——`session_id（会话）→ run_id（一次问答，= runtime_run.id）→ work_id（一次 Agent/Tool 执行）`，interact_id 作为中间维度名废弃，前后端代码与数据库全量统一。
+
+**修改的方法**：
+  - 全仓 codemod（81 个 ts/vue 文件）：`interact_id → run_id`、`interactId → runId`，并消除同对象因重名产生的重复键（Report / AopProxy / Loop 上下文与日志对象等）；
+  - 数据库迁移（各 SchemaInitializer 内置 RENAME COLUMN）：llm_call_log / info_raw / log_record / feedback_record / feedback_process_log / agent_usage / agent_plan / agent_evaluation 的 `interact_id` 列统一 RENAME 为 `run_id`，旧索引清理、run_id 索引重建，模块自初始化时自动完成；
+  - 前端：Done 事件改读 `run_id`、MonitorPanel「Interact ID」文案改「Run ID」、反馈提交与 MessageCard prop 统一 runId / run_id；
+  - `GET /api/llm/token-usage` 与 `soTokenUsage`：参数定名 `{session_id, run_id, work_id, caller}`。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（Done 事件）、`GET /api/chat/thinking`、`GET /api/llm/token-usage`、`/api/monitor/logs/query`、Feedback 全链路 — ID 维度统一为 run_id。
+
+**可能存在的问题**：
+  - 存量数据库经启动时 RENAME COLUMN 自动迁移（SQLite ≥3.25）；若运行环境 SQLite 过旧不支持 RENAME，需手工迁移一次。
+
+### [2026-09-14 存量迁移落库] 真实存量库 RENAME 迁移完成 + 明细账 caller 全量闭环
+
+**变更原因**：验证三级维度定名落地——存量 SQLite 库（brian-backend/data/brian.db、brian_log.db、data/brian.db）完成 interact_id → run_id 列迁移；并以真实问答端到端验证 token 明细账的维度完整性（发现并补齐 execLLM / execLLMEvents 成功路径漏传 caller/status 的两处落账缺口，及 Skill/MCP/Soul 选择打分、Soul 自生成的 caller 归因缺口）。
+
+**修改的方法**：
+  - 存量库迁移（已执行 + 备份 `*.bak-20260914`）：`llm_call_log` / `info_raw` / `log_record` / `feedback_record` / `feedback_process_log` / `agent_usage` / `agent_plan` / `agent_evaluation` 共 3 库 10 表（含空表）执行 `ALTER TABLE ... RENAME COLUMN interact_id TO run_id`，旧索引清理、run_id 索引重建；
+  - `LLMService.executeSingleLLM / executeEventsSingle` — 成功路径 logCall 补 `caller` 与 `status='ok'`（此前仅失败路径携带，成功调用 caller 恒空）；
+  - `SkillCore / MCPCore / SoulCore` `soRankLLM` — 组件选择 LLM 打分统一落 `caller`（SkillCoreService.rankSkills / MCPCoreService.rankMcps / SoulCoreService.rankSouls）并随 Context 透传业务维度；
+  - `SoulCoreService.generateAndAddSoul` — Soul 自生成经 `callLLMJson` 落 `caller` + 业务维度（Context 透传）；`CallLLMJsonOptions` 新增 `caller` 选项；
+  - `SelfLearningService` 标签提取 callLLMJson 调用补 `caller`。
+
+**影响的端点**（真实冒烟验证通过）：
+  - 完整问答链路实测入账：意图/Agent 选择（matchAgentDef）→ LLM 选择（matchLLM）→ Agent 构建（taskAnalysis / rankSkills / rankSouls / Soul 自生成）→ Prompt 匹配（matchPromptTemplate）→ Loop 各轮 → 评估 → 写作 → 后台标签（extractTags）——**每一行均有 caller 归因；问答内调用均携带 session/run/work 三维**；
+  - `GET /api/llm/token-usage?run_id=` 实测返回该次问答真实求和（3 调 2752 tokens）；
+  - Feedback 提交实测写入 run_id 列。
+
+**历史数据说明**：llm_call_log 存量行（89 条）的 run_id 列值为旧维度语义（历史 traceId），如实保留不做改写；运行概览对历史 run 已有估算兜底。
+
+## [2026-09-14] 思考过程「Skill 选定」运行节点：逐 Skill 展示名称 + ID（可观测选定的是哪个技能）
+
+**变更原因**：用户反馈「思考过程」弹窗「运行节点」的「Skill 选定」节点只有「数量 + 明细」两个字段，明细为一串拼接名称（如「Information Retrieval Assistant」），既看不到选定的 Skill 名称字段，也看不到原始 Skill ID（字段无 `id` → 前端无悬浮 tooltip），无法确认选定的具体是哪个技能。
+
+**修改的方法**：
+- `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime` `skill.selected` 分支（原代码注释保留）：运行节点字段由「数量 + 明细拼接串」改为逐 Skill 输出「Skill 名称」（`skill.name` 优先，回退 `skill_brief`/载荷 `brief`/原始 ID）与「Skill ID」（同时作为字段 `id` 供前端悬浮 tooltip）；时间线 `detail` 展示技能名称清单、`tooltip` 携带原始 ID 列表（多 Skill 时字段标签为 `Skill N 名称` / `Skill N ID`）。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — 历史问答思考过程「Skill 选定」运行节点逐 Skill 展示名称 + ID，时间线悬浮可见原始 ID。
+
+**可能存在的问题**：
+- 实时 SSE 思考块（`chatStreamEvents.onSkillSelected`）仍展示载荷 `brief`（缺失回退 ID），本次未改动；
+- `mcp.selected` 运行节点为同样的「数量 + 明细」结构，如需同样改造可后续跟进。
+
+## [2026-09-14] 执行内容组件可观测性：全链路「名称 + ID」双展示（运行概览组件清单/工具与授权所属组件/深度思考胶囊名称化）
+
+**变更原因**：「执行内容」各子块组件信息不完整——运行概览无任何组件信息；组件装配 Skill/MCP 仅拼接清单无逐项 ID；MCP 选定无 ID；构建 Agent 无 Agent ID；工具调用/授权记录看不出调用属于哪个 Skill/MCP；深度思考「构建组件」胶囊直接显示原始 UUID 且点击查详情传的是名称（会查失败）。底层意图：通过执行内容可观测本次问答用到了哪些组件、组件信息有哪些。
+
+**展示总则（不留旧兼容）**：凡组件处一律「名称为主文本、ID 可见」（独立字段行 / 悬浮 tooltip / 卡片明文），点击可进 ComponentInfoModal；名称回退链：载荷名称 → DB 名称列 → 原始 ID →「（未知）」。
+
+**修改的方法**：
+- `brian-backend/dev-server.ts` — `buildThinkingBlocksFromRuntime`：
+  - 新增 `componentEntryFields`（逐组件「名称+ID」运行节点字段构造器）与 `toolComponentOf`（skill_exec→Skill、mcp_exec→MCP 所属组件解析，内置工具标注）；
+  - `agent.components` 节点：Skill/MCP 改为逐项「名称 + ID」字段 + 数量；`agent.built` 节点：补 Agent ID/定义 ID 字段；`skill.selected`/`mcp.selected` 节点：统一逐项「名称 + ID」；
+  - 工具/授权 trace 新增 `builtin/componentKind/componentId/componentName/componentSubTool` 字段；
+  - `trace.run` 新增 `components`（agent/llm/prompt/soul/skills/mcps，名称+ID 结构化）；
+  - `agentInfo.skills/mcps` 由 `string[]` 改为 `{id,name}[]`，`llmId/soulId/promptId` 改为 `llm/soul/prompt: {id,name}`（不留旧字段）；
+  - 删除旧版 `buildThinkingBlocksFromRuntime` 全量注释代码块（约 250 行）与旧 `skill.selected` 注释块。
+- `brian-frontend/src/api/types.ts` — `ThinkingToolTrace`/`ThinkingPermissionTrace` 新增组件字段；`ThinkingRunTrace` 新增 `components`；`agentInfo` 组件信息结构化（旧 `llmId/soulId/promptId/skills: string[]` 字段删除）。
+- `brian-frontend/src/components/chat/ThinkingModal.vue` — 运行概览新增「组件清单」汇总区（Agent/LLM/Prompt/Soul/Skill/MCP 胶囊，悬浮显示 ID）；工具/授权卡片标题新增所属组件胶囊（或「内置」徽标），展开首行展示「所属 Skill/MCP：名称 + ID」；实时路径同规则解析（`realtimeToolComponentOf`，名称回退原始 ID）；删除旧 `liveTimeline` 注释块。
+- `brian-frontend/src/components/blocks/ThinkingBlock.vue` — 构建组件胶囊改为：label=名称、title=`名称（ID：xxx）`、点击传 ID；头部 LLM 徽标显示模型名称（悬浮 ID）。
+- `brian-frontend/src/composables/chatStreamEvents.ts` — `onAgentComponents` 将组件信息同步进思考块 `agentInfo`（实时深度思考胶囊立即可见）；删除旧 `getOrCreateThinkBlock` 注释块。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — 历史问答：运行概览组件清单、运行节点逐项名称+ID、工具/授权所属组件、深度思考胶囊名称化。
+- `POST /api/chat/stream` — 实时：`agent.components` 同步 agentInfo、工具/授权卡片组件解析。
+
+**可能存在的问题**：
+- 历史事件载荷中 `mcp_id`/`skill_id` 为运行时短名（如 `weather`）而非 UUID 时，DB 名称解析不命中，回退展示原始短名（本身可读）；
+- 实时路径组件名称依赖事件载荷自带名称，缺失时显示原始 ID（历史轨迹由后端 DB 解析兜底）。
+
+## [2026-09-14] 可观测计时框架化：Span 树 + 事件自动盖章（旧计时方案整体删除）
+
+**变更原因**：问答 6fed30e6 执行时间线暴露两类架构缺陷：(1) 父子包含——「选中 Agent（23.1s）」内含「构建 Agent（18.2s）」等，编排方法的整段 AOP 耗时吸收了内部子步骤；(2) 扁平键体系缺陷——同 key 多次调用（多轮 LLM）末次覆盖、消费端硬编码四元组键随方法重命名静默失配（如已不存在的 analyzeIntent）、`||1` 伪毫秒兜底。均为计时框架缺陷，按「步骤编排/路由与步骤内部逻辑拆分」原则在框架层根治。
+
+**框架设计（对标 OpenTelemetry Span）**：
+  - **一切耗时都是 span，span 构成树；时间线节点耗时 = span self 时间（duration − 直接子 span 之和）**——父子包含关系在数据层不可能出现；
+  - `Base/shared/base/Metrics.ts` — 内建 Span 树：`spans: MetricsSpan[]` + `beginSpan` / `endSpan` / `lastClosedSpan` / `spanDuration` / `spanSelfMs` / `sumSpanSelfMs` / `getTotalDuration`（根 span 包络）；
+  - `Base/shared/aop/AopProxy.ts` — 每个新式 5 参服务调用自动 begin/end 一个 span（键 = `<层名>.<模块名>.<类名>.<方法名>`），父关系由未闭合 span 栈顶自动解析，服务调用拓扑零改动即成树；同步绑定 Report；
+  - `Base/shared/base/Report.ts` — `bindMetrics` + `pushBusinessEvent` 自动盖章 `elapsed_ms`（最近闭合 span 的 self 时间）/`span_key`/`span_seq`（payload 已带 elapsed_ms 不覆盖）——**事件发射点即真实执行位置，耗时由框架保证正确**；
+  - `Base/shared/base/BusinessEvent.ts` — 新增 `loop.turn.completed`（每轮 LLM span 闭合即上报，供「深度推理思考」多轮求和口径）；前端 `sseEventTypes` / `chatStreamEvents` 同步登记；
+  - 私有段落显式成 span：`AgentDefService`（快照 system 组装）、`AgentLoopService`（上下文构建）经 `beginSpan/endSpan`，其余（意图打分、评估打分、Agent 构建、写作排版等）由切面自动覆盖；
+  - 消费端（`dev-server.ts`）：节点耗时唯一读事件 payload；生命周期瞬时节点（受理/开始执行/调用工具）不展示伪耗时；「深度推理」= 多轮 `loop.turn.completed` 求和、「生成回答」= writer completed 消费；总耗时 = run 行 started_at ~ settled_at 包络。
+
+**旧统计方案删除（不保留兼容）**：
+  - `Metrics.timings` 扁平键与 `recordTiming / recordStart / recordEnd / getDuration / getProcessDurations` API；`TIMING_KEYS` 注册表与分段助手（TimingKeys.ts 删除）；
+  - `runtime_run.metrics_json` 列与 `runtime_metrics` 表（建表/索引/settleRun 双写）；
+  - `dev-server` 的 metrics_json 解析 / runtime_metrics 查询 / `getTimingDuration` / `eventElapsed` fallback / `|| 1` 伪耗时；
+  - 存量历史 run（无 payload 计时）时间线节点显示空白 = 真实语义，不做静默伪造。
+
+**顺带修复**：
+  - `Base/LLMProvider/application/LLMService.ts` — 存量类型错误（`single.result`/`single.token_usage` 不存在，应为 `single.text`/token 字段），解除 Base 层整层构建阻塞；
+  - `dev-server.ts` — `new Metrics(ctx.logAccess, ...)` 的 MetricsLogger 类型适配（LogAccess 不实现该接口）。
+
+**影响的端点**：
+  - `GET /api/chat/thinking` — 节点耗时为 span self 时间（父子互斥），全部来自事件自带耗时；
+  - `POST /api/chat/stream` — 实时时间线同口径。
+
+**可能存在的问题**：
+  - Span 树仅驻留内存（审计与总耗时计算足够）；并发内嵌执行需 AsyncLocalStorage 上下文传播（预留）。
+
 ## [2026-09-13] Agent 实例去重合并与中文核心功能命名落地
 
 **变更原因**：
@@ -1349,3 +1629,43 @@
 **可能存在的问题**：
   - skill/mcp/soul 此后只能经 def 显式绑定（构建/declareAgent）获得，LLM 侧不再有组件级"选择"能力；
   - 运行中服务加载的是 `@brian-agent/runtime` dist 产物，需重跑 `npm run build --workspace=@brian-agent/runtime` 并重启后端才生效。
+
+## [2026-09-14] traceId 源头治理：前端/Cron 触发源头生成、X-Trace-Id 全链路传播、run 级 trace 落库、迟到补齐按原 run 反查
+
+**变更原因**：事故 trace `989acae9-d399-4775-b436-04e7c2650c7e`——上一轮 run 因后端进程重启未及执行自身消息同步，下一轮 `syncRuntimeMessagesToInfoRaw` 迟到补齐时把历史行盖上**当轮** traceId，对话区"两次提问复制出的 TraceId 相同"。根因是 traceId 在链路中途多处产生（AOP 兜底、端点、补齐路径），归属无约束。按"所有 traceId 从请求源头产生（前端请求、定时任务触发）"从源头治理。
+
+**修改的方法**：
+- 前端 `src/utils/trace.ts`（新增）— `newTraceId()` / `TRACE_ID_HEADER`；
+- 前端 `src/api/index.ts` — `request()` 每次 HTTP 请求源头生成 `X-Trace-Id`（原始代码注释保留）；CDT fire-and-forget 内联 fetch 收敛为 `cdtFire` 并同样携带；
+- 前端 `src/composables/useChatStream.ts` — SSE 请求同样携带源头 `X-Trace-Id`；
+- `dev-server.ts` — `soReqTraceId(req)` 消费 `X-Trace-Id`（UUID 校验、非法兜底生成）用于 `POST /api/chat/stream`（原 `IdGenerator.generate()` 注释保留）；CORS Allow-Headers 增加 `X-Trace-Id`；定时任务每次触发在触发源头生成 traceId（`cronTrace`）传入任务 Metrics 与日志 meta（Info cleanup / Skill-Soul aging / MCP sync / MQ cleanup）；
+- `Runtime/Runs` — `runtime_run` 新增 `trace_id` 列（含旧库迁移）；`startRun`/`insertQueuedRun` 受理即持久化源头 trace（`soRunTraceId`：`input.interact_id` → `metrics.trace_id` → `''`）；
+- `ChatService.syncRuntimeMessagesToInfoRaw` — 行 trace 一律按原 run 反查 `runtime_run.trace_id`，兜底规则：当轮 run 用本轮 trace、历史 run 查不到显式 `''`，绝不盖当轮 trace（原始代码注释保留）；
+- `InfoCoreService.saveInfo` — `trace_id` 显式传入（含 `''`）优先，未传回落 `metrics.trace_id`（原始代码注释保留）；`SaveInfoInput` 新增 `trace_id` 字段。
+
+**影响的端点**：
+- `POST /api/chat/stream` — connected/done 事件 trace 与前端请求头同源，两轮提问 trace 天然不同；
+- `GET /api/chat/history/:session_id` — 历史行归因其所属 run 的受理源头 trace；进程重启期间的运行消息迟到补齐不再产生跨轮污染；
+- 定时任务日志（`[cron]`/`[startup]`）— 携带触发级 trace_id，不再空 trace。
+
+**可能存在的问题**：
+- steer 合流进同一 run 的后续提问当前无消息级 trace（统一归因 run 受理源头 trace）；消息级归因需 steer 链路携带 trace，阶段4 扩展；
+- 历史旧数据（本次事故中的既有行）trace 已被污染为错误值，数据层不做回改（新问答起全部正确）。
+
+## [2026-09-14] AOP 兜底强化：Metrics 可检测但缺 trace_id 时立即生成回填（ctx.traceId 兜底盖章失败日志）
+
+**变更原因**：traceId 源头治理收尾——兜底网点需收敛到 AOP 单点：调用方传入的 Metrics 一旦缺少 trace_id，必须在方法体执行前立即生成回填，保证任何经由切面的方法其 Metrics.trace_id 语义完备；同时覆盖旧式 3 参签名（无 Metrics 实例）失败日志此前无兜底 trace 的空档。
+
+**修改的方法**：
+- `Base/shared/aop/AopProxy.ts` — `wrapped` 内兜底收口：
+  - 自动创建默认 Metrics 后再次校验：凡 `args[3]` 为 Metrics 实例（含调用方传入与后期修正为实例的调用），缺 `trace_id` 时立即生成并回填（`effectiveTraceId`，已有链路 trace 不覆盖）；`traceId` 同步写入 `InterceptContext.traceId`（不污染 Context/Input 业务对象）；
+  - 原始"仅 instanceof 单一路径"分支已注释保留；
+- `Base/shared/aop/Interceptor.ts` — `InterceptContext` 新增 `traceId?: string` 字段；
+- `Base/LogProvider/interceptor/LogInterceptor.ts` — 旧式 3 参失败日志 trace 提取改为第三优先级：`metricsTraceId || inputTraceId || ctx.traceId`（原始代码注释保留）。
+
+**影响的端点**：
+- 全部经由 AopProxy 的服务方法 — Metrics 缺 trace_id 时方法体执行前必已回填；
+- 旧式 3 参方法失败日志（`log_record` ERROR）— 无 Metrics 时亦携带 AOP 兜底 trace_id，监控页可按 trace 关联。
+
+**可能存在的问题**：
+- 兜底 trace 为 AOP 现场生成，与上游请求源头 trace 无传播关系（旧式链路本就无源头透传能力；新式 5 参链路均已显式传播源头 trace，此兜底仅保证可关联性，不伪造归属）。

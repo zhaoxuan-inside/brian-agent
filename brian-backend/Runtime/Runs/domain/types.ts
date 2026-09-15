@@ -90,8 +90,6 @@ export class SubmitRunInput extends Input {
   user_message!: string;
   /** 队列模式（缺省 steer） */
   queue_mode?: QueueMode;
-  /** 交互/上下文 ID（组件匹配透传，可选） */
-  interact_id?: string;
   context_id?: string;
   /** 预算覆盖（缺省取快照 budget_total） */
   budget_total?: number;
@@ -223,6 +221,11 @@ export class ConfigRunsInput extends Input {
   permission_wait_timeout_ms?: number;
   /** 信任工具表全量覆盖（2026-09-12 新增：用于撤销信任；缺省不改动） */
   trusted_tools?: string[];
+  // ===== 2026-09-14 新增：评估 Agent 执行策略 =====
+  /** 评估异步后台执行（缺省 true：评估不阻塞写作与 run 结算，实测评估 LLM 可达 20s+） */
+  eval_async?: boolean;
+  /** 低风险场景跳过评估（缺省 true：单轮直答 stop 且仅 1 轮时跳过评估） */
+  eval_skip_low_risk?: boolean;
 }
 
 /** configRuns 出参 */
@@ -231,6 +234,10 @@ export class ConfigRunsOutput extends Output {
   permission_wait_timeout_ms?: number;
   /** 当前信任工具表（2026-09-12 新增） */
   trusted_tools?: string[];
+  /** 当前评估异步开关（2026-09-14 新增） */
+  eval_async?: boolean;
+  /** 当前低风险跳过开关（2026-09-14 新增） */
+  eval_skip_low_risk?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +266,7 @@ export interface Waiter {
 /** runtime_run 表名 */
 export const RUNTIME_RUN_TABLE = 'runtime_run';
 
-/** runtime_metrics 表名（落地问答执行时间线与耗时） */
-export const RUNTIME_METRICS_TABLE = 'runtime_metrics';
+
 
 /** runtime_runs_config 配置表名 */
 export const RUNTIME_RUNS_CONFIG_TABLE = 'runtime_runs_config';

@@ -308,12 +308,12 @@
 - input：GetInfoContextConfigInput（继承 Input）
 - context：GetInfoContextConfigContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
 - output：GetInfoContextConfigOutput（继承 Output），承载返回内容：
-  - config：上下文构建配置（base_timeline_count, base_tag_relative_count, base_similarity_count, base_keyword_count, base_random_count, total）
+  - config：上下文构建配置（base_timeline_count, base_tag_relative_count, base_similarity_count, base_keyword_count, base_random_count, random_max_percent, tag_relative_max_percent, similarity_max_percent, keyword_max_percent, keyword_score_threshold, total, enable_snapshot_persistence, priority_order）
 **处理流程**：
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `info_context_config` 表，获取唯一配置记录；
 2. 将查询到的配置写入 output 返回；
-3. 若配置表为空（首次使用），返回默认值：base_timeline_count=500、base_tag_relative_count=200、base_similarity_count=150、base_keyword_count=100、base_random_count=50、total=1000；
+3. 若配置表为空（首次使用），返回默认值：base_timeline_count=500、base_tag_relative_count=200、base_similarity_count=150、base_keyword_count=100、base_random_count=50、random_max_percent=20、tag_relative_max_percent=20、similarity_max_percent=15、keyword_max_percent=10、keyword_score_threshold=95、total=1000、enable_snapshot_persistence=true、priority_order='PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'；
 
 **返回**：Boolean，表示查询是否完成
 
@@ -479,21 +479,29 @@
   - session_id：会话 ID（必选）
   - work_id：问答工作 ID（必选，作为本次上下文快照的区分维度）
   - info_id：信息 ID（可选，用于辅助检索关联消息）
+  - info：当前用户提问文本（可选，作为弱相关维度检索的参考文本，优先级最高）
   - mode：构建模式（已废弃，保留字段以兼容旧调用；不再区分 DEFAULT/CUSTOM 两种模式）
   - selected_msg_ids / custom_info_ids：复选消息 ID 列表（可选；若提供且非空，复选消息替换时间线）
   - enable_cross_session：是否允许跨会话召回（可选，默认 true；传 false 时跳过标签相关性 / 向量相似 / 关键词 / 随机全局兜底等全系统维度，仅保留会话内时间线 / 钉住 / 引用，供 Work Agent 执行子任务时规避无关历史会话污染）
+  - persist_snapshot：是否落盘上下文快照（可选，默认 true；内部 Agent 复用 context() 时显式传 false，避免覆盖权威快照，快照冻结在 JSONNode `BUILD_WORK_CONTEXT` 阶段）
 - context：InfoCoreContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
 - output：ContextInfoOutput（继承 Output），承载返回内容：
   - list：构建的上下文消息列表，每项对象包含：
     - `id` / `info_id`：数据唯一标识 / 消息 ID
+    - `session_id` / `work_id` / `run_id`：会话 / 工作 / 运行 ID
     - `summary`：消息摘要文本
-    - `info` / `content`：消息内容文本（若原始消息老化清空则自动回退使用摘要）
+    - `info` / `content`：消息内容文本（若原始消息老化清空则自动回退使用摘要，前缀 `[摘要] `）
     - `summary_length`：消息摘要长度
     - `info_length` / `content_length`：消息内容长度
     - `info_type`：消息类型（`REQUEST` / `RESPONSE` / `SELF_LEARNING` / `AGENT` 等）
+    - `info_creator_role` / `info_creator_id`：信息产生方角色 / 实例 ID
     - `collection_source`：采集方式（`PINNED` / `TIMELINE` / `CITING` / `TAG_RELATIVE` / `SIMILARITY` / `KEYWORD` / `RANDOM` / `CUSTOM` / `CURRENT`）
-    - `source`：来源标注
+    - `source`：来源标注（与 collection_source 同值）
+    - `pin`：是否钉住（0/1）
+    - `created` / `updated`：创建 / 更新时间戳
+    - `handle_result_type`：处理结果类型（错误消息在构建时统一过滤）
   - categories：按来源分类的消息字典（`selected`, `pinned`, `timeline`, `citing`, `tag_relative`, `similarity`, `keyword`, `random`, `current`）
+  - category_ids：各分类的 info_id 列表字典（与 categories 同构，值为 `string[]`）
   - sources_summary：各分类消息数量汇总统计（`Record<string, number>`）
   - **三对象结构（本次新增，用于内容/属性归一化与历史查看）**：
     - `source_ids_map`：对象1，采集来源 → info_id 列表（`Record<CollectionSource, string[]>`，无 work_id 层）
@@ -513,8 +521,8 @@
    - **标签相关性消息（全系统）**：根据参考消息通过 `relationKInfo` 检索（按 similarTo 边 weight 相关度降序）；
    - **向量相似度消息（全系统）**：根据参考消息通过 `similarKInfo` 检索（按相似度分数降序）；
    - **关键词相关性消息（全系统）**：根据参考消息通过 `keywordKInfo` 检索（按 bm25 归一化评分降序），仅保留 `keyword_score >= keyword_score_threshold`（默认 95/100）的高相关命中；
-   - **随机关联消息（全系统）**：从会话内未选中消息（不足时从全局）随机抽样；
-7. 解析 `priority_order` 配置的维度优先级（默认：`PINNED > TIMELINE > TAG_RELATIVE > SIMILARITY > KEYWORD > RANDOM`）；`priority_order` 未列出的维度**不参与采集**（即以该列表为准，仅采集并排序已开启的维度）；
+   - **随机关联消息（全系统）**：从会话内未选中消息随机抽样（`ORDER BY RANDOM()`）；会话内候选不足以填满限额时，从全局随机补充剩余名额（仅 `enable_cross_session=true` 时）；
+7. 解析 `priority_order` 配置的维度优先级（默认：`PINNED > CITING > TIMELINE > TAG_RELATIVE > SIMILARITY > KEYWORD > RANDOM`）；`priority_order` 未列出的维度**不参与采集**（即以该列表为准，仅采集并排序已开启的维度）；
 8. 按优先级顺序依次遍历各维度候选池进行**全局去重**：当某条消息被多个维度同时命中时，优先保留高优先级维度的采集归属与属性；`CURRENT` 消息若已被钉住/引用等显式维度采集则不再重复标记；
 9. 对收集的所有消息填充标准数据结构（含摘要回退、内容与摘要长度计算等），内部执行轨迹（ACT trace JSON）统一剔除，错误消息（handle_result_type 非 correct）统一过滤；
 10. 截取前 `total` 条，填充 `output.list`、`output.categories` 与 `output.sources_summary` 返回；
@@ -806,7 +814,7 @@
 | keyword_score_threshold | 关键词 bm25 归一化评分截断阈值（0-100） | INT | N | | 默认95，仅保留评分不低于该值的命中 |
 | total | 上下文总数 | INT | N | | 默认为1000 |
 | enable_snapshot_persistence | 启用上下文快照持久化 | INT | N | | 默认1 (true) |
-| priority_order | 维度优先级顺序 | TEXT | N | | 默认 PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM |
+| priority_order | 维度优先级顺序 | TEXT | N | | 默认 PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM |
 
 ### 3.13. 上下文采集来源表（SQLite）
 
@@ -854,6 +862,60 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 共现关系同时持久化到 GraphDB：`tagInfo` 在保存时为同一 info 的标签两两建立 `cooccur` 边（边类型 `cooccur`，权重为共现次数），`rebuildCooccurGraph` 用于存量数据全量回填。这样 GraphDB 的边数（「监控 > 系统健康 > GraphDB」）与标签图展示一致，不再依赖向量化。
 
 ## 5. 变更记录
+
+### [2026-09-14] context 上下文构建与 PRD 对齐：CITING 默认优先级 + RANDOM 全局兜底
+**变更原因**：PRD 对齐审查发现两处实现缺口：
+1. 复选引用维度 `CITING` 已存在于代码 `DEFAULT_PRIORITY` 与 `configRegistrations` 默认值（`PINNED,CITING,TIMELINE,...`），但 SchemaInitializer 建表默认值、`updateInfoContextConfig` 落库默认值、`toInfoContextConfigRecord` 回退值仍为不含 CITING 的旧默认（`PINNED,TIMELINE,...`），同一默认值在三处口径不一致；
+2. RANDOM 随机维度仅在会话消息数为 0 时才从全局随机兜底，与 PRD「会话内未选中消息（不足时从全局）随机抽样」不符——会话有消息但候选不足限额时不再补充，弱相关维度召回偏少。
+
+**修改的方法**：
+  - `InfoCoreService.context(session_id, work_id, ...)` — RANDOM 采集块原始代码（已注释保留在源文件中）：
+    ```
+    let randCandidates: InfoRawRecord[] = [];
+    if (randLimit > 0) {
+      try {
+        const existingIds = new Set<string>([...]);
+        const count = await this.relationDb.count(INFO_RAW_TABLE, [
+          { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+        ]);
+        if (count > 0) {
+          const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+            `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
+            [input.session_id, Math.min(randLimit * 3, count)],
+          );
+          const sessionCandidates = randomRows
+            .map((r) => this.toInfoRawRecord(r))
+            .filter((c) => !existingIds.has(c.info_id))
+            .filter((c) => this.isCorrectInfo(c));
+          randCandidates = sessionCandidates.slice(0, randLimit);
+        } else if (enableCrossSession) {
+          const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+            `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
+            [Math.min(randLimit * 3, 100)],
+          );
+          const globalCandidates = randomRows
+            .map((r) => this.toInfoRawRecord(r))
+            .filter((c) => !existingIds.has(c.info_id))
+            .filter((c) => this.isCorrectInfo(c));
+          randCandidates = globalCandidates.slice(0, randLimit);
+        }
+      } catch { /* ignore */ }
+    }
+    ```
+    修改后：`enable_cross_session !== false` 时先做会话内随机采样，若候选不足以填满 `randLimit`，再从全局随机补充剩余名额（排除已采集 info_id，`ORDER BY RANDOM() LIMIT min(remaining*3, 100)`）；
+  - `InfoCoreSchemaInitializer`（建表 DDL 与 ALTER 迁移）— `priority_order` 默认值改为 `'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'`（原默认已注释语义保留于变更记录）；
+  - `InfoCoreService.updateInfoContextConfig` — `upsertConfigRow` 的 `defaultRecord.priority_order` 同步补充 CITING；
+  - `InfoCoreService.toInfoContextConfigRecord` — `priority_order` 空值回退默认值同步补充 CITING；
+  - `Application/Config/domain/configRegistrations.ts` — `context_config.priority_order` 注册默认值此前已含 CITING，本次无改动（口径对齐基准）。
+
+**影响的端点**：
+  - `InfoCore.context`（编排链路 `OrchestrationEntry.buildWorkContext` / JSONNode `BUILD_WORK_CONTEXT` / IntentAgent / PlannerAgent / WriterAgent / AgentExecution 内部复用）— RANDOM 维度在会话内候选不足时跨会话补充，弱相关召回更饱满；`enable_cross_session=false` 的 Work Agent 子任务不受影响（全局补充同样被跳过）；
+  - `updateInfoContextConfig` / 配置页 — 新库初始化与配置重置后 `priority_order` 默认值含 CITING；
+  - 已有库存量配置行 `priority_order` 不被迁移改写（保留用户自定义），仅新初始化/回退默认值生效。
+
+**可能存在的问题**：
+  - 存量库中已落库的旧默认 `priority_order`（无 CITING）不会自动更新为含 CITING 的新默认；如需对齐需在配置页手动修改；
+  - RANDOM 全局补充会在多会话小数据量场景下引入跨会话消息，属 PRD 预期行为（全局兜底），但 `enable_cross_session=false` 调用方语义不变。
 
 ### [2026-09-09] saveInfo 支持传入真实创建时间（修复对话区消息顺序颠倒）
 **变更原因**：Runtime v2 会话同步（ChatService.syncRuntimeMessagesToInfoRaw）在 run 结束后统一调 saveInfo，未携带真实消息时间 → 同一轮 user/assistant 落库同一 `created`；历史查询 `lastNInfo` 按 `created DESC` 排序对同时间戳记录次序不稳定，前端同时间戳 tie-break 又落入 UUID 字符串比较 → 对话区出现"用户消息显示在系统回复下面"的随机颠倒。同时按 `(session_id, info, created)` 去重的条件因落库时间与消息时间错位而恒不匹配，重复同步存在重复插入风险。
@@ -1097,3 +1159,46 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 
 **可能存在的问题**：
 - bm25 采用 min-max 全量归一化（本次命中集合的 bm25 值域线性映射到 0-100，最优=100、最差=0），不同查询间的绝对值不可直接比较；阈值 95 会保留位于命中集合前 5% 相关度的消息，若某次命中的 bm25 值域较窄（各命中相关度接近），可能截断过多或过少。
+
+### [2026-09-15] V2 直连路径恢复上下文快照落库 + 向量化失败可见化
+
+**变更原因**：trace `35a7f3a4` 分析定位（2026-09-15）：V2 runtime 直连路径没有 JSONNode `BUILD_WORK_CONTEXT` 权威快照节点，而 WriterAgent 复用 `context()` 时显式传 `persist_snapshot: false`，导致该 work 在 `info_context_source` 无任何快照，「思考过程/执行过程」可视化经 `soContextByWork` 查不到多源上下文，只能降级展示 loop 侧 `ContextBuilt` 的时间线 wire 消息，表现为「上下文只有单一时间线」。同时向量化（SIMILARITY 维度）依赖本地 embedding 服务，失败路径全部静默吞掉（空向量、`Promise.all` catch 无输出），维度失效不可见。
+
+**修改的方法**：
+- `WriterAgentService.execWrite` — `persist_snapshot: false` 改为 `persist_snapshot: true`：V2 路径下 Writer 是本次问答最后一次上下文构建，其快照即权威快照（按 writer work_id 落盘，`persistContextSourceMap` 幂等先删后插，不与其它 work 冲突）。原始代码：
+  ```ts
+  await this.infoCore.context(
+    Object.assign(new ContextInfoInput(), {
+      session_id: ctx.session_id,
+      work_id: ctx.work_id || '',
+      selected_msg_ids: ctx.selected_msg_ids,
+      info: input.user_query,
+      persist_snapshot: false,
+    }),
+  ```
+- `InfoCoreService.generateEmbedding` — 空向量 / 调用异常时输出 `console.warn` 诊断（含 llm_id），不再静默返回；原始代码为静默 `catch { return []; }`；
+- `InfoCoreService.saveInfo` — 异步自学习（vectorInfo / tagInfo / keywordInfo）的 `Promise.all` catch 输出可见 `console.warn`，不再无输出吞错。
+
+**影响的端点**：
+- `InfoCore.context` — V2 直连问答中 Writer work 的多源上下文快照（PINNED / TIMELINE / CITING / TAG_RELATIVE / SIMILARITY / KEYWORD / RANDOM / CURRENT）按 work 落库，可视化完整还原；
+- `emit` embedding 服务 — 向量化失败由静默变为可见诊断，SIMILARITY 维度失效可被排查（本环境 2026-09-15 09:42 示例根因：本地 LLamaCPP embedding 服务 `http://127.0.0.1:8080` 未启动）。
+
+**可能存在的问题**：
+- AgentExecution / PlannerAgent / IntentAgent 的内部复用仍保持 `persist_snapshot: false`（遵循「权威快照不覆盖」PRD 决策），V1 编排路径权威快照仍在 `BUILD_WORK_CONTEXT`；
+- embedding 服务不可用时 SIMILARITY 仍为空（现在的改进是失败可见 + 保存链路不中断，恢复服务后下一轮保存自然补齐向量）。
+
+### [2026-09-15 追加] V2 思考过程展示侧合并快照 + REQUEST 提前落库（trace 1a688f04 复查）
+
+**变更原因**：复查 trace 1a688f04 发现，上一步 `persist_snapshot: true` 已生效（Writer work 快照含 KEYWORD/RANDOM），但可视化 `buildThinkingBlocksFromRuntime`（V2 历史直连分支）只填 loop 侧 ContextBuilt 的 wire 时间线、从不查询快照三对象（`soContextByWork` 只在编排分支使用，V2 又不写 `orchestration_agent_execution`）；且 REQUEST 消息在 run 结算后才落 info_raw，Writer 构建上下文时时间线恒空 → 快照无 TIMELINE/CURRENT。
+
+**修改的方法**：
+- `dev-server.ts` — runtime 分支 context 改经 `buildRuntimeWorkContext`：按 `llm_call_log.run_id` 反查快照 work → 复刻 SQL 三对象 → 与编排分支同构展示；原纯 wire 时间线注释保留；
+- `ChatService.openChatStreamV2` — submitRun 后立即 saveInfo 落 REQUEST（幂等去重，结算期同步兜底）。
+
+**影响的端点**：
+- `GET /api/chat/thinking` — V2 run 思考过程上下文展示完整静态记忆来源；
+- `POST /api/chat/stream` — 用户消息 REQUEST 先于 Writer 上下文构建落库。
+
+**可能存在的问题**：
+- write 前 REQUEST 极小概率竞态（run 毫秒级完成）由结算期同步兜底；
+- 手动过库只读复刻（`soContextByWorkRaw`）与 `InfoCoreProvider.soContextByWork` 行为一致性需在表结构变更时同步维护。

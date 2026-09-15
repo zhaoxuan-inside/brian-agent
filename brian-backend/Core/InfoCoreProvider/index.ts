@@ -74,6 +74,9 @@ export {
   UpdateInfoOutput,
   DelInfoByWorkInput,
   DelInfoByWorkOutput,
+  // ===== 新增（2026-09-15 记忆集中）：会话级记忆删除（info_context_source / GraphDB 级联）=====
+  DelInfoBySessionInput,
+  DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
   INFO_RAW_TABLE,
