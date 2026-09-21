@@ -611,6 +611,81 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
   }
 
+  // ===== 新增（2026-09-19）：构建阶段 Soul 选定/生成体现（组件装配明细见 agent.components） =====
+  function onSoulSelected(ctx: StreamEventCtx) {
+    const soulId = String(ctx.payload.soul_id || '')
+    const brief = String(ctx.payload.brief || '') || soulId
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[Soul 选定] ${soulId ? brief : '（未绑定）'}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 3,
+      ts: ctx.serverTime,
+      event: 'soul.selected',
+      title: soulId ? `Soul 选定：${brief}` : 'Soul 未绑定',
+      kind: 'agent',
+      target: 'agent-0',
+    })
+  }
+
+  // ===== 新增（2026-09-19）：思维模型选定（CoT/ReAct）→ 时间线与思考面板 =====
+  function onThoughtSelected(ctx: StreamEventCtx) {
+    const mode = String(ctx.payload.thought_mode || 'CoT')
+    const reason = String(ctx.payload.reason || '')
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[思维模型] ${mode}${reason ? `：${reason}` : ''}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 3,
+      ts: ctx.serverTime,
+      event: 'thought.selected',
+      title: `选定思维模型：${mode}`,
+      detail: reason,
+      kind: 'think',
+      target: 'agent-0',
+    })
+  }
+
+  // ===== 新增（2026-09-19）：loop.turn.started：第 N 轮执行开始（体现思维模型） =====
+  function onLoopTurnStarted(ctx: StreamEventCtx) {
+    const round = Number(ctx.payload.round || 1)
+    const mode = String(ctx.payload.thought_mode || '')
+    ui.pushLiveTimelineItem({
+      seq: 5,
+      ts: ctx.serverTime,
+      event: 'loop.turn.started',
+      title: `第 ${round} 轮 Agent 执行开始`,
+      detail: mode ? `思维模型：${mode}${ctx.payload.final_turn ? '（收尾轮）' : ''}` : '',
+      kind: 'think',
+      target: `agent-0`,
+    })
+  }
+
+  // ===== 新增（2026-09-19）：loop.turn.result：本轮执行结果 + 是否继续执行的决策 =====
+  function onLoopTurnResult(ctx: StreamEventCtx) {
+    const round = Number(ctx.payload.round || 1)
+    const nextAction = String(ctx.payload.next_action || 'stop')
+    const reason = String(ctx.payload.decision_reason || '')
+    const toolCalls = Array.isArray(ctx.payload.tool_calls) ? (ctx.payload.tool_calls as unknown[]).map(String) : []
+    const preview = String(ctx.payload.result_preview || '')
+    const titleMap: Record<string, string> = { continue: '继续执行', stop: '执行收敛', error: '执行失败', budget: '预算耗尽' }
+    const thinkBlock = getOrCreateThinkBlock(ctx, ctx.agentId)
+    thinkBlock.content += `[第 ${round} 轮结果] finish_reason=${ctx.payload.finish_reason || 'none'}`
+      + `${toolCalls.length ? `（工具：${toolCalls.join('、')}）` : ''}`
+      + `${preview ? `\n产出：${preview.slice(0, 200)}` : ''}`
+      + `\n[继续执行] ${titleMap[nextAction] ?? nextAction}${reason ? `：${reason}` : ''}\n`
+    chat.updateBlock(thinkBlock.id, { content: thinkBlock.content })
+    ui.pushLiveTimelineItem({
+      seq: 5,
+      ts: ctx.serverTime,
+      event: 'loop.turn.result',
+      title: `第 ${round} 轮完成：${titleMap[nextAction] ?? nextAction}`,
+      detail: reason || (preview ? preview.slice(0, 80) : ''),
+      kind: nextAction === 'error' ? 'lifecycle-fail' : nextAction === 'continue' ? 'think' : 'lifecycle-ok',
+      target: 'agent-0',
+    })
+  }
+
   /** evaluation.completed：Evolutor 评估结论 → 思考面板 */
   function onEvaluationCompleted(ctx: StreamEventCtx) {
     const evalType = String(ctx.payload.eval_type || '')
@@ -959,6 +1034,8 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.IntentStarted]: onIntentStarted,
     [BusinessEvent.AgentBuilt]: onAgentBuilt,
     [BusinessEvent.LlmSelected]: onLlmSelected,
+    [BusinessEvent.SoulSelected]: onSoulSelected,
+    [BusinessEvent.ThoughtModeSelected]: onThoughtSelected,
     [BusinessEvent.PromptSelected]: onPromptSelected,
     [BusinessEvent.SkillSelected]: onSkillSelected,
     [BusinessEvent.McpSelected]: onMcpSelected,
@@ -968,6 +1045,8 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
     [BusinessEvent.WriterStarted]: onWriterStarted,
     [BusinessEvent.ErrorOccurred]: onError,
     [BusinessEvent.MessageBlock]: () => { /* 阶段4 块流 */ },
+    [BusinessEvent.LoopTurnStarted]: onLoopTurnStarted,
+    [BusinessEvent.LoopTurnResult]: onLoopTurnResult,
     [BusinessEvent.LoopTurnCompleted]: () => { /* 轮耗时经历史 trace 聚合，实时不需要处理 */ },
     [SseTransportEvent.Done]: onDone,
   }

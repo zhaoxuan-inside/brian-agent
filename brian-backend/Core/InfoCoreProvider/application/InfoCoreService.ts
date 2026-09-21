@@ -1312,19 +1312,27 @@ export class InfoCoreService {
       currentCandidate = latest[0] ?? null;
     }
 
-    // 2.3 数量与比例双控制 + 动态收缩：除钉住消息外，各弱相关维度限额先取
-    //     「基础数量」与「total × 上限百分比」的较小值，再按基础上下文占比收缩。
-    //     基础上下文越多，弱相关维度越少，把预算让给更明确的上下文，避免无关信息挤占。
+    // 2.3 弱相关维度限额（2026-09-15 第三版，按用户裁定口径）：
+    //     实际上限 = min(该维度基础上限 base_xxx_count, 「基础上下文消息数量」× xxx_max_percent%)
+    //     —— 占比基准是**基础上下文数量**（= pinned + citing + timeline），不再占 total、
+    //     也不再引入 shrinkFactor 二次收缩（原始实现注释保留在下方）；基础上下文越多，
+    //     弱相关空间同比放行，抹去「占比放样 over total + 收缩」的双重折算。
+    // ===== 原始实现（保留作为参考）=====
+    // const baseContextCount = pinnedCandidates.length + citingCandidates.length + timelineCandidates.length;
+    // const shrinkFactor = maxTotal > 0 ? Math.max(0, 1 - baseContextCount / maxTotal) : 1;
+    // const capByPercent = (base: number, percent: number): number => {
+    //   const byPercent = maxTotal > 0 ? Math.floor((maxTotal * percent) / 100) : 0;
+    //   return Math.floor(Math.min(base, byPercent) * shrinkFactor);
+    // };
     const baseContextCount = pinnedCandidates.length + citingCandidates.length + timelineCandidates.length;
-    const shrinkFactor = maxTotal > 0 ? Math.max(0, 1 - baseContextCount / maxTotal) : 1;
-    const capByPercent = (base: number, percent: number): number => {
-      const byPercent = maxTotal > 0 ? Math.floor((maxTotal * percent) / 100) : 0;
-      return Math.floor(Math.min(base, byPercent) * shrinkFactor);
+    const capByBase = (base: number, percent: number): number => {
+      const byBase = Math.floor((baseContextCount * percent) / 100);
+      return Math.min(base, byBase);
     };
-    const tagLimit = capByPercent(contextConfig?.base_tag_relative_count ?? 200, contextConfig?.tag_relative_max_percent ?? 20);
-    const simLimit = capByPercent(contextConfig?.base_similarity_count ?? 150, contextConfig?.similarity_max_percent ?? 15);
-    const kwLimit = capByPercent(contextConfig?.base_keyword_count ?? 100, contextConfig?.keyword_max_percent ?? 10);
-    const randLimit = capByPercent(contextConfig?.base_random_count ?? 50, contextConfig?.random_max_percent ?? 20);
+    const tagLimit = capByBase(contextConfig?.base_tag_relative_count ?? 200, contextConfig?.tag_relative_max_percent ?? 20);
+    const simLimit = capByBase(contextConfig?.base_similarity_count ?? 150, contextConfig?.similarity_max_percent ?? 15);
+    const kwLimit = capByBase(contextConfig?.base_keyword_count ?? 100, contextConfig?.keyword_max_percent ?? 10);
+    const randLimit = capByBase(contextConfig?.base_random_count ?? 50, contextConfig?.random_max_percent ?? 5);
     const kwScoreThreshold = contextConfig?.keyword_score_threshold ?? 95;
 
     // 获取参考文本：优先使用 input.info（当前用户提问文本），其次查找 input.info_id 记录，最后从 CITING/TIMELINE 中提取
@@ -1429,16 +1437,33 @@ export class InfoCoreService {
     //     }
     //   } catch { /* ignore */ }
     // }
-    // ===== 修改后的实现：会话内候选不足 randLimit 时，允许跨会话从全局随机补充（对齐 PRD「会话内不足时从全局」） =====
+    // ===== 修改后的实现（2026-09-15 第二版，对齐 PRD 步骤 524）=====
+    // PRD：RANDOM = 「从会话内未选中消息随机抽样」＋「会话内候选不足以填满限额时，从全局随机补充剩余名额
+    //（仅 enable_cross_session=true 时）」。注意：会话内随机抽样是本维度的基础动作，**不受**
+    // enable_cross_session 约束（该开关只控制跨会话的全局兜底）——
+    // 原实现把整段 RANDOM 采样包进 enableCrossSession 判断，enable_cross_session=false 时
+    // （Work Agent 子任务场景）会话内随机也被一并跳过，与 PRD 相悖。
+    // ===== 原始实现（2026-09-14 版，保留作为参考）=====
+    // let randCandidates: InfoRawRecord[] = [];
+    // if (randLimit > 0 && enableCrossSession) {
+    //   ... 同下，整段（会话内采样 + 全局补充）都被 enableCrossSession 门控 ...
+    // }
     let randCandidates: InfoRawRecord[] = [];
-    if (randLimit > 0 && enableCrossSession) {
+    if (randLimit > 0) {
       try {
+        // 注意：PRD「从会话内未选中消息随机抽样」的「未选中」= 未被复选/钉住等显式维度采集；
+        // 时间线候选不计入排除集（时间线未被采集时，其消息对 RANDOM 仍可见，重复剔除由
+        // 步骤 8 的按优先级全局去重统一裁决）。
         const existingIds = new Set<string>([
           ...pinnedCandidates.map((c) => c.info_id),
           ...citingCandidates.map((c) => c.info_id),
-          ...timelineCandidates.map((c) => c.info_id),
         ]);
 
+        // 1. 会话内随机抽样（无条件：非跨会话维度，PRD 步骤 524 主句）
+        //    CURRENT 消息在本阶段即排除（PRD 步骤 4：当前输入不参与弱相关维度候选）——
+        //    原实现在抽样后才剔除，导致当前消息先占一个 randLimit 名额、再被剔除，最终
+        //    RANDOM 实收比限额少 1（trace 162c58fc 实测 49/50）=====
+        const curExcludeId = currentCandidate?.info_id ?? '';
         const count = await this.relationDb.count(INFO_RAW_TABLE, [
           { field: 'session_id', operator: Operator.EQ, value: input.session_id },
         ]);
@@ -1446,19 +1471,20 @@ export class InfoCoreService {
           // 使用 ORDER BY RANDOM() LIMIT 避免全表扫描
           const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
             `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
-            [input.session_id, Math.min(randLimit * 3, count)],
+            [input.session_id, Math.min((randLimit + 1) * 3, count)],
           );
           const sessionCandidates = randomRows
             .map((r) => this.toInfoRawRecord(r))
-            .filter((c) => !existingIds.has(c.info_id))
+            .filter((c) => !existingIds.has(c.info_id) && c.info_id !== curExcludeId)
             .filter((c) => this.isCorrectInfo(c));
           randCandidates = sessionCandidates.slice(0, randLimit);
         }
-        // 会话内候选不足以填满限额时，从全局随机补充剩余名额（enableCrossSession 已在上方校验）
-        if (randCandidates.length < randLimit) {
+        // 2. 会话内候选不足以填满限额时，从全局随机补充剩余名额（仅 enable_cross_session=true，PRD 括注）
+        if (randCandidates.length < randLimit && enableCrossSession) {
           const remaining = randLimit - randCandidates.length;
           const filledIds = new Set([
             ...existingIds,
+            curExcludeId,
             ...randCandidates.map((c) => c.info_id),
           ]);
           const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
@@ -1868,7 +1894,7 @@ const rawPriority = priorityOrderStr
         base_similarity_count: 150,
         base_keyword_count: 100,
         base_random_count: 50,
-        random_max_percent: 20,
+        random_max_percent: 5,
         tag_relative_max_percent: 20,
         similarity_max_percent: 15,
         keyword_max_percent: 10,
@@ -3122,7 +3148,7 @@ const rawPriority = priorityOrderStr
       base_similarity_count: Number(raw['base_similarity_count'] ?? 150),
       base_keyword_count: Number(raw['base_keyword_count'] ?? 100),
       base_random_count: Number(raw['base_random_count'] ?? 50),
-      random_max_percent: Number(raw['random_max_percent'] ?? 20),
+      random_max_percent: Number(raw['random_max_percent'] ?? 5),
       tag_relative_max_percent: Number(raw['tag_relative_max_percent'] ?? 20),
       similarity_max_percent: Number(raw['similarity_max_percent'] ?? 15),
       keyword_max_percent: Number(raw['keyword_max_percent'] ?? 10),

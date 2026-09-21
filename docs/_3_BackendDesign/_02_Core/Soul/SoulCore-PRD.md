@@ -226,3 +226,17 @@ Agent↔本模块组件的绑定关系收敛至 **Agent 模块 agent 表**（唯
 **影响的端点**：
 - `POST /api/chat/stream` — 数学、写作等不同任务将自动获得差异化特质的人格，不再错配编码人设。
 
+### [2026-09-19] Soul 并入身份声明块，消除身份/人格重复
+
+**变更原因**：
+「Brian 身份声明」模板曾将 {{soul}} 渲染为独立 `# 人格` 区块，导致 system prompt 中 `# 身份`（你是 Brian…智能助理）与 `# 人格`（你是…任务专家）两段重复定义"你是…"式角色，语义重复且相互冲突（会话 trace `ccc6e0ee-d582-40a6-bc1d-cf63cebadc2c` 验证）。
+
+**修改的方法**：
+- `Brian 身份声明` 模板（`Base/PromptCatalog/catalog.ts` `PROMPT_IDS.identity` + `prompt_template` 表 `1f08b32d` 行）：删除独立 `# 人格` 区块，将 {{soul}} 内容并入 `# 身份` 块，作为身份声明内嵌的人格特质；自我介绍规则改为"人格特质只影响做事风格，不改变身份定位"；soul 为空时（{{#if}} 条件块）身份段回退为纯净的 Brian 声明。
+
+**影响的端点**：
+- `POST /api/chat/stream` — system prompt 不再出现重复的角色定义；"你是谁"类回答统一由身份段唯一来源（Brian）给出。
+
+**可能存在的问题**：
+- soul 内容若为完整"你是 X 专家"式定义，与"你是 Brian"句仍会连续出现两个"你"，后续可在 `generateAndAddSoul` 产出中约束为第三人称特质描述以进一步消除。
+

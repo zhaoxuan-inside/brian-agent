@@ -144,25 +144,57 @@ export class RunGatewayService {
     this.config = new ConfigService(relationDb, RUNTIME_RUNS_CONFIG_TABLE);
   }
 
+  // ===== 原始方法（保留作为参考）=====
+  // private async buildStaticMemorySystem(
+  //   runId: string,
+  //   input: SubmitRunInput,
+  //   snapshot: SoAgentSnapshotOutput['snapshot'],
+  //   metrics?: Metrics,
+  //   report?: Report,
+  // ): Promise<string> {
+  //   const baseSystem = snapshot.system ?? '';
+  //   if (!this.infoCore) return baseSystem;
+  //   try {
+  //     const ctxIn = new ContextInfoInput();
+  //     ctxIn.session_id = input.session_key;
+  //     ctxIn.work_id = runId;
+  //     ctxIn.info = input.user_message;
+  //     ctxIn.enable_cross_session = true;
+  //     const ctxOut = new ContextInfoOutput();
+  //     await this.infoCore.context(ctxIn, ctxOut, new InfoCoreContext(), metrics, report);
+  //     const staticMemory = formatContextCategories(ctxOut);
+  //     if (!staticMemory) return baseSystem;
+  //     this.logger?.debug?.('主 Loop 静态记忆注入完成', {
+  //       run_id: runId,
+  //       categories: Object.entries(ctxOut.categories ?? {})
+  //         .filter(([, v]) => Array.isArray(v) && v.length > 0)
+  //         .map(([k]) => k),
+  //     });
+  //     return baseSystem ? `${baseSystem}\n\n${staticMemory}` : staticMemory;
+  //   } catch (err) {
+  //     this.logger?.warn?.('主 Loop 静态记忆构建失败（回退纯 soul system）', { run_id: runId, error: err instanceof Error ? err.message : String(err) });
+  //     return baseSystem;
+  //   }
+  // }
+
   /**
-   * 构建主 Loop 的 system（含多层静态记忆）（数据处理；2026-09-15 新增）。
-   *
-   * - 静态记忆 = <static-memory-context>：InfoCore.context() 多维召回（跨会话）按 runId 落
-   *   权威快照（persist 默认 true），并以不可变块追加到 system —— 不进入对话消息序列，
-   *   每轮轮转内容不变、模型不可修改，仅作背景参照；
-   * - 可变记忆 = 执行过程新信息：工具产出 / 用户追加 / 中间结论保持在消息序列中动态演进，
-   *   与静态记忆物理分离（contextFormatter 的 usage-note 已内嵌冲突裁决规则）；
-   * - 失败兜底 best-effort：召回失败仅记录并回退原 system，不阻塞执行。
+   * ===== 修改后（2026-09-19 上下文前置）：记忆召回与 system 合成两段拆分 =====
+   * 原实现把「多层静态记忆召回」与「和 soul system 拼接」耦合，只能在 Agent 选择/构建之后调用，
+   * 导致意图分析与 Agent 构建阶段拿不到基本上下文。
+   * 现拆为两个方法：
+   * - buildStaticMemory：run 第一步先完成跨会话多层记忆召回（TAG_RELATIVE/SIMILARITY/KEYWORD/
+   *   RANDOM 全局维度），产出静态记忆文本与召回类别清单，并上报 round=0 的 context.built
+   *   （基础上下文 = 会话时间线 + 静态记忆多层召回）；后续意图分析/Agent 构建/Loop 皆以此为基底；
+   * - composeSystemWithMemory：soul system 就绪后与静态记忆一次性拼接（不可变块，语义不变）。
    */
-  private async buildStaticMemorySystem(
+  /** 多层静态记忆召回（逻辑控制；失败 best-effort 返回空串；manifest 至少含召回类别） */
+  private async buildStaticMemory(
     runId: string,
     input: SubmitRunInput,
-    snapshot: SoAgentSnapshotOutput['snapshot'],
     metrics?: Metrics,
     report?: Report,
-  ): Promise<string> {
-    const baseSystem = snapshot.system ?? '';
-    if (!this.infoCore) return baseSystem;
+  ): Promise<{ memory: string; categories: string[] }> {
+    if (!this.infoCore) return { memory: '', categories: [] };
     try {
       const ctxIn = new ContextInfoInput();
       ctxIn.session_id = input.session_key;
@@ -174,18 +206,27 @@ export class RunGatewayService {
       const ctxOut = new ContextInfoOutput();
       await this.infoCore.context(ctxIn, ctxOut, new InfoCoreContext(), metrics, report);
       const staticMemory = formatContextCategories(ctxOut);
-      if (!staticMemory) return baseSystem;
-      this.logger?.debug?.('主 Loop 静态记忆注入完成', {
-        run_id: runId,
-        categories: Object.entries(ctxOut.categories ?? {})
-          .filter(([, v]) => Array.isArray(v) && v.length > 0)
-          .map(([k]) => k),
+      const categories = Object.entries(ctxOut.categories ?? {})
+        .filter(([, v]) => Array.isArray(v) && v.length > 0)
+        .map(([k]) => k);
+      this.logger?.debug?.('主 Loop 静态记忆召回完成（前置构建）', { run_id: runId, categories });
+      report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
+        round: 0,
+        base: true,
+        message_count: 0,
+        memory_categories: categories,
       });
-      return baseSystem ? `${baseSystem}\n\n${staticMemory}` : staticMemory;
+      return { memory: staticMemory, categories };
     } catch (err) {
-      this.logger?.warn?.('主 Loop 静态记忆构建失败（回退纯 soul system）', { run_id: runId, error: err instanceof Error ? err.message : String(err) });
-      return baseSystem;
+      this.logger?.warn?.('主 Loop 静态记忆召回失败（回退空记忆，不阻塞执行）', { run_id: runId, error: err instanceof Error ? err.message : String(err) });
+      return { memory: '', categories: [] };
     }
+  }
+
+  /** system 合成（数据处理）：soul identity system + 静态记忆不可变块 */
+  private composeSystemWithMemory(baseSystem: string, memory: string): string {
+    if (!memory) return baseSystem;
+    return baseSystem ? `${baseSystem}\n\n${memory}` : memory;
   }
 
   /** 初始化组件 */
@@ -551,10 +592,17 @@ export class RunGatewayService {
   // }
 
   // ===== 修改后的方法 =====
-  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；透传 metrics 并在结束时落地入库；异常必收敛 */
+  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；透传 metrics 并在结束时落地入库；异常必收敛
+   *  ===== 修改后（2026-09-19 上下文前置）：① 第一步先构建基本上下文（会话时间线 + 跨会话多层静态记忆），
+   *  之后意图分析/Agent 构建/组件装配/Loop 执行全部依赖该基本上下文（静态记忆随 system 注入，意图/执行共享）；
+   *  ② 组件装配完成后即选思维模型（CoT/ReAct）并上报 thought.selected（含选择理由）；
+   *  ③ Loop 执行期间逐轮上下文/结果/终止决策由 Loop 上报（loop.turn.*）===== */
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
     let matchOut: MatchAgentDefOutput | undefined;
     try {
+      // ===== 修改后（2026-09-19 上下文前置）：第一步 = 基本上下文构建。后续所有步骤
+      // （intent 分析、Agent 构建、Loop 每轮 system）都消费这一次召回的静态记忆 =====
+      const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
       matchOut = await this.matchAgent(runId, input, parent?.metrics, parent?.report);
       // ===== 修改后（2026-09-12）：选择 Agent 先于组件装配上报，时间线顺序符合
       // 「需求确认 → 选择 Agent → 组件写作（LLM/Soul/Prompt/Skill/MCP）」；
@@ -590,6 +638,14 @@ export class RunGatewayService {
         skills: skillEntries,
         mcps: mcpEntries,
       });
+      // ===== 新增（2026-09-19）：思维模型选定（CoT/ReAct），在组件装配后、Loop 执行前上报。=====
+      const thoughtMode = this.decideThoughtMode(skillEntries.length, mcpEntries.length);
+      parent?.report?.pushBusinessEvent(BusinessEvent.ThoughtModeSelected, {
+        thought_mode: thoughtMode.mode,
+        reason: thoughtMode.reason,
+        skills_count: skillEntries.length,
+        mcps_count: mcpEntries.length,
+      });
       const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
       // ===== 新增（2026-09-15 用户要求）：主 Loop 注入多层静态记忆。
       //      主 Loop（对话每轮的实时执行 Agent）原先仅消费会话时间线 + soul，跨会话多层记忆
@@ -600,7 +656,11 @@ export class RunGatewayService {
       //      —— 执行过程中新增的信息（工具产出 / 用户追加消息 / 中间结论）仍在消息序列中动态演进，
       //         与静态记忆自然分离（静态块 usage-note 已声明「与执行新信息冲突时以新信息为准」）。
       //      Writer 汇总阶段保持自身的快照与记忆注入不变（writer work 快照 + agent_results 动态块）=====
-      loopInput.system = await this.buildStaticMemorySystem(runId, input, snapshot, parent?.metrics, parent?.report);
+      // ===== 修改后（2026-09-19 上下文前置）：主 Loop 不再二次召回静态记忆 ——
+      // 复用第一步（buildStaticMemory）的可视记忆清单与 soul system 合成，保证
+      // 意图分析、Agent 构建、Loop 执行消费同一份基本上下文快照 =====
+      loopInput.system = this.composeSystemWithMemory(snapshot.system ?? '', baseCtx.memory);
+      loopInput.thought_mode = thoughtMode.mode;
       // 注入 Writer 时由外部统一排版输出，延迟 Loop 的原始 reply.delta
       if (this.writer) {
         loopInput.defer_final_reply = true;
@@ -925,6 +985,29 @@ export class RunGatewayService {
     const snapOutput = new SoAgentSnapshotOutput();
     await this.agents.soAgentSnapshot(snapInput, snapOutput, new AgentDefContext(), metrics, report);
     return snapOutput.snapshot;
+  }
+
+  // ===== 2026-09-19 新增：思维模型选定（数据处理） =====
+  /**
+   * CoT/ReAct 判定规则（确定性，无随机）：
+   * - 有绑定 Skill 或 MCP（即存在外部工具/事实查询能力）→ ReAct：
+   *   执行形态是「行动→观察→再决策」的外部交互闭环，需 ReAct 的 Reason-Act 循环防止一次性幻觉调用；
+   * - 无外部工具（纯知识类直答任务）→ CoT：
+   *   无外部观察点，ReAct 的 Act 环节退化，一步链式推理（上下文 → 分析 → 结论）耗时最低，
+   *   且 Loop 允许每轮 continue（工具仍可由通用原语触发，只是不作为主要交互形态）。
+   * 逐轮体现在 loop.turn.started（thought_mode）与 thought.selected 事件 payload.reason。
+   */
+  private decideThoughtMode(skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
+    if (skillCount > 0 || mcpCount > 0) {
+      return {
+        mode: 'ReAct',
+        reason: `绑定了 ${skillCount} 个 Skill / ${mcpCount} 个 MCP，执行需「行动→观察→再决策」的外部交互闭环，选用 ReAct`,
+      };
+    }
+    return {
+      mode: 'CoT',
+      reason: '无绑定 Skill/MCP（纯知识类任务，无外部观察点），ReAct 的 Act 环节退化，选用 CoT 一步链式推理',
+    };
   }
 
   /** Loop 入参组装（原始方法，保留作为参考） */

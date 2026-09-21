@@ -217,3 +217,18 @@ submitRun ──ack──► accepted(queued)
   - ~~业务表 work_id 仍承载"问答锚点"语义~~ → 已收敛：**三级维度全量定名**——业务维度最终为 `session_id → run_id → work_id`，interact_id 已在前后端代码与数据库列（llm_call_log/info_raw/log_record/feedback_record/feedback_process_log/agent_usage/agent_plan/agent_evaluation）全部以 RENAME COLUMN 迁移为 run_id，前后端契约同步；
   - 系统级后台流调用 LLM 本无 session/run（业务维度空属正确语义），已全部落 `caller` 来源归因；
   - 
+### [2026-09-19] 上下文前置构建 + 思维模型选定（CoT/ReAct）+ 思维模型逐轮透出
+
+**变更原因**：复盘 trace ccc6e0ee：① 多层静态记忆召回发生在 Agent 选择/构建之后，意图分析与 Agent 构建阶段拿不到基本上下文，违反「上下文先行、后续步骤全依赖基本上下文」的执行语义；② 新建 Agent 的组件（LLM/Soul/Skill/MCP/Prompt）选择/生成过程未体现（仅最终 agent.components 汇总一处）；③ Agent 执行的 CoT/ReAct 选择及理由、逐轮上下文/结果/终止决策不可见。
+
+**修改的方法**：
+  - `RunGatewayService.executeRun` — 第一段新增 `buildStaticMemory`（会话时间线 + 跨会话多层静态记忆召回，上报 `round=0、base=true` 的 `context.built`）；快照组装后 `composeSystemWithMemory` 复用该份记忆与 soul system 拼接（原 `buildStaticMemorySystem` 整体注释保留，不再二次召回）；
+  - `RunGatewayService.decideThoughtMode`（新增）— 绑定 Skill/MCP → `ReAct`（外部「行动→观察→再决策」闭环）；无绑定 → `CoT`（无观察点，ReAct Act 退化）。经 `thought.selected` 事件上报 mode + reason，并随 `ExecAgentLoopInput.thought_mode` 传入 Loop；
+  - `LoginContainer` 无改动；组件逐件体现由 Agent 层 `AgentBuilderService.buildAgent` 上报。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 新增事件 `context.built(round=0, base=true)`、`thought.selected`；静态记忆召回提前（时间线上移）；Loop 每轮不再重复调 InfoCore.context。
+
+**可能存在的问题**：
+  - 上下文前置后，意图分析/构建期间记忆已冻结，用户 steer 追加内容本轮仍走消息序列动态演进（静态记忆不重建）；
+  - thought.selected 当前为确定性规则判定（无工具 → CoT），策略表（agent_strategy）仅落账不作裁决。

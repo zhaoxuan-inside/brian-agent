@@ -3864,60 +3864,166 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         });
 
       } else if (method === 'GET' && pathname === '/api/chat/eval-result') {
+        // ===== 原始方法（保留作为参考）=====
         // 评估结果采集接口：返回某次工作（work）的 Evolutor 评估结果（评分 JSON）。
         // 数据来源：orchestration_agent_execution（execution_type=SYSTEM 且 agent_type=EVOLUTOR）的 answer 字段。
+        // const infoId = String(params.get('info_id') ?? '');
+        // let workId = String(params.get('work_id') ?? '');
+        // let traceId = String(params.get('trace_id') ?? '');
+        //
+        // if (!workId && !infoId) {
+        //   sendJson(res, 400, { error: '请至少提供 work_id / info_id 中的一个参数' });
+        //   return;
+        // }
+        //
+        // if (!workId && infoId) {
+        //   try {
+        //     const rows = ctx.relationDb.queryRaw<{ work_id: string; trace_id: string }>(
+        //       `SELECT "work_id", "trace_id" FROM "info_raw" WHERE "info_id" = ? LIMIT 1`,
+        //       [infoId],
+        //     );
+        //     if (rows.length > 0) {
+        //       workId = String(rows[0].work_id ?? '');
+        //       traceId = String(rows[0].trace_id ?? '');
+        //     }
+        //   } catch { /* degrade gracefully */ }
+        // }
+        //
+        // if (!workId) {
+        //   sendJson(res, 200, { work_id: '', trace_id: traceId, found: false, evaluation: null });
+        //   return;
+        // }
+        //
+        // const evalRows = ctx.relationDb.queryRaw<{ answer: string; created: number; elapsed_ms: number; agent_name: string }>(
+        //   `SELECT e.answer, e.created, e.elapsed_ms, a.agent_name
+        //    FROM orchestration_agent_execution e
+        //    LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
+        //    WHERE e.work_id = ? AND e.execution_type = 'SYSTEM' AND a.agent_type = 'EVOLUTOR'
+        //    ORDER BY e.created DESC LIMIT 1`,
+        //   [workId],
+        // );
+        //
+        // if (evalRows.length === 0) {
+        //   sendJson(res, 200, { work_id: workId, trace_id: traceId, found: false, evaluation: null });
+        //   return;
+        // }
+        //
+        // const evalRow = evalRows[0];
+        // sendJson(res, 200, {
+        //   work_id: workId,
+        //   trace_id: traceId,
+        //   found: true,
+        //   evaluation: {
+        //     answer: String(evalRow.answer ?? ''),
+        //     created: Number(evalRow.created ?? 0),
+        //     elapsed_ms: Number(evalRow.elapsed_ms ?? 0),
+        //     agent_name: String(evalRow.agent_name ?? ''),
+        //   },
+        // });
+
+        // ===== 修改后的方法（2026-09-15）：数据源迁移到 agent_evaluation =====
+        // 原因：2026-09-14 Runtime v2 重构后，评估结果只写 agent_evaluation
+        // （run_id = 一次问答的 runtime_run.id），orchestration_agent_execution 不再新增行；
+        // 且 Runtime v2 中评估私有 evalWorkId 独立生成，问答的 work_id 在 agent_evaluation
+        // 中并无对应行，只能以 run_id（= info_raw.work_id / info_raw.run_id）关联。
+        // 旧数据（orchestration 时代）仍走原表兜底查询。
         const infoId = String(params.get('info_id') ?? '');
         let workId = String(params.get('work_id') ?? '');
+        let runId = String(params.get('run_id') ?? '');
         let traceId = String(params.get('trace_id') ?? '');
 
-        if (!workId && !infoId) {
-          sendJson(res, 400, { error: '请至少提供 work_id / info_id 中的一个参数' });
+        if (!workId && !runId && !infoId) {
+          sendJson(res, 400, { error: '请至少提供 work_id / run_id / info_id 中的一个参数' });
           return;
         }
 
-        // 未显式提供 work_id 时，按 info_id 反查 info_raw 得到 work_id 与 trace_id
-        if (!workId && infoId) {
+        // 未显式提供 work_id / run_id 时，按 info_id 反查 info_raw 得到
+        // work_id（= runtime_run.id / run_id，问答业务维度）、run_id 与 trace_id
+        if ((!workId && !runId) && infoId) {
           try {
-            const rows = ctx.relationDb.queryRaw<{ work_id: string; trace_id: string }>(
-              `SELECT "work_id", "trace_id" FROM "info_raw" WHERE "info_id" = ? LIMIT 1`,
+            const rows = ctx.relationDb.queryRaw<{ work_id: string; run_id: string; trace_id: string }>(
+              `SELECT "work_id", "run_id", "trace_id" FROM "info_raw" WHERE "info_id" = ? LIMIT 1`,
               [infoId],
             );
             if (rows.length > 0) {
               workId = String(rows[0].work_id ?? '');
-              traceId = String(rows[0].trace_id ?? '');
+              runId = runId || String(rows[0].run_id ?? '') || String(rows[0].work_id ?? '');
+              traceId = traceId || String(rows[0].trace_id ?? '');
             }
           } catch { /* degrade gracefully */ }
         }
 
-        if (!workId) {
+        if (!workId && !runId) {
           sendJson(res, 200, { work_id: '', trace_id: traceId, found: false, evaluation: null });
           return;
         }
 
-        const evalRows = ctx.relationDb.queryRaw<{ answer: string; created: number; elapsed_ms: number; agent_name: string }>(
-          `SELECT e.answer, e.created, e.elapsed_ms, a.agent_name
-           FROM orchestration_agent_execution e
-           LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
-           WHERE e.work_id = ? AND e.execution_type = 'SYSTEM' AND a.agent_type = 'EVOLUTOR'
-           ORDER BY e.created DESC LIMIT 1`,
-          [workId],
-        );
+        // ===== 新链路（Runtime v2）：优先查 agent_evaluation（run_id = 一次问答）=====
+        const queryLegacyEval = (): { answer: string; created: number; elapsed_ms: number; agent_name: string }[] => {
+          try {
+            return ctx.relationDb.queryRaw<{ answer: string; created: number; elapsed_ms: number; agent_name: string }>(
+              `SELECT e.answer, e.created, e.elapsed_ms, a.agent_name
+               FROM orchestration_agent_execution e
+               LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
+               WHERE e.work_id = ? AND e.execution_type = 'SYSTEM' AND a.agent_type = 'EVOLUTOR'
+               ORDER BY e.created DESC LIMIT 1`,
+              [workId],
+            );
+          } catch {
+            return [] as { answer: string; created: number; elapsed_ms: number; agent_name: string }[];
+          }
+        };
 
-        if (evalRows.length === 0) {
+        let answerJson = '';
+        let created = 0;
+
+        try {
+          const evalRows = ctx.relationDb.queryRaw<{ run_id: string; work_id: string; scores: string; suggestions: string; need_optimize: number; created: number; updated: number }>(
+            `SELECT "run_id", "work_id", "scores", "suggestions", "need_optimize", "created", "updated"
+             FROM "agent_evaluation" WHERE "run_id" = ? OR "work_id" = ? ORDER BY "created" DESC LIMIT 1`,
+            [runId || workId, runId || workId],
+          );
+
+          if (evalRows.length > 0) {
+            const row = evalRows[0];
+            created = Number(row.created ?? 0);
+            // 组装与旧 orchestration_agent_execution.answer 等价的评分 JSON，
+            // EvalResultModal 按 scores / suggestions / need_optimize 结构化解析
+            answerJson = JSON.stringify({
+              ...(() => {
+                try { return JSON.parse(row.scores || '{}'); } catch { return {}; }
+              })(),
+              suggestions: (() => {
+                try { return JSON.parse(row.suggestions || '[]'); } catch { return []; }
+              })(),
+              need_optimize: Number(row.need_optimize ?? 0) === 1,
+            });
+          }
+        } catch { /* degrade：agent_evaluation 表可能不存在（旧部署） */ }
+
+        // agent_evaluation 未命中且 work_id 存在时，回退旧 orchestration_agent_execution（历史数据）
+        if (!answerJson && workId) {
+          const legacyRows = queryLegacyEval();
+          if (legacyRows.length > 0) {
+            answerJson = String(legacyRows[0].answer ?? '');
+            created = Number(legacyRows[0].created ?? 0);
+          }
+        }
+
+        if (!answerJson) {
           sendJson(res, 200, { work_id: workId, trace_id: traceId, found: false, evaluation: null });
           return;
         }
 
-        const evalRow = evalRows[0];
         sendJson(res, 200, {
           work_id: workId,
           trace_id: traceId,
           found: true,
           evaluation: {
-            answer: String(evalRow.answer ?? ''),
-            created: Number(evalRow.created ?? 0),
-            elapsed_ms: Number(evalRow.elapsed_ms ?? 0),
-            agent_name: String(evalRow.agent_name ?? ''),
+            answer: answerJson,
+            created,
+            elapsed_ms: 0,
+            agent_name: '进化 Agent (Evolutor)',
           },
         });
 

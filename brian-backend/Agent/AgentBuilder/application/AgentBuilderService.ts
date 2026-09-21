@@ -6,6 +6,7 @@ import {
   ExecPromptInput, ExecPromptOutput, PromptContext,
   SoPromptInput, SoPromptOutput,
   InfoType,
+  BusinessEvent,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -73,7 +74,11 @@ export class AgentBuilderService {
     private readonly streamAccess?: StreamAccess,
   ) {}
 
-  async buildAgent(input: BuildAgentInput, output: BuildAgentOutput, ctx: AgentBuilderContext, _metrics?: Metrics, _report?: Report,
+  // ===== 修改后的方法（2026-09-19）：构建阶段每个组件的选择/生成逐一上报 ——
+  // llm/skill/mcp/soul/prompt 在各自 Core 匹配完成后即时 emit（LLM/Skill/MCP/Soul/Prompt 组件
+  // 各自的「选定」事件带 stage='build' 与选择原因），使 thinking 过程可看到本次新建 Agent
+  // 的组件装配明细，而不是只在最终 agent.components 汇总一处 =====
+  async buildAgent(input: BuildAgentInput, output: BuildAgentOutput, ctx: AgentBuilderContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
     const libCtx = this.toLibCtx(ctx, input.run_id);
@@ -90,8 +95,8 @@ export class AgentBuilderService {
     }
 
     // 先通过 Core 为该 agent 匹配 LLM，供任务分析使用（禁止 llm_model LIMIT 1）
-    const analysisLlm = await this.matchLlmForAgent(agentId, input.run_id, _metrics, _report);
-    const analysis = await this.analyzeTask(input, config, analysisLlm, _metrics, _report);
+    const analysisLlm = await this.matchLlmForAgent(agentId, input.run_id, metrics, report);
+    const analysis = await this.analyzeTask(input, config, analysisLlm, metrics, report);
     const signature = analysis.signature;
     const complexity = analysis.complexity;
     const domain = analysis.domain;
@@ -106,8 +111,8 @@ export class AgentBuilderService {
         }),
         matchOut,
         libCtx,
-        _metrics,
-        _report,
+        metrics,
+        report,
       );
       if (matchOut.matched && !matchOut.regenerate && matchOut.agent_id) {
         await this.agentLibrary.recordAgentUsage(
@@ -118,8 +123,8 @@ export class AgentBuilderService {
           }),
           new RecordAgentUsageOutput(),
           libCtx,
-          _metrics,
-          _report,
+          metrics,
+          report,
         );
         output.agent_id = matchOut.agent_id;
 
@@ -145,8 +150,8 @@ export class AgentBuilderService {
       }),
       strategyOut,
       new AgentStrategyContext(),
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
     if (!strategyOut.strategy_id) {
       throw new ValidationError('Failed to match strategy');
@@ -161,10 +166,16 @@ export class AgentBuilderService {
       }),
       llmOut,
       new LLMCoreContext(),
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
     const llmId = llmOut.llm_id || analysisLlm || '';
+    // ===== 2026-09-19：LLM 组件选定体现（构建阶段；绑定事实源 = agent_llm，由 matchLLM 写入） =====
+    report?.pushBusinessEvent(BusinessEvent.LlmSelected, {
+      llm_id: llmId,
+      stage: 'build',
+      reason: 'Core 按任务/配额选型（matchLLM 选定并写入 agent_llm 绑定，供任务分析与本 Agent 执行复用）',
+    });
 
     const skillOut = new MatchSkillOutput();
     await this.skillCore.matchSkill(
@@ -175,9 +186,16 @@ export class AgentBuilderService {
       }),
       skillOut,
       new SkillCoreContext(),
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
+    // ===== 2026-09-19：Skill 组件选定体现（构建阶段；绑定落 agent 表 skill_ids） =====
+    report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
+      source: 'build',
+      skills: (skillOut.skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
+      reason: 'skillCore.matchSkill 按任务语义选定技能清单（无强匹配即空绑定）',
+      skills_count: (skillOut.skills ?? []).length,
+    });
 
     const mcpOut = new MatchMcpOutput();
     await this.mcpCore.matchMCP(
@@ -188,9 +206,16 @@ export class AgentBuilderService {
       }),
       mcpOut,
       new McpCoreContext(),
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
+    // ===== 2026-09-19：MCP 组件选定体现（构建阶段；绑定落 agent 表 mcp_ids） =====
+    report?.pushBusinessEvent(BusinessEvent.McpSelected, {
+      stage: 'build',
+      mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, brief: '' })),
+      reason: 'mcpCore.matchMCP 按任务语义选定外部工具通道（无强匹配即空绑定）',
+      mcps_count: (mcpOut.mcp_ids ?? []).length,
+    });
 
     const soulOut = new MatchSoulOutput();
     await this.soulCore.matchSoul(
@@ -203,9 +228,18 @@ export class AgentBuilderService {
       }),
       soulOut,
       new SoulCoreContext(),
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
+    // ===== 2026-09-19：Soul 组件选定/生成体现（构建阶段；命中即复用、未命中由 Core 生成入库） =====
+    report?.pushBusinessEvent(BusinessEvent.SoulSelected, {
+      soul_id: soulOut.soul_id || '',
+      brief: String(soulOut.soul?.soul_brief ?? '').slice(0, 200),
+      stage: 'build',
+      reason: soulOut.soul_id
+        ? 'soulCore.matchSoul 按任务领域选择/生成人格（soul 入 soul 表并落 agent 绑定）'
+        : 'soulCore.matchSoul 无命中（本次构建未绑定 Soul）',
+    });
 
     const agentName = this.generateAgentName(
       soulOut.soul,
@@ -216,8 +250,16 @@ export class AgentBuilderService {
 
     // Prompt 选择：经 PromptsAccess 资源选择（纯选择，无绑定持久化；绑定落 agent 表）
     const promptTemplateId = await this.matchPromptForAgent(
-      input.task_content || analysis.signature, analysis.domain, _metrics, _report,
+      input.task_content || analysis.signature, analysis.domain, metrics, report,
     );
+    // ===== 2026-09-19：Prompt 组件选定体现（构建阶段；LLM 语义评分 ≥75 才采纳特定模板，否则回退内置身份模板） =====
+    report?.pushBusinessEvent(BusinessEvent.PromptSelected, {
+      template_id: promptTemplateId,
+      stage: 'build',
+      reason: promptTemplateId
+        ? 'matchPromptForAgent LLM 语义评分命中特定模板（score≥75），绑定落 agent 表 prompt_template_id'
+        : '无高度契合模板（评分<75），Prompt 回退执行侧内置身份模板（Brian 身份声明）',
+    });
 
     // 为新 Agent 生成说明（LLM 基于任务与选定组件生成；该说明是后续 matchAgent 的匹配依据）
     const agentPurpose = await this.generateAgentPurpose(
@@ -226,8 +268,8 @@ export class AgentBuilderService {
       String(soulOut.soul?.soul_brief ?? ''),
       (skillOut.skills ?? []).map((s) => s.skill_brief),
       mcpOut.mcp_ids ?? [],
-      _metrics,
-      _report,
+      metrics,
+      report,
     );
 
     const addOut = new AddAgentOutput();

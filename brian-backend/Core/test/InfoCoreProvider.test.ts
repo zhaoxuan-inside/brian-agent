@@ -823,6 +823,66 @@ describe('InfoCoreProvider', () => {
       }
     });
 
+    it('RANDOM：会话内随机抽样不受 enable_cross_session 影响（false 时仅跳过全局兜底）', async () => {
+      const sessionId = 'random-in-session';
+      // 2026-09-15 口径：基础上下文×5%，randLimit= floor(基础×5%)，需 ≥20 条基础上下文才有随机配额（8/tiny 不够）
+      for (let i = 0; i < 30; i++) {
+        await infoCore.saveInfo(
+          makeSaveInput({ session_id: sessionId, info: `Session message ${i} with enough length to be meaningful.` }),
+          new SaveInfoOutput(), new InfoCoreContext(),
+        );
+      }
+      // 其它会话的消息（仅 enable_cross_session=true 时才可能被随机兜底捞到）
+      const otherIds: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const out = new SaveInfoOutput();
+        await infoCore.saveInfo(
+          makeSaveInput({ session_id: 'other-random-session', info: `Other session message ${i} also long enough.` }),
+          out, new InfoCoreContext(),
+        );
+        otherIds.push(out.info_id);
+      }
+
+      await new Promise((r) => setTimeout(r, 200));
+
+      // 仅保留 RANDOM 维度，彻底隔离时间线/钉住
+      const cfgIn = new UpdateInfoContextConfigInput();
+      cfgIn.priority_order = 'RANDOM';
+      await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+
+      try {
+        const input = new ContextInfoInput();
+        input.session_id = sessionId;
+        input.work_id = `work-${sessionId}`;
+        input.enable_cross_session = false;
+        input.info = 'Session message 3 about meaningful stuff?';
+        const output = new ContextInfoOutput();
+        await infoCore.context(input, output, new InfoCoreContext());
+
+        const randomIds = (output.categories?.random ?? []).map((m) => m.info_id);
+        // 会话内随机照常生效（PRD 步骤 524 主句：会话内随机抽样不受 cross_session 开关约束）
+        expect(randomIds.length).toBeGreaterThanOrEqual(1);
+        const allCollectedIds = output.list.map((m) => m.info_id);
+        // 不应出现其它会话的消息（全局兜底已随 enable_cross_session=false 跳过）
+        for (const otherId of otherIds) {
+          expect(allCollectedIds).not.toContain(otherId);
+        }
+        // 当前消息不进入 RANDOM（2026-09-15：先剔除再核算名额，限额不被当前消息占用）
+        const currentRows = await relationDb.queryRaw<{ info_id: string }>(
+          `SELECT info_id FROM info_raw WHERE session_id = ? ORDER BY created DESC LIMIT 1`,
+          [sessionId],
+        );
+        const currentId = currentRows?.[0]?.info_id ?? '';
+        if (currentId) {
+          expect(randomIds).not.toContain(currentId);
+        }
+      } finally {
+        const resetIn = new UpdateInfoContextConfigInput();
+        resetIn.priority_order = 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
+        await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+      }
+    });
+
     it('should populate complete message object data structure', async () => {
       const sessionId = 'struct-test-session';
       const out = new SaveInfoOutput();

@@ -124,3 +124,14 @@ finish=tool-calls → `consumeToolCalls`（execTool 配对结果 → Part 状态
 
 - 单测：LLMEvent 归一化（mock provider 流）——**已落地**（`Base/test/LLMEventsParser.test.ts` 8 用例 + `Base/test/LLMEventsRunner.test.ts` 6 用例，2026-09-04）；finish=tool-calls → 执行 → 配对；预算超支 prefill；aborted 未配对 Part 规范化。IterationBudget —— 已落地（`Runtime/test/IterationBudget.test.ts` 6 用例）。
 - 集成：mock LLM 多轮 tool_calls 后 stop；steering 注入点边界正确；watchdog 触发 abort。
+
+### [2026-09-19] 逐轮可观测：loop.turn.started / loop.turn.result + 逐轮 thought_mode 透出
+
+**变更原因**：轮级执行的「基础上下文依赖、本轮产出、是否继续执行」此前不可见（仅轮末 `loop.turn.completed` 带耗时）。
+**修改的方法**：
+  - `Runtime/Loop/application/AgentLoopService.ts`：
+  - 同轮 `context.built` payload 新增 `thought_mode`（本轮思维模型）；
+  - `runInnerTurn`（原实现注释保留）每轮开始上报 `loop.turn.started`（round / thought_mode / final_turn / base_context 归因）；轮末上报 `loop.turn.result`（finish_reason / result_preview / tool_calls / next_action=continue|stop|error|budget / decision_reason）；
+  - `ExecAgentLoopInput` 新增 `thought_mode` 字段（RunGateway 装配后传入）。
+**影响的端点**：
+  - `POST /api/chat/stream` — 每轮多两条时间线节点（逐轮开始/结果）。

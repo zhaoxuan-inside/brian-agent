@@ -343,11 +343,27 @@
   3. **历史返回真实 trace_id**：`/api/chat/history` 的 `traceId` 字段改为 `m.trace_id || ''`（仅真实 trace_id，不回落业务 ID）；`/api/visualization/message-dag` 节点同样回传 `trace_id`。
   4. **新增「评估结果」按钮**：`MessageCard` 底部栏在「思考过程」按钮旁新增「评估结果」按钮（Gauge 图标），点击后弹出 `EvalResultModal` 展示对应 work 的 Evolutor 评估评分 JSON（解析 scores / suggestions / need_optimize 结构化展示，并保留原始 JSON 与 trace_id）。
   5. **后端新增接口**：`GET /api/chat/eval-result?info_id=xxx`（或 `work_id`），按 info_id 反查 `info_raw` 得到 `work_id` 与 `trace_id`，再从 `orchestration_agent_execution`（`execution_type=SYSTEM` 且 `agent_type=EVOLUTOR`）读取最新评估 `answer` 返回。
+     - **[2026-09-15 修改]** Runtime v2 重构后评估结果改落 `agent_evaluation` 表（`run_id` = 一次问答的 `runtime_run.id`，即 `info_raw.work_id`），且评估使用框架生成的私有 work_id，按 `orchestration_agent_execution.work_id` 永远查不到。接口现优先按 `run_id`（= info_raw.work_id / run_id）查 `agent_evaluation`，未命中时回退旧 `orchestration_agent_execution`（历史数据）。
   6. **状态管理**：`session.ts` 新增 `evalResultVisible` / `evalResultLoading` / `evalResult` / `evalResultError` / `evalTraceId` 与 `openEvalResult` / `closeEvalResult`。
 - **行为差异**：
   - 修改前：消息框复制按钮复制 `work_id` 却标注为 TraceId；trace_id 不随消息历史还原；无「评估结果」按钮。
   - 修改后：消息框「复制 TraceId」复制真实客户端 trace_id；traceId 独立于业务 ID，任意方法缺失时自动生成，日志统一保存 trace_id；点击「评估结果」可直接查看评分 JSON，评估未完成时提示"暂无评估结果（评估可能尚未完成，稍后重试）"。
 - **新增边界条件**：Evolutor 评估为异步（setImmediate / MQ），评估完成前点击「评估结果」可能返回 `found=false`，稍后重试即可；历史旧数据无 `trace_id` 列值时「复制 TraceId」按钮不展示（不回落业务 ID）。
+- **[2026-09-15 变更原因]**（见本文件下方 2026-09-15 变更记录）。
+
+### [2026-09-15] /api/chat/eval-result 数据源迁移到 agent_evaluation（修复「评估结果」弹窗永远为空）
+- **变更原因**：2026-09-14 Runtime v2 重构后，Evolutor 评估结果不再写 `orchestration_agent_execution`（该表已无任何写入方，成为历史数据），改为写 `agent_evaluation`（`run_id` = 一次问答的 `runtime_run.id`，与 `info_raw.work_id` / `info_raw.run_id` 同值）；且评估阶段使用框架生成的私有 `evalWorkId`，此 ID 与问答的 work_id 完全无关，导致原接口按 `work_id = info_raw.work_id` 查 `orchestration_agent_execution` **永远查不到任何行**，消息框「评估结果」按钮始终显示"暂无评估结果"。DB 实证：`orchestration_agent_execution` 最新行 created=2026-09-14（旧架构），而 `agent_evaluation` 在 2026-09-14 20:30 后仍在持续新增且 `run_id` 与新问答 `work_id` 精确匹配。
+- **功能变更**（后端，`brian-backend/dev-server.ts` `/api/chat/eval-result` 端点）：
+  1. **反查维度变更**：`info_id` 反查 `info_raw` 额外返回 `run_id`；关联键以 `run_id`（= `info_raw.work_id` / `info_raw.run_id`）为主。
+  2. **新链路查询**：优先查 `agent_evaluation`（`WHERE run_id = ? OR work_id = ?`，取最新一行），按其 `scores` / `suggestions` / `need_optimize` 三列组装与原 `answer` 字段等价的评分 JSON（前端 `EvalResultModal` 按 scores / suggestions / need_optimize 结构化解析，契约不变）。
+  3. **旧数据兜底**：`agent_evaluation` 未命中且 `work_id` 存在时，回退旧的 `orchestration_agent_execution` 查询（`execution_type=SYSTEM` 且 `agent_type=EVOLUTOR`），保持历史消息可查看。
+  - 前端无改动（接口响应 schema 保持 `{ work_id, trace_id, found, evaluation: { answer, created, elapsed_ms, agent_name } }`）。
+- **行为差异**：
+  - 修改前：点击「评估结果」永远返回 `found=false`（Runtime v2 流量按 work_id 查 `orchestration_agent_execution` 恒为空）。
+  - 修改后：已执行评估的问答可正常解析展示评分/建议/是否需优化；历史旧架构数据走兜底路径仍可展示。
+- **新增边界条件**：
+  - 评估被跳过（`eval_skip_low_risk=true` 且单轮直答 iterations≤1）、评估尚未完成（`eval_async` fire-and-forget）、或 `agent_evaluation` 因错误跳过评估（call_error / internal_error 不评分）时 `found=false`，提示"暂无评估结果"，属预期；
+  - `agent_evaluation` 无 `elapsed_ms` / `agent_name` 列，`elapsed_ms` 返回 0、`agent_name` 固定返回"进化 Agent (Evolutor)"（前端默认文案一致）。
 
 ### [2026-08-22] "执行过程"聚合块展示 Write Agent 与评估 Agent 的执行结果
 - **变更原因**：Writer / Evolutor 系统 Agent 不经过 `orchestration_agent_execution`（`execSingleAgent` 的 ReACT 循环），其执行结果未落库，导致「思考过程」弹窗的"执行过程"看不到 Write Agent 与评估 Agent 的执行结果（属展示缺失，非调度缺失）。

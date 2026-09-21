@@ -82,6 +82,14 @@ export enum BusinessEvent {
   WriterCompleted = 'writer.completed',
   /** Agent 解散（2026-09-11 新增；低分 < DisbandThreshold.Critical 且 system 归属时执行） */
   AgentDisbanded = 'agent.disbanded',
+  /** Soul 选定/生成（2026-09-19 新增；Agent 构建阶段组件选择的独立体现） */
+  SoulSelected = 'soul.selected',
+  /** 思维模型选定（2026-09-19 新增；CoT/ReAct 的选择结论与理由，在 Agent 组件装配后、Loop 执行前上报） */
+  ThoughtModeSelected = 'thought.selected',
+  /** Loop 单轮开始（2026-09-19 新增；逐轮体现思维模型与轮次推进） */
+  LoopTurnStarted = 'loop.turn.started',
+  /** Loop 单轮结果（2026-09-19 新增；本轮执行结果、工具调用与是否继续执行的决策） */
+  LoopTurnResult = 'loop.turn.result',
   /** Loop 单轮完成（2026-09-14 Span 框架；payload 自带该轮 LLM 调用 span self 耗时，
    *  供「深度推理思考」汇总节点的多轮求和口径） */
   LoopTurnCompleted = 'loop.turn.completed',
@@ -114,6 +122,8 @@ export const TIMELINE_POINT_EVENTS: ReadonlySet<BusinessEvent> = new Set([
   // —— 部分/内容创建点 ——
   BusinessEvent.ReplyCreated,
   BusinessEvent.ThinkCreated,
+  // —— Loop 单轮开始（耗时由 loop.turn.completed / loop.turn.result 携带）——
+  BusinessEvent.LoopTurnStarted,
   // —— 工具开始（耗时由 tool.result 携带）——
   BusinessEvent.ToolStarted,
   // —— 权限询问/应答（等待用户操作，不属执行耗时）——

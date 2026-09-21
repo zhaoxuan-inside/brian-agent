@@ -104,6 +104,8 @@ interface LoopRunContext {
   lastMessageId?: string;
   finalTurn: boolean;
   deferFinalReply: boolean;
+  /** 思维模型（RunGateway 装配后传入；逐轮透出，2026-09-19 新增） */
+  thoughtMode?: string;
   /** 业务事件在线上报通道（无流会话为 undefined，pushBusinessEvent no-op） */
   report?: Report;
   /** 衡量对象（方法内日志经 Metrics 保存——Metrics 封装 LogProvider 调用接口） */
@@ -249,6 +251,7 @@ export class AgentLoopService {
       outputTokens: 0,
       finalTurn: false,
       deferFinalReply: input.defer_final_reply === true,
+      thoughtMode: input.thought_mode,
       metrics,
       report,
       deltaBuffer: { text: '', reasoning: '' },
@@ -340,17 +343,65 @@ export class AgentLoopService {
     return { stop: false, finalTurn };
   }
 
-  /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费 */
+  // ===== 原始方法（保留作为参考）=====
+  // /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费 */
+  // private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopStopReason> {
+  //   const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
+  //   if (steered.length) {
+  //     await this.persistInjectedMessages(ctx, steered);
+  //   }
+  //   const gate = this.consumeBudget(ctx);
+  //   if (gate.stop) {
+  //     return gate.reason ?? LoopStopReason.Budget;
+  //   }
+  //   ctx.finalTurn = gate.finalTurn;
+  //   const turn = await this.callLLMTurn(ctx);
+  //   if (!turn.ok) {
+  //     this.flushDeltaBuffer(ctx, 'think');
+  //     return turn.verdict ?? LoopStopReason.Error;
+  //   }
+  //   this.flushDeltaBuffer(ctx, 'think');
+  //   await this.persistAssistantTurn(ctx, turn);
+  //   if (turn.finishReason !== 'tool-calls') {
+  //     if (turn.finishReason !== 'error' && turn.text) {
+  //       if (!ctx.deferFinalReply) {
+  //         ctx.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: turn.text });
+  //       }
+  //     }
+  //     ctx.result = turn.text ?? '';
+  //     if (turn.finishReason === 'error') {
+  //       ctx.error = ctx.error ?? 'LLM 流异常终止（未收到结束帧）';
+  //       return LoopStopReason.Error;
+  //     }
+  //     return LoopStopReason.Stop;
+  //   }
+  //   await this.consumeToolCalls(ctx, turn.toolCalls ?? []);
+  //   return 'continue';
+  // }
+
+  // ===== 修改后的方法（2026-09-19 逐轮可观测）：每轮开始/结果单独上报 ——
+  // loop.turn.started 体现本轮思维模型；loop.turn.result 体现本轮上下文归因 / 执行结果 /
+  // 是否继续执行的决策（finish_reason=tool-calls → 继续消费工具进入下一轮；否则收敛），
+  // 供前端「思考过程」逐轮展示基础上下文、本轮产出与终止判定 =====
+  /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费；逐轮事件上报 */
   private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopStopReason> {
+    const round = ctx.iterations + 1;
     const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
     if (steered.length) {
       await this.persistInjectedMessages(ctx, steered);
     }
     const gate = this.consumeBudget(ctx);
     if (gate.stop) {
+      this.emitLoopTurnResult(ctx, round, 'none', '', [], 'budget', `预算耗尽（remaining=${ctx.budget.remaining}，无宽限），停止执行`);
       return gate.reason ?? LoopStopReason.Budget;
     }
     ctx.finalTurn = gate.finalTurn;
+    ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnStarted, {
+      round,
+      thought_mode: ctx.thoughtMode ?? '',
+      final_turn: ctx.finalTurn,
+      base_context: 'static-memory + soul + identity system（不变块）',
+    });
     const turn = await this.callLLMTurn(ctx);
     if (!turn.ok) {
       // ===== 修改后（2026-09-12）：失败轮残留文本进 thinking，不进对话框 =====
@@ -365,6 +416,7 @@ export class AgentLoopService {
         output_tokens: turn.outputTokens,
       });
       this.flushDeltaBuffer(ctx, 'think');
+      this.emitLoopTurnResult(ctx, round, 'none', '', [], 'error', turn.error ?? '本轮 LLM 调用失败，停止执行');
       return turn.verdict ?? LoopStopReason.Error;
     }
     // ===== 修改后（2026-09-12）：中间轮（带 tool_calls）文本进 thinking，仅最终轮进对话框 =====
@@ -373,6 +425,14 @@ export class AgentLoopService {
     // 最终轮再把全文（turn.text，与持久化一致）发一条 reply.delta，保证对话框只见最终回复。
     this.flushDeltaBuffer(ctx, 'think');
     await this.persistAssistantTurn(ctx, turn);
+    const toolNames = (turn.toolCalls ?? []).map((c) => c.tool_id);
+    const decision = turn.finishReason === 'tool-calls' ? 'continue' : 'stop';
+    const decisionReason = turn.finishReason === 'tool-calls'
+      ? `本轮发起了 ${toolNames.length} 个工具调用，需观察工具结果后再决策，继续下一轮`
+      : turn.finishReason === 'error'
+        ? 'LLM 流异常终止（未收到结束帧）'
+        : '本轮无需调用工具（finish_reason=stop），Agent 结论已产出，收敛结束';
+    this.emitLoopTurnResult(ctx, round, String(turn.finishReason ?? ''), turn.text ?? '', toolNames, decision, decisionReason);
     if (turn.finishReason !== 'tool-calls') {
       if (turn.finishReason !== 'error' && turn.text) {
         if (!ctx.deferFinalReply) {
@@ -389,6 +449,29 @@ export class AgentLoopService {
     }
     await this.consumeToolCalls(ctx, turn.toolCalls ?? []);
     return 'continue';
+  }
+
+  /** 逐轮结果上报（逻辑控制；loop.turn.result：本轮结果摘要 + 是否继续决策） */
+  private emitLoopTurnResult(
+    ctx: LoopRunContext,
+    round: number,
+    finishReason: string,
+    text: string,
+    toolCalls: string[],
+    nextAction: 'continue' | 'stop' | 'error' | 'budget',
+    reason: string,
+  ): void {
+    ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnResult, {
+      round,
+      thought_mode: ctx.thoughtMode ?? '',
+      finish_reason: finishReason,
+      result_preview: text.slice(0, 300),
+      result_length: text.length,
+      tool_calls: toolCalls.slice(0, 10),
+      next_action: nextAction,
+      decision_reason: reason.slice(0, 300),
+      context_note: '本轮上下文见同轮 context.built（基础上下文 + 会话新增消息）',
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -507,6 +590,7 @@ export class AgentLoopService {
     const round = ctx.iterations + 1;
     ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
       round,
+      thought_mode: ctx.thoughtMode ?? '',
       message_count: input.messages.length,
       system: String(ctx.system ?? '').slice(0, 4000),
       messages: input.messages.map((m) => ({

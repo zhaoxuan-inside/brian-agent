@@ -237,7 +237,7 @@ export class InfoCoreSchemaInitializer {
         "base_similarity_count"   INTEGER NOT NULL DEFAULT 150,
         "base_keyword_count"      INTEGER NOT NULL DEFAULT 100,
         "base_random_count"       INTEGER NOT NULL DEFAULT 50,
-        "random_max_percent"      INTEGER NOT NULL DEFAULT 20,
+        "random_max_percent"      INTEGER NOT NULL DEFAULT 5,
         "tag_relative_max_percent" INTEGER NOT NULL DEFAULT 20,
         "similarity_max_percent"   INTEGER NOT NULL DEFAULT 15,
         "keyword_max_percent"      INTEGER NOT NULL DEFAULT 10,
@@ -249,7 +249,7 @@ export class InfoCoreSchemaInitializer {
     `);
 
     for (const col of [
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "random_max_percent" INTEGER NOT NULL DEFAULT 20`,
+      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "random_max_percent" INTEGER NOT NULL DEFAULT 5`,
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "tag_relative_max_percent" INTEGER NOT NULL DEFAULT 20`,
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "similarity_max_percent" INTEGER NOT NULL DEFAULT 15`,
       `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_max_percent" INTEGER NOT NULL DEFAULT 10`,

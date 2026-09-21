@@ -70,6 +70,8 @@ export class ExecAgentLoopInput extends Input {
   idle_watchdog_ms?: number;
   /** 延迟最终回复与完成事件（由外部排版/评估流程在循环后统一输出） */
   defer_final_reply?: boolean;
+  /** 思维模型（2026-09-19 新增；RunGateway 装配阶段选定 CoT/ReAct，随轮事件透出供可观测） */
+  thought_mode?: string;
 }
 
 /** execAgentLoop 出参 */

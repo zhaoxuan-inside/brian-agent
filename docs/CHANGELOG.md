@@ -1,3 +1,66 @@
+## [2026-09-15] /api/chat/eval-result 数据源迁移到 agent_evaluation（「评估结果」弹窗永远为空）
+
+**变更原因**：对话页消息框「评估结果」按钮点击后永远提示"暂无评估结果"。根因是 2026-09-14 Runtime v2 重构后的数据源错位：
+1. Evolutor 评估结果不再写 `orchestration_agent_execution`（该表已无任何写入方，最新行为 2026-09-14 20:41 之前的旧架构数据），改写 `agent_evaluation`；
+2. Runtime v2 中评估阶段使用框架生成的私有 `evalWorkId`（`RunGatewayService.executeRun` 内 `IdGenerator.generate()`），与问答的 `work_id` 完全无关——评估关联到问答的唯一键变成了 `run_id`（= 一次问答的 `runtime_run.id` = `info_raw.work_id` / `info_raw.run_id`）；
+3. 原端点按 `work_id = info_raw.work_id` 查 `orchestration_agent_execution`，两个数据源对不上，恒 `found=false`。DB 实证：`agent_evaluation` 在 2026-09-14 20:30 后持续新增且 `run_id` 与新问答 `work_id` 精确匹配，而原端点查的表从那一时刻起零新增。
+
+**修改的方法**：
+  - `dev-server.ts` `/api/chat/eval-result` 端点 — 反查 `info_raw` 额外取 `run_id`；优先按 `run_id`（= `work_id`）查 `agent_evaluation`，由其 `scores` / `suggestions` / `need_optimize` 三列组装原 `answer` 字段等价的评分 JSON（前端 `EvalResultModal` 解析契约不变）；`agent_evaluation` 未命中且 `work_id` 存在时回退旧 `orchestration_agent_execution` 查询（历史数据兜底）。原查询逻辑完整注释保留。
+
+**影响的端点**：
+  - `GET /api/chat/eval-result` — 已评估问答可正常返回 `found=true`；接口响应 schema 不变，前端零改动。
+
+**可能存在的问题**：
+  - `agent_evaluation` 无 `elapsed_ms` / `agent_name` 列：`elapsed_ms` 返回 0（前端已判空不显示），`agent_name` 固定"进化 Agent (Evolutor)"（与前端默认文案一致）；
+  - 单轮直答（iterations≤1）在 `eval_skip_low_risk=true`（默认开）下按设计跳过评估，此类消息的「评估结果」按钮仍显示"暂无评估结果"，属预期而非缺陷；
+  - 评估私有 `evalWorkId` 与问答断链后，「思考过程」弹窗若按 work 关联评估块可能受同样影响（本次未涉及，需单独确认）。
+
+---
+
+## [2026-09-15] 弱相关维度数量口径重定义（用户裁定）：上限 = min(基础上限, 基础上下文数量 × 占比)；random 默认占比改为 5%
+
+**变更原因**：用户指出原「动态收缩」口径与实际预期不符——原实现为 `min(base, total×percent)×shrinkFactor`（占比基准是 total、再对基础占比做二次收缩）；正确口径应为：
+
+> 弱相关维度实际上限 = **min（该维度基础上限 base_xxx_count, 「基础上下文消息数量」× xxx_max_percent%）**
+
+即占比基准从 total 改为 **基础上下文数量（pinned + citing + timeline）**，取消 shrinkFactor 二次折算。用户例子：基础上下文 100 条 → 随机采样最多 5 条（random 占比 5%）。
+
+**修改的方法**：
+  - `InfoCoreService.context` — `capByPercent`（min(base, total×percent)×shrink）替换为 `capByBase`：`min(base, floor(baseContextCount × percent / 100))`；原始实现注释保留；
+  - `random_max_percent` 默认值 20 → **5**（四处同步：代码回退值 `toInfoContextConfigRecord`、`updateInfoContextConfig` 默认落库、SchemaInitializer 建表/加列 DEFAULT、configRegistrations 注册默认与描述文案），其余三维度占比描述文案同步改为「相对于基础上下文数量」；
+  - DB `info_context_config.random_max_percent` 存量行 20 → 5（含 priority_order 前一轮已更新）；
+  - 配套单测调整：RANDOM 用例改为 30 条消息会话（5% 口径下基础 ≥ 20 才产生随机配额，8 条会话恰好 0 条随机，符合新口径）。
+
+**新的数量公式（默认配置，随机 5%、标签 20%、相似 15%、关键词 10%）**：
+
+  基础上下文 = 100 条 → 随机 ≤ 5、标签 ≤ 20、相似 ≤ 15、关键词 ≤ 10（同时受各自基础上限 50/200/150/100 约束）
+  基础上下文 < 20 条 → 随机配额为 0（新会话大部分场景无随机记忆）
+
+**影响的端点**：
+  - `InfoCore.context` — 四个弱相关维度（TAG/SIM/KW/RANDOM）限额口径统一改为「基础上限 vs 基础上下文×占比」取小，不再占 total、不再动态收缩。
+
+**可能存在的问题**：
+  - 新会话（基础上下文 < 20 条）随机配额为 0，跨会话随机联想记忆在小会话初期不再出现——这是新口径的直接推论（风险已向用户确认接受）；
+  - `total`（1000 条总预算）仍保留用于最终 `slice` 封顶，但不再参与弱相关配额的计算。
+
+## [2026-09-15] RANDOM 随机采样名额核算与 PRD 对齐（trace 162c58fc）：CURRENT 提前剔除 + 库内遗留 priority_order 补 CITING
+
+**变更原因**：问答 trace 162c58fc（run bcae81a5，16:52）实测快照 RANDOM=49/48 条（loop/work），与数量逻辑（randLimit = min(base_random_count=50, total=1000×20%) × shrinkFactor = **50**）不符、差 1。根因：新会话中 info_raw 仅 1 条 REQUEST（当前消息），RANDOM 第一阶段"会话内未选中消息随机抽样"先把它采进候选并占一个名额，CURRENT 剔除在**抽样之后**（PRD 步骤 4 要求当前输入不进弱相关候选），splice 掉后名额不再回补，最终实收比限额少 1。
+
+**修改的方法**：
+  - `InfoCoreService.context` — RANDOM 采集块：当前消息（CURRENT）在会话内/全局候选**采样阶段即排除**（`curExcludeId` 过滤并入 filledIds），不再依赖事后 splice 回补（原实现注释保留）；会话采样 SQL limit 放宽为 `min((randLimit+1)*3, count)` 防腾挪误差；效果：trace 162c58fc 场景下最终 RANDOM 实收 = randLimit（50）满额。
+
+**附带数据修复**：库内 `info_context_config.priority_order` 为 CITING 默认值修复（2026-09-14 PRD 对齐）之前的旧值 `TIMELINE,PINNED,TAG_RELATIVE,...`（不含 CITING、PINNED 次序不符）。现有行未被 SchemaInitializer 的默认值迁移覆盖，本次直接 UPDATE 为 PRD 默认 `PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM`。
+
+**影响的端点**：
+  - `InfoCore.context` — RANDOM 维度实收数量恢复与限额一致（基础场景满额 50 / 收缩后足额），CURRENT 不再挤占随机名额。
+
+**可能存在的问题**：
+  - TAG_RELATIVE / SIMILARITY / KEYWORD 同样存在「采样后才剔 CURRENT」的同类名额占用模式（影响 ≤1 条，且这些维度限额由检索排序截断而非精确取满，影响可忽略）；若后续要完全对齐可同样前置剔除；
+  - `ORDER BY RANDOM() LIMIT min(remaining*3, 100)` 的 100 上限在面对超大库（>100 万行）时可能样本不足，需表分区/模块化后再评估。
+
+
 ## [2026-09-15] 记忆管理收敛 InfoCoreProvider：消多路径 ①快照读取唯一化（删 SQL 复刻）②会话级删除收敛 ③摘要生成内建
 
 **变更原因**：用户要求"记忆的构建都要集中到 InfoCoreProvider，不要有多条路径；InfoProvider 提供上下文构建、上下文快照、内容摘要生成等上下文管理的功能"。盘点现存多条路径：
@@ -1669,3 +1732,24 @@
 
 **可能存在的问题**：
 - 兜底 trace 为 AOP 现场生成，与上游请求源头 trace 无传播关系（旧式链路本就无源头透传能力；新式 5 参链路均已显式传播源头 trace，此兜底仅保证可关联性，不伪造归属）。
+
+## [2026-09-19] 上下文前置 + 新 Agent 组件化体现 + CoT/ReAct 选定与逐轮执行体现
+
+**变更原因**：复盘 trace ccc6e0ee 的执行语义缺口：多层静态记忆召回晚于意图分析/Agent 构建（基本上下文未前置）；新建 Agent 的 LLM/Soul/Skill/MCP/Prompt 组件选择/生成仅有一处终态汇总；Agent 思维模型（CoT/ReAct）选择无结论无理由；逐轮的上下文依赖、本轮结果、是否继续执行不可见。
+
+**修改的方法**：
+  - `RunGatewayService.buildStaticMemorySystem(3参快照版)` — 注释保留，拆分为 `buildStaticMemory`（第一步召回 + `round=0` `context.built(base=true)`）与 `composeSystemWithMemory`（快照 system + 静态记忆一次性拼接，Loop 与意图分析消费同一份基本上下文）；`executeRun` 内记忆召回上移至匹配前；
+  - `RunGatewayService.decideThoughtMode` — 新增 CoT/ReAct 确定性规则：绑定 Skill/MCP → ReAct（理由随事件下发），否则 CoT；上报 `thought.selected`（mode+reason），经 `ExecAgentLoopInput.thought_mode` 传入 Loop；
+  - `AgentBuilderService.buildAgent`（原签名 `_metrics/_report` 改用透传）— 构建阶段逐组件上报：`llm.selected(stage=build)`、`skill.selected(source=build)`、`mcp.selected(stage=build)`、`soul.selected`（brief+reason，命中/未绑定区分）、`prompt.selected(stage=build, score≥75 采纳特定模板否则回退内置)`；
+  - `AgentLoopService.runInnerTurn` — 注释保留原实现；每轮上报 `loop.turn.started`（round/thought_mode/final_turn/base_context）与 `loop.turn.result`（finish_reason/result_preview/tool_calls/next_action/decision_reason）；`context.built` payload 新增 `thought_mode`；
+  - `Runtime/Loop/domain/types.ts` — `ExecAgentLoopInput.thought_mode` 新增字段；
+  - `Base/shared/base/BusinessEvent.ts` — 新增事件 `soul.selected / thought.selected / loop.turn.started / loop.turn.result`；`TIMELINE_POINT_EVENTS` 补 `loop.turn.started`；
+  - 前端同步（`sseEventTypes.ts` + `chatStreamEvents.ts`）— 4 个新事件登记 EVENT_UI_STYLE 与处理器（时间线/思考面板逐轮标注）；`Base/dist` 重建（运行时走 dist）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 事件序变为：run.accepted → context.built(round=0 基础上下文) → 意图/Agent 构建（llm/skill/mcp/soul/prompt 逐件 selected）→ agent.components → thought.selected → run.started → 每轮（loop.turn.started → context.built(round N) → tool.* → loop.turn.result）→ 写作/评估 → run.finished；
+  - 全量测试基线不变：新事件仅追加，不改焦点。
+
+**可能存在的问题**：
+  - CoT/ReAct 判定为无 LLM 的规则裁决（快照组件事实），复杂任务含隐式工具需求时仍选 CoT——默认预算内 Loop 允许通用原语工具兜底；
+  - 评估异步（eval_async）时 evaluation.completed 可能晚于 run.finished（既有行为不变）。
