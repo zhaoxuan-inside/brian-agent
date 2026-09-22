@@ -6,7 +6,7 @@ import { ConfigSchemaInitializer } from '../Config/infrastructure/ConfigSchemaIn
 import { ConfigContext, UpdateLayerPrivilegeInput, UpdateLayerPrivilegeOutput,
   UpdateModulePrivilegeInput, UpdateModulePrivilegeOutput, GetConfigDetailInput, GetConfigDetailOutput,
   GetConfigItemInput, GetConfigItemOutput, UpdateConfigInput, UpdateConfigOutput,
-  ConfigConfigInput, ConfigConfigOutput } from '../Config/domain/types';
+  ConfigConfigInput, ConfigConfigOutput, GetConfigHistoryInput, GetConfigHistoryOutput } from '../Config/domain/types';
 import { setupRealTestEnvironment, cleanupTempDirs, type RealTestContext } from './real-test-helpers';
 
 describe('ConfigService', () => {
@@ -286,14 +286,16 @@ describe('ConfigService', () => {
       expect(keys).toContain('chat.default_history_lastN');
     });
 
+    // ===== 修改后（2026-09-22）：Orchestration 层配置种子已随 Runtime v2 退役清单（Runtime-PRD §10）删除，
+    // 过滤夹具改用存活的 AGENT 层注册 =====
     it('TC-CFG-061: Filter by layer', async () => {
       const input = new GetConfigDetailInput();
-      input.layer = 'ORCHESTRATION';
+      input.layer = 'AGENT';
       const output = new GetConfigDetailOutput();
       await service.soConfigDetail(input, output, ctx());
 
       expect(output.layers.length).toBe(1);
-      expect((output.layers[0] as any).layer).toBe('ORCHESTRATION');
+      expect((output.layers[0] as any).layer).toBe('AGENT');
     });
 
     it('TC-CFG-062: Filter by module', async () => {
@@ -325,16 +327,16 @@ describe('ConfigService', () => {
 
     it('TC-CFG-064: Combined filter (layer + module)', async () => {
       const input = new GetConfigDetailInput();
-      input.layer = 'ORCHESTRATION';
-      input.module = 'entry';
+      input.layer = 'AGENT';
+      input.module = 'agent_builder';
       const output = new GetConfigDetailOutput();
       await service.soConfigDetail(input, output, ctx());
 
       expect(output.layers.length).toBe(1);
       const layer = output.layers[0] as any;
-      expect(layer.layer).toBe('ORCHESTRATION');
+      expect(layer.layer).toBe('AGENT');
       const mods = layer.modules as any[];
-      expect(mods.every((m: any) => m.module === 'entry')).toBe(true);
+      expect(mods.every((m: any) => m.module === 'agent_builder')).toBe(true);
     });
 
     it('TC-CFG-065: readable_only=true excludes unreadable config', async () => {
@@ -1328,6 +1330,64 @@ describe('ConfigService', () => {
       const getOutput = new GetConfigItemOutput();
       await service.soConfigItem(getInput, getOutput, ctx());
       expect(getOutput.config_item.current_value).toBe(5);
+    });
+  });
+
+  // ===== 新增（2026-09-22）：配置变更历史（TODO-List §2）=====
+  describe('soConfigHistory', () => {
+    it('TC-CFG-100: updateConfig 应记录 old/new 变更历史', async () => {
+      vi.spyOn(llmCore, 'configLLMCore').mockResolvedValue(true);
+      const key = 'llm_core.regen_rate';
+      const input = new UpdateConfigInput();
+      input.config_key = key;
+      input.value = 42;
+      await service.updateConfig(input, new UpdateConfigOutput(), ctx());
+
+      const q = new GetConfigHistoryInput();
+      q.config_key = key;
+      const out = new GetConfigHistoryOutput();
+      await service.soConfigHistory(q, out, ctx());
+      expect(out.records.length).toBe(1);
+      expect(out.records[0].config_key).toBe(key);
+      expect(out.records[0].new_value).toBe(42);
+      expect(out.records[0].change_time).toBeGreaterThan(0);
+    });
+
+    it('TC-CFG-101: 全局查询应含所有配置项且按时间降序', async () => {
+      vi.spyOn(llmCore, 'configLLMCore').mockResolvedValue(true);
+      await service.updateConfig(
+        Object.assign(new UpdateConfigInput(), { config_key: 'llm_core.regen_rate', value: 1 }),
+        new UpdateConfigOutput(), ctx(),
+      );
+      await service.updateConfig(
+        Object.assign(new UpdateConfigInput(), { config_key: 'llm_core.prompt_template_id', value: 'x' }),
+        new UpdateConfigOutput(), ctx(),
+      );
+      const out = new GetConfigHistoryOutput();
+      await service.soConfigHistory(new GetConfigHistoryInput(), out, ctx());
+      expect(out.records.length).toBeGreaterThanOrEqual(2);
+      for (let i = 1; i < out.records.length; i++) {
+        expect(out.records[i - 1].change_time).toBeGreaterThanOrEqual(out.records[i].change_time);
+      }
+    });
+
+    it('TC-CFG-102: 时间范围过滤应命中区间内记录', async () => {
+      vi.spyOn(llmCore, 'configLLMCore').mockResolvedValue(true);
+      await service.updateConfig(
+        Object.assign(new UpdateConfigInput(), { config_key: 'llm_core.regen_rate', value: 7 }),
+        new UpdateConfigOutput(), ctx(),
+      );
+      const out = new GetConfigHistoryOutput();
+      const q = new GetConfigHistoryInput();
+      q.start_time = Date.now() - 60_000;
+      q.end_time = Date.now() + 60_000;
+      await service.soConfigHistory(q, out, ctx());
+      expect(out.records.length).toBe(1);
+      const miss = new GetConfigHistoryOutput();
+      const q2 = new GetConfigHistoryInput();
+      q2.end_time = Date.now() - 120_000;
+      await service.soConfigHistory(q2, miss, ctx());
+      expect(miss.records.length).toBe(0);
     });
   });
 });
