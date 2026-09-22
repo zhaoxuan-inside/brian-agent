@@ -30,8 +30,10 @@ import {
   CDT_CHROME_PATHS,
   CDT_DEFAULT_PORT,
   CDT_DEFAULT_PROFILE_DIR,
+  CDT_PROFILE_SNAPSHOT_SOURCE,
   type CDTEnv,
 } from '../domain/types';
+import { copySnapshotAuthFiles, readSeedMarker, resolveSnapshotSourceDir, writeSeedMarker } from './ProfileSnapshot';
 
 /** CDP WebSocket 响应类型 */
 interface CDPResponse {
@@ -202,6 +204,10 @@ export class CDTService {
     const profileDir = await this.config.getString('profile_dir', CDT_DEFAULT_PROFILE_DIR) || CDT_DEFAULT_PROFILE_DIR;
     const absProfileDir = join(this.dataDir, profileDir);
     if (!existsSync(absProfileDir)) mkdirSync(absProfileDir, { recursive: true });
+    // ===== 修改后（2026-09-22）：登录态种子——配置了 profile_snapshot_source 时，
+    // 首次启动（或源路径变更）把本机 Chrome 的 Cookies / Local Storage 复制进产品 profile，
+    // 产品浏览器直接继承用户已登录站点。播种失败仅告警，不阻塞 Chrome 启动。
+    await this.seedProfileFromSnapshot(absProfileDir, metrics);
 
     const windowWidth = await this.config.getInt('window_width', 1920);
     const windowHeight = await this.config.getInt('window_height', 1080);
@@ -297,9 +303,11 @@ export class CDTService {
     return true;
   }
 
+  // ===== 修改后（2026-09-22）：进程句柄丢失（Chrome re-exec）时回退 CDP 端点探活，
+  // status 不再误报未运行（pid 如实为 0，端口可见）。
   async isCDTRunning(_input: IsCDTRunningInput, output: IsCDTRunningOutput, _ctx: CDTContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const alive = this.isProcessAlive();
+    const alive = this.isProcessAlive() || (await this.isCDPEndpointAlive());
     output.running = alive;
     output.pid = alive ? this.pid : 0;
     output.port = alive ? this.port : 0;
@@ -604,7 +612,9 @@ export class CDTService {
     const langArr = JSON.stringify(languages);
     const script = `
       try {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        // webdriver 必须重定义在 Navigator.prototype（原型级）：实例级 defineProperty 会
+        // 制造自有属性，被 _.has(navigator,'webdriver') 类检测（sannysoft WebDriver New）识破
+        Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false, configurable: true });
         Object.defineProperty(navigator, 'platform', { get: () => ${JSON.stringify(platform)} });
         Object.defineProperty(navigator, 'languages', { get: () => ${langArr} });
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => ${hardwareConcurrency} });
@@ -619,12 +629,42 @@ export class CDTService {
         );
       }
     `;
+    // ===== 修复（2026-09-22）：未 enable Page domain 时 addScriptToEvaluateOnNewDocument
+    // 应答成功但注入永不生效（静默丢脚本）。先武装 Page domain 再注册；并在当前文档
+    // 立即执行同一脚本，覆盖"注册后、下次导航前"的当前页面。
+    this.sendCmd(ws, 'Page.enable', {});
     this.sendCmd(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: script });
+    this.sendCmd(ws, 'Runtime.evaluate', { expression: script });
   }
 
   // ============================================================
   // 内部方法
   // ============================================================
+
+  /**
+   * 登录态种子编排（逻辑控制）：读取 profile_snapshot_source 配置，
+   * 源有效且未播种（或源已变更）时复制本机 Chrome 登录态到产品 profile。
+   * 失败仅告警不抛错——播种是增强能力，不能拖垮 Chrome 启动主链路。
+   */
+  private async seedProfileFromSnapshot(profileDir: string, metrics?: Metrics): Promise<void> {
+    try {
+      const raw = await this.config.getString(CDT_PROFILE_SNAPSHOT_SOURCE, '');
+      const source = resolveSnapshotSourceDir(raw);
+      if (!source) {
+        if (raw) {
+          metrics?.warn?.('CDTService.seedProfileFromSnapshot 源 profile 目录不存在，跳过播种', { source: raw });
+        }
+        return;
+      }
+      if (readSeedMarker(profileDir) === source) return;
+      if (!copySnapshotAuthFiles(source, profileDir, metrics)) return;
+      writeSeedMarker(profileDir, source);
+    } catch (err) {
+      metrics?.warn?.('CDTService.seedProfileFromSnapshot 播种失败（不阻塞 Chrome 启动）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   /** 启动前释放调试端口（清理上一次 session 未正确关闭的残留 Chrome 进程） */
   private freeDebugPort(metrics?: Metrics): void {
@@ -655,14 +695,29 @@ export class CDTService {
    * 处理 Chrome 进程非预期退出。
    * 当子进程 exit 事件触发时（非通过 stopCDT 主动停止），重置状态。
    */
-  private handleUnexpectedExit(
+  // ===== 修改后（2026-09-22）：Chrome 152 启动器进程 re-exec 后原进程立即退出，
+  // 触发本回调把 pid/endpoint 清零 → status 误报未运行且 keep-alive 被停。
+  // now：先探测 CDP 端点，仍存活则视为 re-exec 保留会话状态；真死才清理。
+  //（原始实现无条件清理，已注释保留于方法尾部）。
+  // 原代码：
+  //   this.stopCommandWs();
+  //   this.stopKeepAlive();
+  //   this.stopScreencast();
+  //   this.process = null;
+  //   this.pid = 0;
+  //   this.endpoint = '';
+  private async handleUnexpectedExit(
     code: number | null,
     signal: string | null,
     errorMessage?: string,
-  ): void {
+  ): Promise<void> {
     const reason = errorMessage
       ? `错误: ${errorMessage}`
       : `退出码=${code}, 信号=${signal}`;
+    if (await this.isCDPEndpointAlive()) {
+      this.logger?.warn?.(`[CDTService] Chrome 启动进程退出（${reason}），但 CDP 端点仍存活（浏览器 re-exec），保留会话状态`);
+      return;
+    }
     this.logger?.warn?.(`[CDTService] Chrome 进程非预期退出 (${reason})`);
 
     this.stopCommandWs();
@@ -671,6 +726,19 @@ export class CDTService {
     this.process = null;
     this.pid = 0;
     this.endpoint = '';
+  }
+
+  /** CDP 端点存活探测（逻辑控制；/json/version 短超时探活） */
+  private async isCDPEndpointAlive(): Promise<boolean> {
+    if (!this.port) {
+      return false;
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}/json/version`, { signal: AbortSignal.timeout(1500) });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   /**

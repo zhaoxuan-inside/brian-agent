@@ -131,6 +131,7 @@ export const NAV_SECTIONS: NavSection[] = [
   { key: 'cdt', label: 'CDT / 浏览器', icon: Monitor, desc: 'Chrome 远程浏览器控制与网页访问', subsections: [
     { key: 'cdt-status', label: '浏览器状态', icon: Radio, type: 'entity', entityType: 'cdt-status' },
     { key: 'cdt-page', label: '网页访问', icon: Globe, type: 'entity', entityType: 'cdt-page' },
+    { key: 'cdt-params', label: '浏览器参数', icon: Settings, type: 'params', configModule: 'cdt_provider', configCategories: ['basic'] },
   ]},
   { key: 'maintenance', label: '维护', icon: RefreshCw, desc: '配置重置与快照管理', subsections: [
     { key: 'snapshot', label: '重置与快照', icon: RefreshCw, type: 'snapshot' },

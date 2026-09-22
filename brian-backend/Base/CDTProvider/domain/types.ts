@@ -22,6 +22,9 @@ export const CDT_DEFAULT_PORT = 9222;
 /** 默认用户数据目录（相对于 data 目录） */
 export const CDT_DEFAULT_PROFILE_DIR = 'cdt-profile';
 
+/** 登录态种子源配置键：本机 Chrome profile 目录路径（支持 ~ 前缀；空 = 不启用播种） */
+export const CDT_PROFILE_SNAPSHOT_SOURCE = 'profile_snapshot_source';
+
 /** Chrome 各平台可执行文件搜索路径 */
 export const CDT_CHROME_PATHS: Record<string, string[]> = {
   linux: [
