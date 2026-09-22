@@ -26,9 +26,13 @@ import {
 } from '../../AgentBuilder/domain/types';
 import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
-  AgentLibraryContext,
+  AgentLibraryContext, type AgentRecord,
 } from '../../AgentLibrary/domain/types';
-import { formatContextCategories, formatDynamicContext } from '@brian-agent/base';
+import { formatContextCategories } from '@brian-agent/base';
+import {
+  buildWriterResultsContext, cleanFallbackResults, formatAgentResult,
+  type WriterResultsContext,
+} from '../domain/services/WriterDomainService';
 import { TraceStore } from '../../AgentExecution/application/trace/TraceStore';
 import { buildSingleAnswerTrace } from '../../AgentExecution/application/trace/TraceCodec';
 import { renderPromptWithFallback, resolveAgentLlm } from '../../shared/AgentKit';
@@ -37,6 +41,16 @@ const FORMAT_ENUM = ['TEXT', 'MARKDOWN', 'JSON'];
 const STYLE_ENUM = ['clear', 'concise', 'detailed', 'creative'];
 const DEPTH_ENUM = ['shallow', 'medium', 'deep'];
 const LANGUAGE_ENUM = ['zh-CN', 'en-US'];
+
+/** Writer 写作偏好（入参 / 会话画像 / 模块默认配置归一后的形态）。 */
+type WriterPreferences = NonNullable<WriteInput['user_preferences']>;
+
+/** Writer 单次写作的准备产物：WRITER agent 档案、ID 与 AgentLibrary 上下文。 */
+interface PreparedWriterAgent {
+  agentId: string;
+  agent: AgentRecord | undefined;
+  libCtx: AgentLibraryContext;
+}
 
 export class WriterAgentService {
   private readonly traceStore: TraceStore;
@@ -55,18 +69,50 @@ export class WriterAgentService {
     this.traceStore = new TraceStore(relationDb);
   }
 
-  // ===== 修改后的 write 方法：支持兼容兼顾 r.answer 和 r.result 字段 =====
   async execWrite(input: WriteInput, output: WriteOutput, ctx: WriterAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean> {
     const startedAt = IdGenerator.now();
+    const prepared = await this.prepareWriterAgent(input, ctx);
+    const { preferences, config } = await this.resolveWritePreferences(input, ctx);
+    const contextExtra = await this.buildSessionContext(input, ctx, metrics);
+    const resultsCtx = buildWriterResultsContext(input.agent_results ?? []);
+    if (resultsCtx.errorResults.length > 0 && resultsCtx.results === '') {
+      await this.emitErrorFallback(input, output, prepared, preferences, config, resultsCtx, startedAt, metrics);
+      return true;
+    }
+    // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
+    let llmId = config?.llm_id || '';
+    if (!llmId && prepared.agent?.agent_id && this.llmCore) {
+      llmId = await this.resolveLlm(prepared.agent.agent_id, metrics);
+    }
+    const system = await this.loadSoulContent(prepared.agent, metrics);
+    const prompt = await this.renderWritePrompt(input, preferences, contextExtra, resultsCtx, system, config, metrics);
+    const llm = await this.execWriterLlm(input, ctx, llmId, system, prompt, metrics, _report);
+    const { response, tokens } = this.applyWriteResult(output, llm, resultsCtx.results, input.user_query);
+    await this.recordWriterUsage(prepared.libCtx, prepared.agentId, input, ctx);
+    output.agent_id = prepared.agentId;
+    output.response = response;
+    output.response_format = preferences.format || 'MARKDOWN';
+    output.token_usage = tokens;
+    await this.recordTrace(output, this.buildWriterTraceParams(prepared, input.user_query, response,
+      Number(llm.eventsOutput.input_tokens ?? 0), Number(llm.eventsOutput.output_tokens ?? 0),
+      String(llm.eventsOutput.result ?? ''), startedAt, config), metrics);
+    return true;
+  }
+
+  /** 构建 WRITER 系统 Agent 并加载其档案（构建失败抛 ValidationError）。 */
+  private async prepareWriterAgent(input: WriteInput, ctx: WriterAgentContext): Promise<PreparedWriterAgent> {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
       run_id: input.run_id || ctx.run_id,
     });
     const buildOut = new BuildSystemAgentOutput();
-    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'WRITER' }), buildOut, builderCtx);
+    await this.agentBuilder.buildSystemAgent(
+      Object.assign(new BuildSystemAgentInput(), { agent_type: 'WRITER' }),
+      buildOut,
+      builderCtx,
+    );
     if (!buildOut.agent_id) throw new ValidationError('buildWriterAgent failed');
-
     const libCtx = Object.assign(new AgentLibraryContext(), builderCtx);
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(
@@ -74,8 +120,14 @@ export class WriterAgentService {
       getOut,
       libCtx,
     );
-    const agent = getOut.agents[0];
+    return { agentId: buildOut.agent_id, agent: getOut.agents[0], libCtx };
+  }
 
+  /** 解析写作偏好：入参优先 → 会话画像 → 模块默认配置；同时读取模块配置。 */
+  private async resolveWritePreferences(input: WriteInput, ctx: WriterAgentContext): Promise<{
+    preferences: WriterPreferences;
+    config: WriterAgentConfigRecord | null;
+  }> {
     let preferences = input.user_preferences;
     if (!preferences && ctx.session_id) {
       const profile = await this.loadProfile(ctx.session_id);
@@ -97,142 +149,124 @@ export class WriterAgentService {
         format: config?.default_format ?? 'MARKDOWN',
       };
     }
+    return { preferences, config };
+  }
 
-    let contextExtra = '';
-    if (ctx.session_id) {
-      try {
-        const ctxOut = new ContextInfoOutput();
-        // ===== 修改后（2026-09-15 采纳分析建议）：恢复快照持久化（默认 true）。
-        //      原先关闭导致 info_context_source 无本 work 记录，可视化经 soContextByWork
-        //      查不到多源上下文，只能降级展示 loop 侧时间线，造成"只见单一时间线上下文"。
-        //      多源上下文（PINNED/TIMELINE/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）
-        //      现将随 work 落库，供 trace/可视化完整还原上下文来源 =====
-        await this.infoCore.context(
-          Object.assign(new ContextInfoInput(), {
-            session_id: ctx.session_id,
-            work_id: ctx.work_id || '',
-            selected_msg_ids: ctx.selected_msg_ids,
-            info: input.user_query,
-            persist_snapshot: true,
-          }),
-          ctxOut,
-          new InfoCoreContext(),
-        );
-        // ===== 修改后的方法：结构化分类包裹与属性脱敏 =====
-        contextExtra = formatContextCategories(ctxOut);
-      } catch (err) {
-        /* best-effort */
-        // 降级容忍：上下文构建失败不阻断写作，回退空上下文
-        metrics?.warn('WriterAgentService.execWrite 构建会话上下文失败，降级为空上下文', {
-          error: err instanceof Error ? err.message : String(err),
-          session_id: ctx.session_id,
-          work_id: ctx.work_id,
-        });
-      }
+  /**
+   * 构建会话记忆上下文（多源分类包裹 + 属性脱敏）；失败降级为空上下文不阻断写作。
+   */
+  private async buildSessionContext(input: WriteInput, ctx: WriterAgentContext, metrics?: Metrics): Promise<string> {
+    if (!ctx.session_id) return '';
+    try {
+      const ctxOut = new ContextInfoOutput();
+      // ===== 修改后（2026-09-15 采纳分析建议）：恢复快照持久化（默认 true）。
+      //      原先关闭导致 info_context_source 无本 work 记录，可视化经 soContextByWork
+      //      查不到多源上下文，只能降级展示 loop 侧时间线，造成"只见单一时间线上下文"。
+      //      多源上下文（PINNED/TIMELINE/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）
+      //      现将随 work 落库，供 trace/可视化完整还原上下文来源 =====
+      await this.infoCore.context(
+        Object.assign(new ContextInfoInput(), {
+          session_id: ctx.session_id, work_id: ctx.work_id || '',
+          selected_msg_ids: ctx.selected_msg_ids, info: input.user_query, persist_snapshot: true,
+        }),
+        ctxOut,
+        new InfoCoreContext(),
+      );
+      return formatContextCategories(ctxOut);
+    } catch (err) {
+      // 降级容忍：上下文构建失败不阻断写作，回退空上下文
+      metrics?.warn('WriterAgentService.execWrite 构建会话上下文失败，降级为空上下文', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: ctx.session_id, work_id: ctx.work_id,
+      });
+      return '';
     }
+  }
 
-    // agent results — 子 Agent 执行产物
-    const agentResults = input.agent_results ?? [];
-    const isErrorResult = (r: { handle_result_type?: string }) =>
-      r.handle_result_type === HandleResultType.CALL_ERROR
-      || r.handle_result_type === HandleResultType.INTERNAL_ERROR;
-    const formatResult = (r: { agent_id: string; task_content?: string; result?: string; answer?: string }) => {
-      const text = r.answer ?? r.result ?? '';
-      const taskContent = r.task_content ?? '';
-      return `[${r.agent_id}] ${taskContent}: ${text}`;
+  /** 结果全为错误时跳过 LLM：错误信息直接透传为 error_fallback 块并记录轨迹。 */
+  private async emitErrorFallback(
+    input: WriteInput, output: WriteOutput, prepared: PreparedWriterAgent,
+    preferences: WriterPreferences, config: WriterAgentConfigRecord | null,
+    resultsCtx: WriterResultsContext, startedAt: number, metrics?: Metrics,
+  ): Promise<void> {
+    const errorText = resultsCtx.errorResults.map(formatAgentResult).join('\n');
+    output.blocks = [{
+      id: IdGenerator.generate(),
+      type: 'error_fallback' as const,
+      content: errorText,
+      meta: { streaming_status: 'completed' as const },
+    }];
+    output.agent_id = prepared.agentId;
+    output.response = errorText;
+    output.response_format = preferences.format || 'MARKDOWN';
+    output.token_usage = 0;
+    output.handle_result_type = resultsCtx.errorResults[0]?.handle_result_type ?? HandleResultType.INTERNAL_ERROR;
+    await this.recordTrace(output, this.buildWriterTraceParams(prepared, input.user_query, errorText, 0, 0, '', startedAt, config), metrics);
+  }
+
+  /** 组装 Writer 轨迹参数（agent 元数据 + 结果与 token/耗时），正常与错误透传两条路径复用。 */
+  private buildWriterTraceParams(
+    prepared: PreparedWriterAgent, taskContent: string, response: string,
+    inputTokens: number, outputTokens: number, rawResponse: string,
+    startedAt: number, config: WriterAgentConfigRecord | null,
+  ) {
+    return {
+      agentId: prepared.agentId,
+      agentName: prepared.agent?.agent_name ?? prepared.agentId,
+      soulId: prepared.agent?.soul_id ?? '',
+      taskContent,
+      response,
+      inputTokens,
+      outputTokens,
+      rawResponse,
+      elapsedMs: IdGenerator.now() - startedAt,
+      templateId: config?.write_prompt_template_id,
     };
-    // ===== 修改后（2026-09-15）：子 Agent 执行结果按「动态执行上下文」语义包装注入。
-    //      与 formatContextCategories 渲染的静态记忆上下文（任务开始前检索的历史，不可修改）
-    //      明确区分：前者描述功能与使用方式，本动态块声明为本轮执行新产生的信息，
-    //      时效最高、与记忆冲突时以其为准；原始纯拼接文本仍保留在 results，
-    //      供 LLM 失败降级兜底使用 =====
-    const results = agentResults.filter((r) => !isErrorResult(r)).map(formatResult).join('\n');
-    const agentResultsContext = formatDynamicContext(
-      '以下内容是本次任务执行过程中由各个执行 Agent 实时产出的工作结果，属于动态执行上下文：'
-      + '它们反映本次任务的真实执行进展，时效性最高、可直接引用；'
-      + '请与 static-memory-context（历史记忆）区分使用——执行结果与记忆冲突时，以执行结果为准。',
-      agentResults.filter((r) => !isErrorResult(r)).map(formatResult),
-    );
+  }
 
-    // 错误信息不参与 Writer 汇总：结果全为错误时跳过 LLM，直接透传错误信息
-    const errorResults = agentResults.filter(isErrorResult);
-    if (errorResults.length > 0 && results === '') {
-      const errorText = errorResults.map(formatResult).join('\n');
-      output.blocks = [{
-        id: IdGenerator.generate(),
-        type: 'error_fallback' as const,
-        content: errorText,
-        meta: { streaming_status: 'completed' as const },
-      }];
-      output.agent_id = buildOut.agent_id;
-      output.response = errorText;
-      output.response_format = preferences.format || 'MARKDOWN';
-      output.token_usage = 0;
-      output.handle_result_type = errorResults[0]?.handle_result_type ?? HandleResultType.INTERNAL_ERROR;
-      await this.recordTrace(output, {
-        agentId: buildOut.agent_id,
-        agentName: agent?.agent_name ?? buildOut.agent_id,
-        soulId: agent?.soul_id ?? '',
-        taskContent: input.user_query,
-        response: errorText,
-        inputTokens: 0,
-        outputTokens: 0,
-        rawResponse: '',
-        elapsedMs: IdGenerator.now() - startedAt,
-        templateId: config?.write_prompt_template_id,
-      }, metrics);
-      return true;
+  /** 读取 Agent 绑定的 Soul 作为 system 角色；失败降级为无 system 角色继续（可选项缺失回退）。 */
+  private async loadSoulContent(agent: AgentRecord | undefined, metrics?: Metrics): Promise<string> {
+    if (!agent?.soul_id || !this.soulAccess) return '';
+    try {
+      const soulOut = new GetSoulOutput();
+      await this.soulAccess.soSoulById(
+        Object.assign(new GetSoulInput(), { id: agent.soul_id }),
+        soulOut,
+        new SoulContext(),
+      );
+      return soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
+    } catch (err) {
+      // 降级容忍：Soul 读取失败按无 system 角色继续
+      metrics?.warn('WriterAgentService.execWrite 读取 Soul 失败，降级为无 system 角色', {
+        error: err instanceof Error ? err.message : String(err),
+        soul_id: agent.soul_id,
+        agent_id: agent.agent_id,
+      });
+      return '';
     }
+  }
 
-    let response = '';
-    let tokens = 0;
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
-    let llmId = config?.llm_id || '';
-    if (!llmId && agent?.agent_id && this.llmCore) {
-      llmId = await this.resolveLlm(agent.agent_id, metrics);
-    }
+  /** 渲染 Writer 汇总 Prompt：注入任务、偏好、静态记忆上下文与动态执行上下文。 */
+  private renderWritePrompt(
+    input: WriteInput, preferences: WriterPreferences, contextExtra: string,
+    resultsCtx: WriterResultsContext, system: string, config: WriterAgentConfigRecord | null,
+    metrics?: Metrics,
+  ): Promise<string> {
+    return this.renderPrompt(config?.write_prompt_template_id, 'Writer', {
+      user_query: input.user_query,
+      task_content: input.user_query,
+      preferences: JSON.stringify(preferences),
+      context: contextExtra,
+      context_data: contextExtra,
+      agent_results: resultsCtx.agentResultsContext || resultsCtx.results,
+      soul: system,
+    }, metrics);
+  }
 
-    let system = '';
-    if (agent?.soul_id && this.soulAccess) {
-      try {
-        const soulOut = new GetSoulOutput();
-        await this.soulAccess.soSoulById(
-          Object.assign(new GetSoulInput(), { id: agent.soul_id }),
-          soulOut,
-          new SoulContext(),
-        );
-        system = soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
-      } catch (err) {
-        /* ignore */
-        // 降级容忍：Soul 读取失败按无 system 角色继续（可选项缺失回退）
-        metrics?.warn('WriterAgentService.execWrite 读取 Soul 失败，降级为无 system 角色', {
-          error: err instanceof Error ? err.message : String(err),
-          soul_id: agent.soul_id,
-          agent_id: agent.agent_id,
-        });
-      }
-    }
-
-    // ===== 修改后的方法（补全 user_query/context 占位符变量，采用 execLLMEvents 原生流式与全链路看门狗） =====
-    // ===== 修改后（2026-09-15）：注入动态执行上下文包装版（agentResultsContext），
-    //      与静态记忆上下文在模板内可视区分（见 formatDynamicContext 与 writer_protocol 模板）=====
-    const prompt = await this.renderPrompt(
-      config?.write_prompt_template_id,
-      'Writer',
-      {
-        user_query: input.user_query,
-        task_content: input.user_query,
-        preferences: JSON.stringify(preferences),
-        context: contextExtra,
-        context_data: contextExtra,
-        agent_results: agentResultsContext || results,
-        soul: system,
-      },
-      metrics,
-    );
-
+  /** 构建 execLLMEvents 输入：messages 组装 + text_delta → SSE pushText 透传回调。 */
+  private buildWriteEventsInput(input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string): ExecLLMEventsInput {
     const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
-    const eventsInput = Object.assign(new ExecLLMEventsInput(), {
+    return Object.assign(new ExecLLMEventsInput(), {
       id: llmId,
       messages: [
         ...(system ? [{ role: 'system' as const, content: system }] : []),
@@ -245,30 +279,26 @@ export class WriterAgentService {
       caller: 'WriterAgent.execWrite',
       on_event: (ev: LLMEvent) => {
         if (ev.type === 'text_delta' && ev.delta && hasStreamAccess) {
-          this.streamAccess!.pushText(
-            ctx.session_id || '',
-            'text_chunk',
-            ev.delta,
-            {
-              work_id: input.work_id || ctx.work_id,
-              run_id: input.run_id || ctx.run_id,
-              chunk_delay_ms: 0,
-            },
-          );
+          this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', ev.delta, {
+            work_id: input.work_id || ctx.work_id,
+            run_id: input.run_id || ctx.run_id,
+            chunk_delay_ms: 0,
+          });
         }
       },
     });
+  }
 
+  /** 执行 Writer LLM 调用：优先 execLLMEvents 原生流式（SSE 透传），无流式能力时降级 execLLM。 */
+  private async execWriterLlm(
+    input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string,
+    metrics?: Metrics, report?: Report,
+  ): Promise<{ ok: boolean; eventsOutput: ExecLLMEventsOutput }> {
+    const eventsInput = this.buildWriteEventsInput(input, ctx, llmId, system, prompt);
     const eventsOutput = new ExecLLMEventsOutput();
     let ok = false;
     if (typeof this.llmAccess.execLLMEvents === 'function') {
-      ok = await this.llmAccess.execLLMEvents(
-        eventsInput,
-        eventsOutput,
-        new LLMContext(),
-        metrics,
-        _report,
-      );
+      ok = await this.llmAccess.execLLMEvents(eventsInput, eventsOutput, new LLMContext(), metrics, report);
     } else {
       const execIn = Object.assign(new ExecLLMInput(), {
         id: llmId,
@@ -280,63 +310,54 @@ export class WriterAgentService {
         caller: 'WriterAgent.execWrite',
       });
       const execOut = new ExecLLMOutput();
-      ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), metrics, _report);
+      ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), metrics, report);
       eventsOutput.result = execOut.result ?? '';
       eventsOutput.input_tokens = execOut.input_tokens ?? 0;
       eventsOutput.output_tokens = execOut.output_tokens ?? 0;
     }
+    return { ok, eventsOutput };
+  }
 
-    if (!ok || !eventsOutput.result) {
+  /** 将 LLM 结果回写 output：Markdown 直出经 parseBlocks 归一；失败/空结果走纯文本降级。 */
+  private applyWriteResult(
+    output: WriteOutput,
+    llm: { ok: boolean; eventsOutput: ExecLLMEventsOutput },
+    fallbackResults: string,
+    userQuery: string,
+  ): { response: string; tokens: number } {
+    if (!llm.ok || !llm.eventsOutput.result) {
       // 降级兜底：清理内部调试标签与前缀，以自然段落输出
-      const cleanResults = results
-        .replace(/\[(?:w2-)?[^\]]+\]\s*/g, '')
-        .replace(/^Summary:\s*/g, '')
-        .trim();
-      response = cleanResults || input.user_query;
+      const response = cleanFallbackResults(fallbackResults) || userQuery;
       output.blocks = [{
         id: IdGenerator.generate(),
         type: 'text_paragraph' as const,
         content: response,
         meta: { streaming_status: 'completed' as const },
       }];
-    } else {
-      tokens = Number((eventsOutput.input_tokens ?? 0) + (eventsOutput.output_tokens ?? 0));
-      // ===== 修改后（2026-09-22）：Writer 输出协议改为 Markdown 直出（writer_protocol 模板
-      // output_contract 已同步改），LLM 产物即最终回复原文，不再经 JSON content blocks 中间协议。
-      // 原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证缺尾 `]` → parse 失败 → 残缺 JSON
-      // 原文被当作回复投递）、转义膨胀 ~30% 加重截断、join(content) 压平丢弃标题层级与列表标记。
-      response = eventsOutput.result.trim();
-      // parseBlocks 保留为 BlockStream 预留：对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容
-      output.blocks = this.parseBlocks(response);
+      return { response, tokens: 0 };
     }
+    const tokens = Number((llm.eventsOutput.input_tokens ?? 0) + (llm.eventsOutput.output_tokens ?? 0));
+    // ===== 修改后（2026-09-22）：Writer 输出协议改为 Markdown 直出（writer_protocol 模板
+    // output_contract 已同步改），LLM 产物即最终回复原文，不再经 JSON content blocks 中间协议。
+    // 原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证缺尾 `]` → parse 失败 → 残缺 JSON
+    // 原文被当作回复投递）、转义膨胀 ~30% 加重截断、join(content) 压平丢弃标题层级与列表标记。
+    const response = llm.eventsOutput.result.trim();
+    // parseBlocks 保留为 BlockStream 预留：对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容
+    output.blocks = this.parseBlocks(response);
+    return { response, tokens };
+  }
 
+  /** 记录 Writer 的 Agent 使用统计（upsert 语义）。 */
+  private async recordWriterUsage(libCtx: AgentLibraryContext, agentId: string, input: WriteInput, ctx: WriterAgentContext): Promise<void> {
     await this.agentLibrary.recordAgentUsage(
       Object.assign(new RecordAgentUsageInput(), {
-        agent_id: buildOut.agent_id,
+        agent_id: agentId,
         work_id: input.work_id || ctx.work_id || '',
         run_id: input.run_id || ctx.run_id || '',
       }),
       new RecordAgentUsageOutput(),
       libCtx,
     );
-
-    output.agent_id = buildOut.agent_id;
-    output.response = response;
-    output.response_format = preferences.format || 'MARKDOWN';
-    output.token_usage = tokens;
-    await this.recordTrace(output, {
-      agentId: buildOut.agent_id,
-      agentName: agent?.agent_name ?? buildOut.agent_id,
-      soulId: agent?.soul_id ?? '',
-      taskContent: input.user_query,
-      response,
-      inputTokens: Number(eventsOutput.input_tokens ?? 0),
-      outputTokens: Number(eventsOutput.output_tokens ?? 0),
-      rawResponse: String(eventsOutput.result ?? ''),
-      elapsedMs: IdGenerator.now() - startedAt,
-      templateId: config?.write_prompt_template_id,
-    }, metrics);
-    return true;
   }
 
   /**

@@ -272,3 +272,18 @@
 
 **可能存在的问题**：
   - 无已知问题；`agent_id` 为新增默认字段，向下兼容。
+
+### [2026-09-22] evalWorkAgent 方法拆分（编排骨架 + 语义步骤私有方法，逻辑零变更）
+**变更原因**：`evalWorkAgent` 199 行，混合上下文解析、trace 读取、LLM 打分、落库、MQ 派发、反馈上报、低分解散多类职责，超出 10–30 行方法约束（DDDStandards §2）。
+
+**修改的方法**（原方法保留为 ≤30 行编排骨架，步骤顺序/条件/副作用/返回值语义零变更）：
+  - `EvolutorAgentService.evalWorkAgent` — 编排骨架：错误结果短路 → 解析上下文 → 读 trace → 渲染 Prompt → LLM 打分 → 解析评分 → trace 效率修正 → 落库 → 刷新评分 → MQ 派发 → 反馈上报 → 低分解散 → 回写 Output + 上报。
+  - 新增私有步骤：`resolveEvalContext`（EVOLUTOR Agent 就绪 + LLM/阈值解析）、`loadTraceContext`（best-effort trace 读取）、`execEvalLlm`（评估 LLM 调用，失败回空串）、`saveWorkEvaluation`（agent_evaluation 落库）、`dispatchOptimizeMessage`（agent.optimize 队列）、`submitEvalFeedback`（反馈上报）、`writeEvalOutput`（Output 回写 + evaluation.completed 事件）。
+  - 新增领域服务 `EvolutorAgent/domain/services/EvalScoreDomainService.ts`（纯函数，零 I/O）：`parseWorkAgentScores`（LLM 输出 → 四维评分，空/解析失败回默认 50 分兜底）、`applyTraceEfficiency`（依 trace 迭代数修正 efficiency 并重算 overall）。
+
+**影响的端点**：
+  - `agent.eval` MQ worker → `evalWorkAgent`（行为不变）。
+  - `runEvalOnce` / 评估闭环 `runEvaluationCycle` 同步直调 `evalWorkAgent`（行为不变）。
+
+**可能存在的问题**：
+  - `resolveEvalContext` 与 `evalWriterAgent` 前置段（buildSystemAgent → soAgent → LLM 解析 → 阈值）逐字重复，本次未动 evalWriterAgent（不在拆分范围）；后续可将 `resolveEvalContext` 入参放宽为 `EvalWorkAgentInput | EvalWriterAgentInput` 复用。

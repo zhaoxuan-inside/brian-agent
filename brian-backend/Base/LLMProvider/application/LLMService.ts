@@ -40,6 +40,7 @@ import type { LLMMessage } from '../../shared/llm/LLMEvent';
 import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS } from './llmevents/LLMEventsRunner';
 import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CALL_LOG_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
 import { LLMStrategyFactory } from './strategies';
+import type { ILLMProviderStrategy, HttpRequestOptions } from './strategies';
 import { newPatch, newRecord } from '../../shared/query';
 import {
   isModelsCacheFresh,
@@ -1386,13 +1387,6 @@ export class LLMService {
   }
 
   /**
-   * 判断模型是否具备对话/文本生成能力。
-   *
-   * execLLM 走 OpenAI 兼容 chat 接口，仅 text / vision 类型模型可用；
-   * embedding 向量模型（如 nomic-embed-text）不支持 chat 补全，必须排除。
-   * 历史数据可能缺少 llm_type，视为默认 text 以保证向后兼容。
-   */
-  /**
    * 单个模型的底层推理请求执行
    */
   private async executeSingleLLM(
@@ -1401,153 +1395,189 @@ export class LLMService {
     startTime: number,
     output: ExecLLMOutput,
   ): Promise<boolean> {
+    const llm = await this.soValidatedLLM(llmId, output);
+    if (!llm) return false;
+    const provider = await this.soValidatedLLMProvider(llm, output);
+    if (!provider) return false;
+    const strategy = LLMStrategyFactory.soStrategyById(provider);
+    const req = strategy.buildChatRequest(provider, llm, input);
+    const ok = (input.stream && typeof input.onDelta === 'function')
+      ? await this.executeSingleLLMStreaming(llmId, input, startTime, output)
+      : await this.executeSingleLLMRequest(llmId, strategy, req, input, startTime, output);
+    if (!ok) return false;
+    await this.recordChatSuccess(llmId, input, output);
+    return true;
+  }
+
+  /**
+   * 查询并校验可用模型（逻辑控制；不存在/禁用/embedding 类型时回填错误并返回 null）。
+   *
+   * execLLM 走 OpenAI 兼容 chat 接口，仅 text / vision 类型模型可用；
+   * embedding 向量模型（如 nomic-embed-text）不支持 chat 补全，必须排除。
+   * 历史数据可能缺少 llm_type，视为默认 text 以保证向后兼容。
+   */
+  private async soValidatedLLM(llmId: string, output: ExecLLMOutput): Promise<LLMAvailableRecord | null> {
     const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: llmId },
     ]);
     if (!llmRow) {
       output.error = `LLM ${llmId} 不存在`;
       output.error_code = 'NOT_FOUND';
-      return false;
+      return null;
     }
     const llm = llmRow as unknown as LLMAvailableRecord;
     if (!llm.enable) {
       output.error = `LLM ${llmId} 已禁用`;
       output.error_code = 'VALIDATION_ERROR';
-      return false;
+      return null;
     }
     if ((llm.llm_type ?? 'text') === 'embedding') {
       output.error = `LLM ${llmId} 是 ${llm.llm_type ?? '未知'} 模型，无法用于文本生成`;
       output.error_code = 'VALIDATION_ERROR';
-      return false;
+      return null;
     }
+    return llm;
+  }
 
+  /** 查询并校验模型提供商（逻辑控制；不存在/禁用时回填错误并返回 null） */
+  private async soValidatedLLMProvider(llm: LLMAvailableRecord, output: ExecLLMOutput): Promise<LLMProviderRecord | null> {
     const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
       { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
     ]);
     if (!providerRow) {
       output.error = `LLMProvider ${llm.llm_provider_id} 不存在`;
       output.error_code = 'NOT_FOUND';
-      return false;
+      return null;
     }
     const provider = providerRow as unknown as LLMProviderRecord;
     if (!provider.enable) {
       output.error = `LLMProvider ${provider.id} 已禁用`;
       output.error_code = 'VALIDATION_ERROR';
+      return null;
+    }
+    return provider;
+  }
+
+  /** 执行流式单模型调用（逻辑控制；委托 LLMEventsRunner 引擎，失败回填错误且不落调用日志） */
+  private async executeSingleLLMStreaming(
+    llmId: string,
+    input: ExecLLMInput,
+    startTime: number,
+    output: ExecLLMOutput,
+  ): Promise<boolean> {
+    const single = await this.executeEventsSingle(llmId, this.soSingleEventsInput(llmId, input));
+    if (!single.ok) {
+      output.error = single.error || 'LLM 流式调用失败';
+      output.error_code = single.error_code || 'EXEC_FAILED';
+      output.duration_ms = Date.now() - startTime;
       return false;
     }
+    output.raw_response = single.text ?? '';
+    output.result = single.text ?? '';
+    output.input_prompt = String(input.prompt ?? '');
+    output.input_tokens = single.input_tokens ?? 0;
+    output.output_tokens = single.output_tokens ?? 0;
+    output.duration_ms = Date.now() - startTime;
+    return true;
+  }
 
-    const prompt = String(input.prompt ?? '');
-    const body: Record<string, unknown> = {
-      model: llm.llm_title,
-      messages: [{ role: 'user', content: prompt }],
-    };
-    if (input.system) {
-      (body.messages as Array<Record<string, unknown>>).unshift(
-        { role: 'system', content: input.system },
-      );
-    }
-    if (input.temperature !== undefined) {
-      body.temperature = input.temperature;
-    }
-    if (input.max_tokens !== undefined) {
-      body.max_tokens = input.max_tokens;
-    } else if (llm.max_tokens) {
-      body.max_tokens = llm.max_tokens > 100000 ? 4096 : llm.max_tokens;
-    }
-    // 透传其他参数（extra 中的参数原样进入请求体）
-    if (input.extra) {
-      for (const [k, v] of Object.entries(input.extra)) {
-        if (!['prompt', 'system', 'temperature', 'max_tokens', 'model', 'messages', 'api_key'].includes(k)) {
-          body[k] = v;
+  /** 组装单模型流式事件入参（数据处理；no_fallback 固定 true，text_delta 桥接 onDelta 回调） */
+  private soSingleEventsInput(llmId: string, input: ExecLLMInput): ExecLLMEventsInput {
+    return Object.assign(new ExecLLMEventsInput(), {
+      id: llmId,
+      prompt: input.prompt,
+      system: input.system,
+      temperature: input.temperature,
+      max_tokens: input.max_tokens,
+      no_fallback: true,
+      extra: input.extra,
+      session_id: input.session_id,
+      run_id: input.run_id,
+      work_id: input.work_id,
+      on_event: (ev: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
+        if (ev.type === 'text_delta' && ev.delta) {
+          input.onDelta!(ev.delta);
         }
-      }
-    }
+      },
+    });
+  }
 
-    const strategy = LLMStrategyFactory.soStrategyById(provider);
-    const req = strategy.buildChatRequest(provider, llm, input);
-
-    // ===== 修改后的流式处理：无缝委托统一的 LLMEventsRunner 引擎（支持 reasoning、看门狗保活与 Token 统计） =====
-    if (input.stream && typeof input.onDelta === 'function') {
-      const eventsInput = Object.assign(new ExecLLMEventsInput(), {
-        id: llmId,
-        prompt: input.prompt,
-        system: input.system,
-        temperature: input.temperature,
-        max_tokens: input.max_tokens,
-        no_fallback: true,
-        extra: input.extra,
-        session_id: input.session_id,
-        run_id: input.run_id,
-        work_id: input.work_id,
-        on_event: (ev: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
-          if (ev.type === 'text_delta' && ev.delta) {
-            input.onDelta!(ev.delta);
-          }
-        },
-      });
-      const single = await this.executeEventsSingle(llmId, eventsInput);
-      if (!single.ok) {
-        output.error = single.error || 'LLM 流式调用失败';
-        output.error_code = single.error_code || 'EXEC_FAILED';
-        output.duration_ms = Date.now() - startTime;
-        return false;
-      }
-      output.raw_response = single.text ?? '';
-      output.result = single.text ?? '';
-      output.input_prompt = prompt;
-      output.input_tokens = single.input_tokens ?? 0;
-      output.output_tokens = single.output_tokens ?? 0;
-      output.duration_ms = Date.now() - startTime;
-    } else {
-      // 非流式调用（原有逻辑）
-      try {
-        const httpInput = Object.assign(new ExecRequestInput(), {
-          url: req.url,
-          method: req.method,
-          headers: req.headers,
-          body: req.body,
-          timeout_ms: this.execTimeoutMs,
-        });
-        const httpOutput = new ExecRequestOutput();
-        await this.http.execRequest(httpInput, httpOutput, new HttpContext());
-        const res = httpOutput.response;
-    if (!res.ok) {
-        const text = res.bodyText;
-        output.error = `LLM 调用失败: HTTP ${res.status} ${text}`;
+  /** 执行非流式单模型调用（逻辑控制；HTTP 失败/解析异常回填错误并落调用日志） */
+  private async executeSingleLLMRequest(
+    llmId: string,
+    strategy: ILLMProviderStrategy,
+    req: HttpRequestOptions,
+    input: ExecLLMInput,
+    startTime: number,
+    output: ExecLLMOutput,
+  ): Promise<boolean> {
+    try {
+      const res = await this.execChatHttpRequest(req);
+      if (!res.ok) {
+        output.error = `LLM 调用失败: HTTP ${res.status} ${res.bodyText}`;
         output.error_code = 'REMOTE_ERROR';
         output.duration_ms = Date.now() - startTime;
-        await this.logCall({
-          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
-        });
+        await this.logChatError(llmId, input, output);
         return false;
       }
-        const rawText = res.bodyText;
-        output.raw_response = rawText;
-        let json: unknown = {};
-        try {
-          json = JSON.parse(rawText);
-        } catch {
-          json = {};
-        }
-        const parsed = strategy.parseChatResponse(json, rawText);
-        output.result = parsed.content;
-        output.input_prompt = prompt;
-        output.input_tokens = parsed.inputTokens;
-        output.output_tokens = parsed.outputTokens;
-        output.duration_ms = Date.now() - startTime;
-      } catch (err) {
-        output.error = err instanceof Error ? err.message : String(err);
-        output.error_code = 'CONNECT_ERROR';
-        output.duration_ms = Date.now() - startTime;
-        await this.logCall({
-          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
-        });
-        return false;
-      }
+      this.fillChatResponse(res.bodyText, strategy, String(input.prompt ?? ''), startTime, output);
+    } catch (err) {
+      output.error = err instanceof Error ? err.message : String(err);
+      output.error_code = 'CONNECT_ERROR';
+      output.duration_ms = Date.now() - startTime;
+      await this.logChatError(llmId, input, output);
+      return false;
     }
+    return true;
+  }
 
+  /** 发起对话推理 HTTP 请求（逻辑控制；超时取 llm_config.exec_timeout_ms） */
+  private async execChatHttpRequest(req: HttpRequestOptions) {
+    const httpInput = Object.assign(new ExecRequestInput(), {
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      body: req.body,
+      timeout_ms: this.execTimeoutMs,
+    });
+    const httpOutput = new ExecRequestOutput();
+    await this.http.execRequest(httpInput, httpOutput, new HttpContext());
+    return httpOutput.response;
+  }
+
+  /** 解析并回填对话推理响应（数据处理；JSON 解析失败按空对象交策略解析兜底） */
+  private fillChatResponse(
+    rawText: string,
+    strategy: ILLMProviderStrategy,
+    prompt: string,
+    startTime: number,
+    output: ExecLLMOutput,
+  ): void {
+    output.raw_response = rawText;
+    let json: unknown = {};
+    try {
+      json = JSON.parse(rawText);
+    } catch {
+      json = {};
+    }
+    const parsed = strategy.parseChatResponse(json, rawText);
+    output.result = parsed.content;
+    output.input_prompt = prompt;
+    output.input_tokens = parsed.inputTokens;
+    output.output_tokens = parsed.outputTokens;
+    output.duration_ms = Date.now() - startTime;
+  }
+
+  /** 记录对话调用失败日志（逻辑控制；复用 logCall，error 口径统一） */
+  private async logChatError(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void> {
+    await this.logCall({
+      llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+      duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+    });
+  }
+
+  /** 记录对话调用成功用量与日志（逻辑控制；upsert llm_usage 当日计数 + logCall ok 口径） */
+  private async recordChatSuccess(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void> {
     // 成功后更新 llm_usage 表当天的 usage_count 与 token 用量
     await this.upsertUsage(llmId, output.input_tokens, output.output_tokens);
     await this.logCall({
@@ -1561,7 +1591,6 @@ export class LLMService {
       output_tokens: output.output_tokens,
       duration_ms: output.duration_ms,
     });
-    return true;
   }
 
   /**

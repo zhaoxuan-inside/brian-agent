@@ -171,3 +171,24 @@
 2. **optimizeAgent**：由 Evolutor 评估后经 MQ 触发；负责重匹配 strategy 与 Core 组件，并将 llm_id/soul_id/strategy_id 写回 agent 表。
 3. **task_signature**：格式 `[domain] 任务前256字`（见名词词典）。
 4. **系统 Agent**：Planner/Writer/Evolutor 预置策略标签 Plan-and-Solve / CoT / ReAct，经 AgentStrategy.soStrategy 解析 strategy_id。
+
+## 代码变更记录
+
+### [2026-09-22] buildAgent / optimizeAgent 方法拆分（编排骨架 + 语义步骤私有方法，逻辑零变更）
+**变更原因**：`buildAgent` 310 行、`optimizeAgent` 207 行，混合参数准备、组件装配、校验、持久化、绑定、上报多类职责，超出 10–30 行方法约束（DDDStandards §2）。
+
+**修改的方法**（原方法保留为编排骨架，步骤顺序/条件/副作用/返回值语义零变更；组件 run_id/context_id 等入参逐字段保持原表达式）：
+  - `AgentBuilderService.buildAgent` — 编排骨架：配置/ID 准备 → agent_building 事件 → 任务分析 → 复用匹配（命中即返回）→ 组件装配 → 持久化 → Core 绑定 → 存档 → agent_built 事件 → 回写 output。
+  - `AgentBuilderService.optimizeAgent` — 编排骨架：auto_optimize 开关 → 加载目标 Agent → 策略重匹配 → 陈旧 Skill/Soul 解绑 → LLM 重匹配 → Soul 重绑 → Skill 重绑+opt → MCP 重绑+opt → 汇总 optimized。
+  - 新增 buildAgent 私有步骤：`emitAgentBuildingEvent`、`reuseMatchedAgent`、`recordMatchedAgentUsage`、`emitAgentMatchedEvent`、`matchStrategyForAgent`、`matchLlmForBuild`、`matchSkillForBuild`、`matchMcpForBuild`、`matchSoulForBuild`、`selectPromptForAgent`、`assembleAgentComponents`、`persistBuiltAgent`、`bindCoreComponents`、`buildBuildSummary`、`archiveAgentBuild`、`emitAgentBuiltEvent`。
+  - 新增 optimizeAgent 私有步骤：`loadOptimizeTarget`、`rematchStrategy`、`unbindStaleSkills`、`unbindStaleSouls`、`rematchLlm`、`rebindSoul`、`rebindSkills`、`rebindMcps`。
+  - 新增跨方法复用私有步骤：`optSkillBindings` / `optMcpBindings`（buildAgent 与 optimizeAgent 共用 Core opt 绑定循环）、`optSoulBinding`。
+  - `generateAgentName` 私有方法下沉领域服务 `AgentNamingDomainService`（纯函数，去除未使用的 `_agentId` 入参）。
+  - 新增领域服务（纯函数，零 I/O）：`domain/services/AgentNamingDomainService.ts`（Agent 命名：Soul 简述 → 技能简述 → 领域映射兜底）、`domain/services/BindingDiffDomainService.ts`（`computeBindingDiff` 绑定增/删差异，Skill/MCP 重绑共用）、`domain/services/AgentBuildSummaryDomainService.ts`（`buildAgentBuildSummary` 构建产物摘要，info_raw 存档与 agent_built 流事件共用）。
+
+**影响的端点**：
+  - Runtime/编排 → `AgentBuilderAccess.buildAgent`（行为不变，流事件 payload 字段一致）。
+  - Evolutor optimize worker（`agent.optimize` 队列）→ `optimizeAgent`（行为不变，changes 记录语义一致）。
+
+**可能存在的问题**：
+  - `buildSystemAgent` 的 optSoul（context_id 为空串）与 buildAgent 语义不同，未纳入 `optSoulBinding` 复用，保持原样。

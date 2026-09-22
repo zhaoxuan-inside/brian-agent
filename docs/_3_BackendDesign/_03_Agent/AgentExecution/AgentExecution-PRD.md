@@ -439,3 +439,16 @@ Agent 执行过程被抽象为以下四个原子接口。各接口可独立开�
 
 
 
+
+### [2026-09-22] execAgent 方法拆分：273 行编排骨架化（逻辑零变更）
+**变更原因**：`execAgent` 273 行，远超 DDDStandards §2 的 10-30 行约束；资源加载、规则解析、循环分发、轨迹归档混在单方法内。
+
+**修改的方法**：
+- `AgentExecutionService.execAgent` — 保留为 24 行编排骨架，步骤下沉为私有方法：`prepareExecRun`（起点/配置/traceId/迭代上限/libCtx）、`soEnabledAgent`（加载校验 + 签名解析领域）、`buildExecContextData`（task_content 净化 + 多源上下文，失败降级）、`prepareExecResources`（策略/技能/MCP 加载 + 绑定与 LLM 校验 + 工具清单）、`resolveExecRule`（规则 JSON 容错解析 + CoT→ReAct 升级）、`runExecRule`（无规则/phases/steps 三路分发）、`runDirectAnswer`、`recordExecUsage`、`saveExecTraceInfo`（空答案标记 + saveInfo 归档）、`storeExecTrace`（内存 LRU + 落库）、`finishExecOutput`（输出回写）。
+- 复用既有阶段方法（未重复实现 ReACT 循环）：`runPhases` / `runSteps` / `execThink` / `execAct` / `execReflect` / `execAnswer`（经 `dispatchStep` 分发）与 `buildAnswerInput`；无规则分支原先内联构造的 AnswerInput 与 `buildAnswerInput` 产物字段等价（仅 domain 键重复出现、值相同），统一收敛复用。
+
+**影响的端点**：
+- `AgentExecutionAccess.execAgent` 对外签名与行为不变；ReACT 各阶段 SSE 事件（agent_thinking / agent_action / agent_reflection）推送顺序不变。
+
+**可能存在的问题**：
+- 空规则对象（steps:[] 且 phases 缺失）仍走「不执行 → 兜底 Answer」原路径，行为与拆分前一致。

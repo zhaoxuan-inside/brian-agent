@@ -2,6 +2,20 @@
 
 ## 待实现功能
 
+### 0. 方法长度拆分队列（2026-09-22 评审立项，`npm run analyze:methods 30` 生成）
+
+> 背景：HS-Code-Skill 全量整改拆掉了 12 个 >120 行超长方法（最大 400 行），剩余 ~331 个 >30 行方法多为 31–80 行区间。按 DDDStandards §2「连贯性优先、不为拆而拆」分批消化，本表登记排队。
+
+| 批次 | 范围 | 说明 |
+|------|------|------|
+| 已完成 | 24 个 >120 行中 11 个 + 4 个 SchemaInitializer | context/buildAgent/optimizeAgent/evalWorkAgent/execWrite/execAgent/soSession/executeRun/executeSingleLLM 已拆；SelfLearning/LLM/InfoCore/MCP 四个 init 数据驱动收敛 |
+| 批次 1 | >120 行余量 11 个（AopProxy.wrap 166、ConfigService.getCurrentValue 164、CDTCoreService.login 157、soTagGraph 156、listLLM 152 等） | AopProxy 为横切基建，拆分需同步回归全部 46 个接入点，单独排期 |
+| 批次 2 | 80–120 行 ~37 个 | 按层分组拆分 |
+| 批次 3 | 50–80 行 ~96 个 | 拆分收益递减，结合触达时顺手拆（单一关注点，不顺手重构原则的例外按 decisions.md 登记） |
+| 批次 4 | 31–50 行 ~187 个 | 仅在行为变更同文件触达时拆 |
+
+**配套遗留**：① `evalWriterAgent` 前置段与 `resolveEvalContext` 逐字重复（EvolutorAgent-PRD 已登记）；② IntentAgent `info_content` 恒 undefined 拼入历史 prompt（any 治理发现，修复需上游结构对齐）；③ `writeLLMCoreQuotaConfig` 传参缺 `llm_provider_id` 运行时会抛 ValidationError（any 治理发现，decisions.md [2026-09-22e] 登记）。
+
 ### 1. Runtime v2 编排内核重构（弃用 workflow，2026-09-04 决策定稿）
 
 | 项目 | 内容 |

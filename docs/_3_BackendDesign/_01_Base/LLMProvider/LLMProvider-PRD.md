@@ -661,3 +661,15 @@
 
 **可能存在的问题**：
   - metrics.llm_usage 为内存实例字段，仅随 AOP invocation 序列化（DEBUG 级）与显式 INFO 遥测日志落库；调用方未传 run 级 metrics 时 invocation_json 不携带。
+
+### [2026-09-22] LLMSchemaInitializer DDL 收敛为数据驱动表
+
+**变更原因**：`init` 以 DDL 字符串堆砌达 257 行，超出方法长度约束（10–30 行）；按 DDDStandards §2「纯声明式内容允许通过数据驱动表收敛长度」执行重构。
+
+**修改的方法**：
+  - `LLMSchemaInitializer.init` — 55 条 DDL（6 CREATE TABLE + 25 CREATE INDEX/UNIQUE INDEX + 24 幂等容忍 ALTER/RENAME/DROP）逐字提取到类内私有数据表 `ddlStatements`（`string | { sql, ignoreReason }`）；`init` 仅循环执行，普通语句失败即抛出，带 `ignoreReason` 的迁移语句保持原 try/catch 幂等容忍语义，执行顺序不变。
+
+**影响的端点**：无（逻辑零变更：SQL 序列经转译执行比对逐字一致；`LLMAccess.initialize` 行为不变）。
+
+**可能存在的问题**：
+  - 无。quota/caller 等列循环已展开为显式表项，新增迁移列时按表内既有格式追加即可。

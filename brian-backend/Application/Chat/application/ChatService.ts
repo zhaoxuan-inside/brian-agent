@@ -39,6 +39,11 @@ import {
   OpenChatStreamInput, OpenChatStreamOutput,
   type SSEEvent,
 } from '../domain/types';
+import {
+  toSessionSummaries,
+  toTraceTokenUsage,
+  type SessionAggregateMaps,
+} from '../domain/services/SessionSearchDomainService';
 
 import {
   RunGatewayAccess,
@@ -547,60 +552,75 @@ export class ChatService {
     return true;
   }
 
+  /**
+   * 检索会话列表（应用编排）：关键词/时间过滤 → 分页取会话 → 批量聚合统计 → 摘要映射 → 总数回写。
+   *
+   * 命中过滤条件（关键词 / 时间范围）返回空集时短路返回；统计/标签/token/消息数
+   * 均为批量查询（消除逐会话 N+1），单项查询失败按口径降级不阻断。
+   */
   async soSession(input: SearchSessionInput, output: SearchSessionOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const conditions: Condition[] = [];
-
     if (input.keyword) {
-      const kw = `%${input.keyword}%`;
-      const matchedRows = this.relationDb.queryRaw<{ session_id: string }>(
-        `SELECT "session_id" FROM "chat_session" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "info_raw" WHERE "info" LIKE ?`,
-        [kw, kw],
-      );
-      const matchedIds = matchedRows.map((r) => r.session_id).filter(Boolean);
-      if (matchedIds.length === 0) {
-        output.sessions = [];
-        output.total = 0;
-        return true;
-      }
-      conditions.push({
-        field: 'session_id',
-        operator: Operator.IN,
-        value: matchedIds,
-      });
+      const matchedIds = this.soSessionIdsByKeyword(input.keyword);
+      if (matchedIds.length === 0) return this.writeEmptySessionPage(output);
+      conditions.push({ field: 'session_id', operator: Operator.IN, value: matchedIds });
     }
-
     if (input.start_time !== undefined || input.end_time !== undefined) {
-      const timeConds: string[] = [];
-      const timeArgs: unknown[] = [];
-      if (input.start_time !== undefined) {
-        timeConds.push('"created" >= ?');
-        timeArgs.push(input.start_time);
-      }
-      if (input.end_time !== undefined) {
-        timeConds.push('"created" < ?');
-        timeArgs.push(input.end_time);
-      }
-      const timeRows = this.relationDb.queryRaw<{ session_id: string }>(
-        `SELECT DISTINCT "session_id" FROM "info_raw" WHERE ${timeConds.join(' AND ')}`,
-        timeArgs,
-      );
-      const timeMatchedIds = timeRows.map((r) => r.session_id).filter(Boolean);
-      if (timeMatchedIds.length === 0) {
-        output.sessions = [];
-        output.total = 0;
-        return true;
-      }
-      conditions.push({
-        field: 'session_id',
-        operator: Operator.IN,
-        value: timeMatchedIds,
-      });
+      const timeMatchedIds = this.soSessionIdsByTimeRange(input.start_time, input.end_time);
+      if (timeMatchedIds.length === 0) return this.writeEmptySessionPage(output);
+      conditions.push({ field: 'session_id', operator: Operator.IN, value: timeMatchedIds });
     }
+    const selOutput = await this.soSessionPage(input, conditions);
+    const sessionIds = selOutput.rows.map((r) => String(r.session_id ?? '')).filter(Boolean);
+    const maps = this.soSessionAggregateMaps(sessionIds, metrics);
+    const sessions = toSessionSummaries(selOutput.rows, maps);
+    const total = await this.countSessionTotal(conditions, metrics);
+    output.sessions = sessions;
+    output.total = total;
+    return true;
+  }
 
+  /** 空结果页回写（数据处理）：无命中时输出空列表与 0 总数 */
+  private writeEmptySessionPage(output: SearchSessionOutput): boolean {
+    output.sessions = [];
+    output.total = 0;
+    return true;
+  }
+
+  /** 按关键词查会话 ID（逻辑控制；会话标题 LIKE 与 info 内容 LIKE 联合） */
+  private soSessionIdsByKeyword(keyword: string): string[] {
+    const kw = `%${keyword}%`;
+    const matchedRows = this.relationDb.queryRaw<{ session_id: string }>(
+      `SELECT "session_id" FROM "chat_session" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "info_raw" WHERE "info" LIKE ?`,
+      [kw, kw],
+    );
+    return matchedRows.map((r) => r.session_id).filter(Boolean);
+  }
+
+  /** 按时间范围查会话 ID（逻辑控制；info_raw.created 半开区间过滤 [start, end)） */
+  private soSessionIdsByTimeRange(startTime?: number, endTime?: number): string[] {
+    const timeConds: string[] = [];
+    const timeArgs: unknown[] = [];
+    if (startTime !== undefined) {
+      timeConds.push('"created" >= ?');
+      timeArgs.push(startTime);
+    }
+    if (endTime !== undefined) {
+      timeConds.push('"created" < ?');
+      timeArgs.push(endTime);
+    }
+    const timeRows = this.relationDb.queryRaw<{ session_id: string }>(
+      `SELECT DISTINCT "session_id" FROM "info_raw" WHERE ${timeConds.join(' AND ')}`,
+      timeArgs,
+    );
+    return timeRows.map((r) => r.session_id).filter(Boolean);
+  }
+
+  /** 分页查会话行（逻辑控制；排序解析与分页默认值在此装配） */
+  private async soSessionPage(input: SearchSessionInput, conditions: Condition[]): Promise<SelectDBOutput> {
     const pageCurrent = input.page_current ?? 1;
     const pageSize = input.page_size ?? 20;
-
     const selInput = Object.assign(new SelectDBInput(), {
       query_param: {
         table: 'chat_session',
@@ -613,188 +633,182 @@ export class ChatService {
     });
     const selOutput = Object.assign(new SelectDBOutput(), {});
     await this.relationDb.selectDB(selInput, selOutput, new DBContext());
+    return selOutput;
+  }
 
-    // ===== 新增：批量聚合会话统计（问答次数 / 字符数 / 标签 / token），避免逐会话 N+1 =====
-    const sessionIds = selOutput.rows.map((r) => String(r.session_id ?? '')).filter(Boolean);
+  /** 批量装配会话页聚合映射（逻辑控制；五类统计依序执行，批量结果供领域层映射消费） */
+  private soSessionAggregateMaps(sessionIds: string[], metrics?: Metrics): SessionAggregateMaps {
+    const maps: SessionAggregateMaps = {
+      statMap: new Map(), tagsMap: new Map(), tokenMap: new Map(), countMap: new Map(), lastMsgMap: new Map(),
+    };
+    if (sessionIds.length === 0) return maps;
+    maps.statMap = this.soSessionQaStats(sessionIds, metrics);
+    maps.tagsMap = this.soSessionTags(sessionIds, metrics);
+    maps.tokenMap = this.soSessionTokenStats(sessionIds, metrics);
+    maps.countMap = this.soSessionMessageCount(sessionIds);
+    maps.lastMsgMap = this.soSessionLastMessage(sessionIds, metrics);
+    return maps;
+  }
+
+  /** 聚合会话问答次数与问/答字符数（逻辑控制；info_type = REQUEST/RESPONSE 汇总，失败降级空映射） */
+  private soSessionQaStats(sessionIds: string[], metrics?: Metrics): Map<string, { qa_count: number; question_chars: number; answer_chars: number }> {
     const statMap = new Map<string, { qa_count: number; question_chars: number; answer_chars: number }>();
-    const tagsMap = new Map<string, string[]>();
-    const tokenMap = new Map<string, { input_tokens: number; output_tokens: number }>();
-
-    if (sessionIds.length > 0) {
-      const placeholders = sessionIds.map(() => '?').join(',');
-
-      try {
-        const statRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
-          `SELECT "session_id",
-             SUM(CASE WHEN "info_type" = 'REQUEST' THEN 1 ELSE 0 END) AS qa_count,
-             SUM(CASE WHEN "info_type" = 'REQUEST' THEN "info_length" ELSE 0 END) AS question_chars,
-             SUM(CASE WHEN "info_type" = 'RESPONSE' THEN "info_length" ELSE 0 END) AS answer_chars
-           FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
-          sessionIds,
-        );
-        for (const r of statRows) {
-          statMap.set(String(r.session_id), {
-            qa_count: Number(r.qa_count ?? 0) || 0,
-            question_chars: Number(r.question_chars ?? 0) || 0,
-            answer_chars: Number(r.answer_chars ?? 0) || 0,
-          });
-        }
-      } catch (err) {
-        /* degrade gracefully */
-        metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_ids: sessionIds,
+    const placeholders = sessionIds.map(() => '?').join(',');
+    try {
+      const statRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
+        `SELECT "session_id",
+           SUM(CASE WHEN "info_type" = 'REQUEST' THEN 1 ELSE 0 END) AS qa_count,
+           SUM(CASE WHEN "info_type" = 'REQUEST' THEN "info_length" ELSE 0 END) AS question_chars,
+           SUM(CASE WHEN "info_type" = 'RESPONSE' THEN "info_length" ELSE 0 END) AS answer_chars
+         FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
+        sessionIds,
+      );
+      for (const r of statRows) {
+        statMap.set(String(r.session_id), {
+          qa_count: Number(r.qa_count ?? 0) || 0,
+          question_chars: Number(r.question_chars ?? 0) || 0,
+          answer_chars: Number(r.answer_chars ?? 0) || 0,
         });
       }
-
-      try {
-        const tagRows = this.relationDb.queryRaw<{ session_id: string; tag: string }>(
-          `SELECT ir."session_id", t."tag"
-           FROM "info_tag" t
-           INNER JOIN "info_raw" ir ON t."info_id" = ir."info_id"
-           WHERE ir."session_id" IN (${placeholders})
-           GROUP BY ir."session_id", t."tag"`,
-          sessionIds,
-        );
-        for (const r of tagRows) {
-          const sid = String(r.session_id ?? '');
-          const tag = String(r.tag ?? '').trim();
-          if (!sid || !tag) continue;
-          const list = tagsMap.get(sid) ?? [];
-          if (!list.includes(tag)) list.push(tag);
-          tagsMap.set(sid, list);
-        }
-      } catch (err) {
-        /* degrade gracefully */
-        metrics?.warn('ChatService.soSession 会话标签聚合失败（该批会话标签降级为空）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_ids: sessionIds,
-        });
-      }
-
-      try {
-        const traceRows = this.relationDb.queryRaw<{ session_id: string; trace_id: string; iterations_json: string; total_token_usage: number }>(
-          `SELECT ow."session_id", t."trace_id", t."iterations_json", t."total_token_usage"
-           FROM "orchestration_work" ow
-           INNER JOIN "orchestration_agent_execution" e ON ow."work_id" = e."work_id"
-           INNER JOIN "agent_execution_trace" t ON e."trace_id" = t."trace_id" AND e."trace_id" IS NOT NULL AND e."trace_id" != ''
-           WHERE ow."session_id" IN (${placeholders})
-           GROUP BY ow."session_id", t."trace_id"`,
-          sessionIds,
-        );
-        const seen = new Set<string>();
-        for (const r of traceRows) {
-          const sid = String(r.session_id ?? '');
-          const traceId = String(r.trace_id ?? '');
-          if (!sid || !traceId || seen.has(`${sid}:${traceId}`)) continue;
-          seen.add(`${sid}:${traceId}`);
-          let inputTokens = 0;
-          let outputTokens = 0;
-          try {
-            const iterations = JSON.parse(r.iterations_json || '[]');
-            if (Array.isArray(iterations)) {
-              for (const it of iterations) {
-                for (const key of ['think', 'reflect', 'answer']) {
-                  const piece = it?.[key];
-                  if (piece && typeof piece === 'object') {
-                    inputTokens += Number(piece.input_tokens ?? 0) || 0;
-                    outputTokens += Number(piece.output_tokens ?? 0) || 0;
-                  }
-                }
-              }
-            }
-          } catch (err) {
-            /* ignore */
-            metrics?.warn('ChatService.soSession iterations_json 解析失败（回退 total_token_usage 统计）', {
-              error: err instanceof Error ? err.message : String(err),
-              session_id: sid,
-              trace_id: traceId,
-            });
-          }
-          if (inputTokens === 0 && outputTokens === 0) {
-            outputTokens = Number(r.total_token_usage ?? 0) || 0;
-          }
-          const cur = tokenMap.get(sid) ?? { input_tokens: 0, output_tokens: 0 };
-          cur.input_tokens += inputTokens;
-          cur.output_tokens += outputTokens;
-          tokenMap.set(sid, cur);
-        }
-      } catch (err) {
-        /* degrade gracefully */
-        metrics?.warn('ChatService.soSession 会话 token 聚合失败（token 统计降级为 0）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_ids: sessionIds,
-        });
-      }
-    }
-
-    const sessions: SearchSessionOutput['sessions'] = [];
-
-    // 批量查询消息计数与最后消息，消除逐会话 N+1
-    const countMap = new Map<string, number>();
-    const lastMsgMap = new Map<string, { time: number; msg: string }>();
-    if (sessionIds.length > 0) {
-      const placeholders = sessionIds.map(() => '?').join(',');
-      try {
-        const cntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
-          `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
-          sessionIds,
-        );
-        for (const r of cntRows) countMap.set(String(r.session_id), Number(r.cnt));
-      } catch { /* degrade gracefully */ }
-
-      try {
-        const lastRows = this.relationDb.queryRaw<{ session_id: string; created: number; info: string }>(
-          `SELECT ir."session_id", ir."created", ir."info"
-           FROM "info_raw" ir
-           INNER JOIN (
-             SELECT "session_id", MAX("created") AS max_created
-             FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"
-           ) latest ON ir."session_id" = latest."session_id" AND ir."created" = latest.max_created`,
-          sessionIds,
-        );
-        for (const r of lastRows) {
-          lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
-        }
-      } catch (err) {
-        /* degrade gracefully */
-        metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_ids: sessionIds,
-        });
-      }
-    }
-
-    for (const row of selOutput.rows) {
-      const sessionId = row.session_id as string;
-
-      const countInfo = countMap.get(sessionId);
-      const messageCount = countInfo ?? 0;
-      const lastInfo = lastMsgMap.get(sessionId);
-      const lastMessageTime = lastInfo?.time ?? 0;
-      const lastMessage = lastInfo?.msg ?? '';
-
-      const stat = statMap.get(sessionId) ?? { qa_count: 0, question_chars: 0, answer_chars: 0 };
-      const token = tokenMap.get(sessionId) ?? { input_tokens: 0, output_tokens: 0 };
-
-      sessions.push({
-        session_id: sessionId,
-        session_title: (row.session_title as string) ?? '',
-        message_count: messageCount,
-        last_message_time: lastMessageTime,
-        last_message: lastMessage || (row.session_title as string) || '',
-        created: (row.created as number) ?? 0,
-        updated: (row.updated as number) ?? 0,
-        qa_count: stat.qa_count,
-        question_chars: stat.question_chars,
-        answer_chars: stat.answer_chars,
-        input_tokens: token.input_tokens,
-        output_tokens: token.output_tokens,
-        tags: tagsMap.get(sessionId) ?? [],
+    } catch (err) {
+      /* degrade gracefully */
+      metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_ids: sessionIds,
       });
     }
+    return statMap;
+  }
 
-    let total = 0;
+  /** 聚合会话标签集合（逻辑控制；info_tag 关联去重，失败降级空映射） */
+  private soSessionTags(sessionIds: string[], metrics?: Metrics): Map<string, string[]> {
+    const tagsMap = new Map<string, string[]>();
+    const placeholders = sessionIds.map(() => '?').join(',');
+    try {
+      const tagRows = this.relationDb.queryRaw<{ session_id: string; tag: string }>(
+        `SELECT ir."session_id", t."tag"
+         FROM "info_tag" t
+         INNER JOIN "info_raw" ir ON t."info_id" = ir."info_id"
+         WHERE ir."session_id" IN (${placeholders})
+         GROUP BY ir."session_id", t."tag"`,
+        sessionIds,
+      );
+      for (const r of tagRows) {
+        const sid = String(r.session_id ?? '');
+        const tag = String(r.tag ?? '').trim();
+        if (!sid || !tag) continue;
+        const list = tagsMap.get(sid) ?? [];
+        if (!list.includes(tag)) list.push(tag);
+        tagsMap.set(sid, list);
+      }
+    } catch (err) {
+      /* degrade gracefully */
+      metrics?.warn('ChatService.soSession 会话标签聚合失败（该批会话标签降级为空）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_ids: sessionIds,
+      });
+    }
+    return tagsMap;
+  }
+
+  /** 聚合会话 token 用量（逻辑控制；iterations 明细优先，查询失败降级空映射） */
+  private soSessionTokenStats(sessionIds: string[], metrics?: Metrics): Map<string, { input_tokens: number; output_tokens: number }> {
+    const tokenMap = new Map<string, { input_tokens: number; output_tokens: number }>();
+    try {
+      const placeholders = sessionIds.map(() => '?').join(',');
+      const traceRows = this.relationDb.queryRaw<{ session_id: string; trace_id: string; iterations_json: string; total_token_usage: number }>(
+        `SELECT ow."session_id", t."trace_id", t."iterations_json", t."total_token_usage"
+         FROM "orchestration_work" ow
+         INNER JOIN "orchestration_agent_execution" e ON ow."work_id" = e."work_id"
+         INNER JOIN "agent_execution_trace" t ON e."trace_id" = t."trace_id" AND e."trace_id" IS NOT NULL AND e."trace_id" != ''
+         WHERE ow."session_id" IN (${placeholders})
+         GROUP BY ow."session_id", t."trace_id"`,
+        sessionIds,
+      );
+      this.aggregateTraceTokenRows(traceRows, tokenMap, metrics);
+    } catch (err) {
+      /* degrade gracefully */
+      metrics?.warn('ChatService.soSession 会话 token 聚合失败（token 统计降级为 0）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_ids: sessionIds,
+      });
+    }
+    return tokenMap;
+  }
+
+  /** 逐条累计 trace token 用量（数据处理；同会话同 trace 去重，解析失败告警并回退 total_token_usage） */
+  private aggregateTraceTokenRows(
+    traceRows: Array<{ session_id: string; trace_id: string; iterations_json: string; total_token_usage: number }>,
+    tokenMap: Map<string, { input_tokens: number; output_tokens: number }>,
+    metrics?: Metrics,
+  ): void {
+    const seen = new Set<string>();
+    for (const r of traceRows) {
+      const sid = String(r.session_id ?? '');
+      const traceId = String(r.trace_id ?? '');
+      if (!sid || !traceId || seen.has(`${sid}:${traceId}`)) continue;
+      seen.add(`${sid}:${traceId}`);
+      let usage = { input_tokens: 0, output_tokens: 0 };
+      try {
+        usage = toTraceTokenUsage(String(r.iterations_json ?? ''), Number(r.total_token_usage ?? 0) || 0);
+      } catch (err) {
+        metrics?.warn('ChatService.soSession iterations_json 解析失败（回退 total_token_usage 统计）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sid,
+          trace_id: traceId,
+        });
+        usage.output_tokens = Number(r.total_token_usage ?? 0) || 0;
+      }
+      const cur = tokenMap.get(sid) ?? { input_tokens: 0, output_tokens: 0 };
+      cur.input_tokens += usage.input_tokens;
+      cur.output_tokens += usage.output_tokens;
+      tokenMap.set(sid, cur);
+    }
+  }
+
+  /** 批量查会话消息条数（逻辑控制；失败降级空映射） */
+  private soSessionMessageCount(sessionIds: string[]): Map<string, number> {
+    const countMap = new Map<string, number>();
+    try {
+      const placeholders = sessionIds.map(() => '?').join(',');
+      const cntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
+        `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
+        sessionIds,
+      );
+      for (const r of cntRows) countMap.set(String(r.session_id), Number(r.cnt));
+    } catch { /* degrade gracefully */ }
+    return countMap;
+  }
+
+  /** 批量查会话最后一条消息（逻辑控制；子查询取每会话最新 created，失败降级空映射） */
+  private soSessionLastMessage(sessionIds: string[], metrics?: Metrics): Map<string, { time: number; msg: string }> {
+    const lastMsgMap = new Map<string, { time: number; msg: string }>();
+    try {
+      const placeholders = sessionIds.map(() => '?').join(',');
+      const lastRows = this.relationDb.queryRaw<{ session_id: string; created: number; info: string }>(
+        `SELECT ir."session_id", ir."created", ir."info"
+         FROM "info_raw" ir
+         INNER JOIN (
+           SELECT "session_id", MAX("created") AS max_created
+           FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"
+         ) latest ON ir."session_id" = latest."session_id" AND ir."created" = latest.max_created`,
+        sessionIds,
+      );
+      for (const r of lastRows) {
+        lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
+      }
+    } catch (err) {
+      /* degrade gracefully */
+      metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_ids: sessionIds,
+      });
+    }
+    return lastMsgMap;
+  }
+
+  /** 统计会话总数（逻辑控制；同过滤条件 countDB，失败降级 0） */
+  private async countSessionTotal(conditions: Condition[], metrics?: Metrics): Promise<number> {
     try {
       const totalInput = Object.assign(new CountDBInput(), {
         table: 'chat_session',
@@ -802,17 +816,14 @@ export class ChatService {
       });
       const totalOutput = Object.assign(new CountDBOutput(), {});
       await this.relationDb.countDB(totalInput, totalOutput, new DBContext());
-      total = totalOutput.count;
+      return totalOutput.count;
     } catch (err) {
       /* degrade gracefully */
       metrics?.warn('ChatService.soSession 会话总数统计失败（total 降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
       });
+      return 0;
     }
-
-    output.sessions = sessions;
-    output.total = total;
-    return true;
   }
 
   async soSessionDetail(input: GetSessionDetailInput, output: GetSessionDetailOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,

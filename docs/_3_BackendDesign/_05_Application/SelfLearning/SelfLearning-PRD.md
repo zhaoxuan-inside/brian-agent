@@ -804,3 +804,18 @@ SelfLearning 模块的配置通过 Config Application 统一管理（`/api/confi
 | 资料库路径校验 | addLibrary（自动校验） | 路径存在性和权限 |
 | Tag 关系图 | getTagGraph | Canvas 图数据 |
 | Tag 关联信息 | getTagRelatedInfo | 查看 Tag 关联的问答 |
+
+## 7. 变更记录
+
+### [2026-09-22] SelfLearningSchemaInitializer DDL 收敛为数据驱动表 + 种子步骤拆分
+
+**变更原因**：`init` 以 DDL 字符串堆砌达 321 行，超出方法长度约束（10–30 行）；按 DDDStandards §2「纯声明式内容允许通过数据驱动表收敛长度」执行重构。
+
+**修改的方法**：
+  - `SelfLearningSchemaInitializer.init` — 拆为编排方法（3 步）：`initDDL`（私有，循环执行 36 条 DDL 数据表 `ddlStatements`）→ `seedDefaultConfig`（私有，空表写入默认配置单行，逐字保留）→ `seedBuiltinTasks`（私有，空表写入 3 条内置任务，任务定义提取为数据表 `builtinTaskSeeds`，id/created/updated/status 仍在写入时生成）。
+  - DDL 含 8 CREATE TABLE + 20 CREATE INDEX/UPDATE + 13 幂等容忍语句（ALTER/跨模块索引）；普通语句失败即抛出，带 `ignoreReason` 的迁移语句保持原 try/catch 幂等容忍语义，执行顺序不变。
+
+**影响的端点**：无（逻辑零变更：SQL 序列与种子写入经转译执行比对逐字一致，覆盖空表/非空表两条路径；`SelfLearningAccess.initialize` 行为不变）。
+
+**可能存在的问题**：
+  - 无。新增迁移列或内置任务时按表内既有格式追加即可。

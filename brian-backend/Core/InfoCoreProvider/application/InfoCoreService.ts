@@ -101,6 +101,56 @@ const STOPWORDS = new Set([
   '比较', '起来', '过来', '出来', '起来', '开始', '没有', '时候', '东西',
 ]);
 
+// ---------------------------------------------------------------------------
+// Context 构建私有结构（application 内部步骤方法的 input/output 形状，不进 domain 契约）
+// ---------------------------------------------------------------------------
+
+/** 上下文构建计划：total 总预算、时间线限额、跨会话开关、复选消息 ID 列表 */
+interface ContextBuildPlan {
+  maxTotal: number;
+  timelineLimit: number;
+  enableCrossSession: boolean;
+  selectedIds: string[];
+}
+
+/** 弱相关维度（TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）限额与关键词分数阈值 */
+interface ContextWeakDimensionLimits {
+  tagLimit: number;
+  simLimit: number;
+  kwLimit: number;
+  randLimit: number;
+  kwScoreThreshold: number;
+}
+
+/** 弱相关维度并行采集结果（TAG_RELATIVE / SIMILARITY / KEYWORD 三维候选） */
+interface ContextWeakDimensionCandidates {
+  tag: InfoRawRecord[];
+  sim: InfoRawRecord[];
+  kw: InfoRawRecord[];
+}
+
+/** 上下文候选采集分桶：按来源维度归集的原始候选（尚未去重/转 ContextInfoItem） */
+interface ContextCandidateBuckets {
+  pinned: InfoRawRecord[];
+  citing: InfoRawRecord[];
+  timeline: InfoRawRecord[];
+  tag: InfoRawRecord[];
+  sim: InfoRawRecord[];
+  kw: InfoRawRecord[];
+  rand: InfoRawRecord[];
+}
+
+// 上下文采集来源全集：既作 priority_order 缺省时的默认优先级，也作合法性校验集合
+const CONTEXT_COLLECTION_SOURCES: ContextCollectionSource[] = [
+  CollectionSource.PINNED,
+  CollectionSource.CITING,
+  CollectionSource.TIMELINE,
+  CollectionSource.TAG_RELATIVE,
+  CollectionSource.SIMILARITY,
+  CollectionSource.KEYWORD,
+  CollectionSource.RANDOM,
+];
+
 /**
  * InfoCoreProvider 应用服务。
  *
@@ -1263,405 +1313,34 @@ export class InfoCoreService {
    * f. Keyword  — keywordKInfo（关键词相关消息）
    * g. Random   — 随机抽样
    */
-  // ===== 修改后的方法 =====
   async context(input: ContextInfoInput, output: ContextInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
-    if (!input.session_id) {
-      throw new ValidationError('context 需要提供 session_id');
-    }
-    if (!input.work_id) {
-      throw new ValidationError('context 需要提供 work_id');
-    }
-
+    this.validateContextInput(input);
     const contextConfig = await this.getInfoContextConfig();
-    const maxTotal = contextConfig?.total || 1000;
-    const DEFAULT_PRIORITY: CollectionSource[] = [
-      CollectionSource.PINNED,
-      CollectionSource.CITING,
-      CollectionSource.TIMELINE,
-      CollectionSource.TAG_RELATIVE,
-      CollectionSource.SIMILARITY,
-      CollectionSource.KEYWORD,
-      CollectionSource.RANDOM,
-    ];
-    const priorityOrderStr = contextConfig?.priority_order;
-
-    // Helper: 将 raw record 转为标准 ContextInfoItem（接受预取的 summaries 避免 N+1）
-    const toContextItem = (
-      raw: InfoRawRecord,
-      collectionSource: ContextCollectionSource,
-      summaryText?: string,
-    ): ContextInfoItem => {
-      let contentText = raw.info || '';
-      if (!contentText && summaryText) {
-        contentText = `[摘要] ${summaryText}`;
-      }
-
-      return {
-        id: raw.id || raw.info_id,
-        info_id: raw.info_id,
-        session_id: raw.session_id,
-        work_id: raw.work_id || '',
-        run_id: raw.run_id || '',
-        info_type: raw.info_type || InfoType.REQUEST,
-        info_creator_role: raw.info_creator_role,
-        info_creator_id: raw.info_creator_id,
-        info: contentText,
-        content: contentText,
-        summary: summaryText || '',
-        summary_length: summaryText ? summaryText.length : 0,
-        info_length: contentText.length,
-        content_length: contentText.length,
-        collection_source: collectionSource,
-        source: collectionSource,
-        pin: raw.pin ? 1 : 0,
-        created: raw.created,
-        updated: raw.updated,
-        handle_result_type: raw.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE,
-      };
-    };
-
-    // 1. 单模式多维度智能混合构建（无独立 CUSTOM 分支）
-    //    基础上下文：复选消息（selected_msg_ids / custom_info_ids）优先，有复选时复选消息替换时间线；
-    //    无复选时退化为纯时间线。其余维度（标签/向量/关键词/随机）逻辑不变。
-    const timelineLimit = contextConfig?.base_timeline_count ?? 500;
-    // 是否允许跨会话召回（TAG_RELATIVE / SIMILARITY / KEYWORD / RANDOM 全局兜底）。
-    // Work Agent 执行子任务时应关闭，避免无关历史会话污染当前任务上下文。
-    const enableCrossSession = input.enable_cross_session !== false;
-
-    // 2.1 收集钉住消息 (PINNED，会话内)
-    const pinnedRows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: [
-        { field: 'session_id', operator: Operator.EQ, value: input.session_id },
-        { field: 'pin', operator: Operator.EQ, value: 1 },
-      ],
-      order_by: [{ field: 'created', direction: 'DESC' }],
+    const plan = this.prepareContextBuildPlan(input, contextConfig);
+    // 基础上下文候选：钉住消息（PINNED）+ 复选消息（CITING）替换时间线（无复选退化为纯时间线）+ 当前消息
+    const pinnedCandidates = await this.collectPinnedCandidates(input.session_id);
+    const base = await this.collectSelectedOrTimelineCandidates(input, plan.selectedIds, plan.timelineLimit);
+    const currentCandidate = await this.extractCurrentCandidate(input.session_id, plan.selectedIds, base.timelineCandidates);
+    const baseContextCount = pinnedCandidates.length + base.citingCandidates.length + base.timelineCandidates.length;
+    const limits = this.resolveWeakDimensionLimits(contextConfig, baseContextCount);
+    const { refText, refInfoRow } = await this.resolveReferenceText(input, base.citingCandidates, base.timelineCandidates);
+    const weak = await this.collectWeakDimensionCandidates(input.session_id, refText, refInfoRow, limits, plan.enableCrossSession, _context, metrics, report);
+    const randCandidates = await this.collectRandomCandidates(input.session_id, limits.randLimit, plan.enableCrossSession, pinnedCandidates, base.citingCandidates, currentCandidate, metrics);
+    this.excludeCurrentFromWeakDimensions(currentCandidate, [weak.tag, weak.sim, weak.kw, randCandidates]);
+    // 装配回写：剔除执行轨迹 → 批量预取摘要 → 按优先级去重收集 → 分类统计 → 三对象落盘
+    const candidatesMap = this.buildContextCandidatesMap({
+      pinned: pinnedCandidates, citing: base.citingCandidates, timeline: base.timelineCandidates,
+      tag: weak.tag, sim: weak.sim, kw: weak.kw, rand: randCandidates,
     });
-    const pinnedCandidates = pinnedRows.map((r) => this.toInfoRawRecord(r));
-
-    // 2.2 基础上下文：复选消息（CITING）替换时间线，或纯时间线
-    const selectedIds = (input.selected_msg_ids || input.custom_info_ids || []).filter((id) => Boolean(id));
-    const citingCandidates: InfoRawRecord[] = [];
-    const timelineCandidates: InfoRawRecord[] = [];
-    if (selectedIds.length > 0) {
-      // 复选消息替换时间线：复选消息作为基础上下文，不再并行采集时间线
-      for (const msgId of selectedIds) {
-        const r = await this.getInfoByInfoId(msgId);
-        if (r && r.session_id === input.session_id) {
-          citingCandidates.push(r);
-        }
-      }
-    } else {
-      const tl = await this.lastNInfoTimeline(input.session_id, timelineLimit);
-      for (const item of tl) {
-        timelineCandidates.push(item);
-      }
-    }
-
-    // 当前消息（本次问答输入）：时间线按 created DESC 排序，最新一条即本次输入，
-    // 从时间线中单独拆出作为 CURRENT 类型，避免与 task_content 重复出现在上下文中。
-    // 复选模式下当前输入不在复选列表内，单独取最新一条用于 CURRENT 标注与弱相关维度剔除。
-    let currentCandidate: InfoRawRecord | null = null;
-    if (timelineCandidates.length > 0) {
-      currentCandidate = timelineCandidates.shift() ?? null;
-    } else if (selectedIds.length > 0) {
-      const latest = await this.lastNInfoTimeline(input.session_id, 1);
-      currentCandidate = latest[0] ?? null;
-    }
-
-    // 2.3 弱相关维度限额（2026-09-15 第三版，按用户裁定口径）：
-    //     实际上限 = min(该维度基础上限 base_xxx_count, 「基础上下文消息数量」× xxx_max_percent%)
-    //     —— 占比基准是**基础上下文数量**（= pinned + citing + timeline），不再占 total、
-    //     也不再引入 shrinkFactor 二次收缩（原始实现注释保留在下方）；基础上下文越多，
-    //     弱相关空间同比放行，抹去「占比放样 over total + 收缩」的双重折算。
-    const baseContextCount = pinnedCandidates.length + citingCandidates.length + timelineCandidates.length;
-    const capByBase = (base: number, percent: number): number => {
-      const byBase = Math.floor((baseContextCount * percent) / 100);
-      return Math.min(base, byBase);
-    };
-    const tagLimit = capByBase(contextConfig?.base_tag_relative_count ?? 200, contextConfig?.tag_relative_max_percent ?? 20);
-    const simLimit = capByBase(contextConfig?.base_similarity_count ?? 150, contextConfig?.similarity_max_percent ?? 15);
-    const kwLimit = capByBase(contextConfig?.base_keyword_count ?? 100, contextConfig?.keyword_max_percent ?? 10);
-    const randLimit = capByBase(contextConfig?.base_random_count ?? 50, contextConfig?.random_max_percent ?? 5);
-    const kwScoreThreshold = contextConfig?.keyword_score_threshold ?? 95;
-
-    // 获取参考文本：优先使用 input.info（当前用户提问文本），其次查找 input.info_id 记录，最后从 CITING/TIMELINE 中提取
-    let refText = input.info || '';
-    let refInfoRow: InfoRawRecord | null = null;
-    if (input.info_id) {
-      refInfoRow = await this.getInfoByInfoId(input.info_id);
-      if (refInfoRow?.info && !refText) {
-        refText = refInfoRow.info;
-      }
-    }
-    if (!refInfoRow && (citingCandidates.length > 0 || timelineCandidates.length > 0)) {
-      const candidates = citingCandidates.length > 0 ? citingCandidates : timelineCandidates;
-      refInfoRow = candidates.find((t) => t.info_type === InfoType.REQUEST) || candidates[0] || null;
-      if (refInfoRow?.info && !refText) {
-        refText = refInfoRow.info;
-      }
-    }
-
-    // TAG_RELATIVE / SIMILARITY / KEYWORD 三个维度无依赖，并行执行
-    const [tagResult, simResult, kwResult] = await Promise.all([
-      // TAG_RELATIVE (全系统标签相关性消息)
-      (async (): Promise<InfoRawRecord[]> => {
-        if (!refInfoRow || tagLimit <= 0 || !enableCrossSession) return [];
-        try {
-          const relInput = new RelationKInfoInput();
-          relInput.info_id = refInfoRow.info_id;
-          relInput.topN = tagLimit;
-          const relOutput = new RelationKInfoOutput();
-          await this.relationKInfo(relInput, relOutput, _context, metrics, report);
-          return relOutput.list;
-        } catch (err) {
-          // 降级容忍：TAG_RELATIVE 候选采集失败不阻断上下文构建
-          metrics?.warn('InfoCoreService.context TAG_RELATIVE 候选采集失败，降级为空列表', {
-            error: err instanceof Error ? err.message : String(err),
-            info_id: refInfoRow.info_id,
-            session_id: input.session_id,
-          });
-          return [];
-        }
-      })(),
-      // SIMILARITY (全系统向量语义相似消息)
-      (async (): Promise<InfoRawRecord[]> => {
-        if (!refText || simLimit <= 0 || !enableCrossSession) return [];
-        try {
-          const simInput = new SimilarKInfoInput();
-          simInput.info = refText;
-          simInput.topK = simLimit;
-          const simOutput = new SimilarKInfoOutput();
-          await this.similarKInfo(simInput, simOutput, _context, metrics, report);
-          return simOutput.list.filter((item) => this.isCorrectInfo(item));
-        } catch (err) {
-          // 降级容忍：SIMILARITY 候选采集失败不阻断上下文构建
-          metrics?.warn('InfoCoreService.context SIMILARITY 候选采集失败，降级为空列表', {
-            error: err instanceof Error ? err.message : String(err),
-            session_id: input.session_id,
-          });
-          return [];
-        }
-      })(),
-      // KEYWORD (全系统关键词匹配消息)
-      (async (): Promise<InfoRawRecord[]> => {
-        if (!refText || kwLimit <= 0 || !enableCrossSession) return [];
-        try {
-          const kwInput = new KeywordKInfoInput();
-          kwInput.info = refText;
-          const kwOutput = new KeywordKInfoOutput();
-          await this.keywordKInfo(kwInput, kwOutput, _context, metrics, report);
-          const result: InfoRawRecord[] = [];
-          for (const item of kwOutput.list) {
-            if (!this.isCorrectInfo(item)) continue;
-            if ((item.keyword_score ?? 0) < kwScoreThreshold) continue;
-            result.push(item);
-            if (result.length >= kwLimit) break;
-          }
-          return result;
-        } catch (err) {
-          // 降级容忍：KEYWORD 候选采集失败不阻断上下文构建
-          metrics?.warn('InfoCoreService.context KEYWORD 候选采集失败，降级为空列表', {
-            error: err instanceof Error ? err.message : String(err),
-            session_id: input.session_id,
-          });
-          return [];
-        }
-      })(),
-    ]);
-    const tagCandidates: InfoRawRecord[] = tagResult;
-    const simCandidates: InfoRawRecord[] = simResult;
-    const kwCandidates: InfoRawRecord[] = kwResult;
-
-    // RANDOM (随机采样消息：优先抽取未在前面维度被选中的新消息；限额已按基础上下文动态收缩)
-    // ===== 修改后的实现（2026-09-15 第二版，对齐 PRD 步骤 524）=====
-    // PRD：RANDOM = 「从会话内未选中消息随机抽样」＋「会话内候选不足以填满限额时，从全局随机补充剩余名额
-    //（仅 enable_cross_session=true 时）」。注意：会话内随机抽样是本维度的基础动作，**不受**
-    // enable_cross_session 约束（该开关只控制跨会话的全局兜底）——
-    // 原实现把整段 RANDOM 采样包进 enableCrossSession 判断，enable_cross_session=false 时
-    // （Work Agent 子任务场景）会话内随机也被一并跳过，与 PRD 相悖。
-    let randCandidates: InfoRawRecord[] = [];
-    if (randLimit > 0) {
-      try {
-        // 注意：PRD「从会话内未选中消息随机抽样」的「未选中」= 未被复选/钉住等显式维度采集；
-        // 时间线候选不计入排除集（时间线未被采集时，其消息对 RANDOM 仍可见，重复剔除由
-        // 步骤 8 的按优先级全局去重统一裁决）。
-        const existingIds = new Set<string>([
-          ...pinnedCandidates.map((c) => c.info_id),
-          ...citingCandidates.map((c) => c.info_id),
-        ]);
-
-        // 1. 会话内随机抽样（无条件：非跨会话维度，PRD 步骤 524 主句）
-        //    CURRENT 消息在本阶段即排除（PRD 步骤 4：当前输入不参与弱相关维度候选）——
-        //    原实现在抽样后才剔除，导致当前消息先占一个 randLimit 名额、再被剔除，最终
-        //    RANDOM 实收比限额少 1（trace 162c58fc 实测 49/50）=====
-        const curExcludeId = currentCandidate?.info_id ?? '';
-        const count = await this.relationDb.count(INFO_RAW_TABLE, [
-          { field: 'session_id', operator: Operator.EQ, value: input.session_id },
-        ]);
-        if (count > 0) {
-          // 使用 ORDER BY RANDOM() LIMIT 避免全表扫描
-          const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
-            `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
-            [input.session_id, Math.min((randLimit + 1) * 3, count)],
-          );
-          const sessionCandidates = randomRows
-            .map((r) => this.toInfoRawRecord(r))
-            .filter((c) => !existingIds.has(c.info_id) && c.info_id !== curExcludeId)
-            .filter((c) => this.isCorrectInfo(c));
-          randCandidates = sessionCandidates.slice(0, randLimit);
-        }
-        // 2. 会话内候选不足以填满限额时，从全局随机补充剩余名额（仅 enable_cross_session=true，PRD 括注）
-        if (randCandidates.length < randLimit && enableCrossSession) {
-          const remaining = randLimit - randCandidates.length;
-          const filledIds = new Set([
-            ...existingIds,
-            curExcludeId,
-            ...randCandidates.map((c) => c.info_id),
-          ]);
-          const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
-            `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
-            [Math.min(remaining * 3, 100)],
-          );
-          const globalCandidates = globalRows
-            .map((r) => this.toInfoRawRecord(r))
-            .filter((c) => !filledIds.has(c.info_id))
-            .filter((c) => this.isCorrectInfo(c));
-          randCandidates = [...randCandidates, ...globalCandidates].slice(0, randLimit);
-        }
-      } catch (err) {
-        // 降级容忍：RANDOM 采样失败保留已采部分，不阻断上下文构建
-        metrics?.warn('InfoCoreService.context RANDOM 随机候选采集失败，保留已采部分', {
-          error: err instanceof Error ? err.message : String(err),
-          session_id: input.session_id,
-        });
-      }
-    }
-
-    // 当前消息仅应作为 CURRENT（或经显式钉住/引用）出现；
-    // 从弱相关维度（标签/向量相似/关键词/随机）中剔除，避免当前输入被重复采集。
-    if (currentCandidate) {
-      const curId = currentCandidate.info_id;
-      for (const list of [tagCandidates, simCandidates, kwCandidates, randCandidates]) {
-        const idx = list.findIndex((c) => c.info_id === curId);
-        if (idx >= 0) list.splice(idx, 1);
-      }
-    }
-
-    // 2.2 组装候选映射表
-    // 内部执行轨迹（ACT trace JSON，含每轮完整 prompt/response，动辄数十万字符）不应作为
-    // 上下文重新喂给 LLM，统一剔除，避免 LLM 输入超限（Input length exceeds maximum）。
-    const withoutTraces = (list: InfoRawRecord[]): InfoRawRecord[] =>
-      list.filter((c) => !this.isTraceInfo(c));
-    const candidatesMap = new Map<ContextCollectionSource, InfoRawRecord[]>([
-      [CollectionSource.PINNED, withoutTraces(pinnedCandidates)],
-      [CollectionSource.CITING, withoutTraces(citingCandidates)],
-      [CollectionSource.TIMELINE, withoutTraces(timelineCandidates)],
-      [CollectionSource.TAG_RELATIVE, withoutTraces(tagCandidates)],
-      [CollectionSource.SIMILARITY, withoutTraces(simCandidates)],
-      [CollectionSource.KEYWORD, withoutTraces(kwCandidates)],
-      [CollectionSource.RANDOM, withoutTraces(randCandidates)],
-    ]);
-
-    // 2.3 解析优先级顺序并按配置列表确定采集维度
-const rawPriority = priorityOrderStr
-      ? priorityOrderStr.split(',').map((s) => s.trim().toUpperCase() as ContextCollectionSource)
-      : DEFAULT_PRIORITY;
-    const validSources: ContextCollectionSource[] = [
-      CollectionSource.PINNED,
-      CollectionSource.CITING,
-      CollectionSource.TIMELINE,
-      CollectionSource.TAG_RELATIVE,
-      CollectionSource.SIMILARITY,
-      CollectionSource.KEYWORD,
-      CollectionSource.RANDOM,
-    ];
-    const priorityList: ContextCollectionSource[] = [];
-    for (const src of rawPriority) {
-      if (validSources.includes(src) && !priorityList.includes(src)) {
-        priorityList.push(src);
-      }
-    }
-
-    // 2.4 按优先级依次收集去重（批量预取摘要避免 N+1）
-    const seenIds = new Set<string>();
-    const collectedItems: ContextInfoItem[] = [];
-
-    // 收集所有候选 info_id 用于批量查询摘要
-    const allCandidateIds = new Set<string>();
-    for (const sourceKey of priorityList) {
-      const candidates = candidatesMap.get(sourceKey) || [];
-      for (const cand of candidates) {
-        if (cand?.info_id) allCandidateIds.add(cand.info_id);
-      }
-    }
-    if (currentCandidate?.info_id) allCandidateIds.add(currentCandidate.info_id);
-
-    const summaryMap = await this.getInfoSummaryBatchByInfoIds([...allCandidateIds]);
-
-    for (const sourceKey of priorityList) {
-      const candidates = candidatesMap.get(sourceKey) || [];
-      for (const cand of candidates) {
-        if (!cand || !cand.info_id || seenIds.has(cand.info_id)) {
-          continue;
-        }
-        seenIds.add(cand.info_id);
-        const summary = summaryMap.get(cand.info_id)?.summary;
-        const item = toContextItem(cand, sourceKey, summary);
-        collectedItems.push(item);
-      }
-    }
-
-    // 当前消息：作为 CURRENT 类型加入结果（供溯源/落盘），但不参与时间线上下文拼接；
-    // 若当前消息已通过其它维度（如钉住/引用）采集，则去重，不再重复标记为 CURRENT。
-    if (currentCandidate && !seenIds.has(currentCandidate.info_id)) {
-      const summary = summaryMap.get(currentCandidate.info_id)?.summary;
-      const currentItem = toContextItem(currentCandidate, CollectionSource.CURRENT, summary);
-      collectedItems.unshift(currentItem);
-    }
-
-    // 2.5 截取 total 条
-    const resultList = collectedItems.slice(0, maxTotal);
-
-    output.list = resultList;
-    output.categories = {
-      selected: resultList.filter((i) => i.collection_source === CollectionSource.CUSTOM),
-      pinned: resultList.filter((i) => i.collection_source === CollectionSource.PINNED),
-      timeline: resultList.filter((i) => i.collection_source === CollectionSource.TIMELINE),
-      citing: resultList.filter((i) => i.collection_source === CollectionSource.CITING),
-      tag_relative: resultList.filter((i) => i.collection_source === CollectionSource.TAG_RELATIVE),
-      similarity: resultList.filter((i) => i.collection_source === CollectionSource.SIMILARITY),
-      keyword: resultList.filter((i) => i.collection_source === CollectionSource.KEYWORD),
-      random: resultList.filter((i) => i.collection_source === CollectionSource.RANDOM),
-      current: resultList.filter((i) => i.collection_source === CollectionSource.CURRENT),
-    };
-
-    output.category_ids = {
-      selected: output.categories.selected.map((i) => i.info_id),
-      pinned: output.categories.pinned.map((i) => i.info_id),
-      timeline: output.categories.timeline.map((i) => i.info_id),
-      citing: output.categories.citing.map((i) => i.info_id),
-      tag_relative: output.categories.tag_relative.map((i) => i.info_id),
-      similarity: output.categories.similarity.map((i) => i.info_id),
-      keyword: output.categories.keyword.map((i) => i.info_id),
-      random: output.categories.random.map((i) => i.info_id),
-      current: output.categories.current.map((i) => i.info_id),
-    };
-
-    output.sources_summary = {
-      selected: output.categories.selected.length,
-      pinned: output.categories.pinned.length,
-      timeline: output.categories.timeline.length,
-      citing: output.categories.citing.length,
-      tag_relative: output.categories.tag_relative.length,
-      similarity: output.categories.similarity.length,
-      keyword: output.categories.keyword.length,
-      random: output.categories.random.length,
-      current: output.categories.current.length,
-    };
-
-    await this.fillContextTriplesAndPersist(output, resultList, input.work_id, input.persist_snapshot !== false, metrics);
-
+    const priorityList = this.parseContextPriorityList(contextConfig?.priority_order);
+    const summaryMap = await this.prefetchContextSummaries(priorityList, candidatesMap, currentCandidate);
+    const collectedItems = this.collectDedupedContextItems(priorityList, candidatesMap, summaryMap, currentCandidate);
+    output.list = collectedItems.slice(0, plan.maxTotal);
+    output.categories = this.buildContextCategories(output.list);
+    output.category_ids = this.buildContextCategoryIds(output.categories!);
+    output.sources_summary = this.buildContextSourcesSummary(output.categories!);
+    await this.fillContextTriplesAndPersist(output, output.list, input.work_id, input.persist_snapshot !== false, metrics);
     return true;
   }
 
@@ -2895,6 +2574,497 @@ const rawPriority = priorityOrderStr
   // =========================================================================
   // Private: Context helpers
   // =========================================================================
+
+  /** 校验 context 输入必填项：session_id 与 work_id。 */
+  private validateContextInput(input: ContextInfoInput): void {
+    if (!input.session_id) {
+      throw new ValidationError('context 需要提供 session_id');
+    }
+    if (!input.work_id) {
+      throw new ValidationError('context 需要提供 work_id');
+    }
+  }
+
+  /** 准备上下文构建计划：总预算/时间线限额/跨会话开关（Work Agent 执行子任务时应关闭避免无关历史污染）/复选消息列表。 */
+  private prepareContextBuildPlan(input: ContextInfoInput, contextConfig: InfoContextConfigRecord | null): ContextBuildPlan {
+    return {
+      maxTotal: contextConfig?.total || 1000,
+      timelineLimit: contextConfig?.base_timeline_count ?? 500,
+      enableCrossSession: input.enable_cross_session !== false,
+      selectedIds: (input.selected_msg_ids || input.custom_info_ids || []).filter((id) => Boolean(id)),
+    };
+  }
+
+  /** 采集钉住消息候选（PINNED，会话内，按 created DESC）。 */
+  private async collectPinnedCandidates(sessionId: string): Promise<InfoRawRecord[]> {
+    const pinnedRows = await this.relationDb.select(INFO_RAW_TABLE, {
+      conditions: [
+        { field: 'session_id', operator: Operator.EQ, value: sessionId },
+        { field: 'pin', operator: Operator.EQ, value: 1 },
+      ],
+      order_by: [{ field: 'created', direction: 'DESC' }],
+    });
+    return pinnedRows.map((r) => this.toInfoRawRecord(r));
+  }
+
+  /** 采集基础上下文候选：复选消息（CITING）替换时间线（不再并行采集时间线），无复选退化为纯时间线。 */
+  private async collectSelectedOrTimelineCandidates(
+    input: ContextInfoInput,
+    selectedIds: string[],
+    timelineLimit: number,
+  ): Promise<{ citingCandidates: InfoRawRecord[]; timelineCandidates: InfoRawRecord[] }> {
+    const citingCandidates: InfoRawRecord[] = [];
+    const timelineCandidates: InfoRawRecord[] = [];
+    if (selectedIds.length > 0) {
+      for (const msgId of selectedIds) {
+        const r = await this.getInfoByInfoId(msgId);
+        if (r && r.session_id === input.session_id) {
+          citingCandidates.push(r);
+        }
+      }
+    } else {
+      const tl = await this.lastNInfoTimeline(input.session_id, timelineLimit);
+      for (const item of tl) {
+        timelineCandidates.push(item);
+      }
+    }
+    return { citingCandidates, timelineCandidates };
+  }
+
+  /**
+   * 拆出当前消息（CURRENT）：时间线按 created DESC 排序，最新一条即本次输入，从时间线中单独拆出，
+   * 避免与 task_content 重复出现在上下文中；复选模式下当前输入不在复选列表内，单独取最新一条。
+   */
+  private async extractCurrentCandidate(
+    sessionId: string,
+    selectedIds: string[],
+    timelineCandidates: InfoRawRecord[],
+  ): Promise<InfoRawRecord | null> {
+    if (timelineCandidates.length > 0) {
+      return timelineCandidates.shift() ?? null;
+    }
+    if (selectedIds.length > 0) {
+      const latest = await this.lastNInfoTimeline(sessionId, 1);
+      return latest[0] ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * 解析弱相关维度限额（2026-09-15 第三版口径，按用户裁定）：
+   * 实际上限 = min(该维度基础上限 base_xxx_count, 「基础上下文消息数量」× xxx_max_percent%)——
+   * 占比基准是基础上下文数量（= pinned + citing + timeline），不占 total、无 shrinkFactor 二次收缩。
+   */
+  private resolveWeakDimensionLimits(
+    contextConfig: InfoContextConfigRecord | null,
+    baseContextCount: number,
+  ): ContextWeakDimensionLimits {
+    const capByBase = (base: number, percent: number): number => {
+      const byBase = Math.floor((baseContextCount * percent) / 100);
+      return Math.min(base, byBase);
+    };
+    return {
+      tagLimit: capByBase(contextConfig?.base_tag_relative_count ?? 200, contextConfig?.tag_relative_max_percent ?? 20),
+      simLimit: capByBase(contextConfig?.base_similarity_count ?? 150, contextConfig?.similarity_max_percent ?? 15),
+      kwLimit: capByBase(contextConfig?.base_keyword_count ?? 100, contextConfig?.keyword_max_percent ?? 10),
+      randLimit: capByBase(contextConfig?.base_random_count ?? 50, contextConfig?.random_max_percent ?? 5),
+      kwScoreThreshold: contextConfig?.keyword_score_threshold ?? 95,
+    };
+  }
+
+  /** 解析参考文本：优先 input.info（当前提问），其次 input.info_id 记录，最后从 CITING/TIMELINE 候选中取 REQUEST。 */
+  private async resolveReferenceText(
+    input: ContextInfoInput,
+    citingCandidates: InfoRawRecord[],
+    timelineCandidates: InfoRawRecord[],
+  ): Promise<{ refText: string; refInfoRow: InfoRawRecord | null }> {
+    let refText = input.info || '';
+    let refInfoRow: InfoRawRecord | null = null;
+    if (input.info_id) {
+      refInfoRow = await this.getInfoByInfoId(input.info_id);
+      if (refInfoRow?.info && !refText) {
+        refText = refInfoRow.info;
+      }
+    }
+    if (!refInfoRow && (citingCandidates.length > 0 || timelineCandidates.length > 0)) {
+      const candidates = citingCandidates.length > 0 ? citingCandidates : timelineCandidates;
+      refInfoRow = candidates.find((t) => t.info_type === InfoType.REQUEST) || candidates[0] || null;
+      if (refInfoRow?.info && !refText) {
+        refText = refInfoRow.info;
+      }
+    }
+    return { refText, refInfoRow };
+  }
+
+  /** 并行采集 TAG_RELATIVE / SIMILARITY / KEYWORD 三维弱相关候选（三维无依赖）。 */
+  private async collectWeakDimensionCandidates(
+    sessionId: string,
+    refText: string,
+    refInfoRow: InfoRawRecord | null,
+    limits: ContextWeakDimensionLimits,
+    enableCrossSession: boolean,
+    _context: InfoCoreContext,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<ContextWeakDimensionCandidates> {
+    const [tag, sim, kw] = await Promise.all([
+      this.collectTagRelativeCandidates(sessionId, refInfoRow, limits.tagLimit, enableCrossSession, _context, metrics, report),
+      this.collectSimilarityCandidates(sessionId, refText, limits.simLimit, enableCrossSession, _context, metrics, report),
+      this.collectKeywordCandidates(sessionId, refText, limits.kwLimit, limits.kwScoreThreshold, enableCrossSession, _context, metrics, report),
+    ]);
+    return { tag, sim, kw };
+  }
+
+  /** 采集 TAG_RELATIVE 候选（全系统标签相关性消息）；失败降级为空列表，不阻断上下文构建。 */
+  private async collectTagRelativeCandidates(
+    sessionId: string,
+    refInfoRow: InfoRawRecord | null,
+    tagLimit: number,
+    enableCrossSession: boolean,
+    _context: InfoCoreContext,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<InfoRawRecord[]> {
+    if (!refInfoRow || tagLimit <= 0 || !enableCrossSession) return [];
+    try {
+      const relInput = new RelationKInfoInput();
+      relInput.info_id = refInfoRow.info_id;
+      relInput.topN = tagLimit;
+      const relOutput = new RelationKInfoOutput();
+      await this.relationKInfo(relInput, relOutput, _context, metrics, report);
+      return relOutput.list;
+    } catch (err) {
+      metrics?.warn('InfoCoreService.context TAG_RELATIVE 候选采集失败，降级为空列表', {
+        error: err instanceof Error ? err.message : String(err),
+        info_id: refInfoRow.info_id,
+        session_id: sessionId,
+      });
+      return [];
+    }
+  }
+
+  /** 采集 SIMILARITY 候选（全系统向量语义相似消息）；失败降级为空列表，不阻断上下文构建。 */
+  private async collectSimilarityCandidates(
+    sessionId: string,
+    refText: string,
+    simLimit: number,
+    enableCrossSession: boolean,
+    _context: InfoCoreContext,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<InfoRawRecord[]> {
+    if (!refText || simLimit <= 0 || !enableCrossSession) return [];
+    try {
+      const simInput = new SimilarKInfoInput();
+      simInput.info = refText;
+      simInput.topK = simLimit;
+      const simOutput = new SimilarKInfoOutput();
+      await this.similarKInfo(simInput, simOutput, _context, metrics, report);
+      return simOutput.list.filter((item) => this.isCorrectInfo(item));
+    } catch (err) {
+      metrics?.warn('InfoCoreService.context SIMILARITY 候选采集失败，降级为空列表', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
+      return [];
+    }
+  }
+
+  /** 采集 KEYWORD 候选（全系统关键词匹配消息）；失败降级为空列表，不阻断上下文构建。 */
+  private async collectKeywordCandidates(
+    sessionId: string,
+    refText: string,
+    kwLimit: number,
+    kwScoreThreshold: number,
+    enableCrossSession: boolean,
+    _context: InfoCoreContext,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<InfoRawRecord[]> {
+    if (!refText || kwLimit <= 0 || !enableCrossSession) return [];
+    try {
+      const kwInput = new KeywordKInfoInput();
+      kwInput.info = refText;
+      const kwOutput = new KeywordKInfoOutput();
+      await this.keywordKInfo(kwInput, kwOutput, _context, metrics, report);
+      return this.pickKeywordCandidates(kwOutput.list, kwScoreThreshold, kwLimit);
+    } catch (err) {
+      metrics?.warn('InfoCoreService.context KEYWORD 候选采集失败，降级为空列表', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
+      return [];
+    }
+  }
+
+  /** 关键词候选过滤：剔除错误信息与低于 keyword_score_threshold 的项，满额即停。 */
+  private pickKeywordCandidates(
+    list: Array<InfoRawRecord & { keyword_score?: number }>,
+    kwScoreThreshold: number,
+    kwLimit: number,
+  ): InfoRawRecord[] {
+    const result: InfoRawRecord[] = [];
+    for (const item of list) {
+      if (!this.isCorrectInfo(item)) continue;
+      if ((item.keyword_score ?? 0) < kwScoreThreshold) continue;
+      result.push(item);
+      if (result.length >= kwLimit) break;
+    }
+    return result;
+  }
+
+  /** 采集 RANDOM 随机候选：失败保留已采部分，不阻断上下文构建（限额已按基础上下文动态收缩）。 */
+  private async collectRandomCandidates(
+    sessionId: string,
+    randLimit: number,
+    enableCrossSession: boolean,
+    pinnedCandidates: InfoRawRecord[],
+    citingCandidates: InfoRawRecord[],
+    currentCandidate: InfoRawRecord | null,
+    metrics?: Metrics,
+  ): Promise<InfoRawRecord[]> {
+    let randCandidates: InfoRawRecord[] = [];
+    if (randLimit > 0) {
+      try {
+        randCandidates = await this.sampleRandomCandidates(sessionId, randLimit, enableCrossSession, pinnedCandidates, citingCandidates, currentCandidate);
+      } catch (err) {
+        metrics?.warn('InfoCoreService.context RANDOM 随机候选采集失败，保留已采部分', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
+    }
+    return randCandidates;
+  }
+
+  /**
+   * 随机采样（PRD 步骤 524，2026-09-15 第二版对齐）：会话内随机抽样是本维度基础动作，不受
+   * enable_cross_session 约束（该开关只控制跨会话全局兜底，原实现整体包进判断导致 Work Agent
+   * 子任务场景会话内随机被跳过）；「未选中」= 未被复选/钉住等显式维度采集，时间线候选不计入
+   * 排除集（重复剔除由按优先级全局去重统一裁决）；CURRENT 在采样阶段即排除（PRD 步骤 4），
+   * 避免当前消息先占名额再被剔除导致实收少 1（trace 162c58fc 实测 49/50）。
+   */
+  private async sampleRandomCandidates(
+    sessionId: string,
+    randLimit: number,
+    enableCrossSession: boolean,
+    pinnedCandidates: InfoRawRecord[],
+    citingCandidates: InfoRawRecord[],
+    currentCandidate: InfoRawRecord | null,
+  ): Promise<InfoRawRecord[]> {
+    const existingIds = new Set<string>([
+      ...pinnedCandidates.map((c) => c.info_id),
+      ...citingCandidates.map((c) => c.info_id),
+    ]);
+    const curExcludeId = currentCandidate?.info_id ?? '';
+    let randCandidates = await this.sampleSessionRandomCandidates(sessionId, randLimit, existingIds, curExcludeId);
+    if (randCandidates.length < randLimit && enableCrossSession) {
+      const remaining = randLimit - randCandidates.length;
+      const filledIds = new Set([
+        ...existingIds,
+        curExcludeId,
+        ...randCandidates.map((c) => c.info_id),
+      ]);
+      const globalCandidates = this.sampleGlobalRandomCandidates(remaining, filledIds);
+      randCandidates = [...randCandidates, ...globalCandidates].slice(0, randLimit);
+    }
+    return randCandidates;
+  }
+
+  /** 会话内随机抽样：ORDER BY RANDOM() LIMIT 避免全表扫描，采样上限放宽为 min((randLimit+1)*3, count) 防腾挪误差。 */
+  private async sampleSessionRandomCandidates(
+    sessionId: string,
+    randLimit: number,
+    existingIds: Set<string>,
+    curExcludeId: string,
+  ): Promise<InfoRawRecord[]> {
+    const count = await this.relationDb.count(INFO_RAW_TABLE, [
+      { field: 'session_id', operator: Operator.EQ, value: sessionId },
+    ]);
+    if (count <= 0) return [];
+    const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
+      `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
+      [sessionId, Math.min((randLimit + 1) * 3, count)],
+    );
+    return randomRows
+      .map((r) => this.toInfoRawRecord(r))
+      .filter((c) => !existingIds.has(c.info_id) && c.info_id !== curExcludeId)
+      .filter((c) => this.isCorrectInfo(c))
+      .slice(0, randLimit);
+  }
+
+  /** 跨会话全局随机补充剩余名额（仅 enable_cross_session=true 时调用），采样上限 min(remaining*3, 100)。 */
+  private sampleGlobalRandomCandidates(remaining: number, filledIds: Set<string>): InfoRawRecord[] {
+    const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
+      `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
+      [Math.min(remaining * 3, 100)],
+    );
+    return globalRows
+      .map((r) => this.toInfoRawRecord(r))
+      .filter((c) => !filledIds.has(c.info_id))
+      .filter((c) => this.isCorrectInfo(c));
+  }
+
+  /** 当前消息仅应以 CURRENT（或经显式钉住/引用）出现：从弱相关维度候选中剔除，避免当前输入被重复采集。 */
+  private excludeCurrentFromWeakDimensions(currentCandidate: InfoRawRecord | null, weakLists: InfoRawRecord[][]): void {
+    if (currentCandidate) {
+      const curId = currentCandidate.info_id;
+      for (const list of weakLists) {
+        const idx = list.findIndex((c) => c.info_id === curId);
+        if (idx >= 0) list.splice(idx, 1);
+      }
+    }
+  }
+
+  /** 组装候选映射表（来源 → 候选）；内部执行轨迹（ACT trace JSON 动辄数十万字符）统一剔除，避免 LLM 输入超限。 */
+  private buildContextCandidatesMap(buckets: ContextCandidateBuckets): Map<ContextCollectionSource, InfoRawRecord[]> {
+    const withoutTraces = (list: InfoRawRecord[]): InfoRawRecord[] =>
+      list.filter((c) => !this.isTraceInfo(c));
+    return new Map<ContextCollectionSource, InfoRawRecord[]>([
+      [CollectionSource.PINNED, withoutTraces(buckets.pinned)],
+      [CollectionSource.CITING, withoutTraces(buckets.citing)],
+      [CollectionSource.TIMELINE, withoutTraces(buckets.timeline)],
+      [CollectionSource.TAG_RELATIVE, withoutTraces(buckets.tag)],
+      [CollectionSource.SIMILARITY, withoutTraces(buckets.sim)],
+      [CollectionSource.KEYWORD, withoutTraces(buckets.kw)],
+      [CollectionSource.RANDOM, withoutTraces(buckets.rand)],
+    ]);
+  }
+
+  /** 解析 priority_order 配置为去重后的合法采集优先级列表（未配置时用默认优先级，非法/重复来源剔除）。 */
+  private parseContextPriorityList(priorityOrderStr?: string): ContextCollectionSource[] {
+    const rawPriority = priorityOrderStr
+      ? priorityOrderStr.split(',').map((s) => s.trim().toUpperCase() as ContextCollectionSource)
+      : CONTEXT_COLLECTION_SOURCES;
+    const priorityList: ContextCollectionSource[] = [];
+    for (const src of rawPriority) {
+      if (CONTEXT_COLLECTION_SOURCES.includes(src) && !priorityList.includes(src)) {
+        priorityList.push(src);
+      }
+    }
+    return priorityList;
+  }
+
+  /** 批量预取全部候选（含当前消息）的摘要（避免逐条查询 N+1），返回 info_id → 摘要记录映射。 */
+  private async prefetchContextSummaries(
+    priorityList: ContextCollectionSource[],
+    candidatesMap: Map<ContextCollectionSource, InfoRawRecord[]>,
+    currentCandidate: InfoRawRecord | null,
+  ): Promise<Map<string, InfoSummaryRecord>> {
+    const allCandidateIds = new Set<string>();
+    for (const sourceKey of priorityList) {
+      const candidates = candidatesMap.get(sourceKey) || [];
+      for (const cand of candidates) {
+        if (cand?.info_id) allCandidateIds.add(cand.info_id);
+      }
+    }
+    if (currentCandidate?.info_id) allCandidateIds.add(currentCandidate.info_id);
+    return this.getInfoSummaryBatchByInfoIds([...allCandidateIds]);
+  }
+
+  /** 按优先级去重收集并转为 ContextInfoItem；当前消息未被其它维度采集时以 CURRENT 类型置于最前（不参与时间线拼接）。 */
+  private collectDedupedContextItems(
+    priorityList: ContextCollectionSource[],
+    candidatesMap: Map<ContextCollectionSource, InfoRawRecord[]>,
+    summaryMap: Map<string, InfoSummaryRecord>,
+    currentCandidate: InfoRawRecord | null,
+  ): ContextInfoItem[] {
+    const seenIds = new Set<string>();
+    const collectedItems: ContextInfoItem[] = [];
+    for (const sourceKey of priorityList) {
+      const candidates = candidatesMap.get(sourceKey) || [];
+      for (const cand of candidates) {
+        if (!cand || !cand.info_id || seenIds.has(cand.info_id)) {
+          continue;
+        }
+        seenIds.add(cand.info_id);
+        const summary = summaryMap.get(cand.info_id)?.summary;
+        collectedItems.push(this.toContextItem(cand, sourceKey, summary));
+      }
+    }
+    if (currentCandidate && !seenIds.has(currentCandidate.info_id)) {
+      const summary = summaryMap.get(currentCandidate.info_id)?.summary;
+      collectedItems.unshift(this.toContextItem(currentCandidate, CollectionSource.CURRENT, summary));
+    }
+    return collectedItems;
+  }
+
+  /** 将 raw record 转为标准 ContextInfoItem（info 为空时回退摘要占位文本；接受预取的摘要避免 N+1）。 */
+  private toContextItem(raw: InfoRawRecord, collectionSource: ContextCollectionSource, summaryText?: string): ContextInfoItem {
+    let contentText = raw.info || '';
+    if (!contentText && summaryText) {
+      contentText = `[摘要] ${summaryText}`;
+    }
+    return {
+      id: raw.id || raw.info_id,
+      info_id: raw.info_id,
+      session_id: raw.session_id,
+      work_id: raw.work_id || '',
+      run_id: raw.run_id || '',
+      info_type: raw.info_type || InfoType.REQUEST,
+      info_creator_role: raw.info_creator_role,
+      info_creator_id: raw.info_creator_id,
+      info: contentText,
+      content: contentText,
+      summary: summaryText || '',
+      summary_length: summaryText ? summaryText.length : 0,
+      info_length: contentText.length,
+      content_length: contentText.length,
+      collection_source: collectionSource,
+      source: collectionSource,
+      pin: raw.pin ? 1 : 0,
+      created: raw.created,
+      updated: raw.updated,
+      handle_result_type: raw.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE,
+    };
+  }
+
+  /** 按来源分类装配 categories（selected/pinned/timeline/citing/tag_relative/similarity/keyword/random/current）。 */
+  private buildContextCategories(resultList: ContextInfoItem[]): NonNullable<ContextInfoOutput['categories']> {
+    return {
+      selected: resultList.filter((i) => i.collection_source === CollectionSource.CUSTOM),
+      pinned: resultList.filter((i) => i.collection_source === CollectionSource.PINNED),
+      timeline: resultList.filter((i) => i.collection_source === CollectionSource.TIMELINE),
+      citing: resultList.filter((i) => i.collection_source === CollectionSource.CITING),
+      tag_relative: resultList.filter((i) => i.collection_source === CollectionSource.TAG_RELATIVE),
+      similarity: resultList.filter((i) => i.collection_source === CollectionSource.SIMILARITY),
+      keyword: resultList.filter((i) => i.collection_source === CollectionSource.KEYWORD),
+      random: resultList.filter((i) => i.collection_source === CollectionSource.RANDOM),
+      current: resultList.filter((i) => i.collection_source === CollectionSource.CURRENT),
+    };
+  }
+
+  /** 从 categories 提取各来源的 info_id 列表（category_ids）。 */
+  private buildContextCategoryIds(
+    categories: NonNullable<ContextInfoOutput['categories']>,
+  ): NonNullable<ContextInfoOutput['category_ids']> {
+    return {
+      selected: categories.selected.map((i) => i.info_id),
+      pinned: categories.pinned.map((i) => i.info_id),
+      timeline: categories.timeline.map((i) => i.info_id),
+      citing: categories.citing.map((i) => i.info_id),
+      tag_relative: categories.tag_relative.map((i) => i.info_id),
+      similarity: categories.similarity.map((i) => i.info_id),
+      keyword: categories.keyword.map((i) => i.info_id),
+      random: categories.random.map((i) => i.info_id),
+      current: categories.current.map((i) => i.info_id),
+    };
+  }
+
+  /** 从 categories 统计各来源条数（sources_summary）。 */
+  private buildContextSourcesSummary(categories: NonNullable<ContextInfoOutput['categories']>): Record<string, number> {
+    return {
+      selected: categories.selected.length,
+      pinned: categories.pinned.length,
+      timeline: categories.timeline.length,
+      citing: categories.citing.length,
+      tag_relative: categories.tag_relative.length,
+      similarity: categories.similarity.length,
+      keyword: categories.keyword.length,
+      random: categories.random.length,
+      current: categories.current.length,
+    };
+  }
 
   /**
    * 组装三对象（source_ids_map / content_map / attribute_map）到 output，并按 work_id 落盘来源关系。

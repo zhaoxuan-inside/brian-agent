@@ -622,3 +622,15 @@
 
 **可能存在的问题**：
 - 调用统计依赖 `mcp_usage` 表按天累计，历史数据需真实调用 `execMcp` 才能产生；当前无调用记录时展示为空属正常。
+
+### [2026-09-22] MCPSchemaInitializer DDL 收敛为数据驱动表
+
+**变更原因**：`init` 以 DDL 字符串堆砌达 156 行，超出方法长度约束（10–30 行）；按 DDDStandards §2「纯声明式内容允许通过数据驱动表收敛长度」执行重构。
+
+**修改的方法**：
+  - `MCPSchemaInitializer.init` — 33 条 DDL（5 CREATE TABLE + 23 CREATE INDEX + 5 幂等容忍 ALTER）逐字提取到类内私有数据表 `ddlStatements`（`string | { sql, ignoreReason }`）；`init` 仅循环执行，普通语句失败即抛出，带 `ignoreReason` 的迁移语句保持原 try/catch 幂等容忍语义，执行顺序不变。
+
+**影响的端点**：无（逻辑零变更：SQL 序列经转译执行比对逐字一致；`MCPAccess.initialize` 行为不变）。
+
+**可能存在的问题**：
+  - 无。新增迁移列时按表内既有格式追加即可。

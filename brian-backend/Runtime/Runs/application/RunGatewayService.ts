@@ -403,176 +403,207 @@ export class RunGatewayService {
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
     let matchOut: MatchAgentDefOutput | undefined;
     try {
-      // ===== 修改后（2026-09-19 上下文前置）：第一步 = 基本上下文构建。后续所有步骤
-      // （intent 分析、Agent 构建、Loop 每轮 system）都消费这一次召回的静态记忆 =====
       const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
       matchOut = await this.matchAgent(runId, input, parent?.metrics, parent?.report);
-      // ===== 修改后（2026-09-12）：选择 Agent 先于组件装配上报，时间线顺序符合
-      // 「需求确认 → 选择 Agent → 组件写作（LLM/Soul/Prompt/Skill/MCP）」；
-      // 修改后（2026-09-14 Span 框架）：matchAgentDef 为切面 span，事件耗时由框架自动盖章（self 时间，
-      // 自动扣除内部 buildAgent 等子 span —— 选择 Agent 与构建 Agent 不再互相包含） =====
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
         def_id: matchOut.def_id,
         agent_name: matchOut.def.name,
         matched_by: matchOut.matched_by,
       });
-      // ===== 修改后（2026-09-11 收敛版）：def 命中即复用绑定，不再传 regen 绕过缓存 =====
       const snapshot = await this.soSnapshot(matchOut.def_id, runId, input, parent?.metrics, parent?.report);
-      // ===== 修改后（2026-09-13）：组件装配完成清单补充组件名称（soul_name/prompt_name/llm_name、
-      // Skill/MCP 的 brief 兜底解析），供「思考过程」时间线与执行内容展示名称、悬浮可见 ID；
-      // 修改后（2026-09-14）：事件 payload 携带组件装配环节真实耗时 elapsed_ms =====
-      const soulId = matchOut.def.soul_id ?? '';
-      const promptId = matchOut.def.prompt_template_id ?? '';
-      const llmId = snapshot.llm_id ?? '';
-      const skillEntries = (snapshot.tools ?? [])
-        .filter((t) => t.kind === 'skill')
-        .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id) }));
-      const mcpEntries = (snapshot.tools ?? [])
-        .filter((t) => t.kind === 'mcp')
-        .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install', 'mcp_title') }));
-      parent?.report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
-        agent_name: snapshot.name,
-        soul_id: soulId,
-        soul_name: this.soComponentName(soulId, 'soul', 'soul_brief'),
-        prompt_template_id: promptId,
-        prompt_name: this.soComponentName(promptId, 'prompt_template', 'prompt_template_title'),
-        llm_id: llmId,
-        llm_name: this.soComponentName(llmId, 'llm_available', 'llm_title'),
-        skills: skillEntries,
-        mcps: mcpEntries,
-      });
-      // ===== 新增（2026-09-19）：思维模型选定（CoT/ReAct），在组件装配后、Loop 执行前上报。=====
-      const thoughtMode = this.decideThoughtMode(skillEntries.length, mcpEntries.length);
-      parent?.report?.pushBusinessEvent(BusinessEvent.ThoughtModeSelected, {
-        thought_mode: thoughtMode.mode,
-        reason: thoughtMode.reason,
-        skills_count: skillEntries.length,
-        mcps_count: mcpEntries.length,
-      });
+      const { skillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
+      const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
+      this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
       const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
-      // ===== 新增（2026-09-15 用户要求）：主 Loop 注入多层静态记忆。
-      //      主 Loop（对话每轮的实时执行 Agent）原先仅消费会话时间线 + soul，跨会话多层记忆
-      //      （PINNED/CITING/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）只在 Writer 汇总阶段使用。
-      //      现在每次 run 开始时构建一次静态记忆上下文（InfoCore.context 多维召回，按 runId
-      //      落权威快照），以 <static-memory-context> 不可变块追加到 system：
-      //      —— 静态记忆在 system 中，不进入对话消息序列，每轮轮转不变且不可由模型修改；
-      //      —— 执行过程中新增的信息（工具产出 / 用户追加消息 / 中间结论）仍在消息序列中动态演进，
-      //         与静态记忆自然分离（静态块 usage-note 已声明「与执行新信息冲突时以新信息为准」）。
-      //      Writer 汇总阶段保持自身的快照与记忆注入不变（writer work 快照 + agent_results 动态块）=====
-      // ===== 修改后（2026-09-19 上下文前置）：主 Loop 不再二次召回静态记忆 ——
-      // 复用第一步（buildStaticMemory）的可视记忆清单与 soul system 合成，保证
-      // 意图分析、Agent 构建、Loop 执行消费同一份基本上下文快照 =====
-      loopInput.system = this.composeSystemWithMemory(snapshot.system ?? '', baseCtx.memory);
-      loopInput.thought_mode = thoughtMode.mode;
-      // 注入 Writer 时由外部统一排版输出，延迟 Loop 的原始 reply.delta
-      if (this.writer) {
-        loopInput.defer_final_reply = true;
-      }
+      this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
       const loopOutput = new ExecAgentLoopOutput();
       await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
-
-      // ===== 执行完成后的 评估 + 写作 阶段（完整五阶段链路） =====
-      let finalResult = loopOutput.result;
       if (loopOutput.stop_reason === LoopStopReason.Stop && loopOutput.result) {
-        // =====================================================================
-        // ===== 修改后（2026-09-14）：评估 Agent 异步化 + 低风险跳过 =====
-        // 1) 低风险场景（单轮直答 stop 且仅 1 轮无多轮工具编排）跳过评估（eval_skip_low_risk，默认开）；
-        // 2) 需要评估时后台 fire-and-forget 执行，不阻塞写作 Agent 与 run 结算（eval_async，默认开）。
-        // 评估 Agent：评估本次输出质量（正确性/完整性/效率/相关性评分）
-        // 2026-09-14：评估 Agent 执行前由框架生成其私有 work_id；run_id = 一次问答（runtime_run.id）
-        if (this.evaluator) {
-          const evalAsync = await this.soEvalAsync();
-          const skipLowRisk = await this.soEvalSkipLowRisk();
-          const lowRisk = loopOutput.iterations <= 1;
-          if (skipLowRisk && lowRisk) {
-            this.logger?.debug?.('评估 Agent 跳过（低风险：单轮直答，eval_skip_low_risk=true）', { run_id: runId, iterations: loopOutput.iterations });
-          } else {
-            const evalWorkId = IdGenerator.generate();
-            // 评估 LLM 调用前上报 evaluation.started（时间线实时推进；started 事件仍在流内同步发布）
-            parent?.report?.pushBusinessEvent(BusinessEvent.EvaluationStarted, { work_id: evalWorkId, mode: evalAsync ? 'async' : 'sync' });
-            const evalPromise = this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
-            if (!evalAsync) {
-              await evalPromise;
-            }
-          }
-        }
-
-        // 2. 写作 Agent：美化本次输出为 Markdown / Mermaid 等最佳展示格式
-        // 2026-09-14：写作 Agent 执行前由框架生成其私有 work_id；run_id = 一次问答（runtime_run.id）
-        if (this.writer) {
-          try {
-            const writeWorkId = IdGenerator.generate();
-            // ===== 修改后（2026-09-14）：写作 LLM 调用前上报 writer.started（写作 LLM 实测 7s+，
-            // 此前仅有 completed 事件，时间线在写作期静止；开始事件让节点实时推进） =====
-            parent?.report?.pushBusinessEvent(BusinessEvent.WriterStarted, { work_id: writeWorkId });
-            const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
-            const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: writeWorkId, run_id: runId };
-            const writeOk = await this.writer.execWrite({
-              work_id: writeWorkId,
-              run_id: runId,
-              user_query: input.user_message,
-              agent_results: [{
-                agent_id: matchOut.def.name,
-                task_content: input.user_message,
-                result: loopOutput.result,
-              }],
-            }, writeOut, writeCtx, parent?.metrics, parent?.report);
-            if (writeOk && writeOut.response) {
-              finalResult = writeOut.response;
-              // ===== 修改后（2026-09-14 Span 框架）：execWrite 为切面 span，事件耗时由框架自动盖章 =====
-              parent?.report?.pushBusinessEvent(BusinessEvent.WriterCompleted, {
-                format: writeOut.response_format || 'MARKDOWN',
-                length: finalResult.length,
-                has_mermaid: finalResult.includes('```mermaid'),
-              });
-              // 发送美化排版后的最终回复
-              parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
-              // 同步更新消息库，保证历史问答（info_raw 聚合）能读到美化后的排版
-              if (loopOutput.msg_id) {
-                await this.updateAssistantMessageContent(loopOutput.msg_id, finalResult);
-              }
-            } else {
-              parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
-            }
-          } catch (err) {
-            this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
-            parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
-          }
-        }
+        await this.executeRunEvaluation(runId, input, matchOut, loopOutput, parent);
+        await this.executeRunWriting(runId, input, matchOut, loopOutput, parent);
       }
-
-      // 如果启用了 defer_final_reply 且正常完成，由 Gateway 统筹发布 run.finished
       if (loopInput.defer_final_reply && loopOutput.stop_reason === LoopStopReason.Stop) {
         parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
       }
-
-      // ===== 修改后（2026-09-13）：结算落账并落地 metrics 时间线 =====
       await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
-      if (loopOutput.stop_reason === LoopStopReason.Error) {
-        this.logger?.error?.('run 执行失败', {
-          run_id: runId,
-          session_key: input.session_key,
-          stop_reason: loopOutput.stop_reason,
-          error: loopOutput.error,
-          iterations: loopOutput.iterations,
-        });
-        await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, loopOutput.error ?? '');
-      } else if (loopOutput.stop_reason === LoopStopReason.Aborted) {
-        this.logger?.warn?.('run 执行中止（外部信号取消/超时）', {
-          run_id: runId,
-          session_key: input.session_key,
-          stop_reason: loopOutput.stop_reason,
-          iterations: loopOutput.iterations,
-        });
+      await this.recordRunOutcome(runId, input, matchOut, loopOutput, parent);
+    } catch (err) {
+      await this.settleRunFailure(runId, input, matchOut, err, parent);
+    }
+  }
+
+  /** 发布组件装配完成事件（逻辑控制；补充组件名称便于时间线展示，返回思维模型判定所需计数） */
+  private publishAgentComponents(
+    matchOut: MatchAgentDefOutput,
+    snapshot: SoAgentSnapshotOutput['snapshot'],
+    report?: Report,
+  ): { skillCount: number; mcpCount: number } {
+    const soulId = matchOut.def.soul_id ?? '';
+    const promptId = matchOut.def.prompt_template_id ?? '';
+    const llmId = snapshot.llm_id ?? '';
+    const skillEntries = (snapshot.tools ?? [])
+      .filter((t) => t.kind === 'skill')
+      .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id) }));
+    const mcpEntries = (snapshot.tools ?? [])
+      .filter((t) => t.kind === 'mcp')
+      .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install', 'mcp_title') }));
+    report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
+      agent_name: snapshot.name,
+      soul_id: soulId,
+      soul_name: this.soComponentName(soulId, 'soul', 'soul_brief'),
+      prompt_template_id: promptId,
+      prompt_name: this.soComponentName(promptId, 'prompt_template', 'prompt_template_title'),
+      llm_id: llmId,
+      llm_name: this.soComponentName(llmId, 'llm_available', 'llm_title'),
+      skills: skillEntries,
+      mcps: mcpEntries,
+    });
+    return { skillCount: skillEntries.length, mcpCount: mcpEntries.length };
+  }
+
+  /** 发布思维模型选定事件（逻辑控制；组件装配后、Loop 执行前上报 CoT/ReAct 决策） */
+  private publishThoughtModeSelected(
+    thoughtMode: { mode: 'CoT' | 'ReAct'; reason: string },
+    skillCount: number,
+    mcpCount: number,
+    report?: Report,
+  ): void {
+    report?.pushBusinessEvent(BusinessEvent.ThoughtModeSelected, {
+      thought_mode: thoughtMode.mode,
+      reason: thoughtMode.reason,
+      skills_count: skillCount,
+      mcps_count: mcpCount,
+    });
+  }
+
+  /** 回填 Loop 执行上下文（数据处理；静态记忆合成 system、思维模型与写作延迟标记） */
+  private prepareLoopContext(
+    loopInput: ExecAgentLoopInput,
+    snapshot: SoAgentSnapshotOutput['snapshot'],
+    memory: string,
+    thoughtMode: 'CoT' | 'ReAct',
+  ): void {
+    loopInput.system = this.composeSystemWithMemory(snapshot.system ?? '', memory);
+    loopInput.thought_mode = thoughtMode;
+    if (this.writer) {
+      loopInput.defer_final_reply = true;
+    }
+  }
+
+  /** 执行输出评估决策（逻辑控制；低风险跳过，eval_async=false 时同步等待评估完成） */
+  private async executeRunEvaluation(
+    runId: string,
+    input: SubmitRunInput,
+    matchOut: MatchAgentDefOutput,
+    loopOutput: ExecAgentLoopOutput,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    if (!this.evaluator) return;
+    const evalAsync = await this.soEvalAsync();
+    const skipLowRisk = await this.soEvalSkipLowRisk();
+    const lowRisk = loopOutput.iterations <= 1;
+    if (skipLowRisk && lowRisk) {
+      this.logger?.debug?.('评估 Agent 跳过（低风险：单轮直答，eval_skip_low_risk=true）', { run_id: runId, iterations: loopOutput.iterations });
+      return;
+    }
+    const evalWorkId = IdGenerator.generate();
+    parent?.report?.pushBusinessEvent(BusinessEvent.EvaluationStarted, { work_id: evalWorkId, mode: evalAsync ? 'async' : 'sync' });
+    const evalPromise = this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
+    if (!evalAsync) {
+      await evalPromise;
+    }
+  }
+
+  /** 执行写作 Agent 美化输出（逻辑控制；写作成功同步消息库，失败/未产出降级为原始输出 ReplyDelta） */
+  private async executeRunWriting(
+    runId: string,
+    input: SubmitRunInput,
+    matchOut: MatchAgentDefOutput,
+    loopOutput: ExecAgentLoopOutput,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    if (!this.writer) return;
+    try {
+      const writeWorkId = IdGenerator.generate();
+      parent?.report?.pushBusinessEvent(BusinessEvent.WriterStarted, { work_id: writeWorkId });
+      const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
+      const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: writeWorkId, run_id: runId };
+      const writeOk = await this.writer.execWrite({
+        work_id: writeWorkId,
+        run_id: runId,
+        user_query: input.user_message,
+        agent_results: [{ agent_id: matchOut.def.name, task_content: input.user_message, result: loopOutput.result }],
+      }, writeOut, writeCtx, parent?.metrics, parent?.report);
+      if (writeOk && writeOut.response) {
+        await this.applyWriterResult(writeOut.response, writeOut, loopOutput, parent);
+      } else {
+        parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
       }
     } catch (err) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      this.logger?.error?.('run 执行异常（未捕获错误）', { run_id: runId, session_key: input.session_key, error: errMessage });
-      parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: errMessage });
-      await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.metrics, parent?.report, errMessage);
-      if (matchOut?.def?.agent_ref) {
-        await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, errMessage);
-      }
+      this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
+      parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+    }
+  }
+
+  /** 回写写作排版结果（逻辑控制；上报 WriterCompleted/ReplyDelta 并同步更新 assistant 消息内容） */
+  private async applyWriterResult(
+    finalResult: string,
+    writeOut: { response?: string; response_format?: string; blocks?: unknown[] },
+    loopOutput: ExecAgentLoopOutput,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    parent?.report?.pushBusinessEvent(BusinessEvent.WriterCompleted, {
+      format: writeOut.response_format || 'MARKDOWN',
+      length: finalResult.length,
+      has_mermaid: finalResult.includes('```mermaid'),
+    });
+    parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
+    if (loopOutput.msg_id) {
+      await this.updateAssistantMessageContent(loopOutput.msg_id, finalResult);
+    }
+  }
+
+  /** 记录 run 终止结果（逻辑控制；失败记错误日志并杀死错误 Agent，中止仅记日志） */
+  private async recordRunOutcome(
+    runId: string,
+    input: SubmitRunInput,
+    matchOut: MatchAgentDefOutput,
+    loopOutput: ExecAgentLoopOutput,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    if (loopOutput.stop_reason === LoopStopReason.Error) {
+      this.logger?.error?.('run 执行失败', {
+        run_id: runId,
+        session_key: input.session_key,
+        stop_reason: loopOutput.stop_reason,
+        error: loopOutput.error,
+        iterations: loopOutput.iterations,
+      });
+      await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, loopOutput.error ?? '');
+    } else if (loopOutput.stop_reason === LoopStopReason.Aborted) {
+      this.logger?.warn?.('run 执行中止（外部信号取消/超时）', {
+        run_id: runId,
+        session_key: input.session_key,
+        stop_reason: loopOutput.stop_reason,
+        iterations: loopOutput.iterations,
+      });
+    }
+  }
+
+  /** 异常收敛结算（逻辑控制；未捕获错误统一结算为 error，命中 agent_ref 时杀死错误 Agent） */
+  private async settleRunFailure(
+    runId: string,
+    input: SubmitRunInput,
+    matchOut: MatchAgentDefOutput | undefined,
+    err: unknown,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    const errMessage = err instanceof Error ? err.message : String(err);
+    this.logger?.error?.('run 执行异常（未捕获错误）', { run_id: runId, session_key: input.session_key, error: errMessage });
+    parent?.metrics?.error?.('run 执行失败（结算为 error）', { run_id: runId, error: errMessage });
+    await this.settleRun(runId, LoopStopReason.Error, 0, '', matchOut?.def?.agent_ref ?? '', input.user_message, parent?.metrics, parent?.report, errMessage);
+    if (matchOut?.def?.agent_ref) {
+      await this.killErroredAgent(runId, matchOut, input, parent?.metrics, parent?.report, errMessage);
     }
   }
 

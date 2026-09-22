@@ -52,7 +52,7 @@ import {
 import { TraceStore } from './trace/TraceStore';
 import {
   GetAgentInput, GetAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
-  AgentLibraryContext, ComponentKind,
+  AgentLibraryContext, ComponentKind, type AgentRecord,
 } from '../../AgentLibrary/domain/types';
 import {
   GetStrategyInput, GetStrategyOutput, AgentStrategyContext,
@@ -120,6 +120,16 @@ interface AgentExecutionEnv {
   config: AgentExecutionConfigRecord | null;
 }
 
+/** execAgent 执行资源准备产物：策略规则源 + 技能/MCP 清单与工具定义。 */
+interface PreparedExecResources {
+  stratOut: GetStrategyOutput;
+  skills: { id: string; brief: string; work: string }[];
+  mcps: { id: string; title: string; brief: string }[];
+  skillIds: string[];
+  mcpIds: string[];
+  toolsJson: string;
+}
+
 export class AgentExecutionService {
   // 全量 LLM 轨迹（各阶段 prompt/raw_response/工具结果）单条可达数百 KB，
   // 上限淘汰防止随执行次数无界增长；需要完整轨迹走 agent_execution_trace 落库查询。
@@ -159,92 +169,103 @@ export class AgentExecutionService {
 
   async execAgent(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
+    const { start, config, traceId, maxIter, libCtx } = await this.prepareExecRun(input, ctx);
+    const { agent, domain, agentName } = await this.soEnabledAgent(input.agent_id, libCtx);
+    // LLM 绑定只存在于 LLMProvider 的 agent_llm，执行时经 Core.matchLLM 解析
+    const llmId = await this.resolveLlm(input.agent_id, ctx);
+    const contextData = await this.buildExecContextData(input, ctx, metrics);
+    const { stratOut, ...execResources } = await this.prepareExecResources(input, ctx, agent, llmId);
+    const { rule, maxFromRule } = this.resolveExecRule(stratOut, execResources.skillIds, execResources.mcpIds, maxIter);
+    const env: AgentExecutionEnv = { input, ctx, agent, ...execResources, contextData, agentName, domain, llmId, maxFromRule, taskId: input.task_id ?? '', config };
+    const traceIterations: TraceIterations = [];
+    const run = await this.runExecRule(rule, env, '', traceIterations);
+    let { finalAnswer, totalTokens } = run;
+    if (!finalAnswer) {
+      const fallback = await this.runDirectAnswer(env, run.history, traceIterations);
+      finalAnswer = fallback.finalAnswer;
+      totalTokens += fallback.totalTokens;
+    }
+    await this.recordExecUsage(input, ctx, libCtx, traceId, finalAnswer);
+    await this.saveExecTraceInfo(input, output, ctx, metrics, traceId, finalAnswer, totalTokens);
+    const end = IdGenerator.now();
+    await this.storeExecTrace(input, traceId, start, end, traceIterations, totalTokens, finalAnswer, metrics);
+    return this.finishExecOutput(output, finalAnswer, run.iteration, traceIterations, traceId, end - start);
+  }
+
+  /** 准备执行运行时参数：计时起点、模块配置、轨迹 ID、迭代上限与 AgentLibrary 上下文。 */
+  private async prepareExecRun(input: ExecAgentInput, ctx: AgentExecutionContext): Promise<{
+    start: number; config: AgentExecutionConfigRecord | null; traceId: string; maxIter: number; libCtx: AgentLibraryContext;
+  }> {
     const start = IdGenerator.now();
     const config = await this.getConfig();
     const traceId = IdGenerator.generate();
     const maxIter = input.max_iterations ?? config?.default_max_iterations ?? 10;
     const libCtx = this.toLibCtx(ctx, input.work_id, input.run_id);
+    return { start, config, traceId, maxIter, libCtx };
+  }
 
+  /** 加载并校验目标 Agent（未启用抛 NotFoundError），并解析任务签名中的领域与名称。 */
+  private async soEnabledAgent(agentId: string, libCtx: AgentLibraryContext): Promise<{ agent: AgentRecord; domain: string; agentName: string }> {
     const getOut = new GetAgentOutput();
-    await this.agentLibrary.soAgent(
-      Object.assign(new GetAgentInput(), { agent_id: input.agent_id }),
-      getOut,
-      libCtx,
-    );
+    await this.agentLibrary.soAgent(Object.assign(new GetAgentInput(), { agent_id: agentId }), getOut, libCtx);
     if (getOut.agents.length === 0 || !getOut.agents[0].enable) {
-      throw new NotFoundError('Agent', input.agent_id);
+      throw new NotFoundError('Agent', agentId);
     }
     const agent = getOut.agents[0];
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm，执行时经 Core.matchLLM 解析
-    const llmId = await this.resolveLlm(input.agent_id, ctx);
     const domainMatch = (agent.task_signature || '').match(/^\[(.+?)\]/);
-    const domain = domainMatch ? domainMatch[1] : 'general';
-    const agentName = agent.agent_name || agent.agent_id;
+    return { agent, domain: domainMatch ? domainMatch[1] : 'general', agentName: agent.agent_name || agent.agent_id };
+  }
 
-    // ===== 修改后的方法：剥离 work_context 非内容 JSON 属性，确保 Prompt 仅包含纯净 Task Content =====
+  /**
+   * 构建执行上下文：剥离 work_context 非内容 JSON 属性得到纯净 task_content（原地回写 input），
+   * 再经 InfoCore 多源检索分类包裹；失败降级为纯任务内容不阻断执行。
+   */
+  private async buildExecContextData(input: ExecAgentInput, ctx: AgentExecutionContext, metrics?: Metrics): Promise<string> {
     const { cleanTaskContent } = parseTaskContentAndContext(input.task_content);
     input.task_content = cleanTaskContent;
     let contextData = cleanTaskContent;
-
     const sessionId = ctx.session_id;
-    if (sessionId) {
-      try {
-        const ctxOut = new ContextInfoOutput();
-        // ===== 修改后的代码：传入 info: input.task_content =====
-        await this.infoCore.context(
-          Object.assign(new ContextInfoInput(), {
-            session_id: sessionId,
-            work_id: input.work_id || ctx.work_id || '',
-            selected_msg_ids: ctx.selected_msg_ids,
-            info: input.task_content,
-            persist_snapshot: false,
-          }),
-          ctxOut,
-          new InfoCoreContext(),
-        );
-        // ===== 修改后的方法：按分类分类节点包裹内容且脱敏非内容属性 =====
-        // 当前消息（本次输入）已由 InfoCoreProvider.context 单独拆出为 CURRENT 类型，
-        // 不再拼入上下文；上下文仅包含历史引用消息，任务内容经 task_content 变量单独注入。
-        const formattedCtx = formatContextCategories(ctxOut);
-        if (formattedCtx) {
-          contextData = formattedCtx;
-        }
-      } catch (err) {
-        /* best-effort */
-        // 降级容忍：上下文构建失败不阻断执行，回退纯任务内容
-        metrics?.warn('AgentExecutionService.execAgent 构建会话上下文失败，降级为纯任务内容', {
-          error: err instanceof Error ? err.message : String(err),
-          session_id: sessionId,
-          agent_id: input.agent_id,
-        });
-      }
+    if (!sessionId) return contextData;
+    try {
+      const ctxOut = new ContextInfoOutput();
+      await this.infoCore.context(
+        Object.assign(new ContextInfoInput(), {
+          session_id: sessionId, work_id: input.work_id || ctx.work_id || '',
+          selected_msg_ids: ctx.selected_msg_ids, info: input.task_content, persist_snapshot: false,
+        }),
+        ctxOut,
+        new InfoCoreContext(),
+      );
+      // 当前消息（本次输入）已由 InfoCoreProvider.context 单独拆出为 CURRENT 类型，不拼入上下文；上下文仅含历史引用消息，任务内容经 task_content 变量单独注入。
+      const formattedCtx = formatContextCategories(ctxOut);
+      if (formattedCtx) contextData = formattedCtx;
+    } catch (err) {
+      // 降级容忍：上下文构建失败不阻断执行，回退纯任务内容
+      metrics?.warn('AgentExecutionService.execAgent 构建会话上下文失败，降级为纯任务内容', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId, agent_id: input.agent_id,
+      });
     }
+    return contextData;
+  }
 
+  /** 加载执行资源：策略 → 技能/MCP → 绑定校验（失效剔除）→ LLM 校验 → 工具清单。 */
+  private async prepareExecResources(input: ExecAgentInput, ctx: AgentExecutionContext, agent: AgentRecord, llmId: string): Promise<PreparedExecResources> {
     const stratOut = new GetStrategyOutput();
     await this.agentStrategy.soStrategyById(
-      Object.assign(new GetStrategyInput(), { strategy_id: agent.strategy_id }),
-      stratOut,
-      new AgentStrategyContext(),
+      Object.assign(new GetStrategyInput(), { strategy_id: agent.strategy_id }), stratOut, new AgentStrategyContext(),
     );
-
     const skillsLoaded = await this.loadSkills(input.agent_id, ctx);
     const mcpsLoaded = await this.loadMcps(input.agent_id, ctx);
     // ===== Agent 绑定资源 DB 校验（Soul/Prompt/Skill/MCP）：失效绑定剔除后再进入执行 =====
     const resourceValidation = await validateAgentResources({
-      agentId: input.agent_id,
-      soulId: agent.soul_id,
-      promptId: agent.prompt_template_id,
-      skillIds: agent.skill_ids ?? [],
-      mcpIds: agent.mcp_ids ?? [],
-      soulAccess: this.soulAccess,
-      promptsAccess: this.promptsAccess,
-      skillAccess: this.skillAccess,
-      mcpAccess: this.mcpAccess,
+      agentId: input.agent_id, soulId: agent.soul_id, promptId: agent.prompt_template_id,
+      skillIds: agent.skill_ids ?? [], mcpIds: agent.mcp_ids ?? [],
+      soulAccess: this.soulAccess, promptsAccess: this.promptsAccess,
+      skillAccess: this.skillAccess, mcpAccess: this.mcpAccess,
     });
-    if (resourceValidation.issues.length > 0) {
-      for (const issue of resourceValidation.issues) {
-        this.logger?.warn?.(`execAgent ${issue}`);
-      }
+    for (const issue of resourceValidation.issues) {
+      this.logger?.warn?.(`execAgent ${issue}`);
     }
     const skills = skillsLoaded.filter((s) => !resourceValidation.invalid_skill_ids.includes(s.id));
     const mcps = mcpsLoaded.filter((m) => !resourceValidation.invalid_mcp_ids.includes(m.id));
@@ -252,27 +273,24 @@ export class AgentExecutionService {
     if (!(await validateAgentLlm(this.llmAccess, llmId))) {
       throw new ValidationError(`Agent ${input.agent_id} 绑定的 LLM 不存在或已禁用: ${llmId}`);
     }
-    const skillIds = skills.map((s) => s.id);
-    const mcpIds = mcps.map((m) => m.id);
     const toolsJson = JSON.stringify({
       skills: skills.map((s) => ({ id: s.id, description: s.brief, work: s.work })),
       mcps: mcps.map((m) => ({ id: m.id, name: m.title, description: m.brief })),
       browser: this.buildBrowserToolDef(),
     });
+    return { stratOut, skills, mcps, skillIds: skills.map((s) => s.id), mcpIds: mcps.map((m) => m.id), toolsJson };
+  }
 
-    let history = '';
-    let iteration = 0;
-    let finalAnswer = '';
-    const traceIterations: TraceIterations = [];
-    let totalTokens = 0;
-
+  /**
+   * 解析最终生效的执行规则：JSON 容错解析；工具可用但规则无 Act 步（如 CoT）时升级为 ReAct 循环。
+   */
+  private resolveExecRule(stratOut: GetStrategyOutput, skillIds: string[], mcpIds: string[], maxIter: number): { rule: ExecutionRule | null; maxFromRule: number } {
     let rule: ExecutionRule | null = null;
     try {
       rule = stratOut.execution_rule ? JSON.parse(stratOut.execution_rule) as ExecutionRule : null;
     } catch {
       rule = null;
     }
-
     // ===== 工具可用但策略规则不含 Act 步（如 CoT）时，升级为 ReAct 工具循环 =====
     // CoT 规则为 Think→Answer，缺少 Act，导致 Think 即使决定 tool_type=CDT/SKILL/MCP 也不会被执行。
     // 只要 Agent 存在可用工具（绑定 Skill / MCP / 内置浏览器），就应保证工具决策能被实际执行。
@@ -291,66 +309,46 @@ export class AgentExecutionService {
         ],
       };
     }
-    const maxFromRule = rule?.max_iterations ?? maxIter;
+    return { rule, maxFromRule: rule?.max_iterations ?? maxIter };
+  }
 
-    const env = {
-      input, ctx, agent, skillIds, mcpIds, skills, mcps, contextData, toolsJson, maxFromRule, config,
-      agentName, domain, llmId, taskId: input.task_id ?? '',
-    };
-
+  /** 按规则分发执行：无规则/空规则直接 Answer；phases 优先；否则 steps 步进循环。 */
+  private async runExecRule(
+    rule: ExecutionRule | null,
+    env: AgentExecutionEnv,
+    history: string,
+    traceIterations: TraceIterations,
+  ): Promise<{ history: string; finalAnswer: string; totalTokens: number; iteration: number }> {
     if (!rule?.steps && !rule?.phases) {
-      const answerOut = new AnswerOutput();
-      await this.execAnswer(
-        Object.assign(new AnswerInput(), {
-          agent_id: input.agent_id, agent_name: agentName, domain, llm_id: llmId, soul_id: agent.soul_id,
-          history, context_data: contextData, task_content: input.task_content,
-          tools_json: toolsJson,
-        }),
-        answerOut,
-        ctx,
-      );
-      finalAnswer = answerOut.answer;
-      totalTokens += answerOut.token_usage;
-      // ===== 修改后的代码：补全 raw_response 与 input/output tokens 记录（prompt 以引用存储，展示时重建） =====
-      traceIterations.push({
-        iteration_index: 0,
-        answer: buildAnswerStep(answerOut, this.answerPromptRef(env)),
-        iteration_elapsed_ms: answerOut.elapsed_ms ?? 0,
-      });
-    } else if (rule.phases?.length) {
-      const result = await this.runPhases(rule, env, history, maxFromRule, traceIterations);
-      history = result.history;
-      finalAnswer = result.finalAnswer;
-      totalTokens += result.totalTokens;
-      iteration = result.iteration;
-    } else if (rule.steps?.length) {
-      const result = await this.runSteps(rule.steps, env, history, maxFromRule, traceIterations);
-      history = result.history;
-      finalAnswer = result.finalAnswer;
-      totalTokens += result.totalTokens;
-      iteration = result.iteration;
+      const direct = await this.runDirectAnswer(env, history, traceIterations);
+      return { history, finalAnswer: direct.finalAnswer, totalTokens: direct.totalTokens, iteration: 0 };
     }
-
-    if (!finalAnswer) {
-      const answerOut = new AnswerOutput();
-      await this.execAnswer(
-        Object.assign(new AnswerInput(), {
-          agent_id: input.agent_id, agent_name: agentName, domain, llm_id: llmId, soul_id: agent.soul_id,
-          history, context_data: contextData, task_content: input.task_content,
-          tools_json: toolsJson,
-        }),
-        answerOut,
-        ctx,
-      );
-      finalAnswer = answerOut.answer;
-      totalTokens += answerOut.token_usage;
-      traceIterations.push({
-        iteration_index: traceIterations.length,
-        answer: buildAnswerStep(answerOut, this.answerPromptRef(env)),
-        iteration_elapsed_ms: answerOut.elapsed_ms ?? 0,
-      });
+    if (rule.phases?.length) {
+      return this.runPhases(rule, env, history, env.maxFromRule, traceIterations);
     }
+    if (rule.steps?.length) {
+      return this.runSteps(rule.steps, env, history, env.maxFromRule, traceIterations);
+    }
+    return { history, finalAnswer: '', totalTokens: 0, iteration: 0 };
+  }
 
+  /**
+   * 直接执行 Answer 步（无规则路径与兜底路径共用）：追加答案轨迹，
+   * iteration_index 取当前轨迹长度（无规则首轮为 0，与原实现一致）。
+   */
+  private async runDirectAnswer(env: AgentExecutionEnv, history: string, traceIterations: TraceIterations): Promise<{ finalAnswer: string; totalTokens: number }> {
+    const answerOut = new AnswerOutput();
+    await this.execAnswer(this.buildAnswerInput(env, history), answerOut, env.ctx);
+    traceIterations.push({
+      iteration_index: traceIterations.length,
+      answer: buildAnswerStep(answerOut, this.answerPromptRef(env)),
+      iteration_elapsed_ms: answerOut.elapsed_ms ?? 0,
+    });
+    return { finalAnswer: answerOut.answer, totalTokens: answerOut.token_usage };
+  }
+
+  /** 记录 Agent 使用统计（upsert 语义），usage_context 携带轨迹与产出摘要。 */
+  private async recordExecUsage(input: ExecAgentInput, ctx: AgentExecutionContext, libCtx: AgentLibraryContext, traceId: string, finalAnswer: string): Promise<void> {
     await this.agentLibrary.recordAgentUsage(
       Object.assign(new RecordAgentUsageInput(), {
         agent_id: input.agent_id,
@@ -365,45 +363,47 @@ export class AgentExecutionService {
       new RecordAgentUsageOutput(),
       libCtx,
     );
+  }
 
-    // 空答案视为执行失败：LLM 不可用时 ReACT 循环可能“正常”跑完但产出为空，
-    // 需显式失败，避免上游编排层把空输出当作成功结果继续 Writer / Evolutor 阶段。
+  /**
+   * 归档执行结果到记忆链路（saveInfo，InfoType.ACT）；空答案先行标记 output.error 视为执行失败。
+   * best-effort：存档失败不阻断执行，轨迹仍在 traceStore 落库。
+   */
+  private async saveExecTraceInfo(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics: Metrics | undefined,
+    traceId: string, finalAnswer: string, totalTokens: number): Promise<boolean> {
+    // 空答案视为执行失败：LLM 不可用时 ReACT 循环可能"正常"跑完但产出为空，需显式失败，
+    // 避免上游编排层把空输出当作成功结果继续 Writer / Evolutor 阶段。
     const producedOutput = Boolean(finalAnswer && finalAnswer.trim());
     if (!producedOutput) {
       output.error = 'Work Agent 未产生有效输出（LLM 调用失败或返回为空）';
     }
-
-    if (sessionId) {
-      try {
-        const traceHandleResult = producedOutput
-          ? HandleResultType.CORRECT
-          : classifyHandleResult(output.error, 'external');
-        await this.infoCore.saveInfo(
-          Object.assign(new SaveInfoInput(), {
-            session_id: sessionId,
-            work_id: input.work_id || ctx.work_id,
-            run_id: input.run_id || ctx.run_id || '',
-            info_type: InfoType.ACT,
-            info_creator_role: 'AGENT',
-            info_creator_id: input.agent_id,
-            info: JSON.stringify(buildLightTraceRef(traceId, finalAnswer, totalTokens)),
-            handle_result_type: traceHandleResult,
-          }),
-          new SaveInfoOutput(),
-          new InfoCoreContext(),
-        );
-      } catch (err) {
-        /* best-effort */
-        // 容忍执行结果存档失败：轨迹仍在 traceStore 落库，info 存档缺失仅影响记忆链路
-        metrics?.warn('AgentExecutionService.execAgent 执行结果存档 saveInfo 失败已容忍', {
-          error: err instanceof Error ? err.message : String(err),
-          agent_id: input.agent_id,
-          session_id: sessionId,
-        });
-      }
+    const sessionId = ctx.session_id;
+    if (!sessionId) return producedOutput;
+    try {
+      const traceHandleResult = producedOutput ? HandleResultType.CORRECT : classifyHandleResult(output.error, 'external');
+      await this.infoCore.saveInfo(
+        Object.assign(new SaveInfoInput(), {
+          session_id: sessionId, work_id: input.work_id || ctx.work_id,
+          run_id: input.run_id || ctx.run_id || '', info_type: InfoType.ACT,
+          info_creator_role: 'AGENT', info_creator_id: input.agent_id,
+          info: JSON.stringify(buildLightTraceRef(traceId, finalAnswer, totalTokens)), handle_result_type: traceHandleResult,
+        }),
+        new SaveInfoOutput(),
+        new InfoCoreContext(),
+      );
+    } catch (err) {
+      // 容忍执行结果存档失败（best-effort）：轨迹仍在 traceStore 落库，info 存档缺失仅影响记忆链路
+      metrics?.warn('AgentExecutionService.execAgent 执行结果存档 saveInfo 失败已容忍',
+        { error: err instanceof Error ? err.message : String(err), agent_id: input.agent_id, session_id: sessionId });
     }
+    return producedOutput;
+  }
 
-    const end = IdGenerator.now();
+  /** 轨迹入库：内存 LRU 淘汰（上限 TRACES_MAX）+ agent_execution_trace 落库。 */
+  private async storeExecTrace(
+    input: ExecAgentInput, traceId: string, start: number, end: number,
+    iterations: TraceIterations, totalTokens: number, answer: string, metrics?: Metrics,
+  ): Promise<void> {
     while (this.traces.size >= AgentExecutionService.TRACES_MAX) {
       // Map 迭代序即插入序，淘汰最早写入的轨迹
       const oldest = this.traces.keys().next().value;
@@ -411,24 +411,25 @@ export class AgentExecutionService {
       this.traces.delete(oldest);
     }
     this.traces.set(traceId, {
-      agent_id: input.agent_id,
-      start_time: start,
-      end_time: end,
-      iterations: traceIterations,
-      total_token_usage: totalTokens,
-      answer: finalAnswer,
+      agent_id: input.agent_id, start_time: start, end_time: end,
+      iterations, total_token_usage: totalTokens, answer,
     });
     await this.traceStore.save({
       trace_id: traceId, agent_id: input.agent_id, start_time: start, end_time: end,
-      iterations: traceIterations, total_token_usage: totalTokens, answer: finalAnswer,
+      iterations, total_token_usage: totalTokens, answer,
     }, metrics);
+  }
 
+  /** 回写执行输出（answer/iterations/trace_id/elapsed_ms）并判定产出有效性。 */
+  private finishExecOutput(
+    output: ExecAgentOutput, finalAnswer: string, iteration: number,
+    traceIterations: TraceIterations, traceId: string, elapsedMs: number,
+  ): boolean {
     output.answer = finalAnswer;
     output.iterations = iteration || traceIterations.length;
     output.trace_id = traceId;
-    output.elapsed_ms = end - start;
-
-    return producedOutput;
+    output.elapsed_ms = elapsedMs;
+    return Boolean(finalAnswer && finalAnswer.trim());
   }
 
   async execAgentAsync(input: ExecAgentAsyncInput, output: ExecAgentAsyncOutput, ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,

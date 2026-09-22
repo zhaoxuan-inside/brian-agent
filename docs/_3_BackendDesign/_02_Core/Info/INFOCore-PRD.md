@@ -882,6 +882,21 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 
 ## 5. 变更记录
 
+### [2026-09-22] context 方法拆分重构：400 行编排水 monolith → 30 行骨架 + 25 个原子步骤方法
+**变更原因**：`context` 401 行为全库最长方法（`analyze-method-length.mjs` >30 行榜首），违反 DDDStandards §2 方法长度约束（10–30 行）与流程控制/数据处理拆分判据。本次为**纯代码移动重构**：条件、执行顺序、副作用、返回值语义、metrics 上报文本均零变更；签名不变。
+
+**拆分结构**（application 层私有方法，模块无 domain/services 目录按规范不强建；全部 ≤30 行，均带单行/多行 JSDoc，JSDoc 承接原方法的口径与 PRD 引用注释）：
+- 参数准备：`validateContextInput` / `prepareContextBuildPlan`（total、时间线限额、enable_cross_session、复选列表）/ `parseContextPriorityList`（priority_order 解析，缺省优先级与合法性校验收敛为模块常量 `CONTEXT_COLLECTION_SOURCES`）
+- 基础上下文采集：`collectPinnedCandidates`（PINNED）/ `collectSelectedOrTimelineCandidates`（复选 CITING 替换时间线，无复选退化纯时间线）/ `extractCurrentCandidate`（CURRENT 拆出，保留 shift() 时序突变语义）
+- 弱相关维度采集：`resolveWeakDimensionLimits`（2026-09-15 第三版 min(基础上限, 基础上下文×占比) 口径）/ `resolveReferenceText` / `collectWeakDimensionCandidates`（TAG/SIM/KW 并行）→ `collectTagRelativeCandidates` / `collectSimilarityCandidates` / `collectKeywordCandidates` / `pickKeywordCandidates`（阈值过滤下沉）
+- RANDOM 采集：`collectRandomCandidates`（守卫+容错保留已采部分）→ `sampleRandomCandidates`（PRD 步骤 524 编排）→ `sampleSessionRandomCandidates` / `sampleGlobalRandomCandidates`（ORDER BY RANDOM() 采样）
+- 装配回写：`excludeCurrentFromWeakDimensions`（CURRENT 弱相关剔除）/ `buildContextCandidatesMap`（ACT trace 剔除）/ `prefetchContextSummaries`（批量摘要防 N+1）/ `collectDedupedContextItems`（优先级去重 + CURRENT 置前）/ `toContextItem`（原局部 helper 提升为私有方法）/ `buildContextCategories` / `buildContextCategoryIds` / `buildContextSourcesSummary`
+- 复用既有方法（未改动）：`getInfoByInfoId` / `lastNInfoTimeline` / `toInfoRawRecord` / `isCorrectInfo` / `isTraceInfo` / `getInfoSummaryBatchByInfoIds` / `fillContextTriplesAndPersist`（内含 `persistContextSourceMap`）
+
+**影响的行为**：无（逻辑零变更；TAG/SIM/KW/RANDOM 降级 warn 日志文本原样保留，便于与历史 trace 对账）。原方法内 `// ===== 修改后的方法 =====` 过渡标记随之移除（DDDStandards §6.2 禁止注释保留旧实现，历史由本记录与 git 承载）。
+
+**验证**：`npm run typecheck --workspace=@brian-agent/core` 0 错误；`npm run test --workspace=@brian-agent/core` 197/197 全绿；`node scripts/analyze-method-length.mjs 30` 中 InfoCoreService 仅余 `saveInfo`（90 行，另行任务）；InfoCoreService.ts eslint 0 error。
+
 ### [2026-09-14] context 上下文构建与 PRD 对齐：CITING 默认优先级 + RANDOM 全局兜底
 **变更原因**：PRD 对齐审查发现两处实现缺口：
 1. 复选引用维度 `CITING` 已存在于代码 `DEFAULT_PRIORITY` 与 `configRegistrations` 默认值（`PINNED,CITING,TIMELINE,...`），但 SchemaInitializer 建表默认值、`updateInfoContextConfig` 落库默认值、`toInfoContextConfigRecord` 回退值仍为不含 CITING 的旧默认（`PINNED,TIMELINE,...`），同一默认值在三处口径不一致；
@@ -1247,3 +1262,15 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 - 判定口径为「`handle_result_type != correct` 或 `info_raw` 无对应行（孤儿）」；若后续引入新的系统信息写入方（以 correct 落库但不属于用户信息），需扩展过滤条件；
 - 清理会在服务启动全量执行，`info_tag` 体量极大时 `DELETE ... NOT IN` 有一定耗时（当前数据量级可忽略）；
 - 关键词共现边的源 `info_keyword`（FTS5）仅在建图时过滤，未做行级清理（`keywordInfo` 抽取侧已有 correct 过滤）。
+
+### [2026-09-22] InfoCoreSchemaInitializer DDL 收敛为数据驱动表
+
+**变更原因**：`init` 以 DDL 字符串堆砌达 231 行，超出方法长度约束（10–30 行）；按 DDDStandards §2「纯声明式内容允许通过数据驱动表收敛长度」执行重构。
+
+**修改的方法**：
+  - `InfoCoreSchemaInitializer.init` — 38 条 DDL（11 CREATE TABLE/VIRTUAL TABLE + 12 CREATE INDEX + 15 幂等容忍 ALTER/RENAME/DROP）逐字提取到类内私有数据表 `ddlStatements`（`string | { sql, ignoreReason }`）；`init` 仅循环执行，普通语句失败即抛出，带 `ignoreReason` 的迁移语句保持原 try/catch 幂等容忍语义，执行顺序不变。
+
+**影响的端点**：无（逻辑零变更：SQL 序列经转译执行比对逐字一致；`InfoCoreAccess.initialize` 行为不变）。
+
+**可能存在的问题**：
+  - 无。新增迁移列时按表内既有格式追加即可。

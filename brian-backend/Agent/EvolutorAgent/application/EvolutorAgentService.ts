@@ -19,6 +19,7 @@ import {
   GetEvaluationInput, GetEvaluationOutput,
   GetEvolutionReportInput, GetEvolutionReportOutput,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,
+  type EvalScores,
 } from '../domain/types';
 import {
   BuildSystemAgentInput, BuildSystemAgentOutput,
@@ -41,6 +42,7 @@ import { TraceStore } from '../../AgentExecution/application/trace/TraceStore';
 import { buildSingleAnswerTrace } from '../../AgentExecution/application/trace/TraceCodec';
 import { parseJsonObject } from '../../shared/signature';
 import { renderPromptWithFallback, resolveAgentLlm } from '../../shared/AgentKit';
+import { parseWorkAgentScores, applyTraceEfficiency } from '../domain/services/EvalScoreDomainService';
 
 const OPTIMIZE_QUEUE = 'agent.optimize';
 const EVAL_QUEUE = 'agent.eval';
@@ -60,6 +62,14 @@ function mapEval(row: Record<string, unknown>): AgentEvaluationRecord {
     suggestions: String(row.suggestions),
     need_optimize: row.need_optimize === true || row.need_optimize === 1 || row.need_optimize === '1',
   };
+}
+
+/** 评估执行上下文：评估配置、EVOLUTOR 系统 Agent、目标 LLM 与优化阈值 */
+interface EvalContext {
+  config: EvolutorAgentConfigRecord | null;
+  evolutorId: string;
+  targetLlmId: string;
+  threshold: number;
 }
 
 export class EvolutorAgentService {
@@ -86,9 +96,40 @@ export class EvolutorAgentService {
   async evalWorkAgent(input: EvalWorkAgentInput, output: EvalWorkAgentOutput, ctx: EvolutorAgentContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     // 错误信息（call_error / internal_error）不参与评估：直接跳过评分与优化触发
-    if (input.handle_result_type === HandleResultType.CALL_ERROR || input.handle_result_type === HandleResultType.INTERNAL_ERROR) {
-      return true;
+    if (input.handle_result_type === HandleResultType.CALL_ERROR || input.handle_result_type === HandleResultType.INTERNAL_ERROR) return true;
+    const evalCtx = await this.resolveEvalContext(ctx, input, metrics);
+    const traceData = await this.loadTraceContext(input, ctx, metrics);
+    const prompt = await this.renderPrompt(evalCtx.config?.eval_work_prompt_template_id, 'WorkAgent 质量评估', {
+      task_content: input.task_content, agent_output: input.agent_output,
+      trace: traceData ? JSON.stringify(traceData) : '',
+    }, metrics);
+    const raw = await this.execEvalLlm(ctx, input, evalCtx.targetLlmId, prompt, metrics, report);
+    const { scores, suggestions } = parseWorkAgentScores(raw);
+    applyTraceEfficiency(scores, traceData);
+
+    const needOptimize = scores.overall < evalCtx.threshold;
+    const evalId = await this.saveWorkEvaluation(input, scores, suggestions, needOptimize);
+    await this.refreshEvalScore(input.agent_id, scores.overall);
+    if (needOptimize) await this.dispatchOptimizeMessage(input, suggestions);
+    if (this.feedbackAccess && suggestions.length > 0) await this.submitEvalFeedback(input, scores, suggestions);
+
+    // ===== 解散判定：overall < critical_disband_score（配置中心可调）；仅 system 归属，user 资产由 delAgent 守卫拒绝 =====
+    const evolutorConfig = await this.getConfig();
+    const criticalDisbandScore = evolutorConfig?.critical_disband_score ?? DisbandThreshold.Critical;
+    if (scores.overall < criticalDisbandScore) {
+      output.disbanded = await this.disbandBadAgent(input.agent_id, report, metrics);
     }
+
+    this.writeEvalOutput(output, input, evalCtx.evolutorId, evalId, scores, suggestions, needOptimize, report);
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // evalWorkAgent 私有步骤（评估编排的各语义阶段）
+  // ---------------------------------------------------------------------------
+
+  /** 解析评估执行上下文：确保 EVOLUTOR 系统 Agent 就绪，解析目标 LLM（配置优先，缺省经 Core.matchLLM）与优化阈值。 */
+  private async resolveEvalContext(ctx: EvolutorAgentContext, input: EvalWorkAgentInput, metrics?: Metrics): Promise<EvalContext> {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
@@ -111,48 +152,33 @@ export class EvolutorAgentService {
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
       targetLlmId = await this.resolveLlm(evolutor.agent_id, metrics);
     }
-    const threshold = config?.optimize_threshold ?? 60;
+    return { config, evolutorId: buildOut.agent_id, targetLlmId, threshold: config?.optimize_threshold ?? 60 };
+  }
 
-    let traceData: unknown = null;
-    if (input.trace_id) {
-      try {
-        const traceOut = new GetTraceOutput();
-        await this.agentExecution.soTrace(
-          Object.assign(new GetTraceInput(), { trace_id: input.trace_id }),
-          traceOut,
-          Object.assign(new AgentExecutionContext(), ctx),
-        );
-        traceData = traceOut.trace;
-      } catch (err) {
-        /* best-effort */
-        // 降级容忍：trace 读取失败仅缺失评估参考上下文，评分流程继续
-        metrics?.warn('EvolutorAgentService.evalWorkAgent 读取执行 trace 失败，跳过 trace 上下文', {
-          error: err instanceof Error ? err.message : String(err),
-          trace_id: input.trace_id,
-          agent_id: input.agent_id,
-        });
-      }
-    }
-
-    let scores = {
-      correctness: 50, completeness: 50, efficiency: 50, relevance: 50, overall: 50,
-    };
-    let suggestions: string[] = [];
-
-    const prompt = await this.renderPrompt(
-      config?.eval_work_prompt_template_id,
-      'WorkAgent 质量评估',
-      {
-        task_content: input.task_content,
-        agent_output: input.agent_output,
-        trace: traceData ? JSON.stringify(traceData) : '',
-      },
-      metrics,
-    );
-
+  /** 读取被评估执行的 trace（best-effort）：读取失败仅缺失评估参考上下文，评分流程继续。 */
+  private async loadTraceContext(input: EvalWorkAgentInput, ctx: EvolutorAgentContext, metrics?: Metrics): Promise<unknown> {
+    if (!input.trace_id) return null;
     try {
-      // ===== 修改后（2026-09-14 Span 框架）：评估 LLM 打分经切面自动成为子 span，
-      // evaluation.completed 事件由框架自动携带其 self 耗时 =====
+      const traceOut = new GetTraceOutput();
+      await this.agentExecution.soTrace(
+        Object.assign(new GetTraceInput(), { trace_id: input.trace_id }),
+        traceOut,
+        Object.assign(new AgentExecutionContext(), ctx),
+      );
+      return traceOut.trace;
+    } catch (err) {
+      /* best-effort */
+      // 降级容忍：trace 读取失败仅缺失评估参考上下文，评分流程继续
+      metrics?.warn('EvolutorAgentService.evalWorkAgent 读取执行 trace 失败，跳过 trace 上下文', {
+        error: err instanceof Error ? err.message : String(err), trace_id: input.trace_id, agent_id: input.agent_id,
+      });
+      return null;
+    }
+  }
+
+  /** 执行评估 LLM 打分调用（失败/异常返回空串，由领域服务走默认分兜底）。 */
+  private async execEvalLlm(ctx: EvolutorAgentContext, input: EvalWorkAgentInput, targetLlmId: string, prompt: string, metrics?: Metrics, report?: Report): Promise<string> {
+    try {
       const llmOut = new ExecLLMOutput();
       const ok = await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
@@ -169,39 +195,13 @@ export class EvolutorAgentService {
         metrics,
         report,
       );
-      if (ok && llmOut.result) {
-        const parsed = parseJsonObject(llmOut.result);
-        if (parsed) {
-          const c = Number(parsed.correctness ?? 50);
-          const comp = Number(parsed.completeness ?? 50);
-          const eff = Number(parsed.efficiency ?? 50);
-          const rel = Number(parsed.relevance ?? 50);
-          scores = {
-            correctness: c,
-            completeness: comp,
-            efficiency: eff,
-            relevance: rel,
-            overall: Number(parsed.overall ?? Math.round((c + comp + eff + rel) / 4)),
-          };
-          suggestions = Array.isArray(parsed.suggestions)
-            ? (parsed.suggestions as unknown[]).map(String)
-            : [];
-        }
-      }
+      return ok && llmOut.result ? llmOut.result : '';
     } catch { /* defaults */ }
+    return '';
+  }
 
-    // 从 trace 估算 efficiency（迭代越少越高）
-    if (traceData && typeof traceData === 'object') {
-      const iters = Number((traceData as { iterations?: unknown[] }).iterations?.length ?? 0);
-      if (iters > 0) {
-        scores.efficiency = Math.max(0, Math.min(100, 100 - iters * 5));
-        scores.overall = Math.round(
-          (scores.correctness + scores.completeness + scores.efficiency + scores.relevance) / 4,
-        );
-      }
-    }
-
-    const needOptimize = scores.overall < threshold;
+  /** 评估结果落 agent_evaluation 表（记录 scores/suggestions/need_optimize）；返回 eval_id。 */
+  private async saveWorkEvaluation(input: EvalWorkAgentInput, scores: EvalScores, suggestions: string[], needOptimize: boolean): Promise<string> {
     const evalId = IdGenerator.generate();
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_EVALUATION_TABLE, [
@@ -217,53 +217,50 @@ export class EvolutorAgentService {
       { field: 'suggestions', value: JSON.stringify(suggestions) },
       { field: 'need_optimize', value: needOptimize ? 1 : 0 },
     ]);
+    return evalId;
+  }
 
-    // 不直接覆盖 eval_score，改用 usage_count 加权平均（旧评分权重=使用次数，新评估权重=1）
-    await this.refreshEvalScore(input.agent_id, scores.overall);
-
-    if (needOptimize) {
-      await this.mqAccess.sendMQ(
-        Object.assign(new SendMQInput(), {
-          data: {
-            queue: OPTIMIZE_QUEUE,
-            payload: {
-              agent_id: input.agent_id,
-              run_id: input.run_id,
-              usage_feedback: suggestions.join('; '),
-            },
+  /** 评估不达标时经 MQ 派发优化任务（agent.optimize 队列，由 Evolutor 优化 worker 消费）。 */
+  private async dispatchOptimizeMessage(input: EvalWorkAgentInput, suggestions: string[]): Promise<void> {
+    await this.mqAccess.sendMQ(
+      Object.assign(new SendMQInput(), {
+        data: {
+          queue: OPTIMIZE_QUEUE,
+          payload: {
+            agent_id: input.agent_id,
+            run_id: input.run_id,
+            usage_feedback: suggestions.join('; '),
           },
-        }),
-        new SendMQOutput(),
-        new MQContext(),
-      );
-    }
+        },
+      }),
+      new SendMQOutput(),
+      new MQContext(),
+    );
+  }
 
-    // 上报 Agent 评估反馈至反馈处理模块（统一存储与分析）
-    if (this.feedbackAccess && suggestions.length > 0) {
-      await this.feedbackAccess.submitAgentFeedback(
-        Object.assign(new SubmitAgentFeedbackInput(), {
-          agent_id: input.agent_id,
-          work_id: input.work_id,
-          run_id: input.run_id,
-          rating: scores.overall,
-          suggestions,
-          category: 'WORK_AGENT_EVAL',
-        }),
-        new SubmitAgentFeedbackOutput(),
-        new FeedbackContext(),
-      );
-    }
+  /** 上报 Agent 评估反馈至反馈处理模块（统一存储与分析）。 */
+  private async submitEvalFeedback(input: EvalWorkAgentInput, scores: EvalScores, suggestions: string[]): Promise<void> {
+    if (!this.feedbackAccess) return;
+    await this.feedbackAccess.submitAgentFeedback(
+      Object.assign(new SubmitAgentFeedbackInput(), {
+        agent_id: input.agent_id,
+        work_id: input.work_id,
+        run_id: input.run_id,
+        rating: scores.overall,
+        suggestions,
+        category: 'WORK_AGENT_EVAL',
+      }),
+      new SubmitAgentFeedbackOutput(),
+      new FeedbackContext(),
+    );
+  }
 
-    // ===== 解散判定（overall < critical_disband_score 配置，配置中心 Evolutor Agent 页可调）——
-    // 组件完全无效的荒谬 Agent 直接删除（仅 system 归属；user 资产由 delAgent 守卫拒绝），
-    // 并 disable 对应 runtime_agent_def，下一轮同类任务走 L4 Build 全新重建。
-    const evolutorConfig = await this.getConfig();
-    const criticalDisbandScore = evolutorConfig?.critical_disband_score ?? DisbandThreshold.Critical;
-    if (scores.overall < criticalDisbandScore) {
-      output.disbanded = await this.disbandBadAgent(input.agent_id, report, metrics);
-    }
-
-    output.agent_id = buildOut.agent_id;
+  /** 回写评估 Output 并上报 evaluation.completed 事件（无流会话静默降级 no-op）。 */
+  private writeEvalOutput(
+    output: EvalWorkAgentOutput, input: EvalWorkAgentInput, evolutorId: string, evalId: string,
+    scores: EvalScores, suggestions: string[], needOptimize: boolean, report?: Report,
+  ): void {
+    output.agent_id = evolutorId;
     output.eval_id = evalId;
     output.scores = scores;
     output.suggestions = suggestions;
@@ -280,7 +277,6 @@ export class EvolutorAgentService {
       need_optimize: needOptimize,
       disbanded: output.disbanded === true,
     });
-    return true;
   }
 
   // ===== 新增方法（2026-09-11）：低分解散（逻辑控制）——delAgent(user 资产守卫内建) + def disable =====

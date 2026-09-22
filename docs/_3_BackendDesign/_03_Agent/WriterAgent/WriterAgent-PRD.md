@@ -192,3 +192,16 @@
 **可能存在的问题**：
   - 无已知问题；`agent_id` 为新增默认字段，向下兼容。
 
+
+### [2026-09-22] execWrite 方法拆分：282 行编排骨架化（逻辑零变更）
+**变更原因**：`execWrite` 282 行，远超 DDDStandards §2 的 10-30 行约束；构建 Agent、偏好解析、上下文构建、LLM 调用、结果回写混在单方法内。
+
+**修改的方法**：
+- `WriterAgentService.execWrite` — 保留为 29 行编排骨架，步骤下沉为私有方法：`prepareWriterAgent`（构建 WRITER + 加载档案）、`resolveWritePreferences`（入参→画像→默认配置）、`buildSessionContext`（多源上下文，失败降级）、`emitErrorFallback`（全错误透传快路径）、`buildWriterTraceParams`（轨迹参数，双路径复用）、`loadSoulContent`（Soul 读取，失败降级）、`renderWritePrompt`、`buildWriteEventsInput`（SSE pushText 回调组装）、`execWriterLlm`（execLLMEvents 优先/execLLM 降级）、`applyWriteResult`（Markdown 直出/纯文本降级）、`recordWriterUsage`。
+- 新增 `WriterAgent/domain/services/WriterDomainService.ts`（纯函数，零 I/O）：`buildWriterResultsContext` / `isErrorAgentResult` / `formatAgentResult` / `cleanFallbackResults` —— 子 Agent 结果加工（动态执行上下文包装 + 降级兜底文本清理）下沉领域层。
+
+**影响的端点**：
+- `WriterAgentAccess.execWrite` 对外签名与行为不变；SSE 事件（text_delta → pushText）推送顺序与 report 透传位置保持原样。
+
+**可能存在的问题**：
+- 无行为变更；`TC-WR-020` 既有用例全绿兜底。

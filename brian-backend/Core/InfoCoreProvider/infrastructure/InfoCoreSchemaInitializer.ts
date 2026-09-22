@@ -23,6 +23,12 @@ import {
   INFO_CONTEXT_CONFIG_TABLE,
 } from '../domain/types';
 
+/** 幂等容忍 DDL 条目：执行失败进入 catch 忽略，ignoreReason 说明预期冲突场景 */
+type TolerantDdl = { sql: string; ignoreReason: string };
+
+/** DDL 数据表条目：字符串 = 直接执行（失败即抛出）；TolerantDdl = try/catch 幂等容忍 */
+type DdlEntry = string | TolerantDdl;
+
 /**
  * InfoCoreProvider 表结构初始化器。
  *
@@ -34,12 +40,10 @@ export class InfoCoreSchemaInitializer {
    */
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  /**
-   * 创建所有 InfoCoreProvider 表（IF NOT EXISTS 语义，可安全重复调用）。
-   */
-  init(): void {
+  // ===== DDL 数据表（纯声明，数组顺序即执行顺序；IF NOT EXISTS 保证幂等）=====
+  private readonly ddlStatements: readonly DdlEntry[] = [
     // info_raw — 原始信息主表
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_RAW_TABLE}" (
         "id"                TEXT    NOT NULL PRIMARY KEY,
         "created"           INTEGER NOT NULL,
@@ -57,48 +61,22 @@ export class InfoCoreSchemaInitializer {
         "trace_id"          TEXT    NOT NULL DEFAULT '',
         "handle_result_type" TEXT   NOT NULL DEFAULT 'correct'
       )
-    `);
-    try {
-      this.relationDb.executeRaw(`ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`);
-    } catch {
-      // 字段已存在
-    }
-    try {
-      this.relationDb.executeRaw(`ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "handle_result_type" TEXT NOT NULL DEFAULT 'correct'`);
-    } catch {
-      // 字段已存在
-    }
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_trace_id" ON "${INFO_RAW_TABLE}" ("trace_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_session_id" ON "${INFO_RAW_TABLE}" ("session_id")`,
-    );
+    `,
+    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "handle_result_type" TEXT NOT NULL DEFAULT 'correct'`, ignoreReason: '字段已存在' },
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_trace_id" ON "${INFO_RAW_TABLE}" ("trace_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_session_id" ON "${INFO_RAW_TABLE}" ("session_id")`,
     // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id（一次问答，= runtime_run.id） =====
-    try {
-      this.relationDb.executeRaw(`ALTER TABLE "${INFO_RAW_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`);
-    } catch { /* 已重命名或原列不存在 */ }
-    try {
-      this.relationDb.executeRaw(`DROP INDEX IF EXISTS "idx_${INFO_RAW_TABLE}_interact_id"`);
-    } catch { /* ignore */ }
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_run_id" ON "${INFO_RAW_TABLE}" ("run_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_type" ON "${INFO_RAW_TABLE}" ("info_type")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_creator_id" ON "${INFO_RAW_TABLE}" ("info_creator_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_created" ON "${INFO_RAW_TABLE}" ("created")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_handle_result_type" ON "${INFO_RAW_TABLE}" ("handle_result_type")`,
-    );
+    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`, ignoreReason: '已重命名或原列不存在' },
+    { sql: `DROP INDEX IF EXISTS "idx_${INFO_RAW_TABLE}_interact_id"`, ignoreReason: '旧索引可能不存在' },
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_run_id" ON "${INFO_RAW_TABLE}" ("run_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_type" ON "${INFO_RAW_TABLE}" ("info_type")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_creator_id" ON "${INFO_RAW_TABLE}" ("info_creator_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_created" ON "${INFO_RAW_TABLE}" ("created")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_handle_result_type" ON "${INFO_RAW_TABLE}" ("handle_result_type")`,
 
     // info_context_source — 每次问答（work_id）的上下文采集来源 → info_id 关系
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_CONTEXT_SOURCE_TABLE}" (
         "id"        TEXT    NOT NULL PRIMARY KEY,
         "created"   INTEGER NOT NULL,
@@ -107,16 +85,12 @@ export class InfoCoreSchemaInitializer {
         "source"    TEXT    NOT NULL,
         "info_id"   TEXT    NOT NULL
       )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_id" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_source" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id", "source")`,
-    );
+    `,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_id" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_source" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id", "source")`,
 
     // info_vector — 向量化存储
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_VECTOR_TABLE}" (
         "id"        TEXT    NOT NULL PRIMARY KEY,
         "created"   INTEGER NOT NULL,
@@ -124,10 +98,10 @@ export class InfoCoreSchemaInitializer {
         "info_id"   TEXT    NOT NULL UNIQUE,
         "embedding" TEXT    NOT NULL
       )
-    `);
+    `,
 
     // info_tag — 信息标签关联
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_TAG_TABLE}" (
         "id"        TEXT    NOT NULL PRIMARY KEY,
         "created"   INTEGER NOT NULL,
@@ -136,16 +110,12 @@ export class InfoCoreSchemaInitializer {
         "tag"       TEXT    NOT NULL,
         UNIQUE("info_id", "tag")
       )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_TAG_TABLE}_info_id" ON "${INFO_TAG_TABLE}" ("info_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${INFO_TAG_TABLE}_tag" ON "${INFO_TAG_TABLE}" ("tag")`,
-    );
+    `,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_TAG_TABLE}_info_id" ON "${INFO_TAG_TABLE}" ("info_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${INFO_TAG_TABLE}_tag" ON "${INFO_TAG_TABLE}" ("tag")`,
 
     // info_tag_vector — 标签向量化
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_TAG_VECTOR_TABLE}" (
         "id"        TEXT    NOT NULL PRIMARY KEY,
         "created"   INTEGER NOT NULL,
@@ -153,10 +123,10 @@ export class InfoCoreSchemaInitializer {
         "tag_id"    TEXT    NOT NULL UNIQUE,
         "embedding" TEXT    NOT NULL
       )
-    `);
+    `,
 
     // info_summary — 摘要存储
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_SUMMARY_TABLE}" (
         "id"        TEXT    NOT NULL PRIMARY KEY,
         "created"   INTEGER NOT NULL,
@@ -164,19 +134,19 @@ export class InfoCoreSchemaInitializer {
         "info_id"   TEXT    NOT NULL UNIQUE,
         "summary"   TEXT    NOT NULL
       )
-    `);
+    `,
 
     // info_keyword — 关键词全文索引（FTS5 虚拟表）
-    this.relationDb.executeRaw(`
+    `
       CREATE VIRTUAL TABLE IF NOT EXISTS "${INFO_KEYWORD_TABLE}" USING fts5(
         "info_id",
         "word",
         tokenize='unicode61'
       )
-    `);
+    `,
 
     // info_tag_config — 标签提取配置
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_TAG_CONFIG_TABLE}" (
         "id"                  TEXT    NOT NULL PRIMARY KEY,
         "created"             INTEGER NOT NULL,
@@ -186,10 +156,10 @@ export class InfoCoreSchemaInitializer {
         "tag_top_k"           INTEGER NOT NULL DEFAULT 5,
         "enable"              INTEGER NOT NULL DEFAULT 1
       )
-    `);
+    `,
 
     // info_summary_config — 摘要生成配置
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_SUMMARY_CONFIG_TABLE}" (
         "id"                  TEXT    NOT NULL PRIMARY KEY,
         "created"             INTEGER NOT NULL,
@@ -200,20 +170,20 @@ export class InfoCoreSchemaInitializer {
         "threshold"           INTEGER NOT NULL DEFAULT 100,
         "info_types"          TEXT    NOT NULL DEFAULT 'RESPONSE'
       )
-    `);
+    `,
 
     // info_config — 全局配置（老化天数等）
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_CONFIG_TABLE}" (
         "id"              TEXT    NOT NULL PRIMARY KEY,
         "created"         INTEGER NOT NULL,
         "updated"         INTEGER NOT NULL,
         "alive_max_days"  INTEGER NOT NULL DEFAULT 30
       )
-    `);
+    `,
 
     // info_vector_config — 向量化配置
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_VECTOR_CONFIG_TABLE}" (
         "id"            TEXT    NOT NULL PRIMARY KEY,
         "created"       INTEGER NOT NULL,
@@ -224,10 +194,10 @@ export class InfoCoreSchemaInitializer {
         "chunk_size"    INTEGER NOT NULL DEFAULT 512,
         "chunk_overlap" INTEGER NOT NULL DEFAULT 64
       )
-    `);
+    `,
 
     // info_context_config — 上下文构建配置
-    this.relationDb.executeRaw(`
+    `
       CREATE TABLE IF NOT EXISTS "${INFO_CONTEXT_CONFIG_TABLE}" (
         "id"                      TEXT    NOT NULL PRIMARY KEY,
         "created"                 INTEGER NOT NULL,
@@ -246,26 +216,32 @@ export class InfoCoreSchemaInitializer {
         "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1,
         "priority_order"          TEXT    NOT NULL DEFAULT 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'
       )
-    `);
+    `,
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "random_max_percent" INTEGER NOT NULL DEFAULT 5`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "tag_relative_max_percent" INTEGER NOT NULL DEFAULT 20`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "similarity_max_percent" INTEGER NOT NULL DEFAULT 15`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_max_percent" INTEGER NOT NULL DEFAULT 10`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_score_threshold" INTEGER NOT NULL DEFAULT 95`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "priority_order" TEXT NOT NULL DEFAULT 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "threshold" INTEGER NOT NULL DEFAULT 100`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "info_types" TEXT NOT NULL DEFAULT 'RESPONSE'`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_VECTOR_CONFIG_TABLE}" ADD COLUMN "chunk_size" INTEGER NOT NULL DEFAULT 512`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${INFO_VECTOR_CONFIG_TABLE}" ADD COLUMN "chunk_overlap" INTEGER NOT NULL DEFAULT 64`, ignoreReason: '字段已存在' },
+  ];
 
-    for (const col of [
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "random_max_percent" INTEGER NOT NULL DEFAULT 5`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "tag_relative_max_percent" INTEGER NOT NULL DEFAULT 20`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "similarity_max_percent" INTEGER NOT NULL DEFAULT 15`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_max_percent" INTEGER NOT NULL DEFAULT 10`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "keyword_score_threshold" INTEGER NOT NULL DEFAULT 95`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1`,
-      `ALTER TABLE "${INFO_CONTEXT_CONFIG_TABLE}" ADD COLUMN "priority_order" TEXT NOT NULL DEFAULT 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM'`,
-      `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "threshold" INTEGER NOT NULL DEFAULT 100`,
-      `ALTER TABLE "${INFO_SUMMARY_CONFIG_TABLE}" ADD COLUMN "info_types" TEXT NOT NULL DEFAULT 'RESPONSE'`,
-      `ALTER TABLE "${INFO_VECTOR_CONFIG_TABLE}" ADD COLUMN "chunk_size" INTEGER NOT NULL DEFAULT 512`,
-      `ALTER TABLE "${INFO_VECTOR_CONFIG_TABLE}" ADD COLUMN "chunk_overlap" INTEGER NOT NULL DEFAULT 64`,
-    ]) {
-      try {
-        this.relationDb.executeRaw(col);
-      } catch {
-        // 字段已存在
+  /**
+   * 创建所有 InfoCoreProvider 表（IF NOT EXISTS 语义，可安全重复调用）。
+   */
+  init(): void {
+    for (const ddl of this.ddlStatements) {
+      if (typeof ddl === 'string') {
+        this.relationDb.executeRaw(ddl);
+        continue;
       }
+      try {
+        this.relationDb.executeRaw(ddl.sql);
+      } catch { /* 幂等容忍：忽略原因见该条目 ignoreReason */ }
     }
   }
 }

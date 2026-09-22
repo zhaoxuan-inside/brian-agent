@@ -1,3 +1,37 @@
+## [2026-09-22g] refactor: InfoCoreService.context 方法拆分——401 行编排水 monolith → 30 行骨架 + 25 个原子步骤方法
+
+**变更原因**：`context` 401 行为全库最长方法（analyze-method-length.mjs >30 榜首），违反 DDDStandards §2 方法长度约束与流程控制/数据处理拆分判据。
+
+**修改的方法**（`Core/InfoCoreProvider/application/InfoCoreService.ts`，纯代码移动：条件/顺序/副作用/返回值/日志文本零变更，签名不变）：
+  - 编排骨架 `context` 30 行，按「参数准备 → 各维度候选采集 → 装配回写」顺序编排 25 个新私有方法（全部 ≤30 行）：validateContextInput / prepareContextBuildPlan / parseContextPriorityList（缺省优先级收敛为模块常量 CONTEXT_COLLECTION_SOURCES）；collectPinnedCandidates / collectSelectedOrTimelineCandidates / extractCurrentCandidate；resolveWeakDimensionLimits / resolveReferenceText / collectWeakDimensionCandidates → collectTagRelativeCandidates / collectSimilarityCandidates / collectKeywordCandidates / pickKeywordCandidates；collectRandomCandidates → sampleRandomCandidates → sampleSessionRandomCandidates / sampleGlobalRandomCandidates；excludeCurrentFromWeakDimensions / buildContextCandidatesMap / prefetchContextSummaries / collectDedupedContextItems / toContextItem（局部 helper 提升）/ buildContextCategories / buildContextCategoryIds / buildContextSourcesSummary。
+  - 复用既有方法：getInfoByInfoId / lastNInfoTimeline / toInfoRawRecord / isCorrectInfo / isTraceInfo / getInfoSummaryBatchByInfoIds / fillContextTriplesAndPersist（内含 persistContextSourceMap）。
+  - `// ===== 修改后的方法 =====` 过渡标记移除（DDDStandards §6.2 禁止注释保留旧实现，历史由变更记录与 git 承载）。
+
+**影响的端点**：无接口行为变更（POST/GET 上下文构建相关路由均等价）；TAG/SIM/KW/RANDOM 降级 warn 日志文本原样保留。
+
+**可能存在的问题**：
+  - buildContextCandidatesMap/excludeCurrentFromWeakDimensions 等装配方法为 application 私有（模块无 domain/services 目录，按规范不强建）；若后续其它编排需复用候选去重/分类装配，再上提 domain/services。
+
+**验证**：typecheck（@brian-agent/core）0 错误；core vitest 197/197 全绿；analyze-method-length 30 中 InfoCoreService 仅余 saveInfo（90 行，另行任务）；InfoCoreService.ts eslint 0 error。
+
+## [2026-09-22g] refactor: 超长方法拆分——12 个 >120 行方法归位 + SchemaInitializer 数据驱动收敛
+
+**变更原因**：评审发现 341 个方法 >30 行（24 个 >120 行，最大 InfoCoreService.context 400 行），远超 DDDStandards §2 上限。
+
+**修改的方法**（编排骨架全部 ≤31 行，逻辑零变更，纯代码移动）：
+  - `InfoCoreService.context` 400→30：拆 20+ 私有步骤方法（参数准备/五维度采集/装配回写），4 个结构 interface + 优先级常量收敛。
+  - `AgentBuilderService.buildAgent` 310→28、`optimizeAgent` 207→21：组件装配/绑定/重绑拆分；`optSkillBindings`/`optMcpBindings` 收敛两方法重复段；binding diff 上提 `BindingDiffDomainService`。
+  - `WriterAgentService.execWrite` 282→29、`AgentExecutionService.execAgent` 273→24：ReACT 阶段全复用既有 execThink/Act/Reflect/Answer，未重复实现。
+  - `ChatService.soSession` 267→22（五类聚合拆分 + `SessionSearchDomainService`）、`RunGatewayService.executeRun` 175→31（事件顺序逐字保留）、`LLMService.executeSingleLLM` 168→21。
+  - `EvolutorAgentService.evalWorkAgent` 199→27 + `EvalScoreDomainService`。
+  - 新增领域服务（纯函数零 I/O）：AgentNaming/BindingDiff/AgentBuildSummary/Writer/SessionSearch/EvalScore 6 个。
+  - SchemaInitializer ×4（SelfLearning 321→5、LLM 257→11、InfoCore 231→11、MCP 156→11）：DDL 提取数据驱动表 `ddlStatements`，执行序列经 TS 转译录制逐字比对证明等价。
+  - 删除拆分中发现的死代码 `buildChatRequestBody`（纯函数返回值从未消费，每次 LLM 调用空转）。
+
+**影响的端点**：无接口/事件/DDL 行为变更（Runtime 事件序列有专项用例兜底）。
+
+**验证（门禁）**：typecheck 5 workspace 0 错误；lint 0 errors；npm test 5/5（base 824/core 197/runtime 47/agent 118/application 486）；analyze:methods 复测 120+ 行方法 24→11，榜首 400→166。
+
 ## [2026-09-22f] refactor: Config 模块消 any 清零——149 处 any 归零并取消 eslint 豁免
 
 **变更原因**：ConfigService.ts（145 处）/ConfigAccess.ts（4 处）共 149 处 `any` 使 Config 路由层完全绕过类型检查（实际 eslint 计数 149，超出任务预估的 104+4）；依赖（chatAccess 等 4 个跨模块 Access）与全部配置写入路由的真实类型在下游签名文件中齐备，具备诚实标注条件。
