@@ -135,6 +135,8 @@ export class QueryDocumentInput extends Input {
   context_after?: string;
   /** 用户输入的问题 */
   question?: string;
+  /** 当前文档标题（注入 Prompt，帮助模型理解文档主题） */
+  document_title?: string;
 }
 
 export class QueryDocumentOutput extends Output {
@@ -168,6 +170,61 @@ export class GetFileAnnotationsInput extends Input {
 export class GetFileAnnotationsOutput extends Output {
   annotations: Array<Record<string, unknown>> = [];
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// updateFileContent（文档编辑：写回本地文件）
+// ─────────────────────────────────────────────────────────────────────────
+
+export class UpdateFileContentInput extends Input {
+  file_id!: string;
+  /** 新的 Markdown 全文 */
+  content!: string;
+}
+
+export class UpdateFileContentOutput extends Output {
+  file_name = '';
+  content = '';
+  /** 写回后的字节数 */
+  size = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// deleteFile（文档删除：删除本地文件 + 级联清理索引与注释）
+// ─────────────────────────────────────────────────────────────────────────
+
+export class DeleteFileInput extends Input {
+  file_id!: string;
+}
+
+export class DeleteFileOutput extends Output {
+  /** 级联删除的咨询注释条数 */
+  deleted_annotations = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 文档伴读专用 Agent / Soul（资料库问答场景）
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 声明式 Agent 唯一引用名（declareAgent upsert by name） */
+export const DOCUMENT_READING_AGENT_NAME = 'document_reading';
+
+/** 文档伴读内置 Soul 摘要（幂等识别键） */
+export const DOCUMENT_READING_SOUL_BRIEF = '文档伴读导师';
+
+/** 文档伴读内置 Soul 内容（注入 system，决定回答风格与边界） */
+export const DOCUMENT_READING_SOUL_CONTENT = [
+  '你是一位「文档伴读导师」，擅长把复杂的文档讲清楚，帮助读者真正读懂，而不是匆匆翻过。',
+  '',
+  '你的风格：',
+  '- 耐心、亲切、有条理，先给结论，再用最少的必要细节把结论讲透；',
+  '- 善于把抽象概念翻译成读者熟悉的语言，善用类比与最小示例；',
+  '- 会主动点明概念之间的关系、前置知识与常见误区；',
+  '- 回答只依据文档上下文与可靠常识，绝不编造；信息不足时坦率说明，并指出需要补充哪部分；',
+  '- 语言简洁，沿用文档中的专业术语，默认使用中文（用户使用其他语言时跟随用户）。',
+].join('\n');
+
+/** 文档伴读内置 Soul 应用场景（Soul 匹配展示用） */
+export const DOCUMENT_READING_SOUL_USAGE = '资料库文档阅读：解释选中内容、举例与延伸讲解，帮助用户理解与学习文档';
 
 // ─────────────────────────────────────────────────────────────────────────
 // startLearning

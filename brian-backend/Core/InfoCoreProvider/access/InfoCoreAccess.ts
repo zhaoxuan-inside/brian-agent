@@ -89,6 +89,8 @@ import {
   DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
+  BackfillMissingSummariesInput,
+  BackfillMissingSummariesOutput,
 } from '../domain/types';
 
 /**
@@ -351,6 +353,12 @@ export class InfoCoreAccess {
   async delInfo(input: DelInfoInput, output: DelInfoOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.delInfo(input, output, context, metrics, report);
+  }
+
+  /** 补生成缺失摘要（幂等；LLM 间歇失败导致的摘要丢失补偿） */
+  async backfillMissingSummaries(input: BackfillMissingSummariesInput, output: BackfillMissingSummariesOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.backfillMissingSummaries(input, output, context, metrics, report);
   }
 
   /** 改写指定 work 下某 info_type 的 info 内容（如需求确认 APPROVE 替换 REQUEST）。 */

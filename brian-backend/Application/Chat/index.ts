@@ -4,6 +4,7 @@ export {
   SubmitWorkInput, SubmitWorkOutput,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
+  PurgeOrphanSessionsInput, PurgeOrphanSessionsOutput,
   SearchSessionInput, SearchSessionOutput,
   GetSessionDetailInput, GetSessionDetailOutput,
   UpdateSessionTitleInput, UpdateSessionTitleOutput,

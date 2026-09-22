@@ -6,7 +6,7 @@ import {
   UpdateDBInput, UpdateDBOutput,
   CountDBInput, CountDBOutput,
   DataObject, DBContext,
-  IdGenerator, ValidationError, NotFoundError, Operator,
+  IdGenerator, ValidationError, NotFoundError, Operator, Logic,
   type Logger, type Condition,
   type StreamAccess,
 } from '@brian-agent/base';
@@ -15,7 +15,6 @@ import {
   LastNInfoInput, LastNInfoOutput,
   GraphInfoInput, GraphInfoOutput,
   SoCitationEdgesInput, SoCitationEdgesOutput,
-  DelInfoGraphInput, DelInfoGraphOutput,
   // ===== 新增（2026-09-15 记忆集中）：会话级记忆删除统一走 InfoCore =====
   DelInfoBySessionInput, DelInfoBySessionOutput,
   KeywordKInfoInput, KeywordKInfoOutput,
@@ -27,6 +26,7 @@ import {
   ChatContext,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
+  PurgeOrphanSessionsInput, PurgeOrphanSessionsOutput,
   SearchSessionInput, SearchSessionOutput,
   GetSessionDetailInput, GetSessionDetailOutput,
   UpdateSessionTitleInput, UpdateSessionTitleOutput,
@@ -408,6 +408,39 @@ export class ChatService {
 
     for (const sessionId of input.session_ids) {
       try {
+        // ===== 新增（2026-09-21 反馈级联删除）：随会话删除关联的反馈数据 =====
+        // 反馈表（feedback_record / feedback_process_log）以 run_id（对话轮次，
+        // 关联 runtime_run.id）和 work_id（作品/任务，关联 info_raw.work_id）引用
+        // 会话内容。此前会话删除后这些引用全部失效，监控页残留「无法关联任何内容」
+        // 的孤儿反馈（只剩一串 ID）。故在删除会话数据**之前**先收集两类引用
+        // （info_raw / runtime_run 马上会被下方步骤删除），再按 run_id / work_id
+        // 级联删除反馈。表名按名引用（同 writer_agent_user_profile 惯例，
+        // 避免 Application → Base 的运行时耦合）；失败静默跳过不阻塞会话删除。
+        try {
+          const fbRunRows = await this.relationDb.select(RUNTIME_RUN_TABLE, {
+            conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
+            fields: ['id'],
+          });
+          const fbRunIds = fbRunRows.map(r => String(r.id ?? '')).filter(Boolean);
+          const fbWorkRows = await this.relationDb.select('info_raw', {
+            conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+            fields: ['work_id'],
+          });
+          const fbWorkIds = [...new Set(fbWorkRows.map(r => String(r.work_id ?? '')).filter(Boolean))];
+          if (fbRunIds.length > 0 || fbWorkIds.length > 0) {
+            const fbConds: Condition[] = [];
+            if (fbRunIds.length > 0) fbConds.push({ field: 'run_id', operator: Operator.IN, value: fbRunIds });
+            if (fbWorkIds.length > 0) fbConds.push({ field: 'work_id', operator: Operator.IN, value: fbWorkIds, logic: Logic.OR });
+            await this.relationDb.delete('feedback_record', fbConds);
+            await this.relationDb.delete('feedback_process_log', fbConds);
+          }
+        } catch (fbErr: unknown) {
+          this.logger?.warn?.('deleteSession: 反馈数据级联清理失败（已跳过）', {
+            session_id: sessionId,
+            error: fbErr instanceof Error ? fbErr.message : String(fbErr),
+          });
+        }
+
         // ===== 原始代码（保留作为参考；2026-09-15 记忆集中）=====
         // 1. 收集该会话下所有 info_id → 2. 内联直写删除派生表（info_tag/info_summary/info_keyword/info_vector）
         //    3. 直接调 delInfoGraph + 直删 info_raw —— 与 InfoCore.delInfoByWork 重复的第二条删除路径
@@ -422,6 +455,21 @@ export class ChatService {
           { field: 'session_id', operator: Operator.EQ, value: sessionId },
         ]);
         deletedCount += affected;
+
+        // ===== 新增（2026-09-21 会话删除关联数据同步）：WriterAgent 会话级写作偏好
+        // （writer_agent_user_profile.session_id 唯一）此前随会话删除后残留为孤儿数据，
+        // 导致会话重新创建/复用同 id 时读取到陈旧偏好；此处随会话同步清理。
+        // 表名按名引用，避免 Application → Agent 的运行时耦合；表不存在时静默跳过 =====
+        try {
+          await this.relationDb.delete('writer_agent_user_profile', [
+            { field: 'session_id', operator: Operator.EQ, value: sessionId },
+          ]);
+        } catch (prefErr: unknown) {
+          this.logger?.warn?.('deleteSession: writer_agent_user_profile 清理失败（已跳过）', {
+            session_id: sessionId,
+            error: prefErr instanceof Error ? prefErr.message : String(prefErr),
+          });
+        }
 
         // ===== 新增（2026-09-15）：思考过程/耗时统计生命周期跟随问答 —— 删除会话时
         // 一并清理事件流（stream_event，思考过程时间线的持久事实源）与 Runtime 派生表
@@ -473,6 +521,49 @@ export class ChatService {
     }
 
     output.deleted_count = deletedCount;
+    return true;
+  }
+
+  /**
+   * 清理「孤儿会话记忆」：`info_raw` 中 `session_id` 已不存在于 `chat_session` 的残留记录
+   * （及其派生表与 GraphDB 引用边），供服务启动时与每日定时任务调用。
+   *
+   * 根因（2026-09-21 记忆残留事故）：历史版本权限审计桥以 Runtime 内部 session id 落
+   * `info_raw.session_id`（而非对话会话键），以及早期在会话级联删除逻辑收敛前删除的会话，
+   * 都会在 `info_raw` 留下 `session_id` 无法匹配任何 `chat_session` 的孤儿行。
+   * 这些行不会被 `deleteSession(指定 session_id)` 命中，因而会话删除后仍在「信息 > 记忆」
+   * 页持续展示已删除会话的对话内容。
+   *
+   * 判定口径：以 `chat_session.session_id` 为唯一存活集合（会话在 `createSession` 时即落库，
+   * 所有 `info_raw` 写入均发生在会话存在期间），差集即孤儿。
+   * 清理复用 {@link deleteSession} 的级联逻辑，保证与单次会话删除行为一致。
+   */
+  async purgeOrphanSessions(input: PurgeOrphanSessionsInput, output: PurgeOrphanSessionsOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    // 1. 存活会话键集合
+    const liveRows = this.relationDb.queryRaw<{ session_id: string }>(
+      `SELECT "session_id" FROM "chat_session"`,
+    );
+    const liveSessions = new Set<string>(
+      (liveRows ?? []).map((r) => String(r.session_id ?? '')).filter(Boolean),
+    );
+
+    // 2. info_raw 中出现过的全部会话键，差集即孤儿
+    const rawRows = this.relationDb.queryRaw<{ session_id: string }>(
+      `SELECT DISTINCT "session_id" FROM "info_raw"`,
+    );
+    const orphanSessions = Array.from(new Set(
+      (rawRows ?? []).map((r) => String(r.session_id ?? '')).filter(Boolean),
+    )).filter((sid) => !liveSessions.has(sid));
+
+    output.purged_session_ids = orphanSessions;
+    output.purged_count = orphanSessions.length;
+    if (input.dry_run || orphanSessions.length === 0) return true;
+
+    // 3. 复用 deleteSession 的级联清理（info_* / GraphDB / runtime_* / stream_event / writer 偏好）
+    const delInput = new DeleteSessionInput();
+    delInput.session_ids = orphanSessions;
+    await this.deleteSession(delInput, new DeleteSessionOutput(), _context, _metrics, _report);
     return true;
   }
 

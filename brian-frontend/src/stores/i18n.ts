@@ -4,6 +4,7 @@ import { ref, computed } from 'vue'
 export type Locale = 'zh-CN' | 'en-US'
 
 const i18nMap: Record<string, Record<Locale, string>> = {
+  'nav.home': { 'zh-CN': '首页', 'en-US': 'Home' },
   'nav.chat': { 'zh-CN': '对话', 'en-US': 'Chat' },
   'nav.info': { 'zh-CN': '信息', 'en-US': 'Info' },
   'nav.learning': { 'zh-CN': '学习', 'en-US': 'Learning' },

@@ -2,8 +2,10 @@ import { callLLMJson } from '@brian-agent/base';
 import { Metrics, Report } from '@brian-agent/base';
 import * as fs from 'fs';
 import * as path from 'path';
-import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, InfoType, type Logger, type Condition } from '@brian-agent/base';
-import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
+import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext, PROMPT_IDS, getBuiltinTemplate, renderTemplate, InfoType, type Logger, type Condition } from '@brian-agent/base';
+import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess, SoulAccess } from '@brian-agent/base';
+import type { AgentDefAccess } from '@brian-agent/runtime';
+import { DeclareAgentInput, DeclareAgentOutput, SoAgentDefsInput, SoAgentDefsOutput, AgentDefContext, AgentMode, AgentDefStatus } from '@brian-agent/runtime';
 import type {
   InfoCoreAccess, MQCoreAccess, LLMCoreAccess,
 } from '@brian-agent/core';
@@ -44,6 +46,10 @@ import {
   QueryDocumentInput, QueryDocumentOutput,
   SaveAnnotationInput, SaveAnnotationOutput,
   GetFileAnnotationsInput, GetFileAnnotationsOutput,
+  UpdateFileContentInput, UpdateFileContentOutput,
+  DeleteFileInput, DeleteFileOutput,
+  DOCUMENT_READING_AGENT_NAME, DOCUMENT_READING_SOUL_BRIEF,
+  DOCUMENT_READING_SOUL_CONTENT, DOCUMENT_READING_SOUL_USAGE,
   StartLearningInput, StartLearningOutput,
   StopLearningInput, StopLearningOutput,
   GetTagGraphInput, GetTagGraphOutput,
@@ -68,6 +74,11 @@ export class SelfLearningService {
   /** 手动停止意图：进行中的单轮任务在单元边界（文件 / 建图-激活阶段）检查后提前结束 */
   private readonly cancelRequested = new Set<LearningTaskRecord['mode']>();
 
+  /** 文档伴读声明式 Agent 定义 ID 缓存（ensureBuiltinDocumentAgent 落账后填充） */
+  private documentAgentDefId = '';
+  /** 文档伴读内置 Soul ID 缓存（ensureDocumentReadingSoul 落账后填充） */
+  private documentAgentSoulId = '';
+
   // ===== 原始字段（保留作为参考）=====
   // private documentLearningTimer: ReturnType<typeof setInterval> | null = null;
   // private evalScheduleRunning = false;
@@ -91,6 +102,10 @@ export class SelfLearningService {
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
     private readonly logger?: Logger,
+    /** 文档伴读内置 Soul 的读写入口（Base.SoulProvider；缺省则跳过内置 Agent 装配） */
+    private readonly soulAccess?: SoulAccess,
+    /** 文档伴读声明式 Agent 的注册/快照入口（Runtime.Agents；缺省则回退直连 LLM） */
+    private readonly agentDefAccess?: AgentDefAccess,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -526,6 +541,11 @@ export class SelfLearningService {
   // queryDocument（文档内容选中解释）
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ===== 修改后的方法（2026-09-21）：文档伴读专用 Agent + 专用 Prompt + 专用 Soul =====
+  // 变更原因：此前直连 execLLM 且 Prompt 仅做简单解释，缺少独立人设与阅读伴读方法论；
+  // 现改为经「文档伴读」声明式 Agent 取 system（身份 + 专用 Soul）与默认模型，
+  // Prompt 走增强后的 builtin.document_query（含文档标题与伴读式回答要求）；
+  // 配置项 document_query_prompt_template_id / document_query_llm_id 仍作为覆盖优先级最高项。
   async queryDocument(input: QueryDocumentInput, output: QueryDocumentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selection = (input.selection || input.content || '').trim();
@@ -540,7 +560,10 @@ export class SelfLearningService {
     const templateId = String(config.document_query_prompt_template_id ?? '');
     const configuredLlmId = String(config.document_query_llm_id ?? '');
 
-    // 1. 渲染 Prompt（配置的模板，或按标题动态解析）
+    // 1. 文档伴读专用 Agent 快照：system（身份 + Soul）+ 默认模型 + 温度
+    const agent = await this.soDocumentReadingAgent(question);
+
+    // 2. 渲染专用 Prompt（含文档标题与伴读式回答要求；未配置时用内置模板）
     const prompt = await this.renderPrompt(
       templateId,
       '文档阅读问答',
@@ -549,42 +572,223 @@ export class SelfLearningService {
         context_before: contextBefore,
         context_after: contextAfter,
         question,
+        document_title: input.document_title || '',
       },
+      PROMPT_IDS.documentQuery,
     );
 
-    // 2. 匹配 LLM（配置的模型，或自动匹配）
-    let llmId = configuredLlmId;
-    if (!llmId) {
-      try {
-        const matchOut = new MatchLLMOutput();
-        await this.llmCore.matchLLM(
-          Object.assign(new MatchLLMInput(), {
-            agent_id: 'document_query',
-            context_id: 'document_query',
-            run_id: IdGenerator.generate(),
-          }),
-          matchOut,
-          new LLMCoreContext(),
-        );
-        llmId = matchOut.llm_id || '';
-      } catch {
-        llmId = '';
-      }
-    }
+    // 3. 模型：配置 > Agent 快照 > 自动匹配
+    let llmId = configuredLlmId || agent.llm_id;
+    if (!llmId) llmId = await this.matchDocumentQueryLlm();
     if (!llmId) {
       output.result = '未配置文档阅读模型：请在「配置中心 > 应用配置 > 自学习 > 文档阅读 LLM」中选择模型';
       return true;
     }
     output.llm_id = llmId;
 
-    // 3. 调用 LLM
+    // 4. 调用 LLM（system 注入专用 Soul / 身份）
+    await this.execDocumentQueryLlm(llmId, prompt, agent.system, agent.temperature, output);
+    return true;
+  }
+
+  // ===== 原始方法（保留作为参考）=====
+  // async queryDocument(input: QueryDocumentInput, output: QueryDocumentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   const selection = (input.selection || input.content || '').trim();
+  //   if (!selection) {
+  //     throw new ValidationError('selection is required');
+  //   }
+  //   const question = (input.question || '').trim();
+  //   const contextBefore = input.context_before || '';
+  //   const contextAfter = input.context_after || '';
+  //
+  //   const config = await this.getConfig();
+  //   const templateId = String(config.document_query_prompt_template_id ?? '');
+  //   const configuredLlmId = String(config.document_query_llm_id ?? '');
+  //
+  //   // 1. 渲染 Prompt（配置的模板，或按标题动态解析）
+  //   const prompt = await this.renderPrompt(templateId, '文档阅读问答', {
+  //     selection, context_before: contextBefore, context_after: contextAfter, question,
+  //   });
+  //
+  //   // 2. 匹配 LLM（配置的模型，或自动匹配）
+  //   let llmId = configuredLlmId;
+  //   if (!llmId) {
+  //     try {
+  //       const matchOut = new MatchLLMOutput();
+  //       await this.llmCore.matchLLM(Object.assign(new MatchLLMInput(), {
+  //         agent_id: 'document_query', context_id: 'document_query', run_id: IdGenerator.generate(),
+  //       }), matchOut, new LLMCoreContext());
+  //       llmId = matchOut.llm_id || '';
+  //     } catch { llmId = ''; }
+  //   }
+  //   if (!llmId) {
+  //     output.result = '未配置文档阅读模型：请在「配置中心 > 应用配置 > 自学习 > 文档阅读 LLM」中选择模型';
+  //     return true;
+  //   }
+  //   output.llm_id = llmId;
+  //
+  //   // 3. 调用 LLM
+  //   try {
+  //     const llmOut = new ExecLLMOutput();
+  //     await this.llmAccess.execLLM(Object.assign(new ExecLLMInput(), {
+  //       id: llmId, prompt, temperature: 0.3, max_tokens: 1024, caller: 'SelfLearningService.readDocument',
+  //     }), llmOut, new LLMContext());
+  //     output.result = llmOut.result || '';
+  //   } catch (err: unknown) {
+  //     output.result = `解释失败：${err instanceof Error ? err.message : String(err)}`;
+  //   }
+  //   return true;
+  // }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 文档伴读专用 Agent / Soul 装配（ensureBuiltinDocumentAgent 等）
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * 确保文档伴读专用资源就绪（幂等）：内置 Soul + 声明式 Agent。
+   *
+   * Agent 以 status=Disabled 声明：不参与主对话的 Agent 匹配（避免文档人设劫持普通问答），
+   * 仅由 queryDocument 按 def_id 显式取快照。任一依赖缺失时静默跳过并返回空串。
+   */
+  async ensureBuiltinDocumentAgent(): Promise<string> {
+    if (!this.soulAccess || !this.agentDefAccess) return '';
+    if (this.documentAgentDefId) return this.documentAgentDefId;
+
+    const soulId = await this.ensureDocumentReadingSoul();
+    this.documentAgentSoulId = soulId;
+    const declareInput = Object.assign(new DeclareAgentInput(), {
+      name: DOCUMENT_READING_AGENT_NAME,
+      mode: AgentMode.Subagent,
+      agent_purpose: '文档伴读：基于资料库文档的选中内容与上下文，解释、举例并延伸讲解，帮助用户阅读理解',
+      task_signature: '[document_reading] 解释文档选中内容并回答读者提问',
+      prompt_template_id: PROMPT_IDS.documentReadingIdentity,
+      model_id: '',
+      soul_id: soulId,
+      temperature: 0.3,
+      status: AgentDefStatus.Disabled,
+    });
+    const declareOutput = new DeclareAgentOutput();
+    await this.agentDefAccess.declareAgent(declareInput, declareOutput, new AgentDefContext());
+    this.documentAgentDefId = declareOutput.def_id || '';
+    this.logger?.debug?.('ensureBuiltinDocumentAgent done', { defId: this.documentAgentDefId, soulId });
+    return this.documentAgentDefId;
+  }
+
+  /** 内置文档伴读 Soul 幂等 upsert（数据处理；返回 soul_id） */
+  private async ensureDocumentReadingSoul(): Promise<string> {
+    const soOut = new SoSoulOutput();
+    await this.soulAccess!.soSoul(
+      { conditions: [{ field: 'soul_brief', operator: Operator.EQ, value: DOCUMENT_READING_SOUL_BRIEF }] },
+      soOut,
+      new SoulContext(),
+    );
+    if (soOut.list.length > 0) return soOut.list[0].id;
+
+    const addOut = new AddSoulOutput();
+    await this.soulAccess!.addSoul(
+      {
+        data: {
+          soul_brief: DOCUMENT_READING_SOUL_BRIEF,
+          soul_content: DOCUMENT_READING_SOUL_CONTENT,
+          soul_usage: DOCUMENT_READING_SOUL_USAGE,
+        },
+      },
+      addOut,
+      new SoulContext(),
+    );
+    return addOut.id;
+  }
+
+  /**
+   * 文档伴读 Agent 配置解析（逻辑控制）：
+   * - 模型 / 温度：读声明式 Agent 定义（按 name 解析，取 model_id / temperature）；
+   * - system：由专用身份 Prompt（builtin 内置模板，内存渲染）+ 绑定 Soul 组装。
+   *
+   * 说明：内置 Prompt 播种在新版已收敛到 PromptProvider/DB 管理，DB 中可能没有
+   * `builtin.document_reading_identity` 行，因此 system 直接取内置模板内存渲染，
+   * 避免因缺模板导致快照失败；Agent 本身仍作为 Soul 绑定与模型/温度的配置载体。
+   */
+  private async soDocumentReadingAgent(_question: string): Promise<{ system: string; llm_id: string; temperature?: number }> {
+    const system = await this.buildDocumentReadingSystem();
+    if (!this.agentDefAccess) return { system, llm_id: '' };
+    try {
+      await this.ensureBuiltinDocumentAgent();
+      const defsOut = new SoAgentDefsOutput();
+      await this.agentDefAccess.soAgentDefs(Object.assign(new SoAgentDefsInput(), {}), defsOut, new AgentDefContext());
+      const def = defsOut.defs.find((d) => d.name === DOCUMENT_READING_AGENT_NAME);
+      return { system, llm_id: def?.model_id || '', temperature: def?.temperature };
+    } catch (err: unknown) {
+      this.logger?.warn?.(`文档伴读 Agent 配置解析失败，回退默认: ${err instanceof Error ? err.message : String(err)}`);
+      return { system, llm_id: '' };
+    }
+  }
+
+  /** 文档伴读 system 组装（数据处理）：专用身份模板 + 绑定 Soul 内存渲染 */
+  private async buildDocumentReadingSystem(): Promise<string> {
+    const soul = await this.soDocumentReadingSoulContent();
+    const template = getBuiltinTemplate(PROMPT_IDS.documentReadingIdentity) || '';
+    if (!template) return soul;
+    return renderTemplate(template, {
+      soul,
+      task_directive: '阅读文档并回答读者关于选中内容的提问',
+    });
+  }
+
+  /** 读取文档伴读绑定 Soul 的内容（逻辑控制；缺失返回空串） */
+  private async soDocumentReadingSoulContent(): Promise<string> {
+    if (!this.soulAccess) return '';
+    try {
+      const soulId = this.documentAgentSoulId || await this.ensureDocumentReadingSoul();
+      if (!soulId) return '';
+      const soulOut = new GetSoulOutput();
+      await this.soulAccess.soSoulById(
+        Object.assign(new GetSoulInput(), { id: soulId }),
+        soulOut,
+        new SoulContext(),
+      );
+      return soulOut.soul?.soul_content || '';
+    } catch (err: unknown) {
+      this.logger?.warn?.(`读取文档伴读 Soul 失败: ${err instanceof Error ? err.message : String(err)}`);
+      return '';
+    }
+  }
+
+  /** 文档问答模型自动匹配（逻辑控制；matchLLM 失败视为未配置） */
+  private async matchDocumentQueryLlm(): Promise<string> {
+    try {
+      const matchOut = new MatchLLMOutput();
+      await this.llmCore.matchLLM(
+        Object.assign(new MatchLLMInput(), {
+          agent_id: 'document_query',
+          context_id: 'document_query',
+          run_id: IdGenerator.generate(),
+        }),
+        matchOut,
+        new LLMCoreContext(),
+      );
+      return matchOut.llm_id || '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** 文档问答 LLM 调用（数据处理；system 非空时注入专用 Soul） */
+  private async execDocumentQueryLlm(
+    llmId: string,
+    prompt: string,
+    system: string,
+    temperature: number | undefined,
+    output: QueryDocumentOutput,
+  ): Promise<void> {
     try {
       const llmOut = new ExecLLMOutput();
       await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
           id: llmId,
           prompt,
-          temperature: 0.3,
+          ...(system ? { system } : {}),
+          temperature: temperature ?? 0.3,
           max_tokens: 1024,
           caller: 'SelfLearningService.readDocument',
         }),
@@ -595,16 +799,23 @@ export class SelfLearningService {
     } catch (err: unknown) {
       output.result = `解释失败：${err instanceof Error ? err.message : String(err)}`;
     }
-    return true;
   }
 
-  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省按标题动态查找；缺失 fail-loud */
+  /**
+   * 渲染 Prompt：配置模板优先；未配置时优先用内置模板内存渲染（`builtinTemplateId`），
+   * 再按标题查 DB；均缺失时 fail-loud。
+   */
   private async renderPrompt(
     templateId: string | undefined,
     fallbackTitle: string,
     variables: Record<string, unknown>,
+    builtinTemplateId?: string,
   ): Promise<string> {
     let id = templateId;
+    if (!id && builtinTemplateId) {
+      const builtin = getBuiltinTemplate(builtinTemplateId);
+      if (builtin) return renderTemplate(builtin, variables);
+    }
     if (!id) {
       const soOut = new SoPromptOutput();
       await this.promptsAccess.soPrompt(
@@ -668,8 +879,105 @@ export class SelfLearningService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // startLearning
+  // updateFileContent（文档编辑：写回本地文件）
   // ─────────────────────────────────────────────────────────────────────────
+
+  async updateFileContent(input: UpdateFileContentInput, output: UpdateFileContentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const file = await this.soFileRecord(input.file_id);
+    if (!file) {
+      throw new NotFoundError('文档', input.file_id);
+    }
+    if (Number(file.is_directory) === 1) {
+      throw new ValidationError('目录不可编辑');
+    }
+    const filePath = String(file.file_path ?? '');
+    if (!filePath) {
+      throw new ValidationError('文档路径为空，无法写回');
+    }
+
+    fs.writeFileSync(filePath, input.content ?? '', 'utf-8');
+    const size = Buffer.byteLength(input.content ?? '', 'utf-8');
+    const now = IdGenerator.now();
+    // 内容变更 → 重置学习状态为 PENDING，使下一轮文档学习重新抽取知识点
+    await this.relationDb.update('self_learning_file', [
+      { field: 'file_size', value: size },
+      { field: 'status', value: 'PENDING' },
+      { field: 'error_message', value: null },
+      { field: 'learned_at', value: null },
+      { field: 'updated', value: now },
+    ], [{ field: 'file_id', operator: Operator.EQ, value: input.file_id }]);
+
+    output.file_name = String(file.file_name ?? '');
+    output.content = input.content ?? '';
+    output.size = size;
+    this.logger?.debug?.('updateFileContent done', { fileId: input.file_id, size });
+    return true;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // deleteFile（文档删除：删除本地文件 + 级联清理索引与注释）
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async deleteFile(input: DeleteFileInput, output: DeleteFileOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const file = await this.soFileRecord(input.file_id);
+    if (!file) {
+      throw new NotFoundError('文档', input.file_id);
+    }
+    if (Number(file.is_directory) === 1) {
+      throw new ValidationError('目录不可删除');
+    }
+
+    // 删除本地文件；文件已不存在时视为成功（幂等）
+    const filePath = String(file.file_path ?? '');
+    if (filePath) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+    }
+
+    const annRows = this.relationDb.queryRaw<{ c: number }>(
+      'SELECT COUNT(*) AS "c" FROM "document_annotation" WHERE "file_id" = ?',
+      [input.file_id],
+    );
+    output.deleted_annotations = Number(annRows[0]?.c ?? 0);
+
+    const txInput = Object.assign(new TransactionDBInput(), {
+      operations: [
+        {
+          type: 'DELETE',
+          table: 'document_annotation',
+          conditions: [{ field: 'file_id', operator: Operator.EQ, value: input.file_id }] as Condition[],
+        },
+        {
+          type: 'DELETE',
+          table: 'self_learning_file',
+          conditions: [{ field: 'file_id', operator: Operator.EQ, value: input.file_id }] as Condition[],
+        },
+      ],
+    });
+    await this.relationDb.transactionDB(txInput, Object.assign(new TransactionDBOutput(), {}), new DBContext());
+    this.logger?.debug?.('deleteFile done', { fileId: input.file_id, annotations: output.deleted_annotations });
+    return true;
+  }
+
+  /** 按 file_id 读取文件索引行（数据处理；不存在返回 null） */
+  private async soFileRecord(fileId: string): Promise<Record<string, unknown> | null> {
+    const selInput = Object.assign(new SelectOneDBInput(), {
+      query_param: {
+        table: 'self_learning_file',
+        conditions: [
+          { field: 'file_id', operator: Operator.EQ, value: fileId },
+        ] as Condition[],
+      },
+    });
+    const selOutput = Object.assign(new SelectOneDBOutput(), {});
+    await this.relationDb.selectOneDB(selInput, selOutput, new DBContext());
+    return selOutput.row ?? null;
+  }
 
   // ===== 修改后的 startLearning：手动触发 = 立即完整执行一次指定任务 =====
   // 原逻辑：手动触发会顺带安装 60s 文档定时器 / 30min Tag 定时器，并启动 Evolutor 常驻评估调度

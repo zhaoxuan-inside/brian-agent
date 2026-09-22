@@ -119,14 +119,31 @@
   - summary：信息摘要
 **处理流程**：
 
-1. 调用 RelationDBProvider.selectOneDB 查询 `info_summary_config` 表获取配置（enable, llm_id, prompt_template_id, threshold）；如果 enable=false 或缺少 llm_id 或 prompt_template_id，直接返回 true（跳过摘要压缩）；
-2. 根据 info_id 调用 RelationDBProvider.selectOneDB 查询 `info_raw` 表获取信息内容（info 字段）；
-3. **阈值判断**：若信息内容字符数不超过 `threshold`（默认 100），直接以原文作为摘要（无需调用 LLM）；否则进入下一步；
-4. 将信息内容和 prompt_template_id 调用 PromptsProvider.execPrompt 生成 prompt；
-5. 将 llm_id 和 prompt 调用 LLMProvider.execLLM 生成信息的摘要文本（建议 temperature=0.3，max_tokens 根据内容长度动态设置）；
-6. 调用 RelationDBProvider.insertDB 将 `{ info_id, summary: 摘要文本 }` 保存到 `info_summary` 表（upsert 语义：若 info_id 已存在则更新摘要）；
+1. 调用 RelationDBProvider.selectOneDB 查询 `info_summary_config` 表获取配置（enable, llm_id, prompt_template_id, threshold, info_types）；如果 enable=false，直接返回 true（跳过摘要压缩）；
+2. 按 info_id 幂等检查：`info_summary` 已有该 info_id 行时直接返回（不重复生成）；
+3. 根据 info_id 调用 RelationDBProvider.selectOneDB 查询 `info_raw` 表获取信息内容（info 字段）；
+4. **阈值判断**：若信息内容字符数不超过 `threshold`，直接以原文作为摘要（无需调用 LLM）；否则进入下一步；
+5. **类型过滤**：`info_types`（默认 RESPONSE）非空时，仅对列表内 info_type 的信息做 LLM 摘要，其余类型跳过（短文本原文即摘要不受此限制）；
+6. 将 llm_id 和拼接的摘要 prompt 调用 LLMProvider.execLLM 生成信息的摘要文本；**失败自动重试 1 次（间隔 2s）**，仍失败则返回空串、不落库、不阻塞保存链路（`generateSummaryText` / `execSummaryLLM`）；
+7. 调用 RelationDBProvider.insertDB 将 `{ info_id, summary: 摘要文本 }` 保存到 `info_summary` 表。
 
-> **摘要生成方式变更**：所有 LLM 摘要生成逻辑统一由上层编排调用内置 **SummaryAgent** 负责（经 `saveInfo.input.summary` 传入落库）。`InfoCoreService.summaryInfo` 仅保留字符数不超过 `threshold`（默认 100）的短内容原文落库功能，内部不再独立调用 LLM 避免出现两套不一致的摘要生成逻辑。
+> **摘要生成方式变更（2026-09-15 记忆集中）**：摘要生成能力收敛至 InfoCore 本体——长文本由 `summaryInfo` 内部经 `config.llm_id` / `prompt_template_id` 调 LLM 生成（saveInfo 后异步触发），`info_summary` 不再依赖上层 SummaryAgent。
+
+#### 2.3.6. 补生成缺失摘要（backfillMissingSummaries）
+
+**功能**：补偿 LLM 间歇性失败（如本地/远程模型服务 CONNECT_ERROR）导致的摘要丢失：对「长文本（超过 threshold）且 `info_summary` 无行」的正常信息（handle_result_type=correct、info 非空）逐条复用 `summaryInfo` 补生成。
+**入参**：
+- input：BackfillMissingSummariesInput（继承 Input），无字段
+- output：BackfillMissingSummariesOutput（继承 Output），承载返回内容：
+  - backfilled_count：本次实际补生成的摘要条数
+**处理流程**：
+
+1. 防重入检查（backfillRunning 标志），已在执行中则直接返回 0；
+2. 读取 `info_summary_config`，enable=false 时直接返回；
+3. SQL 一次选出候选：`info_raw` LEFT JOIN `info_summary` 为空、`length(info) > threshold`、handle_result_type=correct（错误信息的摘要已在 saveInfo 时以原文落库，无需补偿）；
+4. 逐条调用 `summaryInfo`（内部幂等，重复执行无副作用），统计成功条数。
+
+> **触发时机**：dev-server 启动时执行一次（与 Info 老化清理同模式），失败不阻塞启动。
 
 #### 2.3.5. 对信息进行keyword（keywordInfo）
 
@@ -861,6 +878,8 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 
 共现关系同时持久化到 GraphDB：`tagInfo` 在保存时为同一 info 的标签两两建立 `cooccur` 边（边类型 `cooccur`，权重为共现次数），`rebuildCooccurGraph` 用于存量数据全量回填。这样 GraphDB 的边数（「监控 > 系统健康 > GraphDB」）与标签图展示一致，不再依赖向量化。
 
+> **错误信息隔离（2026-09-21）**：Tag 图 / 关键词图仅采集 `handle_result_type = correct` 的信息派生的标签 / 关键词。`rebuildCooccurGraph` 重建前先清理「非正确信息（`call_error` / `internal_error`）派生」与「信息已删除（无 `info_raw` 行）的孤儿」标签行（`purgeNonCorrectTagRows`），随后 `rebuildCooccurForSource` 以 `INNER JOIN info_raw + handle_result_type = correct` 过滤后重建节点与共现边，确保「涌现」图中不出现系统报错信息派生的节点。
+
 ## 5. 变更记录
 
 ### [2026-09-14] context 上下文构建与 PRD 对齐：CITING 默认优先级 + RANDOM 全局兜底
@@ -1208,3 +1227,23 @@ Tag 图与关键词图采用 **共现（co-occurrence）** 策略构建边：两
 
 - RANDOM 维度候选采样阶段即排除 CURRENT（此前在合并阶段剔除，导致新会话场景下随机实收比限额少 1——当前消息先占名额后剔除、不回补）；
 - 存量配置行 priority_order（旧值缺 CITING）UPDATE 为 PRD 默认顺序。
+
+### [2026-09-21] 「涌现」图错误信息隔离：标签/关键词图不采集系统报错信息
+
+**变更原因**：「信息 > 涌现」（Tag 关系图）图中出现由系统报错信息派生的节点（如工具缺失 / 工具不可用等）。根因：`tagInfo` 虽已按 `handle_result_type != correct` 跳过错误信息的标签抽取，但存量数据（错误信息在隔离机制引入前抽取的标签）以及已删除信息遗留的孤儿标签仍保留在 `info_tag` 中，`rebuildCooccurGraph` 全量重建时未回溯 `info_raw.handle_result_type`，再次将这些标签建入 GraphDB。
+
+**修改的方法**：
+- `InfoCoreService.rebuildCooccurGraph` — 新增步骤 0：调用 `purgeNonCorrectTagRows` 清理存量（原始实现注释保留）；
+- `InfoCoreService.purgeNonCorrectTagRows`（新增）— 删除 `info_id` 无法回溯到 `info_raw`、或对应信息 `handle_result_type` 非 `correct` 的 `info_tag` 行；
+- `InfoCoreService.rebuildCooccurForSource` — 读到表逻辑改为 `INNER JOIN info_raw` 且仅保留 `handle_result_type = correct`（原始 `relationDb.select` 全量读取注释保留），标签 / 关键词图节点与共现边均只由正确信息派生；
+- `RebuildCooccurGraphOutput` — 新增 `purged_rows` 字段，回报本次清理的标签行数。
+
+**影响的端点**：
+- `GET /api/memory/tag-graph` — 「涌现」图仅展示正确信息派生的标签节点；
+- `GET /api/memory/keyword-graph` — 关键词图同样仅展示正确信息派生的关键词节点；
+- 服务启动时 `[startup] rebuild cooccur edges` — 触发存量清理与重建。
+
+**可能存在的问题**：
+- 判定口径为「`handle_result_type != correct` 或 `info_raw` 无对应行（孤儿）」；若后续引入新的系统信息写入方（以 correct 落库但不属于用户信息），需扩展过滤条件；
+- 清理会在服务启动全量执行，`info_tag` 体量极大时 `DELETE ... NOT IN` 有一定耗时（当前数据量级可忽略）；
+- 关键词共现边的源 `info_keyword`（FTS5）仅在建图时过滤，未做行级清理（`keywordInfo` 抽取侧已有 correct 过滤）。

@@ -301,11 +301,25 @@ async function handleDeleteSession(sessionId: string) {
   chatList.value = chatList.value.filter(c => c.sessionId !== sessionId)
 }
 
+// ===== 修改前（2026-09-21）：逐条 Promise.allSettled 调用单条接口，关联数据清理分散在多次请求中 =====
+// async function handleBatchDelete() {
+//   const ids = [...selectedSessions.value]
+//   const results = await Promise.allSettled(ids.map(id => chatApi.deleteSession(id)))
+//   const okIds = ids.filter((_, i) => results[i].status === 'fulfilled')
+//   chatList.value = chatList.value.filter(c => !okIds.includes(c.sessionId))
+//   selectedSessions.value = new Set()
+// }
+
+// ===== 修改后：一次调用批量删除接口提交 session_ids[]，后端统一级联清理关联数据 =====
 async function handleBatchDelete() {
-  const ids = [...selectedSessions.value]
-  const results = await Promise.allSettled(ids.map(id => chatApi.deleteSession(id)))
-  const okIds = ids.filter((_, i) => results[i].status === 'fulfilled')
-  chatList.value = chatList.value.filter(c => !okIds.includes(c.sessionId))
+  const ids = [...selectedSessions.value].filter(Boolean)
+  if (ids.length === 0) {
+    selectedSessions.value = new Set()
+    return
+  }
+  await chatApi.deleteSessions(ids)
+  const idSet = new Set(ids)
+  chatList.value = chatList.value.filter(c => !idSet.has(c.sessionId))
   selectedSessions.value = new Set()
 }
 

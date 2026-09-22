@@ -115,6 +115,19 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // ===== 新增（2026-09-21 批量删除）：一次请求删除多个会话（含关联数据级联清理），
+  // 成功后统一从列表移除；若当前会话在删除集合内则重置对话区状态 =====
+  async function deleteSessions(sessionIds: string[]) {
+    const ids = sessionIds.filter(Boolean)
+    if (ids.length === 0) return
+    await chatApi.deleteSessions(ids)
+    const idSet = new Set(ids)
+    chatList.value = chatList.value.filter(c => !idSet.has(c.sessionId))
+    if (currentSessionId.value && idSet.has(currentSessionId.value)) {
+      clearMessages()
+    }
+  }
+
   function clearMessages() {
     messages.value = []
     blocks.value = []
@@ -266,7 +279,7 @@ export const useSessionStore = defineStore('session', () => {
     splitRatio, isStreaming, selectedMsgIds, citingMode,
     focusInfoId, centerInfoId,
     setSplitRatio, loadChatList, ensureSession, loadChatHistory, loadDag,
-    deleteSession, clearMessages, addMessage, updateMessage, removeUserMessageByContent, addBlock,
+    deleteSession, deleteSessions, clearMessages, addMessage, updateMessage, removeUserMessageByContent, addBlock,
     updateBlock, appendBlockContent, finalizeBlocks, finalizeThinkingBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
     toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter,
     setStreaming, setCancelController, cancelCurrentTask,

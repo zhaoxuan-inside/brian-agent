@@ -34,16 +34,17 @@
 
 #### 功能 ICON 区导航项
 
-从左到右排列，仅保留 6 个核心导航项，避免图标过多导致混乱：
+从左到右排列，保留 7 个导航项：
 
 | 序号 | 图标 | 名称 | 路由 | 详细 PRD | 说明 |
 |------|------|------|------|---------|------|
-| 1 | MessageCircle | 对话 | / | [对话Page-PRD](./_01_对话页面/对话Page-PRD.md) | 对话页面，系统默认首页 |
-| 2 | Brain | 信息 | /info | [信息Page-PRD](./_03_信息页面/信息Page-PRD.md) | 信息页面，包含历史、记忆、资料库、Tag图、关键词图 |
-| 3 | BookOpen | 学习 | /learning | [学习Page-PRD](./_04_学习页面/学习Page-PRD.md) | 学习页面 |
-| 4 | BarChart3 | 监控 | /monitor | [监控Page-PRD](./_05_监控页面/监控Page-PRD.md) | 系统监控页面 |
-| 5 | Settings | 配置 | /config | [配置Page-PRD](./_02_配置页面/配置Page-PRD.md) | 配置页面，包含模型、Soul、Work、Skill、MCP、Agent管理 |
-| 6 | Wrench | 工具 | /tool | [工具Page-PRD](./_06_工具页面/工具Page-PRD.md) | 工具页面，包含 ID 生成、JSON/XML 检查格式化压缩、正则匹配 |
+| 1 | Home | 首页 | / | [首页Page-PRD](./_07_首页页面/首页Page-PRD.md) | 产品宣传首页，系统默认落地页 |
+| 2 | MessageCircle | 对话 | /chat | [对话Page-PRD](./_01_对话页面/对话Page-PRD.md) | 对话页面 |
+| 3 | Brain | 信息 | /info | [信息Page-PRD](./_03_信息页面/信息Page-PRD.md) | 信息页面，包含历史、记忆、资料库、Tag图、关键词图 |
+| 4 | BookOpen | 学习 | /learning | [学习Page-PRD](./_04_学习页面/学习Page-PRD.md) | 学习页面 |
+| 5 | BarChart3 | 监控 | /monitor | [监控Page-PRD](./_05_监控页面/监控Page-PRD.md) | 系统监控页面 |
+| 6 | Settings | 配置 | /config | [配置Page-PRD](./_02_配置页面/配置Page-PRD.md) | 配置页面，包含模型、Soul、Work、Skill、MCP、Agent管理 |
+| 7 | Wrench | 工具 | /tool | [工具Page-PRD](./_06_工具页面/工具Page-PRD.md) | 工具页面，包含 ID 生成、JSON/XML 检查格式化压缩、正则匹配 |
 
 #### 导航图标交互
 - 当前选中的导航图标高亮显示（brian-blue 颜色）；
@@ -55,7 +56,7 @@
 - 展示区占据功能区下方的全部可用空间；
 - 展示区内容根据当前选中的导航图标动态切换；
 - 展示区有内边距，与功能区保持视觉间距；
-- 打开页面时默认展示对话页面（/），并自动调用 Chat Application 的 openChatStream 接口建立 SSE 连接；
+- 打开页面时默认展示宣传首页（/）；对话页（/chat）在用户点击「立即体验」或导航图标时进入，进入后自动调用 Chat Application 的 openChatStream 接口建立 SSE 连接；
 
 ### 2.4. 主题
 
@@ -79,11 +80,12 @@
 
 ## 3. 页面 PRD 映射
 
-整体页面下包含 6 个子页面 PRD，每个子页面 PRD 对应一个导航项，描述该页面的详细功能设计和布局：
+整体页面下包含 7 个子页面 PRD，每个子页面 PRD 对应一个导航项，描述该页面的详细功能设计和布局：
 
 | 子页面 PRD | 文件路径 | 对应导航项 | 包含内容 |
 |-----------|---------|-----------|---------|
-| 对话Page-PRD | `_01_对话页面/对话Page-PRD.md` | 对话（/） | 对话输入区、ChatMap区、对话区、会话列表、Agent编排DAG弹窗 |
+| 首页Page-PRD | `_07_首页页面/首页Page-PRD.md` | 首页（/） | 产品宣传页：亮点区块、产品截图、数据统计、交流群二维码 |
+| 对话Page-PRD | `_01_对话页面/对话Page-PRD.md` | 对话（/chat） | 对话输入区、ChatMap区、对话区、会话列表、Agent编排DAG弹窗 |
 | 配置Page-PRD | `_02_配置页面/配置Page-PRD.md` | 配置（/config） | 五层架构配置浏览、模型/Soul/Work/Skill/MCP/Agent管理 |
 | 信息Page-PRD | `_03_信息页面/信息Page-PRD.md` | 信息（/info） | 历史、记忆、资料库、Tag关系图、关键词图（5个TAB） |
 | 学习Page-PRD | `_04_学习页面/学习Page-PRD.md` | 学习（/learning） | 学习控制、学习进度、学习成果、学习统计 |

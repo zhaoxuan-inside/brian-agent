@@ -9,6 +9,7 @@ import {
   ChatContext,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
+  PurgeOrphanSessionsInput, PurgeOrphanSessionsOutput,
   SearchSessionInput, SearchSessionOutput,
   GetSessionDetailInput, GetSessionDetailOutput,
   UpdateSessionTitleInput, UpdateSessionTitleOutput,
@@ -45,6 +46,11 @@ export class ChatAccess {
   async deleteSession(i: DeleteSessionInput, o: DeleteSessionOutput, c: ChatContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.deleteSession(i, o, c, metrics, report);
+  }
+
+  async purgeOrphanSessions(i: PurgeOrphanSessionsInput, o: PurgeOrphanSessionsOutput, c: ChatContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.purgeOrphanSessions(i, o, c, metrics, report);
   }
 
   async soSession(i: SearchSessionInput, o: SearchSessionOutput, c: ChatContext, metrics?: Metrics, report?: Report,

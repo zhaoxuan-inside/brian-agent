@@ -19,6 +19,9 @@
 | `queryDocument` | `i: QueryDocumentInput, o: QueryDocumentOutput, c: SelfLearningContext, metrics?: Metric...` | `Promise<boolean>` | — |
 | `saveAnnotation` | `i: SaveAnnotationInput, o: SaveAnnotationOutput, c: SelfLearningContext, metrics?: Metr...` | `Promise<boolean>` | — |
 | `soFileAnnotations` | `i: GetFileAnnotationsInput, o: GetFileAnnotationsOutput, c: SelfLearningContext, metric...` | `Promise<boolean>` | — |
+| `updateFileContent` | `i: UpdateFileContentInput, o: UpdateFileContentOutput, c: SelfLearningContext, metrics?...` | `Promise<boolean>` | — |
+| `deleteFile` | `i: DeleteFileInput, o: DeleteFileOutput, c: SelfLearningContext, metrics?: Metrics, rep...` | `Promise<boolean>` | — |
+| `ensureBuiltinDocumentAgent` | `` | `Promise<string>` | 确保文档伴读专用 Agent/Soul 就绪（启动幂等装配；依赖缺失时返回空串） |
 | `startLearning` | `i: StartLearningInput, o: StartLearningOutput, c: SelfLearningContext, metrics?: Metric...` | `Promise<boolean>` | — |
 | `stopLearning` | `i: StopLearningInput, o: StopLearningOutput, c: SelfLearningContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `soTagGraph` | `i: GetTagGraphInput, o: GetTagGraphOutput, c: SelfLearningContext, metrics?: Metrics, r...` | `Promise<boolean>` | — |

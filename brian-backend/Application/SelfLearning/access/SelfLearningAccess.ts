@@ -1,8 +1,9 @@
 import { Metrics, Report } from '@brian-agent/base';
-import type { RelationDBAccess, GraphDBAccess, Logger, MQAccess, ChunkAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
+import type { RelationDBAccess, GraphDBAccess, Logger, MQAccess, ChunkAccess, LLMAccess, PromptsAccess, SoulAccess } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import type { InfoCoreAccess, MQCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import type { EvolutorAgentAccess, WriterAgentAccess } from '@brian-agent/agent';
+import type { AgentDefAccess } from '@brian-agent/runtime';
 import { SelfLearningSchemaInitializer } from '../infrastructure/SelfLearningSchemaInitializer';
 import { SelfLearningService } from '../application/SelfLearningService';
 import {
@@ -17,6 +18,8 @@ import {
   QueryDocumentInput, QueryDocumentOutput,
   SaveAnnotationInput, SaveAnnotationOutput,
   GetFileAnnotationsInput, GetFileAnnotationsOutput,
+  UpdateFileContentInput, UpdateFileContentOutput,
+  DeleteFileInput, DeleteFileOutput,
   StartLearningInput, StartLearningOutput,
   StopLearningInput, StopLearningOutput,
   GetTagGraphInput, GetTagGraphOutput,
@@ -46,12 +49,15 @@ export class SelfLearningAccess {
     llmAccess: LLMAccess,
     promptsAccess: PromptsAccess,
     logger?: Logger,
+    soulAccess?: SoulAccess,
+    agentDefAccess?: AgentDefAccess,
   ) {
     this.initPromise = new SelfLearningSchemaInitializer(relationDb).init();
     const raw = new SelfLearningService(
       relationDb, infoCore, mqCore, llmCore,
       evolutorAgent, writerAgent,
       graphDBAccess, chunkAccess, mqAccess, llmAccess, promptsAccess, logger,
+      soulAccess, agentDefAccess,
     );
     this.service = AopProxy.wrap(raw, { logger });
   }
@@ -118,6 +124,24 @@ export class SelfLearningAccess {
   ): Promise<boolean> {
     await this.initPromise;
     return this.service.soFileAnnotations(i, o, c, metrics, report);
+  }
+
+  async updateFileContent(i: UpdateFileContentInput, o: UpdateFileContentOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.updateFileContent(i, o, c, metrics, report);
+  }
+
+  async deleteFile(i: DeleteFileInput, o: DeleteFileOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.deleteFile(i, o, c, metrics, report);
+  }
+
+  /** 确保文档伴读专用 Agent/Soul 就绪（启动幂等装配；依赖缺失时返回空串） */
+  async ensureBuiltinDocumentAgent(): Promise<string> {
+    await this.initPromise;
+    return this.service.ensureBuiltinDocumentAgent();
   }
 
   async startLearning(i: StartLearningInput, o: StartLearningOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,

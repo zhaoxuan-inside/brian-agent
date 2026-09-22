@@ -361,6 +361,17 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         // sendJson(res, 200, { msgId: output.run_id, workId: output.work_id });
         sendJson(res, 501, { error: 'chat send 已迁移 Runtime v2（RunGateway），e2e 装配未覆盖，见 TR-对话页面' });
 
+      } else if (method === 'DELETE' && pathname === '/api/chat/session') {
+        // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[]，镜像 dev-server 语义 =====
+        const rawIds = body.session_ids;
+        const sessionIds = Array.isArray(rawIds) ? rawIds.map((x: unknown) => String(x)).filter(Boolean) : [];
+        if (sessionIds.length === 0) { sendJson(res, 400, { error: 'session_ids 必须为非空数组' }); return; }
+        const input: any = { session_ids: sessionIds };
+        const output: any = {};
+        const context: any = {};
+        await ctx.chatAccess.deleteSession(input, output, context);
+        sendJson(res, 200, { deleted_count: output.deleted_count });
+
       } else if (method === 'DELETE' && pathname.startsWith('/api/chat/session/')) {
         const sessionId = pathname.split('/api/chat/session/')[1];
         const input: any = { session_ids: [sessionId] };

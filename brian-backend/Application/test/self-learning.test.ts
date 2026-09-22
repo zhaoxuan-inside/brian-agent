@@ -16,6 +16,8 @@ import {
   SearchLibraryInput, SearchLibraryOutput,
   GetLibraryFilesInput, GetLibraryFilesOutput,
   GetFileContentInput, GetFileContentOutput,
+  UpdateFileContentInput, UpdateFileContentOutput,
+  DeleteFileInput, DeleteFileOutput,
   StartLearningInput, StartLearningOutput,
   StopLearningInput, StopLearningOutput,
   GetTagGraphInput, GetTagGraphOutput,
@@ -837,6 +839,125 @@ describe('SelfLearningService', () => {
 
       expect(output.file_name).toBe('pending.md');
       expect(output.learned_at).toBeNull();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // updateFileContent / deleteFile（文档编辑与删除）
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('updateFileContent / deleteFile', () => {
+    async function seedFile(dir: string, fileId: string, name: string, content: string): Promise<string> {
+      const filePath = path.join(dir, name);
+      writeMdFile(dir, name, content);
+      await db.insert('self_learning_library', [
+        { field: 'id', value: `lib-${fileId}` },
+        { field: 'created', value: 1700000001000 },
+        { field: 'updated', value: 1700000001000 },
+        { field: 'library_id', value: `lib-${fileId}` },
+        { field: 'library_name', value: 'Edit Test' },
+        { field: 'library_path', value: dir },
+        { field: 'enable_self_learning', value: 1 },
+        { field: 'learning_rate', value: 5 },
+      ]);
+      await db.insert('self_learning_file', [
+        { field: 'id', value: `row-${fileId}` },
+        { field: 'created', value: 1700000001000 },
+        { field: 'updated', value: 1700000001000 },
+        { field: 'library_id', value: `lib-${fileId}` },
+        { field: 'file_id', value: fileId },
+        { field: 'file_name', value: name },
+        { field: 'file_path', value: filePath },
+        { field: 'relative_path', value: name },
+        { field: 'parent_path', value: '' },
+        { field: 'is_directory', value: 0 },
+        { field: 'file_size', value: content.length },
+        { field: 'status', value: 'COMPLETED' },
+        { field: 'learned_at', value: 1700000099000 },
+      ]);
+      return filePath;
+    }
+
+    it('TC-SL-049: updateFileContent writes back to disk and resets status to PENDING', async () => {
+      const dir = makeTempDir();
+      const filePath = await seedFile(dir, 'file-edit-1', 'edit.md', '# Old');
+      const next = '# New Title\n\nupdated body';
+
+      const input = Object.assign(new UpdateFileContentInput(), { file_id: 'file-edit-1', content: next });
+      const output = new UpdateFileContentOutput();
+      await service.updateFileContent(input, output, makeCtx());
+
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe(next);
+      expect(output.file_name).toBe('edit.md');
+      expect(output.size).toBe(Buffer.byteLength(next, 'utf-8'));
+
+      const row = db.queryRaw<{ status: string; file_size: number; learned_at: number | null }>(
+        'SELECT "status", "file_size", "learned_at" FROM "self_learning_file" WHERE "file_id" = ?',
+        ['file-edit-1'],
+      )[0];
+      expect(row.status).toBe('PENDING');
+      expect(row.file_size).toBe(Buffer.byteLength(next, 'utf-8'));
+      expect(row.learned_at).toBeNull();
+    });
+
+    it('TC-SL-050: updateFileContent on missing file → throws', async () => {
+      const input = Object.assign(new UpdateFileContentInput(), { file_id: 'nope', content: 'x' });
+      await expect(service.updateFileContent(input, new UpdateFileContentOutput(), makeCtx())).rejects.toThrow();
+    });
+
+    it('TC-SL-051: updateFileContent on directory → throws and leaves directory intact', async () => {
+      const dir = makeTempDir();
+      fs.mkdirSync(path.join(dir, 'sub'));
+      await db.insert('self_learning_library', [
+        { field: 'id', value: 'lib-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
+        { field: 'library_id', value: 'lib-dir' }, { field: 'library_name', value: 'Dir' },
+        { field: 'library_path', value: dir }, { field: 'enable_self_learning', value: 1 }, { field: 'learning_rate', value: 5 },
+      ]);
+      await db.insert('self_learning_file', [
+        { field: 'id', value: 'row-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
+        { field: 'library_id', value: 'lib-dir' }, { field: 'file_id', value: 'file-dir' },
+        { field: 'file_name', value: 'sub' }, { field: 'file_path', value: path.join(dir, 'sub') },
+        { field: 'is_directory', value: 1 }, { field: 'status', value: 'PENDING' },
+      ]);
+      const input = Object.assign(new UpdateFileContentInput(), { file_id: 'file-dir', content: 'x' });
+      await expect(service.updateFileContent(input, new UpdateFileContentOutput(), makeCtx())).rejects.toThrow();
+      expect(fs.existsSync(path.join(dir, 'sub'))).toBe(true);
+    });
+
+    it('TC-SL-052: deleteFile removes disk file, index row and cascaded annotations', async () => {
+      const dir = makeTempDir();
+      const filePath = await seedFile(dir, 'file-del-1', 'del.md', '# Del');
+      await db.insert('document_annotation', [
+        { field: 'id', value: 'ann-1' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
+        { field: 'library_id', value: 'lib-file-del-1' }, { field: 'file_id', value: 'file-del-1' },
+        { field: 'selection_text', value: 'Del' }, { field: 'selection_start', value: 0 }, { field: 'selection_end', value: 3 },
+        { field: 'question', value: 'q' }, { field: 'result', value: 'a' }, { field: 'llm_id', value: '' },
+      ]);
+
+      const output = new DeleteFileOutput();
+      await service.deleteFile(Object.assign(new DeleteFileInput(), { file_id: 'file-del-1' }), output, makeCtx());
+
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(output.deleted_annotations).toBe(1);
+      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "file_id" = ?', ['file-del-1']);
+      expect(Number(rows[0]?.c ?? 0)).toBe(0);
+      const ann = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "document_annotation" WHERE "file_id" = ?', ['file-del-1']);
+      expect(Number(ann[0]?.c ?? 0)).toBe(0);
+    });
+
+    it('TC-SL-053: deleteFile on missing file → throws', async () => {
+      const input = Object.assign(new DeleteFileInput(), { file_id: 'nope' });
+      await expect(service.deleteFile(input, new DeleteFileOutput(), makeCtx())).rejects.toThrow();
+    });
+
+    it('TC-SL-054: deleteFile is idempotent when disk file already removed', async () => {
+      const dir = makeTempDir();
+      const filePath = await seedFile(dir, 'file-del-2', 'gone.md', '# Gone');
+      fs.rmSync(filePath);
+      const output = new DeleteFileOutput();
+      await service.deleteFile(Object.assign(new DeleteFileInput(), { file_id: 'file-del-2' }), output, makeCtx());
+      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "file_id" = ?', ['file-del-2']);
+      expect(Number(rows[0]?.c ?? 0)).toBe(0);
     });
   });
 

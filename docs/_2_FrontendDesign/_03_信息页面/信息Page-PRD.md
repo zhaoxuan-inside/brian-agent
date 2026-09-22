@@ -72,6 +72,26 @@
     -   防范XSS攻击，禁用内联脚本执行。
     -   支持从MD内容中点击 `work_id` 引用链接跳转至问答记忆Tab对应位置。
 
+#### 3.2.4 文档阅读器（阅读扩展）
+文档打开后进入三栏阅读器，面向「阅读 + 学习 + 提问」场景：
+-   **目录栏（左）**：由正文标题（`#`~`####`）自动生成层级目录，点击平滑滚动定位；无章节时展示占位。
+-   **正文阅读栏（中）**：卡片式阅读区，正文限宽（约 46rem）并采用舒适行高；顶部展示文档名、学习状态、章节数 / 字数 / 体积与操作入口；正文区域内滚动，顶部固定「编辑 / 删除」操作。
+-   **读伴提问栏（右）**：常驻展示该文档的全部咨询卡片；卡片含编号、选中原文引用、问题与回答（Markdown 渲染）。
+-   **边注模式（宽屏 ≥1360px）**：模拟「读纸质书在空白处写批注」的体验——问答卡片脱离独立右栏，绝对定位到正文右侧空白（约 18rem 宽），垂直对齐其正文标注位置；卡片经编号徽章与左侧引线和正文标注建立视觉联系。相邻卡片重叠时向下顺延，边注总高度超过正文时自动撑开内容区保证可滚动查看。正文改为限宽靠左 + 版心居中的书页布局；窄屏（<1360px）回退为独立右栏列表。点击正文标注与点击卡片双向联动激活（标注高亮 + 卡片高亮，视口外的一侧自动滚入）；正文高度变化（图片加载 / 编辑写回 / 窗口缩放）时自动重排对齐。
+-   **划线提问**：正文选中文本后右键弹出「询问读伴」，弹出提问框；提问默认文案为「请解释这段内容」。
+-   **标注与定位**：提问成功后，正文对应文本被标注为带编号的下划线；点击卡片高亮并平滑滚动到对应标注，点击正文标注联动高亮对应卡片，再次点击取消高亮。
+-   **失效降级（重锚定）**：文档被编辑或外部修改后，标注按两级策略在渲染后正文中重新对齐：① 全文拼接文本节点**精确匹配**（支持同一块级元素内跨行内节点，如选区内含加粗/链接）；② 失败时**模糊重锚定**——归一化（忽略空白、标点、大小写）后以选中片段头/中/尾探针收集候选窗口，字符重合度 ≥0.6 视为命中（改错别字、增删词语、调整标点后仍能对齐）。仍无法对齐的标注才标记「原文已变更」（不再绘制下划线，卡片仍保留展示，边注模式下顺延排布在前一卡片之后）；跨块级元素的选区不绘制下划线（避免非法 DOM 嵌套）。
+-   **编辑文档**：点击「编辑」进入 Markdown 源码编辑模式，保存后写回本地文件，并重新进入学习队列（状态置 `PENDING`）；保存后自动重算目录与字数、重新匹配标注。
+-   **删除文档**：点击「删除」弹出二次确认（明确提示删除本地文件、同步清理该文档咨询记录且不可恢复）；确认后删除本地文件、级联清理索引与咨询记录，并返回目录列表。
+-   **空/异常态**：无提问时展示引导文案；文档已被删除/不可读时正文降级展示友好提示。
+
+#### 3.2.5 读伴问答（专用 Agent / Prompt / Soul）
+文档问答由「文档伴读」专用 Agent 承载：系统段使用专用身份 Prompt（`builtin.document_reading_identity`）叠加专用 Soul（文档伴读导师），问答 Prompt 使用 `builtin.document_query`（含文档标题、前文、选中内容、后文与问题）。
+-   **Agent 声明**：Runtime 声明式 Agent，`status=Disabled`（不参与主对话匹配，仅由资料库问答显式调用），模型留空由配置或自动匹配决定。
+-   **配置覆盖**：「配置中心 > 应用配置 > 自学习 > 文档阅读 Prompt / 文档阅读 LLM」优先于 Agent 默认。
+-   **能力增强**：回答要求先给结论、结合上下文解释含义与关系、必要时用类比/最小示例、指出易混点与前置知识，并严格基于文档上下文，不编造。
+-   **等待与失败反馈**：读伴问答为同步 LLM 推理（实测约 10~30 秒），前端请求带 60 秒超时（`AbortSignal.timeout`）；等待期间弹窗内展示「读伴正在思考」提示；失败/超时不再静默——弹窗内展示可读错误（超时/网络/服务异常分类文案），保留已输入内容便于重试。
+
 ### 3.3 Tab 3：Tag关系图
 通过Canvas力导向图展示系统中所有Tag及其关联关系，支持交互式探索。
 
@@ -168,7 +188,8 @@
 - **二次确认**：单个删除与批量删除均弹出确认弹窗，提示将同步清理关联数据且不可恢复。
 - **级联删除**（后端 `ChatService.deleteSession`）：删除 `chat_session`、`info_raw`，并按会话下 `info_id` 级联清理 `info_tag`、`info_summary`、`info_keyword`、`info_vector`，同时删除 GraphDB 中该会话的 info 节点与引用边。
 - **不删除** `info_tag_vector`（全局标签向量，跨会话共享，由 `orphan_tag_check` 定时任务负责清理孤立标签）。
-- **批量删除健壮性**：批量删除采用 `Promise.allSettled`，单条失败不影响其余会话删除。
+- **批量删除健壮性**：单条/批量删除均先二次确认；批量删除一次调用 `DELETE /api/chat/session`（请求体 `session_ids[]`），由后端统一级联清理，失败时保留列表与选中项便于重试。
+- **孤儿会话记忆清理**（后端 `ChatService.purgeOrphanSessions`）：服务启动时与每日午夜清理 `info_raw` 中 `session_id` 已不存在于 `chat_session` 的残留记忆（含派生表与 GraphDB 引用边），避免历史版本权限审计/反馈以非会话键落库产生的孤儿行在「记忆」页签持续展示已删除会话的对话内容。
 
 ---
 
@@ -409,3 +430,64 @@
 
 **可能存在的问题**：
 - 参数调整后若节点数极多（>200），仍可能出现局部重叠，需配合 `limit` 参数控制节点数量。
+
+### [2026-09-21] 记忆页：删除会话后对话内容残留治理（孤儿会话记忆清理）
+
+**变更原因**：在「对话」页删除会话后，「信息 > 记忆」页仍展示该会话的对话内容（实测残留 23 条来自 2026-08-10 ~ 08-14 已删除会话的 `info_raw` 记录）。根因：历史版本权限审计桥把 `info_raw.session_id` 写成 Runtime 内部 session id（而非对话会话键），以及在会话级联删除逻辑收敛（2026-09-15）之前删除的会话，均会在 `info_raw` 留下 `session_id` 无法匹配任何 `chat_session` 的孤儿行；这类行不会被按指定 `session_id` 的 `deleteSession` 命中，因而长期残留并被「记忆」页签读取展示。
+
+**修改的方法**：
+- 后端 `ChatService.purgeOrphanSessions`（新增）— 以 `chat_session.session_id` 为存活集合，取 `info_raw` 中 `session_id` 的差集为孤儿，复用 `deleteSession` 的级联清理（`info_*` / GraphDB / `runtime_*` / `stream_event` / `writer_agent_user_profile`）；支持 `dry_run` 仅统计不删除。
+- 后端 `Chat-PRD` 领域类型（`PurgeOrphanSessionsInput` / `PurgeOrphanSessionsOutput`，新增）与 `ChatAccess.purgeOrphanSessions`（新增）。
+- 后端 `dev-server.ts` — 服务启动时执行一次孤儿会话记忆清理，并注册每日午夜复查（与 Info 老化清理同一模式）。
+
+**影响的端点**：
+- 无新增前端端点；维护任务在服务启动与每日午夜触发，不对外暴露 HTTP 接口。
+
+**可能存在的问题**：
+- 判定口径为「`session_id` 不在 `chat_session` 即孤儿」，若未来出现非对话会话（不落 `chat_session`）的记忆写入方，需同步纳入存活集合；
+- 会话删除与进行中的 run 并发时，run 迟到的记忆写入可能在下次清理前短暂残留，需后续评估「删除时中止进行中 run」；
+- 存量已清空内容（老化）但索引仍在的 `info_raw` 行若其会话已删除，会随本次清理一并删除（符合彻底删除语义）。
+
+### [2026-09-21] 「涌现」（Tag 关系图）：不采集系统报错信息派生的节点
+
+**变更原因**：「涌现」图中出现由系统报错信息派生的节点（如「工具缺失」「工具不可用」等）。Tag 图节点由 `info_tag` 聚合而来，而 `info_tag` 的错误信息隔离此前仅作用于 `tagInfo` 的实时抽取；存量错误标签与已删除信息遗留的孤儿标签仍保留在 `info_tag`，服务启动 `rebuildCooccurGraph` 重建时未回溯 `handle_result_type`，导致错误信息仍在图中体现。
+
+**修改的方法**：
+- 后端 `InfoCoreService.rebuildCooccurGraph` — 重建前调用 `purgeNonCorrectTagRows` 清理存量错误/孤儿标签行（原始实现注释保留）；
+- 后端 `InfoCoreService.purgeNonCorrectTagRows`（新增）— 删除 `info_id` 无对应 `info_raw` 或对应信息 `handle_result_type != correct` 的 `info_tag` 行；
+- 后端 `InfoCoreService.rebuildCooccurForSource` — 改为 `INNER JOIN info_raw ... WHERE handle_result_type = 'correct'`（原始全量 `relationDb.select` 注释保留）；
+- 后端 `RebuildCooccurGraphOutput` — 新增 `purged_rows`。
+
+**影响的端点**：
+- `GET /api/memory/tag-graph` — 仅返回正确信息派生的标签节点，系统报错信息不再入图；
+- 服务启动时自动执行一次清理 + 重建（`[startup] rebuild cooccur edges`）。
+
+**可能存在的问题**：
+- 过滤口径为 `handle_result_type != correct` 或 `info_raw` 无对应行；若未来出现以 `correct` 落库但非用户信息的系统消息，需扩展判定；
+- 存量图重建为全量先删后建，超大标签量时启动阶段有短时耗时。
+
+### [2026-09-21] 资料库文档阅读器：展示重构 + 文档编辑/删除 + 读伴专用 Agent/Prompt/Soul
+
+**变更原因**：资料库文档阅读区原为「章节 | 正文 | 咨询卡片 + SVG 虚线连线」的三栏布局，咨询卡片拥挤、连线穿过正文、选中高亮无样式（`.doc-annotation-mark` 此前无 CSS），且文档仅可只读浏览，无法编辑/删除，内容变更后咨询标注无法优雅降级。
+
+**修改的方法**：
+- 前端 `components/info/LibraryTab.vue` — 阅读区重构为「目录 / 正文阅读栏 / 读伴提问栏」三栏阅读器：正文限宽居中、行高放宽、内部滚动；目录支持点击定位；提问卡片带编号、原文引用、Markdown 回答；移除穿过正文的 SVG 虚线连线，改为编号下划线 + 点击卡片滚动定位高亮；新增「编辑 / 删除」入口、编辑模式（Markdown 源码 textarea + 保存/取消）、删除二次确认弹窗；提问弹窗文案改为「询问读伴」。
+- 前端 `composables/useLibraryTab.ts` — 新增编辑/删除状态与动作（`openEditor` / `saveEditor` / `requestDeleteFile` / `confirmDeleteFile` 等）；`openFile` 改为批量加载注释并统一 `refreshAnnotationMarks` 标注；`restoreMark` 返回是否匹配成功并写入 `data-anno-index`；新增 `refreshAnnotationMarks`（内容变更后重匹配，失败标记 `stale`）与 `setActiveAnnotation`；移除 `annotationLines` / `recomputeLines`（原逻辑注释保留在 PRD 变更说明中）；文档读取失败时展示友好降级文案；`queryDocument` 透传 `document_title`。
+- 前端 `styles/globals.css` — 新增 `.doc-reading`（阅读排版）与 `.doc-annotation-mark` / `.is-active`（编号下划线标注，含暗色）。
+- 前端 `api/index.ts` / `api/types.ts` — 新增 `libraryApi.updateFileContent` / `deleteFile`；`queryDocument` 增加 `document_title`；新增 `DocumentAnnotation` 类型。
+- 后端 `SelfLearningService` — 新增 `updateFileContent`（写回本地文件、重置学习状态为 `PENDING`）、`deleteFile`（删除本地文件、级联清理 `document_annotation` 与 `self_learning_file`）、`soFileRecord`；`queryDocument` 改为经「文档伴读」声明式 Agent（读定义取模型/温度）+ 专用身份模板（`builtin.document_reading_identity` 内存渲染）与专用 Soul 组装 system，配置项仍优先；新增 `ensureBuiltinDocumentAgent` / `ensureDocumentReadingSoul` / `soDocumentReadingAgent` / `buildDocumentReadingSystem` / `soDocumentReadingSoulContent` / `matchDocumentQueryLlm` / `execDocumentQueryLlm`（原始实现注释保留），`renderPrompt` 支持内置模板优先渲染。
+- 后端 `SelfLearning/domain/types.ts` — 新增 `UpdateFileContentInput/Output`、`DeleteFileInput/Output`、`QueryDocumentInput.document_title`；新增文档伴读 Agent/Soul 常量。
+- 后端 `SelfLearning/access/SelfLearningAccess.ts` — 构造函数接收 `soulAccess` / `agentDefAccess`（可选）；新增 `updateFileContent` / `deleteFile` / `ensureBuiltinDocumentAgent` 包装。
+- 后端 `Base/PromptCatalog/catalog.ts` — 增强 `builtin.document_query`（含文档标题、伴读式回答要求）；新增 `builtin.document_reading_identity`（文档伴读身份段）。
+- 后端 `dev-server.ts` — 装配 `soulAccess` / `runtimeAgentDefAccess` 到 SelfLearningAccess，启动时幂等装配文档伴读 Agent/Soul；新增 `PUT /api/library/files/:fileId/content` 与 `DELETE /api/library/files/:fileId` 路由；`POST /api/library/query` 透传 `document_title`。
+
+**影响的端点**：
+- 新增 `PUT /api/library/files/:fileId/content`（body `{ content }` → `{ fileName, content, size }`）。
+- 新增 `DELETE /api/library/files/:fileId`（→ `{ success, deletedAnnotations }`）。
+- `POST /api/library/query` — 新增可选 `document_title`；后端改为经专用 Agent 组装 system 与模型。
+
+**可能存在的问题**：
+- 删除文档会删除本地磁盘文件（不可恢复），依赖前端二次确认；目录类记录不允许删除/编辑。
+- 编辑/外部修改后，标注按 `selection_text` 匹配，跨文本节点或重复文本可能匹配到首次出现位置；无法匹配者标记「原文已变更」。
+- 删除文档仅级联清理索引与咨询注释，不回收该文档此前学习产生的知识条目（`info_raw`）。
+- 内置 Soul / Agent 为代码内置种子（沿用 Summary/Intent Agent 既有约定），与 DevStandards「禁止硬编码种子」存在口径差异。

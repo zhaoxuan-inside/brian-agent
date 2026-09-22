@@ -242,6 +242,18 @@ export interface FeedbackProcessLogRecord {
   details: string
 }
 
+/** 处理日志列表项（后端批量关联的人性化展示字段） */
+export interface FeedbackProcessLogListItem extends FeedbackProcessLogRecord {
+  /** 反馈来源：user（用户提交）/ agent（Agent 评估产生） */
+  source?: 'user' | 'agent'
+  /** 反馈分类 */
+  category?: string
+  /** 用户评论文本 */
+  comment?: string
+  /** 关联的用户提问摘要 */
+  user_question?: string
+}
+
 export interface FeedbackProcessLogDetail {
   log: FeedbackProcessLogRecord | null
   feedback: {
@@ -601,6 +613,19 @@ export interface LibraryTreeNode {
   relative_path: string
   is_directory: boolean
   children: LibraryTreeNode[]
+}
+
+/** 文档咨询注释（选中内容的一次性问答卡片） */
+export interface DocumentAnnotation {
+  id: string
+  file_id: string
+  selection_text: string
+  selection_start: number
+  selection_end: number
+  question: string
+  result: string
+  llm_id: string
+  created: number
 }
 
 export interface GraphNode {

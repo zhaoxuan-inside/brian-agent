@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
 import { useI18nStore } from '@/stores/i18n'
 import { useAuthStore } from '@/stores/auth'
-import { MessageCircle, Brain, BookOpen, BarChart3, Settings, Sun, Moon, Globe, User, Lock, Wrench, Clock } from '@lucide/vue'
+import { Home, MessageCircle, Brain, BookOpen, BarChart3, Settings, Sun, Moon, Globe, User, Lock, Wrench, Clock } from '@lucide/vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,7 +13,8 @@ const i18nStore = useI18nStore()
 const authStore = useAuthStore()
 
 const navItems = computed(() => [
-  { icon: MessageCircle, route: '/', name: i18nStore.t('nav.chat') },
+  { icon: Home, route: '/', name: i18nStore.t('nav.home') },
+  { icon: MessageCircle, route: '/chat', name: i18nStore.t('nav.chat') },
   { icon: Brain, route: '/info', name: i18nStore.t('nav.info') },
   { icon: BookOpen, route: '/learning', name: i18nStore.t('nav.learning') },
   { icon: BarChart3, route: '/monitor', name: i18nStore.t('nav.monitor') },

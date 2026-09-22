@@ -327,9 +327,17 @@ export class WriterAgentService {
       }];
     } else {
       tokens = Number((eventsOutput.input_tokens ?? 0) + (eventsOutput.output_tokens ?? 0));
-      const blocks = this.parseBlocks(eventsOutput.result);
-      response = blocks.map((b) => b.content).join('\n\n');
-      output.blocks = blocks;
+      // ===== 修改后（2026-09-22）：Writer 输出协议改为 Markdown 直出（writer_protocol 模板
+      // output_contract 已同步改），LLM 产物即最终回复原文，不再经 JSON content blocks 中间协议。
+      // 原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证缺尾 `]` → parse 失败 → 残缺 JSON
+      // 原文被当作回复投递）、转义膨胀 ~30% 加重截断、join(content) 压平丢弃标题层级与列表标记。
+      // ===== 原始代码（保留作为参考）=====
+      // const blocks = this.parseBlocks(eventsOutput.result);
+      // response = blocks.map((b) => b.content).join('\n\n');
+      // output.blocks = blocks;
+      response = eventsOutput.result.trim();
+      // parseBlocks 保留为 BlockStream 预留：对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容
+      output.blocks = this.parseBlocks(response);
     }
 
     await this.agentLibrary.recordAgentUsage(

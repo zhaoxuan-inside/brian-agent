@@ -88,6 +88,93 @@
 .markdown-body img { max-width: 100%; border-radius: 6px; }
 
 /* ============================================================
+   资料库文档阅读器（LibraryTab）
+   - .doc-reading：舒适行宽的正文排版
+   - .doc-annotation-mark：咨询提问对应的正文标注（编号下划线）
+   ============================================================ */
+.doc-reading {
+  font-size: 0.95rem;
+  line-height: 1.9;
+}
+.doc-reading h1,
+.doc-reading h2,
+.doc-reading h3,
+.doc-reading h4 {
+  scroll-margin-top: 6rem;
+}
+.doc-reading h1,
+.doc-reading h2 {
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid rgba(175, 184, 193, 0.3);
+  margin-top: 1.4em;
+}
+.doc-reading > :first-child { margin-top: 0; }
+
+.doc-annotation-mark {
+  background: rgba(0, 122, 255, 0.14);
+  border-bottom: 2px solid rgba(0, 122, 255, 0.55);
+  border-radius: 3px;
+  padding: 0 1px;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.doc-annotation-mark::after {
+  content: attr(data-anno-index);
+  margin-left: 1px;
+  vertical-align: super;
+  font-size: 9px;
+  font-weight: 700;
+  color: #0071e3;
+}
+.doc-annotation-mark.is-active {
+  background: rgba(255, 149, 0, 0.22);
+  border-bottom-color: #ff9500;
+}
+.doc-annotation-mark.is-active::after { color: #ff9500; }
+.dark .doc-annotation-mark { background: rgba(0, 122, 255, 0.3); }
+.dark .doc-annotation-mark.is-active { background: rgba(255, 149, 0, 0.32); }
+
+/* ============================================================
+   资料库阅读器 · 边注（marginalia）模式（≥1360px 启用）
+   - .doc-margin-grid：书页版心布局——正文靠左限宽，右侧空白承载边注
+   - .doc-margin-note：绝对定位的边注卡片，top 由 useLibraryTab 按正文
+     标注位置计算（重叠时向下顺延）
+   - ::before 引线：从卡片指向正文栏，呼应纸质书批注引线
+   ============================================================ */
+.doc-margin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 42rem) minmax(240px, 288px);
+  column-gap: 1rem;
+  justify-content: center;
+  align-items: start;
+}
+.doc-margin-layer {
+  position: relative;
+  min-height: 1px;
+}
+.doc-margin-note {
+  position: absolute;
+  left: 0;
+  width: 100%;
+}
+.doc-margin-note::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 16px;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(0, 122, 255, 0.35);
+}
+.doc-margin-note.is-active::before { background: #ff9500; }
+.dark .doc-margin-note::before { background: rgba(0, 122, 255, 0.5); }
+.dark .doc-margin-note.is-active::before { background: #ff9500; }
+/* 边注回答区限高内滚：防止长回答把后续卡片推出很远 */
+.doc-margin-answer { overscroll-behavior: contain; }
+
+/* ============================================================
    Info 页列表切换过渡动画：避免日期切换时内容闪烁
    ============================================================ */
 .list-fade-enter-active,

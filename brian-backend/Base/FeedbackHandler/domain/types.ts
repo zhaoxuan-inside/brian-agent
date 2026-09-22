@@ -170,6 +170,25 @@ export interface FeedbackProcessLogRecord {
   details: string;
 }
 
+/**
+ * 处理日志列表项（人性化展示字段）。
+ *
+ * 列表接口在返回原始日志的基础上，批量关联补充展示字段，
+ * 避免前端列表只显示一串无意义的 ID：
+ * - source / category / comment：关联 feedback_record 补充反馈来源、分类与评论；
+ * - user_question：按 run_id 关联 info_raw 取该轮对话首条用户提问。
+ */
+export interface FeedbackProcessLogListItem extends FeedbackProcessLogRecord {
+  /** 反馈来源：user（用户提交）/ agent（Agent 评估产生） */
+  source?: FeedbackSource;
+  /** 反馈分类 */
+  category?: string;
+  /** 用户评论文本（用户提交反馈时） */
+  comment?: string;
+  /** 关联的用户提问摘要 */
+  user_question?: string;
+}
+
 export class RecordProcessLogInput extends Input {
   feedback_id!: string;
   action!: ProcessAction;
@@ -191,8 +210,33 @@ export class QueryProcessLogsInput extends Input {
 }
 
 export class QueryProcessLogsOutput extends Output {
-  logs: FeedbackProcessLogRecord[] = [];
+  logs: FeedbackProcessLogListItem[] = [];
   total = 0;
+}
+
+// ---------------------------------------------------------------------------
+// 反馈级联删除
+// ---------------------------------------------------------------------------
+
+/** 按关联引用删除反馈（会话删除时级联调用） */
+export class DeleteFeedbackByRefsInput extends Input {
+  /** 关联 run_id 列表（对话轮次，关联 runtime_run.id） */
+  run_ids?: string[];
+  /** 关联 work_id 列表（作品/任务） */
+  work_ids?: string[];
+}
+
+export class DeleteFeedbackByRefsOutput extends Output {
+  /** 实际删除的记录总数（feedback_record + feedback_process_log） */
+  deleted_count = 0;
+}
+
+/** 孤儿反馈清理（run_id 已不存在于 runtime_run 的历史残留） */
+export class PurgeOrphanFeedbackInput extends Input {}
+
+export class PurgeOrphanFeedbackOutput extends Output {
+  /** 清理的记录总数 */
+  purged_count = 0;
 }
 
 export class GetProcessLogDetailInput extends Input {

@@ -148,7 +148,7 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 
 **功能**：删除指定的会话及其关联的所有消息
 
-**URL**：`DELETE /api/chat/session`
+**URL**：`DELETE /api/chat/session`（批量，请求体 `{ session_ids: string[] }`）；单条删除兼容 `DELETE /api/chat/session/:session_id`
 
 **入参**：
 - input：DeleteSessionInput（继承 Input），包含以下字段：
@@ -159,12 +159,37 @@ Chat Application 是系统最上层的用户交互入口，位于 Application �
 
 **处理流程**：
 
-1. 校验 `session_ids` 非空；
-2. 调用 RelationDBProvider.transactionDB 开启事务：
-   a. 遍历 session_ids，调用 RelationDBProvider.deleteDB 删除 `chat_session` 表中对应记录；
-   b. 调用 InfoCore.delInfoGraph 删除 GraphDB 中该 session 的 info 节点与引用边；
-   c. 调用 RelationDBProvider.deleteDB 删除 `info_raw` 表中该 session 的消息记录（级联清理摘要、向量、标签等加工数据由 InfoCore.delInfo 负责定时清理）；
-3. 事务提交，返回 deleted_count；
+1. 校验 `session_ids` 非空（空数组返回 400）；
+2. 遍历 session_ids，逐个级联清理该会话的关联数据：
+   a. 调用 InfoCore.delInfoBySession 删除 `info_raw` 及派生数据（`info_tag` / `info_summary` / `info_keyword` / `info_vector` / `info_context_source`）并级联 GraphDB 引用边；
+   b. 调用 RelationDBProvider.deleteDB 删除 `chat_session` 表中对应记录；
+   c. 清理 Runtime 派生表（`runtime_run` / `runtime_session` / `runtime_message` / `runtime_message_part`）与事件流 `stream_event`；
+   d. 清理 `writer_agent_user_profile`（WriterAgent 会话级写作偏好，session_id 唯一）；
+   e. 路由层按会话级联重置用户画像（`user_profile_record` / `user_profile_dimension_data`）；
+3. 返回 deleted_count；
+
+#### 3.3.2.1. 清理孤儿会话记忆（purgeOrphanSessions）
+
+**功能**：清理 `info_raw` 中 `session_id` 已不存在于 `chat_session` 的残留记忆（及其派生表与 GraphDB 引用边），供服务启动时与每日午夜定时任务调用，治理「删除会话后『信息 > 记忆』页仍有对话内容残留」。
+
+**URL**：无（仅内部维护任务调用，不对外暴露 HTTP 接口）
+
+**入参**：
+- input：PurgeOrphanSessionsInput（继承 Input），包含以下字段：
+  - dry_run（BOOL，可选）：仅统计不删除
+- context：ChatContext（继承 Context）
+- output：PurgeOrphanSessionsOutput（继承 Output），承载返回内容：
+  - purged_count：孤儿会话数量
+  - purged_session_ids：孤儿会话 ID 列表
+
+**处理流程**：
+
+1. 查询 `chat_session.session_id` 构建存活会话集合；
+2. 查询 `info_raw` 中所有 `DISTINCT session_id`，与存活集合求差集得到孤儿会话；`dry_run` 时直接返回；
+3. 复用 `deleteSession` 的级联逻辑清理孤儿会话（`info_*` / GraphDB / `runtime_*` / `stream_event` / `writer_agent_user_profile`）；
+4. 返回孤儿会话数量与 ID 列表。
+
+**设计说明**：判定口径以 `chat_session` 为唯一存活集合——会话在 `createSession` 时即落库，所有 `info_raw` 写入均发生在会话存在期间，差集即历史版本以非会话键落库（如权限审计早期以 Runtime session id 落库）或级联删除收敛前删除的会话所遗留的孤儿行。
 
 #### 3.3.3. 搜索会话（searchSession）
 

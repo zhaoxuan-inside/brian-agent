@@ -1,3 +1,283 @@
+## [2026-09-22b] 优化：写作 Agent 表达组件升级——专属 Soul + 人类友好阐述协议
+
+**变更原因**：用户判定 Writer 美化目标未达标（对工作 Agent 输出做人类友好阐述）。DB 实证三大组件缺陷：① Soul——WRITER agent 复用共享 soul `c708f478`（「专业编码与研究助手」，62 字，被 14 个 agent 共用），与编辑润色职责完全错位；② Prompt 模板——只有格式协议（标题/列表/mermaid），零表达质量标准，preferences 枚举（style=clear/depth=medium）语义未定义，LLM 无从执行；③ 双重人格注入——soul 同时走 system message 与模板 `{{ soul }}`，冗余且路径不一；④ Skill——`skill_ids_json='[]'` 且 `execWrite` 无 skill 注入链路，现有 9 个 skill 全为工具型（搜索/计算器/编排），对 Writer 无适用项。
+
+**修改的方法**：
+  - DB `soul` — 新增 Writer 专属 soul `ff605218`（brief「Brian最终表达层·人类友好阐述编辑」）：身份定位（首席编辑，原料→成品的转化者）+ 四信条（读者优先/准确为底/说人话/有温度不失分寸）+ 四纪律（承接语境/结论先行/节奏均衡/尊重原意）。
+  - DB `agent` — WRITER agent `a18bcf7f` 重绑 `soul_id=ff605218`；共享 soul `c708f478` 其余 13 个绑定不动（已确认 `buildSystemAgent` 复用现有 agent 不重建，绑定持久生效）。
+  - DB `prompt_template`（95b7c089）— `synthesis_protocol` 重写为「人类友好阐述协议」五步：读者视角重组（结论先行/例子类比）、**preferences 语义表**（style: clear/warm/professional；depth: brief≈200字/medium/deep）、表达自然化（禁「一、二、三」序号标题与「首先/其次/最后」八股、禁空洞总结与套路化反问）、排版按需服务可读性；删除 `<identity>{{ soul }}</identity>` 段（人格统一由 system 消息承载，消除双份注入）。
+  - 后端 `Base/PromptCatalog/catalog.ts` — 内置 writer 模板（`builtin.writer`）同步五条规则（英文镜像版），原文注释保留。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（V2 链路）— Writer 阶段人格与表达协议变更；接口结构、事件、落库格式不变。
+
+**验证（e2e）**：重启 dev-server 后两轮追问式实测（同 session：「记忆的本质是什么？」→「记忆的分类呢？」）。TURN2（事故同题）表达质量全面达标：承接语境自然（「上一回我们说到它是个永远在线的编辑系统，这一回往里面走走」）、无序号标题（小标题带语义如「按时间分：三层仓库」「把它串回上一回」）、生活化例子与隐喻贯穿（电话号码/楼/图书馆/肌肉/人生篇章）、结尾为承接隐喻的自然延展（「想往哪个房间再走近一步？」）而非套路反问。lint/typecheck/单测与基线一致（仅既存问题）。
+
+**决策记录**：Skill 组件本次不注入——工具型 skill 对无工具链路的 Writer 无意义，写作技巧内化进 prompt 模板；若未来引入「写作风格/排版」类提示词型 skill，需先在 `execWrite` 补 skill 加载与注入逻辑（另立任务）。
+
+**可能存在的问题**：
+  - `matchSoul` 对新建 agent 仍按任务语义生成 soul，未来若 WRITER agent 被删除重建（`force_new`），会重新生成通用 soul 而非本专属版；如需固化可把专属 soul 文案登记进 SoulCore 生成策略；
+  - preferences 语义目前定义 clear/warm/professional × brief/medium/deep，`writer_agent_config` 可配置值若超出此集合（如 funny），模板行为未定义（回退默认）。
+
+## [2026-09-22] 优化：写作 Agent 输出协议 JSON blocks → Markdown 直出
+
+**变更原因**：trace `418a19a1`（2026-09-22 10:20「记忆的分类呢？」）实证写作 Agent 整合产出为整段原始 JSON：Writer LLM 按模板要求输出 JSON content blocks 数组，但输出在结尾截断（612 output tokens，缺尾 `]`），`parseBlocks` JSON.parse 失败后走 catch 降级——把**残缺 JSON 原文**当作回复投递（`reply.delta`）并落库。结构性根源是输出协议本身：① 长 JSON 截断即整篇报废；② JSON 转义膨胀 ~30% token 加重截断概率；③ 下游 `blocks.map(b=>b.content).join('\n\n')` 压平丢弃 heading 层级与 list_item 标记（同日成功 run 3a94a7d8 实证排版全丢）；④ 消费端（reply.delta → 前端 Markdown 渲染）原生吃 Markdown，blocks 中间协议与管线不匹配。按「优化写作 Agent 本身、让它一次产出合格输出，不做下游检测补救」的决策，将输出协议改为 Markdown 直出。
+
+**修改的方法**：
+  - 后端 `Agent/WriterAgent/application/WriterAgentService.ts` — `execWrite` 成功分支：`response` 直取 `eventsOutput.result.trim()`，`output.blocks` 由 `parseBlocks(response)` 生成（对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容）；原 JSON blocks join 逻辑注释保留。`parseBlocks` 方法保留（BlockStream 预留）。
+  - 后端 `Base/PromptCatalog/catalog.ts` — 内置 writer 模板（`builtin.writer`）：删除规则 4-9（JSON blocks 契约与示例），改为 Markdown 直出规范（`##` 分节 / 列表层级 / 加粗 / 表格 / mermaid / preferences.format 语义），原文注释保留。
+  - DB `prompt_template`（id=95b7c089「Writer 结构化响应」，`is_system=0` 用户模板、`seed_hash` 为空，为运行时实际生效模板）— `output_contract` 由「仅输出合法 JSON 数组」改为「直接输出 Markdown 正文」，删除 `<block_registry>` 段；`synthesis_protocol` 补 Markdown 排版步骤。全库备份 `brian-backend/data/brian.db.bak-writermd-20260922`。
+
+**影响的端点**：
+  - `POST /api/chat/stream`（V2 链路）— `writer.completed` 与 `reply.delta` 语义不变；`reply.delta` 内容从「可能为 JSON 字符串」变为稳定 Markdown 正文；`output.blocks` 结构兼容不变。
+  - 会话历史（info_raw RESPONSE）— 新问答落库为 Markdown 排版正文。
+
+**验证（e2e）**：`tsc --noEmit` 通过；lint 仅既存 `InfoCoreService.ts` no-console（非本次文件）；Agent workspace 单测 119 通过、2 失败为既存（`shared-full.test.ts` formatContextCategories，stash 验证与本次无关）。重启 dev-server 后以事故同题「记忆的分类呢？」实测：`writer.completed` `format=MARKDOWN length=712`，`reply.delta` 与 info_raw 落库均为结构化 Markdown（`## 一、按保持时间分…` 标题 + 列表 + 加粗，无 JSON、无围栏包裹）。
+
+**可能存在的问题**：
+  - `writer_agent_config.default_format` 枚举仍含 `JSON` 选项（FORMAT_ENUM），直出协议下该偏好无对应行为（模板仅区分 TEXT/MARKDOWN），后续可收敛枚举；
+  - Writer LLM 输出仍无 max_tokens 上限（llm_available.max_tokens=0 → 端点默认），Markdown 直出已大幅降低截断危害（截断只丢尾段），如需彻底杜绝可另配；
+  - `llm_call_log` 不记录 finish_reason，截断仍不可观测（本次未改，另立任务）；
+  - BlockStream-PRD 的 blocks 原生管线规划不受影响：parseBlocks 与 blocks 接口保留，届时以独立协议接入。
+
+## [2026-09-22] 修复：摘要生成失败静默丢摘要——LLM 重试 + 启动时缺失摘要回填
+
+**变更原因**：对话页消息框摘要区回退显示原文（观感为「没有摘要」）。排查确认：摘要生成链路（saveInfo → summaryInfo → LLM → info_summary → message-dag 接口 → 前端 MessageCard）本身完好，但 `llm_call_log` 实测本地/远程模型服务间歇性 CONNECT_ERROR（2026-09-22 上午 45 次，其中一次摘要生成调用挂起 120s 后失败），`generateSummaryText` 捕获异常后仅 console.warn 到终端即返回空串——摘要丢失不可见、不可恢复。
+
+**修改的方法**：
+  - 后端 `Core/InfoCoreProvider/application/InfoCoreService.ts` — `generateSummaryText` 拆出 `execSummaryLLM`（单次调用）+ 重试循环（最多 2 次尝试、间隔 2s，常量 `SUMMARY_LLM_MAX_ATTEMPTS` / `SUMMARY_LLM_RETRY_DELAY_MS`）；新增 `backfillMissingSummaries`（Lifecycle 区）：防重入标志 + 一次 SQL 选出「长文本超阈值、info_summary 无行、handle_result_type=correct、info 非空」候选，逐条复用 summaryInfo（内部幂等）补生成；`backfillRunning` 私有字段防并发重入。原始实现注释保留。
+  - 后端 `Core/InfoCoreProvider/domain/types.ts` — 新增 `BackfillMissingSummariesInput/Output`。
+  - 后端 `Core/InfoCoreProvider/access/InfoCoreAccess.ts` + 模块 `index.ts` — 同步暴露新方法与类型。
+  - 后端 `dev-server.ts` — 启动序列（每日 Info 老化清理之后）调用一次 backfill，失败 warn 不阻塞启动。
+
+**影响的端点**：
+  - 启动序列 — 新增一次性缺失摘要回填（需重启 dev-server 生效）。
+  - `GET /api/visualization/message-dag` 与 `GET /api/chat/history/:sessionId` — 无接口结构变化；回填后缺摘要消息的 `info_summary` 由空变为真实 AI 摘要，前端消息框摘要区不再回退原文。
+  - `POST /api/chat/send`（V2 流）— 摘要生成失败重试发生在 saveInfo 后的 setImmediate 异步链路内，不阻塞 SSE 流；最坏情况摘要延迟约 2×LLM 超时。
+
+**验证（e2e）**：单元测试 3 项（候选筛选排除短文本/错误/已老化清空信息；补生成成功 + 幂等重跑 0 条；LLM 失败降级重试 1 次后返回 0 不抛错），InfoCoreProvider 全量 83 用例通过、Core 与根 tsconfig 类型检查通过。一次性脚本对真实库执行 backfill：57d67751（262 字回复，10:17 LLM 失败丢摘要）成功补生成「记忆是面向未来的动态建构而非过去拷贝…」，message-dag 接口 4/4 节点均有摘要。
+
+**可能存在的问题**：
+  - 历史数据层面：`chat_session` 仅剩 2 会话、`info_raw` 仅剩 4 条，而 runtime_* / info_context_source（47 个孤儿 work）/ GraphDB 残留完整——历史会话的 info_* 数据曾被「非现有 deleteSession 级联」的路径删除（疑与 chat_session 双 schema 冲突处理相关），runtime_message 中仍存有 09-04/09-08 原始消息可作回填源，如需恢复历史摘要可另立任务；
+  - 本地 llama.cpp 服务（127.0.0.1:8080，nomic-embed 向量化模型）处于宕机状态，与摘要无关但影响记忆向量化，需另行拉起；
+  - 重试仅 1 次，针对间歇性 CONNECT_ERROR；若模型服务持续宕机，摘要仍会丢失（由启动回填兜底）。
+
+## [2026-09-21] 修复：反馈数据随会话级联删除 + 孤儿反馈启动清理
+
+**变更原因**：反馈表（feedback_record / feedback_process_log）以 run_id（关联 runtime_run.id）与 work_id（关联 info_raw.work_id）引用会话内容，但删除会话时从未级联清理反馈——会话删除后监控页残留大量「无法关联任何内容」的孤儿反馈：列表卡片永远显示「暂无提问内容」、详情只剩一串 ID（Process ID / Run ID / Agent ID 全部指向已删除的数据）。用户要求：关联信息已删除的反馈应被关联删除。
+
+**修改的方法**：
+  - 后端 `Application/Chat/application/ChatService.ts` — `deleteSession` 会话循环内新增级联（遵循该文件既有的按日期注释增量修改惯例）：删除会话数据**之前**先收集该会话的 run_id（runtime_run.session_key 反查）与 work_id（info_raw.session_id 反查，去重），随后按 `run_id IN … OR work_id IN …` 删除 `feedback_record` 与 `feedback_process_log`（表名按名引用，同 writer_agent_user_profile 惯例；失败 warn 不阻塞会话删除）。单删/批删/孤儿会话清理（purgeOrphanSessions 复用 deleteSession）三条路径一并覆盖。
+  - 后端 `Base/FeedbackHandler/domain/types.ts` — 新增 `DeleteFeedbackByRefsInput/Output`、`PurgeOrphanFeedbackInput/Output`。
+  - 后端 `Base/FeedbackHandler/application/FeedbackService.ts` — 新增 `deleteFeedbackByRefs`（按 run_id/work_id OR 引用删除两表）与 `purgeOrphanFeedback`（孤儿判据：run_id 无效于 runtime_run **且** work_id 无效于 info_raw，即关联内容全部已删除或本为空 → 按 id 走标准删除路径移除）；FeedbackAccess/模块 index 同步暴露。
+  - 后端 `dev-server.ts` — 启动时（孤儿会话记忆清理之后）调用一次 `purgeOrphanFeedback` 清理历史残留，失败不阻塞启动。
+
+**影响的端点**：
+  - `DELETE /api/chat/session` 与 `DELETE /api/chat/session/:id` — 删除会话时级联删除关联反馈（含 Agent 评估反馈），响应结构不变。
+  - 启动序列 — 新增一次性孤儿反馈清理（dev-server 已重启生效）。
+  - 监控页反馈记录/详情 — 孤儿记录不再展示，剩余记录均可关联到真实对话内容。
+
+**验证（e2e）**：向 DB 注入测试会话（runtime_run + info_raw + 按 run_id/work_id 引用的反馈 + 无关反馈），调用 `DELETE /api/chat/session`：run_id 关联反馈、work_id 关联反馈、处理日志均被级联删除，无关会话的反馈正确保留；历史孤儿反馈（含用户示例中 2026/9/14 的 8 条）启动清理后监控页总数归零。
+
+**可能存在的问题**：
+  - 孤儿判据以 info_raw.work_id 为 work 存在性依据（works 表不在同一库），若未来出现独立的作品删除路径需同步接入级联；
+  - 无任何引用（run_id 与 work_id 均空）的「裸评分」反馈会被启动清理删除——此类记录在监控页本就无任何可展示内容，符合「无法关联即清理」的预期；
+  - `DELETE /api/memory`（按 info_id 删记忆）不删 runtime_run，关联该 run 的反馈仍保留（对话轮次仍存在，口径一致）。
+
+## [2026-09-21] 优化：监控页「反馈处理记录」去 ID 化，改为「人话优先」卡片流
+
+**变更原因**：上一轮仅修复了表格重叠，但列表主体仍是一串 ID（Process ID / Agent ID / Run ID），用户无法一眼看出「这条反馈对应哪次提问、评价如何」——信息密度高但对人不友好。
+
+**修改的方法**：
+  - 后端 `Base/FeedbackHandler/domain/types.ts` — 新增 `FeedbackProcessLogListItem`（继承原始记录，附加 `source` / `category` / `comment` / `user_question` 展示字段），`QueryProcessLogsOutput.logs` 改用该类型。
+  - 后端 `Base/FeedbackHandler/application/FeedbackService.ts` — `getProcessLogs` 查询后调用新增私有方法 `enrichProcessLogs` 批量补充人性化字段：`feedback_id IN` 一次批量关联反馈来源/分类/评论，`run_id IN` 一次批量取该轮对话首条用户提问（与详情接口同口径，非逐行 N+1）；失败静默降级为仅原始字段（原始实现注释保留）。
+  - 前端 `api/types.ts` + `api/index.ts` — 镜像新增 `FeedbackProcessLogListItem`，`feedbackApi.records` 返回类型更新。
+  - 前端 `components/panels/MonitorPanel.vue` — 反馈记录由 ID 表格重构为**卡片流**：主文案优先展示用户提问摘要（无提问依次回退用户评论/分类），行首为评分徽章（≥70 好评 / 41-69 中评 / ≤40 差评 / 0 未评分，阈值与后端 RATING_*_THRESHOLD 一致）+ 动作徽章（带图标）+ 来源徽章（用户反馈/Agent 评估），时间改相对时间（悬浮显示绝对时间），分类与 agent_id 降为次要信息行；整卡可点开详情。
+  - 反馈详情弹窗 — 评分改为同款好评/中评/差评徽章，新增来源/分类/用户评论展示，Process ID 增加一键复制。
+
+**影响的端点**：
+  - `GET /api/feedback/records` — 响应在原字段基础上追加 `source` / `category` / `comment` / `user_question`（向后兼容，前端对缺失字段有回退）；轮询频率与参数不变。后端 dev-server 已重启生效（原进程不支持热加载）。
+  - `GET /api/feedback/records/:processId` — 行为不变（本次校验其 enrichment 口径与列表一致）。
+
+**可能存在的问题**：
+  - 列表 enrichment 对每页日志额外增加 2 次批量查询（IN 上限 = 页大小 50），当前量级无感；若未来日志量大可考虑缓存或改为 SQL JOIN；
+  - `user_question` 依赖 info_raw 中 `info_creator_role='user'` 的首条消息，历史数据缺失时该卡片自动回退显示评论/分类；
+  - 卡片主文案使用 `line-clamp-2` 截断，超长提问需点开详情查看全文。
+
+## [2026-09-21] 修复：监控页「反馈处理记录」内容重叠 + 页面展示优化
+
+**变更原因**：反馈记录表格为 `table-fixed` 固定列宽布局，「时间」列仅 96px（`w-24`），而单元格内容 `2026/9/21 14:30:25`（约 140px）带 `whitespace-nowrap` 强制不换行——文字溢出列边界直接压到「Process ID」列上，产生内容重叠。另有轮询体验问题：`fetchFeedbackRecords` 每次执行都置 `fbLoading=true` 并整表替换为「加载中...」，10 秒轮询导致表格每 10 秒闪烁一次；轮询失败还会清空已有记录误显「暂无」。
+
+**修改的方法**：
+  - 前端 `components/panels/MonitorPanel.vue` — `fetchFeedbackRecords(manual)` 重写：仅首次加载（`fbLoaded` 标记）展示阻塞式「加载中...」，10s 轮询与手动刷新静默更新（手动刷新时刷新图标旋转 `fbRefreshing`），失败时保留旧数据而非清空（原始实现注释保留）；新增 `fbTotal` 展示总条数。
+  - 反馈记录表格：列宽重排（时间 `w-40` / Process ID `w-32` / 评分 `w-14` / 动作 `w-16` / Agent ID `w-28` / Run ID 自适应），溢出单元格全部改 `truncate` + `title` 悬浮完整值（去掉 JS `slice` 假省略号），表格加 `min-w-[640px]` + 容器 `overflow-auto`（窄屏横向滚动而非挤压重叠）；动作标签改圆角胶囊样式。
+  - 最近日志表格：同样加 `min-w-[760px]` + `overflow-auto`，时间列 `whitespace-nowrap` 改 `truncate`（消除同类重叠隐患）。
+  - 系统健康卡片：组件详情 key/value 加 `min-w-0 truncate` + `title`，长值不再撑破布局。
+  - 反馈详情弹窗：长 UUID 字段加 `break-all`（不再溢出弹窗）、元信息栅格移动端单列（`grid-cols-1 sm:grid-cols-2`）、动作/评分空值兜底显示。
+  - 刷新按钮补充 `title="刷新"` 提示。
+
+**影响的端点**：
+  - 纯前端展示层改动，无后端端点变化；生效入口为「监控」页面（`MonitorView` → `MonitorPanel`）。
+  - `GET /feedback/records` 调用频率与参数不变，仅前端消费 `total` 字段展示总条数。
+
+**可能存在的问题**：
+  - 反馈记录 `fbTotal` 为后端返回的全量总数，列表仍只加载最近 50 条，两者数字不一致属预期（表格为滚动窗口）；
+  - 轮询失败静默保留旧数据，界面无失败提示（数据时间戳不更新可间接察觉）；如需强提示可后续加 toast；
+  - 深色模式下胶囊标签配色沿用既有 `actionColors`，未单独调整对比度。
+
+## [2026-09-21] 修复：询问读伴点击「咨询」后一直转圈、失败无反馈
+
+**变更原因**：读伴问答为同步 LLM 推理（实测约 19s，大上下文更久），而前端 `fetch` 无超时、`submitAsk` 的 `catch` 静默吞错——请求慢/挂起/失败时按钮转圈或弹窗停滞，均无任何反馈，感知为「一直在转圈」。另发现后端 `execDocumentQueryLlm` 出错时把错误包装为 200 +「解释失败：…」文案返回（见可能存在的问题）。
+
+**修改的方法**：
+  - 前端 `api/index.ts` — `request` 助手新增可选 `timeoutMs`（`AbortSignal.timeout`，默认不传保持所有既有接口行为不变；原始实现注释保留）；`libraryApi.queryDocument` 传入 `timeoutMs: 60000`，超时自动中止请求。
+  - 前端 `composables/useLibraryTab.ts` — 新增 `askError` 状态；`submitAsk` 失败不再静默：`TimeoutError` 映射为「咨询超时：读伴响应超过 60 秒…」，其余映射为「咨询失败：<原因>」，错误展示在弹窗内并保留已输入内容便于重试（原始实现注释保留）；`openAskDialog`/`closeFileModal` 清理 `askError`。
+  - 前端 `components/info/LibraryTab.vue` — 询问弹窗增加等待提示（「读伴正在结合文档上下文思考，通常需要 10~30 秒」）与失败错误文案展示。
+
+**影响的端点**：
+  - 纯前端改动，无后端端点变化；生效入口为「信息 > 资料库 > 划词右键询问读伴 > 咨询」。
+  - `POST /api/library/query` 行为不变；前端 60s 超时后本地中止（后端请求继续完成但结果被丢弃）。
+
+**可能存在的问题**：
+  - 后端 `execDocumentQueryLlm` 出错时以 200 +「解释失败：…」文案返回，前端会当作正常回答生成卡片（不拦截）；建议后续后端改为抛错返回 5xx，前端按错误分支处理——涉及后端重启，本次未改；
+  - 后端 `execLLM` 链路无显式超时，LLM provider 挂起时后端请求会一直等待（前端 60s 超时仅中止本地等待）；
+  - 60s 超时阈值按当前实测延迟（约 19s）×3 余量设定，若更换更慢的 LLM 需相应调整。
+
+## [2026-09-21] 修复：编辑文档后咨询标注与正文的引用关系丢失
+
+**变更原因**：`restoreMark` 按选中文本在**单个文本节点**内 `indexOf` 精确匹配——① 编辑后选区内只要引入行内格式（加粗/链接等）即把文本节点拆开，跨节点选中则从来匹配不上；② 选区内改错别字/增删词/调标点后全量精确匹配失败，直接标记「原文已变更」，下划线与边注对齐关系全部丢失。
+
+**修改的方法**：
+  - 前端 `composables/useLibraryTab.ts` — 新增模块级纯函数并导出：`normalizeForFuzzy`（去空白/标点/大小写 + 原始下标映射）、`fuzzyLocate`（头/中/尾探针收集候选窗口，字符重合度计数交集评分，≥0.6 命中并映射回原始区间）；新增（组合函数内）`buildDomTextIndex`（拼接文本节点 + (node,offset) 索引，跳过已标注文本）、`wrapRange`（`surroundContents` 失败退回 extract/insert，跨块级元素还原并放弃以防非法嵌套）；`restoreMark` 重写为「跨节点精确匹配 → 模糊重锚定 → 放弃」三级策略（原始实现注释保留）；`markSelection` 复用 `wrapRange`，新提问跨内联节点选中也能落标注（原始实现注释保留）。
+  - 前端 `components/info/LibraryTab.vue` — 编辑器保存提示文案更新为「标注自动重新对齐，无法对齐才标记失效」。
+  - 前端 `test/annotationAnchoring.test.ts`（新增）— `normalizeForFuzzy`/`fuzzyLocate` 单元测试 9 例：逐字命中与映射、选区内改字/加词/调标点重锚定、相似段落择优、无关内容/低相似度/过短否定用例。
+
+**影响的端点**：
+  - 纯前端展示层改动，无后端端点变化；生效入口为「信息 > 资料库 > 打开文档（恢复历史标注）/ 保存编辑（重对齐标注）/ 划词询问读伴（落标注）」。
+
+**可能存在的问题**：
+  - 模糊重锚定基于字符重合度（顺序无关），选区被大幅重写（相似度 <0.6）或头/中/尾探针全部被改时仍会标记「原文已变更」；
+  - 全文多处高度相似段落同时存在时，取重合度最高者，理论上可能锚定到错误的相似段落（探针候选 + 阈值已缓解）；
+  - 每条标注重建时重新拼接全文文本索引（N×O(文档长度)），万字符级文档 × 数十条标注无感知，超大文档可按需缓存索引。
+
+## [2026-09-21] 资料库阅读器：读伴问答改为「纸质书边注（marginalia）」呈现
+
+**变更原因**：读伴问答卡片集中在独立右栏，垂直位置与正文无对应关系，看不出问答结果和 Markdown 原文之间的联系。期望体验是「读纸质书时在空白区写批注」——补充内容紧挨对应原文，联系一目了然。
+
+**修改的方法**：
+  - 前端 `composables/useLibraryTab.ts` — 新增边注子系统：`marginMode`（matchMedia `≥1360px`）、`noteTops`/`relayoutMarginNotes`（按正文标注垂直位置对齐边注卡片，相邻重叠向下顺延，末卡片底边撑开内容区 minHeight）、`marginLayerRef`、`handleMarkClick`（正文标注点击事件委托，联动激活卡片）；`refreshAnnotationMarks` 末尾追加边注重排触发、`setActiveAnnotation` 追加边注卡片滚入视口、`submitAsk` 新卡落位后重排、`closeFileModal` 清理 `noteTops`；`onBeforeUnmount` 追加 ResizeObserver / matchMedia 清理；`watch(contentAreaRef)` 挂载 ResizeObserver 监听正文高度变化重排；`DocAnnotation` 移至模块顶层并导出（原始实现以注释保留）。
+  - 前端 `components/info/AnnotationCard.vue`（新增）— 读伴提问卡片组件，右栏列表与边注共用：编号徽章（激活时橙色）、原文引用、问题、回答 Markdown；`compact` 形态供边注使用（回答区限高内滚）；失效标注展示「原文已变更」。
+  - 前端 `components/info/LibraryTab.vue` — 阅读区正文外层加 relative 包裹层：宽屏切 `doc-margin-grid`（正文限宽 42rem + 右侧 `minmax(240px,288px)` 边注层，版心居中），窄屏回退独立右栏列表（卡片替换为 `AnnotationCard`）；正文标注点击事件委托；正文列样式随模式切换（边注模式取消 `mx-auto` 居中）。
+  - 前端 `styles/globals.css` — 新增 `.doc-margin-grid`（grid 版心布局）、`.doc-margin-layer`/`.doc-margin-note`（绝对定位边注卡片）、`::before` 引线（蓝/激活橙，含暗色）、`.doc-margin-answer`（内滚防长回答顶飞后续卡片）。
+
+**影响的端点**：
+  - 纯前端展示层改动，无后端端点变化；业务入口为「信息 > 资料库 > 打开文档阅读 / 划词询问读伴」。
+  - 视口 ≥1360px 时读伴问答从右栏变为正文右侧边注；<1360px 行为与改版前一致。
+
+**可能存在的问题**：
+  - 边注首帧先全部落在 `top:0` 再测量定位，`nextTick` 后一次重排到位，理论上存在单帧跳动（实测不明显）；
+  - 失效（stale）标注无正文锚点，边注只能顺延在前一卡片之后，不与原文对齐；
+  - 窗口在 1360px 断点附近反复拖动会触发布局模式来回切换（matchMedia 已做状态去重，成本可控）；
+  - 边注回答限高 15rem 内滚，超长回答需在卡片内滚动查看。
+
+## [2026-09-21] 资料库文档阅读器重构 + 文档编辑/删除 + 读伴专用 Agent/Prompt/Soul
+
+**变更原因**：资料库文档阅读区原为「章节 | 正文 | 咨询卡片 + SVG 虚线连线」布局，卡片拥挤、连线穿过正文、选中高亮无样式；文档只读无法编辑/删除；内容变更后咨询标注无法优雅降级。同时文档问答此前直连 `execLLM`，缺少专用 Agent/Prompt/Soul，问答能力有限。
+
+**修改的方法**：
+  - 前端 `components/info/LibraryTab.vue` — 阅读区重构为「目录 / 正文阅读栏 / 读伴提问栏」；正文限宽居中、内部滚动；移除 SVG 虚线连线，改为编号下划线 + 点击卡片定位高亮；新增编辑模式与删除二次确认；提问文案改「询问读伴」。
+  - 前端 `composables/useLibraryTab.ts` — 新增 `openEditor/saveEditor/requestDeleteFile/confirmDeleteFile`；新增 `refreshAnnotationMarks`（内容变更后重匹配，失败置 `stale`）与 `setActiveAnnotation`；`openFile` 批量加载并统一标注；移除 `annotationLines/recomputeLines`；`queryDocument` 透传 `document_title`。
+  - 前端 `styles/globals.css` — 新增 `.doc-reading` 与 `.doc-annotation-mark`/`.is-active` 样式（含暗色）。
+  - 前端 `api/index.ts` / `api/types.ts` — 新增 `libraryApi.updateFileContent` / `deleteFile`；`queryDocument` 增加 `document_title`；新增 `DocumentAnnotation` 类型。
+  - 后端 `SelfLearningService` — 新增 `updateFileContent`（写回本地文件、状态置 `PENDING`）、`deleteFile`（删本地文件 + 级联清理 `document_annotation`/`self_learning_file`）、`soFileRecord`；`queryDocument` 改为经「文档伴读」声明式 Agent（读 Agent 定义取模型/温度）+ 专用身份模板（`builtin.document_reading_identity`，内存渲染，不依赖 DB 播种）与专用 Soul 组装 system，配置项优先；新增 `ensureBuiltinDocumentAgent` / `ensureDocumentReadingSoul` / `soDocumentReadingAgent` / `buildDocumentReadingSystem` / `soDocumentReadingSoulContent` / `matchDocumentQueryLlm` / `execDocumentQueryLlm`（原始实现注释保留）；`renderPrompt` 支持内置模板优先渲染。
+  - 后端 `SelfLearning/domain/types.ts` — 新增 `UpdateFileContentInput/Output`、`DeleteFileInput/Output`、`QueryDocumentInput.document_title` 与文档伴读常量。
+  - 后端 `SelfLearning/access/SelfLearningAccess.ts` — 构造接收 `soulAccess`/`agentDefAccess`（可选），新增三个包装方法。
+  - 后端 `Base/PromptCatalog/catalog.ts` — 增强 `builtin.document_query`（含文档标题与伴读式回答要求）；新增 `builtin.document_reading_identity`（文档伴读身份段）。
+  - 后端 `dev-server.ts` — 装配 Soul/AgentDef 到 SelfLearning，启动幂等装配文档伴读 Agent/Soul；新增文件编辑/删除路由；`/api/library/query` 透传 `document_title`。
+
+**影响的端点**：
+  - 新增 `PUT /api/library/files/:fileId/content`（`{ content }` → `{ fileName, content, size }`）。
+  - 新增 `DELETE /api/library/files/:fileId`（→ `{ success, deletedAnnotations }`）。
+  - `POST /api/library/query` — 新增可选 `document_title`，后端改走专用 Agent 组装 system/模型。
+
+**可能存在的问题**：
+  - 删除文档为物理删除（不可恢复），仅级联清理索引与咨询记录，不回收该文档历史学习产生的知识条目；
+  - 标注按 `selection_text` 全量首匹配，编辑后可能出现定位偏移或标记「原文已变更」；
+  - 内置 Soul/Agent 采用代码内置种子（沿用 Summary/Intent Agent 约定），与 DevStandards「禁止硬编码种子」口径存在差异；
+  - 需重启后端（tsx dev-server.ts 无热加载）后新路由与 Agent 装配才生效。
+
+
+
+**变更原因**：「涌现」图中出现由系统报错信息派生的节点（如「工具缺失」「工具不可用」等）。Tag 图节点由 `info_tag` 聚合、经 `rebuildCooccurGraph` 建入 GraphDB；`tagInfo` 实时抽取虽已按 `handle_result_type != correct` 跳过错误信息，但存量错误标签（隔离机制引入前抽取）与已删除会话遗留的孤儿标签仍在 `info_tag` 中，而 `rebuildCooccurGraph` 全量重建时未回溯 `info_raw.handle_result_type`，导致这些标签被重新建入「涌现」图。DB 实证：`info_raw` 已清空、`info_tag` 残留 23 条孤儿标签，`GET /api/memory/tag-graph` 仍返回「工具缺失 / No external tool」等系统标签节点。
+
+**修改的方法**：
+  - `InfoCoreService.rebuildCooccurGraph` — 新增步骤 0：调用 `purgeNonCorrectTagRows` 清理存量（原始实现注释保留）；
+  - `InfoCoreService.purgeNonCorrectTagRows`（新增）— 删除 `info_id` 无法回溯到 `info_raw`、或对应信息 `handle_result_type != correct` 的 `info_tag` 行；
+  - `InfoCoreService.rebuildCooccurForSource` — 读表改为 `INNER JOIN info_raw` 且仅保留 `handle_result_type = 'correct'`（原始全量 `relationDb.select` 注释保留），标签 / 关键词图节点与共现边仅由正确信息派生；
+  - `InfoCoreProvider/domain/types.ts` — `RebuildCooccurGraphOutput` 新增 `purged_rows` 字段；
+  - `Core/test/InfoCoreProvider.test.ts` — 新增用例：错误信息派生标签被清理且不入 GraphDB「涌现」图。
+
+**影响的端点**：
+  - `GET /api/memory/tag-graph` — 仅返回正确信息派生的标签节点，系统报错信息不再入图；
+  - `GET /api/memory/keyword-graph` — 关键词图同样仅由正确信息派生；
+  - 服务启动 `[startup] rebuild cooccur edges` — 触发存量清理与重建。
+
+**可能存在的问题**：
+  - 判定口径为「`handle_result_type != correct` 或 `info_raw` 无对应行（孤儿）」；若后续出现以 `correct` 落库但属系统运行信息（非用户信息）的写入方，需扩展过滤条件；
+  - 启动时全量 `DELETE ... NOT IN` 在 `info_tag` 体量极大时有短时耗时（当前量级可忽略）；
+  - `info_keyword`（FTS5）仅在建图侧过滤，未做行级清理（`keywordInfo` 抽取侧已有 correct 过滤）。
+
+## [2026-09-21] 删除会话后「信息 > 记忆」页对话内容残留：孤儿会话记忆清理（purgeOrphanSessions）
+
+**变更原因**：在「对话」页删除会话后，「信息 > 记忆」页仍展示该会话的对话内容。DB 实证：`chat_session` 已空，但 `info_raw` 仍残留 23 条记录（来自 2026-08-10 ~ 08-14 已删除会话，全为 `PERMISSION` / `USER_FEEDBACK` 类型）。根因是 `info_raw.session_id` 无法匹配任何 `chat_session` 的孤儿行：
+1. 历史版本权限审计桥（`dev-server.ts permissionAuditBridge.asked`）早期把 `info_raw.session_id` 落为 Runtime 内部 session id（2026-09-11 才改为落对话会话键 `session_key`），旧行删除会话时按对话会话键删除命中不到；
+2. 会话级联删除逻辑 2026-09-15 才收敛到 `InfoCore.delInfoBySession`，此前删除的会话亦可能遗留孤儿记忆。
+这类孤儿行不会被按指定 `session_id` 的 `deleteSession` 命中，因而长期残留并被「记忆」页签（`GET /api/memory/search` 直读 `info_raw`）展示。
+
+**修改的方法**：
+  - `ChatService.purgeOrphanSessions`（新增）— 以 `chat_session.session_id` 为唯一存活集合，取 `info_raw` 中 `DISTINCT session_id` 的差集为孤儿会话，复用 `deleteSession` 的级联逻辑（`info_raw` / `info_tag` / `info_summary` / `info_keyword` / `info_vector` / `info_context_source` / GraphDB 引用边 / `runtime_*` / `stream_event` / `writer_agent_user_profile`）彻底清理；支持 `dry_run` 仅统计不删除；
+  - `Application/Chat/domain/types.ts` — 新增 `PurgeOrphanSessionsInput`（`dry_run?`）/ `PurgeOrphanSessionsOutput`（`purged_count` / `purged_session_ids`）；`Chat/index.ts` 导出；
+  - `Application/Chat/access/ChatAccess.ts` — 新增 `purgeOrphanSessions` 包装方法；
+  - `dev-server.ts` — 服务启动时执行一次孤儿会话记忆清理，并注册每日午夜复查（复用 `cronTrace('cron.orphanmemory')`，与 Info 老化清理同一模式）。
+
+**影响的端点**：
+  - 无新增 HTTP 端点；维护任务在服务启动与每日午夜触发，清理 `info_raw` 孤儿行。
+  - 「信息 > 记忆」页签数据源 `GET /api/memory/search` / `GET /api/memory/date-counts` 间接受影响：不再返回孤儿记忆。
+
+**可能存在的问题**：
+  - 判定口径为「`session_id` 不在 `chat_session` 即孤儿」，若未来出现不落 `chat_session` 的记忆写入方，需同步纳入存活集合；
+  - 会话删除与进行中的 run 并发时，run 迟到的记忆写入（如 `saveStepInfo`）可能在下次启动/午夜清理前短暂残留，建议后续评估「删除会话时中止进行中 run」；
+  - 启动清理为一次性全表 `DISTINCT` 扫描，`info_raw` 极大时可能有秒级开销（每日复查同理），如体量增长需改为增量游标。
+
+---
+
+## [2026-09-21] 对话页「历史会话」批量删除修复：补批量端点 + 级联清理关联数据（writer_agent_user_profile 残留）
+
+**变更原因**：对话页「历史会话」侧栏批量勾选后点击删除，会话删除不完整且关联数据残留。根因有两点：
+1. 前端批量删除为逐条调用单条接口 `DELETE /api/chat/session/:id`，无二次确认、无失败处理（顺序 `for await`，任一失败即中断循环，剩余会话不删且选中项不清空），与 PRD「session_ids[] 一次提交」契约不符；
+2. 后端 `ChatService.deleteSession` 虽已级联清理 info_*、runtime_*、stream_event，但 **`writer_agent_user_profile`（WriterAgent 会话级写作偏好，session_id 唯一）未随会话删除**，DB 实证删除后残留为孤儿数据；HTTP 层亦无批量删除端点。
+
+**修改的方法**：
+  - `ChatService.deleteSession` — 在删除 `chat_session` 后新增按 `session_id` 清理 `writer_agent_user_profile`（独立 try/catch 最佳努力清理，表不存在时静默跳过；表名按名引用避免 Application → Agent 运行时耦合）；
+  - `dev-server.ts` — 新增 `DELETE /api/chat/session`（请求体 `session_ids: string[]`）批量端点：调用 `ChatService.deleteSession` 一次级联清理，并逐会话 `resetUserProfile` 清理 `user_profile_record` / `user_profile_dimension_data`；空数组返回 400。单条路径 `DELETE /api/chat/session/:id` 保留不变；
+  - `brian-frontend/src/api/index.ts` — 新增 `chatApi.deleteSessions(sessionIds)`（`DELETE /api/chat/session`）；
+  - `brian-frontend/src/stores/session.ts` — 新增 `deleteSessions(ids)`：一次请求删除多个会话，成功后从 `chatList` 移除，当前会话在集合内则 `clearMessages()`；
+  - `brian-frontend/src/views/ChatView.vue` — 单条/批量删除改为二次确认弹窗（`deleteConfirm` / `requestDeleteSession` / `requestBatchDelete` / `confirmDelete`，对齐信息页「历史」Tab）；批量走 `deleteSessions` 一次提交，失败保留列表与选中项；原逐个删除实现注释保留；
+  - `brian-frontend/src/composables/useHistoryTab.ts` — 批量删除由逐条 `Promise.allSettled` 改为一次 `chatApi.deleteSessions`（原实现注释保留）；
+  - `brian-frontend/test/e2e-server.ts` — 镜像新增 `DELETE /api/chat/session` 批量路由。
+
+**影响的端点**：
+  - `DELETE /api/chat/session` — 新增批量删除；一次清理会话记忆 / Runtime 数据 / 写作偏好 / 用户画像；
+  - `DELETE /api/chat/session/:sessionId` — 单条删除行为不变，额外清理 writer_agent_user_profile；
+  - `POST /api/chat` 不存在此路径，无影响。
+
+**可能存在的问题**：
+  - 存量已删除会话遗留的 `writer_agent_user_profile` / `llm_call_log` / 旧 `runtime_event`、`runtime_metrics` 孤儿行不会自动回填清理，如需可另做一次性迁移；
+  - `llm_call_log` 属监控审计数据，本次未纳入会话级联（保留用于 Token/日志追溯），如需随会话删除需单独评估对监控统计的影响；
+  - 批量端点非事务整体回滚：与单条一致采用逐会话级联，个别会话清理失败仅记录 warn 不影响其余会话。
+
+---
+
 ## [2026-09-15] /api/chat/eval-result 数据源迁移到 agent_evaluation（「评估结果」弹窗永远为空）
 
 **变更原因**：对话页消息框「评估结果」按钮点击后永远提示"暂无评估结果"。根因是 2026-09-14 Runtime v2 重构后的数据源错位：
@@ -1753,3 +2033,27 @@
 **可能存在的问题**：
   - CoT/ReAct 判定为无 LLM 的规则裁决（快照组件事实），复杂任务含隐式工具需求时仍选 CoT——默认预算内 Loop 允许通用原语工具兜底；
   - 评估异步（eval_async）时 evaluation.completed 可能晚于 run.finished（既有行为不变）。
+
+## [2026-09-22] 新增：BrianAgent.html 宣传页移植为系统首页（/），对话页迁移至 /chat
+
+**变更原因**：产品宣传页 BrianAgent.html 此前为独立单文件（含加群二维码：QQ 群 942758906 / 微信群），与前端分离。用户要求将其作为系统首页，且风格与现有前端保持一致。
+
+**修改的方法**：
+  - 前端新增 `views/HomeView.vue` — 宣传页整页移植：Hero、数据统计（滚动计数）、痛点对话、记忆地图（SVG 节点悬浮高亮 + 连线绘制动画）、涌现图/关键词图、需求确认与执行时间线（逐步点亮循环）、第二大脑、数据归属、终端打字动画、对比表、交流群二维码（QQ 群号可点击复制）。视觉全面对齐前端设计体系：apple-gray 色板 + brian-blue 强调色 + glass-panel/block-card 卡片，支持明暗主题与 prefers-reduced-motion；背景复用 NeuralBackground（替代原宣传页独立 canvas）。
+  - 前端新增 composables：`useRevealOnScroll.ts`（v-reveal 渐显指令）、`useCountUp.ts`（数字滚动）、`useTypewriter.ts`（终端打字循环）、`useOnceVisible.ts`（进入视口触发一次）。
+  - 前端新增 `src/env.d.ts`（vite/client 资源类型声明）与 `src/assets/home/`（从 BrianAgent.html 提取的 6 张图：hero-map / memory-pin / tag-graph / keyword-graph / qr-qq / qr-wechat）。
+  - 前端 `router/index.ts` — 路由调整：`/` 由对话页改为首页（HomeView），对话页迁移至 `/chat`（原配置注释保留）。
+  - 前端 `components/layout/Header.vue` — 导航新增「首页」项（Home 图标，路由 /），对话项路由改为 /chat。
+  - 前端 `stores/i18n.ts` — 新增 `nav.home` 词条。
+  - 文档：新增 `_07_首页页面/首页Page-PRD.md`；同步更新 整体页面-PRD.md 与 test/TR-整体页面-全局导航与框架.md 的导航项/默认页描述。
+
+**影响的端点**：
+  - 无后端接口变化。前端路由：`/` = 宣传首页（新），`/chat` = 对话（原 `/`），其余路由不变；顶部导航 Logo 与「首页」图标均回首页，宣传页内「立即体验 / 现在就试」进入 `/chat`。
+  - 构建产物新增 HomeView chunk 与 6 张静态图片资源。
+
+**验证**：eslint、vue-tsc --noEmit、vite build 全部通过；vitest e2e 109/114 通过——5 个失败（chat-page 发消息链路，HTTP 501）在未含本次改动的工作区基线上同样失败（已用 git stash 复测确认），属后端在改代码的既有问题，与本次无关。
+
+**可能存在的问题**：
+  - 宣传页文案当前为中文硬编码（与对话页等既有页面中文硬编码做法一致），未接入 i18n；后续若需英文版需补齐文案词条；
+  - 首页图片资源约 1.6MB（PNG 截图为主），首屏懒加载已对二维码启用（loading=lazy），截图区随路由懒加载拆包，弱网首访可再考虑转 WebP；
+  - e2e 中 chat 发送链路 5 个用例因后端在改代码（Chat 模块 501）失败，需后端改动完成后单独修复验证。

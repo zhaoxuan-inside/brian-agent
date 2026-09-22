@@ -118,13 +118,41 @@ function handleNewChat() {
   showSidebar.value = false
 }
 
-async function handleDeleteSession(sessionId: string) {
-  await sessionStore.deleteSession(sessionId)
+// ===== 修改前（2026-09-21）：删除无二次确认，批量删除逐个调用单条接口且无失败处理，
+// 任一失败会中断循环，导致部分会话未删除、关联数据（记忆/画像/写作偏好）残留 =====
+// async function handleDeleteSession(sessionId: string) {
+//   await sessionStore.deleteSession(sessionId)
+// }
+//
+// async function handleBatchDelete() {
+//   for (const id of selectedSessions.value) await sessionStore.deleteSession(id)
+//   selectedSessions.value = new Set()
+// }
+
+// ===== 修改后：单条/批量统一走二次确认；批量删除调用批量接口一次提交 session_ids[]，
+// 后端统一级联清理关联数据，失败时保留选中项便于重试 =====
+const deleteConfirm = ref<{ type: 'single' | 'batch'; sessionId?: string } | null>(null)
+
+function requestDeleteSession(sessionId: string) {
+  deleteConfirm.value = { type: 'single', sessionId }
 }
 
-async function handleBatchDelete() {
-  for (const id of selectedSessions.value) await sessionStore.deleteSession(id)
-  selectedSessions.value = new Set()
+function requestBatchDelete() {
+  deleteConfirm.value = { type: 'batch' }
+}
+
+async function confirmDelete() {
+  if (!deleteConfirm.value) return
+  const { type, sessionId } = deleteConfirm.value
+  deleteConfirm.value = null
+  try {
+    if (type === 'single' && sessionId) {
+      await sessionStore.deleteSession(sessionId)
+    } else if (type === 'batch') {
+      await sessionStore.deleteSessions([...selectedSessions.value])
+      selectedSessions.value = new Set()
+    }
+  } catch { /* 删除失败保留列表与选中项，便于重试 */ }
 }
 
 function formatTime(ts: number) {
@@ -192,7 +220,7 @@ function formatTime(ts: number) {
             <component :is="allSelected ? CheckSquare : Square" :size="14" />
             {{ allSelected ? '取消全选' : '全选' }}
           </button>
-          <button v-if="selectedSessions.size > 0" class="flex items-center gap-1 text-xs text-error-red hover:bg-error-red/10 px-2 py-1 rounded" @click="handleBatchDelete">
+          <button v-if="selectedSessions.size > 0" class="flex items-center gap-1 text-xs text-error-red hover:bg-error-red/10 px-2 py-1 rounded" @click="requestBatchDelete">
             <Trash2 :size="12" /> 删除({{ selectedSessions.size }})
           </button>
         </div>
@@ -236,7 +264,7 @@ function formatTime(ts: number) {
                       <Edit3 :size="12" />
                     </button>
                   </div>
-                  <button class="ml-1 p-1 rounded text-apple-gray-300 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" @click.stop="handleDeleteSession(chat.sessionId)">
+                  <button class="ml-1 p-1 rounded text-apple-gray-300 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" @click.stop="requestDeleteSession(chat.sessionId)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -248,6 +276,24 @@ function formatTime(ts: number) {
     </Transition>
 
     <ChatArea />
+
+    <!-- 删除确认弹窗（单条 / 批量） -->
+    <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm = null">
+      <div class="block-card w-full max-w-sm mx-4 p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold">确认删除</h3>
+          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="deleteConfirm = null"><X :size="18" /></button>
+        </div>
+        <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300">
+          {{ deleteConfirm.type === 'batch' ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？` : '确定删除该会话及其全部消息吗？' }}
+        </p>
+        <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签、向量与用户画像数据，且不可恢复。</p>
+        <div class="flex justify-end gap-2 mt-6">
+          <button class="btn-secondary" @click="deleteConfirm = null">取消</button>
+          <button class="px-3 py-2 text-xs font-medium bg-error-red text-white rounded-lg hover:bg-error-red/90 transition-colors" @click="confirmDelete">确认删除</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

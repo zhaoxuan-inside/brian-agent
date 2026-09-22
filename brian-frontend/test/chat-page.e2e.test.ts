@@ -78,6 +78,38 @@ describe('Chat Page - Session Management E2E', () => {
     const deleted = list.body.sessions.find((s: any) => s.session_id === sessionId);
     expect(deleted).toBeFalsy();
   });
+
+  // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[] 删除多个会话 =====
+  it('TC-CHAT-068: should batch delete multiple sessions', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const created = await api('/api/chat/create-session', {
+        method: 'POST',
+        body: JSON.stringify({ session_title: `Batch Delete ${i}` }),
+      });
+      ids.push(created.body.session_id);
+    }
+
+    const res = await api('/api/chat/session', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_ids: ids }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted_count).toBe(3);
+
+    const list = await api('/api/chat/list');
+    for (const id of ids) {
+      expect(list.body.sessions.find((s: any) => s.session_id === id)).toBeFalsy();
+    }
+  });
+
+  it('TC-CHAT-068b: batch delete rejects empty session_ids', async () => {
+    const res = await api('/api/chat/session', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_ids: [] }),
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('Chat Page - Message Send & Receive E2E', () => {

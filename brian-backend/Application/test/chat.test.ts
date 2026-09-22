@@ -22,6 +22,7 @@ import {
   SubmitWorkInput, SubmitWorkOutput,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
+  PurgeOrphanSessionsInput, PurgeOrphanSessionsOutput,
   SearchSessionInput, SearchSessionOutput,
   GetSessionDetailInput, GetSessionDetailOutput,
   UpdateSessionTitleInput, UpdateSessionTitleOutput,
@@ -338,6 +339,47 @@ describe('ChatService', () => {
       const output = new DeleteSessionOutput();
 
       await expect(service.deleteSession(input, output, new ChatContext())).rejects.toThrow(ValidationError);
+    });
+
+    // ===== 新增（2026-09-21 会话删除关联数据同步）：删除会话时同步清理关联数据 =====
+    it('TC-CHAT-054b: Delete session cascades writer_agent_user_profile', async () => {
+      const createOut = new CreateSessionOutput();
+      await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
+      const sid = createOut.session_id;
+
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'writer_agent_user_profile',
+          data: [
+            { field: 'id', value: 'wp-1' },
+            { field: 'created', value: 1700000000000 },
+            { field: 'updated', value: 1700000000000 },
+            { field: 'session_id', value: sid },
+            { field: 'language', value: 'zh-CN' },
+            { field: 'style', value: 'clear' },
+            { field: 'depth', value: 'medium' },
+            { field: 'format', value: 'MARKDOWN' },
+            { field: 'additional_preferences', value: '' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      const before = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM writer_agent_user_profile WHERE session_id = ?', [sid],
+      )[0]?.c;
+      expect(Number(before)).toBe(1);
+
+      const input = Object.assign(new DeleteSessionInput(), { session_ids: [sid] });
+      const output = new DeleteSessionOutput();
+      await service.deleteSession(input, output, new ChatContext());
+
+      expect(output.deleted_count).toBe(1);
+      const after = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM writer_agent_user_profile WHERE session_id = ?', [sid],
+      )[0]?.c;
+      expect(Number(after)).toBe(0);
     });
   });
 
@@ -946,6 +988,66 @@ describe('ChatService', () => {
       const delOut = new DeleteSessionOutput();
       await service.deleteSession(delInput, delOut, new ChatContext());
       expect(delOut.deleted_count).toBe(0);
+    });
+  });
+
+  // ===== 新增（2026-09-21 记忆残留修复）：孤儿会话记忆清理 =====
+  describe('purgeOrphanSessions', () => {
+    it('TC-CHAT-057: purges info_raw rows whose session no longer exists, keeps live session memory', async () => {
+      // 存活会话：createSession 落 chat_session
+      const createOut = new CreateSessionOutput();
+      await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
+      const liveSid = createOut.session_id;
+      await insertInfoRawRow(ctx.db, liveSid, 'live-info-1');
+
+      // 孤儿会话：info_raw 有记录但 chat_session 不存在
+      const orphanSid = 'orphan-session-9f3a';
+      await insertInfoRawRow(ctx.db, orphanSid, 'orphan-info-1');
+      await insertInfoRawRow(ctx.db, orphanSid, 'orphan-info-2');
+
+      const input = new PurgeOrphanSessionsInput();
+      const output = new PurgeOrphanSessionsOutput();
+      const result = await service.purgeOrphanSessions(input, output, new ChatContext());
+
+      expect(result).toBe(true);
+      expect(output.purged_count).toBe(1);
+      expect(output.purged_session_ids).toEqual([orphanSid]);
+
+      const orphanLeft = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', [orphanSid],
+      )[0]?.c;
+      expect(Number(orphanLeft)).toBe(0);
+
+      const liveLeft = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', [liveSid],
+      )[0]?.c;
+      expect(Number(liveLeft)).toBe(1);
+    });
+
+    it('TC-CHAT-058: dry_run reports orphans without deleting', async () => {
+      await insertInfoRawRow(ctx.db, 'orphan-dry-run', 'orphan-dry-info');
+
+      const input = Object.assign(new PurgeOrphanSessionsInput(), { dry_run: true });
+      const output = new PurgeOrphanSessionsOutput();
+      await service.purgeOrphanSessions(input, output, new ChatContext());
+
+      expect(output.purged_count).toBe(1);
+      const left = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', ['orphan-dry-run'],
+      )[0]?.c;
+      expect(Number(left)).toBe(1);
+    });
+
+    it('TC-CHAT-059: no orphans → purged_count=0 and no deletion', async () => {
+      const createOut = new CreateSessionOutput();
+      await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
+      await insertInfoRawRow(ctx.db, createOut.session_id, 'live-info-x');
+
+      const output = new PurgeOrphanSessionsOutput();
+      await service.purgeOrphanSessions(new PurgeOrphanSessionsInput(), output, new ChatContext());
+
+      expect(output.purged_count).toBe(0);
+      expect(output.purged_session_ids).toEqual([]);
     });
   });
 

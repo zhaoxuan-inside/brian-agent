@@ -3,12 +3,13 @@ import type {
   DagNode, DagEdge, MemoryItem, GraphNode, GraphEdge,
   ModelProvider, ModelInfo, LearningStats, LearningProgress,
   SystemHealth, UserProfile, LibraryPath, LibraryFilePage, LibraryTreeNode,
+  DocumentAnnotation,
   ConfigTreeLayer,
   UserProfileData, ProfileVersionData, ProfileHistoryItem,
   VisualizedMessage, MessageGraphNode, MessageGraphEdge, AgentDAG, AgentTrace,
   McpUsageRecord,
   Block, AgentDagData,
-  FeedbackProcessLogRecord, FeedbackProcessLogDetail, FeedbackConfig,
+  FeedbackProcessLogListItem, FeedbackProcessLogDetail, FeedbackConfig,
 } from './types'
 import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
 
@@ -28,13 +29,34 @@ const API_BASE = '/api'
 //   }
 //   return res.json()
 // }
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+// ===== 原始 request（保留作为参考，2026-09-21 增加可选 timeoutMs） =====
+// async function request<T>(path: string, options?: RequestInit): Promise<T> {
+//   const res = await fetch(`${API_BASE}${path}`, {
+//     ...options,
+//     headers: {
+//       'Content-Type': 'application/json',
+//       [TRACE_ID_HEADER]: newTraceId(),
+//       ...((options?.headers ?? {}) as Record<string, string>),
+//     },
+//   })
+//   if (!res.ok) {
+//     const err = await res.json().catch(() => ({ message: res.statusText }))
+//     throw new Error(err.error || err.message || `HTTP ${res.status}`)
+//   }
+//   return res.json()
+// }
+
+// ===== 修改后的 request（2026-09-21）：支持可选 timeoutMs，超时自动中止请求 =====
+// 默认不超时（保持所有既有接口行为不变），仅长耗时接口（如读伴问答）显式传入。
+async function request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const { timeoutMs, ...rest } = options ?? {}
   const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
+    ...rest,
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : rest.signal,
     headers: {
       'Content-Type': 'application/json',
       [TRACE_ID_HEADER]: newTraceId(),
-      ...((options?.headers ?? {}) as Record<string, string>),
+      ...((rest.headers ?? {}) as Record<string, string>),
     },
   })
   if (!res.ok) {
@@ -70,6 +92,13 @@ export const chatApi = {
     request<{ session: { session_id: string } }>(`/chat/session/${encodeURIComponent(sessionId)}`),
   deleteSession: (sessionId: string) =>
     request<void>(`/chat/session/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+  // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[]，服务端统一级联清理
+  // 记忆 / Runtime / 用户画像等关联数据，替代逐条 DELETE 循环 =====
+  deleteSessions: (sessionIds: string[]) =>
+    request<{ deleted_count: number }>('/chat/session', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_ids: sessionIds }),
+    }),
   updateTitle: (sessionId: string, title: string) =>
     request<{ success: boolean; session_id: string; session_title: string }>(`/chat/session/${encodeURIComponent(sessionId)}/title`, {
       method: 'PUT',
@@ -358,7 +387,7 @@ export const feedbackApi = {
       body: JSON.stringify(data),
     }),
   records: (limit = 50) =>
-    request<{ logs: FeedbackProcessLogRecord[]; total: number }>(`/feedback/records?limit=${limit}`),
+    request<{ logs: FeedbackProcessLogListItem[]; total: number }>(`/feedback/records?limit=${limit}`),
   recordDetail: (processId: string) =>
     request<FeedbackProcessLogDetail>(`/feedback/records/${encodeURIComponent(processId)}`),
   getConfig: () =>
@@ -391,14 +420,24 @@ export const libraryApi = {
   tree: (id: string) => request<{ tree: LibraryTreeNode[] }>(`/library/paths/${encodeURIComponent(id)}/tree`).then(r => r.tree),
   fileContent: (fileId: string) =>
     request<{ fileName: string; content: string; learnedAt: number }>(`/library/files/${encodeURIComponent(fileId)}/content`),
-  queryDocument: (opts: { selection: string; context_before?: string; context_after?: string; question?: string }) =>
+  updateFileContent: (fileId: string, content: string) =>
+    request<{ fileName: string; content: string; size: number }>(`/library/files/${encodeURIComponent(fileId)}/content`, {
+      method: 'PUT', body: JSON.stringify({ content })
+    }),
+  deleteFile: (fileId: string) =>
+    request<{ success: boolean; deletedAnnotations: number }>(`/library/files/${encodeURIComponent(fileId)}`, {
+      method: 'DELETE'
+    }),
+  queryDocument: (opts: { selection: string; context_before?: string; context_after?: string; question?: string; document_title?: string }) =>
     request<{ result: string; llm_id: string }>('/library/query', {
-      method: 'POST', body: JSON.stringify(opts)
+      method: 'POST',
+      // 读伴问答为同步 LLM 推理（实测 10~30s+），60s 超时避免无限转圈
+      timeoutMs: 60000, body: JSON.stringify(opts)
     }),
   saveAnnotation: (opts: { library_id?: string; file_id: string; selection_text: string; selection_start: number; selection_end: number; question: string; result: string; llm_id?: string }) =>
     request<{ id: string }>('/library/annotations', { method: 'POST', body: JSON.stringify(opts) }),
   fileAnnotations: (fileId: string) =>
-    request<{ annotations: Array<{ id: string; file_id: string; selection_text: string; selection_start: number; selection_end: number; question: string; result: string; llm_id: string; created: number }> }>(`/library/files/${encodeURIComponent(fileId)}/annotations`).then(r => r.annotations),
+    request<{ annotations: DocumentAnnotation[] }>(`/library/files/${encodeURIComponent(fileId)}/annotations`).then(r => r.annotations),
   checkPath: (path: string) =>
     request<{ exists: boolean; isReadable: boolean; isWritable: boolean }>('/library/check-path', {
       method: 'POST', body: JSON.stringify({ path })

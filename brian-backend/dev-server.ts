@@ -76,6 +76,7 @@ import {
   AnalyzeFeedbackInput, AnalyzeFeedbackOutput,
   QueryProcessLogsInput, QueryProcessLogsOutput,
   GetProcessLogDetailInput, GetProcessLogDetailOutput,
+  PurgeOrphanFeedbackInput, PurgeOrphanFeedbackOutput,
   GetFeedbackConfigInput, GetFeedbackConfigOutput,
   UpdateFeedbackConfigInput, UpdateFeedbackConfigOutput,
   RecordProcessLogInput, RecordProcessLogOutput,
@@ -88,7 +89,7 @@ import {
   TriggerCronTaskInput, TriggerCronTaskOutput,
   ListCronTaskRunsInput, ListCronTaskRunsOutput,
 } from './Base/CronProvider';
-import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, DelInfoGraphInput, DelInfoGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ClearGraphInput, ClearGraphOutput, SaveInfoInput, SaveInfoOutput } from './Core/InfoCoreProvider';
+import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, DelInfoGraphInput, DelInfoGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ClearGraphInput, ClearGraphOutput, SaveInfoInput, SaveInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput } from './Core/InfoCoreProvider';
 import { LLMCoreAccess } from './Core/LLMCoreProvider';
 import { MCPCoreAccess } from './Core/MCPCoreProvider';
 import { SkillCoreAccess, SkillCoreContext, AgeSkillInput, AgeSkillOutput } from './Core/SkillCoreProvider';
@@ -129,6 +130,8 @@ import {
   QueryDocumentInput, QueryDocumentOutput,
   SaveAnnotationInput, SaveAnnotationOutput,
   GetFileAnnotationsInput, GetFileAnnotationsOutput,
+  UpdateFileContentInput, UpdateFileContentOutput,
+  DeleteFileInput, DeleteFileOutput,
   StartLearningInput, StartLearningOutput,
   StopLearningInput, StopLearningOutput,
   GetLearningProgressInput, GetLearningProgressOutput,
@@ -203,6 +206,7 @@ import {
   ChatContext,
   CreateSessionInput, CreateSessionOutput,
   DeleteSessionInput, DeleteSessionOutput,
+  PurgeOrphanSessionsInput, PurgeOrphanSessionsOutput,
   SearchSessionInput, SearchSessionOutput,
   GetSessionDetailInput, GetSessionDetailOutput,
   GetChatHistoryInput, GetChatHistoryOutput,
@@ -872,7 +876,15 @@ async function buildContext() {
   });
 
   const chunkAccess = new ChunkAccess(logger);
-  const selfLearningAccess = new SelfLearningAccess(relationDb, infoCore, mqCore, llmCore, evolutorAgent, writerAgent, graphDBAccess, mqAccess, chunkAccess, llmAccess, promptsAccess, logger);
+  const selfLearningAccess = new SelfLearningAccess(relationDb, infoCore, mqCore, llmCore, evolutorAgent, writerAgent, graphDBAccess, mqAccess, chunkAccess, llmAccess, promptsAccess, logger, soulAccess, runtimeAgentDefAccess);
+
+  // 文档伴读专用 Agent / Soul（资料库问答场景）：启动幂等装配（Disabled 声明，不参与主对话匹配）
+  try {
+    const docAgentDefId = await selfLearningAccess.ensureBuiltinDocumentAgent();
+    logger.info('[startup] document reading agent', docAgentDefId || '(skipped)');
+  } catch (e) {
+    logger.warn('[startup] document reading agent failed', e instanceof Error ? e.message : String(e));
+  }
 
   // 系统启动时自动开启随机触发学习（自动学习后台常驻：空闲时按 random_factor 随机触发）
   await selfLearningAccess.startLearning(
@@ -1010,6 +1022,69 @@ async function buildContext() {
     }, msUntilMidnight);
   }
   scheduleInfoCleanup();
+
+  // ===== 新增（2026-09-22 摘要补偿）：启动时补生成缺失摘要 =====
+  // LLM 间歇性 CONNECT_ERROR（llm_call_log 实测）导致长文本消息摘要生成失败后
+  // info_summary 无行，对话框摘要区回退显示原文；启动时对存量缺摘要消息幂等回填
+  // （summaryInfo 内部幂等 + backfillRunning 防重入），失败不阻塞启动。
+  try {
+    const backfillOut = new BackfillMissingSummariesOutput();
+    await infoCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), backfillOut, new InfoCoreContext(), cronTrace('cron.summarybackfill.startup'));
+    if (backfillOut.backfilled_count > 0) logger.info('[startup] Summary backfill', `补生成了 ${backfillOut.backfilled_count} 条缺失摘要`);
+  } catch (e) {
+    logger.warn('[startup] Summary backfill failed', String(e));
+  }
+
+  // ===== 新增（2026-09-21 记忆残留修复）：孤儿会话记忆清理 =====
+  // info_raw 中 session_id 已不存在于 chat_session 的残留记录（历史版本权限审计以 Runtime
+  // 内部 session id 落 info_raw.session_id、早期会话级联删除逻辑收敛前删除的会话等），
+  // 不会被按指定 session_id 的 deleteSession 命中，导致「信息 > 记忆」页持续展示已删除
+  // 会话的对话内容。故启动时清理一次，并每日午夜复查（与 Info 老化清理同一模式）。
+  async function purgeOrphanSessionMemory(): Promise<number> {
+    const out = new PurgeOrphanSessionsOutput();
+    await chatAccess.purgeOrphanSessions(
+      new PurgeOrphanSessionsInput(), out, new ChatContext(), cronTrace('cron.orphanmemory'),
+    );
+    return out.purged_count;
+  }
+  try {
+    const purged = await purgeOrphanSessionMemory();
+    if (purged > 0) logger.info('[startup] Orphan session memory cleanup', `清理了 ${purged} 个孤儿会话的记忆残留`);
+  } catch (e) {
+    logger.warn('[startup] Orphan session memory cleanup failed', String(e));
+  }
+
+  // ===== 新增（2026-09-21 反馈级联删除）：孤儿反馈一次性清理 =====
+  // 历史版本删除会话时未级联清理反馈，残留 run_id 已不存在于 runtime_run 的
+  // 孤儿反馈（监控页反馈卡片显示「暂无提问内容」，详情只剩一串无法关联的 ID）。
+  // 新增级联删除后不会再产生新孤儿，故仅启动时清理一次；失败不阻塞启动。
+  try {
+    const orphanFeedbackOut = new PurgeOrphanFeedbackOutput();
+    await feedbackAccess.purgeOrphanFeedback(
+      new PurgeOrphanFeedbackInput(), orphanFeedbackOut, new FeedbackContext(), cronTrace('cron.orphanfeedback'),
+    );
+    if (orphanFeedbackOut.purged_count > 0) {
+      logger.info('[startup] Orphan feedback cleanup', `清理了 ${orphanFeedbackOut.purged_count} 条孤儿反馈`);
+    }
+  } catch (e) {
+    logger.warn('[startup] Orphan feedback cleanup failed', String(e));
+  }
+
+  function scheduleOrphanMemoryCleanup() {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+    setTimeout(() => {
+      try {
+        purgeOrphanSessionMemory().then((purged) => {
+          if (purged > 0) logger.info('[cron] Orphan session memory cleanup', `清理了 ${purged} 个孤儿会话的记忆残留`);
+        }).catch(() => {});
+      } catch { /* ignore */ }
+      scheduleOrphanMemoryCleanup(); // 调度下一天
+    }, msUntilMidnight);
+  }
+  scheduleOrphanMemoryCleanup();
 
   // 周期性同步 MCP 安装状态（每 1 小时通过 npm list -g 清理全局已卸载的 npm 记录）
   setInterval(() => {
@@ -4137,6 +4212,35 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         return;
 
+      } else if (method === 'DELETE' && pathname === '/api/chat/session') {
+        // ===== 新增（2026-09-21 批量删除会话）：PRD 约定 session_ids[] 一次提交，
+        // 服务端统一级联清理会话记忆（InfoCore）、Runtime/事件流数据（ChatService）
+        // 与用户画像（user_profile_record / user_profile_dimension_data）=====
+        const rawBatchIds = (body as Record<string, unknown>).session_ids;
+        const batchIds = Array.isArray(rawBatchIds)
+          ? (rawBatchIds as unknown[]).map((x) => String(x)).filter(Boolean)
+          : [];
+        if (batchIds.length === 0) {
+          sendJson(res, 400, { error: 'session_ids 必须为非空数组' });
+          return;
+        }
+        const batchInput = Object.assign(new DeleteSessionInput(), { session_ids: batchIds });
+        const batchOutput = new DeleteSessionOutput();
+        await ctx.chatAccess.deleteSession(batchInput, batchOutput, new ChatContext());
+        // 级联清理每个会话的用户画像数据（最佳努力清理，失败不影响会话删除）
+        for (const sid of batchIds) {
+          try {
+            await ctx.userProfileAccess.resetUserProfile(
+              Object.assign(new ResetUserProfileInput(), { session_id: sid }),
+              new ResetUserProfileOutput(),
+              new UserProfileContext(),
+            );
+          } catch {
+            // 画像重置失败不影响会话删除
+          }
+        }
+        sendJson(res, 200, { deleted_count: batchOutput.deleted_count });
+
       } else if (method === 'DELETE' && pathname.startsWith('/api/chat/session/')) {
         const sid = pathname.split('/api/chat/session/')[1];
         const input = Object.assign(new DeleteSessionInput(), { session_ids: [sid] });
@@ -4840,6 +4944,27 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (!ok) { sendJson(res, 404, { error: '文件不存在或不可读' }); return; }
         sendJson(res, 200, { fileName: out.file_name, content: out.content, learnedAt: out.learned_at || 0 });
 
+      } else if (method === 'PUT' && /\/api\/library\/files\/[^/]+\/content$/.test(pathname)) {
+        const fileId = pathname.split('/api/library/files/')[1].split('/')[0];
+        const content = String((body as Record<string, unknown>).content ?? '');
+        const out = new UpdateFileContentOutput();
+        await ctx.selfLearningAccess.updateFileContent(
+          Object.assign(new UpdateFileContentInput(), { file_id: fileId, content }),
+          out,
+          new SelfLearningContext(),
+        );
+        sendJson(res, 200, { fileName: out.file_name, content: out.content, size: out.size });
+
+      } else if (method === 'DELETE' && /^\/api\/library\/files\/[^/]+$/.test(pathname)) {
+        const fileId = pathname.split('/api/library/files/')[1].split('/')[0];
+        const out = new DeleteFileOutput();
+        await ctx.selfLearningAccess.deleteFile(
+          Object.assign(new DeleteFileInput(), { file_id: fileId }),
+          out,
+          new SelfLearningContext(),
+        );
+        sendJson(res, 200, { success: true, deletedAnnotations: out.deleted_annotations });
+
       } else if (method === 'POST' && pathname === '/api/library/query') {
         const b = (body as Record<string, unknown>);
         const out = new QueryDocumentOutput();
@@ -4850,6 +4975,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             context_before: b.context_before ? String(b.context_before) : undefined,
             context_after: b.context_after ? String(b.context_after) : undefined,
             question: b.question ? String(b.question) : undefined,
+            document_title: b.document_title ? String(b.document_title) : undefined,
           }),
           out,
           new SelfLearningContext(),

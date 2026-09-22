@@ -40,8 +40,10 @@
 | `soInfoContextConfig` | `input: SoInfoContextConfigInput, output: SoInfoContextConfigOutput, context: InfoCoreCo...` | `Promise<boolean>` | 获取上下文构建配置 |
 | `updateInfoContextConfig` | `input: UpdateInfoContextConfigInput, output: UpdateInfoContextConfigOutput, context: In...` | `Promise<boolean>` | 更新上下文构建配置 |
 | `delInfo` | `input: DelInfoInput, output: DelInfoOutput, context: InfoCoreContext, metrics?: Metrics...` | `Promise<boolean>` | 清理过期信息（级联） |
+| `backfillMissingSummaries` | `input: BackfillMissingSummariesInput, output: BackfillMissingSummariesOutput, context: ...` | `Promise<boolean>` | 补生成缺失摘要（幂等；LLM 间歇失败导致的摘要丢失补偿） |
 | `updateInfo` | `input: UpdateInfoInput, output: UpdateInfoOutput, context: InfoCoreContext, metrics?: M...` | `Promise<boolean>` | 改写指定 work 下某 info_type 的 info 内容（如需求确认 APPROVE 替换 REQUEST）。 |
 | `delInfoByWork` | `input: DelInfoByWorkInput, output: DelInfoByWorkOutput, context: InfoCoreContext, metri...` | `Promise<boolean>` | 删除指定 work 落库的全部信息及派生数据（如需求确认 CANCEL 丢弃本次提问）。 |
+| `delInfoBySession` | `input: DelInfoBySessionInput, output: DelInfoBySessionOutput, context: InfoCoreContext,...` | `Promise<boolean>` | ===== 新增（2026-09-15 记忆集中）：删除指定 session 的全部记忆信息与派生数据（快照/摘要/标签/关键词/向量），级联 GraphDB ===== |
 | `existVectorInfo` | `input: ExistInfoInput, output: ExistInfoOutput, context: InfoCoreContext, metrics?: Met...` | `Promise<boolean>` | 检查 info_vector 是否存在 |
 | `existTagInfo` | `input: ExistInfoInput, output: ExistInfoOutput, context: InfoCoreContext, metrics?: Met...` | `Promise<boolean>` | 检查 info_tag 是否存在 |
 | `existSummaryInfo` | `input: ExistInfoInput, output: ExistInfoOutput, context: InfoCoreContext, metrics?: Met...` | `Promise<boolean>` | 检查 info_summary 是否存在 |

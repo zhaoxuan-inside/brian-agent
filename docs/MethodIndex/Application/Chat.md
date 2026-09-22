@@ -10,6 +10,7 @@
 |------|------|------|------|
 | `createSession` | `i: CreateSessionInput, o: CreateSessionOutput, c: ChatContext, metrics?: Metrics, repor...` | `Promise<boolean>` | — |
 | `deleteSession` | `i: DeleteSessionInput, o: DeleteSessionOutput, c: ChatContext, metrics?: Metrics, repor...` | `Promise<boolean>` | — |
+| `purgeOrphanSessions` | `i: PurgeOrphanSessionsInput, o: PurgeOrphanSessionsOutput, c: ChatContext, metrics?: Me...` | `Promise<boolean>` | — |
 | `soSession` | `i: SearchSessionInput, o: SearchSessionOutput, c: ChatContext, metrics?: Metrics, repor...` | `Promise<boolean>` | — |
 | `soSessionDetail` | `i: GetSessionDetailInput, o: GetSessionDetailOutput, c: ChatContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `updateSessionTitle` | `i: UpdateSessionTitleInput, o: UpdateSessionTitleOutput, c: ChatContext, metrics?: Metr...` | `Promise<boolean>` | — |

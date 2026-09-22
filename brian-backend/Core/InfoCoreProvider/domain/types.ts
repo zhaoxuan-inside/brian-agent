@@ -227,6 +227,18 @@ export class KeywordInfoOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
+// backfillMissingSummaries (summary compensation)
+// ---------------------------------------------------------------------------
+
+/** backfillMissingSummaries 入参 */
+export class BackfillMissingSummariesInput extends Input {}
+
+/** backfillMissingSummaries 出参：本次实际补生成摘要的条数 */
+export class BackfillMissingSummariesOutput extends Output {
+  backfilled_count = 0;
+}
+
+// ---------------------------------------------------------------------------
 // graphTag
 // ---------------------------------------------------------------------------
 
@@ -253,6 +265,8 @@ export class RebuildCooccurGraphOutput extends Output {
   deleted_edges = 0;
   /** 重建的共现边数 */
   rebuilt_edges = 0;
+  /** 重建前清理的非正确信息 / 已删除信息派生的标签行数（2026-09-21 涌现图错误信息隔离） */
+  purged_rows = 0;
 }
 
 // ---------------------------------------------------------------------------

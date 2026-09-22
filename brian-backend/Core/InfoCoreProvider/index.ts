@@ -79,6 +79,8 @@ export {
   DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
+  BackfillMissingSummariesInput,
+  BackfillMissingSummariesOutput,
   INFO_RAW_TABLE,
   INFO_CONTEXT_SOURCE_TABLE,
   INFO_VECTOR_TABLE,

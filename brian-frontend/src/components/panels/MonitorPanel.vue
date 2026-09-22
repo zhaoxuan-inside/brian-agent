@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
-import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2, MessageSquare, X, Loader2 } from '@lucide/vue'
+import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2, MessageSquare, X, Loader2, CircleCheck, UserX, SkipForward, Tag } from '@lucide/vue'
 import { monitorApi, feedbackApi } from '@/api'
-import type { SystemHealth, FeedbackProcessLogRecord, FeedbackProcessLogDetail } from '@/api/types'
+import type { SystemHealth, FeedbackProcessLogListItem, FeedbackProcessLogDetail } from '@/api/types'
 import { copyToClipboard } from '@/utils/clipboard'
 
 const health = ref<SystemHealth>({ status: 'healthy', components: [], uptime: 0 })
@@ -36,16 +36,36 @@ const LOG_SOURCE_OPTIONS = [
   { value: 'MANUAL', label: 'MANUAL' },
 ]
 
-const fbRecords = ref<FeedbackProcessLogRecord[]>([])
+const fbRecords = ref<FeedbackProcessLogListItem[]>([])
 const fbLoading = ref(false)
+const fbLoaded = ref(false)
+const fbRefreshing = ref(false)
+const fbTotal = ref(0)
 const fbDetailOpen = ref(false)
 const fbDetail = ref<FeedbackProcessLogDetail | null>(null)
 const fbDetailLoading = ref(false)
 
-async function fetchFeedbackRecords() {
-  fbLoading.value = true
-  try { fbRecords.value = (await feedbackApi.records(50)).logs } catch { fbRecords.value = [] }
-  fbLoading.value = false
+// ===== 原始方法（保留作为参考）=====
+// async function fetchFeedbackRecords() {
+//   fbLoading.value = true
+//   try { fbRecords.value = (await feedbackApi.records(50)).logs } catch { fbRecords.value = [] }
+//   fbLoading.value = false
+// }
+
+// ===== 修改后的方法：仅首次加载展示阻塞式"加载中"；10s 轮询与手动刷新静默更新，
+// 避免表格每 10 秒被"加载中..."整体替换而闪烁；轮询失败时保留旧数据而非清空误显"暂无" =====
+async function fetchFeedbackRecords(manual = false) {
+  const initial = !fbLoaded.value
+  if (initial) fbLoading.value = true
+  else if (manual) fbRefreshing.value = true
+  try {
+    const res = await feedbackApi.records(50)
+    fbRecords.value = res.logs
+    fbTotal.value = res.total ?? res.logs.length
+    fbLoaded.value = true
+  } catch { if (initial) fbRecords.value = [] }
+  if (initial) fbLoading.value = false
+  fbRefreshing.value = false
 }
 
 async function openFeedbackDetail(processId: string) {
@@ -61,6 +81,18 @@ function closeFeedbackDetail() {
   fbDetail.value = null
 }
 
+const copiedDetailId = ref(false)
+
+async function copyDetailProcessId() {
+  const pid = fbDetail.value?.log?.process_id
+  if (!pid) return
+  const ok = await copyToClipboard(pid)
+  if (ok) {
+    copiedDetailId.value = true
+    setTimeout(() => { copiedDetailId.value = false }, 1500)
+  }
+}
+
 const actionLabels: Record<string, string> = {
   submitted: '已提交',
   disbanded: '已解散',
@@ -71,6 +103,44 @@ const actionColors: Record<string, string> = {
   submitted: 'text-brian-blue bg-brian-blue/10',
   disbanded: 'text-error-red bg-error-red/10',
   skipped: 'text-apple-gray-400 bg-apple-gray-100 dark:bg-apple-gray-800',
+}
+
+const actionIcons: Record<string, unknown> = {
+  submitted: CircleCheck,
+  disbanded: UserX,
+  skipped: SkipForward,
+}
+
+const sourceLabels: Record<string, string> = {
+  user: '用户反馈',
+  agent: 'Agent 评估',
+}
+
+// 评分 0-100 → 人话标签：≥70 好评 / ≤40（且 >0）差评 / 其余中评 / 0 未评分
+// 阈值与后端 FeedbackService 的 RATING_POSITIVE_THRESHOLD / RATING_NEGATIVE_THRESHOLD 保持一致
+function ratingBadge(rating: number): { label: string; cls: string } {
+  if (!rating || rating <= 0) return { label: '未评分', cls: 'text-apple-gray-400 bg-apple-gray-100 dark:bg-apple-gray-800' }
+  if (rating >= 70) return { label: `好评 ${rating}`, cls: 'text-success-green bg-success-green/10' }
+  if (rating <= 40) return { label: `差评 ${rating}`, cls: 'text-error-red bg-error-red/10' }
+  return { label: `中评 ${rating}`, cls: 'text-warning-orange bg-warning-orange/10' }
+}
+
+// 列表主文案：优先用户提问，其次用户评论，再次分类——不再以 ID 为主体
+function feedbackSummary(r: FeedbackProcessLogListItem): string {
+  if (r.user_question) return r.user_question
+  if (r.comment) return r.comment
+  if (r.category) return `反馈分类：${r.category}`
+  return '暂无提问内容，点击查看详情'
+}
+
+// 相对时间：比绝对时间戳更符合人的阅读习惯（悬浮仍有完整时间）
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`
+  return new Date(ts).toLocaleDateString('zh-CN')
 }
 
 function buildLogQuery() {
@@ -403,10 +473,10 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
             <p class="text-xs font-medium truncate">{{ comp.name }}</p>
             <span class="w-2 h-2 rounded-full flex-shrink-0" :class="statusIcon(comp.status)" />
           </div>
-          <div class="flex-1 space-y-1">
-            <div v-for="(val, key) in comp.details" :key="key" class="flex items-center justify-between gap-1 text-[11px]">
-              <span class="text-apple-gray-400">{{ key }}</span>
-              <span class="text-apple-gray-700 dark:text-apple-gray-200 font-medium">{{ val }}</span>
+          <div class="flex-1 space-y-1 min-w-0">
+            <div v-for="(val, key) in comp.details" :key="key" class="flex items-center justify-between gap-1 text-[11px] min-w-0">
+              <span class="text-apple-gray-400 truncate" :title="String(key)">{{ key }}</span>
+              <span class="text-apple-gray-700 dark:text-apple-gray-200 font-medium truncate" :title="String(val)">{{ val }}</span>
             </div>
           </div>
           <p class="mt-2 pt-1.5 text-[10px] text-apple-gray-400 border-t border-apple-gray-100 dark:border-apple-gray-700/60 truncate">{{ comp.message }}</p>
@@ -529,7 +599,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
         <h3 class="text-sm font-semibold flex items-center gap-2">
           <Eye :size="16" class="text-brian-blue" /> 最近日志
         </h3>
-        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" @click="fetchAll(true)">
+        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" title="刷新" @click="fetchAll(true)">
           <RefreshCw :size="14" />
         </button>
       </div>
@@ -581,8 +651,8 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
 
       <div v-if="logs.length === 0" class="text-center py-6 text-apple-gray-400 text-sm">暂无日志</div>
-      <div v-else class="max-h-80 overflow-y-auto rounded-lg border border-apple-gray-100 dark:border-apple-gray-700">
-        <table class="w-full table-fixed text-xs font-mono">
+      <div v-else class="max-h-80 overflow-auto rounded-lg border border-apple-gray-100 dark:border-apple-gray-700">
+        <table class="w-full table-fixed text-xs font-mono min-w-[760px]">
           <colgroup>
             <col class="w-8" />
             <col class="w-24" />
@@ -610,7 +680,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
               <td class="py-1.5 px-2">
                 <input type="checkbox" class="rounded" :checked="selectedLogs.has(entry.id)" @change="toggleLogSelect(entry.id)" />
               </td>
-              <td class="py-1.5 px-2 text-apple-gray-400 whitespace-nowrap">{{ new Date(entry.timestamp).toLocaleTimeString('zh-CN') }}</td>
+              <td class="py-1.5 px-2 text-apple-gray-400 truncate" :title="new Date(entry.timestamp).toLocaleString('zh-CN')">{{ new Date(entry.timestamp).toLocaleTimeString('zh-CN') }}</td>
               <td class="py-1.5 px-2"><span class="px-1 rounded font-medium" :class="logLevelColors[entry.level] || ''">{{ entry.level }}</span></td>
               <td class="py-1.5 px-2 text-apple-gray-500 truncate" :title="entry.source">{{ entry.source }}</td>
               <td class="py-1.5 px-2 text-brian-blue/70 truncate" :title="entry.trace_id ? `traceId: ${entry.trace_id}` : ''">{{ entry.trace_id ? entry.trace_id.slice(0, 8) : '' }}</td>
@@ -630,51 +700,44 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
     </div>
 
-    <!-- 反馈处理记录 -->
+    <!-- 反馈处理记录：卡片流——人话优先（评分/动作/提问摘要/相对时间），ID 仅作辅助 -->
     <div class="block-card rounded-2xl p-6">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold flex items-center gap-2">
           <MessageSquare :size="16" class="text-warning-orange" /> 反馈处理记录
+          <span v-if="fbTotal > 0" class="text-[11px] font-normal text-apple-gray-400">共 {{ fbTotal }} 条</span>
         </h3>
-        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" @click="fetchFeedbackRecords">
-          <RefreshCw :size="14" />
+        <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" title="刷新" @click="fetchFeedbackRecords(true)">
+          <RefreshCw :size="14" :class="{ 'animate-spin': fbLoading || fbRefreshing }" />
         </button>
       </div>
       <div v-if="fbLoading" class="text-center py-4 text-apple-gray-400 text-sm">加载中...</div>
       <div v-else-if="fbRecords.length === 0" class="text-center py-6 text-apple-gray-400 text-sm">暂无反馈处理记录</div>
-      <div v-else class="max-h-80 overflow-y-auto rounded-lg border border-apple-gray-100 dark:border-apple-gray-700">
-        <table class="w-full table-fixed text-xs">
-          <colgroup>
-            <col class="w-24" /><col class="w-36" /><col class="w-14" /><col class="w-14" /><col class="w-20" /><col />
-          </colgroup>
-          <thead class="sticky top-0 bg-apple-gray-50 dark:bg-apple-gray-800 z-10">
-            <tr class="text-left text-apple-gray-400 border-b border-apple-gray-100 dark:border-apple-gray-700">
-              <th class="py-2 px-2 font-medium">时间</th>
-              <th class="py-2 px-2 font-medium">Process ID</th>
-              <th class="py-2 px-2 font-medium">评分</th>
-              <th class="py-2 px-2 font-medium">动作</th>
-              <th class="py-2 px-2 font-medium">Agent ID</th>
-              <th class="py-2 px-2 font-medium">Run ID</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-apple-gray-50 dark:divide-apple-gray-800/50">
-            <tr v-for="r in fbRecords" :key="r.id" class="hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50">
-              <td class="py-1.5 px-2 text-apple-gray-400 whitespace-nowrap">{{ new Date(r.created).toLocaleString('zh-CN') }}</td>
-              <td class="py-1.5 px-2">
-                <button
-                  class="text-brian-blue hover:underline font-mono text-[11px]"
-                  @click="openFeedbackDetail(r.process_id)"
-                >{{ r.process_id.slice(0, 12) }}...</button>
-              </td>
-              <td class="py-1.5 px-2">{{ r.rating }}</td>
-              <td class="py-1.5 px-2">
-                <span class="px-1 rounded text-[10px] font-medium" :class="actionColors[r.action] || ''">{{ actionLabels[r.action] || r.action }}</span>
-              </td>
-              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.agent_id">{{ r.agent_id ? r.agent_id.slice(0, 12) + '...' : '-' }}</td>
-              <td class="py-1.5 px-2 text-apple-gray-500 truncate font-mono text-[11px]" :title="r.run_id">{{ r.run_id ? r.run_id.slice(0, 12) + '...' : '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-else class="max-h-96 overflow-y-auto space-y-2 pr-1">
+        <button
+          v-for="r in fbRecords"
+          :key="r.id"
+          class="w-full text-left p-3 rounded-xl border border-apple-gray-100 dark:border-apple-gray-700 hover:border-brian-blue/40 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors"
+          @click="openFeedbackDetail(r.process_id)"
+        >
+          <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+            <span class="px-1.5 py-0.5 rounded-md text-[11px] font-semibold shrink-0" :class="ratingBadge(r.rating).cls">{{ ratingBadge(r.rating).label }}</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1 shrink-0" :class="actionColors[r.action] || ''">
+              <component :is="actionIcons[r.action]" :size="11" />
+              {{ actionLabels[r.action] || r.action }}
+            </span>
+            <span
+              v-if="r.source"
+              class="px-1.5 py-0.5 rounded-full text-[10px] text-apple-gray-500 bg-apple-gray-100 dark:bg-apple-gray-800 shrink-0"
+            >{{ sourceLabels[r.source] || r.source }}</span>
+            <span class="ml-auto text-[11px] text-apple-gray-400 shrink-0" :title="new Date(r.created).toLocaleString('zh-CN')">{{ formatRelativeTime(r.created) }}</span>
+          </div>
+          <p class="text-sm text-apple-gray-700 dark:text-apple-gray-200 line-clamp-2 break-words">{{ feedbackSummary(r) }}</p>
+          <div v-if="r.category || r.agent_id" class="flex items-center gap-3 mt-1.5 text-[11px] text-apple-gray-400 min-w-0">
+            <span v-if="r.category" class="flex items-center gap-0.5 shrink-0"><Tag :size="10" /> {{ r.category }}</span>
+            <span v-if="r.agent_id" class="font-mono truncate min-w-0" :title="r.agent_id">{{ r.agent_id }}</span>
+          </div>
+        </button>
       </div>
     </div>
 
@@ -697,13 +760,26 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
               <Loader2 :size="20" class="animate-spin text-brian-blue" />
             </div>
             <template v-else-if="fbDetail">
-              <div class="grid grid-cols-2 gap-3 text-sm">
-                <div><span class="text-apple-gray-400">Process ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.process_id }}</span></div>
-                <div><span class="text-apple-gray-400">反馈 ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.feedback_id?.slice(0, 16) }}...</span></div>
-                <div><span class="text-apple-gray-400">动作:</span> <span class="px-1 rounded text-xs font-medium" :class="actionColors[fbDetail.log?.action || '']">{{ actionLabels[fbDetail.log?.action || ''] }}</span></div>
-                <div><span class="text-apple-gray-400">评分:</span> {{ fbDetail.log?.rating }}</div>
-                <div><span class="text-apple-gray-400">Run ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.run_id || '-' }}</span></div>
-                <div><span class="text-apple-gray-400">Agent ID:</span> <span class="font-mono text-xs">{{ fbDetail.log?.agent_id || '-' }}</span></div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div class="min-w-0 sm:col-span-2 flex items-center gap-1 flex-wrap">
+                  <span class="text-apple-gray-400 shrink-0">Process ID:</span>
+                  <span class="font-mono text-xs break-all">{{ fbDetail.log?.process_id }}</span>
+                  <button class="p-0.5 rounded text-apple-gray-400 hover:text-brian-blue shrink-0" title="复制 Process ID" @click="copyDetailProcessId">
+                    <Check v-if="copiedDetailId" :size="12" class="text-success-green" />
+                    <Copy v-else :size="12" />
+                  </button>
+                </div>
+                <div><span class="text-apple-gray-400">动作:</span> <span class="px-1.5 py-0.5 rounded-full text-xs font-medium" :class="actionColors[fbDetail.log?.action || ''] || ''">{{ actionLabels[fbDetail.log?.action || ''] || fbDetail.log?.action || '-' }}</span></div>
+                <div class="flex items-center gap-1"><span class="text-apple-gray-400">评分:</span> <span class="px-1.5 py-0.5 rounded-md text-xs font-semibold" :class="ratingBadge(fbDetail.log?.rating ?? 0).cls">{{ ratingBadge(fbDetail.log?.rating ?? 0).label }}</span></div>
+                <div><span class="text-apple-gray-400">来源:</span> {{ fbDetail.feedback?.source ? (sourceLabels[fbDetail.feedback.source] || fbDetail.feedback.source) : '-' }}</div>
+                <div class="min-w-0"><span class="text-apple-gray-400">分类:</span> {{ fbDetail.feedback?.category || '-' }}</div>
+                <div class="min-w-0 sm:col-span-2"><span class="text-apple-gray-400">反馈 ID:</span> <span class="font-mono text-xs break-all">{{ fbDetail.log?.feedback_id }}</span></div>
+                <div class="min-w-0 sm:col-span-2"><span class="text-apple-gray-400">Run ID:</span> <span class="font-mono text-xs break-all">{{ fbDetail.log?.run_id || '-' }}</span></div>
+                <div class="min-w-0 sm:col-span-2"><span class="text-apple-gray-400">Agent ID:</span> <span class="font-mono text-xs break-all">{{ fbDetail.log?.agent_id || '-' }}</span></div>
+              </div>
+              <div v-if="fbDetail.feedback?.comment" class="border-t border-apple-gray-100 dark:border-apple-gray-700 pt-3">
+                <h4 class="text-xs font-medium text-apple-gray-400 mb-1">用户评论</h4>
+                <div class="p-3 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 text-sm whitespace-pre-wrap">{{ fbDetail.feedback.comment }}</div>
               </div>
               <div v-if="fbDetail.user_question" class="border-t border-apple-gray-100 dark:border-apple-gray-700 pt-3">
                 <h4 class="text-xs font-medium text-apple-gray-400 mb-1">用户提问</h4>

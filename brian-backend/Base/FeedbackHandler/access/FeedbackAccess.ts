@@ -13,6 +13,8 @@ import {
   RecordProcessLogInput, RecordProcessLogOutput,
   QueryProcessLogsInput, QueryProcessLogsOutput,
   GetProcessLogDetailInput, GetProcessLogDetailOutput,
+  DeleteFeedbackByRefsInput, DeleteFeedbackByRefsOutput,
+  PurgeOrphanFeedbackInput, PurgeOrphanFeedbackOutput,
   GetFeedbackConfigInput, GetFeedbackConfigOutput,
   UpdateFeedbackConfigInput, UpdateFeedbackConfigOutput,
 } from '../domain/types';
@@ -87,6 +89,22 @@ export class FeedbackAccess {
   ): Promise<boolean> {
     await this.initPromise;
     return this.service.getProcessLogDetail(i, o, c, metrics, report);
+  }
+
+  async deleteFeedbackByRefs(
+    i: DeleteFeedbackByRefsInput, o: DeleteFeedbackByRefsOutput, c: FeedbackContext,
+    metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.deleteFeedbackByRefs(i, o, c, metrics, report);
+  }
+
+  async purgeOrphanFeedback(
+    i: PurgeOrphanFeedbackInput, o: PurgeOrphanFeedbackOutput, c: FeedbackContext,
+    metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    await this.initPromise;
+    return this.service.purgeOrphanFeedback(i, o, c, metrics, report);
   }
 
   async getFeedbackConfig(

@@ -34,6 +34,18 @@ export class DeleteSessionOutput extends Output {
   deleted_count = 0;
 }
 
+export class PurgeOrphanSessionsInput extends Input {
+  /** 仅扫描统计不执行删除（用于观测 / 联调） */
+  dry_run?: boolean;
+}
+
+export class PurgeOrphanSessionsOutput extends Output {
+  /** 被清理（或 dry_run 下被识别）的孤儿会话数量 */
+  purged_count = 0;
+  /** 被清理（或 dry_run 下被识别）的孤儿会话 ID 列表 */
+  purged_session_ids: string[] = [];
+}
+
 export class SearchSessionInput extends Input {
   keyword?: string;
   start_time?: number;

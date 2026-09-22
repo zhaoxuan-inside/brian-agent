@@ -38,6 +38,8 @@
 
 ## 3. 实现文件
 
+> **阶段说明（2026-09-22）**：V2 对话链路的 Writer 输出协议已从 JSON content blocks **回退为 Markdown 直出**（writer_protocol 模板 output_contract + `execWrite` response 直通，详见 CHANGELOG 2026-09-22 条目）。原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证）、转义膨胀加重截断、下游 join 压平丢弃排版。`parseBlocks()` 与 `WriteOutput.blocks` 接口保留（Markdown 原文回退为单一 text_paragraph 全文块），本 PRD 的 Block 原生事件流（`block_id`/`block_type`/`block_action` SSE 事件）仍为后续演进方向，届时以独立协议接入而非复用 present JSON 约定。
+
 | 文件 | 改动 | 说明 |
 |------|------|------|
 | `brian-backend/Agent/WriterAgent/domain/types.ts` | 新增 `Block`, `BlockMeta` 类型；`WriteOutput` 增加 `blocks` 字段 | PRD WriterAgent 类型定义 |

@@ -107,6 +107,16 @@
 | TC-CHAT-055 | 删除会话级联清理 | 会话有消息和引用关系 | chat_session、info_raw 及 GraphDB 中相关 info 节点与引用边均删除 |
 | TC-CHAT-056 | 删除会话事务回滚 | 删除过程中 DB 异常 | 事务回滚，会话和消息不被部分删除 |
 
+### 3.2.1 清理孤儿会话记忆 — purgeOrphanSessions
+
+**端点**：无（服务启动 / 每日午夜维护任务内部调用）
+
+| 编号 | 测试场景 | 前置条件 | 预期结果 |
+|------|---------|---------|---------|
+| TC-CHAT-057 | 清理孤儿会话记忆 | info_raw 存在 session_id 不在 chat_session 的记录，同时存在存活会话记忆 | purged_count=1，孤儿记录被删除，存活会话记录保留 |
+| TC-CHAT-058 | dry_run 仅统计不删除 | info_raw 存在孤儿记录，dry_run=true | purged_count 为孤儿数，孤儿记录仍保留 |
+| TC-CHAT-059 | 无孤儿 | 所有 info_raw.session_id 均在 chat_session 中 | purged_count=0，purged_session_ids=[]，不执行删除 |
+
 ### 3.3 搜索会话 — searchSession
 
 **端点**：`GET /api/chat/session`

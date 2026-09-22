@@ -172,7 +172,7 @@
 -   **核心操作**：
     -   搜索：调用 `searchSession(keyword)`，支持模糊匹配（匹配会话名称 `sessionTitle` 与消息内容）。
     -   新建：调用 `createSession()`，成功后自动切换并关闭面板。
-    -   删除：单条删除或批量勾选删除，需二次确认。
+    -   删除：单条删除或批量勾选删除，均需二次确认（确认弹窗提示将同时清理关联的记忆、标签、向量与用户画像数据）。单条调用 `chatApi.deleteSession`（`DELETE /api/chat/session/:sessionId`）；批量勾选后一次调用 `chatApi.deleteSessions`（`DELETE /api/chat/session`，请求体 `{ session_ids: string[] }`），由后端统一级联清理关联数据，成功后清空选中项并移除列表条目；失败时保留列表与选中项以便重试。
     -   重命名：会话条目提供编辑按钮（Edit3 图标），点击进入内联编辑，回车或点击确认（Check）调用 `chatApi.updateTitle`（`PUT /api/chat/session/:sessionId/title`）保存，X 取消。名称优先展示 `sessionTitle`，为空回退 `lastMessage` 或「新会话」。
 -   **溢出保护**：切换会话前调用 `checkSessionOverflow()`，超限则 Toast 提示并阻断操作。
 -   **会话切换清理**：切换会话时，清空当前 Block 列表并重新初始化流解析器，避免跨会话 Block 状态污染。

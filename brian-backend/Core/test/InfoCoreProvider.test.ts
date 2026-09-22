@@ -13,6 +13,10 @@ import {
   IdGenerator,
   CollectionSource,
   HandleResultType,
+  SelectGraphInput,
+  SelectGraphOutput,
+  GraphTarget,
+  GraphContext,
 } from '@brian-agent/base';
 import {
   InfoCoreAccess,
@@ -66,6 +70,10 @@ import {
   DelInfoOutput,
   ExistInfoInput,
   ExistInfoOutput,
+  BackfillMissingSummariesInput,
+  BackfillMissingSummariesOutput,
+  RebuildCooccurGraphInput,
+  RebuildCooccurGraphOutput,
 } from '../InfoCoreProvider';
 import { ValidationError, NotFoundError } from '../shared/errors';
 
@@ -108,6 +116,7 @@ describe('InfoCoreProvider', () => {
     input.info_creator_id = overrides?.info_creator_id ?? 'user-1';
     input.info_creator_role = overrides?.info_creator_role ?? 'user';
     input.info = overrides?.info ?? '这是一条测试信息 This is a test information message for testing purposes';
+    input.info_type = overrides?.info_type;
     input.parent_info_ids = overrides?.parent_info_ids;
     input.summary = overrides?.summary;
     input.handle_result_type = overrides?.handle_result_type;
@@ -359,6 +368,93 @@ describe('InfoCoreProvider', () => {
     });
   });
 
+  describe('backfillMissingSummaries', () => {
+    /** 构造 stub LLM 接入层：记录 execLLM 调用并返回固定摘要（仅注入 backfill 用例） */
+    function makeStubLLMAccess(result: string | null, calls: Array<{ id: string }>): LLMAccess {
+      return {
+        execLLM: async (input: { id: string }, output: { result?: string }) => {
+          calls.push({ id: String(input.id) });
+          if (result === null) throw new Error('CONNECT_ERROR(stub)');
+          output.result = result;
+          return true;
+        },
+      } as unknown as LLMAccess;
+    }
+
+    it('仅对超阈值、无摘要的正常信息补生成摘要（短文本/错误/已老化清空的不补）', async () => {
+      // 先关闭摘要生成，避免 saveInfo 异步自学习链路与本用例竞争写 info_summary
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+
+      const longOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ info: '长'.repeat(150) }), longOut, new InfoCoreContext());
+      const shortOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ info: '短内容' }), shortOut, new InfoCoreContext());
+      const errOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ info: '执行失败：参数非法', handle_result_type: HandleResultType.CALL_ERROR }), errOut, new InfoCoreContext());
+
+      // 模拟老化清空：长文本 info 置空（无摘要行的历史残留形态之一）
+      await relationDb.executeRaw('UPDATE "info_raw" SET "info" = \'\' WHERE "info_id" = ?', [longOut.info_id]);
+
+      // 开启摘要生成并注入 stub 模型
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\'', []);
+      const calls: Array<{ id: string }> = [];
+      const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess('这是补生成的摘要', calls), promptsAccess, vectorDb, graphDb);
+
+      const output = new BackfillMissingSummariesOutput();
+      await stubCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), output, new InfoCoreContext());
+
+      expect(output.backfilled_count).toBe(0);
+      expect(calls.length).toBe(0);
+    });
+
+    it('对缺失摘要的长文本信息补生成，且重复执行幂等', async () => {
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+
+      const longOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ info: '这是一段需要生成摘要的长文本内容。'.repeat(10), info_type: 'RESPONSE' }), longOut, new InfoCoreContext());
+
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
+      const calls: Array<{ id: string }> = [];
+      const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess('这是补生成的摘要', calls), promptsAccess, vectorDb, graphDb);
+
+      const output = new BackfillMissingSummariesOutput();
+      await stubCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), output, new InfoCoreContext());
+      expect(output.backfilled_count).toBe(1);
+      expect(calls.length).toBe(1);
+      expect(calls[0].id).toBe('llm-stub-1');
+
+      const rows = await relationDb.select('info_summary', {
+        conditions: [{ field: 'info_id', operator: Operator.EQ, value: longOut.info_id }],
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].summary).toBe('这是补生成的摘要');
+
+      // 幂等：再次执行不产生新摘要、不再调用 LLM
+      const second = new BackfillMissingSummariesOutput();
+      await stubCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), second, new InfoCoreContext());
+      expect(second.backfilled_count).toBe(0);
+      expect(calls.length).toBe(1);
+    });
+
+    it('LLM 失败时降级返回 0 且重试一次，不阻塞流程', async () => {
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+
+      const longOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ info: '另一段需要生成摘要的长文本内容。'.repeat(10), info_type: 'RESPONSE' }), longOut, new InfoCoreContext());
+
+      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
+      const calls: Array<{ id: string }> = [];
+      const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess(null, calls), promptsAccess, vectorDb, graphDb);
+
+      const output = new BackfillMissingSummariesOutput();
+      await expect(
+        stubCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), output, new InfoCoreContext()),
+      ).resolves.toBe(true);
+      expect(output.backfilled_count).toBe(0);
+      expect(calls.length).toBe(2);
+    });
+  });
+
   describe('keywordInfo', () => {
     it('should throw ValidationError when info_id is empty', async () => {
       const input = new ProcessInfoInput();
@@ -457,6 +553,59 @@ describe('InfoCoreProvider', () => {
       const node = gOut.graph.nodes.find((n) => n.info_id === saveOut.info_id);
       expect(node).toBeTruthy();
       expect(node?.handle_result_type).toBe(HandleResultType.CALL_ERROR);
+    });
+
+    it('rebuildCooccurGraph 清理错误信息派生的标签，且不建入「涌现」图', async () => {
+      // 正常信息（handle_result_type=correct）与系统报错信息各落一条 info_raw
+      const okOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: 's-rebuild', info: '正常信息' }), okOut, new InfoCoreContext());
+      const errOut = new SaveInfoOutput();
+      await infoCore.saveInfo(
+        makeSaveInput({ session_id: 's-rebuild', info: '系统报错信息', handle_result_type: HandleResultType.INTERNAL_ERROR }),
+        errOut, new InfoCoreContext(),
+      );
+
+      // 模拟历史存量：绕过 tagInfo 的错误过滤，直接写入两条 info_tag（正确信息 / 报错信息各一条）
+      const now = IdGenerator.now();
+      await relationDb.insert('info_tag', [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'info_id', value: okOut.info_id },
+        { field: 'tag', value: '正常标签' },
+      ]);
+      await relationDb.insert('info_tag', [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'info_id', value: errOut.info_id },
+        { field: 'tag', value: '报错标签' },
+      ]);
+
+      const rebuildOut = new RebuildCooccurGraphOutput();
+      await infoCore.rebuildCooccurGraph(new RebuildCooccurGraphInput(), rebuildOut, new InfoCoreContext());
+      expect(rebuildOut.purged_rows).toBeGreaterThanOrEqual(1);
+
+      // 报错信息派生的标签行已被清理，正常标签保留
+      const errTagRows = await relationDb.select('info_tag', {
+        conditions: [{ field: 'info_id', operator: Operator.EQ, value: errOut.info_id }],
+      });
+      const okTagRows = await relationDb.select('info_tag', {
+        conditions: [{ field: 'info_id', operator: Operator.EQ, value: okOut.info_id }],
+      });
+      expect(errTagRows.length).toBe(0);
+      expect(okTagRows.length).toBe(1);
+
+      // GraphDB「涌现」图只包含正常信息的标签节点
+      const graphOut = new SelectGraphOutput();
+      await graphDb.selectGraph(
+        { target: GraphTarget.NODE, node_type: 'Tag' } as SelectGraphInput,
+        graphOut, new GraphContext(),
+      );
+      const tagNames = (graphOut.list as Array<{ content?: Record<string, unknown> }>)
+        .map((n) => String(n.content?.tag ?? ''));
+      expect(tagNames).toContain('正常标签');
+      expect(tagNames).not.toContain('报错标签');
     });
   });
 

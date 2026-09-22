@@ -8,6 +8,8 @@ export {
   RecordProcessLogInput, RecordProcessLogOutput,
   QueryProcessLogsInput, QueryProcessLogsOutput,
   GetProcessLogDetailInput, GetProcessLogDetailOutput,
+  DeleteFeedbackByRefsInput, DeleteFeedbackByRefsOutput,
+  PurgeOrphanFeedbackInput, PurgeOrphanFeedbackOutput,
   GetFeedbackConfigInput, GetFeedbackConfigOutput,
   UpdateFeedbackConfigInput, UpdateFeedbackConfigOutput,
   FEEDBACK_RECORD_TABLE,
@@ -19,5 +21,6 @@ export type {
   FeedbackRecord,
   ProcessAction,
   FeedbackProcessLogRecord,
+  FeedbackProcessLogListItem,
   FeedbackConfigRecord,
 } from './domain/types';

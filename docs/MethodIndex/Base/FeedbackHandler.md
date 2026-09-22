@@ -16,5 +16,7 @@
 | `recordProcessLog` | `i: RecordProcessLogInput, o: RecordProcessLogOutput, c: FeedbackContext, metrics?: Metr...` | `Promise<boolean>` | — |
 | `getProcessLogs` | `i: QueryProcessLogsInput, o: QueryProcessLogsOutput, c: FeedbackContext, metrics?: Metr...` | `Promise<boolean>` | — |
 | `getProcessLogDetail` | `i: GetProcessLogDetailInput, o: GetProcessLogDetailOutput, c: FeedbackContext, metrics?...` | `Promise<boolean>` | — |
+| `deleteFeedbackByRefs` | `i: DeleteFeedbackByRefsInput, o: DeleteFeedbackByRefsOutput, c: FeedbackContext, metric...` | `Promise<boolean>` | — |
+| `purgeOrphanFeedback` | `i: PurgeOrphanFeedbackInput, o: PurgeOrphanFeedbackOutput, c: FeedbackContext, metrics?...` | `Promise<boolean>` | — |
 | `getFeedbackConfig` | `i: GetFeedbackConfigInput, o: GetFeedbackConfigOutput, c: FeedbackContext, metrics?: Me...` | `Promise<boolean>` | — |
 | `updateFeedbackConfig` | `i: UpdateFeedbackConfigInput, o: UpdateFeedbackConfigOutput, c: FeedbackContext, metric...` | `Promise<boolean>` | — |

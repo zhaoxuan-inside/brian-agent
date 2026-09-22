@@ -23,7 +23,7 @@ import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
 import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
@@ -55,6 +55,11 @@ const KEYWORD_COOCCUR_EDGE_TYPE = 'keywordCooccur';
 
 // 引用边类型：info 引用（citing）另一条 info（cited），用于图遍历与可视化
 const CITATION_EDGE_TYPE = 'CITATION';
+
+// 摘要 LLM 生成重试参数：本地模型服务间歇性 CONNECT_ERROR（llm_call_log 实测），
+// 单次失败即丢摘要；最多尝试 2 次、间隔 2s（短间隔，避免 setImmediate 异步链路被长挂起拖垮）
+const SUMMARY_LLM_MAX_ATTEMPTS = 2;
+const SUMMARY_LLM_RETRY_DELAY_MS = 2000;
 
 // 旧版 info 引用关系表名（迁移后 DROP）
 const LEGACY_INFO_GRAPH_TABLE = 'info_graph';
@@ -116,6 +121,9 @@ export class InfoCoreService {
     private readonly vectorDb: VectorDBAccess,
     private readonly graphDb: GraphDBAccess,
   ) {}
+
+  /** 摘要回填防重入标志（backfillMissingSummaries 专用） */
+  private backfillRunning = false;
 
   /**
    * 初始化：确保所有配置表有默认配置。
@@ -448,15 +456,29 @@ export class InfoCoreService {
       console.warn('[InfoCoreProvider] summaryInfo 未配置 llm_id，长文本摘要跳过（请在配置中设置摘要模型）');
       return '';
     }
+    // 重试来源：llm_call_log 实测本地模型服务间歇性 CONNECT_ERROR（如 2026-09-22 上午 45 次），
+    // 单次失败即丢摘要且无补偿；此处对同一内容最多尝试 SUMMARY_LLM_MAX_ATTEMPTS 次
+    for (let attempt = 1; attempt <= SUMMARY_LLM_MAX_ATTEMPTS; attempt++) {
+      const summary = await this.execSummaryLLM(info, summaryConfig.llm_id);
+      if (summary) return summary;
+      if (attempt < SUMMARY_LLM_MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, SUMMARY_LLM_RETRY_DELAY_MS));
+      }
+    }
+    return '';
+  }
+
+  /** 单次经 LLM 生成摘要（数据处理；失败返回空串并输出可见诊断） */
+  private async execSummaryLLM(info: string, llmId: string): Promise<string> {
     try {
       const execInput = new ExecLLMInput();
-      execInput.id = summaryConfig.llm_id;
+      execInput.id = llmId;
       execInput.prompt = `请将以下内容浓缩为一条简洁、准确、保留关键信息与结论的摘要（不超过 15% 原文长度，不要添加任何评论或前缀）：\n\n${info}`;
       const execOutput = new ExecLLMOutput();
       await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
       return String(execOutput.result ?? '').trim();
     } catch (err) {
-      console.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${summaryConfig.llm_id}）: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${llmId}）: ${err instanceof Error ? err.message : String(err)}`);
       return '';
     }
   }
@@ -547,8 +569,27 @@ export class InfoCoreService {
    * 该过程幂等，可与增量 buildCooccurEdges 配合使用（tagInfo 在保存时实时建边，
    * 本方法负责历史标签的一次性回填）。
    */
+  // ===== 原始方法（保留作为参考）=====
+  // async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   // 标签共现边
+  //   const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE);
+  //   // 关键词共现边
+  //   const kwResult = await this.rebuildCooccurForSource(INFO_KEYWORD_TABLE, 'word', 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE);
+  //   output.deleted_edges = tagResult.deleted + kwResult.deleted;
+  //   output.rebuilt_edges = tagResult.rebuilt + kwResult.rebuilt;
+  //   return true;
+  // }
+
+  // ===== 修改后的方法（2026-09-21 涌现图错误信息隔离）=====
+  // 「涌现」图节点来自 info_tag，原实现全量重建时未回溯 info_raw.handle_result_type，
+  // 使系统报错信息（call_error / internal_error）派生的标签、以及已删除信息遗留的
+  // 孤儿标签被重新建入 GraphDB。现重建前先清理非 correct 信息派生的标签行，重建时
+  // 再按 handle_result_type=correct 过滤（见 rebuildCooccurForSource）。
   async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
+    // 0. 清理非正确信息 / 已删除信息派生的标签行（存量治理，防止错误标签再次入图）
+    output.purged_rows = this.purgeNonCorrectTagRows();
     // 标签共现边
     const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE);
     // 关键词共现边
@@ -556,6 +597,29 @@ export class InfoCoreService {
     output.deleted_edges = tagResult.deleted + kwResult.deleted;
     output.rebuilt_edges = tagResult.rebuilt + kwResult.rebuilt;
     return true;
+  }
+
+  /**
+   * 清理「非正确信息」派生的标签行（数据处理）。
+   *
+   * 判定口径：info_tag.info_id 无法回溯到 info_raw 记录（信息已被删除的孤儿标签），
+   * 或对应信息 handle_result_type 非 correct（系统报错信息）时，该标签行不属于用户信息，
+   * 从 info_tag 中删除，避免被 rebuildCooccurGraph 重新建入「涌现」图。
+   *
+   * 幂等：仅删除匹配行，重复执行不影响正常标签；表不存在时静默跳过。
+   */
+  private purgeNonCorrectTagRows(): number {
+    try {
+      return this.relationDb.executeRaw(
+        `DELETE FROM "${INFO_TAG_TABLE}" WHERE "info_id" NOT IN (
+           SELECT "info_id" FROM "${INFO_RAW_TABLE}"
+           WHERE COALESCE("handle_result_type", 'correct') = 'correct'
+         )`,
+      );
+    } catch (err) {
+      console.warn(`[InfoCoreProvider] purgeNonCorrectTagRows 失败（已跳过）: ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    }
   }
 
   /** 从指定表全量重建某类文本的节点（含频次属性）与共现边（幂等：先删后建）。 */
@@ -581,9 +645,20 @@ export class InfoCoreService {
     }
 
     // 2. 读表：统计频次 + 按 info_id 分组
-    const rows = await this.relationDb.select(table, {
-      order_by: [{ field: 'info_id', direction: 'ASC' }],
-    });
+    // ===== 原始代码（保留作为参考）=====
+    // const rows = await this.relationDb.select(table, {
+    //   order_by: [{ field: 'info_id', direction: 'ASC' }],
+    // });
+    // ===== 修改后（2026-09-21 涌现图错误信息隔离）：INNER JOIN info_raw 且仅保留
+    // handle_result_type=correct 的信息派生的标签/关键词，系统报错信息（call_error /
+    // internal_error）与已删除信息（无 info_raw）产生的文本不再被建入图谱 =====
+    const rows = this.relationDb.queryRaw<Record<string, unknown>>(
+      `SELECT t."info_id" AS "info_id", t."${field}" AS "${field}"
+         FROM "${table}" t
+         INNER JOIN "${INFO_RAW_TABLE}" r ON r."info_id" = t."info_id"
+        WHERE COALESCE(r."handle_result_type", 'correct') = 'correct'
+        ORDER BY t."info_id" ASC`,
+    );
     const freqMap = new Map<string, number>();
     const byInfo = new Map<string, string[]>();
     for (const row of rows) {
@@ -1982,6 +2057,51 @@ const rawPriority = priorityOrderStr
 
     output.deleted_count = dbIds.length;
     return true;
+  }
+
+  /**
+   * 补生成缺失摘要（幂等）：长文本（超过 threshold）且无 info_summary 行的正常信息，
+   * 逐条复用 summaryInfo 补生成。用于 LLM 间歇性 CONNECT_ERROR 导致的摘要丢失补偿，
+   * 供服务启动时调用（与 delInfo 老化清理同模式）。
+   *
+   * 幂等：summaryInfo 内部已有 existingRow 检查，重复执行不产生副作用。
+   * 防重入：backfillRunning 标志避免启动/定时并发触发时的重复扫描与 LLM 调用。
+   */
+  async backfillMissingSummaries(_input: BackfillMissingSummariesInput, output: BackfillMissingSummariesOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    if (this.backfillRunning) {
+      output.backfilled_count = 0;
+      return true;
+    }
+    this.backfillRunning = true;
+    try {
+      const summaryConfig = await this.getInfoSummaryConfig();
+      if (!summaryConfig || summaryConfig.enable !== 1) {
+        output.backfilled_count = 0;
+        return true;
+      }
+      const threshold = summaryConfig.threshold ?? 100;
+      const candidates = this.relationDb.queryRaw<{ info_id: string }>(
+        `SELECT r."info_id" FROM "${INFO_RAW_TABLE}" r
+          LEFT JOIN "${INFO_SUMMARY_TABLE}" s ON s."info_id" = r."info_id"
+         WHERE s."info_id" IS NULL
+           AND length(r."info") > ?
+           AND COALESCE(r."handle_result_type", 'correct') = 'correct'`,
+        [threshold],
+      );
+      let backfilled = 0;
+      for (const row of candidates ?? []) {
+        const input = new ProcessInfoInput();
+        input.info_id = String(row.info_id ?? '');
+        const out = new SummaryInfoOutput();
+        await this.summaryInfo(input, out, new InfoCoreContext(), metrics, report);
+        if (out.summary_id) backfilled++;
+      }
+      output.backfilled_count = backfilled;
+      return true;
+    } finally {
+      this.backfillRunning = false;
+    }
   }
 
   /**
