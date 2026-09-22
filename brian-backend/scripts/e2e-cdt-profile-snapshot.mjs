@@ -43,8 +43,8 @@ await cfg.set('profile_snapshot_source', sourceProfile, 'STRING');
 const out1 = { endpoint: '', port: 0, pid: 0 };
 const ok1 = await cdt.startCDT({}, out1, ctx);
 assert(ok1, `startCDT#1 成功（endpoint=${out1.endpoint}）`);
-assert(existsSync(join(dataDir, 'cdt-profile', 'Network', 'Cookies')), 'Cookies 已复制进产品 profile');
-assert(existsSync(join(dataDir, 'cdt-profile', 'Local Storage', 'leveldb', '000003.log')), 'Local Storage 已复制');
+assert(existsSync(join(dataDir, 'cdt-profile', 'Default', 'Network', 'Cookies')), 'Cookies 已复制进产品 profile(Default/)');
+assert(existsSync(join(dataDir, 'cdt-profile', 'Default', 'Local Storage', 'leveldb', '000003.log')), 'Local Storage 已复制');
 const marker1 = readFileSync(join(dataDir, 'cdt-profile', '.cdt-profile-seeded'), 'utf-8');
 assert(marker1 === sourceProfile, '播种标记记录源路径');
 
@@ -55,11 +55,11 @@ assert(status.running, 'CDP 端点探活成功');
 
 // 停止 → 再次启动（同源，不应重复播种；标记保持）
 await cdt.stopCDT({}, {}, ctx);
-writeFileSync(join(dataDir, 'cdt-profile', 'Network', 'Cookies'), 'product-side-cookie');
+writeFileSync(join(dataDir, 'cdt-profile', 'Default', 'Network', 'Cookies'), 'product-side-cookie');
 const out2 = { endpoint: '', port: 0, pid: 0 };
 const ok2 = await cdt.startCDT({}, out2, ctx);
 assert(ok2, 'startCDT#2 成功');
-const after = readFileSync(join(dataDir, 'cdt-profile', 'Network', 'Cookies'), 'utf-8');
+const after = readFileSync(join(dataDir, 'cdt-profile', 'Default', 'Network', 'Cookies'), 'utf-8');
 assert(after === 'product-side-cookie', '同源二次启动不覆盖产品侧登录态（种子只播一次）');
 
 await cdt.stopCDT({}, {}, ctx);
