@@ -334,6 +334,18 @@ export interface ChatMessage {
   pin?: boolean
   /** 权限确认卡（PERMISSION 落库记录 / SSE permission.asked 实时卡） */
   permission?: PermissionCardData
+  /** ask_user 提问卡（SSE permission.asked kind=ask_user；答复经 /api/chat/ask/answer 恢复） */
+  askUser?: AskUserCardData
+}
+
+/** ask_user 提问数据：Agent 澄清/确认（Deferred 挂起，答复=下一条 user 消息） */
+export interface AskUserCardData {
+  askId: string
+  question: string
+  kind: 'clarify' | 'confirm'
+  status: 'pending' | 'answered'
+  askedAt?: number
+  answeredAt?: number
 }
 
 /** 权限确认数据：工具执行前询问（答允许/拒绝；status 收敛后仅展示） */
@@ -710,6 +722,16 @@ export interface ConfigTreeLayer {
   readable: boolean
   writable: boolean
   modules: ConfigTreeModule[]
+}
+
+/** ===== 新增（2026-09-22）：配置变更历史记录（TODO-List §2：历史 + Diff 对比）===== */
+export interface ConfigHistoryRecord {
+  id: string
+  config_key: string
+  old_value: unknown
+  new_value: unknown
+  change_time: number
+  operator: string
 }
 
 export interface ConfigTreeModule {

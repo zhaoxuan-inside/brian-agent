@@ -86,6 +86,8 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  GetConfigHistoryInput,
+  GetConfigHistoryOutput,
 } from '../domain/types';
 
 export class ConfigAccess {
@@ -164,6 +166,12 @@ export class ConfigAccess {
   async updateConfig(input: UpdateConfigInput, output: UpdateConfigOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.updateConfig(input, output, context, metrics, report);
+  }
+
+  /** 查询配置变更历史（config_key 缺省查全局；change_time 降序） */
+  async soConfigHistory(input: GetConfigHistoryInput, output: GetConfigHistoryOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.soConfigHistory(input, output, context, metrics, report);
   }
 
   async configConfig(input: ConfigConfigInput, output: ConfigConfigOutput, context: ConfigContext, metrics?: Metrics, report?: Report,

@@ -13,6 +13,7 @@ import {
   CONFIG_MODULE_PRIVILEGE_TABLE,
   CONFIG_CONFIG_TABLE,
   CONFIG_SNAPSHOT_TABLE,
+  CONFIG_HISTORY_TABLE,
   VALID_LAYERS,
 } from '../domain/types';
 
@@ -82,6 +83,20 @@ export class ConfigSchemaInitializer {
         "updated"       INTEGER NOT NULL,
         "name"          TEXT    NOT NULL,
         "snapshot_data" TEXT    NOT NULL
+      )
+    `);
+
+    // ===== 新增（2026-09-22）：配置变更历史（每次 updateConfig 记录 old/new 值）=====
+    this.relationDb.executeRaw(`
+      CREATE TABLE IF NOT EXISTS "${CONFIG_HISTORY_TABLE}" (
+        "id"          TEXT    NOT NULL PRIMARY KEY,
+        "created"     INTEGER NOT NULL,
+        "updated"     INTEGER NOT NULL,
+        "config_key"  TEXT    NOT NULL,
+        "old_value"   TEXT,
+        "new_value"   TEXT,
+        "change_time" INTEGER NOT NULL,
+        "operator"    TEXT
       )
     `);
 

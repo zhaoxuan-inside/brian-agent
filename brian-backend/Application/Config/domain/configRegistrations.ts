@@ -15,10 +15,6 @@ function core(mod: string, cat: string, key: string, name: string, type: string,
   return { layer: 'CORE', module: mod, category: cat, config_key: `${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals };
 }
 
-function orch(mod: string, cat: string, key: string, name: string, type: string, def: unknown, desc?: string, enumVals?: unknown[]): ConfigRegistration {
-  return { layer: 'ORCHESTRATION', module: mod, category: cat, config_key: `orchestration.${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals };
-}
-
 function app(mod: string, cat: string, key: string, name: string, type: string, def: unknown, desc?: string, enumVals?: unknown[], readable?: boolean, writable?: boolean): ConfigRegistration {
   return { layer: 'APPLICATION', module: mod, category: cat, config_key: `${mod}.${key}`, config_name: name, config_type: type, config_default: def, config_description: desc, config_enum_values: enumVals, readable, writable };
 }
@@ -51,6 +47,7 @@ export const MODULE_LABELS: Record<string, { label: string; desc: string }> = {
   vectordb_provider: { label: 'VectorDB Provider', desc: '向量数据库配置' },
   relationdb_provider: { label: 'RelationDB Provider', desc: '关系型数据库配置' },
   tool_provider: { label: 'Tool Provider', desc: '工具与 HTTP 请求配置' },
+  cdt_provider: { label: 'CDT Provider', desc: 'Chrome 远程浏览器控制' },
   llm_core: { label: 'LLM Core', desc: 'LLM 调用核心' },
   info_core: { label: 'Info Core', desc: '信息/记忆核心' },
   mcp_core: { label: 'MCP Core', desc: 'MCP 调用核心' },
@@ -168,6 +165,9 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   // --- ToolProvider ---
   base('tool_provider', 'basic', 'http_timeout_ms', 'HTTP 请求超时 (ms)', 'INT', 60000, '全局 HTTP 请求默认超时时间，单位毫秒'),
 
+  // --- CDTProvider ---
+  base('cdt_provider', 'basic', 'profile_snapshot_source', '登录态种子源目录', 'STRING', '', '本机 Chrome profile 目录路径（如 ~/.config/google-chrome/Default）。CDT 启动时复制其 Cookies 与 Local Storage 到产品 profile（仅首次或源变更时），使远程浏览器继承已登录站点；留空不启用'),
+
   // --- FeedbackHandler ---
   base('feedback_handler', 'basic', 'enable_auto_disband', '启用自动解散', 'BOOLEAN', true, '用户评分低于解散阈值时，是否自动解散运行时创建的系统 Agent'),
   base('feedback_handler', 'basic', 'disband_threshold', '解散阈值（百分制）', 'INT', 30, '用户评分低于该值时触发系统 Agent 自动解散；用户创建的 Agent 不受影响'),
@@ -251,25 +251,9 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('soul_core', 'opt_rule', 'opt_rule.min_usage_count', '优化规则最小使用次数', 'INT', 5, '低于此次数的 Soul 可能被淘汰'),
 
   // =========================================================================
-  // ORCHESTRATION layer
+  // ORCHESTRATION layer 配置种子已随 Runtime v2 退役清单（Runtime-PRD §10）删除：
+  // Orchestration/ 模块退役后 strategy/execution/jsonnode/visualization 配置无消费方。
   // =========================================================================
-
-  // --- OrchestrationStrategy ---
-  orch('strategy', 'basic', 'default_strategy_id', '默认策略', 'STRING', '', '默认使用的策略 ID'),
-  orch('strategy', 'basic', 'max_plan_retries', '最大计划重试次数', 'INT', 2),
-
-  // --- OrchestrationExecution ---
-  orch('execution', 'basic', 'max_concurrent', '最大并发数', 'INT', 1),
-  orch('execution', 'basic', 'dag_timeout_ms', 'DAG 超时（ms）', 'INT', 300000, '整个 DAG 执行的最大超时时间'),
-  orch('execution', 'basic', 'agent_timeout_ms', '单 Agent 超时（ms）', 'INT', 300000, '单个 Work Agent 执行的最大超时时间'),
-
-  // --- OrchestrationVisualization ---
-  orch('visualization', 'basic', 'max_nodes_in_graph', 'Agent 执行 DAG 最大节点数', 'INT', 50, '编排层生成 Agent 执行 DAG 图时最多展示的 Agent 节点数，超过则截断（防止 DAG 过大）'),
-
-  // --- JSONNode ---
-  orch('jsonnode', 'basic', 'max_execution_depth', '最大执行深度', 'INT', 50),
-  orch('jsonnode', 'basic', 'node_timeout_ms', '节点超时（ms）', 'INT', 300000, '5 分钟'),
-  orch('jsonnode', 'basic', 'trace_enabled', '追踪启用', 'BOOLEAN', true, '是否记录 JSONNode 执行追踪'),
 
   // =========================================================================
   // AGENT layer

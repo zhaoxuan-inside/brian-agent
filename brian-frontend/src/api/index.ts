@@ -5,6 +5,7 @@ import type {
   SystemHealth, UserProfile, LibraryPath, LibraryFilePage, LibraryTreeNode,
   DocumentAnnotation,
   ConfigTreeLayer,
+  ConfigHistoryRecord,
   UserProfileData, ProfileVersionData, ProfileHistoryItem,
   VisualizedMessage, MessageGraphNode, MessageGraphEdge, AgentDAG, AgentTrace,
   McpUsageRecord,
@@ -203,6 +204,19 @@ export const configApi = {
       request<{ config_item: Record<string, unknown> }>(`/config/item/${encodeURIComponent(configKey)}`),
     update: (configKey: string, value: unknown) =>
       request<void>('/config', { method: 'PUT', body: JSON.stringify({ config_key: configKey, value }) }),
+  },
+  // ===== 新增（2026-09-22）：配置变更历史（TODO-List §2：历史查询 + Diff 对比）=====
+  history: {
+    forKey: (configKey: string) =>
+      request<{ records: ConfigHistoryRecord[] }>(`/config/history/${encodeURIComponent(configKey)}`),
+    list: (params?: { start_time?: number; end_time?: number; limit?: number }) => {
+      const qs = new URLSearchParams()
+      if (params?.start_time) qs.set('start_time', String(params.start_time))
+      if (params?.end_time) qs.set('end_time', String(params.end_time))
+      if (params?.limit) qs.set('limit', String(params.limit))
+      const suffix = qs.toString() ? `?${qs.toString()}` : ''
+      return request<{ records: ConfigHistoryRecord[] }>(`/config/history${suffix}`)
+    },
   },
   graphVisualization: {
     get: (graphType: string) => request<{ graph_repulsion: number; graph_spring_strength: number; graph_show_labels: boolean }>(`/config/graph-visualization?graph_type=${encodeURIComponent(graphType)}`),
@@ -707,4 +721,9 @@ export { request as fetchApi }
 /** 权限应答（v2 权限门：permission.asked → 应答唤醒挂起的 Loop；remember=true 为"始终允许"，工具入信任表） */
 export function answerPermission(permission_id: string, approved: boolean, remember = false): Promise<{ ok: boolean; answered: boolean }> {
   return request('/chat/permission/answer', { method: 'POST', body: JSON.stringify({ permission_id, approved, remember }) })
+}
+
+/** ask_user 应答（v2 编排原语：答复恢复为下一条 user 消息，唤醒挂起的 ask_user 工具） */
+export function answerUserAsk(ask_id: string, answer: string): Promise<{ ok: boolean; answered: boolean }> {
+  return request('/chat/ask/answer', { method: 'POST', body: JSON.stringify({ ask_id, answer }) })
 }

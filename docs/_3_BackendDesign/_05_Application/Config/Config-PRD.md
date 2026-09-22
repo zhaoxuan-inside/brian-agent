@@ -552,3 +552,25 @@ Config Application 同时作为 Base 层资源（LLM、Soul、Skill、MCP、Prom
 **可能存在的问题**：
 - 已存在的 `config_registry` 历史数据不受影响（注册表为内存静态定义，不写表）。
 - 前端新增「Agent 库参数」页承载 `agent_library.*`（`ConfigView.vue` 导航）。
+
+## 配置变更历史记录（2026-09-22 · TODO-List §2 落地）
+
+**变更原因**：配置页面 PRD 需求——配置项修改可追溯（变更历史 + 修改前 Diff 对比），此前 updateConfig 无任何历史记录。
+
+**修改的方法**：
+  - `ConfigSchemaInitializer` — 新建 `config_history` 表（id/created/updated/config_key/old_value/new_value/change_time/operator，old/new 值 JSON 序列化存储）。
+  - `ConfigService.updateConfig` — 原实现路由写入后直接返回（原始代码已注释保留于方法上方）；修改后：写入前 `getCurrentValue` 取当前真值，写入成功后 `recordConfigHistory` 落历史（best-effort：失败经 metrics.warn 可见，不阻断配置写入——权限审计同款容忍语义）。
+  - `ConfigService.soConfigHistory` — 新增查询（config_key 缺省查全局；start_time/end_time 时间范围过滤；change_time 降序；limit 缺省 100）；`ConfigAccess`/`Config/index.ts` 透传。
+  - 前端 `api/index.ts configApi.history` — `forKey`/`list` 两个消费端；`api/types.ts ConfigHistoryRecord`。
+  - 前端新组件 `components/config/ConfigValueDiff.vue` — 原语值单行 旧→新 Diff；多行字符串 LCS 行级 diff（+/- 行标注）。
+  - 前端新组件 `components/config/ConfigHistoryModal.vue` — 单配置项变更历史弹窗（每条记录渲染 Diff）。
+  - 前端 `views/ConfigView.vue` — 参数行新增「变更历史」入口；保存流改为「保存 → Diff 确认弹窗（旧值 vs 新值）→ 确认后写入」（`saveParam` → `confirmSaveParam` → `executeConfirmedSave`）。
+
+**影响的端点**：
+  - `GET /api/config/history` — 新增：全局变更历史（query: start_time/end_time/limit）。
+  - `GET /api/config/history/:config_key` — 新增：单配置项变更历史。
+  - `PUT /api/config` — 每次成功写入落一条变更历史。
+
+**可能存在的问题**：
+  - old_value 取自 getCurrentValue（各模块配置真值读取），个别只写不读的配置路径 old 值可能为默认值回退；
+  - 历史表无清理策略（配置变更低频，暂不做保留期；后续可挂 configBus 同款按天清理）。

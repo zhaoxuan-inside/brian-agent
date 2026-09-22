@@ -13,11 +13,15 @@ import {
   Eye, EyeOff,
   Search, Monitor, Terminal, MessageSquare, Send,
   BarChart3, Zap, Plug, Radio, Clock, GripVertical,
+  History,
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
 import CronConfigModal from '@/components/CronConfigModal.vue'
+// ===== 新增（2026-09-22）：配置变更历史 + Diff 对比（TODO-List §2）=====
+import ConfigHistoryModal from '@/components/config/ConfigHistoryModal.vue'
+import ConfigValueDiff from '@/components/config/ConfigValueDiff.vue'
 import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, vectorDbApi, graphDbApi, mqApi } from '@/api'
 import type { VectorSearchInfo } from '@/api'
 import type { ConfigTreeLayer, MQMessage, MQStats, McpUsageRecord } from '@/api/types'
@@ -949,7 +953,56 @@ function startEditParam(item: ParamItem) {
   }
   editingParam.value = item
   const val = getConfigPrimitiveValue(item)
+  editingParamOriginal.value = val
   editingParamValue.value = val !== undefined && val !== null ? String(val) : ''
+}
+
+// ===== 新增（2026-09-22）：修改前 Diff 确认 + 变更历史（TODO-List §2）=====
+/** 编辑中配置项的原始值（Diff 对比基准） */
+const editingParamOriginal = ref<unknown>(null)
+/** 保存前 Diff 确认弹窗状态 */
+const diffConfirm = ref<{ item: ParamItem; newValue: unknown } | null>(null)
+/** 变更历史弹窗状态 */
+const historyItem = ref<ParamItem | null>(null)
+
+/** 原始值→新值解析（数据处理）：按 config_type 将编辑值解析为写入类型 */
+function parseParamValue(raw: string, configType: string): unknown {
+  if (configType === 'INT') return parseInt(raw, 10) || 0
+  if (configType === 'DOUBLE') return parseFloat(raw) || 0
+  if (configType === 'BOOLEAN') return raw === 'true'
+  return raw
+}
+
+/** 保存前打开 Diff 确认弹窗（逻辑控制；取代直接保存） */
+function confirmSaveParam() {
+  if (!editingParam.value) return
+  diffConfirm.value = {
+    item: editingParam.value,
+    newValue: parseParamValue(editingParamValue.value, editingParam.value.config_type),
+  }
+}
+
+/** Diff 确认后真正写入（逻辑控制；失败关闭确认弹窗保持编辑态） */
+async function executeConfirmedSave() {
+  if (!diffConfirm.value) return
+  const { item, newValue } = diffConfirm.value
+  paramSaving.value = true
+  try {
+    await configApi.configItem.update(item.config_key, newValue)
+    showToast('配置已保存', 'success')
+    diffConfirm.value = null
+    cancelEditParam()
+    await loadConfigTree()
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '保存失败')
+    diffConfirm.value = null
+  } finally {
+    paramSaving.value = false
+  }
+}
+
+function openHistory(item: ParamItem) {
+  historyItem.value = item
 }
 
 // Cron 定时时间弹窗
@@ -1127,26 +1180,16 @@ async function savePriorityOrder() {
 function cancelEditParam() {
   editingParam.value = null
   editingParamValue.value = ''
+  editingParamOriginal.value = null
 }
 
-async function saveParam() {
-  if (!editingParam.value) return
-  paramSaving.value = true
-  try {
-    let value: unknown = editingParamValue.value
-    const tp = editingParam.value.config_type
-    if (tp === 'INT') value = parseInt(value as string, 10) || 0
-    else if (tp === 'DOUBLE') value = parseFloat(value as string) || 0
-    else if (tp === 'BOOLEAN') value = value === 'true' || value === true
-    await configApi.configItem.update(editingParam.value.config_key, value)
-    showToast('配置已保存', 'success')
-    cancelEditParam()
-    await loadConfigTree()
-  } catch (e: unknown) {
-    showToast(e instanceof Error ? e.message : '保存失败')
-  } finally {
-    paramSaving.value = false
-  }
+/** ===== 修改后（2026-09-22）：保存改为先弹出 Diff 确认（executeConfirmedSave 真正写入）=====
+ *  原实现点击保存直接调用 updateConfig，无修改前 Diff 对比视图（TODO-List §2）：
+ *  let value: unknown = editingParamValue.value
+ *  ...（类型解析后直接 updateConfig）
+ */
+function saveParam() {
+  confirmSaveParam()
 }
 
 // 进入参数卡片视图时，用当前配置值初始化各卡片的临时值
@@ -4169,6 +4212,14 @@ watch(activeSubSection, async (val) => {
                         <span v-else class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
                           {{ getConfigDisplayValue(item) }}
                         </span>
+                        <!-- ===== 新增（2026-09-22）：变更历史入口（TODO-List §2）===== -->
+                        <button
+                          class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 hover:text-brian-blue transition-colors"
+                          title="变更历史"
+                          @click="openHistory(item)"
+                        >
+                          <History :size="13" />
+                        </button>
                         <button
                           v-if="item.writable !== false"
                           class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 hover:text-brian-blue transition-colors"
@@ -6221,6 +6272,41 @@ watch(activeSubSection, async (val) => {
         </div>
       </div>
     </Transition>
+
+    <!-- ===== 新增（2026-09-22）：修改前 Diff 确认弹窗（TODO-List §2 L5 Diff 对比视图）===== -->
+    <Transition name="fade">
+      <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="diffConfirm = null">
+        <div class="bg-white dark:bg-apple-gray-900 rounded-2xl shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
+          <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800">
+            <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">确认修改</h3>
+            <p class="text-xs text-apple-gray-400 truncate mt-0.5">{{ diffConfirm.item.config_name }}（{{ diffConfirm.item.config_key }}）</p>
+          </div>
+          <div class="px-5 py-4">
+            <ConfigValueDiff :old-value="editingParamOriginal" :new-value="diffConfirm.newValue" />
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-100 dark:border-apple-gray-800">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="diffConfirm = null">取消</button>
+            <button
+              class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60"
+              :disabled="paramSaving"
+              @click="executeConfirmedSave"
+            >
+              <Loader2 v-if="paramSaving" :size="14" class="animate-spin" />
+              <Save v-else :size="14" />
+              确认保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ===== 新增（2026-09-22）：配置变更历史弹窗（TODO-List §2）===== -->
+    <ConfigHistoryModal
+      v-if="historyItem"
+      :config-key="historyItem.config_key"
+      :config-name="historyItem.config_name"
+      @close="historyItem = null"
+    />
   </div>
 </template>
 

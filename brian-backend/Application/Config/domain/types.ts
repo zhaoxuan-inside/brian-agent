@@ -139,6 +139,36 @@ export class ConfigConfigOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
+// GetConfigHistory（配置变更历史；Config-PRD / TODO-List §2）
+// ---------------------------------------------------------------------------
+
+export class GetConfigHistoryInput extends Input {
+  /** 配置项（可选；缺省查全局变更历史） */
+  config_key?: string;
+  /** 起始时间（毫秒时间戳；可选） */
+  start_time?: number;
+  /** 结束时间（毫秒时间戳；可选） */
+  end_time?: number;
+  /** 返回条数上限（缺省 100） */
+  limit?: number;
+}
+
+export class GetConfigHistoryOutput extends Output {
+  /** 变更记录（change_time 降序） */
+  records: ConfigHistoryRecord[] = [];
+}
+
+/** 配置变更历史记录 */
+export interface ConfigHistoryRecord {
+  id: string;
+  config_key: string;
+  old_value: unknown;
+  new_value: unknown;
+  change_time: number;
+  operator: string;
+}
+
+// ---------------------------------------------------------------------------
 // 表名常量
 // ---------------------------------------------------------------------------
 
@@ -147,6 +177,7 @@ export const CONFIG_LAYER_PRIVILEGE_TABLE = 'config_layer_privilege';
 export const CONFIG_MODULE_PRIVILEGE_TABLE = 'config_module_privilege';
 export const CONFIG_CONFIG_TABLE = 'config_config';
 export const CONFIG_SNAPSHOT_TABLE = 'config_snapshot';
+export const CONFIG_HISTORY_TABLE = 'config_history';
 
 export const VALID_LAYERS = ['BASE', 'CORE', 'AGENT', 'ORCHESTRATION', 'APPLICATION'] as const;
 

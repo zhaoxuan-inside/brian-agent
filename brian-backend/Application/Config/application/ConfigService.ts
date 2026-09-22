@@ -14,6 +14,7 @@ import { IdGenerator } from '@brian-agent/base';
 import { GetCronTaskInput, GetCronTaskOutput, CronContext, SetCronTaskInput, SetCronTaskOutput } from '@brian-agent/base';
 import { Operator, ValidationError, NotFoundError } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
+import type { Condition } from '@brian-agent/base';
 import {
   ConfigService as BaseConfigService,
   LLM_CONFIG_TABLE,
@@ -26,6 +27,7 @@ import {
   VECTORDB_CONFIG_TABLE,
   RELATIONDB_CONFIG_TABLE,
   TOOL_CONFIG_TABLE,
+  CDT_CONFIG_TABLE,
 } from '@brian-agent/base';
 
 import type { LLMCoreAccess, InfoCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess } from '@brian-agent/core';
@@ -138,11 +140,15 @@ import {
   UpdateConfigOutput,
   ConfigConfigInput,
   ConfigConfigOutput,
+  GetConfigHistoryInput,
+  GetConfigHistoryOutput,
   CONFIG_LAYER_PRIVILEGE_TABLE,
   CONFIG_MODULE_PRIVILEGE_TABLE,
   CONFIG_CONFIG_TABLE,
+  CONFIG_HISTORY_TABLE,
   VALID_LAYERS,
   type ConfigRegistration,
+  type ConfigHistoryRecord,
 } from '../domain/types';
 import { ALL_CONFIG_REGISTRATIONS, LAYER_LABELS, MODULE_LABELS, CATEGORY_LABELS, MODULE_ENTITY_TYPES } from '../domain/configRegistrations';
 
@@ -155,6 +161,20 @@ import type { UserProfileAccess } from '../../UserProfile/access/UserProfileAcce
 import type { ConfigUserProfileInput, ConfigUserProfileOutput, UserProfileContext } from '../../UserProfile/domain/types';
 import type { VisualizationAccess } from '../../Visualization/access/VisualizationAccess';
 import type { ConfigVisualizationInput, ConfigVisualizationOutput, VisualizationContext } from '../../Visualization/domain/types';
+
+/** 分层配置值读取匹配结果（内部类型）：matched=false 表示本组不处理该配置键 */
+interface ConfigValueMatch {
+  matched: boolean;
+  value: unknown;
+}
+
+/** 配置树构建工作上下文（内部类型）：权限映射 + 层/模块节点工作表 */
+interface ConfigTreeContext {
+  layerPrivMap: Map<string, Record<string, unknown>>;
+  modulePrivMap: Map<string, Record<string, unknown>>;
+  layerMap: Map<string, Record<string, unknown>>;
+  moduleMap: Map<string, { module: Record<string, unknown>; layerName: string }>;
+}
 
 export class ConfigService {
   private readonly relationDb: RelationDBAccess;
@@ -203,6 +223,7 @@ export class ConfigService {
     vectordb_provider: VECTORDB_CONFIG_TABLE,
     relationdb_provider: RELATIONDB_CONFIG_TABLE,
     tool_provider: TOOL_CONFIG_TABLE,
+    cdt_provider: CDT_CONFIG_TABLE,
   };
 
   constructor(
@@ -378,129 +399,167 @@ export class ConfigService {
   // soConfigDetail
   // =========================================================================
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：124 行单方法拆为
+  // 「准备上下文 → 构建层/模块结构 → 填充配置项」三段编排 + 纯数据加工子方法
+  //（原始单方法已删除，等价结构见 git 历史）。
+  /** 配置树查询（逻辑控制；5 参公开边界；三段编排 + 纯数据加工子方法） */
   async soConfigDetail(input: GetConfigDetailInput, output: GetConfigDetailOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
+    const treeCtx = await this.prepareTreeContext();
+    await this.buildTreeStructure(input, treeCtx);
+    await this.fillTreeItems(input, treeCtx);
+    output.layers = Array.from(treeCtx.layerMap.values());
+    return true;
+  }
+
+  /** 准备配置树构建上下文（数据处理）：读取层/模块权限并建立工作表 */
+  private async prepareTreeContext(): Promise<ConfigTreeContext> {
     const layerRows = await this.relationDb.select(CONFIG_LAYER_PRIVILEGE_TABLE);
     const moduleRows = await this.relationDb.select(CONFIG_MODULE_PRIVILEGE_TABLE);
+    return {
+      layerPrivMap: new Map<string, Record<string, unknown>>(layerRows.map((r) => [r.layer as string, r])),
+      modulePrivMap: new Map<string, Record<string, unknown>>(moduleRows.map((r) => [r.module as string, r])),
+      layerMap: new Map<string, Record<string, unknown>>(),
+      moduleMap: new Map<string, { module: Record<string, unknown>; layerName: string }>(),
+    };
+  }
 
-    const layerPrivMap = new Map<string, Record<string, unknown>>(
-      layerRows.map((r) => [r.layer as string, r]),
-    );
-    const modulePrivMap = new Map<string, Record<string, unknown>>(
-      moduleRows.map((r) => [r.module as string, r]),
-    );
-
-    const layerMap = new Map<string, Record<string, unknown>>();
-    const moduleMap = new Map<string, { module: Record<string, unknown>; layerName: string }>();
-
-    // 直接遍历静态定义收集 layer / module 节点
+  /** 构建层/模块节点结构（逻辑控制；按 layer/module 过滤遍历静态注册表） */
+  private async buildTreeStructure(input: GetConfigDetailInput, treeCtx: ConfigTreeContext): Promise<void> {
     for (const reg of ALL_CONFIG_REGISTRATIONS) {
       const layerName = reg.layer;
       if (input.layer && input.layer !== layerName) continue;
-      if (!layerMap.has(layerName)) {
-        const lr = layerPrivMap.get(layerName);
-        const layerInfo = LAYER_LABELS[layerName];
-        layerMap.set(layerName, {
-          layer: layerName,
-          label: layerInfo?.label ?? layerName,
-          desc: layerInfo?.desc ?? '',
-          readable: lr ? (lr.readable as number) === 1 : true,
-          writable: lr ? (lr.writable as number) === 1 : true,
-          modules: [] as Array<Record<string, unknown>>,
-        });
-      }
-
-      const moduleName = reg.module;
-      if (input.module && input.module !== moduleName) continue;
-      // 以「层.模块」为键，避免不同层同名模块（如 ORCHESTRATION 与 APPLICATION 的 visualization）被合并
-      const moduleKey = `${layerName}.${moduleName}`;
-      if (!moduleMap.has(moduleKey)) {
-        const mr = modulePrivMap.get(moduleName);
-        const layerNode = layerMap.get(layerName);
-        const layerReadable = layerNode ? (layerNode.readable as boolean) : true;
-        const layerWritable = layerNode ? (layerNode.writable as boolean) : true;
-        const modReadable = mr ? (mr.readable as number) === 1 : true;
-        const modWritable = mr ? (mr.writable as number) === 1 : true;
-        const modNode = {
-          module: moduleName,
-          label: (MODULE_LABELS[moduleName]?.label) ?? moduleName,
-          desc: (MODULE_LABELS[moduleName]?.desc) ?? '',
-          readable: modReadable,
-          writable: modWritable,
-          effective_readable: layerReadable && modReadable,
-          effective_writable: layerWritable && modWritable,
-          entity_types: (MODULE_ENTITY_TYPES[moduleName]) ?? [],
-          categories: [] as Array<Record<string, unknown>>,
-        };
-        moduleMap.set(moduleKey, { module: modNode, layerName });
-        if (layerNode) {
-          (layerNode.modules as Array<Record<string, unknown>>).push(modNode);
-        }
-      }
+      this.ensureLayerNode(layerName, treeCtx);
+      if (input.module && input.module !== reg.module) continue;
+      this.ensureModuleNode(reg, treeCtx);
     }
+  }
 
-    // 直接遍历静态定义生成配置项
+  /** 确保层节点存在（数据处理；缺省可读可写） */
+  private ensureLayerNode(layerName: string, treeCtx: ConfigTreeContext): void {
+    if (treeCtx.layerMap.has(layerName)) {
+      return;
+    }
+    const lr = treeCtx.layerPrivMap.get(layerName);
+    const layerInfo = LAYER_LABELS[layerName];
+    treeCtx.layerMap.set(layerName, {
+      layer: layerName,
+      label: layerInfo?.label ?? layerName,
+      desc: layerInfo?.desc ?? '',
+      readable: lr ? (lr.readable as number) === 1 : true,
+      writable: lr ? (lr.writable as number) === 1 : true,
+      modules: [] as Array<Record<string, unknown>>,
+    });
+  }
+
+  /** 确保模块节点存在（数据处理；以「层.模块」为键，避免不同层同名模块被合并） */
+  private ensureModuleNode(reg: ConfigRegistration, treeCtx: ConfigTreeContext): void {
+    const moduleKey = `${reg.layer}.${reg.module}`;
+    if (treeCtx.moduleMap.has(moduleKey)) {
+      return;
+    }
+    const mr = treeCtx.modulePrivMap.get(reg.module);
+    const layerNode = treeCtx.layerMap.get(reg.layer);
+    const layerReadable = layerNode ? (layerNode.readable as boolean) : true;
+    const layerWritable = layerNode ? (layerNode.writable as boolean) : true;
+    const modReadable = mr ? (mr.readable as number) === 1 : true;
+    const modWritable = mr ? (mr.writable as number) === 1 : true;
+    const modNode = {
+      module: reg.module,
+      label: (MODULE_LABELS[reg.module]?.label) ?? reg.module,
+      desc: (MODULE_LABELS[reg.module]?.desc) ?? '',
+      readable: modReadable,
+      writable: modWritable,
+      effective_readable: layerReadable && modReadable,
+      effective_writable: layerWritable && modWritable,
+      entity_types: (MODULE_ENTITY_TYPES[reg.module]) ?? [],
+      categories: [] as Array<Record<string, unknown>>,
+    };
+    treeCtx.moduleMap.set(moduleKey, { module: modNode, layerName: reg.layer });
+    if (layerNode) {
+      (layerNode.modules as Array<Record<string, unknown>>).push(modNode);
+    }
+  }
+
+  /** 填充配置项（逻辑控制；按 layer/module/category/readable 过滤后逐项追加） */
+  private async fillTreeItems(input: GetConfigDetailInput, treeCtx: ConfigTreeContext): Promise<void> {
     for (const reg of ALL_CONFIG_REGISTRATIONS) {
-      const moduleName = reg.module;
-      const layerName = reg.layer;
-      const category = reg.category;
-      if (input.layer && input.layer !== layerName) continue;
-      if (input.module && input.module !== moduleName) continue;
-      if (input.category && input.category !== category) continue;
-
-      const modEntry = moduleMap.get(`${layerName}.${moduleName}`);
+      if (input.layer && input.layer !== reg.layer) continue;
+      if (input.module && input.module !== reg.module) continue;
+      if (input.category && input.category !== reg.category) continue;
+      const modEntry = treeCtx.moduleMap.get(`${reg.layer}.${reg.module}`);
       if (!modEntry) continue;
-      const modNode = modEntry.module;
-      const layerNode = layerMap.get(layerName);
-      const layerReadable = layerNode ? (layerNode.readable as boolean) : true;
-      const layerWritable = layerNode ? (layerNode.writable as boolean) : true;
-      const modReadable = modNode.readable as boolean;
-      const modWritable = modNode.writable as boolean;
-
-      const configReadable = reg.readable !== false;
-      const configWritable = reg.writable !== false;
-      const effectiveReadable = layerReadable && modReadable && configReadable;
-      const effectiveWritable = layerWritable && modWritable && configWritable;
-
-      if (input.readable_only && !effectiveReadable) continue;
-
-      const catList = modNode.categories as Array<Record<string, unknown>>;
-      let catNode = catList.find((c) => c.category === category);
-      if (!catNode) {
-        const catInfo = CATEGORY_LABELS[category];
-        catNode = {
-          category,
-          label: catInfo?.label ?? category,
-          desc: catInfo?.desc ?? '',
-          items: [] as Array<Record<string, unknown>>,
-        };
-        catList.push(catNode);
-      }
-
-      let currentValue: unknown = null;
-      try {
-        currentValue = await this.getCurrentValue(reg.config_key);
-      } catch {
-        currentValue = null;
-      }
-
-      (catNode.items as Array<Record<string, unknown>>).push({
-        config_key: reg.config_key,
-        config_name: reg.config_name,
-        config_description: reg.config_description,
-        config_type: reg.config_type,
-        config_default: reg.config_default ?? null,
-        config_enum_values: reg.config_enum_values ?? null,
-        readable: configReadable,
-        writable: configWritable,
-        effective_readable: effectiveReadable,
-        effective_writable: effectiveWritable,
-        current_value: currentValue,
-      });
+      await this.appendConfigItem(reg, input, treeCtx, modEntry.module);
     }
+  }
 
-    output.layers = Array.from(layerMap.values());
-    return true;
+  /** 追加单个配置项（逻辑控制；生效权限计算 + 类目节点归属 + 当前值读取） */
+  private async appendConfigItem(
+    reg: ConfigRegistration,
+    input: GetConfigDetailInput,
+    treeCtx: ConfigTreeContext,
+    modNode: Record<string, unknown>,
+  ): Promise<void> {
+    const layerNode = treeCtx.layerMap.get(reg.layer);
+    const layerReadable = layerNode ? (layerNode.readable as boolean) : true;
+    const layerWritable = layerNode ? (layerNode.writable as boolean) : true;
+    const configReadable = reg.readable !== false;
+    const configWritable = reg.writable !== false;
+    const effectiveReadable = layerReadable && (modNode.readable as boolean) && configReadable;
+    const effectiveWritable = layerWritable && (modNode.writable as boolean) && configWritable;
+    if (input.readable_only && !effectiveReadable) return;
+
+    const catNode = this.ensureCategoryNode(modNode, reg.category);
+    const currentValue = await this.soCurrentConfigValue(reg.config_key);
+    (catNode.items as Array<Record<string, unknown>>).push(this.toConfigItemRecord(reg, currentValue, effectiveReadable, effectiveWritable));
+  }
+
+  /** 确保类目节点存在（数据处理） */
+  private ensureCategoryNode(modNode: Record<string, unknown>, category: string): Record<string, unknown> {
+    const catList = modNode.categories as Array<Record<string, unknown>>;
+    let catNode = catList.find((c) => c.category === category);
+    if (!catNode) {
+      const catInfo = CATEGORY_LABELS[category];
+      catNode = {
+        category,
+        label: catInfo?.label ?? category,
+        desc: catInfo?.desc ?? '',
+        items: [] as Array<Record<string, unknown>>,
+      };
+      catList.push(catNode);
+    }
+    return catNode;
+  }
+
+  /** 读取配置当前值（数据处理；读取失败回退 null，不中断树构建） */
+  private async soCurrentConfigValue(configKey: string): Promise<unknown> {
+    try {
+      return await this.getCurrentValue(configKey);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 配置项记录组装（数据处理） */
+  private toConfigItemRecord(
+    reg: ConfigRegistration,
+    currentValue: unknown,
+    effectiveReadable: boolean,
+    effectiveWritable: boolean,
+  ): Record<string, unknown> {
+    return {
+      config_key: reg.config_key,
+      config_name: reg.config_name,
+      config_description: reg.config_description,
+      config_type: reg.config_type,
+      config_default: reg.config_default ?? null,
+      config_enum_values: reg.config_enum_values ?? null,
+      readable: reg.readable !== false,
+      writable: reg.writable !== false,
+      effective_readable: effectiveReadable,
+      effective_writable: effectiveWritable,
+      current_value: currentValue,
+    };
   }
 
   // =========================================================================
@@ -565,6 +624,14 @@ export class ConfigService {
   // updateConfig
   // =========================================================================
 
+  // ===== 修改后的方法（2026-09-22 配置变更历史）：路由写入成功后记录 old→new 变更历史
+  // （原实现无历史记录，原始代码已注释保留于方法上方说明）。
+  // 原代码：
+  //   this.validateValueType(input.value, reg.config_type);
+  //   await this.routeUpdateConfig(input.config_key, input.value);
+  //   return true;
+  // now：路由前先取当前值（getCurrentValue 读取各模块配置真值），写入成功后落 config_history；
+  // 历史落库失败不阻断配置写入（best-effort + metrics 可见，权限审计同款容忍语义）。
   async updateConfig(input: UpdateConfigInput, _output: UpdateConfigOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.config_key) {
@@ -600,9 +667,83 @@ export class ConfigService {
 
     this.validateValueType(input.value, reg.config_type);
 
+    const oldValue = await this.getCurrentValue(input.config_key);
     await this.routeUpdateConfig(input.config_key, input.value);
+    await this.recordConfigHistory(input.config_key, oldValue, input.value, _metrics);
 
     return true;
+  }
+
+  // =========================================================================
+  // soConfigHistory（配置变更历史查询）
+  // =========================================================================
+
+  /** 查询配置变更历史（逻辑控制；config_key 缺省查全局；change_time 降序；5 参公开边界） */
+  async soConfigHistory(input: GetConfigHistoryInput, output: GetConfigHistoryOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const conditions: Condition[] = [];
+    if (input.config_key) {
+      conditions.push({ field: 'config_key', operator: Operator.EQ, value: input.config_key });
+    }
+    if (input.start_time !== undefined) {
+      conditions.push({ field: 'change_time', operator: Operator.GE, value: input.start_time });
+    }
+    if (input.end_time !== undefined) {
+      conditions.push({ field: 'change_time', operator: Operator.LE, value: input.end_time });
+    }
+    const rows = await this.relationDb.select(CONFIG_HISTORY_TABLE, {
+      conditions,
+      order_by: [{ field: 'change_time', direction: 'DESC' }],
+      page: { current: 1, size: input.limit && input.limit > 0 ? input.limit : 100 },
+    });
+    output.records = rows.map((row) => this.toHistoryRecord(row));
+    return true;
+  }
+
+  /** 历史行 → 记录（数据处理；old/new 值经 JSON 反序列化还原） */
+  private toHistoryRecord(row: Record<string, unknown>): ConfigHistoryRecord {
+    return {
+      id: String(row.id ?? ''),
+      config_key: String(row.config_key ?? ''),
+      old_value: this.parseHistoryValue(row.old_value),
+      new_value: this.parseHistoryValue(row.new_value),
+      change_time: Number(row.change_time ?? 0),
+      operator: String(row.operator ?? ''),
+    };
+  }
+
+  /** 历史值反序列化（数据处理；非 JSON 原文返回） */
+  private parseHistoryValue(raw: unknown): unknown {
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    try {
+      return JSON.parse(String(raw));
+    } catch {
+      return raw;
+    }
+  }
+
+  /** 记录配置变更历史（逻辑控制；best-effort：失败不阻断配置写入，经 metrics 可见） */
+  private async recordConfigHistory(configKey: string, oldValue: unknown, newValue: unknown, metrics?: Metrics): Promise<void> {
+    try {
+      const now = Date.now();
+      await this.relationDb.insert(CONFIG_HISTORY_TABLE, [
+        { field: 'id', value: this.generateId() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'config_key', value: configKey },
+        { field: 'old_value', value: JSON.stringify(oldValue ?? null) },
+        { field: 'new_value', value: JSON.stringify(newValue ?? null) },
+        { field: 'change_time', value: now },
+        { field: 'operator', value: 'user' },
+      ]);
+    } catch (err) {
+      metrics?.warn?.('配置变更历史记录失败（不阻断配置写入）', {
+        config_key: configKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // =========================================================================
@@ -793,168 +934,270 @@ export class ConfigService {
     }
   }
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：163 行前缀 if/else 链按层拆分为
+  // 「路由 → 分组读取」结构（原始单方法已删除，等价结构见 git 历史）：
+  //   顺序保持不变：base provider → log → info_core → core(llm/mcp/skill/soul)
+  //   → agent 层(planner/writer/evolutor/agent_*) → application 层(chat/self_learning/
+  //   user_profile/visualization) → registry 默认值兜底。
+  //   每组方法返回 ConfigValueMatch（matched=false 表示未命中，继续下一组）。
+  /** 配置值读取结果（内部）：matched=false 表示本组不处理该配置键 */
+  private static readonly NOT_MATCHED: ConfigValueMatch = { matched: false, value: null };
+
+  private static matched(value: unknown): ConfigValueMatch {
+    return { matched: true, value };
+  }
+
+  /** 读取配置当前值（逻辑控制；层间路由；写入历史时的 old 值来源） */
   private async getCurrentValue(configKey: string): Promise<unknown> {
     const baseModule = this.matchBaseProviderModule(configKey);
     if (baseModule) {
       return this.readBaseProviderConfig(configKey, baseModule);
     }
-    if (configKey.startsWith('log_provider.')) {
-      const out = {} as ConfigLogOutput;
-      await this.logAccess.configLog({} as ConfigLogInput, out, {} as LogContext);
-      const cfg = (out.config ?? {}) as Record<string, unknown>;
-      const field = configKey.split('.').pop() ?? '';
-      return field ? (cfg[field] ?? null) : null;
+    const layered = await this.readLayeredConfigValue(configKey);
+    if (layered.matched) {
+      return layered.value;
     }
-    if (configKey.startsWith('info_core.tag_config.')) {
-      const out = new SoInfoTagConfigOutput();
-      await this.infoCore.soInfoTagConfig({} as SoInfoTagConfigInput, out, {} as InfoCoreContext);
-      return this.extractConfigValue(out, 'tag_config', configKey);
-    }
-    if (configKey.startsWith('info_core.summary_config.')) {
-      const out = new SoInfoSummaryConfigOutput();
-      await this.infoCore.soInfoSummaryConfig({} as SoInfoSummaryConfigInput, out, {} as InfoCoreContext);
-      return this.extractConfigValue(out, 'summary_config', configKey);
-    }
-    if (configKey.startsWith('info_core.vector_config.')) {
-      const out = new SoInfoVectorConfigOutput();
-      await this.infoCore.soInfoVectorConfig({} as SoInfoVectorConfigInput, out, {} as InfoCoreContext);
-      return this.extractConfigValue(out, 'vector_config', configKey);
-    }
-    if (configKey.startsWith('info_core.context_config.')) {
-      const out = new SoInfoContextConfigOutput();
-      await this.infoCore.soInfoContextConfig({} as SoInfoContextConfigInput, out, {} as InfoCoreContext);
-      return this.extractConfigValue(out, 'context_config', configKey);
-    }
-    if (configKey.startsWith('info_core.config.')) {
-      const out = new SoInfoConfigOutput();
-      await this.infoCore.soInfoConfig({} as SoInfoConfigInput, out, {} as InfoCoreContext);
-      return this.extractConfigValue(out, 'config', configKey);
-    }
-    if (configKey.startsWith('llm_core.')) {
-      const out = new ConfigLLMCoreOutput();
-      await this.llmCore.configLLMCore({} as ConfigLLMCoreInput, out, {} as LLMCoreContext);
-      return this.extractConfigValue(out, 'llm_core', configKey);
-    }
-    if (configKey.startsWith('mcp_core.')) {
-      const out = new ConfigMcpCoreOutput();
-      await this.mcpCore.configMCPCore({} as ConfigMcpCoreInput, out, {} as McpCoreContext);
-      return this.extractConfigValue(out, 'mcp_core', configKey);
-    }
-    if (configKey.startsWith('skill_core.regen_rate') || configKey.startsWith('skill_core.similarity_threshold') || configKey.startsWith(PROMPT_SLOTS.SKILL_MATCH)) {
-      const out = new ConfigSkillCoreOutput();
-      await this.skillCore.configSkillCore({} as ConfigSkillCoreInput, out, {} as SkillCoreContext);
-      return this.extractConfigValue(out, 'skill_core', configKey);
-    }
-    if (configKey.startsWith('skill_core.opt_rule')) {
-      const out = new SoSkillRuleOutput();
-      await this.skillCore.soSkillRule({} as SoSkillRuleInput, out, {} as SkillCoreContext);
-      const first = (out.list ?? [])[0];
-      if (!first) return null;
-      const key = configKey.split('skill_core.opt_rule.')[1];
-      return (first as unknown as Record<string, unknown>)[key] ?? null;
-    }
-    if (configKey.startsWith('soul_core.regen_rate') || configKey.startsWith('soul_core.similarity_threshold') || configKey.startsWith(PROMPT_SLOTS.SOUL_MATCH) || configKey.startsWith('soul_core.llm_id')) {
-      const out = new ConfigSoulCoreOutput();
-      await this.soulCore.configSoulCore({} as ConfigSoulCoreInput, out, {} as SoulCoreContext);
-      return this.extractConfigValue(out, 'soul_core', configKey);
-    }
-    if (configKey.startsWith('soul_core.opt_rule')) {
-      const out = new SoSoulRuleOutput();
-      await this.soulCore.soSoulRule({} as SoSoulRuleInput, out, {} as SoulCoreContext);
-      const first = (out.list ?? [])[0];
-      if (!first) return null;
-      const key = configKey.split('soul_core.opt_rule.')[1];
-      return (first as unknown as Record<string, unknown>)[key] ?? null;
-    }
-    if (configKey.startsWith('planner_agent.')) {
-      return this.getConfigFromAccess(
-        configKey, 'planner_agent',
-        (i: ConfigPlannerAgentInput, c: PlannerAgentContext, o: ConfigPlannerAgentOutput) => this.plannerAgent.configPlannerAgent(i, o, c),
-      );
-    }
-    if (configKey.startsWith('writer_agent.')) {
-      return this.getConfigFromAccess(
-        configKey, 'writer_agent',
-        (i: ConfigWriterAgentInput, c: WriterAgentContext, o: ConfigWriterAgentOutput) => this.writerAgent.configWriterAgent(i, o, c),
-      );
-    }
-    if (configKey.startsWith('evolutor_agent.')) {
-      return this.getConfigFromAccess(
-        configKey, 'evolutor_agent',
-        (i: ConfigEvolutorAgentInput, c: EvolutorAgentContext, o: ConfigEvolutorAgentOutput) => this.evolutorAgent.configEvolutorAgent(i, o, c),
-      );
-    }
-    if (configKey.startsWith('agent_context.')) {
-      const out = {} as AgentContextContext;
-      await this.agentContext.configAgentContext({} as ConfigAgentContextInput, {} as ConfigAgentContextOutput, out);
-      const field = configKey.split('.').pop() ?? '';
-      return field ? ((out as unknown as Record<string, unknown>)[field] ?? null) : null;
-    }
-    if (configKey.startsWith('agent_library.')) {
-      return this.getConfigFromAccess(
-        configKey, 'agent_library',
-        (i: ConfigAgentLibraryInput, c: AgentLibraryContext, o: ConfigAgentLibraryOutput) => this.agentLibrary.configAgentLibrary(i, o, c),
-      );
-    }
-    if (configKey.startsWith('agent_builder.')) {
-      return this.getConfigFromAccess(
-        configKey, 'agent_builder',
-        (i: ConfigAgentBuilderInput, c: AgentBuilderContext, o: ConfigAgentBuilderOutput) => this.agentBuilder.configAgentBuilder(i, o, c),
-      );
-    }
-    if (configKey.startsWith('agent_execution.')) {
-      return this.getConfigFromAccess(
-        configKey, 'agent_execution',
-        (i: ConfigAgentExecutionInput, c: AgentExecutionContext, o: ConfigAgentExecutionOutput) => this.agentExecution.configAgentExecution(i, o, c),
-      );
-    }
-    if (configKey.startsWith('agent_strategy.')) {
-      return this.getConfigFromAccess(
-        configKey, 'agent_strategy',
-        (i: ConfigAgentStrategyInput, c: AgentStrategyContext, o: ConfigAgentStrategyOutput) => this.agentStrategy.configAgentStrategy(i, o, c),
-      );
-    }
-    // V1 编排配置分支已移除（Orchestration 模块删除）
-    if (configKey.startsWith('chat.')) {
-      return this.getConfigFromAccess(
-        configKey, 'chat',
-        (i: ConfigChatInput, c: ChatContext, o: ConfigChatOutput) => this.chatAccess.configChat(i, o, c),
-      );
-    }
-    if (configKey.startsWith('self_learning.')) {
-      // 定时任务 cron 由 CronProvider 统一管理（与定时任务展示页面同一时间源）
-      if (configKey === 'self_learning.tag_aging_cron' || configKey === 'self_learning.orphan_tag_check_cron') {
-        const taskName = configKey === 'self_learning.tag_aging_cron' ? 'tag_aging' : 'orphan_tag_check';
-        const out = new GetCronTaskOutput();
-        await this.cronAccess.soCronTask(Object.assign(new GetCronTaskInput(), { name: taskName }), out, new CronContext());
-        return out.task ? out.task.cron : null;
-      }
-      return this.getConfigFromAccess(
-        configKey, 'self_learning',
-        (i: ConfigSelfLearningInput, c: SelfLearningContext, o: ConfigSelfLearningOutput) => this.selfLearningAccess.configSelfLearning(i, o, c),
-      );
-    }
-    if (configKey.startsWith('user_profile.')) {
-      return this.getConfigFromAccess(
-        configKey, 'user_profile',
-        (i: ConfigUserProfileInput, c: UserProfileContext, o: ConfigUserProfileOutput) => this.userProfileAccess.configUserProfile(i, o, c),
-      );
-    }
-    if (configKey.startsWith('visualization.')) {
-      const out = {} as VisualizationContext;
-      await this.visualizationAccess.configVisualization({} as ConfigVisualizationInput, {} as ConfigVisualizationOutput, out);
-      const cfg = ((out as unknown as Record<string, unknown>).config ?? {}) as Record<string, unknown>;
-      if (configKey.startsWith('visualization.max_nodes_per_graph')) return cfg.max_nodes_per_graph ?? null;
-      if (configKey.startsWith('visualization.default_message_summary_length')) return cfg.default_message_summary_length ?? null;
-      if (configKey.startsWith('visualization.resolve_content_by_default')) return cfg.resolve_content_by_default === 1;
-      return null;
-    }
-
     const reg = this.registryMap.get(configKey);
     if (reg && reg.config_default !== undefined) {
       return reg.config_default;
     }
+    return null;
+  }
 
+  /** 分层路由（逻辑控制）：log → info_core → core → agent → application，命中即返回 */
+  private async readLayeredConfigValue(configKey: string): Promise<ConfigValueMatch> {
+    const logValue = await this.readLogProviderValue(configKey);
+    if (logValue.matched) return logValue;
+    const infoValue = await this.readInfoCoreValue(configKey);
+    if (infoValue.matched) return infoValue;
+    const coreValue = await this.readCoreProviderValue(configKey);
+    if (coreValue.matched) return coreValue;
+    const agentValue = await this.readAgentLayerValue(configKey);
+    if (agentValue.matched) return agentValue;
+    return this.readApplicationLayerValue(configKey);
+  }
+
+  /** log_provider 配置读取（数据处理；configLog 出参按字段名提取） */
+  private async readLogProviderValue(configKey: string): Promise<ConfigValueMatch> {
+    if (!configKey.startsWith('log_provider.')) {
+      return ConfigService.NOT_MATCHED;
+    }
+    const out = {} as ConfigLogOutput;
+    await this.logAccess.configLog({} as ConfigLogInput, out, {} as LogContext);
+    const cfg = (out.config ?? {}) as Record<string, unknown>;
+    const field = configKey.split('.').pop() ?? '';
+    return ConfigService.matched(field ? (cfg[field] ?? null) : null);
+  }
+
+  /** info_core 配置读取（数据处理；tag/summary/vector/context/config 五段） */
+  private async readInfoCoreValue(configKey: string): Promise<ConfigValueMatch> {
+    if (!configKey.startsWith('info_core.')) {
+      return ConfigService.NOT_MATCHED;
+    }
+    if (configKey.startsWith('info_core.tag_config.')) {
+      const out = new SoInfoTagConfigOutput();
+      await this.infoCore.soInfoTagConfig({} as SoInfoTagConfigInput, out, {} as InfoCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'tag_config', configKey));
+    }
+    if (configKey.startsWith('info_core.summary_config.')) {
+      const out = new SoInfoSummaryConfigOutput();
+      await this.infoCore.soInfoSummaryConfig({} as SoInfoSummaryConfigInput, out, {} as InfoCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'summary_config', configKey));
+    }
+    if (configKey.startsWith('info_core.vector_config.')) {
+      const out = new SoInfoVectorConfigOutput();
+      await this.infoCore.soInfoVectorConfig({} as SoInfoVectorConfigInput, out, {} as InfoCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'vector_config', configKey));
+    }
+    if (configKey.startsWith('info_core.context_config.')) {
+      const out = new SoInfoContextConfigOutput();
+      await this.infoCore.soInfoContextConfig({} as SoInfoContextConfigInput, out, {} as InfoCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'context_config', configKey));
+    }
+    const out = new SoInfoConfigOutput();
+    await this.infoCore.soInfoConfig({} as SoInfoConfigInput, out, {} as InfoCoreContext);
+    return ConfigService.matched(this.extractConfigValue(out, 'config', configKey));
+  }
+
+  /** core 层路由（逻辑控制）：llm/mcp → skill → soul */
+  private async readCoreProviderValue(configKey: string): Promise<ConfigValueMatch> {
+    const llmMcp = await this.readLlmMcpCoreValue(configKey);
+    if (llmMcp.matched) return llmMcp;
+    const skill = await this.readSkillCoreValue(configKey);
+    if (skill.matched) return skill;
+    return this.readSoulCoreValue(configKey);
+  }
+
+  /** llm_core / mcp_core 配置读取（数据处理） */
+  private async readLlmMcpCoreValue(configKey: string): Promise<ConfigValueMatch> {
+    if (configKey.startsWith('llm_core.')) {
+      const out = new ConfigLLMCoreOutput();
+      await this.llmCore.configLLMCore({} as ConfigLLMCoreInput, out, {} as LLMCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'llm_core', configKey));
+    }
+    if (configKey.startsWith('mcp_core.')) {
+      const out = new ConfigMcpCoreOutput();
+      await this.mcpCore.configMCPCore({} as ConfigMcpCoreInput, out, {} as McpCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'mcp_core', configKey));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** skill_core 配置读取（数据处理；opt_rule 走规则清单首条字段提取） */
+  private async readSkillCoreValue(configKey: string): Promise<ConfigValueMatch> {
+    const simple = configKey.startsWith('skill_core.regen_rate')
+      || configKey.startsWith('skill_core.similarity_threshold')
+      || configKey.startsWith(PROMPT_SLOTS.SKILL_MATCH);
+    if (simple) {
+      const out = new ConfigSkillCoreOutput();
+      await this.skillCore.configSkillCore({} as ConfigSkillCoreInput, out, {} as SkillCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'skill_core', configKey));
+    }
+    if (configKey.startsWith('skill_core.opt_rule')) {
+      const out = new SoSkillRuleOutput();
+      await this.skillCore.soSkillRule({} as SoSkillRuleInput, out, {} as SkillCoreContext);
+      return ConfigService.matched(this.extractOptRuleField(configKey, 'skill_core.opt_rule.', out));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** soul_core 配置读取（数据处理；opt_rule 走规则清单首条字段提取） */
+  private async readSoulCoreValue(configKey: string): Promise<ConfigValueMatch> {
+    const simple = configKey.startsWith('soul_core.regen_rate')
+      || configKey.startsWith('soul_core.similarity_threshold')
+      || configKey.startsWith(PROMPT_SLOTS.SOUL_MATCH)
+      || configKey.startsWith('soul_core.llm_id');
+    if (simple) {
+      const out = new ConfigSoulCoreOutput();
+      await this.soulCore.configSoulCore({} as ConfigSoulCoreInput, out, {} as SoulCoreContext);
+      return ConfigService.matched(this.extractConfigValue(out, 'soul_core', configKey));
+    }
+    if (configKey.startsWith('soul_core.opt_rule')) {
+      const out = new SoSoulRuleOutput();
+      await this.soulCore.soSoulRule({} as SoSoulRuleInput, out, {} as SoulCoreContext);
+      return ConfigService.matched(this.extractOptRuleField(configKey, 'soul_core.opt_rule.', out));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** opt_rule 首条规则字段提取（数据处理；skill/soul 共用） */
+  private extractOptRuleField(configKey: string, prefix: string, out: { list?: unknown[] }): unknown {
+    const first = (out.list ?? [])[0];
+    if (!first) return null;
+    const key = configKey.slice(prefix.length);
+    return (first as unknown as Record<string, unknown>)[key] ?? null;
+  }
+
+  /** agent 层路由（逻辑控制）：工作 Agent → 框架组件 */
+  private async readAgentLayerValue(configKey: string): Promise<ConfigValueMatch> {
+    const workAgent = await this.readWorkAgentValue(configKey);
+    if (workAgent.matched) return workAgent;
+    return this.readAgentFrameworkValue(configKey);
+  }
+
+  /** planner/writer/evolutor Agent 配置读取（数据处理；统一走 getConfigFromAccess） */
+  private async readWorkAgentValue(configKey: string): Promise<ConfigValueMatch> {
+    if (configKey.startsWith('planner_agent.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'planner_agent',
+        (i: ConfigPlannerAgentInput, c: PlannerAgentContext, o: ConfigPlannerAgentOutput) => this.plannerAgent.configPlannerAgent(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('writer_agent.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'writer_agent',
+        (i: ConfigWriterAgentInput, c: WriterAgentContext, o: ConfigWriterAgentOutput) => this.writerAgent.configWriterAgent(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('evolutor_agent.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'evolutor_agent',
+        (i: ConfigEvolutorAgentInput, c: EvolutorAgentContext, o: ConfigEvolutorAgentOutput) => this.evolutorAgent.configEvolutorAgent(i, o, c),
+      ));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** agent_context/library/builder/execution/strategy 配置读取（数据处理） */
+  private async readAgentFrameworkValue(configKey: string): Promise<ConfigValueMatch> {
+    if (configKey.startsWith('agent_context.')) {
+      const out = {} as AgentContextContext;
+      await this.agentContext.configAgentContext({} as ConfigAgentContextInput, {} as ConfigAgentContextOutput, out);
+      const field = configKey.split('.').pop() ?? '';
+      return ConfigService.matched(field ? ((out as unknown as Record<string, unknown>)[field] ?? null) : null);
+    }
+    if (configKey.startsWith('agent_library.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'agent_library',
+        (i: ConfigAgentLibraryInput, c: AgentLibraryContext, o: ConfigAgentLibraryOutput) => this.agentLibrary.configAgentLibrary(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('agent_builder.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'agent_builder',
+        (i: ConfigAgentBuilderInput, c: AgentBuilderContext, o: ConfigAgentBuilderOutput) => this.agentBuilder.configAgentBuilder(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('agent_execution.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'agent_execution',
+        (i: ConfigAgentExecutionInput, c: AgentExecutionContext, o: ConfigAgentExecutionOutput) => this.agentExecution.configAgentExecution(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('agent_strategy.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'agent_strategy',
+        (i: ConfigAgentStrategyInput, c: AgentStrategyContext, o: ConfigAgentStrategyOutput) => this.agentStrategy.configAgentStrategy(i, o, c),
+      ));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** application 层路由（逻辑控制）：chat/self_learning/user_profile/visualization */
+  private async readApplicationLayerValue(configKey: string): Promise<ConfigValueMatch> {
+    if (configKey.startsWith('chat.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'chat',
+        (i: ConfigChatInput, c: ChatContext, o: ConfigChatOutput) => this.chatAccess.configChat(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('self_learning.')) {
+      return ConfigService.matched(await this.readSelfLearningValue(configKey));
+    }
+    if (configKey.startsWith('user_profile.')) {
+      return ConfigService.matched(await this.getConfigFromAccess(
+        configKey, 'user_profile',
+        (i: ConfigUserProfileInput, c: UserProfileContext, o: ConfigUserProfileOutput) => this.userProfileAccess.configUserProfile(i, o, c),
+      ));
+    }
+    if (configKey.startsWith('visualization.')) {
+      return ConfigService.matched(await this.readVisualizationValue(configKey));
+    }
+    return ConfigService.NOT_MATCHED;
+  }
+
+  /** self_learning 配置读取（数据处理；定时任务 cron 由 CronProvider 统一管理，与定时任务展示页面同一时间源） */
+  private async readSelfLearningValue(configKey: string): Promise<unknown> {
+    if (configKey === 'self_learning.tag_aging_cron' || configKey === 'self_learning.orphan_tag_check_cron') {
+      const taskName = configKey === 'self_learning.tag_aging_cron' ? 'tag_aging' : 'orphan_tag_check';
+      const out = new GetCronTaskOutput();
+      await this.cronAccess.soCronTask(Object.assign(new GetCronTaskInput(), { name: taskName }), out, new CronContext());
+      return out.task ? out.task.cron : null;
+    }
+    return this.getConfigFromAccess(
+      configKey, 'self_learning',
+      (i: ConfigSelfLearningInput, c: SelfLearningContext, o: ConfigSelfLearningOutput) => this.selfLearningAccess.configSelfLearning(i, o, c),
+    );
+  }
+
+  /** visualization 配置读取（数据处理） */
+  private async readVisualizationValue(configKey: string): Promise<unknown> {
+    const out = {} as VisualizationContext;
+    await this.visualizationAccess.configVisualization({} as ConfigVisualizationInput, {} as ConfigVisualizationOutput, out);
+    const cfg = ((out as unknown as Record<string, unknown>).config ?? {}) as Record<string, unknown>;
+    if (configKey.startsWith('visualization.max_nodes_per_graph')) return cfg.max_nodes_per_graph ?? null;
+    if (configKey.startsWith('visualization.default_message_summary_length')) return cfg.default_message_summary_length ?? null;
+    if (configKey.startsWith('visualization.resolve_content_by_default')) return cfg.resolve_content_by_default === 1;
     return null;
   }
 

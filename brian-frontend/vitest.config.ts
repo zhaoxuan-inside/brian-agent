@@ -24,7 +24,6 @@ export default defineConfig({
       '@brian-agent/base': path.resolve(__dirname, '../brian-backend/Base/index.ts'),
       '@brian-agent/core': path.resolve(__dirname, '../brian-backend/Core/index.ts'),
       '@brian-agent/agent': path.resolve(__dirname, '../brian-backend/Agent/index.ts'),
-      '@brian-agent/orchestration': path.resolve(__dirname, '../brian-backend/Orchestration/index.ts'),
     },
   },
   server: {

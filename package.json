@@ -7,7 +7,6 @@
     "brian-backend/Base",
     "brian-backend/Core",
     "brian-backend/Agent",
-    "brian-backend/Orchestration",
     "brian-backend/Runtime",
     "brian-backend/Application",
     "brian-frontend",
