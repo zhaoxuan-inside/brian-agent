@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, markRaw, onUnmounted } from 'vue'
+import { computed, ref, markRaw, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ExternalLink, MessageCircle, Copy, Check,
@@ -12,13 +12,19 @@ import { vReveal } from '@/composables/useRevealOnScroll'
 import { useCountUp } from '@/composables/useCountUp'
 import { useTypewriter } from '@/composables/useTypewriter'
 import { useOnceVisible } from '@/composables/useOnceVisible'
+import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
 
-import heroMap from '@/assets/home/hero-map.png'
-import memoryPin from '@/assets/home/memory-pin.png'
-import tagGraph from '@/assets/home/tag-graph.png'
-import keywordGraph from '@/assets/home/keyword-graph.png'
+// ===== 原始实现（保留作为参考）：静态截图，已替换为下方动态组件 =====
+// import heroMap from '@/assets/home/hero-map.png'
+// import memoryPin from '@/assets/home/memory-pin.png'
+// import tagGraph from '@/assets/home/tag-graph.png'
+// import keywordGraph from '@/assets/home/keyword-graph.png'
 import qrQq from '@/assets/home/qr-qq.jpg'
 import qrWechat from '@/assets/home/qr-wechat.jpg'
+import HeroAppShot from '@/components/home/HeroAppShot.vue'
+import MemoryPinShot from '@/components/home/MemoryPinShot.vue'
+import GraphShot from '@/components/home/GraphShot.vue'
+import { TAG_GRAPH, KEYWORD_GRAPH } from '@/components/home/graphData'
 
 const GITHUB_URL = 'https://github.com/zhaoxuan-inside/brian-agent'
 const QQ_GROUP = '942758906'
@@ -89,13 +95,45 @@ const mapEl = ref<Element | null>(null)
 const mapDrawn = ref(false)
 useOnceVisible(mapEl, () => { mapDrawn.value = true }, 0.3)
 
-const mapEdges = [
-  { from: 'n1', to: 'n2', solid: true, d: 'M150,150 L150,250', delay: '0.2s' },
-  { from: 'n2', to: 'n3', solid: false, d: 'M150,365 L600,255', delay: '0.5s' },
-  { from: 'n3', to: 'n4', solid: true, d: 'M600,370 L600,455', delay: '0.8s' },
-  { from: 'n2', to: 'n5', solid: false, d: 'M250,300 L720,120', delay: '1.1s' },
-  { from: 'n5', to: 'n6', solid: true, d: 'M775,190 L775,270', delay: '1.4s' },
+interface MapEdge {
+  from: string
+  fromSide: EdgeSide
+  to: string
+  toSide: EdgeSide
+  alongA?: number
+  alongB?: number
+  solid: boolean
+  delay: string
+}
+
+// ===== 原始实现（保留作为参考）：手写坐标连线，直线/折角生硬且锚点脱靶 =====
+// const mapEdges = [
+//   { from: 'n1', to: 'n2', solid: true, d: 'M150,150 L150,250', delay: '0.2s' },
+//   { from: 'n2', to: 'n3', solid: false, d: 'M150,365 L600,255', delay: '0.5s' },
+//   { from: 'n3', to: 'n4', solid: true, d: 'M600,370 L600,455', delay: '0.8s' },
+//   { from: 'n2', to: 'n5', solid: false, d: 'M250,300 L720,120', delay: '1.1s' },
+//   { from: 'n5', to: 'n6', solid: true, d: 'M775,190 L775,270', delay: '1.4s' },
+// ]
+const mapEdges: MapEdge[] = [
+  { from: 'n1', fromSide: 'bottom', to: 'n2', toSide: 'top', alongA: 0.42, alongB: 0.58, solid: true, delay: '0.2s' },
+  { from: 'n2', fromSide: 'right', to: 'n3', toSide: 'left', solid: false, delay: '0.5s' },
+  { from: 'n3', fromSide: 'bottom', to: 'n4', toSide: 'top', alongA: 0.45, alongB: 0.55, solid: true, delay: '0.8s' },
+  { from: 'n2', fromSide: 'right', to: 'n5', toSide: 'left', solid: false, delay: '1.1s' },
+  { from: 'n5', fromSide: 'bottom', to: 'n6', toSide: 'top', alongA: 0.45, alongB: 0.55, solid: true, delay: '1.4s' },
 ]
+
+const nodeById = new Map<string, typeof mapNodes[number]>(mapNodes.map((n) => [n.id, n]))
+
+const mapEdgePaths = computed(() => mapEdges.flatMap((e) => {
+  const a = nodeById.get(e.from)
+  const b = nodeById.get(e.to)
+  if (!a || !b) return []
+  return [{ ...e, d: smoothEdgePath(a, e.fromSide, b, e.toSide, { alongA: e.alongA, alongB: e.alongB }) }]
+}))
+
+const solidMapEdgePaths = computed(() => mapEdgePaths.value.filter((e) => e.solid))
+
+const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 const hoveredNode = ref<string | null>(null)
 
 function isEdgeHot(edge: { from: string; to: string }) {
@@ -220,7 +258,8 @@ onUnmounted(() => {
         <p class="px-4 py-2.5 text-[12.5px] text-apple-gray-400 border-b border-apple-gray-200/60 dark:border-apple-gray-700/60">
           左边，是你和 AI 的全部记忆画成的一张可操作地图；右边，是正常的对话问答。
         </p>
-        <img :src="heroMap" alt="Brian-Agent 对话页：左侧 ChatMap 记忆地图，右侧对话" class="block w-full" />
+        <!-- 原始实现（保留作为参考）：<img :src="heroMap" alt="Brian-Agent 对话页：左侧 ChatMap 记忆地图，右侧对话" class="block w-full" /> -->
+        <HeroAppShot />
       </div>
     </header>
 
@@ -275,10 +314,16 @@ onUnmounted(() => {
             </div>
             <svg viewBox="0 0 900 540" class="w-full h-auto block" @mouseleave="hoveredNode = null">
               <path
-                v-for="e in mapEdges" :key="e.from + e.to"
+                v-for="(e, i) in mapEdgePaths" :key="e.from + e.to"
                 class="home-mline" :class="{ solid: e.solid, hot: isEdgeHot(e) }"
                 :d="e.d" :style="{ animationDelay: e.delay }"
               />
+              <!-- solid 连线上的流动光点（SMIL 不响应 reduced-motion，故按需渲染） -->
+              <g v-if="!reduceMotion">
+                <circle v-for="(e, i) in solidMapEdgePaths" :key="`mp${i}`" class="home-pulse" r="2.3">
+                  <animateMotion :path="e.d" dur="3s" repeatCount="indefinite" :begin="`${-i}s`" />
+                </circle>
+              </g>
               <g v-for="n in mapNodes" :key="n.id" class="cursor-pointer" @mouseenter="hoveredNode = n.id" @click="hoveredNode = n.id">
                 <rect class="home-mnode" :class="{ hot: hoveredNode === n.id }" :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="12" />
                 <text class="home-mtxt" :x="n.x + 15" :y="n.y + 30">{{ n.title }}</text>
@@ -302,7 +347,8 @@ onUnmounted(() => {
             </ul>
             <div v-reveal class="home-shot mt-6 relative">
               <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-brian-blue/10 text-brian-blue border border-brian-blue/30">Memory Pin</span>
-              <img :src="memoryPin" alt="Memory Pin：把关键消息钉在上下文里" class="block w-full pt-11" />
+              <!-- 原始实现（保留作为参考）：<img :src="memoryPin" alt="Memory Pin：把关键消息钉在上下文里" class="block w-full pt-11" /> -->
+              <MemoryPinShot class="pt-11" />
             </div>
             <p v-reveal class="home-sub mt-5">
               <b class="text-apple-gray-800 dark:text-apple-gray-100">结果很直接：</b>上下文更短、回答更准、Token 更省——而且你第一次确切知道，AI 这一轮到底「记得」了什么。
@@ -323,7 +369,13 @@ onUnmounted(() => {
 
         <div v-reveal class="home-shot mt-10 motion-safe:home-floaty">
           <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-violet-500/10 text-violet-500 border border-violet-500/30">涌现图 · Tag Graph</span>
-          <img :src="tagGraph" alt="涌现图：标签之间自动涌现的关联网络" class="block w-full pt-11" />
+          <!-- 原始实现（保留作为参考）：<img :src="tagGraph" alt="涌现图：标签之间自动涌现的关联网络" class="block w-full pt-11" /> -->
+          <GraphShot
+            class="pt-11" :nodes="TAG_GRAPH.nodes" :edges="TAG_GRAPH.edges"
+            breadcrumb="涌现" active-tab="涌现"
+            search-placeholder="搜索标签并定位..."
+            label="涌现图：标签之间自动涌现的关联网络"
+          />
         </div>
         <p v-reveal class="home-sub mt-5 max-w-3xl">
           <b class="text-apple-gray-800 dark:text-apple-gray-100">聊了两个月后打开它，</b>你会发现「旅行规划、天气、地铁出行、博物馆」竟然连成了一整片——这是你自己的知识结构，第一次被真实地画了出来。
@@ -331,7 +383,13 @@ onUnmounted(() => {
 
         <div v-reveal class="home-shot mt-9 motion-safe:home-floaty" style="animation-delay:1.5s">
           <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">关键词图 · Keyword Graph</span>
-          <img :src="keywordGraph" alt="关键词图：被一个词激活的联想网络" class="block w-full pt-11" />
+          <!-- 原始实现（保留作为参考）：<img :src="keywordGraph" alt="关键词图：被一个词激活的联想网络" class="block w-full pt-11" /> -->
+          <GraphShot
+            class="pt-11" :nodes="KEYWORD_GRAPH.nodes" :edges="KEYWORD_GRAPH.edges"
+            breadcrumb="关键词图" active-tab="关键词图"
+            search-placeholder="搜索关键词并定位..."
+            label="关键词图：被一个词激活的联想网络"
+          />
         </div>
         <p v-reveal class="home-sub mt-5 max-w-3xl">
           <b class="text-apple-gray-800 dark:text-apple-gray-100">「灵光一闪」也可以被复现，</b>大脑里的联想往往是被某一个词激活的。点一个词，牵出一整片相关记忆。
@@ -590,7 +648,6 @@ onUnmounted(() => {
 
 .home-shot { border: 1px solid rgba(209, 209, 214, 0.8); border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.08); }
 .dark .home-shot { border-color: rgba(58, 58, 60, 0.9); background: #1C1C1E; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); }
-.home-shot img { display: block; width: 100%; }
 
 .home-bubble { display: inline-block; max-width: 88%; padding: 11px 16px; border-radius: 14px; font-size: 15px; line-height: 1.6; }
 .home-bubble-me { background: rgba(0, 122, 255, 0.12); border: 1px solid rgba(0, 122, 255, 0.3); }
@@ -603,11 +660,12 @@ onUnmounted(() => {
 .dark .home-check b { color: #E5E5EA; }
 .home-check::before { content: '✓'; position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(0, 122, 255, 0.12); color: #007AFF; font-size: 11px; display: grid; place-items: center; margin-top: 5px; }
 
-/* 记忆地图示意 */
-.home-mline { fill: none; stroke: rgba(0, 122, 255, 0.45); stroke-width: 1.4; stroke-dasharray: 4 5; transition: 0.3s; }
-.home-mline.solid { stroke-dasharray: none; stroke: rgba(0, 122, 255, 0.7); }
-.home-map-drawn .home-mline { stroke-dasharray: 600; stroke-dashoffset: 600; animation: home-draw 1.4s ease forwards; }
-.home-map-drawn .home-mline.solid { stroke: rgba(0, 122, 255, 0.7); }
+/* 记忆地图示意：圆帽点状虚线（引用）+ 实线（上下文延续），锚点由 edgePath 几何生成 */
+.home-mline { fill: none; stroke: rgba(0, 122, 255, 0.42); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; transition: 0.3s; }
+.home-mline.solid { stroke: rgba(0, 122, 255, 0.62); stroke-dasharray: none; }
+.home-map-drawn .home-mline:not(.solid) { opacity: 1; transition: opacity 0.8s ease; animation: home-flow 1.8s linear infinite; }
+.home-map-drawn .home-mline.solid { opacity: 1; stroke-dasharray: 600; stroke-dashoffset: 600; animation: home-draw 1.4s ease forwards; }
+.home-pulse { fill: #4DA3FF; }
 .home-mnode { fill: #F5F5F7; stroke: #D1D1D6; stroke-width: 1.2; transition: 0.3s; }
 .dark .home-mnode { fill: #2C2C2E; stroke: #3A3A3C; }
 .home-mnode.hot { stroke: #007AFF; fill: rgba(0, 122, 255, 0.08); filter: drop-shadow(0 0 10px rgba(0, 122, 255, 0.45)); }
@@ -635,13 +693,14 @@ onUnmounted(() => {
 .motion-safe\:home-floaty { animation: home-floaty 6s ease-in-out infinite; }
 
 @keyframes home-draw { to { stroke-dashoffset: 0; } }
+@keyframes home-flow { to { stroke-dashoffset: -14; } }
 @keyframes home-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @keyframes home-blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 @keyframes home-floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
 
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
-  .home-map-drawn .home-mline { animation: none; stroke-dashoffset: 0; }
+  .home-map-drawn .home-mline, .home-map-drawn .home-mline.solid, .home-map-drawn .home-mline:not(.solid) { animation: none; stroke-dashoffset: 0; opacity: 1; }
   .motion-safe\:home-floaty { animation: none; }
   .home-pin { animation: none; }
 }
