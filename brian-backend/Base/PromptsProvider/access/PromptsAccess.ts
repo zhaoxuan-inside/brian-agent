@@ -73,12 +73,6 @@ export class PromptsAccess {
     this.catalog = new PromptCatalogAccess(relationDb);
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // async initialize(): Promise<void> {
-  //   await this.service.initialize();
-  //   await this.catalog.seed();
-  // }
-
   // ===== 修改后的方法（移除代码内置 Prompt 播种，统一由 PromptProvider / DB 模板管理） =====
   /**
    * 初始化组件：写入默认配置并恢复 enabled 状态。

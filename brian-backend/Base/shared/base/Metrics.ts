@@ -146,22 +146,6 @@ export class Metrics {
     return span;
   }
 
-  // ===== 原始方法（保留作为参考；2026-09-15 前实现：忽略 handle.id、永远收口栈顶——
-  // 异步交错时 begin/end 不满足 LIFO，会关错 span 且遗留永不闭合的 span =====
-  // endSpan(handle?: MetricsSpan): MetricsSpan | undefined {
-  //   let id = handle?.id ?? this.openSpanStack[this.openSpanStack.length - 1];
-  //   if (id !== undefined) {
-  //     id = this.openSpanStack[this.openSpanStack.length - 1];
-  //     const idx = this.openSpanStack.lastIndexOf(id);
-  //     if (idx >= 0) this.openSpanStack.splice(idx, 1);
-  //   }
-  //   if (id === undefined) return undefined;
-  //   const span = this.spans.find((s) => s.id === id && s.end === undefined);
-  //   if (!span) return undefined;
-  //   span.end = Date.now();
-  //   return span;
-  // }
-
   // ===== 修改后的方法（2026-09-15）：按 handle 配对收口，不再依赖栈顶顺序 =====
   /**
    * 结束一个步骤 span（记录端）：begin/end 按 handle 显式配对。
@@ -187,15 +171,6 @@ export class Metrics {
     return span;
   }
 
-  // ===== 原始方法（保留作为参考；2026-09-15 前实现：按数组序倒扫——异步交错时数组序
-  // （创建序）与闭合序不一致，可能取到较早闭合的无关 span =====
-  // lastClosedSpan(): MetricsSpan | undefined {
-  //   for (let i = this.spans.length - 1; i >= 0; i--) {
-  //     if (this.spans[i].end !== undefined) return this.spans[i];
-  //   }
-  //   return undefined;
-  // }
-
   // ===== 修改后的方法（2026-09-15）：取闭合时间戳最大（最近闭合）的 span =====
   /**
    * 读取最近一个已闭合的 span（消费端）：
@@ -218,19 +193,6 @@ export class Metrics {
     if (span.end === undefined) return 0;
     return span.end >= span.start ? span.end - span.start : 0;
   }
-
-  // ===== 原始方法（保留作为参考；2026-09-15 前实现：self ≤ 0 一律 clamp 0 ——
-  // 异步交叠下 duration ≤ 子项之和时被扣成 0，前端表现为"该步骤没统计到耗时" =====
-  // spanSelfMs(span: MetricsSpan): number {
-  //   const self = this.spanDuration(span);
-  //   if (self <= 0) return 0;
-  //   let children = 0;
-  //   for (const child of this.spans) {
-  //     if (child.parent === span.id) children += this.spanDuration(child);
-  //   }
-  //   const value = self - children;
-  //   return value > 0 ? value : 0;
-  // }
 
   // ===== 修改后的方法（2026-09-15）：负 self 回退取 duration =====
   /**
@@ -319,28 +281,6 @@ export class Metrics {
   error(message: string, meta?: Record<string, unknown>): void {
     this.logger?.error(this.prefix(message), this.merge(meta));
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // saveInvocation(record: {
-  //   targetName: string;
-  //   methodName: string;
-  //   status: 'ok' | 'error';
-  //   error?: string;
-  //   args: Record<string, unknown>;
-  // }): void {
-  //   const invocation = {
-  //     method: `${record.targetName}.${record.methodName}`,
-  //     status: record.status,
-  //     error: record.error,
-  //     elapsed_ms: this.elapsed_ms,
-  //     args: Metrics.safeSerialize(record.args),
-  //   };
-  //   const message = `${record.methodName} ${record.status === 'ok' ? 'completed' : 'failed'}`;
-  //   this.logAt('DEBUG', message, {
-  //     log_source: 'AOP',
-  //     invocation_json: JSON.stringify(invocation),
-  //   });
-  // }
 
   // ===== 修改后的方法 =====
   /**

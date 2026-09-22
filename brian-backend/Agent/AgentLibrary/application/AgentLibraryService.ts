@@ -145,36 +145,6 @@ export class AgentLibraryService {
       return true;
     }
 
-    // ===== 原始方法（保留作为参考）=====
-    // const queryText = input.task_content || input.task_signature;
-    // let bestScore = 0;
-    // let bestId = '';
-    // for (const c of candidates) {
-    //   const score = Math.max(
-    //     simpleSimilarity(input.task_signature, c.task_signature),
-    //     simpleSimilarity(queryText, c.agent_purpose ?? ''),
-    //   );
-    //   if (score > bestScore) {
-    //     bestScore = score;
-    //     bestId = c.agent_id;
-    //   }
-    // }
-    // const regenRate = config?.regen_rate ?? 75;
-    // if (bestScore >= threshold && bestId) {
-    //   if (shouldReuseByRegenRate(regenRate)) {
-    //     output.agent_id = bestId;
-    //     output.similarity_score = bestScore;
-    //     output.matched_by = 'SIMILARITY';
-    //     output.matched = true;
-    //     return true;
-    //   }
-    //   output.matched = true;
-    //   output.regenerate = true;
-    //   output.similarity_score = bestScore;
-    //   output.agent_id = '';
-    //   return true;
-    // }
-
     // ===== 修改后的方法（弃用 2-gram 关键词匹配，保留 领域匹配/语义裁判，统一百分制 0-100） =====
     // 1. 第一层匹配：领域与特征精确/包含匹配 (百分制)
     const queryText = (input.task_content || input.task_signature || '').trim();

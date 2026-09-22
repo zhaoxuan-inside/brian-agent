@@ -95,8 +95,6 @@ export class LogInterceptor implements Interceptor {
     // trace_id 属维护字段（唯一存放点 = Metrics）；Input 上仅为领域级 trace_id（业务查询键）时兜底提取；
     // AOP 兜底（2026-09-14 第三优先级）：ctx.traceId（Metrics 缺 trace 时 AOP 立即生成的兜底值），
     // 覆盖旧式 3 参签名无 Metrics 实例的场景
-    // ===== 原始代码（保留作为参考）=====
-    // const traceId = metricsTraceId || inputTraceId;
     const traceId = metricsTraceId || inputTraceId || ctx.traceId || undefined;
     if (traceId) {
       data.trace_id = traceId;

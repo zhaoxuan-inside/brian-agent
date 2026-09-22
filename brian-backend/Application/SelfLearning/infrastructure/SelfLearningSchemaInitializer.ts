@@ -8,15 +8,6 @@ export class SelfLearningSchemaInitializer {
     // chat_session 表由 Chat 模块（ChatSchemaInitializer）统一建表/管列——2026-09-06 修复双 schema 冲突
     // 存量 Tag 维护记录 source 词表统一（connection/activation/aging/orphan → TAG_MAINTENANCE；2026-09-06）
     //
-    // ===== 原始语句（保留作为参考）：迁移与索引先于建表执行，全新库（self_learning_result/chat_session 尚不存在）会
-    // 直接抛 SQLITE_ERROR("no such table")，导致学习模块在全新数据库上初始化失败（e2e :memory: 库实测复现）=====
-    // this.relationDb.executeRaw(
-    //   "UPDATE self_learning_result SET source = 'TAG_MAINTENANCE' WHERE source IN ('connection', 'activation', 'aging', 'orphan')",
-    // );
-    // this.relationDb.executeRaw(
-    //   'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
-    // );
-
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS self_learning_library (
         id TEXT PRIMARY KEY NOT NULL,

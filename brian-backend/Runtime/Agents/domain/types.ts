@@ -118,15 +118,10 @@ export class MatchAgentDefInput extends Input {
   context_id?: string;
   /** 强制新建（跳过复用层） */
   force_new?: boolean;
-  // ===== 原始字段（2026-09-11 版，已弃用）：命中后 regen 触发标志；
-  // "重新生成概率"唯一实现收敛于 Agent 层 AgentLibraryService.matchAgent，Runtime 不再重复承载 =====
-  // regenerate?: boolean;
 }
 
 /** matchAgentDef 出参 */
 export class MatchAgentDefOutput extends Output {
-  // ===== 原始字段（2026-09-11 版，已弃用）：regen 触发标志（见 MatchAgentDefInput 注释） =====
-  // regenerate?: boolean;
   /** 命中的声明定义 ID */
   def_id!: string;
   /** 命中层 */
@@ -153,9 +148,6 @@ export class SoAgentSnapshotInput extends Input {
   context_id?: string;
   /** 用户消息（任务指令段引用） */
   user_message?: string;
-  // ===== 原始字段（2026-09-11 版，已弃用）：绕过组件匹配缓存标志；
-  // soAgentSnapshot 收敛为只读 def 显式绑定（soul_id/tools_json），不再调用 Core 组件匹配 =====
-  // regenerate?: boolean;
 }
 
 /** soAgentSnapshot 出参 */

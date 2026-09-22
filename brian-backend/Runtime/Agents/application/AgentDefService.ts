@@ -275,159 +275,9 @@ export class AgentDefService {
   // matchAgentDef（确定性三层）
   // -------------------------------------------------------------------------
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 确定性匹配（逻辑控制）：exact → signature → llm → 构建 */
-  // async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, _context: AgentDefContext, _metrics?: Metrics, _report?: Report,
-  // ): Promise<boolean> {
-  //   if (!input.task_content) {
-  //     throw new ValidationError('task_content 不能为空');
-  //   }
-  //   const defs = await this.soActiveDefs();
-  //   const exact = this.soExactMatch(defs, input.task_content, input.task_domain);
-  //   if (exact) {
-  //     output.def_id = exact.id;
-  //     output.matched_by = AgentMatchLayer.Exact;
-  //     output.def = exact;
-  //     return true;
-  //   }
-  //   const signatureHit = this.soSignatureMatch(defs, input.task_content, input.task_domain);
-  //   if (signatureHit) {
-  //     output.def_id = signatureHit.id;
-  //     output.matched_by = AgentMatchLayer.Signature;
-  //     output.def = signatureHit;
-  //     return true;
-  //   }
-  //   if (input.force_new !== true && defs.length > 0) {
-  //     const llmHit = await this.soLLMRankedDef(defs, input.task_content);
-  //     if (llmHit) {
-  //       output.def_id = llmHit.id;
-  //       output.matched_by = AgentMatchLayer.LLM;
-  //       output.def = llmHit;
-  //       return true;
-  //     }
-  //   }
-  //   const built = await this.buildNewDef(input);
-  //   output.def_id = built.id;
-  //   output.matched_by = AgentMatchLayer.Built;
-  //   output.def = built;
-  //   return true;
-  // }
-
-  // ===== 原始方法（保留作为参考，2026-09-11 regen 版）：命中后经 applyRegenDecision 概率重评估 =====
-  // async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
-  // ): Promise<boolean> {
-  //   if (!input.task_content) {
-  //     throw new ValidationError('task_content 不能为空');
-  //   }
-  //   const defs = await this.soActiveDefs();
-  //   // ===== 2026-09-11：命中后 regen 判决 —— agent_library_config.regen_rate 随机判决通过则
-  //   // 跳过 L1/L2 复用走 L3LLM 打分 + L4 构建（即"即使命中 Agent 也有概率重匹配以更新"） =====
-  //   await this.applyRegenDecision(input);
-  //   const exact = input.regenerate ? null : this.soExactMatch(defs, input.task_content, input.task_domain);
-  //   if (exact) {
-  //     output.def_id = exact.id;
-  //     output.matched_by = AgentMatchLayer.Exact;
-  //     output.def = exact;
-  //     return true;
-  //   }
-  //   const signatureHit = input.regenerate && !input.force_new ? null : this.soSignatureMatch(defs, input.task_content, input.task_domain);
-  //   if (signatureHit) {
-  //     output.def_id = signatureHit.id;
-  //     output.matched_by = AgentMatchLayer.Signature;
-  //     output.def = signatureHit;
-  //     return true;
-  //   }
-  //   if (input.force_new !== true && defs.length > 0) {
-  //     const llmHit = await this.soLLMRankedDef(defs, input.task_content, report);
-  //     if (llmHit) {
-  //       output.def_id = llmHit.id;
-  //       output.matched_by = AgentMatchLayer.LLM;
-  //       output.regenerate = input.regenerate === true;
-  //       output.def = llmHit;
-  //       return true;
-  //     }
-  //   }
-  //   const built = await this.buildNewDef(input, report);
-  //   output.def_id = built.id;
-  //   output.matched_by = AgentMatchLayer.Built;
-  //   output.def = built;
-  //   output.regenerate = input.regenerate === true;
-  //   return true;
-  // }
-
   // ===== 修改后的方法（2026-09-11 收敛版）："重新生成概率/复用概率"唯一实现收敛于
   // Agent 层 AgentLibraryService.matchAgent（regen_rate 失效判决 → regenerate → AgentBuilder 重构），
   // Runtime 不再重复判决；def 命中（exact/signature/llm）即复用，不做任何概率推翻 =====
-  // ===== 原始方法（保留作为参考）=====
-  // /** 确定性匹配（逻辑控制）：exact → signature → llm → 构建 */
-  // async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
-  // ): Promise<boolean> {
-  //   if (!input.task_content) {
-  //     throw new ValidationError('task_content 不能为空');
-  //   }
-  //   const defs = await this.soActiveDefs();
-  //   const exact = this.soExactMatch(defs, input.task_content, input.task_domain);
-  //   if (exact) {
-  //     output.def_id = exact.id;
-  //     output.matched_by = AgentMatchLayer.Exact;
-  //     output.def = exact;
-  //     return true;
-  //   }
-  //   const signatureHit = this.soSignatureMatch(defs, input.task_content, input.task_domain);
-  //   if (signatureHit) {
-  //     output.def_id = signatureHit.id;
-  //     output.matched_by = AgentMatchLayer.Signature;
-  //     output.def = signatureHit;
-  //     return true;
-  //   }
-  //   if (input.force_new !== true && defs.length > 0) {
-  //     const llmHit = await this.soLLMRankedDef(defs, input.task_content, _metrics, report);
-  //     if (llmHit) {
-  //       output.def_id = llmHit.id;
-  //       output.matched_by = AgentMatchLayer.LLM;
-  //       output.def = llmHit;
-  //       return true;
-  //     }
-  //   }
-  //   const built = await this.buildNewDef(input, _metrics, report);
-  //   output.def_id = built.id;
-  //   output.matched_by = AgentMatchLayer.Built;
-  //   output.def = built;
-  //   return true;
-  // }
-
-  // ===== 原始方法（保留作为参考，2026-09-14 前）：exact → LLM 语义裁判 → 构建（LLM 每轮必经，
-  // 实测单次意图打分 5-20s，是问答首延时的主因之一）=====
-  // /** 确定性匹配（逻辑控制）：exact (100分) → LLM 语义裁判 (百分制) → 构建 */
-  // async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
-  // ): Promise<boolean> {
-  //   if (!input.task_content) {
-  //     throw new ValidationError('task_content 不能为空');
-  //   }
-  //   const defs = await this.soActiveDefs();
-  //   const exact = this.soExactMatch(defs, input.task_content, input.task_domain);
-  //   if (exact) {
-  //     output.def_id = exact.id;
-  //     output.matched_by = AgentMatchLayer.Exact;
-  //     output.def = exact;
-  //     return true;
-  //   }
-  //   if (input.force_new !== true && defs.length > 0) {
-  //     const llmHit = await this.soLLMRankedDef(input, defs, _metrics, report);
-  //     if (llmHit) {
-  //       output.def_id = llmHit.id;
-  //       output.matched_by = AgentMatchLayer.LLM;
-  //       output.def = llmHit;
-  //       return true;
-  //     }
-  //   }
-  //   const built = await this.buildNewDef(input, _metrics, report);
-  //   output.def_id = built.id;
-  //   output.matched_by = AgentMatchLayer.Built;
-  //   output.def = built;
-  //   return true;
-  // }
-
   // ===== 修改后的方法（2026-09-14）：向量 + LLM 两级匹配 —— exact 命中后又加一层向量召回
   // （query 与 def 用途/签名的余弦相似度 ≥ match_vector_threshold 即直接采纳，跳过 LLM 打分）；
   // 向量置信度不足 or embedding 不可用时回退 LLM 语义裁判，二者均未达标才构建 =====
@@ -468,15 +318,6 @@ export class AgentDefService {
     return true;
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 查询 active 定义（逻辑控制） */
-  // private async soActiveDefs(): Promise<AgentDefRecord[]> {
-  //   const rows = await this.relationDb.select(RUNTIME_AGENT_DEF_TABLE, {
-  //     conditions: [{ field: 'status', operator: Operator.EQ, value: 'active' }],
-  //   });
-  //   return rows.map((row) => this.toDefRecord(row));
-  // }
-
   // ===== 修改后的方法（2026-09-11）：改为启动缓存入口（匹配每轮只读内存，TTL 过期重读） =====
   /** 查询 active 定义（逻辑控制） */
   private async soActiveDefs(): Promise<AgentDefRecord[]> {
@@ -509,25 +350,6 @@ export class AgentDefService {
    * 命中后重评估判决（逻辑控制）：
    * 读 agent_library_config.regen_rate，shouldReuseByRegenRate=false 意味着概率触发重评估。
    */
-  // ===== 原始代码（保留作为参考）：直接 queryRaw；测试库可能缺 agent_library_config 表且 AOP 代理层丢失私有方法上下文 =====
-  /** 命中后重评估判决（数据处理）：regen_rate 读库失败视为不触发 */
-  // ===== 原始方法（保留作为参考，2026-09-11 版，已弃用）：Runtime 侧重复实现"重新生成概率"判决；
-  // 与 Agent 层 AgentLibraryService.matchAgent 的 regen_rate 失效判决重复（同义概念并存，2026-09-11 收敛版删除） =====
-  // private async applyRegenDecision(input: MatchAgentDefInput): Promise<void> {
-  //   if (input.force_new === true) {
-  //     return;
-  //   }
-  //   try {
-  //     const rows = this.relationDb.queryRaw<{ regen_rate: number }>(
-  //       'SELECT "regen_rate" FROM "agent_library_config" LIMIT 1',
-  //       [],
-  //     );
-  //     const regenRate = Number(rows?.[0]?.regen_rate ?? 75);
-  //     if (!shouldReuseByRegenRate(regenRate)) {
-  //       input.regenerate = true;
-  //     }
-  //   } catch {
-  //     /* best effort：配置表缺失时按不复用判定 */
   //   }
   // }
 
@@ -683,34 +505,6 @@ export class AgentDefService {
     return `[${d}] ${(taskContent ?? '').slice(0, 256)}`;
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** L3 LLM 打分命中（逻辑控制；经 LLMAccess.execLLM，Prompt 为 builtin.agent_match 渲染） */
-  // private async soLLMRankedDef(defs: AgentDefRecord[], taskContent: string): Promise<AgentDefRecord | null> {
-  //   const template = getBuiltinTemplate(PROMPT_IDS.agentMatch) ?? '';
-  //   const candidates = defs
-  //     .map((def, index) => `${index + 1}. agent_id=${def.agent_ref || def.id} 用途: ${def.name} — ${this.defBrief(def)}`)
-  //     .join('\n');
-  //   const prompt = renderTemplate(template, { task_content: taskContent, candidates });
-  //   const execInput = new ExecLLMInput();
-  //   execInput.prompt = prompt;
-  //   execInput.max_tokens = 300;
-  //   const execOutput = new ExecLLMOutput();
-  //   const ok = await this.llm.execLLM(execInput, execOutput, new LLMContext());
-  //   if (!ok || !execOutput.result) {
-  //     return null;
-  //   }
-  //   const parsed = parseJsonObject(execOutput.result);
-  //   if (!parsed) {
-  //     return null;
-  //   }
-  //   const score = Number(parsed.score ?? 0);
-  //   if (!(score >= LLM_SCORE_THRESHOLD)) {
-  //     return null;
-  //   }
-  //   const agentRef = String(parsed.agent_id ?? '');
-  //   return defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
-  // }
-
   // ===== 修改后的方法（2026-09-09）：LLM 意图/匹配评估完成即上报 intent.analyzed =====
   // ===== 修改后（2026-09-11）：agentMatch 统一百分制（score 0-100，threshold=AgentScoreThreshold.Default 70）；
   // prompt 仅经 prompt_template 表渲染（删除硬编码内存回退，缺失 fail-loud） =====
@@ -786,23 +580,6 @@ export class AgentDefService {
     throw new ValidationError('未找到 Agent 匹配提示词模板');
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** L4 构建（逻辑控制）：复用 AgentBuilder.buildAgent（force_new）→ 写 def */
-  // private async buildNewDef(input: MatchAgentDefInput): Promise<AgentDefRecord> {
-  //   const buildInput = new BuildAgentInput();
-  //   buildInput.run_id = input.run_id ?? '';
-  //   buildInput.task_content = input.task_content;
-  //   buildInput.task_domain = input.task_domain;
-  //   buildInput.force_new = true;
-  //   const buildOutput = new BuildAgentOutput();
-  //   const ctx = this.prepareBuilderContext(input);
-  //   const ok = await this.components.agentBuilder.buildAgent(buildInput, buildOutput, ctx);
-  //   if (!ok || !buildOutput.agent_id) {
-  //     throw new ValidationError('Agent 构建失败（AgentBuilder 无返回）');
-  //   }
-  //   return this.insertDefFromAgent(buildOutput.agent_id, input);
-  // }
-
   // ===== 修改后的方法（2026-09-09）：Agent 构建完成即上报 agent.built =====
   /** L4 构建（逻辑控制）：复用 AgentBuilder.buildAgent（force_new）→ 写 def；透传 metrics */
   private async buildNewDef(input: MatchAgentDefInput, metrics?: Metrics, report?: Report): Promise<AgentDefRecord> {
@@ -836,38 +613,6 @@ export class AgentDefService {
     ctx.run_id = input.run_id ?? '';
     return ctx;
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord> {
-  //   const asset = await this.soAgentAsset(agentId);
-  //   const binding = await this.soAgentBinding(agentId);
-  //   const name = asset?.agent_name || 'agent';
-  //   const purpose = String(asset?.agent_purpose ?? '') || this.buildSignature(input.task_content, input.task_domain);
-  //   const soulId = asset?.soul_id || binding?.soul_id || '';
-  //   const promptTemplateId = asset?.prompt_template_id || binding?.prompt_template_id || '';
-  //   const skillIds = asset?.skill_ids || (binding ? this.soJsonIdArray(binding.skill_ids_json) : []);
-  //   const mcpIds = asset?.mcp_ids || (binding ? this.soJsonIdArray(binding.mcp_ids_json) : []);
-  //   const toolsJson = (skillIds.length > 0 || mcpIds.length > 0) ? JSON.stringify({ skills: skillIds, mcps: mcpIds }) : '';
-  //   const record = newRecord({
-  //     name: `w2-${name}-${IdGenerator.generate().slice(0, 8)}`,
-  //     mode: AgentMode.Primary,
-  //     agent_ref: agentId,
-  //     task_signature: this.buildSignature(input.task_content, input.task_domain),
-  //     agent_purpose: purpose,
-  //     prompt_template_id: promptTemplateId,
-  //     model_id: asset?.model_id || '',
-  //     soul_id: soulId,
-  //     tools_json: toolsJson,
-  //     budget_total: DEFAULT_BUDGET_TOTAL,
-  //     status: AgentDefStatus.Active,
-  //   });
-  //   await this.relationDb.insert(RUNTIME_AGENT_DEF_TABLE, record);
-  //   this.activeDefsCacheUpdatedAt = 0;
-  //   const defId = String(record[0].value);
-  //   const row = await this.soDefRowById(defId);
-  //   if (!row) throw new NotFoundError(RUNTIME_AGENT_DEF_TABLE, defId);
-  //   return this.toDefRecord(row);
-  // }
 
   // ===== 修改后的方法（全汉字功能名称，不含助手后缀与技术前缀，属性独立存储，支持根据 agent_ref 幂等更新） =====
   /** 从旧 agent 资产写声明定义（逻辑控制；取名/用途/组件绑定经 AgentLibraryAccess，落账 id 取自插入记录） */
@@ -955,42 +700,6 @@ export class AgentDefService {
   // soAgentSnapshot（组件按任务重解析）
   // -------------------------------------------------------------------------
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 组装会话级快照（逻辑控制） */
-  // async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, _metrics?: Metrics, _report?: Report,
-  // ): Promise<boolean> {
-  //   const def = await this.soDefRow(input.def_id);
-  //   const soulContent = await this.soSoulContent(def, input);
-  //   const tools = await this.soSnapshotTools(def, input);
-  //   const system = this.prepareSystemPrompt(def, soulContent, tools, input.user_message ?? input.task_content);
-  //   output.snapshot = {
-  //     def_id: def.id,
-  //     name: def.name,
-  //     system,
-  //     llm_id: def.model_id,
-  //     temperature: def.temperature,
-  //     budget_total: def.budget_total,
-  //     tools,
-  //     meta: { soul_id: def.soul_id || undefined, llm_id: def.model_id || undefined, matched_by: 'snapshot' },
-  //   };
-  //   return true;
-  // }
-
-  // ===== 原始方法（保留作为参考，2026-09-11 版）：def 无显式绑定时仍走 Core 动态
-  // matchSoul/matchSkill/matchMCP（"命中已有 Agent 也重新匹配组件"，已收敛删除） =====
-  // async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
-  // ): Promise<boolean> {
-  //   const def = await this.soDefRow(input.def_id);
-  //   report?.pushBusinessEvent(BusinessEvent.LlmSelected, { llm_id: def.model_id });
-  //   input.regenerate = input.regenerate === true;
-  //   const soulContent = await this.soSoulContent(def, input);
-  //   const tools = await this.soSnapshotTools(def, input, report);
-  //   const system = await this.prepareSystemPrompt(def, soulContent, tools, input.user_message ?? input.task_content);
-  //   output.snapshot = { ...同下 };
-  //   report?.pushBusinessEvent(BusinessEvent.PromptSelected, { template_id: def.prompt_template_id || PROMPT_IDS.identity, system: system.slice(0, 4000), soul_selected: Boolean(def.soul_id || soulContent), tools_count: tools.length });
-  //   return true;
-  // }
-
   // ===== 修改后的方法（支持从 def 及 agent 绑定双重解析 soul/tools，上报真实 template_id UUID） =====
   /** 组装会话级快照（逻辑控制；2026-09-14 Span 框架：system prompt 组装为显式子段 span） */
   async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, metrics?: Metrics, report?: Report,
@@ -1061,30 +770,6 @@ export class AgentDefService {
     return this.soComponentName(id, 'skill', 'name') || this.soComponentName(id, 'skill', 'skill_brief');
   }
 
-  // ===== 原始方法（保留作为参考，2026-09-11 版）：def.soul_id 缺失时经 core.matchSoul
-  // 动态匹配（已按 2026-09-11 收敛原则删除：命中即绑定，无绑定即空） =====
-  // private async soSoulContent(def: AgentDefRecord, input: SoAgentSnapshotInput): Promise<string> {
-  //   if (def.soul_id) {
-  //     return this.soSoulContentById(def.soul_id);
-  //   }
-  //   if (!this.components.soulCore) {
-  //     return '';
-  //   }
-  //   const matchInput = new MatchSoulInput();
-  //   matchInput.agent_id = def.agent_ref;
-  //   matchInput.context_id = input.context_id ?? '';
-  //   matchInput.run_id = input.run_id ?? '';
-  //   matchInput.task_content = input.task_content;
-  //   matchInput.bypass_cache = input.regenerate === true;
-  //   matchInput.task_domain = input.task_domain;
-  //   const matchOutput = new MatchSoulOutput();
-  //   const ok = await this.components.soulCore.matchSoul(matchInput, matchOutput, new SoulCoreContext());
-  //   if (!ok) {
-  //     return '';
-  //   }
-  //   return String(matchOutput.soul?.soul_content ?? '');
-  // }
-
   // ===== 修改后的方法（2026-09-11 收敛版）：只读 def.soul_id 显式绑定，无绑定即空 =====
   /** Soul 内容解析（数据处理；def 显式绑定优先，无绑定即空） */
   private async soSoulContent(def: AgentDefRecord): Promise<string> {
@@ -1105,55 +790,6 @@ export class AgentDefService {
     await this.components.soulCore.soSoulContent(input, output, new SoulCoreContext());
     return output.content;
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // /** 工具清单解析（数据处理；显式 tools_json 优先，否则动态 matchSkill/matchMCP） */
-  // private async soSnapshotTools(def: AgentDefRecord, input: SoAgentSnapshotInput): Promise<SnapshotToolEntry[]> {
-  //   if (def.tools_json) {
-  //     const explicit = parseJsonObject(def.tools_json);
-  //     return this.entriesFromExplicit(explicit);
-  //   }
-  //   const entries: SnapshotToolEntry[] = [];
-  //   if (this.components.skillCore) {
-  //     const matchInput = new MatchSkillInput();
-  //     matchInput.agent_id = def.agent_ref;
-  //     matchInput.context_id = input.context_id ?? '';
-  //     matchInput.run_id = input.run_id ?? '';
-  //     const matchOutput = new MatchSkillOutput();
-  //     const ok = await this.components.skillCore.matchSkill(matchInput, matchOutput, new SkillCoreContext());
-  //     if (ok) {
-  //       for (const entry of matchOutput.skills) {
-  //         entries.push({ kind: 'skill', id: entry.skill_id, brief: entry.skill_brief });
-  //       }
-  //     }
-  //   }
-  //   return this.appendMcpEntries(def, input, entries);
-  // }
-
-  // ===== 原始方法（保留作为参考，2026-09-11 版）：曾把 agent 表绑定传入 matchSkill/matchMCP 走 Layer 1 水合 =====
-  // /** 工具清单解析 */
-  // private async soSnapshotTools(def: AgentDefRecord, input: SoAgentSnapshotInput, report?: Report): Promise<SnapshotToolEntry[]> {
-  //   if (def.tools_json) {
-  //     const explicit = parseJsonObject(def.tools_json);
-  //     const entries = this.entriesFromExplicit(explicit);
-  //     report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
-  //       source: 'explicit',
-  //       skills: entries.filter((e) => e.kind === 'skill').map((e) => ({ id: e.id, brief: e.brief })),
-  //     });
-  //     return entries;
-  //   }
-  //   const binding = await this.soAgentBinding(def.agent_ref);
-  //   const boundSkillIds = binding ? this.soJsonIdArray(binding.skill_ids_json) : [];
-  //   const boundMcpIds = binding ? this.soJsonIdArray(binding.mcp_ids_json) : [];
-  //   ...
-  // }
-
-  // ===== 原始方法（保留作为参考，2026-09-11 版）：tools_json 缺失时经 core.matchSkill/matchMCP
-  // 动态匹配（已按 2026-09-11 收敛原则删除：命中即绑定，无绑定即无工具） =====
-  // private async soSnapshotTools(def: AgentDefRecord, input: SoAgentSnapshotInput, report?: Report): Promise<SnapshotToolEntry[]> {
-  //   if (def.tools_json) { ...explicit 展开... }
-  //   ... matchSkill / appendMcpEntries（match 输入含 task_content/bypass_cache）
-  // }
 
   // ===== 修改后的方法（2026-09-11 收敛版）：只读 def.tools_json 显式绑定，缺失回退 agent 绑定 =====
   /** 工具清单解析（数据处理；显式 tools_json 唯一来源，缺失从 agent 绑定回退） */
@@ -1220,49 +856,7 @@ export class AgentDefService {
     return entries;
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 追加 MCP 条目（数据处理） */
-  // private async appendMcpEntries(def: AgentDefRecord, input: SoAgentSnapshotInput, entries: SnapshotToolEntry[]): Promise<SnapshotToolEntry[]> {
-  //   if (!this.components.mcpCore) {
-  //     return entries;
-  //   }
-  //   const matchInput = new MatchMcpInput();
-  //   matchInput.agent_id = def.agent_ref;
-  //   matchInput.context_id = input.context_id ?? '';
-  //   matchInput.run_id = input.run_id ?? '';
-  //   const matchOutput = new MatchMcpOutput();
-  //   const ok = await this.components.mcpCore.matchMCP(matchInput, matchOutput, new McpCoreContext());
-  //   if (ok) {
-  //     for (const detail of matchOutput.mcp_details) {
-  //       entries.push({ kind: 'mcp', id: String(detail.id ?? ''), brief: String(detail.mcp_brief ?? detail.mcp_title ?? '') });
-  //     }
-  //   }
-  //   return entries;
-  // }
-
   // ===== 修改后的方法（2026-09-09）：MCP 选定完成即上报 mcp.selected =====
-  // ===== 原始方法（保留作为参考，2026-09-11 版，已随动态 Tool 匹配收敛一并弃用）=====
-  // private async appendMcpEntries(def: AgentDefRecord, input: SoAgentSnapshotInput, entries: SnapshotToolEntry[], report?: Report): Promise<SnapshotToolEntry[]> {
-  //   if (!this.components.mcpCore) return entries;
-  //   const matchInput = new MatchMcpInput();
-  //   matchInput.agent_id = def.agent_ref;
-  //   matchInput.context_id = input.context_id ?? '';
-  //   matchInput.run_id = input.run_id ?? '';
-  //   matchInput.task_content = input.task_content;
-  //   matchInput.bypass_cache = input.regenerate === true;
-  //   const matchOutput = new MatchMcpOutput();
-  //   const ok = await this.components.mcpCore.matchMCP(matchInput, matchOutput, new McpCoreContext());
-  //   if (ok) {
-  //     for (const detail of matchOutput.mcp_details) {
-  //       entries.push({ kind: 'mcp', id: String(detail.id ?? ''), brief: String(detail.mcp_brief ?? detail.mcp_title ?? '') });
-  //     }
-  //     report?.pushBusinessEvent(BusinessEvent.McpSelected, {
-  //       mcps: matchOutput.mcp_details.map((d) => ({ id: String(d.id ?? ''), brief: String(d.mcp_brief ?? d.mcp_title ?? '') })),
-  //     });
-  //   }
-  //   return entries;
-  // }
-
   /** 系统提示组装（数据处理→逻辑控制）：prompt_template 表渲染 identity 模板 */
   private async prepareSystemPrompt(def: AgentDefRecord, soulContent: string, tools: SnapshotToolEntry[], userMessage: string): Promise<string> {
     const toolLines = tools

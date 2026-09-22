@@ -158,8 +158,6 @@ export class InfoCoreService {
     const isCorrect = handleResultType === HandleResultType.CORRECT;
 
     const now = IdGenerator.now();
-    // ===== 原始代码（保留作为参考）=====
-    // info_raw.created / updated 一律取保存时刻 now；
     // ===== 修改后（2026-09-09）：优先使用调用方传入的真实创建时间（input.created，
     //      如 runtime_message.created），避免 run 结束后统一同步导致 user/assistant
     //      落库同一时间戳、对话区消息顺序颠倒（并使按 created 去重的条件真正成立）=====
@@ -184,8 +182,6 @@ export class InfoCoreService {
       // ===== 修改后（2026-09-14 trace 源头治理）：trace_id 显式传入（含 ''，表示该行
       // 无已知源头 trace）优先落库；未传入才回落调用方链路（Metrics）trace —— 防止
       // 历史补齐行无 trace 时被错误盖上调用方当轮 trace =====
-      // ===== 原始代码（保留作为参考）=====
-      // { field: 'trace_id', value: (input as { trace_id?: string }).trace_id || metrics?.trace_id || '' },
       { field: 'trace_id', value: input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '') },
       { field: 'handle_result_type', value: handleResultType },
     ]);
@@ -228,8 +224,6 @@ export class InfoCoreService {
             this.keywordInfo(processInput, new KeywordInfoOutput(), _context, metrics, report),
           ]);
         } catch (err) {
-          // ===== 原始代码（保留作为参考）=====
-          // } catch (err) { /* 异步处理错误仅记录，不影响保存 */ }
           // ===== 修改后（2026-09-15）："仅记录"原来是无输出静默吞掉，
           //      异步自学习（关键词/标签/向量）失败完全不可见，输出可见诊断 =====
           metrics?.warn(`[InfoCoreProvider] saveInfo 异步自学习处理失败（info_id=${processInput.info_id}）`, {
@@ -408,12 +402,6 @@ export class InfoCoreService {
     const now = IdGenerator.now();
     let summary: string;
 
-    // ===== 原始代码（保留作为参考）=====
-    // if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
-    //   summary = infoRow.info;
-    // } else {
-    //   return true;   ← 长文本不生成（摘要生成依赖上层 SummaryAgent，实际无调用方，info_summary 长期为空）
-    // }
     // ===== 修改后：长文本由 InfoCore 自身承担 LLM 摘要生成（集中路径：config.llm_id =
     // 摘要模型、prompt_template_id=摘要模板，均可经配置更新接口调整）=====
     if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
@@ -575,18 +563,6 @@ export class InfoCoreService {
    * 该过程幂等，可与增量 buildCooccurEdges 配合使用（tagInfo 在保存时实时建边，
    * 本方法负责历史标签的一次性回填）。
    */
-  // ===== 原始方法（保留作为参考）=====
-  // async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
-  // ): Promise<boolean> {
-  //   // 标签共现边
-  //   const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE);
-  //   // 关键词共现边
-  //   const kwResult = await this.rebuildCooccurForSource(INFO_KEYWORD_TABLE, 'word', 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE);
-  //   output.deleted_edges = tagResult.deleted + kwResult.deleted;
-  //   output.rebuilt_edges = tagResult.rebuilt + kwResult.rebuilt;
-  //   return true;
-  // }
-
   // ===== 修改后的方法（2026-09-21 涌现图错误信息隔离）=====
   // 「涌现」图节点来自 info_tag，原实现全量重建时未回溯 info_raw.handle_result_type，
   // 使系统报错信息（call_error / internal_error）派生的标签、以及已删除信息遗留的
@@ -653,10 +629,6 @@ export class InfoCoreService {
     }
 
     // 2. 读表：统计频次 + 按 info_id 分组
-    // ===== 原始代码（保留作为参考）=====
-    // const rows = await this.relationDb.select(table, {
-    //   order_by: [{ field: 'info_id', direction: 'ASC' }],
-    // });
     // ===== 修改后（2026-09-21 涌现图错误信息隔离）：INNER JOIN info_raw 且仅保留
     // handle_result_type=correct 的信息派生的标签/关键词，系统报错信息（call_error /
     // internal_error）与已删除信息（无 info_raw）产生的文本不再被建入图谱 =====
@@ -1400,13 +1372,6 @@ export class InfoCoreService {
     //     —— 占比基准是**基础上下文数量**（= pinned + citing + timeline），不再占 total、
     //     也不再引入 shrinkFactor 二次收缩（原始实现注释保留在下方）；基础上下文越多，
     //     弱相关空间同比放行，抹去「占比放样 over total + 收缩」的双重折算。
-    // ===== 原始实现（保留作为参考）=====
-    // const baseContextCount = pinnedCandidates.length + citingCandidates.length + timelineCandidates.length;
-    // const shrinkFactor = maxTotal > 0 ? Math.max(0, 1 - baseContextCount / maxTotal) : 1;
-    // const capByPercent = (base: number, percent: number): number => {
-    //   const byPercent = maxTotal > 0 ? Math.floor((maxTotal * percent) / 100) : 0;
-    //   return Math.floor(Math.min(base, byPercent) * shrinkFactor);
-    // };
     const baseContextCount = pinnedCandidates.length + citingCandidates.length + timelineCandidates.length;
     const capByBase = (base: number, percent: number): number => {
       const byBase = Math.floor((baseContextCount * percent) / 100);
@@ -1485,52 +1450,12 @@ export class InfoCoreService {
     const kwCandidates: InfoRawRecord[] = kwResult;
 
     // RANDOM (随机采样消息：优先抽取未在前面维度被选中的新消息；限额已按基础上下文动态收缩)
-    // ===== 原始实现（保留作为参考）：仅在会话消息数为 0 时才从全局随机兜底 =====
-    // let randCandidates: InfoRawRecord[] = [];
-    // if (randLimit > 0) {
-    //   try {
-    //     const existingIds = new Set<string>([
-    //       ...pinnedCandidates.map((c) => c.info_id),
-    //       ...citingCandidates.map((c) => c.info_id),
-    //       ...timelineCandidates.map((c) => c.info_id),
-    //     ]);
-    //     const count = await this.relationDb.count(INFO_RAW_TABLE, [
-    //       { field: 'session_id', operator: Operator.EQ, value: input.session_id },
-    //     ]);
-    //     if (count > 0) {
-    //       const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
-    //         `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
-    //         [input.session_id, Math.min(randLimit * 3, count)],
-    //       );
-    //       const sessionCandidates = randomRows
-    //         .map((r) => this.toInfoRawRecord(r))
-    //         .filter((c) => !existingIds.has(c.info_id))
-    //         .filter((c) => this.isCorrectInfo(c));
-    //       randCandidates = sessionCandidates.slice(0, randLimit);
-    //     } else if (enableCrossSession) {
-    //       const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
-    //         `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
-    //         [Math.min(randLimit * 3, 100)],
-    //       );
-    //       const globalCandidates = randomRows
-    //         .map((r) => this.toInfoRawRecord(r))
-    //         .filter((c) => !existingIds.has(c.info_id))
-    //         .filter((c) => this.isCorrectInfo(c));
-    //       randCandidates = globalCandidates.slice(0, randLimit);
-    //     }
-    //   } catch { /* ignore */ }
-    // }
     // ===== 修改后的实现（2026-09-15 第二版，对齐 PRD 步骤 524）=====
     // PRD：RANDOM = 「从会话内未选中消息随机抽样」＋「会话内候选不足以填满限额时，从全局随机补充剩余名额
     //（仅 enable_cross_session=true 时）」。注意：会话内随机抽样是本维度的基础动作，**不受**
     // enable_cross_session 约束（该开关只控制跨会话的全局兜底）——
     // 原实现把整段 RANDOM 采样包进 enableCrossSession 判断，enable_cross_session=false 时
     // （Work Agent 子任务场景）会话内随机也被一并跳过，与 PRD 相悖。
-    // ===== 原始实现（2026-09-14 版，保留作为参考）=====
-    // let randCandidates: InfoRawRecord[] = [];
-    // if (randLimit > 0 && enableCrossSession) {
-    //   ... 同下，整段（会话内采样 + 全局补充）都被 enableCrossSession 门控 ...
-    // }
     let randCandidates: InfoRawRecord[] = [];
     if (randLimit > 0) {
       try {
@@ -2375,8 +2300,6 @@ const rawPriority = priorityOrderStr
         embedOutput, bizCtx ?? new LLMContext(),
       );
       if (!embedOutput.embedding || embedOutput.embedding.length === 0) {
-        // ===== 原始代码（保留作为参考）=====
-        // return [];
         // ===== 修改后（2026-09-15）：空 embedding 不再静默返回，输出可见诊断。
         //      实测 embedding 服务（如本地 LLamaCPP）不可用时 SIMILARITY 维度整条失效，
         //      且零日志，只能靠翻 llm_available/手动 curl 排查 =====
@@ -2387,8 +2310,6 @@ const rawPriority = priorityOrderStr
       }
       return embedOutput.embedding;
     } catch (err) {
-      // ===== 原始代码（保留作为参考）=====
-      // } catch { return []; }
       // ===== 修改后（2026-09-15）：向量化失败可见化，避免静默丢数据 =====
       metrics?.warn('[InfoCoreProvider] generateEmbedding 调用失败', {
         llm_id: vectorConfig.llm_id,

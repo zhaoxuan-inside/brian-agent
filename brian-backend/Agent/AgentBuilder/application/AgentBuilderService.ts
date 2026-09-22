@@ -595,15 +595,6 @@ export class AgentBuilderService {
     return true;
   }
 
-  // ===== 原始方法/配置（保留作为参考）=====
-  // private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
-  //   PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '系统-Planner' },
-  //   WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '系统-Writer' },
-  //   EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor', defaultName: '系统-Evolutor' },
-  //   SUMMARY: { strategyLabel: 'CoT', signatureKey: 'summary', defaultName: '系统-Summary' },
-  //   INTENT: { strategyLabel: 'CoT', signatureKey: 'intent', defaultName: '需求理解 Agent' },
-  // };
-
   // ===== 修改后的系统 Agent 配置映射（纯汉字功能名称，不含助手后缀，系统属性由 created_by/agent_type 独立保存） =====
   private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
     PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '任务规划' },
@@ -848,35 +839,6 @@ export class AgentBuilderService {
     });
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /**
-  //  * Prompt 选择（纯选择，无绑定持久化）：经 PromptsAccess 取启用模板，
-  //  * simpleSimilarity 对任务文本与 模板名+摘要 打分取最优；无候选或低分回退空串（执行侧内置兜底；透传 metrics/report）。
-  //  */
-  // private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
-  //   try {
-  //     const out = new SoPromptOutput();
-  //     await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext(), metrics, report);
-  //     let bestId = '';
-  //     let bestScore = 0;
-  //     for (const t of out.list ?? []) {
-  //       if (t.enable === false) continue;
-  //       const haystack = `${t.prompt_template_title ?? ''} ${t.prompt_template_brief ?? ''}`;
-  //       const score = Math.max(
-  //         simpleSimilarity(taskText, haystack),
-  //         simpleSimilarity(domain, haystack),
-  //       );
-  //       if (score > bestScore) {
-  //         bestScore = score;
-  //         bestId = t.id;
-  //       }
-  //     }
-  //     return bestScore > 0 ? bestId : '';
-  //   } catch {
-  //     return '';
-  //   }
-  // }
-
   // ===== 修改后的方法（大模型语义评判，统一百分制 0-100，过滤内部系统模板，无强匹配回退空串） =====
   private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
     try {
@@ -966,22 +928,6 @@ export class AgentBuilderService {
       return fallback;
     }
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // private generateAgentName(
-  //   soul: Record<string, unknown> | null,
-  //   skills: Array<{ skill_id: string; skill_brief: string; relevance: number }>,
-  //   domain: string,
-  //   agentId: string,
-  // ): string {
-  //   const parts: string[] = []
-  //   if (domain) parts.push(domain)
-  //   const soulBrief = (soul as Record<string, string> | null)?.soul_brief || ''
-  //   if (soulBrief) parts.push(soulBrief)
-  //   else if (skills.length > 0 && skills[0].skill_brief) parts.push(skills[0].skill_brief)
-  //   if (parts.length === 0) return `Agent-${agentId.slice(0, 8)}`
-  //   return parts.join('-')
-  // }
 
   // ===== 修改后的方法（全汉字功能名称，不含"助手"后缀，属性独立保存） =====
   private generateAgentName(

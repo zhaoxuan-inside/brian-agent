@@ -799,8 +799,6 @@ async function buildContext() {
         // 事故复盘：原实现落 input.session_id（Runtime 内部 runtimeSessionId，RunGateway.prepareLoopInput 传入），
         // 而 /api/chat/history 经 soChatHistory 按 chat session_key 过滤 info_raw，
         // PERMISSION 行查不到 → run 收尾 loadChatHistory 全量替换 messages 后权限卡消失。
-        // ===== 原始代码（保留作为参考）=====
-        // { field: 'session_id', value: input.session_id },
         { field: 'session_id', value: input.session_key || input.session_id },
           { field: 'work_id', value: '' },
           { field: 'run_id', value: '' },
@@ -1149,7 +1147,6 @@ async function buildContext() {
 // ===== 修改后（2026-09-14 trace 源头治理）：traceId 唯一产生点 = 请求源头 =====
 // 前端/调用方每次请求生成并经 X-Trace-Id 头显式携带；服务端只消费：
 // 头合法（UUID v4）即采用，不携带或非法时才兜底生成（保证任意来源仍可追踪）。
-// ===== 原始方法（保留作为参考）：/api/chat/stream 入口处 direct IdGenerator.generate()（见 3863 行注释） =====
 const TRACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function soReqTraceId(req: http.IncomingMessage): string {
   const raw = String(req.headers['x-trace-id'] ?? '').trim().toLowerCase();
@@ -1281,10 +1278,6 @@ async function buildThinkingBlocksAndDag(
 // ===== 修改后的方法（2026-09-13）：时间线严格按因果与时序排序，消除 seq:-1 倒置与技术黑话 =====
 type ContextTriples = { source_ids_map: Record<string, string[]>; content_map: Record<string, string>; attribute_map: Record<string, Record<string, unknown>> };
 
-// ===== 原始代码（保留作为参考；2026-09-15 记忆集中删除）：dev-server 内只读 SQL 复刻 InfoCoreProvider.soContextByWork =====
-// function soContextByWorkRaw(relationDb: AllRelationDb, workId: string): ContextTriples {
-//   ...（info_context_source / info_raw / info_summary 直接 SQL 查询，与 Core 层实现重复）
-// }
 // ===== 修改后：快照三对象统一经 InfoCoreProvider.soContextByWork 读取（唯一路径）=====
 async function soContextByWorkShared(infoCore: InfoCoreLike, workId: string): Promise<ContextTriples> {
   const soOut = { source_ids_map: {} as Record<string, string[]>, content_map: {} as Record<string, string>, attribute_map: {} as Record<string, Record<string, unknown>> };
@@ -1770,11 +1763,6 @@ async function buildThinkingBlocksFromRuntime(
       case 'error.occurred':
         pushTimeline(ev, ev.event_type, `出错：${String(payload.error_message ?? payload.error ?? '')}`, '', TimelineItemKind.LifecycleFail);
         break;
-      // ===== 原始代码（保留作为参考）：重复的 'writer.completed' case（dead code）已并入上方首个 case，
-      //      'loop.turn.completed' 累计耗时保留 =====
-      // case 'writer.completed':
-      //   writerElapsed = eventElapsed(payload);
-      //   break;
       case 'loop.turn.completed':
         llmTurnsMs += eventElapsed(payload);
         break;
@@ -2109,10 +2097,6 @@ async function buildThinkingBlocksFromRuntime(
   return { blocks: [block], dag, trace };
 }
 
-// ===== 原始方法（保留作为参考；2026-09-09 改名，仅负责编排表数据源） =====
-// ===== 从数据表采集思考过程：根据 work_id 列表重建各 Agent 的 ThinkingChain Blocks =====
-// 数据来源：orchestration_agent_dag_record / agent_plan / orchestration_agent_execution /
-//          agent / agent_execution_trace 五张表；由 /api/chat/history 原始内联逻辑抽取而来。
 async function rebuildPromptFromRef(
   rebuilder: PromptRebuilder,
   ref: any,
@@ -2131,7 +2115,6 @@ async function rebuildPromptFromRef(
   }
 }
 
-// ===== 原始方法（保留作为参考；2026-09-09 改名，仅负责编排表数据源） =====
 async function buildThinkingBlocksFromOrchestration(
   relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess,
   infoCore: any,
@@ -3939,63 +3922,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         });
 
       } else if (method === 'GET' && pathname === '/api/chat/eval-result') {
-        // ===== 原始方法（保留作为参考）=====
-        // 评估结果采集接口：返回某次工作（work）的 Evolutor 评估结果（评分 JSON）。
-        // 数据来源：orchestration_agent_execution（execution_type=SYSTEM 且 agent_type=EVOLUTOR）的 answer 字段。
-        // const infoId = String(params.get('info_id') ?? '');
-        // let workId = String(params.get('work_id') ?? '');
-        // let traceId = String(params.get('trace_id') ?? '');
-        //
-        // if (!workId && !infoId) {
-        //   sendJson(res, 400, { error: '请至少提供 work_id / info_id 中的一个参数' });
-        //   return;
-        // }
-        //
-        // if (!workId && infoId) {
-        //   try {
-        //     const rows = ctx.relationDb.queryRaw<{ work_id: string; trace_id: string }>(
-        //       `SELECT "work_id", "trace_id" FROM "info_raw" WHERE "info_id" = ? LIMIT 1`,
-        //       [infoId],
-        //     );
-        //     if (rows.length > 0) {
-        //       workId = String(rows[0].work_id ?? '');
-        //       traceId = String(rows[0].trace_id ?? '');
-        //     }
-        //   } catch { /* degrade gracefully */ }
-        // }
-        //
-        // if (!workId) {
-        //   sendJson(res, 200, { work_id: '', trace_id: traceId, found: false, evaluation: null });
-        //   return;
-        // }
-        //
-        // const evalRows = ctx.relationDb.queryRaw<{ answer: string; created: number; elapsed_ms: number; agent_name: string }>(
-        //   `SELECT e.answer, e.created, e.elapsed_ms, a.agent_name
-        //    FROM orchestration_agent_execution e
-        //    LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
-        //    WHERE e.work_id = ? AND e.execution_type = 'SYSTEM' AND a.agent_type = 'EVOLUTOR'
-        //    ORDER BY e.created DESC LIMIT 1`,
-        //   [workId],
-        // );
-        //
-        // if (evalRows.length === 0) {
-        //   sendJson(res, 200, { work_id: workId, trace_id: traceId, found: false, evaluation: null });
-        //   return;
-        // }
-        //
-        // const evalRow = evalRows[0];
-        // sendJson(res, 200, {
-        //   work_id: workId,
-        //   trace_id: traceId,
-        //   found: true,
-        //   evaluation: {
-        //     answer: String(evalRow.answer ?? ''),
-        //     created: Number(evalRow.created ?? 0),
-        //     elapsed_ms: Number(evalRow.elapsed_ms ?? 0),
-        //     agent_name: String(evalRow.agent_name ?? ''),
-        //   },
-        // });
-
         // ===== 修改后的方法（2026-09-15）：数据源迁移到 agent_evaluation =====
         // 原因：2026-09-14 Runtime v2 重构后，评估结果只写 agent_evaluation
         // （run_id = 一次问答的 runtime_run.id），orchestration_agent_execution 不再新增行；
@@ -4190,8 +4116,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const streamOutput = new OpenChatStreamOutput();
         // ===== 修改后（2026-09-14 trace 源头治理）：traceId 不再由端点生成，从请求源头
         // （前端 X-Trace-Id 头）消费；无携带时才由 soReqTraceId 兜底生成 =====
-        // ===== 原始代码（保留作为参考）=====
-        // const traceId = IdGenerator.generate();
         const traceId = soReqTraceId(req);
         const chatMetrics = new Metrics(ctx.logAccess as unknown as MetricsLogger, 'ChatService.openChatStream', traceId);
 

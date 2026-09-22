@@ -216,15 +216,6 @@ export class AopProxy {
           // 凡 Metrics 实例可检测（显式传入 / 自动创建 / 后续修正为实例），缺 trace_id 时
           // 立即生成并回填；兜底 trace 同时进入 InterceptContext（ctx.traceId），供
           // LogInterceptor 旧式 3 参签名失败日志兜底盖章，不再依赖业务对象携带 =====
-          // ===== 原始代码（保留作为参考）：兜底仅覆盖"Metrics 实例非空且 instanceof"单一路径 =====
-          // const metricsInstance = isNewStyle ? args[3] : undefined;
-          // let effectiveTraceId = metricsInstance instanceof Metrics ? metricsInstance.trace_id : undefined;
-          // if (!effectiveTraceId) effectiveTraceId = IdGenerator.generate();
-          // if (metricsInstance instanceof Metrics) {
-          //   const metrics = metricsInstance as Metrics;
-          //   if (!metrics.trace_id) metrics.trace_id = effectiveTraceId;
-          //   if (!metrics.category) metrics.category = `${targetName}.${methodName}`;
-          // }
           const metricsInstance = isNewStyle ? args[3] : undefined;
           let effectiveTraceId = metricsInstance instanceof Metrics ? metricsInstance.trace_id : undefined;
           if (!effectiveTraceId) effectiveTraceId = IdGenerator.generate();

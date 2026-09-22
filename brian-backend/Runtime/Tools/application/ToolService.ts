@@ -253,17 +253,6 @@ export class ToolService {
     return true;
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 查询工具规格（逻辑控制） */
-  // async soTools(input: SoToolsInput, output: SoToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
-  // ): Promise<boolean> {
-  //   const ids = input.tool_ids?.length ? input.tool_ids : Array.from(this.registry.keys());
-  //   output.specs = ids
-  //     .filter((id) => this.registry.has(id))
-  //     .map((id) => this.toSpecJson(this.registry.get(id)!));
-  //   return true;
-  // }
-
   /** 规格缓存查询（数据处理；miss 重建并回填） */
   private soCachedSpec(id: string): ToolSpecJson {
     const cached = this.specCache.get(id);

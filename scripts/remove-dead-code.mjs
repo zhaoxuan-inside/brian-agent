@@ -23,6 +23,8 @@ function processFile(file) {
   const lines = fs.readFileSync(file, 'utf8').split('\n');
   const out = [];
   let removed = 0;
+  // 「===== 修改后」是设计决策记录（why 注释），即使紧跟在原始代码块内也必须保留
+  const isModifiedBoundary = (l) => l.includes('===== 修改后');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!MARKER.test(line)) { out.push(line); continue; }
@@ -30,12 +32,22 @@ function processFile(file) {
     let j = i + 1;
     while (j < lines.length && lines[j].trim() === '') { removed++; j++; } // 空行
     if (j < lines.length && lines[j].trim().startsWith('/*')) {
-      // 删除到块注释结束行（该行以 */ 结尾）
+      // 块注释：若内含「修改后」说明则整体保留，仅标记行删除
+      let k = j; let hasModified = false;
+      while (k < lines.length && !lines[k].trim().endsWith('*/')) {
+        if (isModifiedBoundary(lines[k])) { hasModified = true; break; }
+        k++;
+      }
+      if (lines[k] && isModifiedBoundary(lines[k])) hasModified = true;
+      if (hasModified) { i = j - 1; continue; }
       removed++; j++;
       while (j < lines.length && !lines[j].trim().endsWith('*/')) { removed++; j++; }
       if (j < lines.length) { removed++; j++; } // */ 行
     } else if (j < lines.length && lines[j].trim().startsWith('//')) {
-      while (j < lines.length && lines[j].trim().startsWith('//')) { removed++; j++; }
+      while (j < lines.length && lines[j].trim().startsWith('//')) {
+        if (isModifiedBoundary(lines[j])) break; // 保留「修改后」及之后内容
+        removed++; j++;
+      }
     }
     if (j < lines.length && lines[j].trim() === '') { removed++; j++; } // 尾部空行
     i = j - 1;

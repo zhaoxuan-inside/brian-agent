@@ -114,30 +114,6 @@ export class LLMEventsRunner {
     }
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // private setupAbortWiring(): () => void {
-  //   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  //   const resetIdle = (): void => {
-  //     clearTimeout(idleTimer);
-  //     idleTimer = setTimeout(
-  //       () => this.abortLocal('timeout'),
-  //       this.opts.idle_watchdog_ms || DEFAULT_IDLE_WATCHDOG_MS,
-  //     );
-  //   };
-  //   resetIdle();
-  //   const external = this.opts.signal;
-  //   const forwardExternal = (): void =>
-  //     this.abortLocal(this.resolveExternalReason(external));
-  //   if (external) {
-  //     if (external.aborted) {
-  //       forwardExternal();
-  //     } else {
-  //       external.addEventListener('abort', forwardExternal, { once: true });
-  //     }
-  //   }
-  //   return () => clearTimeout(idleTimer);
-  // }
-
   // ===== 修改后的方法（2026-09-13）：保留 resetIdle 句柄并在收到数据帧时重置 =====
   /**
    * 中止接线（逻辑控制）：外部 signal → controller；空闲看门狗逐帧重置。
@@ -209,32 +185,6 @@ export class LLMEventsRunner {
     }
     return res;
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // private async readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<LLMEventsRunResult> {
-  //   const decoder = new TextDecoder();
-  //   let buffer = '';
-  //   let lastFrame: unknown = null;
-  //   try {
-  //     while (true) { // eslint-disable-line no-constant-condition
-  //       const read = reader.read();
-  //       const { done, value } = await Promise.race([read, this.aborted]);
-  //       if (done) {
-  //         break;
-  //       }
-  //       buffer += decoder.decode(value, { stream: true });
-  //       const lines = buffer.split('\n');
-  //       buffer = lines.pop() || '';
-  //       lastFrame = this.dispatchLines(lines, lastFrame);
-  //     }
-  //     this.dispatchLines(buffer.split('\n'), lastFrame);
-  //     return this.buildResult(lastFrame, undefined);
-  //   } catch (err) {
-  //     throw this.toAbortOrConnectError(err);
-  //   } finally {
-  //     reader.releaseLock();
-  //   }
-  // }
 
   // ===== 修改后的方法（2026-09-13）：每读取到有效 chunk 帧重置看门狗 =====
   /**

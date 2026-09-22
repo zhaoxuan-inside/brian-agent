@@ -39,54 +39,6 @@ export interface ContextOutputLike {
 const MAX_ITEM_CHARS = 2000;
 const MAX_TOTAL_CHARS = 150000;
 
-// ===== 原始实现（保留作为参考）：分区标题为来源的直译名称，模型难以从名称推断使用方式 =====
-// export function formatContextCategories(ctxOut?: ContextOutputLike): string {
-//   if (!ctxOut) return '';
-//
-//   const cat = ctxOut.categories;
-//   const sections: string[] = [];
-//   let totalChars = 0;
-//
-//   const truncateItem = (text: string): string => {
-//     const t = (text ?? '').trim();
-//     if (t.length <= MAX_ITEM_CHARS) return t;
-//     return `${t.slice(0, MAX_ITEM_CHARS)}…(截断)`;
-//   };
-//
-//   const addCategorySection = (title: string, items?: ContextItemLike[]) => {
-//     if (!items || items.length === 0) return;
-//     if (totalChars >= MAX_TOTAL_CHARS) return;
-//     const lines: string[] = [];
-//     for (const i of items) {
-//       if (totalChars >= MAX_TOTAL_CHARS) break;
-//       const line = truncateItem(i.info || i.content || i.summary || '');
-//       if (!line) continue;
-//       lines.push(line);
-//       totalChars += line.length;
-//     }
-//     if (lines.length > 0) {
-//       sections.push(`<${title}>\n${lines.map((l) => `- ${l}`).join('\n')}\n</${title}>`);
-//     }
-//   };
-//
-//   if (cat) {
-//     addCategorySection('指定消息', cat.selected || cat.custom);
-//     addCategorySection('钉住的消息', cat.pinned);
-//     addCategorySection('时间线消息', cat.timeline);
-//     addCategorySection('引用关联消息', cat.citing);
-//     addCategorySection('标签关联消息', cat.tag_relative);
-//     addCategorySection('向量语义消息', cat.similarity);
-//     addCategorySection('关键词匹配消息', cat.keyword);
-//     addCategorySection('探查随机消息', cat.random);
-//   }
-//
-//   if (sections.length > 0) {
-//     return `<上下文信息>\n${sections.join('\n\n')}\n</上下文信息>`;
-//   }
-//
-//   ...
-// }
-//
 // ===== 修改后的实现 =====
 // 记忆上下文规范化（2026-09-15）：
 // 1. 每类记忆来源带「模型可理解的功能说明」，说明该类记忆如何产生、回答时应如何使用，

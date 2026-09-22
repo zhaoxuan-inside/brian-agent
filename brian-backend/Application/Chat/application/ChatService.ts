@@ -245,21 +245,6 @@ export class ChatService {
     */
   private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics): Promise<void> {
     try {
-      // ===== 原始代码（保留作为参考）=====
-      // const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
-      //   `SELECT * FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" ASC`,
-      //   [runtimeSessionId],
-      // );
-      // for (const msg of rows) {
-      //   const existing = this.relationDb.queryRaw<{ cnt: number }>(
-      //     `SELECT COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" = ? AND "info" = ? AND "created" = ?`,
-      //     [chatSessionId, msg.content, msg.created],
-      //   );
-      //   if (existing?.[0]?.cnt > 0) continue;
-      //   ...
-      //   await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext());  // 未传 created
-      // }
-      // 倒序取最近 200 条后反转为时间序（限制全量重读成本）
       const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
         `SELECT "id", "role", "content", "created", "run_id" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" DESC LIMIT 200`,
         [runtimeSessionId],
@@ -289,8 +274,6 @@ export class ChatService {
       // 未及自身同步，本轮补齐时被盖上本轮 trace）。
       // 修改后：每行按其原 run 反查 runtime_run.trace_id（run 受理时已持久化源头
       // trace），查不到则留空，绝不伪造当轮 trace。
-      // ===== 原始代码（保留作为参考）=====
-      // 仅令牌化 runIds 查询，无 run 级 trace 反查；补齐行统一 stamp 当轮 traceId
       let toolMsgIds = new Set<string>();
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
@@ -441,9 +424,6 @@ export class ChatService {
           });
         }
 
-        // ===== 原始代码（保留作为参考；2026-09-15 记忆集中）=====
-        // 1. 收集该会话下所有 info_id → 2. 内联直写删除派生表（info_tag/info_summary/info_keyword/info_vector）
-        //    3. 直接调 delInfoGraph + 直删 info_raw —— 与 InfoCore.delInfoByWork 重复的第二条删除路径
         // ===== 修改后：记忆删除统一收敛 InfoCoreProvider.delInfoBySession（含派生表 / 上下文快照 / GraphDB 级联），
         //      chat_session / runtime_ / stream_event 等非记忆表仍由本层负责 =====
         const delInput = new DelInfoBySessionInput();

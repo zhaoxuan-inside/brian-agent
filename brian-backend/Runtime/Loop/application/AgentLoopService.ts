@@ -343,42 +343,6 @@ export class AgentLoopService {
     return { stop: false, finalTurn };
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 内层单轮（逻辑控制）：预算 → steering 抽干 → LLM → 持久化 → 工具消费 */
-  // private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopStopReason> {
-  //   const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
-  //   if (steered.length) {
-  //     await this.persistInjectedMessages(ctx, steered);
-  //   }
-  //   const gate = this.consumeBudget(ctx);
-  //   if (gate.stop) {
-  //     return gate.reason ?? LoopStopReason.Budget;
-  //   }
-  //   ctx.finalTurn = gate.finalTurn;
-  //   const turn = await this.callLLMTurn(ctx);
-  //   if (!turn.ok) {
-  //     this.flushDeltaBuffer(ctx, 'think');
-  //     return turn.verdict ?? LoopStopReason.Error;
-  //   }
-  //   this.flushDeltaBuffer(ctx, 'think');
-  //   await this.persistAssistantTurn(ctx, turn);
-  //   if (turn.finishReason !== 'tool-calls') {
-  //     if (turn.finishReason !== 'error' && turn.text) {
-  //       if (!ctx.deferFinalReply) {
-  //         ctx.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: turn.text });
-  //       }
-  //     }
-  //     ctx.result = turn.text ?? '';
-  //     if (turn.finishReason === 'error') {
-  //       ctx.error = ctx.error ?? 'LLM 流异常终止（未收到结束帧）';
-  //       return LoopStopReason.Error;
-  //     }
-  //     return LoopStopReason.Stop;
-  //   }
-  //   await this.consumeToolCalls(ctx, turn.toolCalls ?? []);
-  //   return 'continue';
-  // }
-
   // ===== 修改后的方法（2026-09-19 逐轮可观测）：每轮开始/结果单独上报 ——
   // loop.turn.started 体现本轮思维模型；loop.turn.result 体现本轮上下文归因 / 执行结果 /
   // 是否继续执行的决策（finish_reason=tool-calls → 继续消费工具进入下一轮；否则收敛），
@@ -523,40 +487,6 @@ export class AgentLoopService {
       outputTokens: output.output_tokens,
     };
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // /** LLM 入参组装（逻辑控制；finalTurn 收掉工具） */
-  // private async prepareLLMTurnInput(ctx: LoopRunContext): Promise<ExecLLMEventsInput> {
-  //   const input = new ExecLLMEventsInput();
-  //   input.id = ctx.llmId ?? '';
-  //   input.system = ctx.system;
-  //   input.messages = await this.prepareModelMessages(ctx.sessionId);
-  //   if (!ctx.finalTurn) {
-  //     input.tools = ctx.specs.map((spec) => ({
-  //       tool_id: spec.id,
-  //       description: spec.description,
-  //       parameters: spec.parameters,
-  //     }));
-  //     input.tool_choice = 'auto';
-  //   }
-  //   input.temperature = ctx.temperature;
-  //   input.max_tokens = ctx.maxTokens;
-  //   input.idle_watchdog_ms = ctx.idleWatchdogMs;
-  //   input.signal = ctx.controller.signal;
-  //   input.on_event = (event) => this.streamHandler(ctx, event);
-  //   // 过程可观测：当轮上下文构建完成（wire 消息即当轮 prompt 输入侧）
-  //   const round = ctx.iterations + 1;
-  //   ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
-  //     round,
-  //     message_count: input.messages.length,
-  //     messages: input.messages.map((m) => ({
-  //       role: m.role,
-  //       content: String(m.content ?? '').slice(0, 4000),
-  //       tool_calls: m.tool_calls?.map((t) => t.function.name),
-  //     })),
-  //   });
-  //   return input;
-  // }
 
   // ===== 修改后的方法（2026-09-09）：context.built 补报 system prompt（模型调用输入的 system 侧）；
   // 修改后（2026-09-14 Span 框架）：上下文构建为显式子段 span（prepareModelMessages 私有不经切面） =====
@@ -739,19 +669,6 @@ export class AgentLoopService {
     }
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // /** 新增 Part 并发布 part.created（逻辑控制） */
-  // private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
-  //   const input = new AddPartInput();
-  //   input.message_id = messageId;
-  //   input.run_id = ctx.runId;
-  //   input.part_type = partType;
-  //   input.content = content;
-  //   const output = new AddPartOutput();
-  //   await this.session.addPart(input, output, new SessionCtx());
-  //   await this.publishPartCreated(ctx, messageId, output.part_id, partType);
-  // }
-
   // ===== 修改后的方法（2026-09-09）：reasoning/text Part 直接收敛为 completed 终态 =====
   // 原实现在 turn 结束时直存 Part，状态停留 pending（与 tool Part 的状态机不一致），
   // 导致 runtime_message_part 中思考/回复 Part 恒为 pending；直存即完成，无需经过 running。
@@ -808,23 +725,6 @@ export class AgentLoopService {
       await this.completeToolPart(ctx, part.id, call, result);
     }
   }
-
-  // ===== 原始方法（保留作为参考）=====
-  // /** 权限询问（逻辑控制）：permission.asked 经 Report 下发，挂起等待 answerPermission 应答 */
-  // private async askPermission(ctx: LoopRunContext, call: ParsedToolCall): Promise<boolean> {
-  //   if (!this.permissionGate) {
-  //     return true;
-  //   }
-  //   const permissionId = IdGenerator.generate();
-  //   ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAsked, {
-  //     permission_id: permissionId,
-  //     tool_id: call.tool_id,
-  //     input: call.arguments,
-  //     run_id: ctx.runId,
-  //   });
-  //   const result = await this.permissionGate.wait({ permission_id: permissionId });
-  //   return result.approved;
-  // }
 
   // ===== 修改后的方法（2026-09-11）：permission.asked/answered 双向接权限审计回调 =====
   // 事故复盘（run 46a7be65）：权限被拒仅体现为 tool error 文本，无落库记录可追溯。

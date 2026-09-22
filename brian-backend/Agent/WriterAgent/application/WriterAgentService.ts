@@ -102,8 +102,6 @@ export class WriterAgentService {
     if (ctx.session_id) {
       try {
         const ctxOut = new ContextInfoOutput();
-        // ===== 原始代码（保留作为参考）=====
-        //        persist_snapshot: false,
         // ===== 修改后（2026-09-15 采纳分析建议）：恢复快照持久化（默认 true）。
         //      原先关闭导致 info_context_source 无本 work 记录，可视化经 soContextByWork
         //      查不到多源上下文，只能降级展示 loop 侧时间线，造成"只见单一时间线上下文"。
@@ -135,8 +133,6 @@ export class WriterAgentService {
       const taskContent = r.task_content ?? '';
       return `[${r.agent_id}] ${taskContent}: ${text}`;
     };
-    // ===== 原始代码（保留作为参考）=====
-    // const results = agentResults.filter((r) => !isErrorResult(r)).map(formatResult).join('\n');
     // ===== 修改后（2026-09-15）：子 Agent 执行结果按「动态执行上下文」语义包装注入。
     //      与 formatContextCategories 渲染的静态记忆上下文（任务开始前检索的历史，不可修改）
     //      明确区分：前者描述功能与使用方式，本动态块声明为本轮执行新产生的信息，
@@ -201,45 +197,7 @@ export class WriterAgentService {
       } catch { /* ignore */ }
     }
 
-    // ===== 原始方法（保留作为参考）=====
-    // const prompt = await this.renderPrompt(
-    //   config?.write_prompt_template_id,
-    //   'Writer',
-    //   {
-    //     task_content: input.user_query,
-    //     preferences: JSON.stringify(preferences),
-    //     context_data: contextExtra,
-    //     agent_results: results,
-    //     soul: system,
-    //   },
-    // );
-    // const llmOut = new ExecLLMOutput();
-    // const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
-    // const execInput = Object.assign(new ExecLLMInput(), {
-    //   id: llmId,
-    //   prompt,
-    //   ...(system ? { system } : {}),
-    //   ...(hasStreamAccess ? {
-    //     stream: true,
-    //     onDelta: (delta: string) => {
-    //       this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', delta, { work_id: input.work_id || ctx.work_id, run_id: input.run_id || ctx.run_id, chunk_delay_ms: 0 });
-    //     },
-    //   } : {}),
-    // });
-    // const ok = await this.llmAccess.execLLM(execInput, llmOut, new LLMContext(), _metrics, _report);
-    // if (!ok) {
-    //   response = `Summary: ${input.user_query.slice(0, 100)}\n\nResults:\n${results}`;
-    //   output.blocks = [{ id: IdGenerator.generate(), type: 'text_paragraph' as const, content: response, meta: { streaming_status: 'completed' as const } }];
-    // } else {
-    //   tokens = Number((llmOut.input_tokens ?? 0) + (llmOut.output_tokens ?? 0));
-    //   const blocks = this.parseBlocks(llmOut.result);
-    //   response = blocks.map(b => b.content).join('\n\n');
-    //   output.blocks = blocks;
-    // }
-
     // ===== 修改后的方法（补全 user_query/context 占位符变量，采用 execLLMEvents 原生流式与全链路看门狗） =====
-    // ===== 原始代码（保留作为参考）=====
-    //        agent_results: results,
     // ===== 修改后（2026-09-15）：注入动态执行上下文包装版（agentResultsContext），
     //      与静态记忆上下文在模板内可视区分（见 formatDynamicContext 与 writer_protocol 模板）=====
     const prompt = await this.renderPrompt(
@@ -331,10 +289,6 @@ export class WriterAgentService {
       // output_contract 已同步改），LLM 产物即最终回复原文，不再经 JSON content blocks 中间协议。
       // 原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证缺尾 `]` → parse 失败 → 残缺 JSON
       // 原文被当作回复投递）、转义膨胀 ~30% 加重截断、join(content) 压平丢弃标题层级与列表标记。
-      // ===== 原始代码（保留作为参考）=====
-      // const blocks = this.parseBlocks(eventsOutput.result);
-      // response = blocks.map((b) => b.content).join('\n\n');
-      // output.blocks = blocks;
       response = eventsOutput.result.trim();
       // parseBlocks 保留为 BlockStream 预留：对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容
       output.blocks = this.parseBlocks(response);

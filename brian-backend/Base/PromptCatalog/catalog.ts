@@ -127,20 +127,6 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
       // ===== 修改后（2026-09-22b）：按「人类友好阐述」目标升级表达协议——新增读者视角重组、
       // preferences 语义（style/depth 枚举行为定义）、反机器腔约束；人格统一由 system 消息
       // （soul_content）承载，本模板不再引用 {{soul}}（消除双份注入）。
-      // ===== 原始代码（保留作为参考）=====
-      // 'Generate a structured, beautifully formatted final response based on the above results. Rules:',
-      // '1. Organize with clear Markdown hierarchy (headings, bullet points, bold text for key terms, tables where suitable).',
-      // '2. If the content contains processes, workflows, architecture diagrams or step-by-step logic, include a Mermaid diagram (```mermaid ... ```) to visually present the flow.',
-      // '3. Maintain accuracy and completeness; do not invent ungrounded facts.',
-      // '4. Return as a JSON array of content blocks. Available block types:',
-      // '- "text_paragraph": plain text or markdown content',
-      // '- "heading": section title, meta: { "level": 2 }',
-      // '- "code_block": code or diagram, meta: { "language": "mermaid" | "python" | "json" | ... }',
-      // '- "list_item": bullet point in a list',
-      // '- "artifact_preview": generated artifact or file',
-      // '- "error_fallback": error message',
-      // 'Return ONLY valid JSON array, example:',
-      // '[{"type":"heading","content":"## 推荐方案","meta":{"level":2}},{"type":"text_paragraph","content":"以下是详细建议："},{"type":"code_block","content":"graph TD\\n  A[出发]-->B[景点1]\\n  B-->C[景点2]","meta":{"language":"mermaid"}}]',
       'User query: {{task_content}}',
       'Preferences: {{preferences}}',
       'Static memory context（静态记忆，不可修改，仅供参照）:',
@@ -519,13 +505,6 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     ].join('\n'),
   },
   {
-    // ===== 原始模板（2026-09-19 版，保留作为参考）=====
-    // '你是 Brian，用户的智能个人助理。你具备记忆（信息与图谱）、反思与成长能力，并能调用已注入的工具完成任务。',
-    // '自我介绍规则：…只依据本「身份」段介绍…',
-    // '{{#if soul}}# 人格\n\n{{soul}}\n\n{{/if}}',
-    // '# 任务\n\n{{task_directive}}',
-    // '通用规则：…身份段与人格段冲突时以身份段为准。'
-    //
     // ===== 修改后（2026-09-19）：soul 并入「身份」块，删除独立「# 人格」区块 =====
     // 原模板身份/人格两段均为"你是…"式角色定义（身份=智能助理，人格=任务专家），语义重复且相互冲突；
     // 现在 soul 作为身份段内嵌的人格特质，身份定位唯一（Brian），soul 只影响做事风格。

@@ -150,23 +150,6 @@ export class FeedbackService {
     return true;
   }
 
-  // ===== 原始方法（保留作为参考）=====
-  // async getProcessLogs(
-  //   input: QueryProcessLogsInput, output: QueryProcessLogsOutput, _ctx: FeedbackContext,
-  //   _metrics?: Metrics, _report?: Report,
-  // ): Promise<boolean> {
-  //   const sort: OrderBy[] = input.order_by ?? [{ field: 'created', direction: 'DESC' }];
-  //   const rows = await this.relationDb.select(FEEDBACK_PROCESS_LOG_TABLE, {
-  //     conditions: input.conditions,
-  //     order_by: sort,
-  //     page: input.page,
-  //   });
-  //   output.logs = rows.map(mapProcessLog);
-  //   const count = await this.relationDb.count(FEEDBACK_PROCESS_LOG_TABLE, input.conditions);
-  //   output.total = count;
-  //   return true;
-  // }
-
   // ===== 修改后的方法：在原始查询之上批量补充人性化展示字段 =====
   // 列表原本只含一串 ID（process_id / agent_id / run_id），对人不友好。
   // 通过 feedback_id IN / run_id IN 各一次批量查询（非逐行 N+1）关联

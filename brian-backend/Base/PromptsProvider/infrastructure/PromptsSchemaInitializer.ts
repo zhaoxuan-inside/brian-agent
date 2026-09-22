@@ -26,38 +26,6 @@ export class PromptsSchemaInitializer {
    */
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  // ===== 原始方法（保留作为参考）=====
-  // init(): void {
-  //   this.relationDb.executeRaw(`
-  //     CREATE TABLE IF NOT EXISTS "${PROMPT_TEMPLATE_TABLE}" (
-  //       "id"                    TEXT    NOT NULL PRIMARY KEY,
-  //       "created"               INTEGER NOT NULL,
-  //       "updated"               INTEGER NOT NULL,
-  //       "prompt_template_title" TEXT    NOT NULL,
-  //       "prompt_template_brief" TEXT,
-  //       "prompt_template"       TEXT    NOT NULL,
-  //       "is_system"             INTEGER NOT NULL DEFAULT 0,
-  //       "seed_hash"             TEXT,
-  //       "enable"                INTEGER NOT NULL DEFAULT 1
-  //     )
-  //   `);
-  //   this.addColumnIfMissing('is_system', 'INTEGER NOT NULL DEFAULT 0');
-  //   this.addColumnIfMissing('seed_hash', 'TEXT');
-  //   this.relationDb.executeRaw(
-  //     `UPDATE "${PROMPT_TEMPLATE_TABLE}" SET "is_system" = 1 WHERE "id" LIKE 'builtin.%'`,
-  //   );
-  //   this.relationDb.executeRaw(
-  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_created" ON "${PROMPT_TEMPLATE_TABLE}" ("created")`,
-  //   );
-  //   this.relationDb.executeRaw(
-  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_updated" ON "${PROMPT_TEMPLATE_TABLE}" ("updated")`,
-  //   );
-  //   this.relationDb.executeRaw(
-  //     `CREATE INDEX IF NOT EXISTS "idx_${PROMPT_TEMPLATE_TABLE}_prompt_template_title" ON "${PROMPT_TEMPLATE_TABLE}" ("prompt_template_title")`,
-  //   );
-  //   // ...
-  // }
-
   // ===== 修改后的方法（全量 UUID 校验与表结构初始化） =====
   /**
    * 创建所有 PromptsProvider 表并迁移历史非 UUID 主键为标准 UUID。
