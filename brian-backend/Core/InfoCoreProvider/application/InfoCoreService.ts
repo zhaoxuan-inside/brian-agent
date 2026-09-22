@@ -232,7 +232,9 @@ export class InfoCoreService {
           // } catch (err) { /* 异步处理错误仅记录，不影响保存 */ }
           // ===== 修改后（2026-09-15）："仅记录"原来是无输出静默吞掉，
           //      异步自学习（关键词/标签/向量）失败完全不可见，输出可见诊断 =====
-          console.warn(`[InfoCoreProvider] saveInfo 异步自学习处理失败（info_id=${processInput.info_id}）: ${err instanceof Error ? err.message : String(err)}`);
+          metrics?.warn(`[InfoCoreProvider] saveInfo 异步自学习处理失败（info_id=${processInput.info_id}）`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       });
     }
@@ -275,7 +277,7 @@ export class InfoCoreService {
    * 向量化信息：按 chunk_size 分块（考虑分隔符与重叠覆盖率）后逐块生成 embedding，
    * 写入 LanceDB（向量唯一存储，不再落 SQLite）。
    */
-  async vectorInfo(input: ProcessInfoInput, output: VectorInfoOutput, context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async vectorInfo(input: ProcessInfoInput, output: VectorInfoOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
       throw new ValidationError('vectorInfo 需要提供 info_id');
@@ -297,7 +299,7 @@ export class InfoCoreService {
     // 逐块生成 embedding；任一块失败则整体放弃（保持幂等，后续可重试）
     const embeddings: number[][] = [];
     for (const chunk of chunks) {
-      const embedding = await this.generateEmbedding(chunk, vectorConfig, context);
+      const embedding = await this.generateEmbedding(chunk, vectorConfig, context, metrics);
       if (!embedding || embedding.length === 0) return true;
       embeddings.push(embedding);
     }
@@ -314,7 +316,7 @@ export class InfoCoreService {
    * 2. 调用 LLM 提取 topK 标签。
    * 3. 为每个标签插入 info_tag 表并维护 info_tag_vector。
    */
-  async tagInfo(input: ProcessInfoInput, output: TagInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async tagInfo(input: ProcessInfoInput, output: TagInfoOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
       throw new ValidationError('tagInfo 需要提供 info_id');
@@ -346,8 +348,8 @@ export class InfoCoreService {
       try {
         await this.insertTag(tagId, input.info_id, tag, now);
         await this.ensureTextNode('Tag', 'tag', tag, true);
-        await this.maintainTagVector(tag, tagConfig);
-        await this.graphTag(Object.assign(new GraphTagInput(), { tag_id: tagId }), new GraphTagOutput(), new InfoCoreContext());
+        await this.maintainTagVector(tag, tagConfig, metrics);
+        await this.graphTag(Object.assign(new GraphTagInput(), { tag_id: tagId }), new GraphTagOutput(), new InfoCoreContext(), metrics);
       } catch {
         // 标签重复跳过
       }
@@ -378,8 +380,9 @@ export class InfoCoreService {
    * config.prompt_template_id 调用 LLM 生成（原实现返回空、依赖上层 SummaryAgent 补齐，
    * 而 SummaryAgent 实际无调用方，导致 info_summary 长期空置）。原始逻辑注释保留 =====
    */
-  // ===== 修改后（2026-09-15 记忆集中）：签名保留 metrics/report（与 InfoCore 其余用例一致），当前仅内部复用不再透传 =====
-  async summaryInfo(input: ProcessInfoInput, output: SummaryInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  // ===== 修改后（2026-09-15 记忆集中）：签名保留 metrics/report（与 InfoCore 其余用例一致），
+  //      2026-09-22 起 metrics 透传至摘要 LLM 链路（日志唯一网关约定） =====
+  async summaryInfo(input: ProcessInfoInput, output: SummaryInfoOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
       throw new ValidationError('summaryInfo 需要提供 info_id');
@@ -416,7 +419,7 @@ export class InfoCoreService {
     if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
       summary = infoRow.info;
     } else if (this.isSummaryEligibleType(String(infoRow.info_type ?? ''), summaryConfig)) {
-      summary = await this.generateSummaryText(infoRow.info, summaryConfig);
+      summary = await this.generateSummaryText(infoRow.info, summaryConfig, metrics);
       if (!summary) return true; // LLM 不可用/未配置时无摘要落库，不阻塞保存链路
     } else {
       return true;
@@ -451,15 +454,16 @@ export class InfoCoreService {
   private async generateSummaryText(
     info: string,
     summaryConfig: InfoSummaryConfigRecord,
+    metrics?: Metrics,
   ): Promise<string> {
     if (!summaryConfig.llm_id) {
-      console.warn('[InfoCoreProvider] summaryInfo 未配置 llm_id，长文本摘要跳过（请在配置中设置摘要模型）');
+      metrics?.warn('[InfoCoreProvider] summaryInfo 未配置 llm_id，长文本摘要跳过（请在配置中设置摘要模型）');
       return '';
     }
     // 重试来源：llm_call_log 实测本地模型服务间歇性 CONNECT_ERROR（如 2026-09-22 上午 45 次），
     // 单次失败即丢摘要且无补偿；此处对同一内容最多尝试 SUMMARY_LLM_MAX_ATTEMPTS 次
     for (let attempt = 1; attempt <= SUMMARY_LLM_MAX_ATTEMPTS; attempt++) {
-      const summary = await this.execSummaryLLM(info, summaryConfig.llm_id);
+      const summary = await this.execSummaryLLM(info, summaryConfig.llm_id, metrics);
       if (summary) return summary;
       if (attempt < SUMMARY_LLM_MAX_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, SUMMARY_LLM_RETRY_DELAY_MS));
@@ -469,7 +473,7 @@ export class InfoCoreService {
   }
 
   /** 单次经 LLM 生成摘要（数据处理；失败返回空串并输出可见诊断） */
-  private async execSummaryLLM(info: string, llmId: string): Promise<string> {
+  private async execSummaryLLM(info: string, llmId: string, metrics?: Metrics): Promise<string> {
     try {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
@@ -478,7 +482,9 @@ export class InfoCoreService {
       await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
       return String(execOutput.result ?? '').trim();
     } catch (err) {
-      console.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${llmId}）: ${err instanceof Error ? err.message : String(err)}`);
+      metrics?.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${llmId}）`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return '';
     }
   }
@@ -530,7 +536,7 @@ export class InfoCoreService {
    * 4. 通过 VectorDBProvider.soVector 搜索语义最相似的 top_k 个 tag_id
    * 5. 对每个相似 tag 创建/更新 `similarTo` 边至 GraphDB
    */
-  async graphTag(input: GraphTagInput, output: GraphTagOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async graphTag(input: GraphTagInput, output: GraphTagOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.tag_id) {
       throw new ValidationError('graphTag 需要提供 tag_id');
@@ -546,7 +552,7 @@ export class InfoCoreService {
     }
 
     const nodeId = await this.ensureTagNode(tagText);
-    const embedding = await this.getTagEmbedding(tagText, tagConfig);
+    const embedding = await this.getTagEmbedding(tagText, tagConfig, metrics);
     if (!embedding || embedding.length === 0) {
       output.node_id = nodeId;
       return true;
@@ -586,10 +592,10 @@ export class InfoCoreService {
   // 使系统报错信息（call_error / internal_error）派生的标签、以及已删除信息遗留的
   // 孤儿标签被重新建入 GraphDB。现重建前先清理非 correct 信息派生的标签行，重建时
   // 再按 handle_result_type=correct 过滤（见 rebuildCooccurForSource）。
-  async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     // 0. 清理非正确信息 / 已删除信息派生的标签行（存量治理，防止错误标签再次入图）
-    output.purged_rows = this.purgeNonCorrectTagRows();
+    output.purged_rows = this.purgeNonCorrectTagRows(metrics);
     // 标签共现边
     const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE);
     // 关键词共现边
@@ -608,7 +614,7 @@ export class InfoCoreService {
    *
    * 幂等：仅删除匹配行，重复执行不影响正常标签；表不存在时静默跳过。
    */
-  private purgeNonCorrectTagRows(): number {
+  private purgeNonCorrectTagRows(metrics?: Metrics): number {
     try {
       return this.relationDb.executeRaw(
         `DELETE FROM "${INFO_TAG_TABLE}" WHERE "info_id" NOT IN (
@@ -617,7 +623,9 @@ export class InfoCoreService {
          )`,
       );
     } catch (err) {
-      console.warn(`[InfoCoreProvider] purgeNonCorrectTagRows 失败（已跳过）: ${err instanceof Error ? err.message : String(err)}`);
+      metrics?.warn('[InfoCoreProvider] purgeNonCorrectTagRows 失败（已跳过）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return 0;
     }
   }
@@ -832,7 +840,7 @@ export class InfoCoreService {
    * 返回语义最相似的 topK 条信息记录（含归一化相似度分数 score）。
    * 阈值 similarity_threshold 为归一化值 0-100。
    */
-  async similarKInfo(input: SimilarKInfoInput, output: SimilarKInfoOutput, context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async similarKInfo(input: SimilarKInfoInput, output: SimilarKInfoOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info || !input.topK) {
       throw new ValidationError('similarKInfo 需要提供 info 和 topK');
@@ -844,7 +852,7 @@ export class InfoCoreService {
       return true;
     }
 
-    const embedding = await this.generateEmbedding(input.info, vectorConfig, context);
+    const embedding = await this.generateEmbedding(input.info, vectorConfig, context, metrics);
     if (!embedding || embedding.length === 0) {
       output.list = [];
       return true;
@@ -2358,6 +2366,7 @@ const rawPriority = priorityOrderStr
     text: string,
     vectorConfig: InfoVectorConfigRecord,
     bizCtx?: Context,
+    metrics?: Metrics,
   ): Promise<number[]> {
     try {
       const embedOutput = new EmbedLLMOutput();
@@ -2371,7 +2380,9 @@ const rawPriority = priorityOrderStr
         // ===== 修改后（2026-09-15）：空 embedding 不再静默返回，输出可见诊断。
         //      实测 embedding 服务（如本地 LLamaCPP）不可用时 SIMILARITY 维度整条失效，
         //      且零日志，只能靠翻 llm_available/手动 curl 排查 =====
-        console.warn(`[InfoCoreProvider] generateEmbedding 返回空向量（llm_id=${vectorConfig.llm_id}），SIMILARITY 召回将退化为空；请检查 embedding 服务可用性`);
+        metrics?.warn('[InfoCoreProvider] generateEmbedding 返回空向量，SIMILARITY 召回将退化为空；请检查 embedding 服务可用性', {
+          llm_id: vectorConfig.llm_id,
+        });
         return [];
       }
       return embedOutput.embedding;
@@ -2379,7 +2390,10 @@ const rawPriority = priorityOrderStr
       // ===== 原始代码（保留作为参考）=====
       // } catch { return []; }
       // ===== 修改后（2026-09-15）：向量化失败可见化，避免静默丢数据 =====
-      console.warn(`[InfoCoreProvider] generateEmbedding 调用失败（llm_id=${vectorConfig.llm_id}）: ${err instanceof Error ? err.message : String(err)}`);
+      metrics?.warn('[InfoCoreProvider] generateEmbedding 调用失败', {
+        llm_id: vectorConfig.llm_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
   }
@@ -2470,12 +2484,12 @@ const rawPriority = priorityOrderStr
   }
 
   /** 获取标签向量：优先复用 LanceDB 中已有向量，否则即时生成。 */
-  private async getTagEmbedding(tag: string, _tagConfig: InfoTagConfigRecord): Promise<number[]> {
+  private async getTagEmbedding(tag: string, _tagConfig: InfoTagConfigRecord, metrics?: Metrics): Promise<number[]> {
     const existing = await this.getVectorRecord(this.tagVectorId(tag));
     if (existing && existing.embedding.length > 0) return existing.embedding;
     const vectorConfig = await this.getInfoVectorConfig();
     if (!vectorConfig || vectorConfig.enable !== 1) return [];
-    return this.generateEmbedding(tag, vectorConfig);
+    return this.generateEmbedding(tag, vectorConfig, undefined, metrics);
   }
 
   private async searchInfoVectors(
@@ -3037,10 +3051,11 @@ const rawPriority = priorityOrderStr
   private async maintainTagVector(
     tag: string,
     tagConfig: InfoTagConfigRecord,
+    metrics?: Metrics,
   ): Promise<void> {
     try {
       if (await this.getVectorRecord(this.tagVectorId(tag))) return;
-      const embedding = await this.getTagEmbedding(tag, tagConfig);
+      const embedding = await this.getTagEmbedding(tag, tagConfig, metrics);
       if (!embedding || embedding.length === 0) return;
       await this.upsertTagVector(tag, embedding);
     } catch {

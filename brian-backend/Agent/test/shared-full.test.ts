@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { buildTaskSignature, parseJsonObject } from '../shared/signature';
-import { formatContextCategories } from '@brian-agent/base';
 
 describe('AgentShared - buildTaskSignature', () => {
   it('TC-SH-001: 正常格式 [domain] + 正文', () => {
@@ -77,35 +76,5 @@ describe('AgentShared - parseJsonObject', () => {
   });
 });
 
-describe('AgentShared - formatContextCategories', () => {
-  it('TC-SH-020: 渲染分类标签并过滤非内容属性', () => {
-    const input = {
-      categories: {
-        pinned: [{ info: '系统提示规则', info_id: 'db-123', created: 1000 }],
-        similarity: [{ info: '向量记忆信息', info_id: 'db-456' }],
-        random: [{ info: '探查随机信息', info_id: 'db-789' }],
-      },
-    };
-    const res = formatContextCategories(input);
-    expect(res).toContain('<上下文信息>');
-    expect(res).toContain('<钉住的消息>\n- 系统提示规则\n</钉住的消息>');
-    expect(res).toContain('<向量语义消息>\n- 向量记忆信息\n</向量语义消息>');
-    expect(res).toContain('<探查随机消息>\n- 探查随机信息\n</探查随机消息>');
-    expect(res).not.toContain('db-123');
-    expect(res).not.toContain('created');
-  });
-
-  it('TC-SH-021: 无 categories 降级到 list 渲染', () => {
-    const input = {
-      list: [{ info: '兜底普通消息' }],
-    };
-    const res = formatContextCategories(input);
-    expect(res).toContain('<上下文信息>');
-    expect(res).toContain('<历史消息>\n- 兜底普通消息\n</历史消息>');
-  });
-
-  it('TC-SH-022: 空输入返回空字符串', () => {
-    expect(formatContextCategories(undefined)).toBe('');
-    expect(formatContextCategories({})).toBe('');
-  });
-});
+// formatContextCategories 的行为测试归属 Base 层：Base/test/ContextFormatter.test.ts
+// （曾在此维护的 TC-SH-020/021/022 为旧中文标签格式的过期副本，已删除）

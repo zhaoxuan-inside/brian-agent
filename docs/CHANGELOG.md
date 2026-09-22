@@ -1,3 +1,18 @@
+## [2026-09-22c] 修复：质量门禁回绿——测试归属修正 + 测试链聚合 + console 收口 Metrics
+
+**变更原因**：HS-Code-Skill 评审发现三项门禁红灯：① Agent 层 2 个测试失败——`shared-full.test.ts` 的 TC-SH-020/021/022 是旧中文标签格式的过期副本（实现已改为英文功能标签 + usage-note，Base/test/ContextFormatter.test.ts 已显式断言旧标签不再出现），且 Agent 层测 Base 函数属测试归属错位，正是漂移根因；② `npm test` 用 `&&` 串联 5 个工作区，Agent 失败后 Application 486 个测试被短路跳过，掩盖失败面；③ InfoCoreService 6 处 `console.warn` 绕过 Metrics 日志唯一网关（DevStandards §7.1），lint:backend 6 errors。
+
+**修改的方法**：
+  - `Agent/test/shared-full.test.ts` — 删除过期的 formatContextCategories 重复用例（3 个），测试归属归还 Base 层，保留注释指路。
+  - `scripts/test-all.mjs`（新增）+ `package.json` — `npm test` 改为聚合运行器：逐工作区执行、失败不中断、末尾汇总并按聚合结果退出。
+  - `InfoCoreService` — 6 处 console.warn 收口为 `metrics?.warn(...)`，并沿调用链透传 metrics：`generateSummaryText`/`execSummaryLLM`/`purgeNonCorrectTagRows`/`generateEmbedding`/`getTagEmbedding`/`maintainTagVector` 增加可选 `metrics` 尾参；`summaryInfo`/`rebuildCooccurGraph`/`vectorInfo`/`similarKInfo`/`tagInfo`/`graphTag` 的 `_metrics` 启用为 `metrics` 并向下传递（公开方法签名形状不变）。
+
+**影响的端点**：
+  - 无接口行为变更；`InfoCoreService` 各 access 方法运行时诊断日志从 stdout 迁移至 LogProvider 通道（可经 log 配置 min_level 检索）。
+  - `npm test`：任一工作区失败时其余工作区仍完整执行，汇总退出码非零。
+
+**验证（门禁）**：lint:backend 0 errors；typecheck 5 workspace 全绿；`npm test` 5/5 工作区通过（base/core/runtime/agent/application，Agent 层 118 用例全绿——移除 3 个过期重复用例后）。
+
 ## [2026-09-22b] 优化：写作 Agent 表达组件升级——专属 Soul + 人类友好阐述协议
 
 **变更原因**：用户判定 Writer 美化目标未达标（对工作 Agent 输出做人类友好阐述）。DB 实证三大组件缺陷：① Soul——WRITER agent 复用共享 soul `c708f478`（「专业编码与研究助手」，62 字，被 14 个 agent 共用），与编辑润色职责完全错位；② Prompt 模板——只有格式协议（标题/列表/mermaid），零表达质量标准，preferences 枚举（style=clear/depth=medium）语义未定义，LLM 无从执行；③ 双重人格注入——soul 同时走 system message 与模板 `{{ soul }}`，冗余且路径不一；④ Skill——`skill_ids_json='[]'` 且 `execWrite` 无 skill 注入链路，现有 9 个 skill 全为工具型（搜索/计算器/编排），对 Writer 无适用项。
