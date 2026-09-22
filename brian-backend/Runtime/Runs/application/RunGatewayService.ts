@@ -27,6 +27,7 @@ import {
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
 import { ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
+import { LaneSemaphore } from '../infrastructure/LaneSemaphore';
 import type { SessionAccess } from '../../Session';
 import type { LoopAccess } from '../../Loop';
 import type { AgentDefAccess } from '../../Agents';
@@ -42,6 +43,9 @@ import {
 import {
   AddSessionInput,
   AddSessionOutput,
+  AddMessageInput,
+  AddMessageOutput,
+  MessageRole,
   SessionContext,
   RUNTIME_MESSAGE_TABLE,
   RUNTIME_MESSAGE_PART_TABLE,
@@ -73,6 +77,10 @@ import {
   WaitPermissionOutput,
   AnswerPermissionInput,
   AnswerPermissionOutput,
+  WaitUserAnswerInput,
+  WaitUserAnswerOutput,
+  AnswerUserAskInput,
+  AnswerUserAskOutput,
   RunRecord,
   RunStatus,
   QueueMode,
@@ -508,10 +516,13 @@ export class RunGatewayService {
     }
     const evalWorkId = IdGenerator.generate();
     parent?.report?.pushBusinessEvent(BusinessEvent.EvaluationStarted, { work_id: evalWorkId, mode: evalAsync ? 'async' : 'sync' });
-    const evalPromise = this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
-    if (!evalAsync) {
-      await evalPromise;
+    // ===== 修改后（2026-09-22 curator 落地）：async 路径改经 background lane 调度（并发上限 2），
+    // 前台回复永不与维护工作竞争（Runs-PRD §4 lane 嵌套规则）；sync 路径维持原地等待 =====
+    if (evalAsync) {
+      this.scheduleCurator(runId, input, matchOut, loopOutput, evalWorkId, parent);
+      return;
     }
+    await this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
   }
 
   /** 执行写作 Agent 美化输出（逻辑控制；写作成功同步消息库，失败/未产出降级为原始输出 ReplyDelta） */
@@ -801,8 +812,9 @@ export class RunGatewayService {
     loopInput.budget = { total: input.budget_total ?? snapshot.budget_total };
     const boundSkills = (snapshot.tools ?? []).filter((t) => t.kind === 'skill').map((t) => t.id);
     const boundMcps = (snapshot.tools ?? []).filter((t) => t.kind === 'mcp').map((t) => t.id);
-    // 工具可见性显式清单：skill_exec/mcp_exec 仅在组件已绑定时注入（其余为通用原语工具）
-    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate'];
+    // 工具可见性显式清单：skill_exec/mcp_exec 仅在组件已绑定时注入（其余为通用原语工具；
+    // 2026-09-22：编排三件套齐备，ask_user Deferred 挂起默认注入）
+    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate', 'ask_user'];
     if (boundSkills.length) {
       loopInput.tools.push('skill_exec');
     }
@@ -1115,6 +1127,95 @@ export class RunGatewayService {
     waiter.resolve({ approved: input.approved });
     output.answered = true;
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // waitUserAnswer / answerUserAsk（ask_user 工具：Deferred 挂起，答复=下一条 user 消息）
+  // -------------------------------------------------------------------------
+
+  /** ask_user 等待注册表：ask_id → waiter（waitPermission 同模式；Tools-PRD §5 ask_user） */
+  private readonly userAskWaiters = new Map<string, { resolve: (r: { answer: string; answered: boolean }) => void; run_id: string; session_key: string }>();
+
+  /** ask_user 挂起等待（逻辑控制；ask_user 工具调用，permission.asked 已由工具经 Report 下发；
+   *  超时复用权限等待超时配置，超时归一为未应答（空答复），工具以错误结果回流自行收尾） */
+  async waitUserAnswer(input: WaitUserAnswerInput, output: WaitUserAnswerOutput, _context: RunGatewayContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.ask_id || !input.run_id || !input.session_key) {
+      throw new ValidationError('ask_id/run_id/session_key 不能为空');
+    }
+    let timeoutMs = RunGatewayService.PERMISSION_WAIT_DEFAULT_MS;
+    try {
+      timeoutMs = await this.soPermissionWaitTimeout();
+    } catch { /* best effort：配置读取失败回退默认 */ }
+    const result = await new Promise<{ answer: string; answered: boolean }>((resolve) => {
+      this.userAskWaiters.set(input.ask_id, { resolve, run_id: input.run_id, session_key: input.session_key });
+      const timer = setTimeout(() => {
+        if (this.userAskWaiters.get(input.ask_id)?.resolve === resolve) {
+          this.userAskWaiters.delete(input.ask_id);
+          resolve({ answer: '', answered: false });
+        }
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+    });
+    output.answer = result.answer;
+    output.answered = result.answered;
+    return true;
+  }
+
+  /** ask_user 应答（逻辑控制；HTTP 端点调用）：答复作为下一条 user 消息落库并唤醒挂起的 Loop */
+  async answerUserAsk(input: AnswerUserAskInput, output: AnswerUserAskOutput, _context: RunGatewayContext, metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.ask_id || typeof input.answer !== 'string' || !input.answer.trim()) {
+      throw new ValidationError('ask_id/answer 不能为空');
+    }
+    const waiter = this.userAskWaiters.get(input.ask_id);
+    if (!waiter) {
+      output.answered = false;
+      return true;
+    }
+    this.userAskWaiters.delete(input.ask_id);
+    await this.persistUserAnswer(waiter.session_key, waiter.run_id, input.answer.trim(), metrics);
+    waiter.resolve({ answer: input.answer.trim(), answered: true });
+    output.answered = true;
+    return true;
+  }
+
+  /** 用户答复落库（逻辑控制；role=user 归因原 run，下一轮 wire 派生自动包含） */
+  private async persistUserAnswer(sessionKey: string, runId: string, answer: string, metrics?: Metrics): Promise<void> {
+    const sessionId = await this.soRuntimeSessionId(sessionKey, metrics);
+    const add = new AddMessageInput();
+    add.session_id = sessionId;
+    add.role = MessageRole.User;
+    add.content = answer;
+    add.run_id = runId;
+    await this.session.addMessage(add, new AddMessageOutput(), new SessionContext(), metrics);
+  }
+
+  // -------------------------------------------------------------------------
+  // curator（background lane 会话后审查代理；Runtime-PRD §6 收尾段）
+  // -------------------------------------------------------------------------
+
+  /** background lane 信号量：并发上限 2（LANE_CONCURRENCY[background]），前台回复永不与维护工作竞争 */
+  private readonly backgroundLane = new LaneSemaphore(LANE_CONCURRENCY[LaneKind.Background]);
+
+  /** 调度 curator 审查（逻辑控制；background lane 异步执行评估，不阻塞 run 结算） */
+  private scheduleCurator(
+    runId: string,
+    input: SubmitRunInput,
+    matchOut: MatchAgentDefOutput,
+    loopOutput: ExecAgentLoopOutput,
+    evalWorkId: string,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): void {
+    void this.backgroundLane.acquire().then(async () => {
+      try {
+        await this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
+      } finally {
+        this.backgroundLane.release();
+      }
+    });
   }
 
   async configRuns(input: ConfigRunsInput, output: ConfigRunsOutput, _context: RunGatewayContext, _metrics?: Metrics, _report?: Report,

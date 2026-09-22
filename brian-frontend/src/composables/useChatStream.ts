@@ -8,8 +8,8 @@
 import { ref } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
-import { answerPermission } from '@/api'
-import type { Block, ChatMessage } from '@/api/types'
+import { answerPermission, answerUserAsk } from '@/api'
+import type { AskUserCardData, Block, ChatMessage } from '@/api/types'
 import { readSSE } from './useSSE'
 import { createChatStreamEventHandler } from './chatStreamEvents'
 import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
@@ -36,6 +36,8 @@ export function useChatStream() {
   const confirmingIntent = ref(false)
   /** 权限卡应答进行中（加载态） */
   const permitting = ref(false)
+  /** ask_user 提问卡答复提交中（加载态） */
+  const answeringAsk = ref(false)
 
   function addErrorBlock(botMsgId: string, message: string, errorCode: string, retryAvailable: boolean) {
     const errBlock: Block = {
@@ -210,11 +212,34 @@ export function useChatStream() {
     }
   }
 
+  /**
+   * ===== 新增（2026-09-22）：ask_user 提问卡答复：文本经 /api/chat/ask/answer 提交，
+   * 唤醒挂起的 ask_user 工具（答复由后端落库为下一条 user 消息）；本地乐观翻转卡片状态，
+   * 失败保持 pending 允许重试。后端 permission.answered 事件幂等兜底状态一致。
+   */
+  async function handleAskUserAnswer(askUser: AskUserCardData, answer: string) {
+    if (!askUser || askUser.status !== 'pending' || answeringAsk.value) return
+    const msgId = `ask-${askUser.askId}`
+    answeringAsk.value = true
+    try {
+      await answerUserAsk(askUser.askId, answer)
+      sessionStore.updateMessage(msgId, {
+        askUser: { ...askUser, status: 'answered', answeredAt: Date.now() },
+      })
+    } catch {
+      /* 保持 pending，允许用户重试 */
+    } finally {
+      answeringAsk.value = false
+    }
+  }
+
   return {
     confirmingIntent,
     permitting,
+    answeringAsk,
     handleSend,
     handleIntentConfirm,
     handlePermissionConfirm,
+    handleAskUserAnswer,
   }
 }

@@ -51,6 +51,8 @@ export interface BuiltinToolDeps {
   cdtCore?: CDTCoreAccess;
   /** 子代理委派入口（RunGatewayAccess.submitRun 适配；缺省 delegate 工具 fail-loud） */
   runGateway?: { submitRun(input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string }): Promise<void> };
+  /** ask_user 挂起等待入口（RunGatewayAccess.waitUserAnswer 适配；缺省 ask_user 工具 fail-loud） */
+  askUserGate?: { waitAnswer(input: { ask_id: string; run_id: string; session_key: string }): Promise<{ answer: string; answered: boolean }> };
 }
 
 /** 组件范围兜底文案（数据处理） */

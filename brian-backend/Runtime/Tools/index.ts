@@ -37,4 +37,6 @@ export {
 } from './application/builtinTools';
 export { updatePlanTool, preparePlanSteps, PlanStepStatus } from './application/planTool';
 export { delegateTool } from './application/delegateTool';
+export { askUserTool } from './application/askUserTool';
+export type { AskUserDeps } from './application/askUserTool';
 export type { BuiltinToolDeps } from './application/builtinTools';

@@ -164,7 +164,7 @@ export class SoToolsOutput extends Output {
 
 /** registerBuiltinTools 入参（幂等；内置工具经注入的 Provider 执行） */
 export class RegisterBuiltinToolsInput extends Input {
-  /** 启用的内置工具（缺省全部：skill_exec/mcp_exec/cdt_browser/update_plan/delegate） */
+  /** 启用的内置工具（缺省全部：skill_exec/mcp_exec/cdt_browser/update_plan/delegate/ask_user） */
   enabled?: string[];
 }
 

@@ -210,6 +210,42 @@ export class AnswerPermissionOutput extends Output {
 }
 
 // ---------------------------------------------------------------------------
+// waitUserAnswer / answerUserAsk（ask_user 工具：Deferred 挂起，答复=下一条 user 消息）
+// ---------------------------------------------------------------------------
+
+/** waitUserAnswer 入参（ask_user 工具挂起等待用户答复） */
+export class WaitUserAnswerInput extends Input {
+  /** 提问 ID（工具生成并随 permission.asked 事件下发） */
+  ask_id!: string;
+  /** 引用 runtime_run.id（答复落库归因） */
+  run_id!: string;
+  /** 外部会话标识 */
+  session_key!: string;
+}
+
+/** waitUserAnswer 出参 */
+export class WaitUserAnswerOutput extends Output {
+  /** 用户答复文本（超时/未应答为空串） */
+  answer = '';
+  /** 是否已应答 */
+  answered = false;
+}
+
+/** answerUserAsk 入参（HTTP 端点调用，唤醒挂起的 ask_user 工具） */
+export class AnswerUserAskInput extends Input {
+  /** 提问 ID */
+  ask_id!: string;
+  /** 用户答复文本（作为下一条 user 消息落库） */
+  answer!: string;
+}
+
+/** answerUserAsk 出参 */
+export class AnswerUserAskOutput extends Output {
+  /** 是否成功应答（提问不存在/已应答/已超时时 false） */
+  answered = false;
+}
+
+// ---------------------------------------------------------------------------
 // configRuns
 // ---------------------------------------------------------------------------
 

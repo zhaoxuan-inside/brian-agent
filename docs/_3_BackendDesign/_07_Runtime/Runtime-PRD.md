@@ -138,26 +138,34 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 | **0 地基** ✅（2026-09-04） | `Runtime/` 骨架；Base/LLMProvider 增加 LLMEvent 流 + 原生 tool_calls + AbortSignal | 单测：LLMEvent 流归一化（14 用例）；tool_calls 请求/响应；IterationBudget（6 用例）；zod 依赖就位；见 CHANGELOG 同日记录 |
 | **1 数据模型** | Session/Message/Part/RunState（SQLite 6 表）；EventBus + SSE v2 投影 | soContextDetail 读取正确；事件重放一致 |
 | **2 单代理循环** ✅（2026-09-04） | agentLoop + Tool 框架（skill/mcp/cdt 3 工具）+ Budget | DIRECT 场景端到端验证（`Runtime/test/AgentLoop.test.ts`：多轮 tool_calls 配对回流→stop / 预算→budget / 取消→aborted / 失败→error）；消息中心派生 wire 消息验证；见 CHANGELOG 同日记录 |
-| **3 编排即工具**（部分落地 2026-09-04） | ✅ Runs（两段式 submitRun + session lane + steer/followup/interrupt + waitRun）；✅ Agents（确定性匹配 exact→signature→LLM→构建 + identity 身份段 + 组件绑定收敛（2026-09-11：soAgentSnapshot 只读 def 显式绑定 soul_id/tools_json，命中即复用，无动态重解析、无 Runtime 侧 regen 判决——"重新生成概率"唯一实现收敛于 Agent 层 AgentLibraryService.matchAgent））；✅ Loop 接 steering/followup 真队列；⬜ update_plan/delegate/ask_user 工具、curator | 线上验证：身份问答自称 Brian（不再套编码 Soul）、一般问答正常、确定性复用不重复构建；2026-09-11 e2e：def 命中 run 1.4s（对比收敛前 26s） |
-| **4 网关切换**（过渡投影已上线 2026-09-04） | ✅ Chat v2 分流（`runtime.v2_enabled` 开关，缺省 true）；✅ v2 事件 → 现有前端 SSE 协议过渡投影（part.delta→text_chunk/agent_thinking、tool.*→agent_action/agent_output）；⬜ 前端 v2 原生协议改造（完成后删除过渡投影） | 线上 `/api/chat/stream` 全量走 v2 内核；run 两段式结算 + done 帧 final_response 正确 |
+| **3 编排即工具**（✅ 已完成 2026-09-22） | ✅ Runs（两段式 submitRun + session lane + steer/followup/interrupt + waitRun）；✅ Agents（确定性匹配 exact→signature→LLM→构建 + identity 身份段 + 组件绑定收敛（2026-09-11：soAgentSnapshot 只读 def 显式绑定 soul_id/tools_json，命中即复用，无动态重解析、无 Runtime 侧 regen 判决——"重新生成概率"唯一实现收敛于 Agent 层 AgentLibraryService.matchAgent））；✅ Loop 接 steering/followup 真队列；✅ update_plan/delegate/ask_user 工具、curator（2026-09-22：ask_user Deferred 挂起 + 答复=下一条 user 消息；curator=background lane 评估调度，LaneSemaphore 并发 2） | 线上验证：身份问答自称 Brian（不再套编码 Soul）、一般问答正常、确定性复用不重复构建；2026-09-11 e2e：def 命中 run 1.4s（对比收敛前 26s） |
+| **4 网关切换**（✅ 已完成 2026-09-22） | ✅ Chat v2 分流（`runtime.v2_enabled` 开关，缺省 true）；✅ 前端 v2 原生协议消费（事件分发表仅 v2 事件名，`sseEventTypes.ts` 同构 mirror + `EVENT_UI_STYLE`；v1 过渡投影已随 StreamService v2 原生帧 `formatEventFrame` 直发删除）；✅ ask_user 提问卡（2026-09-22：对话区内联问题+文本答复，`POST /api/chat/ask/answer` 恢复为下一条 user 消息） | 线上 `/api/chat/stream` 全量走 v2 内核；run 两段式结算 + done 帧 final_response 正确 |
 | **5 退役** | 退役清单 §10 全部下线；可视化改为事件投影 | 退役后全量测试通过 |
 
 ## 10. 退役清单
 
-| 退役对象 | 行数 | 替代 |
-|---------|------|------|
-| `Orchestration/JSONNode/application/JSONNodeService.ts`（引擎 + 14 builtin handler） | 1423 | agentLoop + 编排工具 |
-| `Orchestration/JSONNode/`（domain/types 节点定义 · validate · trace 表） | ~300 | 消息/Part 模型 |
-| `Agent/AgentExecution/application/AgentExecutionService.ts`（ExecutionRule 状态机 + ReACT） | 1559 | Loop + Tools |
-| `Agent/AgentExecution/application/trace/`（TraceCodec/TraceStore/PromptRebuilder） | ~300 | Part 持久化 |
-| `Orchestration/OrchestrationStrategy/`（SIMPLE/PLANNING 死路径 + handleDAGFailure） | ~1100 | 声明式 Agent + plan 工具 |
-| `Orchestration/OrchestrationExecution/`（DagScheduler + TaskDAG→AgentDAG） | ~1500 | delegate + subagent lane |
-| `Agent/PlannerAgent` planHierarchical 的 TaskDAG 输出 | ~500 | update_plan 工具（过程性计划卡） |
-| `Agent/IntentAgent` 暂停语义 | ~240 | ask_user 工具 |
-| `Agent/WriterAgent` Block JSON 输出 | ~540 | 主循环 assistant 流 + 块 chunker |
-| `Orchestration/OrchestrationVisualization`（从 DB 重建） | ~700 | 事件投影（timeline/dag 由持久化事件重放） |
+| 退役对象 | 行数 | 替代 | 状态 |
+|---------|------|------|------|
+| `Orchestration/JSONNode/application/JSONNodeService.ts`（引擎 + 14 builtin handler） | 1423 | agentLoop + 编排工具 | ✅ 已删除（模块整体下线） |
+| `Orchestration/JSONNode/`（domain/types 节点定义 · validate · trace 表） | ~300 | 消息/Part 模型 | ✅ 已删除 |
+| `Agent/AgentExecution/application/AgentExecutionService.ts`（ExecutionRule 状态机 + ReACT） | 1559 | Loop + Tools | ⬜ 存量保留（Evolutor soTrace/Visualization 读取仍依赖，见下方退役前置） |
+| `Agent/AgentExecution/application/trace/`（TraceCodec/TraceStore/PromptRebuilder） | ~300 | Part 持久化 | ⬜ 存量保留（同上） |
+| `Orchestration/OrchestrationStrategy/`（SIMPLE/PLANNING 死路径 + handleDAGFailure） | ~1100 | 声明式 Agent + plan 工具 | ✅ 已删除 |
+| `Orchestration/OrchestrationExecution/`（DagScheduler + TaskDAG→AgentDAG） | ~1500 | delegate + subagent lane | ✅ 已删除 |
+| `Agent/PlannerAgent` planHierarchical 的 TaskDAG 输出 | ~500 | update_plan 工具（过程性计划卡） | ⬜ 生产调用面仅剩 VisualizationService.soPlan 读路径，随 Visualization 事件投影重建一并退役 |
+| `Agent/IntentAgent` 暂停语义 | ~240 | ask_user 工具 | ✅ 已移除（2026-09-22 ask_user 工具落地后确认无暂停语义残留） |
+| `Agent/WriterAgent` Block JSON 输出 | ~540 | 主循环 assistant 流 + 块 chunker | ✅ 已迁移（2026-09-22 Markdown 直出，decisions.md 同日条目） |
+| `Orchestration/OrchestrationVisualization`（从 DB 重建） | ~700 | 事件投影（timeline/dag 由持久化事件重放） | ✅ 已删除（Application/Visualization 读 soPlan/trace 的存量视图待事件投影重建后收口） |
 
-保留并复用：`AgentBuilder/AgentLibrary` 组件匹配（LLM/Skill/MCP/Soul 复用判定收敛为 AgentDefService 的组件匹配）；`EvolutorAgent` 评估逻辑（迁入 curator 工具集）；`DagScheduler` **不保留**（决策记录 §2）。
+**退役配套清理（2026-09-22）**：Orchestration 目录删除后遗留的根 workspace 声明、`@brian-agent/orchestration` 依赖/tsconfig 路径/vitest alias、`configRegistrations.ts` 的 ORCHESTRATION 层配置种子（strategy/execution/jsonnode）已清理。
+
+**剩余退役前置**（单独排期，依赖顺序）：
+1. **Visualization 事件投影重建**：Application/VisualizationService 的 timeline/plan/trace 视图改为 `runtime_event`/`stream_event` 重放（Bus-PRD §1「UI = 纯投影」），替代 soPlan/soTrace 读路径；
+2. **Evolutor trace 迁移**：evalWorkAgent 的 loadTraceContext（soTrace + TraceCodec）改为 runtime_message_part 派生评估上下文；
+3. **ConfigService 收口**：configAgentExecution 注册移除；
+4. 以上完成后删除 `Agent/AgentExecution` 与 `PlannerAgent.planHierarchical/execPlan/replan`。
+
+保留并复用：`AgentBuilder/AgentLibrary` 组件匹配（LLM/Skill/MCP/Soul 复用判定收敛为 AgentDefService 的组件匹配）；`EvolutorAgent` 评估逻辑（迁入 curator 工具集，2026-09-22 经 background lane 调度）；`DagScheduler` **不保留**（决策记录 §2）。
 
 ## 11. 表设计（6 表，遵循 DevStandards §5）
 

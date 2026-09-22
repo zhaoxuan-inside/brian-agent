@@ -135,3 +135,34 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
 
 **可能存在的问题**：
   - 缓存基于"注册后 def 不变"假设：init 期以外热注册新工具首次查询有一次一次性构建成本（已保证返回正确值）。
+
+## 10. ask_user 编排原语落地（2026-09-22 · 阶段3 三件套收尾）
+
+**变更原因**：Runtime-PRD §9 阶段3 收尾项——编排三件套中 update_plan/delegate 已落地，ask_user（澄清/确认 Deferred 挂起原语）缺失。
+
+**修改的方法**：
+  - 新增 `Runtime/Tools/application/askUserTool.ts` — `askUserTool(deps)`：参数 zod `{question, kind?: 'clarify'|'confirm'}`；execute 生成 ask_id → `permission.asked`（复用权限卡事件通道，payload 含 question/kind）→ `deps.waitAnswer` Deferred 挂起 → 应答后 `permission.answered` → ok 结果「用户已在对话框答复，见下一条用户消息」；超时/空答复 → error 结果回流（模型自行收尾）；`askUserTool` 未接线/缺 run 上下文 fail-loud。
+  - `ToolService` — `BUILTIN_TOOL_IDS` 与 `prepareBuiltinCandidates` 加入 ask_user（`BuiltinToolDeps.askUserGate` 注入，缺省 fail-loud）；`registerBuiltinTools` 缺省 enabled 清单同步。
+  - `Runtime/Runs` — `waitUserAnswer`/`answerUserAsk` 挂起-应答原语（详见 Runs-PRD 同日条目：答复=下一条 user 消息）。
+  - 测试 `Runtime/test/AskUser.test.ts` — 挂起-恢复事件配对、超时 error 回流、fail-loud、答复落库 user 消息、重复应答幂等、LaneSemaphore 并发上限（6 用例）。
+
+**影响的端点**：
+  - 所有 v2 run（`POST /api/chat/stream`）— ask_user 进入默认工具集，Agent 可发起澄清/确认挂起。
+
+**可能存在的问题**：
+  - 前端暂以权限卡通道呈现 ask_user（确认/拒绝按钮），文本答复入口属阶段4 前端 v2 协议改造（`POST /api/chat/ask/answer` 后端已就绪）。
+
+## 11. CDT 状态误报修复：Chrome 启动器 re-exec（2026-09-22）
+
+**变更原因**：日常体检发现——`/api/cdt/start` 成功后（Chrome 152 启动器 spawn 后 re-exec，原进程立即退出），`process.on('exit')` 触发 `handleUnexpectedExit` 无条件清零 pid/endpoint 并停掉 keep-alive；实际 CDP 端点存活（navigate/evaluate 均正常），但 `/api/cdt/status` 恒报 `running:false`，headless 模式下浏览器可能因失去心跳而自动退出。
+
+**修改的方法**：
+  - `Base/CDTProvider/application/CDTService.handleUnexpectedExit` — 原实现无条件清理状态（原代码已注释保留于方法内）；修改后：先经新增 `isCDPEndpointAlive()`（`/json/version` 1.5s 短超时探活）探测，端点仍存活视为 re-exec 保留会话状态，真死才清理。
+  - `Base/CDTProvider/application/CDTService.isCDTRunning` — 进程句柄丢失时回退 CDP 端点探活，status 如实反映（存活时 running=true、port 可见、pid=0）。
+
+**影响的端点**：
+  - `GET /api/cdt/status` — 修复误报（实测：start 后 status running=true, port=9222）。
+  - 所有经 `cdt_browser` 的 run —— re-exec 场景下 keep-alive 不再被误停，headless 沙箱生命周期稳定。
+
+**可能存在的问题**：
+  - re-exec 后 pid 归零（真实子进程 pid 无法从端口反查），需强杀时只能经 `stopCDT`（killProcess 对 pid=0 no-op）→ 依赖端点探活兜底，若浏览器真死则走正常清理路径。

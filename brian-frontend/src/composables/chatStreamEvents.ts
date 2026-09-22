@@ -802,10 +802,34 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   // 现改为：permission.asked 在对话区插入独立 PermissionConfirmCard（允许/拒绝双按钮），
   // 同一记录由后端落库（info_raw: PERMISSION），历史回放同款卡片；ChatMap 因
   // buildMessageGraph 仅收 REQUEST/RESPONSE 天然不展示。卡 id 用许可 id 保证幂等。
-  /** permission.asked：授权确认统一在思考过程弹窗内完成，对话区不再展示 */
+  /** permission.asked：授权确认统一在思考过程弹窗内完成，对话区不再展示；
+   *  ===== 新增（2026-09-22）：ask_user 提问走对话区内联提问卡（问题+文本答复），
+   *  答复经 /api/chat/ask/answer 恢复为下一条 user 消息 ===== */
   function onPermissionAsked(ctx: StreamEventCtx) {
     const permissionId = String(ctx.payload.permission_id ?? '')
     if (!permissionId) return
+    if (String(ctx.payload.tool_id ?? '') === 'ask_user') {
+      const msgId = `ask-${permissionId}`
+      if (ctx.chat.messages.some(m => m.id === msgId)) {
+        ensureLiveThinkingOpen()
+        return
+      }
+      ctx.chat.addMessage({
+        id: msgId,
+        role: 'assistant',
+        content: '',
+        timestamp: ctx.serverTime,
+        askUser: {
+          askId: permissionId,
+          question: String(ctx.payload.input ?? ''),
+          kind: ctx.payload.kind === 'confirm' ? 'confirm' : 'clarify',
+          status: 'pending',
+          askedAt: ctx.serverTime,
+        },
+      })
+      ensureLiveThinkingOpen()
+      return
+    }
     const msgId = `perm-${permissionId}`
     if (ctx.chat.messages.some(m => m.id === msgId)) {
       ensureLiveThinkingOpen()
@@ -837,6 +861,15 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   function onPermissionAnswered(ctx: StreamEventCtx) {
     const permissionId = String(ctx.payload.permission_id ?? '')
     if (!permissionId) return
+    // ask_user 提问卡应答（answered 事件不携带答复文本，仅翻转本地卡片状态）
+    const askMsgId = `ask-${permissionId}`
+    const askMsg = ctx.chat.messages.find(m => m.id === askMsgId)
+    if (askMsg?.askUser && askMsg.askUser.status === 'pending') {
+      ctx.chat.updateMessage(askMsgId, {
+        askUser: { ...askMsg.askUser, status: 'answered', answeredAt: ctx.serverTime },
+      })
+      return
+    }
     const msgId = `perm-${permissionId}`
     const msg = ctx.chat.messages.find(m => m.id === msgId)
     if (!msg?.permission || msg.permission.status !== 'pending') return

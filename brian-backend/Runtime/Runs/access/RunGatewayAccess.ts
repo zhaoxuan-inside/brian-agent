@@ -29,6 +29,10 @@ import {
   WaitPermissionOutput,
   AnswerPermissionInput,
   AnswerPermissionOutput,
+  WaitUserAnswerInput,
+  WaitUserAnswerOutput,
+  AnswerUserAskInput,
+  AnswerUserAskOutput,
 } from '../domain/types';
 
 /**
@@ -98,6 +102,18 @@ export class RunGatewayAccess {
   async answerPermission(i: AnswerPermissionInput, o: AnswerPermissionOutput, c: RunGatewayContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.answerPermission(i, o, c, metrics, report);
+  }
+
+  /** ask_user 挂起等待（ask_user 工具经组合根注入调用） */
+  async waitUserAnswer(i: WaitUserAnswerInput, o: WaitUserAnswerOutput, c: RunGatewayContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.waitUserAnswer(i, o, c, metrics, report);
+  }
+
+  /** ask_user 应答（HTTP 端点调用；答复恢复为下一条 user 消息） */
+  async answerUserAsk(i: AnswerUserAskInput, o: AnswerUserAskOutput, c: RunGatewayContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.answerUserAsk(i, o, c, metrics, report);
   }
 
   /** 模块配置 */

@@ -17,6 +17,7 @@ import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
 import EvalResultModal from './EvalResultModal.vue'
 import IntentConfirmCard from './IntentConfirmCard.vue'
+import AskUserCard from './AskUserCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
 const sessionStore = useSessionStore()
@@ -25,6 +26,8 @@ const {
   confirmingIntent,
   handleSend,
   handleIntentConfirm,
+  handleAskUserAnswer,
+  answeringAsk,
 } = useChatStream()
 
 const leftWidth = computed(() => `${sessionStore.splitRatio * 100}%`)
@@ -205,8 +208,17 @@ function startResize(e: MouseEvent) {
         </div>
 
         <template v-for="entry in timeline" :key="entry.key">
+          <!-- ===== 新增（2026-09-22）：ask_user 提问卡（对话区内联；答复=下一条 user 消息） ===== -->
+          <div v-if="entry.kind === 'message' && entry.message.askUser" class="flex items-start gap-2 justify-end">
+            <AskUserCard
+              :ask-user="entry.message.askUser"
+              :submitting="answeringAsk"
+              @answer="handleAskUserAnswer"
+            />
+          </div>
+
           <div
-            v-if="entry.kind === 'message'"
+            v-else-if="entry.kind === 'message'"
             class="flex items-start gap-2"
             :class="entry.message.role === 'user' ? 'justify-start' : 'justify-end'"
             :data-info-id="entry.message.id"

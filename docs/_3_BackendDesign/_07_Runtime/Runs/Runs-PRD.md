@@ -232,3 +232,24 @@ submitRun ──ack──► accepted(queued)
 **可能存在的问题**：
   - 上下文前置后，意图分析/构建期间记忆已冻结，用户 steer 追加内容本轮仍走消息序列动态演进（静态记忆不重建）；
   - thought.selected 当前为确定性规则判定（无工具 → CoT），策略表（agent_strategy）仅落账不作裁决。
+
+### [2026-09-22] ask_user 挂起/应答原语落地 + curator background lane 调度（阶段3 编排三件套收尾）
+
+**变更原因**：Runtime-PRD §9 阶段3 收尾项——`ask_user` 工具与 curator 未落地（update_plan/delegate 已于此前完成）。ask_user 补齐"澄清/确认 = Deferred 挂起原语"，curator 补齐"会话后维护工作在 background lane 执行、不与前台风争"的 lane 嵌套规则。
+
+**修改的方法**：
+  - `RunGatewayService` — 新增 `userAskWaiters` 注册表与 `waitUserAnswer`（ask_user 工具调用；Deferred 挂起，超时复用 `permission_wait_timeout_ms` 配置，超时归一为未应答）、`answerUserAsk`（HTTP 端点调用；答复经 `persistUserAnswer` 落库为 role=user 消息归因原 run 后唤醒挂起，**答复=下一条 user 消息**，Runs-PRD §4 映射表语义）；新增 `backgroundLane`（`LaneSemaphore`，并发上限 `LANE_CONCURRENCY[background]=2`）与 `scheduleCurator`（background lane 异步执行评估）。
+  - `RunGatewayService.executeRunEvaluation` — 原实现：async 路径直接 `runWorkEvaluation` fire-and-forget（原始代码已注释保留于方法内说明）；修改后：eval_async=true 时经 `scheduleCurator` 走 background lane 信号量调度（评估即 curator 会话后审查，复用 Evolutor 评估链——Runtime-PRD §10「保留并复用」条款）。
+  - `RunGatewayService.prepareLoopInput` — 工具可见清单加入 `ask_user`。
+  - `Runs/domain/types` — 新增 `WaitUserAnswerInput/Output`、`AnswerUserAskInput/Output`；`Runs/infrastructure/LaneSemaphore` — 新增 lane 并发信号量（promise 队列，零依赖）。
+  - `RunGatewayAccess` / `Runtime/index.ts` — 透传新方法与类型。
+  - `dev-server.ts` — 组合根接线 `askUserGate`（Tool→Gateway 迟绑定，同 delegate 模式）；新增端点 `POST /api/chat/ask/answer`（`{ask_id, answer}` → answerUserAsk）。
+
+**影响的端点**：
+  - `POST /api/chat/ask/answer` — 新增：ask_user 挂起恢复入口，答复成为会话下一条 user 消息。
+  - 所有含评估的 run 结算（`POST /api/chat/stream`）— 评估改在 background lane 排队执行（并发 2），run 结算不再与评估 LLM 竞争执行资源。
+
+**可能存在的问题**：
+  - ask_user 挂起期间 run 停留在 running（与权限门同构），会话忙锁阻止同会话新 run——多端同会话第二端消息将按 steer 入队，答复后一并消化；
+  - 服务重启丢失 userAskWaiters 内存态，挂起中的 ask_user 随遗留 run 收敛路径（convergeOrphanRuns）结算为 aborted，前端卡片呈未应答终态；
+  - 前端 ask_user 提问卡（问题+文本输入）属阶段4 前端 v2 协议改造范围，当前 permission.asked 事件仅可确认/拒绝。
