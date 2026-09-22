@@ -4,6 +4,7 @@
  * 封装 agent_execution_trace 表的读写，隔离 SQL 细节，供 AgentExecutionService 复用。
  */
 import { RelationDBAccess, IdGenerator, Operator } from '@brian-agent/base';
+import type { Metrics } from '@brian-agent/base';
 import { AGENT_EXECUTION_TRACE_TABLE } from '../../domain/types';
 import { TraceIterations } from '../../domain/trace';
 import { stringifyTrace } from './TraceCodec';
@@ -34,7 +35,7 @@ export class TraceStore {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   /** 持久化一条轨迹（best-effort，失败不影响业务）。 */
-  async save(input: TraceSaveInput): Promise<void> {
+  async save(input: TraceSaveInput, metrics?: Metrics): Promise<void> {
     const now = IdGenerator.now();
     try {
       await this.relationDb.insert(AGENT_EXECUTION_TRACE_TABLE, [
@@ -49,7 +50,15 @@ export class TraceStore {
         { field: 'total_token_usage', value: input.total_token_usage },
         { field: 'answer', value: input.answer },
       ]);
-    } catch { /* best-effort */ }
+    } catch (err) {
+      /* best-effort */
+      // 容忍轨迹落库失败：trace 持久化为辅助数据，缺失仅影响事后回放/评估
+      metrics?.warn('TraceStore.save 轨迹落盘失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        trace_id: input.trace_id,
+        agent_id: input.agent_id,
+      });
+    }
   }
 
   /** 按 trace_id 读取轨迹。 */

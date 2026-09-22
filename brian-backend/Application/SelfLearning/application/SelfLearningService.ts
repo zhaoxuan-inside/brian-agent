@@ -102,7 +102,7 @@ export class SelfLearningService {
   // addLibrary
   // ─────────────────────────────────────────────────────────────────────────
 
-  async addLibrary(input: AddLibraryInput, output: AddLibraryOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  async addLibrary(input: AddLibraryInput, output: AddLibraryOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const libraryPath = path.resolve(input.library_path);
     fs.accessSync(libraryPath, fs.constants.R_OK);
@@ -127,7 +127,7 @@ export class SelfLearningService {
       { field: 'learning_rate', value: input.learning_rate ?? 5 },
     ]);
 
-    const { fileCount } = await this.scanLibraryDirectory(libraryId, libraryPath, now);
+    const { fileCount } = await this.scanLibraryDirectory(libraryId, libraryPath, now, undefined, metrics);
 
     output.library_id = libraryId;
     output.file_count = fileCount;
@@ -149,6 +149,7 @@ export class SelfLearningService {
     rootPath: string,
     now: number,
     skipExisting?: Set<string>,
+    metrics?: Metrics,
   ): Promise<{ fileCount: number; dirCount: number }> {
     let fileCount = 0;
     let dirCount = 0;
@@ -188,7 +189,16 @@ export class SelfLearningService {
 
         let fileSize = 0;
         if (isFile) {
-          try { fileSize = fs.statSync(absPath).size; } catch { fileSize = 0; }
+          try {
+            fileSize = fs.statSync(absPath).size;
+          } catch (err) {
+            fileSize = 0;
+            metrics?.warn('SelfLearningService.scanLibraryDirectory 读取文件大小失败（按 0 记账）', {
+              error: err instanceof Error ? err.message : String(err),
+              library_id: libraryId,
+              file_path: absPath,
+            });
+          }
         }
 
         await this.relationDb.insert('self_learning_file', [
@@ -274,7 +284,7 @@ export class SelfLearningService {
   // setLibraryEnabled
   // ─────────────────────────────────────────────────────────────────────────
 
-  async setLibraryEnabled(input: SetLibraryEnabledInput, output: SetLibraryEnabledOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  async setLibraryEnabled(input: SetLibraryEnabledInput, output: SetLibraryEnabledOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const libRow = await this.relationDb.selectOne('self_learning_library', [
       { field: 'library_id', operator: Operator.EQ, value: input.library_id },
@@ -302,6 +312,8 @@ export class SelfLearningService {
         input.library_id,
         String(libRow.library_path ?? ''),
         now,
+        undefined,
+        metrics,
       );
       output.file_count = result.fileCount;
       output.directory_count = result.dirCount;
@@ -1159,7 +1171,7 @@ export class SelfLearningService {
   //    未在执行时幂等无副作用（不存在需要清理的 per-mode 定时器）。
   // 兼容清理：对话学习已改为 runEvalOnce 单轮，不再依赖 Evolutor 常驻评估调度，
   // 仍保留一次幂等 stopEvalSchedule（best-effort）以清理历史版本可能残留的 worker。
-  async stopLearning(input: StopLearningInput, _output: StopLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
+  async stopLearning(input: StopLearningInput, _output: StopLearningOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const mode = input.learning_mode ?? 'ALL';
 
@@ -1185,7 +1197,12 @@ export class SelfLearningService {
         const stopInput = Object.assign(new StopEvalScheduleInput(), {});
         const stopOutput = Object.assign(new StopEvalScheduleOutput(), {});
         await this.evolutorAgent.stopEvalSchedule(stopInput, stopOutput, new EvolutorAgentContext());
-      } catch { /* best-effort：历史常驻调度残留清理，失败不影响停止语义 */ }
+      } catch (err) {
+        /* best-effort：历史常驻调度残留清理，失败不影响停止语义 */
+        metrics?.warn('SelfLearningService.stopLearning 历史常驻调度清理失败（不影响停止语义）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     return true;

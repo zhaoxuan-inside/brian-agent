@@ -69,8 +69,11 @@ export class StreamService {
         this.configCache = rows[0];
         return this.configCache;
       }
-    } catch {
+    } catch (err) {
       /* ignore */
+      this.logger?.warn?.('StreamService.getConfig 读取流配置失败，使用默认配置', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     return {
       id: 'default_stream_config',
@@ -123,8 +126,13 @@ export class StreamService {
         { field: 'payload_json', value: JSON.stringify(input.payload ?? {}) },
         { field: 'ts', value: now },
       ]);
-    } catch {
+    } catch (err) {
       // 事件落库失败不影响在线投递（审计缺一条，优先保证流不中断）
+      this.logger?.warn?.('StreamService.publishEvent 事件落库失败（审计缺失，在线投递继续）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_key: input.session_key,
+        type: input.type,
+      });
     }
     output.seq = seq;
     output.delivered = this.writeEventToEndpoint(input.endpoint_id, input.type, input.payload);
@@ -475,8 +483,12 @@ export class StreamService {
 
     try {
       session.onClose?.();
-    } catch {
+    } catch (err) {
       /* ignore */
+      this.logger?.warn?.('StreamService.closeSessionInternal onClose 回调异常（会话清理继续）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
     }
 
     this.sessions.delete(sessionId);

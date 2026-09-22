@@ -58,7 +58,7 @@ export class AgentStrategyService {
    * 多候选时优先用 prompt 模板做决策；无可用 LLM 绑定时回退第一候选。
    * Agent 层不自选 llm_model。
    */
-  async matchStrategy(input: MatchStrategyInput, output: MatchStrategyOutput, _ctx: AgentStrategyContext, _metrics?: Metrics, _report?: Report,
+  async matchStrategy(input: MatchStrategyInput, output: MatchStrategyOutput, _ctx: AgentStrategyContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const rows = await this.relationDb.select(AGENT_STRATEGY_TABLE, {
       conditions: [{ field: 'enable', operator: Operator.EQ, value: 1 }],
@@ -121,8 +121,14 @@ export class AgentStrategyService {
             return true;
           }
         }
-      } catch {
+      } catch (err) {
         /* fall through */
+        // 降级容忍：模板渲染/LLM 解析失败时回退复杂度中位候选（确定性兜底）
+        metrics?.warn('AgentStrategyService.matchStrategy 策略模板匹配失败，回退复杂度中位候选', {
+          error: err instanceof Error ? err.message : String(err),
+          task_complexity: input.task_complexity,
+          task_domain: input.task_domain,
+        });
       }
     }
 

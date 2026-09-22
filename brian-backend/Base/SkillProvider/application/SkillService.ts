@@ -66,7 +66,9 @@ export class SkillService {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) return parsed as FileEntry[];
-      } catch { /* fall through */ }
+      } catch {
+        /* scripts/references 列非 JSON（历史/手工数据）视为无文件清单，返回 undefined */
+      }
     }
     return undefined;
   }

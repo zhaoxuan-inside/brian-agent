@@ -180,7 +180,9 @@ export class VectorDBComponent {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) return parsed.map((v: unknown) => Number(v));
-      } catch { /* ignore */ }
+      } catch {
+        /* 非法 JSON 向量串按空向量处理，不中断记录映射（历史数据容忍） */
+      }
     }
     return [];
   }
@@ -196,7 +198,9 @@ export class VectorDBComponent {
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
           return parsed as Record<string, unknown>;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* metadata 非 JSON 按 null 处理，不中断记录映射（历史数据容忍） */
+      }
     }
     return null;
   }
@@ -393,7 +397,9 @@ export class VectorDBComponent {
       try {
         await tbl.delete(`id = '${id.replace(/'/g, "''")}'`);
         count++;
-      } catch { /* ignore */ }
+      } catch {
+        /* 单条删除失败继续处理剩余 id（预期容忍）：以返回 count 暴露成功条数，缺失败明细需上层日志渠道补充 */
+      }
     }
     return count;
   }

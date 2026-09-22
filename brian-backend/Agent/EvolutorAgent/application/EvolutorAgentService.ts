@@ -83,7 +83,7 @@ export class EvolutorAgentService {
   }
 
   // ===== 修改后的方法（2026-09-09）：评估完成即上报 evaluation.completed =====
-  async evalWorkAgent(input: EvalWorkAgentInput, output: EvalWorkAgentOutput, ctx: EvolutorAgentContext, _metrics?: Metrics, report?: Report,
+  async evalWorkAgent(input: EvalWorkAgentInput, output: EvalWorkAgentOutput, ctx: EvolutorAgentContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     // 错误信息（call_error / internal_error）不参与评估：直接跳过评分与优化触发
     if (input.handle_result_type === HandleResultType.CALL_ERROR || input.handle_result_type === HandleResultType.INTERNAL_ERROR) {
@@ -109,7 +109,7 @@ export class EvolutorAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let targetLlmId = config?.llm_id || '';
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
-      targetLlmId = await this.resolveLlm(evolutor.agent_id, _metrics);
+      targetLlmId = await this.resolveLlm(evolutor.agent_id, metrics);
     }
     const threshold = config?.optimize_threshold ?? 60;
 
@@ -123,7 +123,15 @@ export class EvolutorAgentService {
           Object.assign(new AgentExecutionContext(), ctx),
         );
         traceData = traceOut.trace;
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        // 降级容忍：trace 读取失败仅缺失评估参考上下文，评分流程继续
+        metrics?.warn('EvolutorAgentService.evalWorkAgent 读取执行 trace 失败，跳过 trace 上下文', {
+          error: err instanceof Error ? err.message : String(err),
+          trace_id: input.trace_id,
+          agent_id: input.agent_id,
+        });
+      }
     }
 
     let scores = {
@@ -139,7 +147,7 @@ export class EvolutorAgentService {
         agent_output: input.agent_output,
         trace: traceData ? JSON.stringify(traceData) : '',
       },
-      _metrics,
+      metrics,
     );
 
     try {
@@ -158,7 +166,7 @@ export class EvolutorAgentService {
         }),
         llmOut,
         new LLMContext(),
-        _metrics,
+        metrics,
         report,
       );
       if (ok && llmOut.result) {
@@ -252,7 +260,7 @@ export class EvolutorAgentService {
     const evolutorConfig = await this.getConfig();
     const criticalDisbandScore = evolutorConfig?.critical_disband_score ?? DisbandThreshold.Critical;
     if (scores.overall < criticalDisbandScore) {
-      output.disbanded = await this.disbandBadAgent(input.agent_id, report);
+      output.disbanded = await this.disbandBadAgent(input.agent_id, report, metrics);
     }
 
     output.agent_id = buildOut.agent_id;
@@ -281,7 +289,7 @@ export class EvolutorAgentService {
    * 1. 按 agent_id 查旧行，仅 system 归属执行 delAgent（user 资产 fail-loud 不越权）；
    * 2. disable 其 runtime_agent_def（agent_ref 对齐），下一轮同类任务走 L4 全新重建。
    */
-  private async disbandBadAgent(agentBizId: string, report?: Report): Promise<boolean> {
+  private async disbandBadAgent(agentBizId: string, report?: Report, metrics?: Metrics): Promise<boolean> {
     const rows = this.relationDb.queryRaw<{ id: string; created_by: string }>(
       `SELECT "id", "created_by" FROM "agent" WHERE "agent_id" = ? LIMIT 1`,
       [agentBizId],
@@ -294,23 +302,30 @@ export class EvolutorAgentService {
     delIn.ids = [String(row.id)];
     const delOut = new DelAgentOutput();
     await this.agentLibrary.delAgent(delIn, delOut, new AgentLibraryContext());
-    await this.disableRuntimeDefs(agentBizId);
+    await this.disableRuntimeDefs(agentBizId, metrics);
     report?.pushBusinessEvent(BusinessEvent.AgentDisbanded, { agent_id: agentBizId, reason: 'low_eval_score' });
     return true;
   }
 
   /** disable 对应 runtime_agent_def（数据处理；best-effort） */
-  private async disableRuntimeDefs(agentBizId: string): Promise<void> {
+  private async disableRuntimeDefs(agentBizId: string, metrics?: Metrics): Promise<void> {
     try {
       await this.relationDb.update('runtime_agent_def', [
         { field: 'status', value: 'disabled' },
         { field: 'updated', value: IdGenerator.now() },
       ], [{ field: 'agent_ref', operator: Operator.EQ, value: agentBizId }]);
-    } catch { /* best effort：def 表可能不存在或列缺失 */ }
+    } catch (err) {
+      /* best effort：def 表可能不存在或列缺失 */
+      // 预期内容忍：旧库可能无 runtime_agent_def 表/列；disable 失败仅影响下一轮重建判定
+      metrics?.warn('EvolutorAgentService.disableRuntimeDefs 禁用 runtime_agent_def 失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        agent_id: agentBizId,
+      });
+    }
   }
 
   // ===== 修改后的方法（2026-09-09）：评估完成即上报 evaluation.completed =====
-  async evalWriterAgent(input: EvalWriterAgentInput, output: EvalWriterAgentOutput, ctx: EvolutorAgentContext, _metrics?: Metrics, report?: Report,
+  async evalWriterAgent(input: EvalWriterAgentInput, output: EvalWriterAgentOutput, ctx: EvolutorAgentContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     // 错误信息（call_error / internal_error）不参与评估：直接跳过评分与优化触发
     if (input.handle_result_type === HandleResultType.CALL_ERROR || input.handle_result_type === HandleResultType.INTERNAL_ERROR) {
@@ -336,7 +351,7 @@ export class EvolutorAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let targetLlmId = config?.llm_id || '';
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
-      targetLlmId = await this.resolveLlm(evolutor.agent_id, _metrics);
+      targetLlmId = await this.resolveLlm(evolutor.agent_id, metrics);
     }
     const threshold = config?.optimize_threshold ?? 60;
 
@@ -353,7 +368,7 @@ export class EvolutorAgentService {
         final_response: input.final_response,
         agent_results: JSON.stringify(input.agent_results),
       },
-      _metrics,
+      metrics,
     );
 
     let inputTokens = 0;
@@ -375,7 +390,7 @@ export class EvolutorAgentService {
         }),
         llmOut,
         new LLMContext(),
-        _metrics,
+        metrics,
         report,
       );
       inputTokens = Number(llmOut.input_tokens ?? 0);
@@ -459,7 +474,7 @@ export class EvolutorAgentService {
       rawResponse,
       elapsedMs: IdGenerator.now() - startedAt,
       templateId: config?.eval_write_prompt_template_id,
-    });
+    }, metrics);
     return true;
   }
 
@@ -482,6 +497,7 @@ export class EvolutorAgentService {
       elapsedMs: number;
       templateId: string | undefined;
     },
+    metrics?: Metrics,
   ): Promise<void> {
     try {
       const traceId = IdGenerator.generate();
@@ -512,14 +528,19 @@ export class EvolutorAgentService {
         }),
         total_token_usage: params.inputTokens + params.outputTokens,
         answer,
-      });
+      }, metrics);
       output.trace_id = traceId;
-    } catch {
+    } catch (err) {
       /* best-effort：轨迹记录失败不影响评估结果 */
+      // 容忍评估轨迹落库失败：trace 为辅助数据，缺失仅影响事后回放
+      metrics?.warn('EvolutorAgentService.recordTrace 评估轨迹落盘失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        agent_id: params.agentId,
+      });
     }
   }
 
-  async startEvalSchedule(input: StartEvalScheduleInput, output: StartEvalScheduleOutput, ctx: EvolutorAgentContext, _metrics?: Metrics, _report?: Report,
+  async startEvalSchedule(input: StartEvalScheduleInput, output: StartEvalScheduleOutput, ctx: EvolutorAgentContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
     const interval = input.interval_ms ?? config?.eval_schedule_interval_ms ?? 3600000;
@@ -586,7 +607,7 @@ export class EvolutorAgentService {
         interval,
         // ===== 修改后的代码：单轮逻辑抽至 runEvaluationCycle（schedule 走 MQ 解耦派发）=====
         handler: async () => {
-          await this.runEvaluationCycle(ctx, { dispatchViaMq: true });
+          await this.runEvaluationCycle(ctx, { dispatchViaMq: true }, metrics);
           return true;
         },
       }),
@@ -610,14 +631,14 @@ export class EvolutorAgentService {
    * 与 startEvalSchedule 的区别：不启动常驻 worker，跑完即返回——调用方
    * （SelfLearning 手动触发 / 随机概率触发）以"一次完整任务"的粒度调度本方法。
    */
-  async runEvalOnce(input: RunEvalOnceInput, output: RunEvalOnceOutput, ctx: EvolutorAgentContext, _metrics?: Metrics, _report?: Report,
+  async runEvalOnce(input: RunEvalOnceInput, output: RunEvalOnceOutput, ctx: EvolutorAgentContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const result = await this.runEvaluationCycle(ctx, {
       dispatchViaMq: false,
       cutoffMs: input.cutoff_ms,
       threshold: input.eval_frequency_threshold,
       batchSize: input.eval_batch_size,
-    });
+    }, metrics);
     output.scanned_agents = result.scannedAgents;
     output.evaluated_count = result.evaluatedCount;
     output.skipped_count = result.skippedCount;
@@ -636,6 +657,7 @@ export class EvolutorAgentService {
   private async runEvaluationCycle(
     ctx: EvolutorAgentContext,
     opts: { dispatchViaMq: boolean; cutoffMs?: number; threshold?: number; batchSize?: number },
+    metrics?: Metrics,
   ): Promise<{ scannedAgents: number; evaluatedCount: number; skippedCount: number }> {
     const config = await this.getConfig();
     const cutoff = IdGenerator.now() - (opts.cutoffMs ?? 7 * 24 * 60 * 60 * 1000);
@@ -717,7 +739,13 @@ export class EvolutorAgentService {
           evaluatedCount++;
         }
       }
-    } catch { /* best-effort，与原 schedule handler 行为一致 */ }
+    } catch (err) {
+      /* best-effort，与原 schedule handler 行为一致 */
+      // 降级容忍：单轮评估闭环失败不抛出，下一轮 schedule/手动触发继续
+      metrics?.warn('EvolutorAgentService.runEvaluationCycle 评估扫描闭环失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // 评估闭环末尾触发老化：依据 agent_opt_rule 规则表对低活跃/低评分 Agent 老化淘汰。
     // agent_opt_rule 表通过 RelationDBProvider 读取（在 AgentLibraryService.ageAgent 内完成）。

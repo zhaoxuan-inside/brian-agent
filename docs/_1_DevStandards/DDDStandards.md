@@ -93,6 +93,7 @@
 
 1. `tsc --noEmit` 0 错误；该层 vitest 全绿。
 2. 模块内 `as any` / `: any` 为 0；无 `console.log`；无注释保留的旧实现。
+   > **豁免条款（2026-09-22）**：① SchemaInitializer 的空 catch 属 DDL 幂等容忍（"列/表/索引已存在"为预期分支），允许保留，但须有注释说明幂等判定条件；② dev-server.ts 与 AopProxy.ts 的 console 属工具链最后通道，须带 `eslint-disable-next-line no-console` 显式豁免；③ LogService 的 catch 禁走 metrics/logger（会递归回 addLog），静默 + 注释说明。
 3. 公开方法 JSDoc 覆盖率 100%。
 4. 方法索引重生成（`npm run docs:index`）且包含本模块全部 access 方法。
 5. 对应 PRD 已同步（签名/方法名/新增方法章节/代码变更记录）。

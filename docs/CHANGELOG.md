@@ -1,3 +1,17 @@
+## [2026-09-22d] 修复：吞异常治理——182 处空/注释 catch 可见化（容忍保留、诊断走 Metrics 网关）
+
+**变更原因**：评审发现 329 处空/仅注释 catch 系统性吞错（业务层 181 + SchemaInitializer 幂等 23 + dev-server 51 等），失败不可见违反 DevStandards §7.1「Metrics 是日志唯一网关」与统一签名异常约定。
+
+**修改的方法**（37 文件，+873/-303）：
+  - 业务层约 95 处补 `metrics?.warn('<类>.<方法> <容忍语义>', { error, 业务键 })`；约 50 处私有 helper 经 ≤2 跳链穿透可选 `metrics` 尾参（如 `ChatService.autoGenerateSessionTitleIfEmpty`、`TraceStore.save`、`LLMService.resolveCandidateModels`、`CDTService.freeDebugPort/killProcess`、`LogService.applyAging` 等），`_metrics` 启用为 `metrics` 计 30+ 方法。
+  - 预期内分支（DDL 幂等、协议格式容忍、日志自递归禁区、纯函数模块）约 40 处补判定条件注释；豁免条款登记进 DDDStandards §6.2。
+  - dev-server.ts 21 处走 fileLogger 通道；AopProxy 4 处走文件级 console 豁免先例。
+  - 控制流零变化：不新增 return false/throw，原容忍注释全保留。决策记录见 docs/decisions.md [2026-09-22d]。
+
+**影响的端点**：无接口行为变更；失败诊断从无输出迁移至 LogProvider 通道。
+
+**验证（门禁）**：typecheck 5 workspace 0 错误；lint:backend 0 errors；npm test 5/5 工作区通过。
+
 ## [2026-09-22c] 修复：质量门禁回绿——测试归属修正 + 测试链聚合 + console 收口 Metrics
 
 **变更原因**：HS-Code-Skill 评审发现三项门禁红灯：① Agent 层 2 个测试失败——`shared-full.test.ts` 的 TC-SH-020/021/022 是旧中文标签格式的过期副本（实现已改为英文功能标签 + usage-note，Base/test/ContextFormatter.test.ts 已显式断言旧标签不再出现），且 Agent 层测 Base 函数属测试归属错位，正是漂移根因；② `npm test` 用 `&&` 串联 5 个工作区，Agent 失败后 Application 486 个测试被短路跳过，掩盖失败面；③ InfoCoreService 6 处 `console.warn` 绕过 Metrics 日志唯一网关（DevStandards §7.1），lint:backend 6 errors。

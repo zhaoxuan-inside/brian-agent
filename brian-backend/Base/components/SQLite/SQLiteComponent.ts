@@ -155,7 +155,7 @@ export class SQLiteComponent {
     try {
       this.db.close();
     } catch {
-      // 忽略重复关闭
+      // 忽略重复关闭：better-sqlite3 对已关闭连接再 close 会抛错，属终态操作的预期分支
     }
   }
 

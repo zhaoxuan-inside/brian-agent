@@ -156,7 +156,7 @@ export class FeedbackService {
   // 反馈来源、分类、评论与该轮对话的首条用户提问，供前端直接展示。
   async getProcessLogs(
     input: QueryProcessLogsInput, output: QueryProcessLogsOutput, _ctx: FeedbackContext,
-    _metrics?: Metrics, _report?: Report,
+    metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sort: OrderBy[] = input.order_by ?? [{ field: 'created', direction: 'DESC' }];
     const rows = await this.relationDb.select(FEEDBACK_PROCESS_LOG_TABLE, {
@@ -167,12 +167,12 @@ export class FeedbackService {
     output.logs = rows.map(mapProcessLog);
     const count = await this.relationDb.count(FEEDBACK_PROCESS_LOG_TABLE, input.conditions);
     output.total = count;
-    await this.enrichProcessLogs(output.logs);
+    await this.enrichProcessLogs(output.logs, metrics);
     return true;
   }
 
   /** 批量补充列表项的人性化展示字段（失败静默降级为仅原始字段） */
-  private async enrichProcessLogs(logs: FeedbackProcessLogListItem[]): Promise<void> {
+  private async enrichProcessLogs(logs: FeedbackProcessLogListItem[], metrics?: Metrics): Promise<void> {
     try {
       // 1) feedback_id IN 批量取反馈记录 → source / category / comment
       const feedbackIds = [...new Set(logs.map(l => l.feedback_id).filter(Boolean))];
@@ -214,7 +214,12 @@ export class FeedbackService {
         const question = questionMap.get(log.run_id);
         if (question) log.user_question = question;
       }
-    } catch { /* 补充字段失败时降级为仅返回原始字段 */ }
+    } catch (err) {
+      /* 补充字段失败时降级为仅返回原始字段 */
+      metrics?.warn('FeedbackService.enrichProcessLogs 展示字段补充失败，降级为仅原始字段', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   async getProcessLogDetail(
@@ -394,7 +399,9 @@ export class FeedbackService {
             if (typeof s === 'string') allSuggestions.push(s);
           }
         }
-      } catch { /* skip bad JSON */ }
+      } catch {
+        /* skip bad JSON：suggestions 列非 JSON（历史/手工数据）时跳过该条，不影响其余统计 */
+      }
     }
 
     const commonIssues = Object.entries(issueCount)

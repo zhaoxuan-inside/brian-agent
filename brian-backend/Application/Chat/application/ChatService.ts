@@ -136,7 +136,7 @@ export class ChatService {
     //   emit Connected / Loading
     //   const runtime = this.runtime!;
     //   await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);   ← 重复调用（已删）
-    await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
+    await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content, metrics);
     emit(SseTransportEvent.Connected, { session_id: sessionId, trace_id: traceId });
     emit(SseTransportEvent.Loading, { work_id: sessionId });
 
@@ -547,7 +547,7 @@ export class ChatService {
     return true;
   }
 
-  async soSession(input: SearchSessionInput, output: SearchSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async soSession(input: SearchSessionInput, output: SearchSessionOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const conditions: Condition[] = [];
 
@@ -639,8 +639,12 @@ export class ChatService {
             answer_chars: Number(r.answer_chars ?? 0) || 0,
           });
         }
-      } catch {
+      } catch (err) {
         /* degrade gracefully */
+        metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_ids: sessionIds,
+        });
       }
 
       try {
@@ -660,8 +664,12 @@ export class ChatService {
           if (!list.includes(tag)) list.push(tag);
           tagsMap.set(sid, list);
         }
-      } catch {
+      } catch (err) {
         /* degrade gracefully */
+        metrics?.warn('ChatService.soSession 会话标签聚合失败（该批会话标签降级为空）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_ids: sessionIds,
+        });
       }
 
       try {
@@ -695,8 +703,13 @@ export class ChatService {
                 }
               }
             }
-          } catch {
+          } catch (err) {
             /* ignore */
+            metrics?.warn('ChatService.soSession iterations_json 解析失败（回退 total_token_usage 统计）', {
+              error: err instanceof Error ? err.message : String(err),
+              session_id: sid,
+              trace_id: traceId,
+            });
           }
           if (inputTokens === 0 && outputTokens === 0) {
             outputTokens = Number(r.total_token_usage ?? 0) || 0;
@@ -706,8 +719,12 @@ export class ChatService {
           cur.output_tokens += outputTokens;
           tokenMap.set(sid, cur);
         }
-      } catch {
+      } catch (err) {
         /* degrade gracefully */
+        metrics?.warn('ChatService.soSession 会话 token 聚合失败（token 统计降级为 0）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_ids: sessionIds,
+        });
       }
     }
 
@@ -739,7 +756,13 @@ export class ChatService {
         for (const r of lastRows) {
           lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
         }
-      } catch { /* degrade gracefully */ }
+      } catch (err) {
+        /* degrade gracefully */
+        metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_ids: sessionIds,
+        });
+      }
     }
 
     for (const row of selOutput.rows) {
@@ -780,8 +803,11 @@ export class ChatService {
       const totalOutput = Object.assign(new CountDBOutput(), {});
       await this.relationDb.countDB(totalInput, totalOutput, new DBContext());
       total = totalOutput.count;
-    } catch {
+    } catch (err) {
       /* degrade gracefully */
+      metrics?.warn('ChatService.soSession 会话总数统计失败（total 降级为 0）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     output.sessions = sessions;
@@ -789,7 +815,7 @@ export class ChatService {
     return true;
   }
 
-  async soSessionDetail(input: GetSessionDetailInput, output: GetSessionDetailOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async soSessionDetail(input: GetSessionDetailInput, output: GetSessionDetailOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
       query_param: {
@@ -817,8 +843,12 @@ export class ChatService {
       const cntOutput = Object.assign(new CountDBOutput(), {});
       await this.relationDb.countDB(cntInput, cntOutput, new DBContext());
       messageCount = cntOutput.count;
-    } catch {
+    } catch (err) {
       /* degrade gracefully */
+      metrics?.warn('ChatService.soSessionDetail 消息计数失败（message_count 降级为 0）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: input.session_id,
+      });
     }
 
     output.session = {
@@ -859,7 +889,7 @@ export class ChatService {
     return true;
   }
 
-  async checkSessionOverflow(input: CheckSessionOverflowInput, output: CheckSessionOverflowOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async checkSessionOverflow(input: CheckSessionOverflowInput, output: CheckSessionOverflowOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     let maxMessages = 1000;
     try {
@@ -871,8 +901,12 @@ export class ChatService {
       if (selOutput.row) {
         maxMessages = (selOutput.row.max_messages_per_session as number) ?? 1000;
       }
-    } catch {
+    } catch (err) {
       /* use default */
+      metrics?.warn('ChatService.checkSessionOverflow 读取会话配置失败（使用默认上限 1000）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: input.session_id,
+      });
     }
 
     let messageCount = 0;
@@ -886,8 +920,12 @@ export class ChatService {
       const cntOutput = Object.assign(new CountDBOutput(), {});
       await this.relationDb.countDB(cntInput, cntOutput, new DBContext());
       messageCount = cntOutput.count;
-    } catch {
+    } catch (err) {
       /* degrade gracefully */
+      metrics?.warn('ChatService.checkSessionOverflow 消息计数失败（按 0 条判断溢出）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: input.session_id,
+      });
     }
 
     output.is_overflowed = messageCount >= maxMessages;
@@ -896,7 +934,7 @@ export class ChatService {
     return true;
   }
 
-  async soChatHistory(input: GetChatHistoryInput, output: GetChatHistoryOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async soChatHistory(input: GetChatHistoryInput, output: GetChatHistoryOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     let lastN = input.lastN;
     if (lastN === undefined) {
@@ -910,8 +948,12 @@ export class ChatService {
         if (selOutput.row) {
           lastN = (selOutput.row.default_history_lastN as number) ?? 50;
         }
-      } catch {
+      } catch (err) {
         /* use default */
+        metrics?.warn('ChatService.soChatHistory 读取默认历史条数配置失败（使用默认 50）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: input.session_id,
+        });
       }
     }
 
@@ -987,7 +1029,7 @@ export class ChatService {
     return true;
   }
 
-  async soMessage(input: SearchMessageInput, output: SearchMessageOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async soMessage(input: SearchMessageInput, output: SearchMessageOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.keyword || input.keyword.trim() === '') {
       throw new ValidationError('keyword cannot be empty');
@@ -1031,8 +1073,12 @@ export class ChatService {
         if (selOutput.row) {
           summary = (selOutput.row.summary as string) ?? '';
         }
-      } catch {
+      } catch (err) {
         /* degrade gracefully */
+        metrics?.warn('ChatService.soMessage 消息摘要查询失败（摘要降级为空）', {
+          error: err instanceof Error ? err.message : String(err),
+          info_id: row.info_id,
+        });
       }
 
       messages.push({
@@ -1051,7 +1097,7 @@ export class ChatService {
     return true;
   }
 
-  async pinMessage(input: PinMessageInput, output: PinMessageOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
+  async pinMessage(input: PinMessageInput, output: PinMessageOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
       throw new ValidationError('info_id is required');
@@ -1072,8 +1118,12 @@ export class ChatService {
       if (selOutput.row) {
         currentPin = (selOutput.row.pin as number) === 1;
       }
-    } catch {
+    } catch (err) {
       /* degrade gracefully */
+      metrics?.warn('ChatService.pinMessage 读取当前 pin 状态失败（按未置顶处理）', {
+        error: err instanceof Error ? err.message : String(err),
+        info_id: input.info_id,
+      });
     }
 
     try {
@@ -1187,7 +1237,7 @@ export class ChatService {
     return true;
   }
 
-  private async autoGenerateSessionTitleIfEmpty(sessionId: string, msgContent: string): Promise<void> {
+  private async autoGenerateSessionTitleIfEmpty(sessionId: string, msgContent: string, metrics?: Metrics): Promise<void> {
     try {
       const selInput = Object.assign(new SelectOneDBInput(), {
         query_param: {
@@ -1213,8 +1263,12 @@ export class ChatService {
           }
         }
       }
-    } catch {
+    } catch (err) {
       /* best effort */
+      metrics?.warn('ChatService.autoGenerateSessionTitleIfEmpty 自动生成会话标题失败（跳过）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
     }
   }
 

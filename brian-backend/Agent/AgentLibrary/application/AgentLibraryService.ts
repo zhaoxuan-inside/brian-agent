@@ -360,7 +360,12 @@ export class AgentLibraryService {
       for (const table of ['skill_usage', 'soul_core_usage', 'agent_mcp_usage']) {
         try {
           this.relationDb.executeRaw(`DELETE FROM "${table}" WHERE "agent_id" = ?`, [agentId]);
-        } catch { /* 表可能不存在 */ }
+        } catch (err) {
+          /* 表可能不存在 */
+          // 预期内容忍：可选 usage 表在旧库可能尚未建表；删除失败仅遗留少量统计残留，
+          // 主记录（agent 表）随后无条件删除
+          void err;
+        }
       }
 
       // 删除主记录

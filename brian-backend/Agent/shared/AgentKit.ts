@@ -67,8 +67,13 @@ export async function renderPromptWithFallback(
         const anyHit = soOut.list?.find((p) => p.enable !== false);
         if (anyHit) id = anyHit.id;
       }
-    } catch {
+    } catch (err) {
       /* ignore */
+      // 降级容忍：动态解析失败回退 fallbackTitle 作为模板标识（由 execPrompt 侧 fail-loud 兜底）
+      metrics?.warn('AgentKit.renderPromptWithFallback 动态解析模板失败，回退标题名兜底', {
+        error: err instanceof Error ? err.message : String(err),
+        fallback_title: fallbackTitle,
+      });
     }
     if (!id) {
       id = fallbackTitle;

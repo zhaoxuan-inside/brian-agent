@@ -134,7 +134,12 @@ export class CronService {
           );
         }
       }
-    } catch { /* best-effort */ }
+    } catch (err) {
+      /* best-effort */
+      this.logger?.warn?.('CronService.recomputeStaleNextRuns 重算过期 next_run 失败（best-effort，等待 tick 兜底）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 检查到期的任务并触发执行 */

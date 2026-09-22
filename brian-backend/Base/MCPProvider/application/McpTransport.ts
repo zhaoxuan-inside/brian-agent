@@ -221,7 +221,7 @@ export class StdioMcpClient {
         try {
           c.kill('SIGTERM');
         } catch {
-          /* ignore */
+          /* 二次 kill 失败可容忍：进程可能已自行退出（ESRCH），随进程退出自然回收 */
         }
       }
     }
@@ -274,7 +274,7 @@ export async function callToolOverHttp(
     try {
       parsed = JSON.parse(text);
     } catch {
-      /* 非 JSON 保持原文 */
+      /* 非 JSON 响应保持原文（协议格式容忍）：unwrapRpcResult 按原文返回给调用方 */
     }
     result = unwrapRpcResult(parsed);
   }
@@ -310,7 +310,7 @@ export async function callToolOverRest(
   try {
     result = JSON.parse(text);
   } catch {
-    /* 非 JSON 保持原文 */
+    /* 非 JSON 响应保持原文（协议格式容忍）：2xx 非 JSON 体按原文返回给调用方 */
   }
   return { raw: text, result };
 }

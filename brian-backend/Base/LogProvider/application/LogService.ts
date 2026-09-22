@@ -161,7 +161,7 @@ export class LogService {
    *
    * @returns 被清理的日志条数
    */
-  async applyAging(): Promise<number> {
+  async applyAging(metrics?: Metrics): Promise<number> {
     let deleted = 0;
 
     // 1. 删除超过保留天数的日志
@@ -170,8 +170,11 @@ export class LogService {
       deleted += await this.relationDb.delete(LOG_RECORD_TABLE, [
         { field: 'created', operator: Operator.LT, value: cutoff },
       ]);
-    } catch {
+    } catch (err) {
       // 忽略异常
+      metrics?.warn('LogService.applyAging 按保留天数清理过期日志失败', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // 2. 裁剪到最大条数（删除最旧记录）
@@ -185,19 +188,22 @@ export class LogService {
         );
         deleted += excess;
       }
-    } catch {
+    } catch (err) {
       // 忽略异常
+      metrics?.warn('LogService.applyAging 按最大条数裁剪日志失败', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return deleted;
   }
 
   /** 节流触发老化，避免高频写入时频繁全表扫描 */
-  private scheduleAging(): void {
+  private scheduleAging(metrics?: Metrics): void {
     const now = Date.now();
     if (now - this.lastAgingAt >= LogService.AGING_INTERVAL_MS) {
       this.lastAgingAt = now;
-      this.applyAging().catch(() => {});
+      this.applyAging(metrics).catch(() => {});
     }
   }
 
@@ -207,7 +213,7 @@ export class LogService {
 
   /** 写入日志到 SQLite（addLog） */
   // ===== 修改后的方法（增加 min_level 过滤）=====
-  async addLog(input: AddLogInput, output: AddLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
+  async addLog(input: AddLogInput, output: AddLogOutput, _context: LogContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const data = input.data;
@@ -245,10 +251,12 @@ export class LogService {
         }),
       );
     } catch {
-      // SQLite 写入失败不影响业务
+      // SQLite 写入失败不影响业务。
+      // 注意：LogService 自身是全系统日志落库通道，此处禁止再调用 metrics/logger
+      // （会经 logger.warn → addLog 递归回本方法，写失败时无限递归），故保持静默。
     }
 
-    this.scheduleAging();
+    this.scheduleAging(metrics);
 
     output.id = logId;
     return true;
@@ -324,7 +332,7 @@ export class LogService {
   }
 
   /** 删除日志（delLog）- 从 SQLite 删除 */
-  async delLog(input: DelLogInput, output: DelLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
+  async delLog(input: DelLogInput, output: DelLogOutput, _context: LogContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
 
@@ -350,8 +358,11 @@ export class LogService {
       if (input.conditions && input.conditions.length > 0) {
         deletedCount += await this.relationDb.delete(LOG_RECORD_TABLE, input.conditions);
       }
-    } catch {
+    } catch (err) {
       // 忽略异常
+      metrics?.warn('LogService.delLog 删除日志失败（已删除部分计数见 affected_rows）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     output.affected_rows = deletedCount;

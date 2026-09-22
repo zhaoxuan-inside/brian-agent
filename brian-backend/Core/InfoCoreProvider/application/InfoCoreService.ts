@@ -188,7 +188,7 @@ export class InfoCoreService {
 
     // 创建图引用边（GraphDB：info 节点 + CITATION 边）
     if (input.parent_info_ids && input.parent_info_ids.length > 0) {
-      await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids);
+      await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids, metrics);
     }
 
     output.info_id = infoId;
@@ -344,8 +344,9 @@ export class InfoCoreService {
         await this.ensureTextNode('Tag', 'tag', tag, true);
         await this.maintainTagVector(tag, tagConfig, metrics);
         await this.graphTag(Object.assign(new GraphTagInput(), { tag_id: tagId }), new GraphTagOutput(), new InfoCoreContext(), metrics);
-      } catch {
-        // 标签重复跳过
+      } catch (err) {
+        // 标签重复跳过：insertTag 唯一键冲突（同一 info 已存在同名标签）属预期幂等场景；
+        // 连带容忍 ensureTextNode / maintainTagVector / graphTag 图向量维护失败（best-effort，不影响保存主流程）
       }
     }
 
@@ -549,7 +550,7 @@ export class InfoCoreService {
     const similarTags = await this.searchSimilarTags(embedding, tagText, tagConfig.tag_top_k || 5);
     for (const similar of similarTags) {
       const similarNodeId = await this.ensureTagNode(similar.tag);
-      await this.connectSimilarTags(nodeId, similarNodeId, similar.score);
+      await this.connectSimilarTags(nodeId, similarNodeId, similar.score, metrics);
     }
 
     output.node_id = nodeId;
@@ -573,9 +574,9 @@ export class InfoCoreService {
     // 0. 清理非正确信息 / 已删除信息派生的标签行（存量治理，防止错误标签再次入图）
     output.purged_rows = this.purgeNonCorrectTagRows(metrics);
     // 标签共现边
-    const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE);
+    const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE, metrics);
     // 关键词共现边
-    const kwResult = await this.rebuildCooccurForSource(INFO_KEYWORD_TABLE, 'word', 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE);
+    const kwResult = await this.rebuildCooccurForSource(INFO_KEYWORD_TABLE, 'word', 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE, metrics);
     output.deleted_edges = tagResult.deleted + kwResult.deleted;
     output.rebuilt_edges = tagResult.rebuilt + kwResult.rebuilt;
     return true;
@@ -613,6 +614,7 @@ export class InfoCoreService {
     nodeType: string,
     textField: string,
     edgeType: string,
+    metrics?: Metrics,
   ): Promise<{ deleted: number; rebuilt: number }> {
     // 1. 删除该 node_type 的所有节点（级联删除关联边与激活数据），保证幂等重建
     const nodeSel = new SelectGraphOutput();
@@ -685,7 +687,7 @@ export class InfoCoreService {
     }
     let rebuilt = 0;
     for (const e of edgeMap.values()) {
-      await this.addCooccurEdge(e.fromId, e.toId, edgeType, e.weight);
+      await this.addCooccurEdge(e.fromId, e.toId, edgeType, e.weight, metrics);
       rebuilt++;
     }
     return { deleted: nodeIds.length, rebuilt };
@@ -1208,7 +1210,7 @@ export class InfoCoreService {
    * 旧实现把 info 引用边存在 RelationDB 的 info_graph 表；本方法将存量引用边迁移为
    * GraphDB 的 CITATION 边（info 节点 + 边），随后 DROP 旧表，实现图结构收敛到 GraphDB。
    */
-  async rebuildCitationGraph(_input: RebuildCitationGraphInput, output: RebuildCitationGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async rebuildCitationGraph(_input: RebuildCitationGraphInput, output: RebuildCitationGraphOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     // 旧表在迁移收敛后已 DROP：先查 sqlite_master 判断存在性，
     // 避免对已迁移库每次查询都触发 RelationDB 的 ERROR 级 "no such table" 日志
@@ -1235,7 +1237,7 @@ export class InfoCoreService {
       const citedInfo = await this.getInfoByInfoId(cited);
       const fromNodeId = await this.ensureInfoGraphNode(citing, { session_id: session, info: citingInfo?.info ?? '' });
       const toNodeId = await this.ensureInfoGraphNode(cited, { session_id: citedInfo?.session_id ?? session, info: citedInfo?.info ?? '' });
-      await this.connectCitationEdge(fromNodeId, toNodeId, citing, cited, session);
+      await this.connectCitationEdge(fromNodeId, toNodeId, citing, cited, session, metrics);
       migrated++;
     }
     output.migrated_edges = migrated;
@@ -1412,7 +1414,15 @@ export class InfoCoreService {
           const relOutput = new RelationKInfoOutput();
           await this.relationKInfo(relInput, relOutput, _context, metrics, report);
           return relOutput.list;
-        } catch { return []; }
+        } catch (err) {
+          // 降级容忍：TAG_RELATIVE 候选采集失败不阻断上下文构建
+          metrics?.warn('InfoCoreService.context TAG_RELATIVE 候选采集失败，降级为空列表', {
+            error: err instanceof Error ? err.message : String(err),
+            info_id: refInfoRow.info_id,
+            session_id: input.session_id,
+          });
+          return [];
+        }
       })(),
       // SIMILARITY (全系统向量语义相似消息)
       (async (): Promise<InfoRawRecord[]> => {
@@ -1424,7 +1434,14 @@ export class InfoCoreService {
           const simOutput = new SimilarKInfoOutput();
           await this.similarKInfo(simInput, simOutput, _context, metrics, report);
           return simOutput.list.filter((item) => this.isCorrectInfo(item));
-        } catch { return []; }
+        } catch (err) {
+          // 降级容忍：SIMILARITY 候选采集失败不阻断上下文构建
+          metrics?.warn('InfoCoreService.context SIMILARITY 候选采集失败，降级为空列表', {
+            error: err instanceof Error ? err.message : String(err),
+            session_id: input.session_id,
+          });
+          return [];
+        }
       })(),
       // KEYWORD (全系统关键词匹配消息)
       (async (): Promise<InfoRawRecord[]> => {
@@ -1442,7 +1459,14 @@ export class InfoCoreService {
             if (result.length >= kwLimit) break;
           }
           return result;
-        } catch { return []; }
+        } catch (err) {
+          // 降级容忍：KEYWORD 候选采集失败不阻断上下文构建
+          metrics?.warn('InfoCoreService.context KEYWORD 候选采集失败，降级为空列表', {
+            error: err instanceof Error ? err.message : String(err),
+            session_id: input.session_id,
+          });
+          return [];
+        }
       })(),
     ]);
     const tagCandidates: InfoRawRecord[] = tagResult;
@@ -1505,7 +1529,13 @@ export class InfoCoreService {
             .filter((c) => this.isCorrectInfo(c));
           randCandidates = [...randCandidates, ...globalCandidates].slice(0, randLimit);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        // 降级容忍：RANDOM 采样失败保留已采部分，不阻断上下文构建
+        metrics?.warn('InfoCoreService.context RANDOM 随机候选采集失败，保留已采部分', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: input.session_id,
+        });
+      }
     }
 
     // 当前消息仅应作为 CURRENT（或经显式钉住/引用）出现；
@@ -1630,7 +1660,7 @@ const rawPriority = priorityOrderStr
       current: output.categories.current.length,
     };
 
-    await this.fillContextTriplesAndPersist(output, resultList, input.work_id, input.persist_snapshot !== false);
+    await this.fillContextTriplesAndPersist(output, resultList, input.work_id, input.persist_snapshot !== false, metrics);
 
     return true;
   }
@@ -2556,7 +2586,7 @@ const rawPriority = priorityOrderStr
   }
 
   /** 建立/更新 similarTo 边（异常静默忽略，避免重复边阻断）。 */
-  private async connectSimilarTags(fromId: string, toId: string, score: number): Promise<void> {
+  private async connectSimilarTags(fromId: string, toId: string, score: number, metrics?: Metrics): Promise<void> {
     try {
       await this.graphDb.addGraphEdge(
         {
@@ -2570,8 +2600,13 @@ const rawPriority = priorityOrderStr
         } as AddGraphEdgeInput,
         new AddGraphEdgeOutput(), new GraphContext(),
       );
-    } catch {
+    } catch (err) {
       // 忽略边已存在等异常
+      metrics?.warn('InfoCoreService.connectSimilarTags similarTo 建边失败已容忍（含边已存在）', {
+        error: err instanceof Error ? err.message : String(err),
+        from_id: fromId,
+        to_id: toId,
+      });
     }
   }
 
@@ -2649,13 +2684,15 @@ const rawPriority = priorityOrderStr
       } else {
         await this.addCooccurEdge(fromId, toId, edgeType);
       }
-    } catch {
-      // 共现边建立失败不影响文本保存
+    } catch (err) {
+      // 共现边建立失败不影响文本保存（best-effort）：图库写失败仅损失共现统计展示，
+      // 主流程文本保存与标签/关键词落库均已成功，容忍跳过
+      void err;
     }
   }
 
   /** 直接建立一条 cooccur 边（节点已存在、边未建立时调用）。 */
-  private async addCooccurEdge(fromId: string, toId: string, edgeType: string, weight = 1): Promise<void> {
+  private async addCooccurEdge(fromId: string, toId: string, edgeType: string, weight = 1, metrics?: Metrics): Promise<void> {
     try {
       await this.graphDb.addGraphEdge(
         {
@@ -2669,8 +2706,14 @@ const rawPriority = priorityOrderStr
         } as AddGraphEdgeInput,
         new AddGraphEdgeOutput(), new GraphContext(),
       );
-    } catch {
+    } catch (err) {
       // 忽略边已存在等异常
+      metrics?.warn('InfoCoreService.addCooccurEdge 共现边建立失败已容忍（含边已存在）', {
+        error: err instanceof Error ? err.message : String(err),
+        from_id: fromId,
+        to_id: toId,
+        edge_type: edgeType,
+      });
     }
   }
 
@@ -2747,6 +2790,7 @@ const rawPriority = priorityOrderStr
     sessionId: string,
     infoText: string,
     parentInfoIds: string[],
+    metrics?: Metrics,
   ): Promise<void> {
     const fromNodeId = await this.ensureInfoGraphNode(infoId, { session_id: sessionId, info: infoText });
     for (const parentId of parentInfoIds) {
@@ -2754,7 +2798,7 @@ const rawPriority = priorityOrderStr
       const parentRow = await this.getInfoByInfoId(parentId);
       if (!parentRow) continue;
       const toNodeId = await this.ensureInfoGraphNode(parentId, { session_id: parentRow.session_id, info: parentRow.info });
-      await this.connectCitationEdge(fromNodeId, toNodeId, infoId, parentId, sessionId);
+      await this.connectCitationEdge(fromNodeId, toNodeId, infoId, parentId, sessionId, metrics);
     }
   }
 
@@ -2765,6 +2809,7 @@ const rawPriority = priorityOrderStr
     citingInfoId: string,
     citedInfoId: string,
     sessionId: string,
+    metrics?: Metrics,
   ): Promise<void> {
     try {
       await this.graphDb.addGraphEdge(
@@ -2779,8 +2824,14 @@ const rawPriority = priorityOrderStr
         } as AddGraphEdgeInput,
         new AddGraphEdgeOutput(), new GraphContext(),
       );
-    } catch {
+    } catch (err) {
       // 忽略边已存在等异常
+      metrics?.warn('InfoCoreService.connectCitationEdge CITATION 引用边建立失败已容忍（含边已存在）', {
+        error: err instanceof Error ? err.message : String(err),
+        citing_info_id: citingInfoId,
+        cited_info_id: citedInfoId,
+        session_id: sessionId,
+      });
     }
   }
 
@@ -2855,6 +2906,7 @@ const rawPriority = priorityOrderStr
     resultList: ContextInfoItem[],
     workId: string,
     persist: boolean = true,
+    metrics?: Metrics,
   ): Promise<void> {
     const sourceIdsMap: ContextSourceIdMap = {};
     const contentMap: ContextContentMap = {};
@@ -2894,7 +2946,7 @@ const rawPriority = priorityOrderStr
     output.attribute_map = attributeMap;
 
     if (persist) {
-      await this.persistContextSourceMap(workId, sourceIdsMap);
+      await this.persistContextSourceMap(workId, sourceIdsMap, metrics);
     }
   }
 
@@ -2902,6 +2954,7 @@ const rawPriority = priorityOrderStr
   private async persistContextSourceMap(
     workId: string,
     sourceIdsMap: ContextSourceIdMap,
+    metrics?: Metrics,
   ): Promise<void> {
     if (!workId) return;
     try {
@@ -2924,7 +2977,15 @@ const rawPriority = priorityOrderStr
             { field: 'source', value: source },
             { field: 'info_id', value: infoId },
           ]);
-        } catch { /* ignore */ }
+        } catch (err) {
+          // 容忍单条来源关系落盘失败：上下文快照持久化为辅助数据，缺失仅影响可视化溯源
+          metrics?.warn('InfoCoreService.persistContextSourceMap 来源关系落盘失败已容忍', {
+            error: err instanceof Error ? err.message : String(err),
+            work_id: workId,
+            source,
+            info_id: infoId,
+          });
+        }
       }
     }
   }
@@ -2979,8 +3040,13 @@ const rawPriority = priorityOrderStr
       const embedding = await this.getTagEmbedding(tag, tagConfig, metrics);
       if (!embedding || embedding.length === 0) return;
       await this.upsertTagVector(tag, embedding);
-    } catch {
+    } catch (err) {
       // ignore
+      // 容忍标签向量维护失败：向量缺失仅影响相似检索召回，不影响标签落库主流程
+      metrics?.warn('InfoCoreService.maintainTagVector 标签向量维护失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        tag,
+      });
     }
   }
 

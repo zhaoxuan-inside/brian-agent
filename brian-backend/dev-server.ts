@@ -256,7 +256,7 @@ function writeFileLog(level: string, message: string, meta?: unknown): void {
     }
     const file = path.join(LOG_DIR, `dev-server-${formatLogDate(new Date())}.log`);
     fs.appendFileSync(file, `[${ts}] [${level}] ${message}${suffix}\n`);
-  } catch { /* ignore */ }
+  } catch { /* 写日志自身失败属预期（如 LOG_DIR 不可写）：静默忽略；此处不可再走 fileLogger，否则自递归 */ }
 }
 
 /** 文件日志器：debug/info/warn 写文件，error 仅作为兜底（业务错误仍走 DB） */
@@ -298,7 +298,9 @@ function createLogger(logAccess?: LogAccess): any {
         {} as any,
         {} as any,
       ).catch(() => {});
-    } catch { /* ignore */ }
+    } catch (err) {
+      fileLogger.warn('[dev-server] createLogger.write 日志落库同步失败（容忍：丢弃该条日志）', err instanceof Error ? err.message : String(err));
+    }
   };
   return {
     // 所有日志点统一经 LogProvider 提交，由 LogProvider 依据配置的 min_level 决定是否入库。
@@ -314,6 +316,7 @@ function createLogger(logAccess?: LogAccess): any {
 }
 
 function addColIfMissing(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, table: string, column: string, type: string): void {
+  // 幂等加列：列已存在时 ALTER TABLE 报错属预期
   try { relationDb.executeRaw(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${type}`); } catch { /* exists */ }
 }
 
@@ -769,6 +772,7 @@ async function buildContext() {
   // answerPermission 后按内存映射回写 status=allowed/denied。best-effort：失败不阻断 run。
   // ===== 修改后的代码（2026-09-11）：权限审计落库桥辅助 =====
   function safeJsonParse(text: string): unknown {
+    // text 非合法 JSON 属预期（info 内容可能是纯文本）：原文返回
     try { return JSON.parse(text); } catch { return text; }
   }
   /** 异常摘要文本（Error / 任意值 → 安全字符串） */
@@ -947,7 +951,7 @@ async function buildContext() {
       );
       const snapshotData: Record<string, unknown[]> = {};
       for (const row of configTables || []) {
-        try { snapshotData[row.name] = relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* ok */ }
+        try { snapshotData[row.name] = relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* 表读取失败属预期（表可能尚未建立/结构漂移）：快照跳过该表 */ }
       }
       const now = Date.now();
       relationDb.executeRaw(
@@ -1091,7 +1095,9 @@ async function buildContext() {
       mcpAccess.syncInstallStatus().then((removed) => {
         if (removed > 0) logger.info('[cron] MCP install sync', { detail: `清理了 ${removed} 条已卸载的 npm 安装记录`, trace_id: triggerTrace.trace_id, source: 'cron.mcpinstallsync' });
       }).catch(() => {});
-    } catch { /* ignore */ }
+    } catch (err) {
+      fileLogger.warn('[dev-server] cron.mcpinstallsync 触发同步失败（容忍：等待下个周期）', err instanceof Error ? err.message : String(err));
+    }
   }, 60 * 60 * 1000);
 
   // 周期性 WAL checkpoint（每 30 分钟），回收 WAL 文件磁盘空间
@@ -1100,7 +1106,9 @@ async function buildContext() {
       for (const db of [relationDb, logRelationDb]) {
         db.walCheckpoint('PASSIVE');
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      fileLogger.warn('[dev-server] cron.walCheckpoint 失败（容忍：等待下个周期重试）', err instanceof Error ? err.message : String(err));
+    }
   }, 30 * 60 * 1000);
 
   // 每日午夜 0:00 执行 Skill/Soul 老化（按 opt_rule 规则禁用不活跃实体）
@@ -1168,7 +1176,7 @@ function jsonBody(req: http.IncomingMessage): Promise<any> {
       }
       body += c;
     });
-    req.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
+    req.on('end', () => { try { resolve(JSON.parse(body)); } catch { /* body 非合法 JSON 属预期：按空对象解析 */ resolve({}); } });
   });
 }
 
@@ -1259,7 +1267,9 @@ async function buildThinkingBlocksAndDag(
         if (rebuilt.dag) workDagMap.set(wid, rebuilt.dag);
         if (rebuilt.trace) workTraceMap.set(wid, rebuilt.trace);
       }
-    } catch { /* degrade gracefully */ }
+    } catch (err) {
+      fileLogger.warn('[dev-server] buildThinkingBlocksAndDag 单 work 思考块重建失败（容忍：降级为空）', err instanceof Error ? err.message : String(err));
+    }
   }
   return { workBlocksMap, workDagMap, workTraceMap };
 }
@@ -1326,7 +1336,11 @@ async function buildRuntimeWorkContext(
   const triplesByWork = new Map<string, ContextTriples>();
   for (const wid of workIds.slice(0, 5)) {
     // ===== 修改后（2026-09-15 记忆集中）：统一经 InfoCoreProvider.soContextByWork =====
-    try { triplesByWork.set(wid, await soContextByWorkShared(infoCore, wid)); } catch { /* ignore */ }
+    try {
+      triplesByWork.set(wid, await soContextByWorkShared(infoCore, wid));
+    } catch (err) {
+      fileLogger.warn('[dev-server] buildRuntimeWorkContext.soContextByWork 失败（容忍：跳过该 work 上下文）', err instanceof Error ? err.message : String(err));
+    }
   }
 
   if (triplesByWork.size > 0) {
@@ -2020,7 +2034,7 @@ async function buildThinkingBlocksFromRuntime(
     );
     permissions = permRows
       .map((r) => {
-        try { return JSON.parse(String(r.info ?? '{}')); } catch { return null; }
+        try { return JSON.parse(String(r.info ?? '{}')); } catch { /* PERMISSION info 非合法 JSON：返回 null 交由上方 filter 过滤 */ return null; }
       })
       .filter((p) => p && String((p as any).run_id ?? '') === runId)
       .map((p: any, idx: number) => {
@@ -2160,7 +2174,7 @@ async function buildThinkingBlocksFromOrchestration(
     for (const dRow of dagRows) {
       const wId = String(dRow.work_id ?? '');
       let dagObj: any = undefined;
-      try { if (dRow.agent_dag_json) dagObj = JSON.parse(String(dRow.agent_dag_json)); } catch { /* ignore */ }
+      try { if (dRow.agent_dag_json) dagObj = JSON.parse(String(dRow.agent_dag_json)); } catch { /* agent_dag_json 非合法 JSON：该 work 无 Agent DAG */ }
 
       // ===== 修改后：解析 agent_plan.task_dag 得到 Planner 的任务级拆解（Task DAG），
       //      并随 workDagMap 一起下发供"思考过程"弹窗展示 Planning 策略拆解 =====
@@ -2273,7 +2287,7 @@ async function buildThinkingBlocksFromOrchestration(
           if (meta?.intent_agent) {
             intentMetaMap.set(wId, meta.intent_agent);
           }
-        } catch { /* ignore */ }
+        } catch { /* metadata 非合法 JSON：跳过该 work 的 intent 元数据 */ }
       }
     }
 
@@ -2335,7 +2349,9 @@ async function buildThinkingBlocksFromOrchestration(
           const soOut: any = { source_ids_map: {}, content_map: {}, attribute_map: {} };
           await infoCore.soContextByWork({ work_id: wid }, soOut, new InfoCoreContext());
           workContextTriplesMap.set(wid, soOut);
-        } catch { /* ignore */ }
+        } catch (err) {
+          fileLogger.warn('[dev-server] buildThinkingBlocksFromOrchestration.soContextByWork 失败（容忍：跳过该 work 上下文）', err instanceof Error ? err.message : String(err));
+        }
       }
     }
 
@@ -2368,7 +2384,7 @@ async function buildThinkingBlocksFromOrchestration(
               const p = JSON.parse(String(row.task_content));
               if (p && p.task_domain) domainFromTask = String(p.task_domain);
               else if (p && p.user_query) domainFromTask = String(p.user_query).slice(0, 16);
-            } catch { /* ignore */ }
+            } catch { /* task_content 非合法 JSON：退回默认 Agent 命名 */ }
           }
 
           agentName = domainFromTask ? `执行 Agent ${currIdx}: ${domainFromTask}` : `执行 Agent #${currIdx}`;
@@ -2462,7 +2478,9 @@ async function buildThinkingBlocksFromOrchestration(
             if (fallbackTraceRows[0].iterations_json) iterJson = fallbackTraceRows[0].iterations_json;
             if (fallbackTraceRows[0].total_token_usage) tokenUsage = Number(fallbackTraceRows[0].total_token_usage);
           }
-        } catch { /* ignore fallback error */ }
+        } catch (err) {
+          fileLogger.warn('[dev-server] buildThinkingBlocksFromOrchestration 轨迹 fallback 查询失败（容忍：无迭代明细）', err instanceof Error ? err.message : String(err));
+        }
       }
 
       const steps: any[] = [];
@@ -2560,7 +2578,7 @@ async function buildThinkingBlocksFromOrchestration(
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch { /* iterations_json 非合法 JSON：跳过该 trace 的迭代明细重建 */ }
       }
 
       if (!content && inputQuery) {
@@ -2719,7 +2737,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               sendJson(res, 400, { error: `已存在 ${count} 条向量数据，写入数据后不支持更改距离度量方式。如需更改请先删除所有向量数据。` });
               return;
             }
-          } catch { /* allow if count fails */ }
+          } catch { /* 向量计数失败属预期（向量库可能未就绪）：fail-open 放行写入 */ }
         }
         const output = new UpdateConfigOutput();
         const context = new ConfigContext();
@@ -2767,7 +2785,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         );
         const data: Record<string, unknown[]> = {};
         for (const row of configTables || []) {
-          try { data[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* ok */ }
+          try { data[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* 表读取失败属预期（表可能尚未建立）：跳过该表 */ }
         }
         const now = Date.now();
         const existing = ctx.relationDb.queryRaw<{ id: string }>(
@@ -2796,7 +2814,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         );
         const backup: Record<string, unknown[]> = {};
         for (const row of configTables || []) {
-          try { backup[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* ok */ }
+          try { backup[row.name] = ctx.relationDb.queryRaw<Record<string, unknown>>(`SELECT * FROM "${row.name}"`, []) || []; } catch { /* 表读取失败属预期（表可能尚未建立）：备份跳过该表 */ }
         }
         const fs = await import('node:fs');
         const path = await import('node:path');
@@ -2810,7 +2828,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         ctx.relationDb.executeRaw('DELETE FROM "config_module_privilege"', []);
         // 2. 清理各模块配置表
         for (const row of configTables || []) {
-          try { ctx.relationDb.executeRaw(`DELETE FROM "${row.name}"`, []); } catch { /* ok */ }
+          try { ctx.relationDb.executeRaw(`DELETE FROM "${row.name}"`, []); } catch { /* 表可能不存在，DELETE 失败属预期 */ }
         }
         // 3. 配置项元数据为内存静态定义，无需重新注册
         // 4. 从「默认快照」恢复默认数据
@@ -2826,7 +2844,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             const placeholders = cols.map(() => '?').join(', ');
             const sql = `INSERT INTO "${table}" ("${cols.join('", "')}") VALUES (${placeholders})`;
             for (const r of rows) {
-              try { ctx.relationDb.executeRaw(sql, cols.map((c) => r[c])); restored++; } catch { /* ok */ }
+              try { ctx.relationDb.executeRaw(sql, cols.map((c) => r[c])); restored++; } catch { /* 单行恢复失败属预期（表结构漂移/冲突）：restored 计数不含该行 */ }
             }
           }
         }
@@ -2881,7 +2899,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           [],
         );
         for (const t of configTables || []) {
-          try { ctx.relationDb.executeRaw(`DELETE FROM "${t.name}"`, []); } catch { /* ok */ }
+          try { ctx.relationDb.executeRaw(`DELETE FROM "${t.name}"`, []); } catch { /* 表可能不存在，DELETE 失败属预期 */ }
         }
         // 恢复快照数据
         for (const [table, rows] of Object.entries(data as Record<string, Array<Record<string, unknown>>>)) {
@@ -2890,7 +2908,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           const placeholders = cols.map(() => '?').join(', ');
           const sql = `INSERT INTO "${table}" ("${cols.join('", "')}") VALUES (${placeholders})`;
           for (const r of rows) {
-            try { ctx.relationDb.executeRaw(sql, cols.map(c => r[c])); } catch { /* ok */ }
+            try { ctx.relationDb.executeRaw(sql, cols.map(c => r[c])); } catch { /* 单行恢复失败属预期（表结构漂移/冲突）：跳过该行 */ }
           }
         }
         sendJson(res, 200, { success: true });
@@ -3082,7 +3100,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           id: m.llm_title || m.id,
           name: m.llm_title,
           brief: m.llm_brief || '',
-          features: m.llm_param ? (() => { try { return JSON.parse(m.llm_param); } catch { return {}; } })() : {},
+          features: m.llm_param ? (() => { try { return JSON.parse(m.llm_param); } catch { /* llm_param 非合法 JSON：features 置空 */ return {}; } })() : {},
         }));
         sendJson(res, ok ? 200 : 502, {
           models,
@@ -3129,10 +3147,12 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               [IdGenerator.generate(), IdGenerator.now(), IdGenerator.now(), providerId, title, llmType, 1, maxTokens],
             );
             if (maxTokens > 0) {
-              try { ctx.relationDb.executeRaw('UPDATE "llm_available" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {}
+              try { ctx.relationDb.executeRaw('UPDATE "llm_available" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch { /* max_tokens 回填失败可忽略（非关键元数据） */ }
             }
             added++;
-          } catch { /* skip */ }
+          } catch (err) {
+            fileLogger.warn('[dev-server] POST /api/config/provider/:id/fetch-models 模型写入失败（容忍：跳过该模型）', err instanceof Error ? err.message : String(err));
+          }
         }
         sendJson(res, 200, { added });
 
@@ -3536,7 +3556,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               'SELECT "default_strategy_id" FROM "agent_strategy_config" LIMIT 1', [],
             );
             strategyId = cfg?.[0]?.default_strategy_id || '';
-          } catch { strategyId = ''; }
+          } catch { /* 策略配置表可能不存在（可选配置）：留空走下方 agent_strategy 兜底 */ strategyId = ''; }
         }
         if (!strategyId) {
           const fallback = ctx.relationDb.queryRaw<{ strategy_id: string }>(
@@ -3703,7 +3723,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             for (const m of listOut.list || []) {
               market.push({ id: String((p as unknown as Record<string, unknown>).id ?? (m as unknown as Record<string, unknown>).id ?? ''), name: String((m as unknown as Record<string, unknown>).mcp_title ?? ''), url: String((p as unknown as Record<string, unknown>).mcp_provider_url ?? '') });
             }
-          } catch { /* best-effort */ }
+          } catch (err) {
+            fileLogger.warn('[dev-server] GET /api/mcp/market 单 provider 列举失败（容忍：跳过该 provider）', err instanceof Error ? err.message : String(err));
+          }
         }
         sendJson(res, 200, { market });
 
@@ -3900,7 +3922,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               args,
             );
             if (rows.length > 0) workId = String(rows[0].work_id ?? '');
-          } catch { /* degrade gracefully */ }
+          } catch (err) {
+            fileLogger.warn('[dev-server] GET /api/chat/thinking work_id 反查失败（容忍：按未找到处理）', err instanceof Error ? err.message : String(err));
+          }
         }
 
         // 有参数但反查不到 work_id 时，返回空结果（而非 400）
@@ -3951,7 +3975,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               runId = runId || String(rows[0].run_id ?? '') || String(rows[0].work_id ?? '');
               traceId = traceId || String(rows[0].trace_id ?? '');
             }
-          } catch { /* degrade gracefully */ }
+          } catch (err) {
+            fileLogger.warn('[dev-server] GET /api/chat/eval-result info_id 反查失败（容忍：按未找到处理）', err instanceof Error ? err.message : String(err));
+          }
         }
 
         if (!workId && !runId) {
@@ -3992,10 +4018,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             // EvalResultModal 按 scores / suggestions / need_optimize 结构化解析
             answerJson = JSON.stringify({
               ...(() => {
-                try { return JSON.parse(row.scores || '{}'); } catch { return {}; }
+                try { return JSON.parse(row.scores || '{}'); } catch { /* scores 非合法 JSON：置空对象 */ return {}; }
               })(),
               suggestions: (() => {
-                try { return JSON.parse(row.suggestions || '[]'); } catch { return []; }
+                try { return JSON.parse(row.suggestions || '[]'); } catch { /* suggestions 非合法 JSON：置空数组 */ return []; }
               })(),
               need_optimize: Number(row.need_optimize ?? 0) === 1,
             });
@@ -4079,7 +4105,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const write = (str: string) => {
           if (clientClosed) return;
-          try { res.write(str); } catch { /* ignore */ }
+          try { res.write(str); } catch { /* 客户端断开竞态下写入抛错属预期 */ }
         };
 
         // 注册到 Base 层 StreamProvider（由 StreamProvider 统一管理心跳与结构化数据分发）
@@ -4089,10 +4115,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             session_id: sessionId,
             writer: (chunk: string) => {
               if (clientClosed) return false;
-              try { res.write(chunk); return true; } catch { return false; }
+              try { res.write(chunk); return true; } catch { /* 客户端断开竞态：返回 false 通知 StreamProvider */ return false; }
             },
             onClose: () => {
-              if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
+              if (!clientClosed) { try { res.end(); } catch { /* 断开竞态下 end 抛错属预期 */ } }
             },
           }),
           registerOutput,
@@ -4132,7 +4158,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             new CloseStreamOutput(),
             new StreamContext(),
           );
-          if (!clientClosed) { try { res.end(); } catch { /* ignore */ } }
+          if (!clientClosed) { try { res.end(); } catch { /* 断开竞态下 end 抛错属预期（finally 收尾） */ } }
         }
         return;
 
@@ -4159,8 +4185,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               new ResetUserProfileOutput(),
               new UserProfileContext(),
             );
-          } catch {
+          } catch (err) {
             // 画像重置失败不影响会话删除
+            fileLogger.warn('[dev-server] DELETE /api/chat/session 级联重置画像失败（容忍：会话已删除）', err instanceof Error ? err.message : String(err));
           }
         }
         sendJson(res, 200, { deleted_count: batchOutput.deleted_count });
@@ -4178,8 +4205,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             new ResetUserProfileOutput(),
             new UserProfileContext(),
           );
-        } catch {
+        } catch (err) {
           // 画像重置失败不影响会话删除（最佳努力清理）
+          fileLogger.warn('[dev-server] DELETE /api/chat/session/:sid 级联重置画像失败（容忍：会话已删除）', err instanceof Error ? err.message : String(err));
         }
         sendJson(res, 200, { deleted_count: output.deleted_count });
 
@@ -4374,28 +4402,40 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           const limit = Math.min(500, Math.max(1, parseInt(params.get('limit') || '100', 10) || 100));
           const g = await buildCooccurGraphFromGraphDBCached(ctx, 'Tag', 'tag', 'cooccur', limit);
           sendJson(res, 200, g);
-        } catch { sendJson(res, 200, { nodes: [], edges: [] }); }
+        } catch (err) {
+          fileLogger.warn('[dev-server] GET /api/memory/tag-graph 构建失败（容忍：返回空图）', err instanceof Error ? err.message : String(err));
+          sendJson(res, 200, { nodes: [], edges: [] });
+        }
 
       } else if (method === 'GET' && pathname === '/api/memory/keyword-graph') {
         try {
           const limit = Math.min(500, Math.max(1, parseInt(params.get('limit') || '100', 10) || 100));
           const g = await buildCooccurGraphFromGraphDBCached(ctx, 'keyword', 'keyword', 'keywordCooccur', limit);
           sendJson(res, 200, g);
-        } catch { sendJson(res, 200, { nodes: [], edges: [] }); }
+        } catch (err) {
+          fileLogger.warn('[dev-server] GET /api/memory/keyword-graph 构建失败（容忍：返回空图）', err instanceof Error ? err.message : String(err));
+          sendJson(res, 200, { nodes: [], edges: [] });
+        }
 
       } else if (method === 'DELETE' && pathname === '/api/memory/tag-graph') {
         try {
           const out = new ClearGraphOutput();
           await ctx.infoCore.clearGraph(Object.assign(new ClearGraphInput(), { node_type: 'Tag' }), out, new InfoCoreContext());
           sendJson(res, 200, { deleted_nodes: out.deleted_nodes });
-        } catch (e: any) { sendJson(res, 500, { error: e?.message || '清理失败' }); }
+        } catch (e: any) {
+          fileLogger.warn('[dev-server] DELETE /api/memory/tag-graph 清理失败（容忍：已回 500）', e instanceof Error ? e.message : String(e));
+          sendJson(res, 500, { error: e?.message || '清理失败' });
+        }
 
       } else if (method === 'DELETE' && pathname === '/api/memory/keyword-graph') {
         try {
           const out = new ClearGraphOutput();
           await ctx.infoCore.clearGraph(Object.assign(new ClearGraphInput(), { node_type: 'keyword' }), out, new InfoCoreContext());
           sendJson(res, 200, { deleted_nodes: out.deleted_nodes });
-        } catch (e: any) { sendJson(res, 500, { error: e?.message || '清理失败' }); }
+        } catch (e: any) {
+          fileLogger.warn('[dev-server] DELETE /api/memory/keyword-graph 清理失败（容忍：已回 500）', e instanceof Error ? e.message : String(e));
+          sendJson(res, 500, { error: e?.message || '清理失败' });
+        }
       // ---- Graph Search: text-based tag traversal ----
       } else if (method === 'POST' && pathname === '/api/memory/graph-search') {
         const query = typeof body.query === 'string' ? body.query.trim() : '';
@@ -4477,7 +4517,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             paths.push({ root_tag: tagText, root_id: rootId, nodes: Array.from(allNodes.values()), edges: allEdges });
           }
           sendJson(res, 200, { root_tags: Array.from(tagInfoMap, ([tag, info_ids]) => ({ tag, info_ids })), paths });
-        } catch { sendJson(res, 200, { root_tags: [], paths: [] }); }
+        } catch (err) {
+          fileLogger.warn('[dev-server] POST /api/memory/graph-search 失败（容忍：返回空结果）', err instanceof Error ? err.message : String(err));
+          sendJson(res, 200, { root_tags: [], paths: [] });
+        }
       } else if (method === 'GET' && /\/api\/memory\/stats\//.test(pathname)) {
         const totalRows = ctx.relationDb.queryRaw<{ cnt: number }>(
           'SELECT COUNT(*) AS "cnt" FROM "info_raw"',
@@ -4800,9 +4843,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           try {
             const st = fs.statSync(p);
             exists = st.isDirectory();
-            try { fs.accessSync(p, fs.constants.R_OK); isReadable = true; } catch { /* ignore */ }
-            try { fs.accessSync(p, fs.constants.W_OK); isWritable = true; } catch { /* ignore */ }
-          } catch { exists = false; }
+            try { fs.accessSync(p, fs.constants.R_OK); isReadable = true; } catch { /* accessSync 抛错 = 无读权限，isReadable 保持 false */ }
+            try { fs.accessSync(p, fs.constants.W_OK); isWritable = true; } catch { /* accessSync 抛错 = 无写权限，isWritable 保持 false */ }
+          } catch { /* statSync 抛错 = 路径不存在，exists 保持 false */ }
         }
         sendJson(res, 200, { exists, isReadable, isWritable });
 
@@ -4977,7 +5020,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               info: JSON.stringify({ rating, comment: body.comment || '', agent_id: agentId || '' }),
             });
             await ctx.infoCore.saveInfo(saveRatingInput, new SaveInfoOutput(), new InfoCoreContext());
-          } catch { /* info_raw may not exist yet */ }
+          } catch (err) {
+            // info_raw may not exist yet
+            fileLogger.warn('[dev-server] POST /api/feedback 评分落库失败（容忍：反馈主流程不受影响）', err instanceof Error ? err.message : String(err));
+          }
         }
 
         // 获取反馈配置并检查是否需要解散 Agent
@@ -5015,7 +5061,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
                 } catch { /* agent may be user-created, guarded */ }
               }
             }
-          } catch { /* best-effort disband */ }
+          } catch (err) {
+            fileLogger.warn('[dev-server] POST /api/feedback 解散 Agent 失败（容忍：不影响反馈提交）', err instanceof Error ? err.message : String(err));
+          }
         }
 
         // 记录处理日志
@@ -5921,7 +5969,9 @@ async function main() {
           fileLogger.warn(`[dev-server] CDT start failed: ${o.error}`);
         }
       });
-      } catch {}
+      } catch (err) {
+        fileLogger.warn('[dev-server] main CDT 动态导入/启动失败（容忍：CDT 不阻塞主服务）', err instanceof Error ? err.message : String(err));
+      }
       }
   });
 

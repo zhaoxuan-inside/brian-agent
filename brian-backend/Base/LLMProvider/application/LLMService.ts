@@ -247,8 +247,12 @@ export class LLMService {
           duration_ms: Number(args.duration_ms ?? 0) || 0,
         }),
       );
-    } catch {
+    } catch (err) {
       /* 明细账失败不阻断主流程 */
+      this.logger?.warn?.('LLMService.logCall 明细账落账失败（best-effort 不阻断主流程）', {
+        error: err instanceof Error ? err.message : String(err),
+        llm_id: args.llmId,
+      });
     }
   }
 
@@ -575,7 +579,7 @@ export class LLMService {
    * 支持 OpenAI 兼容格式 (json.data) 与 Google / 统一格式 (json.models) 的动态解析。
    * 仅在请求成功时更新缓存时间戳。
    */
-  async listLLM(input: ListLLMInput, output: ListLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  async listLLM(input: ListLLMInput, output: ListLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.llm_provider_id) {
@@ -676,8 +680,13 @@ export class LLMService {
       } else {
         try {
           await this.relationDb.insert(LLM_CACHE_TABLE, toCacheInsertRecord(input.llm_provider_id, m));
-        } catch {
+        } catch (err) {
           // skip duplicate insert
+          metrics?.warn('LLMService.listLLM 模型缓存写入失败（可能重复，跳过该条）', {
+            error: err instanceof Error ? err.message : String(err),
+            llm_provider_id: input.llm_provider_id,
+            model: m.modelId,
+          });
         }
       }
     }
@@ -776,7 +785,7 @@ export class LLMService {
    *
    * PRD 3.2.2 条：支持按 ID 批量删除或按条件删除。
    */
-  async delLLM(input: DelLLMInput, output: DelLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  async delLLM(input: DelLLMInput, output: DelLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.ids && !input.conditions) {
@@ -855,7 +864,13 @@ export class LLMService {
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch (err) {
+        /* ignore */
+        metrics?.warn('LLMService.delLLM 清理 soul_core_config 引用失败（表可能不存在）', {
+          error: err instanceof Error ? err.message : String(err),
+          llm_ids: modelIds.join(','),
+        });
+      }
     }
 
     output.affected_rows = await this.relationDb.delete(
@@ -1001,7 +1016,8 @@ export class LLMService {
         duration_ms: usage.duration_ms,
       });
     } catch {
-      /* best effort */
+      /* best effort：统计回填失败不阻断主流程；metrics/logger 通道自身故障时再打日志
+         可能同样失败并向调用方抛出（反噬业务），故此处保持静默 */
     }
   }
 
@@ -1018,7 +1034,7 @@ export class LLMService {
     }
 
     // 解析候选模型队列（按优先级排序并去重）
-    const candidateIds = await this.resolveCandidateModels(input.id);
+    const candidateIds = await this.resolveCandidateModels(input.id, metrics);
     if (candidateIds.length === 0) {
       if (input.id) {
         throw new NotFoundError('LLM', input.id);
@@ -1111,7 +1127,7 @@ export class LLMService {
     this.ensureEnabled();
     this.applyDims(input, context);
     this.validateEventsInput(input);
-    const candidateIds = await this.resolveCandidateModels(input.id);
+    const candidateIds = await this.resolveCandidateModels(input.id, metrics);
     if (candidateIds.length === 0) {
       throw new ValidationError('id 不能为空，且无可用模型');
     }
@@ -1313,7 +1329,7 @@ export class LLMService {
    * 所有候选均过滤掉 embedding 向量模型：execLLM 面向文本/多模态生成，
    * 向量模型（如 nomic-embed-text）不具备对话能力，不可作为文本生成候选。
    */
-  private async resolveCandidateModels(specifiedId?: string): Promise<string[]> {
+  private async resolveCandidateModels(specifiedId?: string, metrics?: Metrics): Promise<string[]> {
     const candidates: string[] = [];
     const added = new Set<string>();
 
@@ -1341,8 +1357,11 @@ export class LLMService {
       for (const row of defaultRows) {
         addCandidate((row as unknown as LLMAvailableRecord).id);
       }
-    } catch {
+    } catch (err) {
       /* ignore */
+      metrics?.warn('LLMService.resolveCandidateModels 读取默认模型失败，跳过默认候选', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // 3. 其余所有已启用的模型（仅文本/多模态，排除 embedding）
@@ -1356,8 +1375,11 @@ export class LLMService {
       for (const row of allEnabledRows) {
         addCandidate((row as unknown as LLMAvailableRecord).id);
       }
-    } catch {
+    } catch (err) {
       /* ignore */
+      metrics?.warn('LLMService.resolveCandidateModels 读取启用模型列表失败，跳过该批候选', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return candidates;
@@ -1672,7 +1694,7 @@ export class LLMService {
    * 3. 调用大模型生成「简介」与「模型用途」（模型选择：默认模型 → 启用的第一个模型）；
    * 4. 解析 JSON 结果并保存到 llm_available（llm_brief / model_usage）。
    */
-  async genLLMAttr(input: GenLLMAttrInput, output: GenLLMAttrOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
+  async genLLMAttr(input: GenLLMAttrInput, output: GenLLMAttrOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.id) {
@@ -1696,8 +1718,12 @@ export class LLMService {
       ]);
       providerTitle =
         (providerRow as unknown as LLMProviderRecord | null)?.llm_provider_title ?? '';
-    } catch {
+    } catch (err) {
       /* ignore */
+      metrics?.warn('LLMService.genLLMAttr 读取提供商名称失败，使用空值继续生成属性', {
+        error: err instanceof Error ? err.message : String(err),
+        llm_id: input.id,
+      });
     }
 
     // 3. 通过 PromptsProvider 渲染 Prompt

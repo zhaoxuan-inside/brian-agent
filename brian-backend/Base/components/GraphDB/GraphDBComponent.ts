@@ -110,7 +110,7 @@ export class GraphDBComponent {
       try {
         this.client.close();
       } catch {
-        // 忽略关闭错误
+        // 忽略关闭错误：关闭失败即丢弃客户端引用（client/initPromise 随后置空），底层资源随进程回收
       }
       this.client = null;
       this.initPromise = null;

@@ -119,7 +119,7 @@ export class CDTService {
         try {
           child.kill('SIGKILL');
         } catch {
-          /* 进程已退出 */
+          /* kill 失败仅可能因进程已先行退出（ESRCH）；exit 钩子内无可靠上报通道，属预期容忍 */
         }
       }
     });
@@ -175,7 +175,7 @@ export class CDTService {
   // 进程生命周期
   // ============================================================
 
-  async startCDT(_input: StartCDTInput, output: StartCDTOutput, _ctx: CDTContext, _metrics?: Metrics, _report?: Report,
+  async startCDT(_input: StartCDTInput, output: StartCDTOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!this.enabled) throw new ComponentDisabledError('CDTProvider');
 
@@ -227,7 +227,7 @@ export class CDTService {
 
     args.push('about:blank');
 
-    this.freeDebugPort();
+    this.freeDebugPort(metrics);
 
     try {
       this.process = spawn(chromePath, args, {
@@ -259,7 +259,7 @@ export class CDTService {
     const ep = await this.fetchWebSocketEndpoint();
     if (!ep) {
       output.error = `无法获取 CDT WebSocket 端点（端口 ${this.port}），请确认 Chrome 已启动`;
-      this.killProcess();
+      this.killProcess(metrics);
       return false;
     }
 
@@ -267,9 +267,9 @@ export class CDTService {
 
     await this.injectAntiDetection();
 
-    if (!await this.startKeepAlive()) {
+    if (!await this.startKeepAlive(metrics)) {
       output.error = 'CDT WebSocket 保活连接失败，Chrome 进程可能不稳定';
-      this.killProcess();
+      this.killProcess(metrics);
       return false;
     }
 
@@ -279,12 +279,12 @@ export class CDTService {
     return true;
   }
 
-  async stopCDT(_input: StopCDTInput, _output: StopCDTOutput, _ctx: CDTContext, _metrics?: Metrics, _report?: Report,
+  async stopCDT(_input: StopCDTInput, _output: StopCDTOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.stopCommandWs();
     this.stopKeepAlive();
     this.stopScreencast();
-    this.killProcess();
+    this.killProcess(metrics);
     this.process = null;
     this.pid = 0;
     this.endpoint = '';
@@ -310,7 +310,7 @@ export class CDTService {
   // CDP 通信
   // ============================================================
 
-  async execCDP(input: ExecCDPInput, output: ExecCDPOutput, _ctx: CDTContext, _metrics?: Metrics, _report?: Report,
+  async execCDP(input: ExecCDPInput, output: ExecCDPOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!this.endpoint) {
       output.error = 'CDT 未启动';
@@ -344,7 +344,13 @@ export class CDTService {
           if (resolved) return;
           resolved = true;
           clearTimeout(timer);
-          try { ws.close(); } catch { /* ignore */ }
+          try {
+            ws.close();
+          } catch (err) {
+            metrics?.warn('CDTService.execCDP 关闭 CDP WebSocket 失败（连接可能已断开）', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         };
 
         ws.on('message', (data: Buffer) => {
@@ -361,8 +367,10 @@ export class CDTService {
                 resolve(true);
               }
             }
-          } catch {
-            /* ignore non-JSON messages */
+          } catch (err) {
+            metrics?.warn('CDTService.execCDP 收到非 JSON CDP 消息，已忽略', {
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         });
 
@@ -422,7 +430,11 @@ export class CDTService {
               id: 0, method: 'Page.screencastFrameAck', params: { sessionId: d.sessionId || 0 },
             }));
           }
-        } catch { /* ignore */ }
+        } catch (err) {
+          this.logger?.warn?.('[CDTService] screencast 帧解析失败，已忽略该帧', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       });
 
       ws.once('error', () => resolve(false));
@@ -615,11 +627,14 @@ export class CDTService {
   // ============================================================
 
   /** 启动前释放调试端口（清理上一次 session 未正确关闭的残留 Chrome 进程） */
-  private freeDebugPort(): void {
+  private freeDebugPort(metrics?: Metrics): void {
     try {
       execSync(`fuser -k ${this.port}/tcp 2>/dev/null || true`, { timeout: 3000 });
-    } catch {
-      /* fuser 不可用或端口未被占用 */
+    } catch (err) {
+      metrics?.warn('CDTService.freeDebugPort 释放调试端口失败（fuser 不可用或执行超时）', {
+        error: err instanceof Error ? err.message : String(err),
+        port: this.port,
+      });
     }
     // 兜底：按 profile 目录清理残留 Chrome。覆盖端口已被其他进程占用或配置端口
     // 已变更的场景（如非 systemd 环境下后端被 SIGKILL 后遗留的孤儿实例）。
@@ -627,8 +642,11 @@ export class CDTService {
     if (this.lastProfileDir) {
       try {
         execSync(`pkill -KILL -f "user-data-dir=${this.lastProfileDir}" 2>/dev/null || true`, { timeout: 3000 });
-      } catch {
-        /* pkill 不可用或无匹配进程 */
+      } catch (err) {
+        metrics?.warn('CDTService.freeDebugPort 按 profile 清理残留 Chrome 失败（pkill 不可用或超时）', {
+          error: err instanceof Error ? err.message : String(err),
+          profile_dir: this.lastProfileDir,
+        });
       }
     }
   }
@@ -659,7 +677,7 @@ export class CDTService {
    * 建立持久 CDP WebSocket 连接，防止 headless Chrome 因无客户端而自动退出。
    * 同时启动心跳定时器，每 30 秒发送一次 Browser.getVersion 探活。
    */
-  private async startKeepAlive(): Promise<boolean> {
+  private async startKeepAlive(metrics?: Metrics): Promise<boolean> {
     this.stopKeepAlive();
 
     try {
@@ -684,7 +702,11 @@ export class CDTService {
                   method: 'Browser.getVersion',
                   params: {},
                 }));
-              } catch { /* 心跳失败，等待下一次 */ }
+              } catch (err) {
+                metrics?.warn('CDTService.startKeepAlive 心跳发送失败（等待下一次心跳）', {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
             }
           }, 30000);
 
@@ -708,7 +730,7 @@ export class CDTService {
             this.stopKeepAlive();
             if (this.isProcessAlive()) {
               this.logger?.warn?.('[CDTService] 保活 WebSocket 意外断开，Chrome 仍运行中，将尝试重连');
-              this.startKeepAlive().catch(() => {});
+              this.startKeepAlive(metrics).catch(() => {});
             }
           }
         });
@@ -741,12 +763,15 @@ export class CDTService {
     }
   }
 
-  private killProcess(): void {
+  private killProcess(metrics?: Metrics): void {
     if (!this.pid) return;
     try {
       process.kill(this.pid, 'SIGKILL');
-    } catch {
-      /* process already dead */
+    } catch (err) {
+      metrics?.warn('CDTService.killProcess 终止 Chrome 进程失败（进程可能已先行退出）', {
+        error: err instanceof Error ? err.message : String(err),
+        pid: this.pid,
+      });
     }
   }
 

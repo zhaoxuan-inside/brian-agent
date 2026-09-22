@@ -157,7 +157,7 @@ export class AgentExecutionService {
 
   private readonly traceStore: TraceStore;
 
-  async execAgent(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, _metrics?: Metrics, _report?: Report,
+  async execAgent(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const start = IdGenerator.now();
     const config = await this.getConfig();
@@ -209,8 +209,14 @@ export class AgentExecutionService {
         if (formattedCtx) {
           contextData = formattedCtx;
         }
-      } catch {
+      } catch (err) {
         /* best-effort */
+        // 降级容忍：上下文构建失败不阻断执行，回退纯任务内容
+        metrics?.warn('AgentExecutionService.execAgent 构建会话上下文失败，降级为纯任务内容', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+          agent_id: input.agent_id,
+        });
       }
     }
 
@@ -386,8 +392,14 @@ export class AgentExecutionService {
           new SaveInfoOutput(),
           new InfoCoreContext(),
         );
-      } catch {
+      } catch (err) {
         /* best-effort */
+        // 容忍执行结果存档失败：轨迹仍在 traceStore 落库，info 存档缺失仅影响记忆链路
+        metrics?.warn('AgentExecutionService.execAgent 执行结果存档 saveInfo 失败已容忍', {
+          error: err instanceof Error ? err.message : String(err),
+          agent_id: input.agent_id,
+          session_id: sessionId,
+        });
       }
     }
 
@@ -409,7 +421,7 @@ export class AgentExecutionService {
     await this.traceStore.save({
       trace_id: traceId, agent_id: input.agent_id, start_time: start, end_time: end,
       iterations: traceIterations, total_token_usage: totalTokens, answer: finalAnswer,
-    });
+    }, metrics);
 
     output.answer = finalAnswer;
     output.iterations = iteration || traceIterations.length;
@@ -419,7 +431,7 @@ export class AgentExecutionService {
     return producedOutput;
   }
 
-  async execAgentAsync(input: ExecAgentAsyncInput, output: ExecAgentAsyncOutput, ctx: AgentExecutionContext, _metrics?: Metrics, _report?: Report,
+  async execAgentAsync(input: ExecAgentAsyncInput, output: ExecAgentAsyncOutput, ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const jobId = IdGenerator.generate();
     const config = await this.getConfig();
@@ -484,8 +496,13 @@ export class AgentExecutionService {
         new StartWorkerOutput(),
         new MQCoreContext(),
       );
-    } catch {
+    } catch (err) {
       /* worker may already exist */
+      // 容忍启动失败：startWorker 对同队列幂等复用，此分支通常为重复启动；非幂等错误需可见
+      metrics?.warn('AgentExecutionService.execAgentAsync 启动执行 worker 失败已容忍（可能已存在）', {
+        error: err instanceof Error ? err.message : String(err),
+        queue: EXEC_QUEUE,
+      });
     }
 
     output.job_id = jobId;
@@ -732,7 +749,7 @@ export class AgentExecutionService {
     return true;
   }
 
-  async soTrace(input: GetTraceInput, output: GetTraceOutput, _ctx: AgentExecutionContext, _metrics?: Metrics, _report?: Report,
+  async soTrace(input: GetTraceInput, output: GetTraceOutput, _ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const mem = this.traces.get(input.trace_id);
     if (mem) {
@@ -794,8 +811,13 @@ export class AgentExecutionService {
         };
         return true;
       }
-    } catch {
+    } catch (err) {
       /* ignore */
+      // 降级容忍：回退检索失败按"未找到 trace"处理（output.trace = null）
+      metrics?.warn('AgentExecutionService.soTrace 回退 InfoCore 检索 trace 失败，返回空 trace', {
+        error: err instanceof Error ? err.message : String(err),
+        trace_id: input.trace_id,
+      });
     }
 
     output.trace = null;
@@ -1589,8 +1611,11 @@ export class AgentExecutionService {
         new SaveInfoOutput(),
         new InfoCoreContext(),
       );
-    } catch {
+    } catch (err) {
       /* best-effort */
+      // 容忍步骤信息落库失败：步骤存档为 trace 展示的可选增强，失败不阻断 ReACT 执行循环；
+      // 调用链经 runSteps/runPhases 距 metrics 持有方超 2 跳，不穿透 metrics
+      void err;
     }
   }
 

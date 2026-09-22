@@ -67,9 +67,9 @@ export class PlannerAgentService {
     private readonly llmCore?: LLMCoreAccess,
   ) {}
 
-  async execPlan(input: PlanInput, output: PlanOutput, ctx: PlannerAgentContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
+  async execPlan(input: PlanInput, output: PlanOutput, ctx: PlannerAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean> {
     const planCtx = await this.decomposeOnce(input, ctx);
-    output.plan_id = await this.persistPlan(planCtx.dag, input.work_id, input.run_id, ctx, '');
+    output.plan_id = await this.persistPlan(planCtx.dag, input.work_id, input.run_id, ctx, '', metrics);
     output.task_dag = planCtx.dag;
     output.clarifications = planCtx.clarifications;
     return true;
@@ -79,7 +79,7 @@ export class PlannerAgentService {
    * 层级规划：LLM 单次产出层级 DAG 后，对仍复杂（complexity >= threshold）的叶子任务
    * 递归调用 LLM 继续拆解，直到所有叶子任务为「小任务」或达到最大深度。
    */
-  async planHierarchical(input: PlanHierarchicalInput, output: PlanHierarchicalOutput, ctx: PlannerAgentContext, _metrics?: Metrics, _report?: Report,
+  async planHierarchical(input: PlanHierarchicalInput, output: PlanHierarchicalOutput, ctx: PlannerAgentContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const planCtx = await this.decomposeOnce(input, ctx);
     const maxDepth = input.max_depth ?? MAX_DECOMPOSE_DEPTH;
@@ -97,7 +97,7 @@ export class PlannerAgentService {
       dag = this.limitDagSize(dag, planCtx.maxSub);
     }
     this.validateDag(dag, planCtx.maxSub);
-    output.plan_id = await this.persistPlan(dag, input.work_id, input.run_id, ctx, '');
+    output.plan_id = await this.persistPlan(dag, input.work_id, input.run_id, ctx, '', metrics);
     output.task_dag = dag;
     output.clarifications = planCtx.clarifications;
     return true;
@@ -185,10 +185,11 @@ export class PlannerAgentService {
     runId: string,
     ctx: PlannerAgentContext,
     parentPlanId: string,
+    metrics?: Metrics,
   ): Promise<string> {
     const planId = IdGenerator.generate();
     await this.insertPlan(planId, workId, runId, dag, parentPlanId);
-    await this.savePlanInfo(ctx, workId, runId, planId, dag);
+    await this.savePlanInfo(ctx, workId, runId, planId, dag, metrics);
     return planId;
   }
 
@@ -360,7 +361,7 @@ export class PlannerAgentService {
    */
   private static readonly MAX_TOTAL_REPLAN_DEPTH = 4;
 
-  async replan(input: ReplanInput, output: ReplanOutput, ctx: PlannerAgentContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
+  async replan(input: ReplanInput, output: ReplanOutput, ctx: PlannerAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean> {
     const row = await this.relationDb.selectOne(AGENT_PLAN_TABLE, [
       { field: 'plan_id', operator: Operator.EQ, value: input.plan_id },
     ]);
@@ -407,7 +408,7 @@ export class PlannerAgentService {
 
     const newPlanId = IdGenerator.generate();
     await this.insertPlan(newPlanId, old.work_id, old.run_id, newDag, input.plan_id);
-    await this.savePlanInfo(ctx, old.work_id, old.run_id, newPlanId, newDag);
+    await this.savePlanInfo(ctx, old.work_id, old.run_id, newPlanId, newDag, metrics);
 
     output.new_plan_id = newPlanId;
     output.task_dag = newDag;
@@ -626,6 +627,7 @@ export class PlannerAgentService {
     runId: string,
     planId: string,
     dag: TaskDag,
+    metrics?: Metrics,
   ): Promise<void> {
     if (!ctx.session_id) return;
     try {
@@ -642,7 +644,15 @@ export class PlannerAgentService {
         new SaveInfoOutput(),
         new InfoCoreContext(),
       );
-    } catch { /* best-effort */ }
+    } catch (err) {
+      /* best-effort */
+      // 容忍计划信息落库失败：计划主记录已 insertPlan 落库，info 存档缺失仅影响记忆链路
+      metrics?.warn('PlannerAgentService.savePlanInfo 计划信息落库失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        plan_id: planId,
+        session_id: ctx.session_id,
+      });
+    }
   }
 
   private async assertPrompt(id: string, metrics?: Metrics): Promise<void> {

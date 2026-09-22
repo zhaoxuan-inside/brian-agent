@@ -485,7 +485,7 @@ export class CDTCoreService {
   // 会话恢复
   // ============================================================
 
-  async restoreSession(input: CDTCoreRestoreSessionInput, output: CDTCoreRestoreSessionOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
+  async restoreSession(input: CDTCoreRestoreSessionInput, output: CDTCoreRestoreSessionOutput, _ctx: CDTCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.sessionName) throw new ValidationError('sessionName 不能为空');
 
@@ -521,8 +521,12 @@ export class CDTCoreService {
           });
         }
       }
-    } catch {
+    } catch (err) {
       /* cookies 格式无效，跳过 */
+      metrics?.warn('CDTCoreService.restoreSession cookies 恢复失败，跳过（存储格式无效或注入失败）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_name: input.sessionName,
+      });
     }
 
     // 恢复 LocalStorage
@@ -533,8 +537,12 @@ export class CDTCoreService {
           expression: `localStorage.setItem('${key.replace(/'/g, "\\'")}', '${value.replace(/'/g, "\\'")}')`,
         });
       }
-    } catch {
+    } catch (err) {
       /* localStorage 格式无效，跳过 */
+      metrics?.warn('CDTCoreService.restoreSession localStorage 恢复失败，跳过（存储格式无效或写入失败）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_name: input.sessionName,
+      });
     }
 
     return true;

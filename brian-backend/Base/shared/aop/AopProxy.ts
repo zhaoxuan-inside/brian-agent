@@ -349,8 +349,11 @@ export class AopProxy {
     for (const interceptor of interceptors) {
       try {
         interceptor.beforeExecute?.(ctx);
-      } catch {
+      } catch (err) {
         // 拦截器异常不影响业务方法执行
+        console.warn(`AopProxy.runBeforeExecute 拦截器异常已忽略（不影响业务）: ${interceptor?.constructor?.name}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
@@ -365,8 +368,11 @@ export class AopProxy {
     for (const interceptor of interceptors) {
       try {
         interceptor.preExecute?.(ctx);
-      } catch {
+      } catch (err) {
         // 拦截器异常不影响业务方法执行
+        console.warn(`AopProxy.runPreExecute 拦截器异常已忽略（不影响业务）: ${interceptor?.constructor?.name}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
@@ -382,8 +388,11 @@ export class AopProxy {
     for (const interceptor of interceptors) {
       try {
         interceptor.postExecute?.(ctx, result);
-      } catch {
+      } catch (err) {
         // 拦截器异常不影响业务方法执行
+        console.warn(`AopProxy.runPostExecute 拦截器异常已忽略（不影响业务）: ${interceptor?.constructor?.name}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
@@ -399,8 +408,11 @@ export class AopProxy {
     for (const interceptor of interceptors) {
       try {
         interceptor.afterExecute?.(ctx, error);
-      } catch {
+      } catch (err) {
         // 拦截器异常不影响业务方法执行
+        console.warn(`AopProxy.runAfterExecute 拦截器异常已忽略（不影响业务）: ${interceptor?.constructor?.name}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

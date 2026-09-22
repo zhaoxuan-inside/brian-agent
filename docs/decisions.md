@@ -9,6 +9,13 @@
 **备选**：维持注释保留（弃用——与两套标准门禁直接冲突，且污染检索链路）。
 **影响**：`scripts/remove-dead-code.mjs` 增强「修改后」边界保护后清理存量 1902 行；后续修改方法直接覆盖旧实现，变更说明进 CHANGELOG。
 
+## [2026-09-22d] 吞异常治理三分法：容忍保留、诊断可见、豁免显式
+
+**决策**：业务层空/仅注释 catch（181 处）按三类处置：① 容忍行为保留（不新增 return false/throw，best-effort 降级语义本就是设计意图），catch 块内补 `metrics?.warn(方法名+容忍语义, {error, 业务键})` 可见诊断，私有 helper 沿调用链 ≤2 跳穿透可选 `metrics` 尾参；② 上下文明确的预期分支（DDL 幂等、协议格式容忍、日志自递归禁区）仅补判定条件注释，登记豁免；③ >2 跳或纯函数模块不强加 metrics（避免污染签名与纯函数设计），补注释说明。
+**原因**：统一签名约定要求异常经 metrics 网关可见（DevStandards §7.1），但 329 处存量中过半是有意的容忍分支，全部改为 fail-fast 会破坏降级设计且改动面失控；「容忍 + 可见」是行为保持的最小修复。
+**备选**：全部改为 metrics.error + return false（弃用——改变控制流，回归风险不可控）；维持静默（弃用——正是本次评审发现的 Critical 级问题）。
+**影响**：约 95 处补诊断、约 50 处启用/穿透 metrics 参数（签名仅加可选尾参）、约 40 处 intent-documented；10 处 VisualizationService V1 死代码路径（enrichAgentDAG 等无存活调用方）保持原状，待后续清理。
+
 ## [2026-09-22] Writer 输出协议：Markdown 直出，弃用 JSON content blocks 中间协议
 
 **决策**：写作 Agent 最终回复由「强制输出 JSON blocks 数组 → parseBlocks → join(content)」改为 LLM 直出 Markdown 正文。

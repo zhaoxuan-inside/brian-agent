@@ -109,7 +109,7 @@ export class UserProfileService {
     return true;
   }
 
-  async soUserProfile(input: GetUserProfileInput, output: GetUserProfileOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
+  async soUserProfile(input: GetUserProfileInput, output: GetUserProfileOutput, _ctx: UserProfileContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sessionId = input.session_id;
     output.session_id = sessionId;
@@ -124,7 +124,13 @@ export class UserProfileService {
           new WriterAgentContext(),
         );
         writerPreferences = wo.user_profile;
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        metrics?.warn('UserProfileService.soUserProfile 读取 writer 偏好失败（best-effort，画像继续）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
     }
 
     let latestRecord: Record<string, unknown> | null = null;
@@ -169,15 +175,19 @@ export class UserProfileService {
           result = storedDimensions[key];
         } else {
           // 未生成画像或该维度未被分析时，实时聚合作为初略画像
-          result = await this.aggregateDimension(key, sessionId, writerPreferences, latestRecord);
+          result = await this.aggregateDimension(key, sessionId, writerPreferences, latestRecord, metrics);
         }
         if (result.confidence < minConfidence) continue;
         (result as Record<string, unknown>).stability = this.determineStability(key, result.value, prevVersionDimensions);
         (result as Record<string, unknown>).direction_key = key;
         (result as Record<string, unknown>).direction_name = String(dir.direction_name);
         dimensions[key] = result;
-      } catch {
+      } catch (err) {
         // skip failed dimensions
+        metrics?.warn('UserProfileService.soUserProfile 维度实时聚合失败（跳过该维度）', {
+          error: err instanceof Error ? err.message : String(err),
+          direction_key: key,
+        });
       }
     }
 
@@ -211,7 +221,7 @@ export class UserProfileService {
     return true;
   }
 
-  async generateProfile(input: GenerateProfileInput, output: GenerateProfileOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
+  async generateProfile(input: GenerateProfileInput, output: GenerateProfileOutput, _ctx: UserProfileContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sessionId = input.session_id;
     const config = await this.getConfig();
@@ -263,7 +273,7 @@ export class UserProfileService {
       const name = String(dir.direction_name);
       try {
         const analysis = await this.analyzeDimensionWithLLM(
-          key, name, conversationText, dir, config,
+          key, name, conversationText, dir, config, metrics,
         );
         dimensionData.push({
           direction_key: key,
@@ -317,10 +327,16 @@ export class UserProfileService {
           saveOut,
           new WriterAgentContext(),
         );
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        metrics?.warn('UserProfileService.generateProfile 写回 writer 画像失败（best-effort）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
     }
 
-    await this.cleanupOldVersions(Number(config.profile_retention_versions ?? 20), sessionId);
+    await this.cleanupOldVersions(Number(config.profile_retention_versions ?? 20), sessionId, metrics);
 
     const profile: Record<string, unknown> = {};
     for (const d of dimensionData) {
@@ -484,7 +500,7 @@ export class UserProfileService {
     return true;
   }
 
-  async configUserProfile(input: ConfigUserProfileInput, output: ConfigUserProfileOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
+  async configUserProfile(input: ConfigUserProfileInput, output: ConfigUserProfileOutput, _ctx: UserProfileContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     let config = await this.getConfigRecord();
     const now = IdGenerator.now();
@@ -533,7 +549,7 @@ export class UserProfileService {
 
     // 自动生成间隔变更时重新调度
     if (input.auto_generate_interval_ms !== undefined) {
-      this.scheduleAutoGeneration();
+      this.scheduleAutoGeneration(metrics);
     }
 
     output.config = await this.getConfig();
@@ -558,7 +574,7 @@ export class UserProfileService {
   }
 
   /** 读取配置中的 auto_generate_interval_ms 并（重新）调度 */
-  private async scheduleAutoGeneration(): Promise<void> {
+  private async scheduleAutoGeneration(metrics?: Metrics): Promise<void> {
     this.stopAutoGeneration();
     try {
       const config = await this.getConfig();
@@ -572,7 +588,12 @@ export class UserProfileService {
           });
         });
       }, interval);
-    } catch { /* best-effort */ }
+    } catch (err) {
+      /* best-effort */
+      metrics?.warn('UserProfileService.scheduleAutoGeneration 读取画像配置失败（跳过自动生成调度）', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 执行一次自动生成（全局画像，无 session 过滤） */
@@ -740,16 +761,17 @@ export class UserProfileService {
       language: string; style: string; depth: string; format: string; additional_preferences: string;
     } | null,
     latestRecord: Record<string, unknown> | null,
+    metrics?: Metrics,
   ): Promise<{ value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> {
     switch (key) {
       case 'language_preference':
-        return this.aggregateLanguagePreference(sessionId, writerPreferences);
+        return this.aggregateLanguagePreference(sessionId, writerPreferences, metrics);
       case 'reply_style':
         return this.aggregateReplyStyle(writerPreferences);
       case 'knowledge_interest':
-        return this.aggregateKnowledgeInterest(sessionId);
+        return this.aggregateKnowledgeInterest(sessionId, metrics);
       case 'interaction_habit':
-        return this.aggregateInteractionHabit(sessionId);
+        return this.aggregateInteractionHabit(sessionId, metrics);
       case 'feedback_sensitivity':
         return this.aggregateFeedbackSensitivity();
       default:
@@ -799,6 +821,7 @@ export class UserProfileService {
     writerPreferences: {
       language: string; style: string; depth: string; format: string; additional_preferences: string;
     } | null,
+    metrics?: Metrics,
   ): Promise<{ value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> {
     const evidence: Array<Record<string, unknown>> = [];
     const value: unknown = writerPreferences?.language ?? 'zh-CN';
@@ -819,7 +842,13 @@ export class UserProfileService {
           const sample = out.list.slice(0, 5).map((r) => r.info).join(' ');
           evidence.push({ source: 'recent_messages', type: 'sample', sample });
         }
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        metrics?.warn('UserProfileService.aggregateLanguagePreference 最近消息采样失败（仅用 writer 偏好兜底）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
     }
 
     const confidence = writerPreferences?.language ? 0.9 : 0.3;
@@ -848,6 +877,7 @@ export class UserProfileService {
 
   private async aggregateKnowledgeInterest(
     sessionId: string | undefined,
+    metrics?: Metrics,
   ): Promise<{ value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> {
     const evidence: Array<Record<string, unknown>> = [];
     let interests: string[] = [];
@@ -873,7 +903,13 @@ export class UserProfileService {
             evidence.push({ source: 'relation_k_info', count: rOut.list?.length ?? 0 });
           }
         }
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        metrics?.warn('UserProfileService.aggregateKnowledgeInterest 关系召回查询失败（仅用标签统计兜底）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
     }
 
     try {
@@ -896,6 +932,7 @@ export class UserProfileService {
 
   private async aggregateInteractionHabit(
     sessionId: string | undefined,
+    metrics?: Metrics,
   ): Promise<{ value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> {
     const evidence: Array<Record<string, unknown>> = [];
     let messageCount = 0;
@@ -921,7 +958,13 @@ export class UserProfileService {
         await this.infoCore.soCitationEdges(Object.assign(new SoCitationEdgesInput(), { session_id: sessionId }), citeOut, new InfoCoreContext());
         citingFrequency = citeOut.edges.length;
         evidence.push({ source: 'graph_citation', citing_count: citingFrequency });
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        metrics?.warn('UserProfileService.aggregateInteractionHabit 引用边统计失败（citing_frequency 降级为 0）', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: sessionId,
+        });
+      }
     }
 
     const habitValue = { message_count: messageCount, avg_message_length: avgLength, citing_frequency: citingFrequency };
@@ -1006,6 +1049,7 @@ export class UserProfileService {
     conversationText: string,
     dirConfig: Record<string, unknown>,
     config: Record<string, unknown>,
+    metrics?: Metrics,
   ): Promise<{ value: unknown; confidence: number; evidence: unknown[] }> {
     const templateId = String(dirConfig.prompt_template_id ?? config.profile_analysis_prompt_template_id ?? '');
 
@@ -1069,8 +1113,12 @@ export class UserProfileService {
           new RecordLLMUsageOutput(),
           new LLMCoreContext(),
         );
-      } catch {
+      } catch (err) {
         /* best-effort usage recording */
+        metrics?.warn('UserProfileService.analyzeDimensionWithLLM LLM 用量记录失败（跳过记账）', {
+          error: err instanceof Error ? err.message : String(err),
+          direction_key: directionKey,
+        });
       }
 
       const resultText = llmOut.result || '';
@@ -1170,6 +1218,7 @@ export class UserProfileService {
   private async cleanupOldVersions(
     retentionVersions: number,
     sessionId?: string,
+    metrics?: Metrics,
   ): Promise<void> {
     try {
       const conditions = sessionId
@@ -1193,6 +1242,12 @@ export class UserProfileService {
           { field: 'id', operator: Operator.EQ, value: row.id },
         ]);
       }
-    } catch { /* best-effort */ }
+    } catch (err) {
+      /* best-effort */
+      metrics?.warn('UserProfileService.cleanupOldVersions 历史版本清理失败（保留全部版本）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
+    }
   }
 }

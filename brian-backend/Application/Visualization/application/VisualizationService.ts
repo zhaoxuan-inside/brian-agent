@@ -305,7 +305,7 @@ export class VisualizationService {
     return true;
   }
 
-  async soAgentTrace(input: GetAgentTraceInput, output: GetAgentTraceOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
+  async soAgentTrace(input: GetAgentTraceInput, output: GetAgentTraceOutput, _ctx: VisualizationContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const traceId = input.trace_id ?? '';
     const traceOut = new GetTraceOutput();
@@ -360,7 +360,7 @@ export class VisualizationService {
       if (iteration.act) {
         const actData = iteration.act as Record<string, unknown>;
         const toolCalls = Array.isArray(actData.tool_calls) ? actData.tool_calls as Array<Record<string, unknown>> : [];
-        const resolvedCalls = await this.resolveToolCalls(toolCalls);
+        const resolvedCalls = await this.resolveToolCalls(toolCalls, metrics);
 
         steps.push({
           phase: 'ACT',
@@ -1275,7 +1275,7 @@ export class VisualizationService {
     }
   }
 
-  private async resolveToolCalls(toolCalls: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
+  private async resolveToolCalls(toolCalls: Array<Record<string, unknown>>, metrics?: Metrics): Promise<Array<Record<string, unknown>>> {
     const resolved: Array<Record<string, unknown>> = [];
 
     for (const call of toolCalls) {
@@ -1286,11 +1286,16 @@ export class VisualizationService {
 
       try {
         if (toolType === 'SKILL' && toolId) {
-          resolvedCall.tool_name = await this.resolveToolName('skill', toolId);
+          resolvedCall.tool_name = await this.resolveToolName('skill', toolId, metrics);
         } else if (toolType === 'MCP' && toolId) {
-          resolvedCall.tool_name = await this.resolveToolName('mcp', toolId);
+          resolvedCall.tool_name = await this.resolveToolName('mcp', toolId, metrics);
         }
-      } catch {
+      } catch (err) {
+        metrics?.warn('VisualizationService.resolveToolCalls 工具名称解析失败（保留原始 tool_call）', {
+          error: err instanceof Error ? err.message : String(err),
+          tool_type: toolType,
+          tool_id: toolId,
+        });
       }
 
       resolved.push(resolvedCall);
@@ -1299,7 +1304,7 @@ export class VisualizationService {
     return resolved;
   }
 
-  private async resolveToolName(toolType: string, id: string): Promise<string> {
+  private async resolveToolName(toolType: string, id: string, metrics?: Metrics): Promise<string> {
     try {
       if (toolType === 'skill') {
         const out = new GetSkillOutput();
@@ -1321,7 +1326,12 @@ export class VisualizationService {
         const mcp = out.mcp as Record<string, unknown> | null;
         return String(mcp?.mcp_name ?? mcp?.name ?? id);
       }
-    } catch {
+    } catch (err) {
+      metrics?.warn('VisualizationService.resolveToolName 工具名查询失败（回退为工具 ID）', {
+        error: err instanceof Error ? err.message : String(err),
+        tool_type: toolType,
+        tool_id: id,
+      });
     }
     return id;
   }

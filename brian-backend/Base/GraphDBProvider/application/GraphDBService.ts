@@ -289,7 +289,11 @@ export class GraphDBService {
     const rawContent = n.content;
     if (rawContent !== null && rawContent !== undefined) {
       if (typeof rawContent === 'string') {
-        try { content = JSON.parse(rawContent); } catch { content = {}; }
+        try {
+          content = JSON.parse(rawContent);
+        } catch {
+          /* content 列非 JSON（异常数据）按空 content 处理，不中断记录映射 */
+        }
       } else if (typeof rawContent === 'object') {
         content = rawContent as Record<string, unknown>;
       }
@@ -320,7 +324,11 @@ export class GraphDBService {
     const rawProps = e.properties;
     if (rawProps !== null && rawProps !== undefined) {
       if (typeof rawProps === 'string') {
-        try { properties = JSON.parse(rawProps) as Record<string, unknown>; } catch { properties = null; }
+        try {
+          properties = JSON.parse(rawProps) as Record<string, unknown>;
+        } catch {
+          /* properties 列非 JSON（异常数据）按 null 处理，不中断记录映射 */
+        }
       } else if (typeof rawProps === 'object') {
         properties = rawProps as Record<string, unknown>;
       }
@@ -809,7 +817,11 @@ export class GraphDBService {
     const propsStr = edge.props != null ? String(edge.props) : null;
     let props: Record<string, unknown> = {};
     if (propsStr) {
-      try { props = JSON.parse(propsStr); } catch { /* ignore */ }
+      try {
+        props = JSON.parse(propsStr);
+      } catch {
+        /* properties 非 JSON 按空对象处理（预期容忍）：similarity 回退静态权重，不影响权重计算 */
+      }
     }
 
     // 提取静态相似度

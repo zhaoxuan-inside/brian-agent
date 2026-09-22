@@ -237,9 +237,14 @@ export class MQCoreService {
       } catch {
         await this.handleFailure(state, msg);
       }
-    } catch {
+    } catch (err) {
       // consumeMQ 自身抛出的错误（例如网络、组件禁用）不增加 error_count，
-      // 等待下一轮重试
+      // 等待下一轮重试。
+      // 判定条件：轮询容错路径。本方法处于 setInterval 定时器边界，无 Metrics 穿透通道
+      // （startWorker 的 metrics 仅存在于启动瞬间）；且组件禁用等持续性错误每个 interval
+      // 都会触发一次，此处 warn 会造成周期性日志噪音，故维持静默容忍、靠 error_count
+      // 与消息重试计数（handleFailure / nackMQ）暴露异常。
+      void err;
     } finally {
       state.active_count--;
     }

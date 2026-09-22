@@ -206,14 +206,20 @@ export class AgentDefService {
         });
       }
       this.agentBindingCacheUpdatedAt = Date.now();
-    } catch {
+    } catch (err) {
       /* best effort：预热失败回退为按需读库 */
+      this.logger?.warn?.('AgentDefService.warmAssetCaches agent 绑定缓存预热失败，回退按需读库', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     try {
       this.activeDefsCache = await this.loadActiveDefs();
       this.activeDefsCacheUpdatedAt = Date.now();
-    } catch {
+    } catch (err) {
       /* best effort */
+      this.logger?.warn?.('AgentDefService.warmAssetCaches active def 缓存预热失败，回退 TTL 按需重读', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -988,7 +994,7 @@ export class AgentDefService {
    * 2. disable 全部 runtime_agent_def（agent_ref 对齐）——立即停匹配，防止后续调用继续报错；
    * 3. system 归属 → delAgent 硬删除；user 归属 → 仅软禁用（delAgent 守卫拒绝越权）。
    */
-  async killErroredAgent(input: KillErroredAgentInput, _output: KillErroredAgentOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
+  async killErroredAgent(input: KillErroredAgentInput, _output: KillErroredAgentOutput, _context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const agentRef = input.agent_ref;
     if (!agentRef) {
@@ -996,10 +1002,10 @@ export class AgentDefService {
     }
     // 错误 usage 落账（best-effort；评估闭环的回溯依据）
     if (this.components.agentLibrary) {
-      await this.recordErroredUsage(agentRef, input);
+      await this.recordErroredUsage(agentRef, input, metrics);
     }
     // def 层立即停用（并失效 active def 缓存 → 下一轮匹配不再命中）
-    await this.disableDefsByRef(agentRef);
+    await this.disableDefsByRef(agentRef, metrics);
     this.activeDefsCacheUpdatedAt = 0;
     // 资产权属判定：system 硬删除，user 软禁用（守卫由 delAgent 内部保证）
     const owned = await this.soAgentOwner(agentRef);
@@ -1021,7 +1027,7 @@ export class AgentDefService {
   }
 
   /** 错误 usage 落账（数据处理；agentLibrary 未注入时静默跳过） */
-  private async recordErroredUsage(agentRef: string, input: KillErroredAgentInput): Promise<void> {
+  private async recordErroredUsage(agentRef: string, input: KillErroredAgentInput, metrics?: Metrics): Promise<void> {
     try {
       const agent = await this.soAgentAsset(agentRef);
       if (!agent || !this.components.agentLibrary) {
@@ -1043,17 +1049,29 @@ export class AgentDefService {
         new RecordAgentUsageOutput(),
         new AgentLibraryContext(),
       );
-    } catch { /* best effort：usage 失败不阻断杀死 */ }
+    } catch (err) {
+      /* best effort：usage 失败不阻断杀死 */
+      metrics?.warn('AgentDefService.recordErroredUsage 错误 usage 落账失败（不阻断杀死）', {
+        error: err instanceof Error ? err.message : String(err),
+        agent_id: agentRef,
+      });
+    }
   }
 
   /** disable agent_ref 全部 def（数据处理；best-effort） */
-  private async disableDefsByRef(agentBizId: string): Promise<void> {
+  private async disableDefsByRef(agentBizId: string, metrics?: Metrics): Promise<void> {
     try {
       await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, newPatch({
         status: AgentDefStatus.Disabled,
         updated: IdGenerator.now(),
       }), [{ field: 'agent_ref', operator: Operator.EQ, value: agentBizId }]);
-    } catch { /* best effort */ }
+    } catch (err) {
+      /* best effort */
+      metrics?.warn('AgentDefService.disableDefsByRef 停用 def 失败（该 agent 可能仍被匹配）', {
+        error: err instanceof Error ? err.message : String(err),
+        agent_id: agentBizId,
+      });
+    }
   }
 
   /** agent 归属查询（数据处理；launch 缓存未命中回退 DB） */

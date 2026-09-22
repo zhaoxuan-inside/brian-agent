@@ -68,7 +68,7 @@ export class IntentAgentService {
     return true;
   }
 
-  async understandRequirement(input: UnderstandRequirementInput, output: UnderstandRequirementOutput, _ctx: IntentAgentContext, _metrics?: Metrics, _report?: Report,
+  async understandRequirement(input: UnderstandRequirementInput, output: UnderstandRequirementOutput, _ctx: IntentAgentContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.user_query || !input.user_query.trim()) {
       output.understood_requirement = input.user_query ?? '';
@@ -78,7 +78,7 @@ export class IntentAgentService {
       return true;
     }
 
-    const threshold = await this.getMatchThresholdConfig();
+    const threshold = await this.getMatchThresholdConfig(metrics);
     output.threshold_score = threshold;
 
     // 1. 获取基于时间的历史上下文
@@ -95,7 +95,7 @@ export class IntentAgentService {
     );
 
     // 4. 执行 Prompt 与 LLM 推理
-    const templateId = await this.soIntentPromptTemplateId();
+    const templateId = await this.soIntentPromptTemplateId(metrics);
     const promptIn = Object.assign(new ExecPromptInput(), {
       id: templateId,
       variables: {
@@ -106,7 +106,7 @@ export class IntentAgentService {
       },
     });
     const promptOut = new ExecPromptOutput();
-    await this.promptsAccess.execPrompt(promptIn, promptOut, new PromptContext(), _metrics, _report);
+    await this.promptsAccess.execPrompt(promptIn, promptOut, new PromptContext(), metrics, _report);
     output.prompt = promptOut.prompt;
 
     const llmIn = Object.assign(new ExecLLMInput(), {
@@ -118,7 +118,7 @@ export class IntentAgentService {
       caller: 'IntentAgentService.understandRequirement',
     });
     const llmOut = new ExecLLMOutput();
-    await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext(), _metrics, _report);
+    await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext(), metrics, _report);
 
     // 回填输入 / 输出 Token 用量，供前端"思考过程"弹窗展示
     output.input_tokens = llmOut.input_tokens ?? 0;
@@ -164,7 +164,7 @@ export class IntentAgentService {
     return addOut.id;
   }
 
-  private async getMatchThresholdConfig(): Promise<number> {
+  private async getMatchThresholdConfig(metrics?: Metrics): Promise<number> {
     try {
       const rows = await this.relationDb.select('config_value', {
         conditions: [{ field: 'config_key', operator: Operator.EQ, value: 'intent_agent.match_threshold' }],
@@ -173,8 +173,12 @@ export class IntentAgentService {
         const val = Number(rows[0].config_value);
         if (!Number.isNaN(val)) return val;
       }
-    } catch {
+    } catch (err) {
       /* best-effort */
+      // 降级容忍：配置读取失败回退默认阈值 80（可选项缺失回退）
+      metrics?.warn('IntentAgentService.getMatchThresholdConfig 读取阈值配置失败，回退默认 80', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     return 80;
   }
@@ -242,7 +246,7 @@ export class IntentAgentService {
   }
 
   /** 获取需求理解提示词模板 ID（逻辑控制） */
-  private async soIntentPromptTemplateId(): Promise<string> {
+  private async soIntentPromptTemplateId(metrics?: Metrics): Promise<string> {
     try {
       const soOut = new SoPromptOutput();
       await this.promptsAccess.soPrompt(
@@ -254,8 +258,12 @@ export class IntentAgentService {
       if (hit) return hit.id;
       const anyHit = soOut.list?.find((p) => p.enable !== false);
       if (anyHit) return anyHit.id;
-    } catch {
+    } catch (err) {
       /* ignore */
+      // 降级容忍：模板查询失败回退默认模板名（可选项缺失回退）
+      metrics?.warn('IntentAgentService.soIntentPromptTemplateId 查询模板失败，回退默认模板名', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     return '需求理解与意图比对';
   }

@@ -357,8 +357,14 @@ export class AgentBuilderService {
           }),
         });
         await this.infoCore.saveInfo(saveIn, new SaveInfoOutput(), new InfoCoreContext());
-      } catch {
+      } catch (err) {
         /* best-effort */
+        // 容忍构建过程存档失败：Agent 主体已创建完成，存档缺失仅影响记忆溯源
+        metrics?.warn('AgentBuilderService.buildAgent 构建过程存档落库失败已容忍', {
+          error: err instanceof Error ? err.message : String(err),
+          agent_id: agentId,
+          session_id: sessionId,
+        });
       }
     }
 

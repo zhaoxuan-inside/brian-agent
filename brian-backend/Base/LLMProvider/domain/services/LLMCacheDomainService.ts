@@ -50,7 +50,7 @@ export function extractRemoteErrorDetail(status: number, bodyText: string): stri
     const errJson = JSON.parse(bodyText) as { error?: { message?: string } };
     if (errJson.error?.message) detail += ` - ${errJson.error.message}`;
   } catch {
-    /* 非 JSON 错误体 */
+    /* 非 JSON 错误体（纯文本/HTML）属预期：领域纯函数无日志通道，保留状态码即可 */
   }
   return detail;
 }

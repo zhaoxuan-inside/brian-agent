@@ -56,7 +56,7 @@ export class WriterAgentService {
   }
 
   // ===== 修改后的 write 方法：支持兼容兼顾 r.answer 和 r.result 字段 =====
-  async execWrite(input: WriteInput, output: WriteOutput, ctx: WriterAgentContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
+  async execWrite(input: WriteInput, output: WriteOutput, ctx: WriterAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean> {
     const startedAt = IdGenerator.now();
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
@@ -120,7 +120,15 @@ export class WriterAgentService {
         );
         // ===== 修改后的方法：结构化分类包裹与属性脱敏 =====
         contextExtra = formatContextCategories(ctxOut);
-      } catch { /* best-effort */ }
+      } catch (err) {
+        /* best-effort */
+        // 降级容忍：上下文构建失败不阻断写作，回退空上下文
+        metrics?.warn('WriterAgentService.execWrite 构建会话上下文失败，降级为空上下文', {
+          error: err instanceof Error ? err.message : String(err),
+          session_id: ctx.session_id,
+          work_id: ctx.work_id,
+        });
+      }
     }
 
     // agent results — 子 Agent 执行产物
@@ -172,7 +180,7 @@ export class WriterAgentService {
         rawResponse: '',
         elapsedMs: IdGenerator.now() - startedAt,
         templateId: config?.write_prompt_template_id,
-      });
+      }, metrics);
       return true;
     }
 
@@ -181,7 +189,7 @@ export class WriterAgentService {
     // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
     let llmId = config?.llm_id || '';
     if (!llmId && agent?.agent_id && this.llmCore) {
-      llmId = await this.resolveLlm(agent.agent_id, _metrics);
+      llmId = await this.resolveLlm(agent.agent_id, metrics);
     }
 
     let system = '';
@@ -194,7 +202,15 @@ export class WriterAgentService {
           new SoulContext(),
         );
         system = soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
-      } catch { /* ignore */ }
+      } catch (err) {
+        /* ignore */
+        // 降级容忍：Soul 读取失败按无 system 角色继续（可选项缺失回退）
+        metrics?.warn('WriterAgentService.execWrite 读取 Soul 失败，降级为无 system 角色', {
+          error: err instanceof Error ? err.message : String(err),
+          soul_id: agent.soul_id,
+          agent_id: agent.agent_id,
+        });
+      }
     }
 
     // ===== 修改后的方法（补全 user_query/context 占位符变量，采用 execLLMEvents 原生流式与全链路看门狗） =====
@@ -212,7 +228,7 @@ export class WriterAgentService {
         agent_results: agentResultsContext || results,
         soul: system,
       },
-      _metrics,
+      metrics,
     );
 
     const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
@@ -250,7 +266,7 @@ export class WriterAgentService {
         eventsInput,
         eventsOutput,
         new LLMContext(),
-        _metrics,
+        metrics,
         _report,
       );
     } else {
@@ -264,7 +280,7 @@ export class WriterAgentService {
         caller: 'WriterAgent.execWrite',
       });
       const execOut = new ExecLLMOutput();
-      ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), _metrics, _report);
+      ok = await this.llmAccess.execLLM(execIn, execOut, new LLMContext(), metrics, _report);
       eventsOutput.result = execOut.result ?? '';
       eventsOutput.input_tokens = execOut.input_tokens ?? 0;
       eventsOutput.output_tokens = execOut.output_tokens ?? 0;
@@ -319,7 +335,7 @@ export class WriterAgentService {
       rawResponse: String(eventsOutput.result ?? ''),
       elapsedMs: IdGenerator.now() - startedAt,
       templateId: config?.write_prompt_template_id,
-    });
+    }, metrics);
     return true;
   }
 
@@ -342,6 +358,7 @@ export class WriterAgentService {
       elapsedMs: number;
       templateId: string | undefined;
     },
+    metrics?: Metrics,
   ): Promise<void> {
     try {
       const traceId = IdGenerator.generate();
@@ -368,10 +385,15 @@ export class WriterAgentService {
         }),
         total_token_usage: params.inputTokens + params.outputTokens,
         answer: params.response,
-      });
+      }, metrics);
       output.trace_id = traceId;
-    } catch {
+    } catch (err) {
       /* best-effort：轨迹记录失败不影响汇总结果 */
+      // 容忍写作轨迹落库失败：trace 为辅助数据，缺失仅影响事后回放
+      metrics?.warn('WriterAgentService.recordTrace 写作轨迹落盘失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+        agent_id: params.agentId,
+      });
     }
   }
 

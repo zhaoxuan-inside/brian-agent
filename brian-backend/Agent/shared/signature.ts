@@ -39,7 +39,10 @@ export function parseTaskContentAndContext(rawTaskContent: string): {
             extractedWorkContext: parsed as Record<string, unknown>,
           };
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        /* ignore：首段非 work_context JSON（协议头缺失/截断），按纯文本透传，属预期输入形态 */
+        void err;
+      }
     }
   }
 
@@ -57,7 +60,10 @@ export function parseTaskContentAndContext(rawTaskContent: string): {
           };
         }
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      /* ignore：整段非 JSON（普通任务文本），按原文透传，属预期输入形态 */
+      void err;
+    }
   }
 
   return { cleanTaskContent: str };

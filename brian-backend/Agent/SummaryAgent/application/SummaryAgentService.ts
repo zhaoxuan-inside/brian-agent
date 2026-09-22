@@ -78,7 +78,7 @@ export class SummaryAgentService {
     return true;
   }
 
-  async generateSummary(input: GenerateSummaryInput, output: GenerateSummaryOutput, _ctx: SummaryAgentContext, _metrics?: Metrics, _report?: Report,
+  async generateSummary(input: GenerateSummaryInput, output: GenerateSummaryOutput, _ctx: SummaryAgentContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const cfgOut = new SoInfoSummaryConfigOutput();
     await this.infoCore.soInfoSummaryConfig(new SoInfoSummaryConfigInput(), cfgOut, new InfoCoreContext());
@@ -103,7 +103,7 @@ export class SummaryAgentService {
       return true;
     }
 
-    output.summary = await this.generateByLLM(input.info);
+    output.summary = await this.generateByLLM(input.info, metrics);
     return true;
   }
 
@@ -131,7 +131,7 @@ export class SummaryAgentService {
     return addOut.id;
   }
 
-  private async generateByLLM(info: string): Promise<string> {
+  private async generateByLLM(info: string, metrics?: Metrics): Promise<string> {
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(
       Object.assign(new GetAgentInput(), { agent_type: 'SUMMARY' }),
@@ -155,12 +155,17 @@ export class SummaryAgentService {
           new SoulContext(),
         );
         system = soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
-      } catch {
+      } catch (err) {
         /* ignore */
+        // 降级容忍：Soul 读取失败按无 system 角色继续（可选项缺失回退）
+        metrics?.warn('SummaryAgentService.generateByLLM 读取 Soul 失败，降级为无 system 角色', {
+          error: err instanceof Error ? err.message : String(err),
+          soul_id: agent.soul_id,
+        });
       }
     }
 
-    const templateId = await this.soSummaryPromptTemplateId();
+    const templateId = await this.soSummaryPromptTemplateId(metrics);
     const promptOut = new ExecPromptOutput();
     const okPrompt = await this.promptsAccess.execPrompt(
       Object.assign(new ExecPromptInput(), {
@@ -192,7 +197,7 @@ export class SummaryAgentService {
   }
 
   /** 获取系统响应摘要生成提示词模板 ID（逻辑控制） */
-  private async soSummaryPromptTemplateId(): Promise<string> {
+  private async soSummaryPromptTemplateId(metrics?: Metrics): Promise<string> {
     try {
       const soOut = new SoPromptOutput();
       await this.promptsAccess.soPrompt(
@@ -204,8 +209,12 @@ export class SummaryAgentService {
       if (hit) return hit.id;
       const anyHit = soOut.list?.find((p) => p.enable !== false);
       if (anyHit) return anyHit.id;
-    } catch {
+    } catch (err) {
       /* ignore */
+      // 降级容忍：模板查询失败回退默认模板名（可选项缺失回退）
+      metrics?.warn('SummaryAgentService.soSummaryPromptTemplateId 查询模板失败，回退默认模板名', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     return '系统响应摘要生成';
   }

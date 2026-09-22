@@ -323,7 +323,7 @@ export class MCPService {
   }
 
   /** 获取 MCP 列表（PRD 3.1.6）- 优先从缓存读取，过期则调用提供商 API */
-  async listMcp(input: ListMcpInput, output: ListMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async listMcp(input: ListMcpInput, output: ListMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const cacheTtl = await this.config.getInt('cache_ttl', 86400);
@@ -371,8 +371,12 @@ export class MCPService {
           installCmd: item.install_cmd ?? `npm install ${item.title}`,
         }));
       }
-    } catch {
+    } catch (err) {
       // API 调用失败时返回空列表
+      metrics?.warn('MCPService.listMcp 拉取提供商 MCP 列表失败，降级返回空列表', {
+        error: err instanceof Error ? err.message : String(err),
+        mcp_provider_id: input.mcp_provider_id,
+      });
     }
 
     // 将 MCP 信息写入 mcp_cache（先清除旧缓存）
@@ -410,7 +414,7 @@ export class MCPService {
   // -------------------------------------------------------------------------
 
   /** 安装 MCP（PRD 3.2.1）- 通过 npm 安装并生成命令 */
-  async installMcp(input: InstallMcpInput, output: InstallMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async installMcp(input: InstallMcpInput, output: InstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     // 从 mcp_cache 获取 MCP 信息
@@ -436,8 +440,13 @@ export class MCPService {
     // 通过 npm 安装
     try {
       execSync(installCmd, { timeout: 120000, stdio: 'pipe' });
-    } catch {
+    } catch (err) {
       // 安装失败不阻断，仍记录安装信息
+      metrics?.warn('MCPService.installMcp npm 安装命令执行失败，仍记录安装信息', {
+        error: err instanceof Error ? err.message : String(err),
+        mcp_id: input.mcp_id,
+        install_cmd: installCmd,
+      });
     }
 
     // 生成启动、关闭、卸载命令
@@ -494,7 +503,7 @@ export class MCPService {
   }
 
   /** 启动 MCP（PRD 3.2.2）- 后台启动进程并跟踪 */
-  async startMcp(input: StartMcpInput, _output: StartMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async startMcp(input: StartMcpInput, _output: StartMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const mcp = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
@@ -514,8 +523,13 @@ export class MCPService {
       const client = new StdioMcpClient();
       try {
         client.spawn(command, args);
-      } catch {
+      } catch (err) {
         // 启动失败不阻断
+        metrics?.warn('MCPService.startMcp stdio 进程启动失败（调用时将按未运行报错）', {
+          error: err instanceof Error ? err.message : String(err),
+          mcp_id: input.id,
+          command,
+        });
       }
       this.runningMcps.set(input.id, client);
       // 异步完成 MCP 握手（不阻塞启动返回）
@@ -531,7 +545,7 @@ export class MCPService {
   }
 
   /** 关闭 MCP（PRD 3.2.3） */
-  async stopMcp(input: StopMcpInput, _output: StopMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async stopMcp(input: StopMcpInput, _output: StopMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const mcp = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
@@ -547,8 +561,12 @@ export class MCPService {
           timeout: 10000,
           stdio: 'pipe',
         });
-      } catch {
+      } catch (err) {
         // 停止命令失败忽略
+        metrics?.warn('MCPService.stopMcp 停止命令执行失败（进程可能需人工确认回收）', {
+          error: err instanceof Error ? err.message : String(err),
+          mcp_id: input.id,
+        });
       }
     }
     await this.relationDb.update(MCP_INSTALL_TABLE, [
@@ -649,7 +667,7 @@ export class MCPService {
   }
 
   /** 卸载 MCP（PRD 3.2.4）- 运行卸载命令并删除记录 */
-  async uninstallMcp(input: UninstallMcpInput, _output: UninstallMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async uninstallMcp(input: UninstallMcpInput, _output: UninstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const mcp = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
@@ -665,8 +683,12 @@ export class MCPService {
         timeout: 60000,
         stdio: 'pipe',
       });
-    } catch {
+    } catch (err) {
       // 卸载失败仍删除记录
+      metrics?.warn('MCPService.uninstallMcp 卸载命令执行失败，仍删除安装记录（包可能残留）', {
+        error: err instanceof Error ? err.message : String(err),
+        mcp_id: input.id,
+      });
     }
     await this.relationDb.delete(MCP_INSTALL_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.id },
@@ -719,7 +741,7 @@ export class MCPService {
   }
 
   /** 升级 MCP（PRD 3.2.5）- 重新执行 npm 安装命令更新到最新版本 */
-  async upgradeMcp(input: UpgradeMcpInput, output: UpgradeMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  async upgradeMcp(input: UpgradeMcpInput, output: UpgradeMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const mcp = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
@@ -734,8 +756,12 @@ export class MCPService {
     }
     try {
       execSync(installCmd, { timeout: 120000, stdio: 'pipe' });
-    } catch {
+    } catch (err) {
       // 更新失败不阻断
+      metrics?.warn('MCPService.upgradeMcp 重新安装命令执行失败，保持原版本', {
+        error: err instanceof Error ? err.message : String(err),
+        mcp_id: input.id,
+      });
     }
     await this.syncInstallStatus();
     const updated = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [

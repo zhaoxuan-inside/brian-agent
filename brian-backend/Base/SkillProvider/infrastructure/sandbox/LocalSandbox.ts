@@ -83,7 +83,11 @@ export class LocalSandbox {
 
       return { stdout: stdout.trim() };
     } finally {
-      try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try {
+        rmSync(workDir, { recursive: true, force: true });
+      } catch {
+        /* 清理临时目录失败（权限/占用）不影响执行结果，交由系统临时目录策略回收 */
+      }
     }
   }
 }
