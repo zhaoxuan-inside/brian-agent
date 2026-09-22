@@ -6,7 +6,7 @@ import {
 } from '@lucide/vue'
 import { useOnceVisible } from '@/composables/useOnceVisible'
 import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
-import { layoutChipsInCard, type LaidChip } from '@/utils/cardChipLayout'
+import { layoutChipsInCard } from '@/utils/cardChipLayout'
 
 // HeroAppShot：首页 Hero 主视觉的动态演示——
 // 左侧 ChatMap：整齐的两列三行网格（纵向问答链 + 横向引用，与真实 ChatMap 布局语义一致），

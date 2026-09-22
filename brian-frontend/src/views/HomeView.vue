@@ -45,7 +45,8 @@ function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 }
 
-// ===== 首页展示卡片的静态数据 =====const growCards = [
+// ===== 首页展示卡片的静态数据 =====
+const growCards = [
   { icon: markRaw(Network), title: '发现你从没意识到的联系', text: '节点越大关联越多，颜色越红出现越频繁。有时你会盯着图愣一下：「原来我最近一直在纠结这件事。」' },
   { icon: markRaw(Compass), title: '顺着网找记忆', text: '除了字面相似，它还沿标签和关键词的关系去捞旧事，常能想起靠搜索根本找不到的过去。' },
   { icon: markRaw(Sparkles), title: '恰到好处地「走神」', text: '检索时掺入极少量看似无关的记忆，避免每次只盯着眼前那点上下文。最好的灵感，常来自意料之外。' },
@@ -711,6 +712,21 @@ onUnmounted(() => {
 .home-mnode { fill: #F5F5F7; stroke: #D1D1D6; stroke-width: 1.2; transition: 0.3s; }
 .dark .home-mnode { fill: #2C2C2E; stroke: #3A3A3C; }
 .home-mnode.hot { stroke: #007AFF; fill: rgba(0, 122, 255, 0.08); filter: drop-shadow(0 0 10px rgba(0, 122, 255, 0.45)); }
+.home-mtime { fill: #8E8E93; font-size: 9.5px; font-family: inherit; pointer-events: none; }
+.dark .home-mtime { fill: #98989D; }
+.home-mchip.blue { fill: rgba(0, 122, 255, 0.14); }
+.home-mchip.gray { fill: rgba(120, 120, 128, 0.16); }
+.home-mchip.eval { fill: rgba(255, 149, 0, 0.16); }
+.home-mchip-txt { font-size: 8.5px; text-anchor: middle; font-family: inherit; pointer-events: none; }
+.home-mchip-txt.blue { fill: #007AFF; }
+.home-mchip-txt.gray { fill: #8E8E93; }
+.home-mchip-txt.eval { fill: #FF9500; }
+.home-mchars { fill: #8E8E93; font-size: 8.5px; pointer-events: none; }
+.dark .home-mchars { fill: #6E6E73; }
+.dark .home-mchip.gray { fill: rgba(255, 255, 255, 0.08); }
+.dark .home-mchip-txt.blue { fill: #4DA3FF; }
+.dark .home-mchip-txt.gray { fill: #98989D; }
+.dark .home-mchip-txt.eval { fill: #FF9F0A; }
 .home-mline.hot { stroke: #AF52DE; stroke-width: 2.2; stroke-dasharray: none; filter: drop-shadow(0 0 5px rgba(175, 82, 222, 0.7)); }
 .home-mtxt { fill: #3A3A3C; font-size: 12.5px; font-family: inherit; pointer-events: none; }
 .dark .home-mtxt { fill: #C7C7CC; }
