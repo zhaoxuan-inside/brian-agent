@@ -13,6 +13,7 @@
 | `soConfigDetail` | `input: GetConfigDetailInput, output: GetConfigDetailOutput, context: ConfigContext, met...` | `Promise<boolean>` | — |
 | `soConfigItem` | `input: GetConfigItemInput, output: GetConfigItemOutput, context: ConfigContext, metrics...` | `Promise<boolean>` | — |
 | `updateConfig` | `input: UpdateConfigInput, output: UpdateConfigOutput, context: ConfigContext, metrics?:...` | `Promise<boolean>` | — |
+| `soConfigHistory` | `input: GetConfigHistoryInput, output: GetConfigHistoryOutput, context: ConfigContext, m...` | `Promise<boolean>` | 查询配置变更历史（config_key 缺省查全局；change_time 降序） |
 | `configConfig` | `input: ConfigConfigInput, output: ConfigConfigOutput, context: ConfigContext, metrics?:...` | `Promise<boolean>` | — |
 | `addLLMProvider` | `input: AddLLMProviderInput, output: AddLLMProviderOutput, context: LLMContext, metrics?...` | `Promise<boolean>` | — |
 | `updateLLMProvider` | `input: UpdateLLMProviderInput, output: UpdateLLMProviderOutput, context: LLMContext, me...` | `Promise<boolean>` | — |

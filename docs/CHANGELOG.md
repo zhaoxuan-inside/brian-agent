@@ -1,3 +1,94 @@
+## [2026-09-22l] fix: CDT 反检测脚本两处静默失效（Page.enable 缺失 + webdriver 实例级伪装暴露）
+
+**变更原因**：真机验证反爬表现时发现 JS 层指纹伪装整体未生效：① `injectAntiDetection` 从未调用 `Page.enable`，而 Chrome 在 Page domain 未 enable 时 `Page.addScriptToEvaluateOnNewDocument` 应答成功但注入永不生效（对照实验：enable 后同一脚本正常注入）——webdriver/cores/mem/languages/isTrusted 覆盖全部静默丢失；② webdriver 用实例级 defineProperty 伪装，被 sannysoft「WebDriver (New)」（`_.has(navigator,'webdriver')` 只查自有属性）识破。
+
+**修改的方法**（`Base/CDTProvider/application/CDTService.ts` injectAntiDetection）：
+  - 注册脚本前先 `Page.enable`；注册后追加 `Runtime.evaluate` 在当前文档立即执行同一脚本（覆盖"注册后、下次导航前"的窗口期）。
+  - webdriver 改为 `Navigator.prototype` 原型级重定义（patchright 同思路）：`navigator.webdriver` 读 false、无自有属性（lodash `_.has` 探测为 false）、原型 getter 返回 false，三者同时满足。
+
+**影响的端点**：`POST /cdt/spoof-env`、`POST /cdt/navigate`（内部调用 injectAntiDetection 的所有路径）；种子登录态与页面功能无回归（知乎登录态跨重启验证通过）。
+
+**验证**：bot.sannysoft.com 实测 14+ 检测项全部通过（UA/WebDriver New/WebDriver Advanced/Chrome/Permissions/Plugins/Languages/PHANTOM_*/SELENIUM_DRIVER/Canvas 一致性）；修复前对照：WebDriver (New) present(failed)、cores/mem/languages 为真实值。
+
+**已知边界**：WebGL context 在 VMware 无 GPU 环境不可用（`getContext('webgl')` 返回 null，`--enable-unsafe-swiftshader` 实测未解决），对 WebGL 指纹检测站点是一个信号；与本机硬件一致（用户本机 Chrome 同样无 WebGL），待 GPU/驱动或 swiftshader 路径另行验证。
+
+## [2026-09-22k] feat: CDT 登录态种子——远程浏览器继承本机 Chrome 已登录站点
+
+**变更原因**：产品远程浏览器访问需登录站点时，首次都要在 Remote Browser 里手工登录。新增「登录态种子」（seed_profile）：用户配置本机 Chrome profile 目录后，CDT 启动时把其 Cookies + Local Storage 复制进产品 profile，已登录站点直接可用，绕过产品内登录流程（方案对齐 agent-browser 的 profile 复用与 Playwright storage_state 范围）。
+
+**修改的方法**：
+  - `CDTService.startCDT` — 原 mkdirSync 后仅建目录；现追加调用 `seedProfileFromSnapshot(absProfileDir, metrics)`（2026-09-22 修改注释已就地标注，启动主链路其余逻辑零变更）。
+  - 新增 `CDTService.seedProfileFromSnapshot(profileDir, metrics)`（私有编排，14 行）：读 `profile_snapshot_source` 配置 → 源校验 → 标记比对 → 复制 → 写标记；失败仅 warn 不阻塞启动。
+  - 新增 `CDTProvider/application/ProfileSnapshot.ts` 纯函数（数据操作与编排分离）：`resolveSnapshotSourceDir`（~ 展开 + 目录校验）/ `copySnapshotAuthFiles`（Network/Cookies 或旧版 Cookies + Local Storage/leveldb 递归复制）/ `readSeedMarker` / `writeSeedMarker`（`.cdt-profile-seeded` 记录已播源路径）。
+  - 新增配置注册 `cdt_provider.profile_snapshot_source`（configRegistrations.ts + Application/Config BASE_PROVIDER_CONFIG_TABLES 映射 → cdt_config 表），配置中心可编辑。
+  - 前端 `configDisplay.ts` cdt 分区新增「浏览器参数」params 子区（configModule: cdt_provider）。
+
+**影响的端点**：
+  - `POST /cdt/start` — 启动前增加播种步骤（同源已播种时为空操作，语义向后兼容）
+  - `GET /config`、`PUT /config` — 新增可读可写配置键 `cdt_provider.profile_snapshot_source`
+  - 其余 CDT 端点行为零变更
+
+**可能存在的问题**：
+  - 源路径变更后的重播种会覆盖产品侧 Cookies/Local Storage（预期行为：用户显式改源即希望切换登录身份）；产品内新登录的其他站点若仅存于被覆盖存储中会丢失。
+  - 种子范围不含 IndexedDB / Session Storage，少数以 IndexedDB 承载登录态的站点（如部分 Firebase 应用）不会被继承，需在 Remote Browser 内登录一次（由持久化 profile 保留）。
+  - Windows 下 Chrome profile 含中文路径/空格时复制按 Node cpSync 处理，未见异常；极端杀软拦截场景播种失败仅降级为未播种。
+
+**实战修正（2026-09-22 真机验证发现）**：初版把登录态平铺复制到 user-data-dir 根——但产品 Chrome 未传 `--profile-directory`，登录态实际存于 `Default/` 子目录，Chrome 找不到种子。修正：目标改为 `<user-data-dir>/Default/`；补充 SQLite 伴生文件（-journal/-wal/-shm）复制；leveldb 先清空目标旧库再整体复制（避免 CURRENT/MANIFEST 混存损坏）。真机回归：知乎 23 条 cookie（含 z_c0/d_c0）种子成功，产品浏览器打开知乎首页即登录态（头像/创作中心渲染，无登录按钮）。
+
+**验证**：Base vitest 842/842（新增 CDTProfileSnapshot.test.ts 9 例）；Application vitest 489/489（Config 注册读写回归）；tsc --noEmit（base/application）0 错误；eslint（CDTProvider + Config）0 problems；前端构建（vue-tsc + vite）通过；E2E `brian-backend/scripts/e2e-cdt-profile-snapshot.mjs` 真实 Chrome 启动链路 7 项断言全 PASS（复制落盘 / 标记写入 / CDP 探活 / 二次启动不覆盖 / 无进程残留）。
+
+## [2026-09-22l] feat: 首页动图升级——假鼠标功能演示 + 力导向图谱范例化
+
+**变更原因**：用户评审「卡片排布很短、不够优雅」：① Hero 地图缺少功能演示动效；② 涌现图/关键词图的高斯撒点 + kNN 连边形态散乱，不像优秀力导向图范例。
+
+**修改的内容**：
+  - `HeroAppShot.vue`：画布 640×560→640×620，卡片放大、间距拉开，新增点阵背景；新增**假鼠标演示循环**（约 8.4s/轮）——光标移动到消息卡复选框 → 点击（涟漪 + 按压缩放 + 勾选框点亮、卡片描边变蓝、气泡「已勾选进本轮上下文」、追问卡「引用 1」胶囊点亮）→ 移动到另一张卡 Pin 按钮 → 点击钉住（Pin 变橙 + 红色脉冲环、气泡「已钉住 · 每轮生效」）→ 复位重播；复选框/Pin 使用与 MessageCard 一致的图标形态；`prefers-reduced-motion` 降级为「已勾选 + 已钉住」静态终态。
+  - `graphData.ts` 重写：涌现图组织为 4 个主题簇（出行天气/美食住宿/Agent 技术/面板行业孤岛）+ 语义桥接边，关键词图 4 个语义簇 + 外围孤点 + external/required/tool 三角；坐标改由 `utils/forceDirectedLayout`（与真实涌现页同款力导向算法，复用而非新写）确定性生成；节点半径按权重、颜色沿用蓝→红频率映射（权重指数衰减突出枢纽）。
+  - `GraphShot.vue`：连边改由数据传入（移除内部 kNN 生成与 neighbors prop），新增枢纽光晕、标签描边晕（paint-order），连边细化至 rgba(.17)。
+  - 新增 `test/graphData.test.ts`（3 用例：画布边界/枢纽形态/确定性）。
+
+**影响的端点**：仅前端首页 `/`，无接口变更。
+
+**可能存在的问题**：
+  - 力导向布局在模块加载时同步计算（两图约 400×O(n²) 次迭代，实测 <30ms），如未来节点数大幅增加需改异步。
+  - 假鼠标演示为定时器驱动状态机（8.4s/轮），页面长期停留会持续重播；`prefers-reduced-motion` 下不运行。
+
+**验证**：vue-tsc 0 错误；eslint 0 problems；vitest 117/122（新增 3 用例全绿，5 个失败为既有基线）；`npm run build` 通过（HomeView 55.56 kB）；headless Chrome 目检：reduced-motion 终态（勾选/钉住/气泡/点亮齐全）+ 正常模式假鼠标按压帧。
+
+
+**变更原因**：评审反馈「消息框的连线不够优雅」：HeroAppShot 与 HomeView 记忆地图的连线为手写坐标折线/硬斜线，锚点随卡片几何漂移，直线与折角生硬，虚线样式粗糙（`4 5` 平头虚线）。
+
+**修改的内容**：
+  - 新增 `src/utils/edgePath.ts`：`edgeAnchor`（卡片边缘锚点，along 沿边偏移）+ `smoothEdgePath`（控制点沿边缘法线外伸、幅度随间距 24~96 收敛，切线恒垂直卡片边缘、无折角）；不复用 chatMapGeometry（与 ChatMap 固定节点尺寸强耦合，泛化属顺手重构，见 decisions.md）。
+  - `HeroAppShot.vue` / `HomeView.vue`：连线数据只声明「起始卡片边 → 目标卡片边」（原始手写路径注释保留）；虚线改圆帽点状（`0.1 6.9`）并流动，实线绘制入场后叠加 SMIL animateMotion 流动光点暗示引用方向（`prefers-reduced-motion` 下不渲染光点、不播动画）；箭头 marker 缩小并柔化。
+  - 修复 HomeView 连线入场缺陷：原 `.home-map-drawn .home-mline { stroke-dasharray: 600 }` 会把虚线也变成实线且 reduced-motion 覆盖特异度不足；现虚线淡入 + 流动、实线绘制，媒体查询内补齐等特异度选择器。
+  - 新增 `test/edgePath.test.ts`（5 用例：锚点/along 偏移/端点贴边/切线方向/弯曲钳制）。
+
+**影响的端点**：仅前端首页 `/` 两处示意 SVG 的连线渲染，无接口变更。
+
+**可能存在的问题**：
+  - 流动光点使用 SMIL animateMotion（Chrome/Firefox/Safari 均支持，IE 不支持；项目无 IE 目标）。
+
+**验证**：vue-tsc 0 错误；eslint 0 problems；vitest 114/119（新增 5 用例全绿，5 个失败为既有基线）；headless Chrome 目检两处连线形态（reduced-motion 终态 + 正常模式光点渲染）。
+
+## [2026-09-22j] feat: 首页 4 张静态产品截图替换为前端动态展示组件
+
+**变更原因**：首页 hero-map / memory-pin / tag-graph / keyword-graph 四张 PNG 截图（合计约 2MB）为静态死图，无法承载入场/交互动效，且拖慢构建产物体积；改为前端代码实现后可动态呈现并随主题/文案迭代。
+
+**新增的组件**（`brian-frontend/src/components/home/`）：
+  - `HeroAppShot.vue` — Hero 应用窗口动态复刻：左侧 ChatMap 记忆地图（连线入场绘制 + 虚线流动 + 节点漂浮 + Pin 脉冲），右侧对话区（消息依次浮现 + 输入框光标闪烁）；替代 hero-map.png。
+  - `MemoryPinShot.vue` — Memory Pin 动态示意：钉住消息的 Pin 图标红色高亮脉冲，两条消息渐次浮现；替代 memory-pin.png。
+  - `GraphShot.vue` — 通用动态图谱组件（涌现图/关键词图共用，props 驱动）：复刻应用窗口 chrome（面包屑/页签/搜索栏/一键清理/图例），SVG 节点确定性布点 + 按邻近度自动连边，rAF 直接操作 DOM 实现节点漂移与连线随动（避免高频响应式开销），悬浮高亮关联节点与连线；替代 tag-graph.png / keyword-graph.png。
+  - `graphData.ts` — 两图节点数据（确定性伪随机布点，数据与编排分离）；原文数据以注释保留于 HomeView.vue。
+
+**影响的端点**：仅前端首页 `/`（HomeView.vue 4 处 `<img>` 替换为组件，原实现按规范注释保留）；无路由/接口变更。构建产物不再包含 4 张 PNG（dist/assets 仅剩 qr-qq/qr-wechat.jpg 二维码）。
+
+**可能存在的问题**：
+  - GraphShot 漂移动画为 rAF 常驻循环（进入视口后启动、卸载时停止），低端设备长驻首页时占用少量 CPU；`prefers-reduced-motion` 下不启动。
+  - 图谱节点标签仅在半径 ≥9 或悬浮时显示，与原图「部分节点有标签」的形态一致；如需全量标签需调整 GraphShot 显示阈值。
+
+**验证**：vue-tsc 0 错误；eslint 0 problems；`npm run build` 通过（HomeView chunk 50.29 kB）；headless Chrome 目检 hero/记忆地图/涌现图/关键词图四个区块渲染正常；前端 vitest 109/114 通过（5 个 chat-page e2e 失败为基线已存在，git stash 复测确认与本次改动无关）。
+
 ## [2026-09-22g] refactor: InfoCoreService.context 方法拆分——401 行编排水 monolith → 30 行骨架 + 25 个原子步骤方法
 
 **变更原因**：`context` 401 行为全库最长方法（analyze-method-length.mjs >30 榜首），违反 DDDStandards §2 方法长度约束与流程控制/数据处理拆分判据。

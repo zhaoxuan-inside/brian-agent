@@ -35,3 +35,45 @@
 **原因**：① 共享 soul（编码研究助理）与编辑职责错位且改动会污染全部系统 agent；② 表达质量标准（读者视角/反机器腔/枚举语义）只有进模板才能被执行，配置枚举无语义等于没配；③ Writer 无工具链路，现有 skill 全为工具型，注入不生效也无意义——写作技巧内化进模板成本最低收益直接。
 **备选**：给 `execWrite` 补 skill 加载注入逻辑（推迟——待出现真正的「写作风格/排版」类提示词型 skill 需求再建，遵循 YAGNI）。
 **影响**：`buildSystemAgent` 对 WRITER 复用不重建，DB 绑定持久生效；若 WRITER agent 被删除重建会回退为 matchSoul 生成的通用 soul。
+
+## [2026-09-22] curator v1 = background lane 评估调度，声明式定义重写暂缓
+
+**决策**：阶段3 收尾的 curator 按「会话后维护工作上 background lane」最小语义落地：`scheduleCurator`（LaneSemaphore 并发 2）调度既有 Evolutor 评估链（evalWorkAgent 含评分/优化派发/低分解散），不做 runtime_agent_def 的直接重写。
+**原因**：Evolutor 评估链已覆盖「评估/优化/解散」全闭环且经线上验证（Runtime-PRD §10「保留并复用」条款）；声明式 def（runtime_agent_def）与旧 agent 体系经 agent_ref 绑定，优化经旧体系生效后再考虑 def 快照重写，避免双写不一致。
+**备选**：curator 独立 fork 会话 + LLM 审查 + def CRUD（推迟——runtime_agent_def 优化闭环尚未设计，先建会产生无消费方的写路径，违反 YAGNI）。
+**影响**：Runs/infrastructure 新增 LaneSemaphore（lane 并发信号量）；eval_async=true 的评估从裸 fire-and-forget 改为 background lane 排队，前台 run 不再与维护工作竞争。
+
+## [2026-09-22] 方法长度批次1 完成：9 个 >120 行方法拆分，AopProxy 继续单独排期
+
+**决策**：批次1 的 9 个非横切方法（getCurrentValue/login/soTagGraph/listLLM/evalWriterAgent/generateProfile/soResource/soConfigDetail/deleteSession）全部拆至 ≤40 行编排 + 纯数据子方法，`120+` 由 11 降至 2；`AopProxy.wrap(166)/get(148)` 不在本批处理。
+**原因**：① 拆分全部按「编排只做流程、子方法只做数据/IO」分层，每方法可独立测试；② AopProxy 是全库 46 个 Access 接入点的横切切面，动它需要全量回归接入点行为（日志/耗时/trace 盖章语义），收益/风险比低于批次2-4，故保持单独排期。
+**备选**：顺带把 AopProxy 一起拆掉（弃用——一次改动只解决一个问题，横切回归面失控会污染本批 diff）。
+**影响**：Application/Test 489 + Agent 118 + Runtime 53 + Base/Core 全量测试通过；`analyze:methods` 报告见 docs/MethodIndex/method-length-report.md。同批消灭配套遗留①（evalWriterAgent 与 resolveEvalContext 逐字重复）。
+
+## [2026-09-22] 阶段5 退役再收敛：Orchestration 遗留接线清理，AgentExecution 退役前置三步排期
+
+**决策**：阶段5 本轮只清理零风险残留（根 workspace 声明、@brian-agent/orchestration 依赖/tsconfig 路径/vitest alias、ORCHESTRATION 层配置种子），AgentExecution/PlannerAgent 本体不删。
+**原因**：AgentExecution 仍被 Evolutor（soTrace/TraceCodec）、VisualizationService（soTrace/soPlan）、ConfigService（configAgentExecution 注册）活引用；其替代物「事件投影可视化」尚未建成。先删后建会直接破坏评估、可视化、配置页面三个线上功能。
+**备选**：直接删除并同步改写三个消费方（弃用——等价于把「可视化事件投影重建」硬塞进退役批次，违反单一关注点）。
+**影响**：Runtime-PRD §10 增加退役前置清单（Visualization 事件投影重建 → Evolutor trace 迁移 → ConfigService 收口 → 删除本体）；config.test.ts 两个 ORCHESTRATION 夹具用例改用 AGENT 层。
+
+## [2026-09-22] 沙箱运行时契约：解释器为硬性部署前置，启动期 fail-fast，零降级
+
+**决策**：LocalSandbox 的 python/bash 解释器改为 `SandboxRuntime.resolveSandboxRuntime` 在 SkillService 构造期按平台规范定位（POSIX python3/bash；win32 py -3→python、Git Bash 标准安装点→PATH，显式拒绝 WSL shim）并做版本校验，结果注入执行器；任一解释器缺失/版本不符 → SandboxRuntimeError → 后端拒绝启动。`BRIAN_SANDBOX_PYTHON`/`BRIAN_SANDBOX_BASH` 部署旋钮指定即唯一候选，不落回自动定位。
+**原因**：用户裁决——产品部署三平台，危险命令必须且只能在沙箱完成；原实现硬编码 `python3`/`bash`（Windows 无 python3 命令名、bash 依赖 WSL/Git Bash）属隐式环境假设，而"运行时试错换一个凑合"的兜底会把降级静默带进生产。根源解法 = 把解释器声明为部署契约：启动期解析+校验+fail-fast，错误含平台精确修复指引。
+**边界说明**：① 平台规范名/标准安装点候选是**定位唯一正确解释器**的查找顺序，与"降级兜底"的区别在于——全部落空即失败，绝不产生次级执行方式；② 拒绝 WSL shim 是正确性过滤（cwd/env 翻译语义与契约不兼容），非候选降级；③ isolated-vm 的"预编译缺失→源码编译"同样非降级（产物提供同等 V8 隔离能力）。
+**附带修复**：LocalSandbox 超时判定原匹配 `err.code` 含 'TIMEOUT'（Windows 侧写法），POSIX 上超时文案从未产出；改按 Node 语义 `killed/signal` 判定。
+**影响**：SkillService 构造失败即后端启动失败（fail-fast 契约）；Windows 部署前置 = Git for Windows（文档化，PRD §5）；新增 SandboxRuntime.ts + 9 个单测；Base 833 全绿。
+
+## [2026-09-22] CDT 登录态种子：播种一次 + 源变更重播，而非每次启动全量快照
+
+**决策**：配置 `profile_snapshot_source` 后，CDT 启动时仅在产品 profile 未播种或源路径变更时，复制本机 Chrome 的 Cookies（Network/Cookies 或旧版根路径）+ Local Storage/leveldb；`.cdt-profile-seeded` 标记记录已播源的绝对路径。
+**原因**：产品自带 Remote Browser，用户会在产品浏览器内产生新登录态；若每次启动都从源全量覆盖（agent-browser 只读快照模式），产品侧登录会被静默回滚。"播种一次 + 源变更重播"同时满足「继承用户本机登录」与「产品内登录可持续」。
+**备选**：每次启动复制只读快照（弃用——覆盖产品侧登录态）；复制完整 profile 目录（弃用——Preferences/Login Data 跨 Chrome 版本噪音大，且登录态 90% 场景由 Cookies+LocalStorage 承载，与 Playwright storage_state 范围对齐）。
+**影响**：播种失败仅告警不阻塞 Chrome 启动；种子复制发生在 startCDT 的进程存活早退之后，不存在与运行中 Chrome 的文件锁竞争。
+
+## [2026-09-22] 首页示意图连线独立为 utils/edgePath.ts，不复用 ChatMap 的 chatMapGeometry.ts
+
+**决策**：HeroAppShot 与 HomeView 记忆地图的消息卡片连线由新增 `src/utils/edgePath.ts`（edgeAnchor/smoothEdgePath，任意尺寸矩形 + 任意边锚点）生成；不复用 `chatMapGeometry.ts` 的 verticalEdgePath/citationEdgePath。
+**原因**：后者与 ChatMap 布局强耦合（NODE_W/NODE_H 常量、节点左上角定位约定、仅纵向/引用两类边），泛化它会触碰生产 ChatMap 及其测试，属顺手重构。
+**备选**：继续手写坐标路径（弃用——卡片几何一变锚点即脱靶，且直线/折角生硬）。

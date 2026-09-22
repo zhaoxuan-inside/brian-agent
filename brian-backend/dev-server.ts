@@ -22,6 +22,8 @@ import {
   RunGatewayContext,
   AnswerPermissionInput,
   AnswerPermissionOutput,
+  AnswerUserAskInput,
+  AnswerUserAskOutput,
 } from '@brian-agent/runtime';
 // import type { LoopQueue } from './Runtime';  // 未使用（loopQueueBridge 用内联 import('@brian-agent/runtime').LoopQueue），移除（eslint no-unused-vars）
 import { applySystemSeed } from './seed/systemSeed';
@@ -172,6 +174,7 @@ import {
   GetConfigDetailInput, GetConfigDetailOutput,
   GetConfigItemInput, GetConfigItemOutput,
   UpdateConfigInput, UpdateConfigOutput,
+  GetConfigHistoryInput, GetConfigHistoryOutput,
 } from './Application/Config/domain/types';
 import { ALL_CONFIG_REGISTRATIONS } from './Application/Config/domain/configRegistrations';
 
@@ -744,10 +747,20 @@ async function buildContext() {
         await runtimeGatewayRef.submitRun(i, new SubmitRunOutput(), new RunGatewayContext());
       },
     },
+    // ===== 新增（2026-09-22）：ask_user 挂起等待：迟绑定 gateway（Deferred 在 RunGateway 侧）=====
+    askUserGate: {
+      waitAnswer: async (input) => {
+        const { WaitUserAnswerInput, WaitUserAnswerOutput, RunGatewayContext } = await import('./Runtime');
+        const i = Object.assign(new WaitUserAnswerInput(), input);
+        const o = new WaitUserAnswerOutput();
+        await runtimeGatewayRef.waitUserAnswer(i, o, new RunGatewayContext());
+        return { answer: o.answer, answered: o.answered };
+      },
+    },
   }, logger);
   await runtimeToolAccess.initialize();
   const builtinRegIn = new RegisterBuiltinToolsInput();
-  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate'];
+  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user'];
   const builtinRegOut = new RegisterBuiltinToolsOutput();
   await runtimeToolAccess.registerBuiltinTools(builtinRegIn, builtinRegOut, new RuntimeToolContext());
   logger.info('[startup] runtime builtin tools', String(builtinRegOut.registered ?? []));
@@ -2777,6 +2790,32 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.configAccess.soConfigItem(input, output, context);
         sendJson(res, 200, { config_item: output.config_item });
 
+      // ===== 新增（2026-09-22）：配置变更历史查询（全局，支持时间范围过滤）=====
+      } else if (method === 'GET' && pathname === '/api/config/history') {
+        const input = Object.assign(new GetConfigHistoryInput(), {
+          start_time: params.get('start_time') ? Number(params.get('start_time')) : undefined,
+          end_time: params.get('end_time') ? Number(params.get('end_time')) : undefined,
+          limit: params.get('limit') ? Number(params.get('limit')) : undefined,
+        });
+        const output = new GetConfigHistoryOutput();
+        const context = new ConfigContext();
+        await ctx.configAccess.soConfigHistory(input, output, context);
+        sendJson(res, 200, { records: output.records });
+
+      // ===== 新增（2026-09-22）：单配置项变更历史查询 =====
+      } else if (method === 'GET' && pathname.startsWith('/api/config/history/')) {
+        const configKey = decodeURIComponent(pathname.split('/api/config/history/')[1]);
+        const input = Object.assign(new GetConfigHistoryInput(), {
+          config_key: configKey,
+          start_time: params.get('start_time') ? Number(params.get('start_time')) : undefined,
+          end_time: params.get('end_time') ? Number(params.get('end_time')) : undefined,
+          limit: params.get('limit') ? Number(params.get('limit')) : undefined,
+        });
+        const output = new GetConfigHistoryOutput();
+        const context = new ConfigContext();
+        await ctx.configAccess.soConfigHistory(input, output, context);
+        sendJson(res, 200, { records: output.records });
+
       // ---- Config Save Defaults ----
       } else if (method === 'POST' && pathname === '/api/config/save-defaults') {
         const configTables = ctx.relationDb.queryRaw<{ name: string }>(
@@ -4074,6 +4113,15 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const permOutput = new AnswerPermissionOutput();
         await runtimeGatewayRef.answerPermission(permInput, permOutput, new RunGatewayContext());
         sendJson(res, 200, { ok: true, answered: permOutput.answered });
+      } else if (method === 'POST' && pathname === '/api/chat/ask/answer') {
+        // ===== 新增（2026-09-22）：ask_user 应答端点：唤醒挂起的 ask_user 工具，答复恢复为下一条 user 消息 =====
+        const askInput = Object.assign(new AnswerUserAskInput(), {
+          ask_id: String(body.ask_id ?? ''),
+          answer: String(body.answer ?? ''),
+        });
+        const askOutput = new AnswerUserAskOutput();
+        await runtimeGatewayRef.answerUserAsk(askInput, askOutput, new RunGatewayContext());
+        sendJson(res, 200, { ok: true, answered: askOutput.answered });
       } else if (method === 'POST' && pathname === '/api/chat/stream') {
         // SSE 流式对话端点：通过 chat_config.sse_heartbeat_interval_ms 控制心跳间隔
         const sessionId = typeof body.session_id === 'string' ? body.session_id : '';

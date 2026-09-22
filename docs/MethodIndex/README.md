@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-22T09:39:04.609Z；方法总数：506
+> 生成时间：2026-09-22T13:31:22.478Z；方法总数：509
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -36,10 +36,10 @@
 | **Core 小计** | | **75** |
 | Runtime | [Agents](./Runtime/Agents.md) | 7 |
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
-| Runtime | [Runs](./Runtime/Runs.md) | 11 |
+| Runtime | [Runs](./Runtime/Runs.md) | 13 |
 | Runtime | [Session](./Runtime/Session.md) | 7 |
 | Runtime | [Tools](./Runtime/Tools.md) | 6 |
-| **Runtime 小计** | | **35** |
+| **Runtime 小计** | | **37** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |
 | Agent | [AgentExecution](./Agent/AgentExecution.md) | 10 |
@@ -52,9 +52,9 @@
 | Agent | [WriterAgent](./Agent/WriterAgent.md) | 5 |
 | **Agent 小计** | | **65** |
 | Application | [Chat](./Application/Chat.md) | 13 |
-| Application | [Config](./Application/Config.md) | 50 |
+| Application | [Config](./Application/Config.md) | 51 |
 | Application | [SelfLearning](./Application/SelfLearning.md) | 25 |
 | Application | [UserProfile](./Application/UserProfile.md) | 13 |
 | Application | [Visualization](./Application/Visualization.md) | 10 |
-| **Application 小计** | | **111** |
-| **总计** | | **506** |
+| **Application 小计** | | **112** |
+| **总计** | | **509** |

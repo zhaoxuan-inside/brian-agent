@@ -38,6 +38,7 @@
 `aging`：老化，AgentLibrary 中自动禁用低活跃度和低评分的 Agent 的机制，基于 agent_opt_rule 规则定时执行；
 `signature`：签名（task_signature），Agent 的任务特征摘要字符串，格式为 `[domain] 任务前256字`，用于 Agent 匹配时的相似度计算；
 `trace`：轨迹，Agent 执行过程中记录的完整操作历史，包含 Think/Act/Reflect/Answer 各步骤的输入输出和耗时，用于评估和回溯；
+`seed_profile`：登录态种子，CDT 启动时把用户本机 Chrome profile 的登录态文件（Cookies + Local Storage）复制到产品 profile 目录的动作；配置键 `profile_snapshot_source`（cdt_config 表，值为源 profile 目录路径）；每个源只播种一次（`.cdt-profile-seeded` 标记记录源路径，源变更时重新播种并覆盖产品侧登录态）；禁用同义词 snapshot_sync、profile_copy；
 `plan`：规划，PlannerAgent 将任务分解为 DAG 子任务图的结果，包含节点（task_id、task_content、dependencies）和边（from_task_id → to_task_id）；
 `config`：configure 的缩写，用于配置类接口的动词前缀，表示对模块级配置的查询与更新，如 configAgentLibrary、configAgentExecution；
 `build`：构建，用于构建、创建类接口的动词前缀，表示构造并返回复杂对象或上下文数据，如 buildAgentContext、buildWriterAgent；由 AgentBuilder、AgentContext 等模块使用；

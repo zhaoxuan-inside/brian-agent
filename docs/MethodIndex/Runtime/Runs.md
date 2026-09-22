@@ -16,6 +16,8 @@
 | `soRunStatus` | `input: SoRunStatusInput, output: SoRunStatusOutput, context: RunGatewayContext, metrics...` | `Promise<boolean>` | 查询运行状态 |
 | `waitPermission` | `i: WaitPermissionInput, o: WaitPermissionOutput, c: RunGatewayContext, metrics?: Metric...` | `Promise<boolean>` | 权限等待挂起（Loop 权限门经组合根注入调用） |
 | `answerPermission` | `i: AnswerPermissionInput, o: AnswerPermissionOutput, c: RunGatewayContext, metrics?: Me...` | `Promise<boolean>` | 权限应答（HTTP 端点调用） |
+| `waitUserAnswer` | `i: WaitUserAnswerInput, o: WaitUserAnswerOutput, c: RunGatewayContext, metrics?: Metric...` | `Promise<boolean>` | ask_user 挂起等待（ask_user 工具经组合根注入调用） |
+| `answerUserAsk` | `i: AnswerUserAskInput, o: AnswerUserAskOutput, c: RunGatewayContext, metrics?: Metrics,...` | `Promise<boolean>` | ask_user 应答（HTTP 端点调用；答复恢复为下一条 user 消息） |
 | `configRuns` | `input: ConfigRunsInput, output: ConfigRunsOutput, context: RunGatewayContext, metrics?:...` | `Promise<boolean>` | 模块配置 |
 | `drainSteeringFor` | `sessionKey: string` | `string[]` | Loop 队列接线：边界抽干 steering（组合根绑定，非业务方法） |
 | `takeFollowupFor` | `sessionKey: string` | `string[]` | Loop 队列接线：外层 followup 取队列（组合根绑定，非业务方法） |
