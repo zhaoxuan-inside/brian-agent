@@ -14,6 +14,21 @@
 
 **验证**：typecheck（@brian-agent/core）0 错误；core vitest 197/197 全绿；analyze-method-length 30 中 InfoCoreService 仅余 saveInfo（90 行，另行任务）；InfoCoreService.ts eslint 0 error。
 
+## [2026-09-22h] docs: 文档骨架补齐——全局索引 + Explan 重写 + Access 层 JSDoc 100%
+
+**变更原因**：评审发现缺全局索引（需求→文档→代码三跳不可达）、Explan.md 过期（路径错误/层描述复制粘贴错误/漏登术语表与决策记录等 6 处）、AgentExecutionAccess 与 ChatAccess 共 23 个公开方法 0 JSDoc（违反 DDDStandards §5 质量门）、过期 SelfLearning PRD stub 与正本并存。
+
+**修改的内容**：
+  - 新增 `docs/index.md`：分层模块表（含方法数，引自动索引）+ 横切文档表 + 检索路径示例。
+  - 重写 `docs/Explan.md`：修正目录说明（新增 _07_Runtime/术语表/根目录五件套），清除不存在路径与复制粘贴错误。
+  - `AgentExecutionAccess.ts`（10 方法）与 `ChatAccess.ts`（13 方法）补齐 JSDoc（+391 行纯注释，含 @see PRD 章节引用，说明与实现对齐）。
+  - 删除 `docs/_02_Application/`（7 行过期 stub，标题错误，正本 820 行在 _05_Application）。
+  - TODO-List 配套遗留补登：Base/Core 双路径收口、目录结构偏差（④⑤）。
+
+**影响的端点**：无代码行为变更。
+
+**验证（门禁）**：typecheck 全绿；lint 0 errors；npm test 5/5。
+
 ## [2026-09-22g] refactor: 超长方法拆分——12 个 >120 行方法归位 + SchemaInitializer 数据驱动收敛
 
 **变更原因**：评审发现 341 个方法 >30 行（24 个 >120 行，最大 InfoCoreService.context 400 行），远超 DDDStandards §2 上限。

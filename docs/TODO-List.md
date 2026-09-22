@@ -14,7 +14,7 @@
 | 批次 3 | 50–80 行 ~96 个 | 拆分收益递减，结合触达时顺手拆（单一关注点，不顺手重构原则的例外按 decisions.md 登记） |
 | 批次 4 | 31–50 行 ~187 个 | 仅在行为变更同文件触达时拆 |
 
-**配套遗留**：① `evalWriterAgent` 前置段与 `resolveEvalContext` 逐字重复（EvolutorAgent-PRD 已登记）；② IntentAgent `info_content` 恒 undefined 拼入历史 prompt（any 治理发现，修复需上游结构对齐）；③ `writeLLMCoreQuotaConfig` 传参缺 `llm_provider_id` 运行时会抛 ValidationError（any 治理发现，decisions.md [2026-09-22e] 登记）。
+**配套遗留**：① `evalWriterAgent` 前置段与 `resolveEvalContext` 逐字重复（EvolutorAgent-PRD 已登记）；② IntentAgent `info_content` 恒 undefined 拼入历史 prompt（any 治理发现，修复需上游结构对齐）；③ `writeLLMCoreQuotaConfig` 传参缺 `llm_provider_id` 运行时会抛 ValidationError（any 治理发现，decisions.md [2026-09-22e] 登记）；④ Base/Core 双路径并存——上层（AgentDefService/ChatService/ConfigService 等）同时持有 Base Access 具体类与 Core Access，违反外部资源接入唯一性的精神，收口需逐模块裁决 canonical 路径（单独排期）；⑤ 目录结构偏差 ~8 处（ChunkProvider/MQCoreProvider 等缺 infrastructure、ToolProvider 根目录散落 4 个工具文件），移动文件涉及跨模块 import 调整，批次 1 拆分时顺带处理。
 
 ### 1. Runtime v2 编排内核重构（弃用 workflow，2026-09-04 决策定稿）
 
