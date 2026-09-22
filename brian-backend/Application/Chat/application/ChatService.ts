@@ -386,127 +386,149 @@ export class ChatService {
     return true;
   }
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：122 行单方法拆为
+  // 「会话循环编排 → 单会话删除 → 五类级联清理子方法」（原始单方法已删除，等价结构见 git 历史；
+  // 级联注释随各子方法保留）。
   async deleteSession(input: DeleteSessionInput, output: DeleteSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.session_ids || input.session_ids.length === 0) {
       throw new ValidationError('session_ids must be a non-empty array');
     }
-
     let deletedCount = 0;
-
     for (const sessionId of input.session_ids) {
-      try {
-        // ===== 新增（2026-09-21 反馈级联删除）：随会话删除关联的反馈数据 =====
-        // 反馈表（feedback_record / feedback_process_log）以 run_id（对话轮次，
-        // 关联 runtime_run.id）和 work_id（作品/任务，关联 info_raw.work_id）引用
-        // 会话内容。此前会话删除后这些引用全部失效，监控页残留「无法关联任何内容」
-        // 的孤儿反馈（只剩一串 ID）。故在删除会话数据**之前**先收集两类引用
-        // （info_raw / runtime_run 马上会被下方步骤删除），再按 run_id / work_id
-        // 级联删除反馈。表名按名引用（同 writer_agent_user_profile 惯例，
-        // 避免 Application → Base 的运行时耦合）；失败静默跳过不阻塞会话删除。
-        try {
-          const fbRunRows = await this.relationDb.select(RUNTIME_RUN_TABLE, {
-            conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
-            fields: ['id'],
-          });
-          const fbRunIds = fbRunRows.map(r => String(r.id ?? '')).filter(Boolean);
-          const fbWorkRows = await this.relationDb.select('info_raw', {
-            conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
-            fields: ['work_id'],
-          });
-          const fbWorkIds = [...new Set(fbWorkRows.map(r => String(r.work_id ?? '')).filter(Boolean))];
-          if (fbRunIds.length > 0 || fbWorkIds.length > 0) {
-            const fbConds: Condition[] = [];
-            if (fbRunIds.length > 0) fbConds.push({ field: 'run_id', operator: Operator.IN, value: fbRunIds });
-            if (fbWorkIds.length > 0) fbConds.push({ field: 'work_id', operator: Operator.IN, value: fbWorkIds, logic: Logic.OR });
-            await this.relationDb.delete('feedback_record', fbConds);
-            await this.relationDb.delete('feedback_process_log', fbConds);
-          }
-        } catch (fbErr: unknown) {
-          this.logger?.warn?.('deleteSession: 反馈数据级联清理失败（已跳过）', {
-            session_id: sessionId,
-            error: fbErr instanceof Error ? fbErr.message : String(fbErr),
-          });
-        }
-
-        // ===== 修改后：记忆删除统一收敛 InfoCoreProvider.delInfoBySession（含派生表 / 上下文快照 / GraphDB 级联），
-        //      chat_session / runtime_ / stream_event 等非记忆表仍由本层负责 =====
-        const delInput = new DelInfoBySessionInput();
-        delInput.session_id = sessionId;
-        const delOutput = new DelInfoBySessionOutput();
-        await this.infoCore.delInfoBySession(delInput, delOutput, new InfoCoreContext(), _metrics);
-
-        const affected = await this.relationDb.delete('chat_session', [
-          { field: 'session_id', operator: Operator.EQ, value: sessionId },
-        ]);
-        deletedCount += affected;
-
-        // ===== 新增（2026-09-21 会话删除关联数据同步）：WriterAgent 会话级写作偏好
-        // （writer_agent_user_profile.session_id 唯一）此前随会话删除后残留为孤儿数据，
-        // 导致会话重新创建/复用同 id 时读取到陈旧偏好；此处随会话同步清理。
-        // 表名按名引用，避免 Application → Agent 的运行时耦合；表不存在时静默跳过 =====
-        try {
-          await this.relationDb.delete('writer_agent_user_profile', [
-            { field: 'session_id', operator: Operator.EQ, value: sessionId },
-          ]);
-        } catch (prefErr: unknown) {
-          this.logger?.warn?.('deleteSession: writer_agent_user_profile 清理失败（已跳过）', {
-            session_id: sessionId,
-            error: prefErr instanceof Error ? prefErr.message : String(prefErr),
-          });
-        }
-
-        // ===== 新增（2026-09-15）：思考过程/耗时统计生命周期跟随问答 —— 删除会话时
-        // 一并清理事件流（stream_event，思考过程时间线的持久事实源）与 Runtime 派生表
-        // （runtime_run / runtime_message_part / runtime_message / runtime_session，
-        //  Part 含 elapsed_ms 耗时与思考内容）；不存在时静默跳过 =====
-        try {
-          await this.relationDb.delete('stream_event', [
-            { field: 'session_key', operator: Operator.EQ, value: sessionId },
-          ]);
-          await this.relationDb.delete(RUNTIME_RUN_TABLE, [
-            { field: 'session_key', operator: Operator.EQ, value: sessionId },
-          ]);
-          // Runtime 派生数据以 runtime_session.session_key = 问答会话 id 关联
-          const runtimeSessions = await this.relationDb.select(RUNTIME_SESSION_TABLE, {
-            conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
-            fields: ['id'],
-          });
-          const runtimeSessionIds = runtimeSessions.map((r) => String(r.id ?? '')).filter(Boolean);
-          if (runtimeSessionIds.length > 0) {
-            const runtimeMessages = await this.relationDb.select(RUNTIME_MESSAGE_TABLE, {
-              conditions: [{ field: 'session_id', operator: Operator.IN, value: runtimeSessionIds }],
-              fields: ['id'],
-            });
-            const runtimeMessageIds = runtimeMessages.map((r) => String(r.id ?? '')).filter(Boolean);
-            if (runtimeMessageIds.length > 0) {
-              await this.relationDb.delete(RUNTIME_MESSAGE_PART_TABLE, [
-                { field: 'msg_id', operator: Operator.IN, value: runtimeMessageIds },
-              ]);
-            }
-            await this.relationDb.delete(RUNTIME_MESSAGE_TABLE, [
-              { field: 'session_id', operator: Operator.IN, value: runtimeSessionIds },
-            ]);
-            await this.relationDb.delete(RUNTIME_SESSION_TABLE, [
-              { field: 'session_key', operator: Operator.EQ, value: sessionId },
-            ]);
-          }
-        } catch (cleanupErr: unknown) {
-          this.logger?.warn?.('deleteSession: runtime/stream 思考过程数据清理失败（已跳过）', {
-            session_id: sessionId,
-            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
-          });
-        }
-      } catch (err: unknown) {
-        this.logger?.error?.('deleteSession: failed to delete session', {
-          session_id: sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      deletedCount += await this.deleteSingleSession(sessionId, _metrics);
     }
-
     output.deleted_count = deletedCount;
     return true;
+  }
+
+  /** 删除单个会话（逻辑控制；五类级联清理 + 删除行数；失败仅记日志不中断批量） */
+  private async deleteSingleSession(sessionId: string, metrics?: Metrics): Promise<number> {
+    try {
+      await this.deleteFeedbackForSession(sessionId);
+      // ===== 修改后：记忆删除统一收敛 InfoCoreProvider.delInfoBySession（含派生表 / 上下文快照 / GraphDB 级联），
+      //      chat_session / runtime_ / stream_event 等非记忆表仍由本层负责 =====
+      const delInput = new DelInfoBySessionInput();
+      delInput.session_id = sessionId;
+      const delOutput = new DelInfoBySessionOutput();
+      await this.infoCore.delInfoBySession(delInput, delOutput, new InfoCoreContext(), metrics);
+      const affected = await this.relationDb.delete('chat_session', [
+        { field: 'session_id', operator: Operator.EQ, value: sessionId },
+      ]);
+      await this.deleteWriterProfileForSession(sessionId);
+      await this.deleteRuntimeDataForSession(sessionId);
+      return affected;
+    } catch (err: unknown) {
+      this.logger?.error?.('deleteSession: failed to delete session', {
+        session_id: sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    }
+  }
+
+  // ===== 新增（2026-09-21 反馈级联删除）：随会话删除关联的反馈数据 =====
+  // 反馈表（feedback_record / feedback_process_log）以 run_id（对话轮次，
+  // 关联 runtime_run.id）和 work_id（作品/任务，关联 info_raw.work_id）引用
+  // 会话内容。此前会话删除后这些引用全部失效，监控页残留「无法关联任何内容」
+  // 的孤儿反馈（只剩一串 ID）。故在删除会话数据**之前**先收集两类引用
+  // （info_raw / runtime_run 马上会被后续步骤删除），再按 run_id / work_id
+  // 级联删除反馈。表名按名引用（同 writer_agent_user_profile 惯例，
+  // 避免 Application → Base 的运行时耦合）；失败静默跳过不阻塞会话删除。
+  /** 反馈数据级联清理（逻辑控制；best-effort） */
+  private async deleteFeedbackForSession(sessionId: string): Promise<void> {
+    try {
+      const fbRunRows = await this.relationDb.select(RUNTIME_RUN_TABLE, {
+        conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
+        fields: ['id'],
+      });
+      const fbRunIds = fbRunRows.map(r => String(r.id ?? '')).filter(Boolean);
+      const fbWorkRows = await this.relationDb.select('info_raw', {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+        fields: ['work_id'],
+      });
+      const fbWorkIds = [...new Set(fbWorkRows.map(r => String(r.work_id ?? '')).filter(Boolean))];
+      if (fbRunIds.length > 0 || fbWorkIds.length > 0) {
+        const fbConds: Condition[] = [];
+        if (fbRunIds.length > 0) fbConds.push({ field: 'run_id', operator: Operator.IN, value: fbRunIds });
+        if (fbWorkIds.length > 0) fbConds.push({ field: 'work_id', operator: Operator.IN, value: fbWorkIds, logic: Logic.OR });
+        await this.relationDb.delete('feedback_record', fbConds);
+        await this.relationDb.delete('feedback_process_log', fbConds);
+      }
+    } catch (fbErr: unknown) {
+      this.logger?.warn?.('deleteSession: 反馈数据级联清理失败（已跳过）', {
+        session_id: sessionId,
+        error: fbErr instanceof Error ? fbErr.message : String(fbErr),
+      });
+    }
+  }
+
+  // ===== 新增（2026-09-21 会话删除关联数据同步）：WriterAgent 会话级写作偏好
+  // （writer_agent_user_profile.session_id 唯一）此前随会话删除后残留为孤儿数据，
+  // 导致会话重新创建/复用同 id 时读取到陈旧偏好；此处随会话同步清理。
+  // 表名按名引用，避免 Application → Agent 的运行时耦合；表不存在时静默跳过 =====
+  /** WriterAgent 写作偏好清理（逻辑控制；best-effort） */
+  private async deleteWriterProfileForSession(sessionId: string): Promise<void> {
+    try {
+      await this.relationDb.delete('writer_agent_user_profile', [
+        { field: 'session_id', operator: Operator.EQ, value: sessionId },
+      ]);
+    } catch (prefErr: unknown) {
+      this.logger?.warn?.('deleteSession: writer_agent_user_profile 清理失败（已跳过）', {
+        session_id: sessionId,
+        error: prefErr instanceof Error ? prefErr.message : String(prefErr),
+      });
+    }
+  }
+
+  // ===== 新增（2026-09-15）：思考过程/耗时统计生命周期跟随问答 —— 删除会话时
+  // 一并清理事件流（stream_event，思考过程时间线的持久事实源）与 Runtime 派生表
+  // （runtime_run / runtime_message_part / runtime_message / runtime_session，
+  //  Part 含 elapsed_ms 耗时与思考内容）；不存在时静默跳过 =====
+  /** Runtime/stream 思考过程数据清理（逻辑控制；best-effort） */
+  private async deleteRuntimeDataForSession(sessionId: string): Promise<void> {
+    try {
+      await this.relationDb.delete('stream_event', [
+        { field: 'session_key', operator: Operator.EQ, value: sessionId },
+      ]);
+      await this.relationDb.delete(RUNTIME_RUN_TABLE, [
+        { field: 'session_key', operator: Operator.EQ, value: sessionId },
+      ]);
+      // Runtime 派生数据以 runtime_session.session_key = 问答会话 id 关联
+      const runtimeSessions = await this.relationDb.select(RUNTIME_SESSION_TABLE, {
+        conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
+        fields: ['id'],
+      });
+      const runtimeSessionIds = runtimeSessions.map((r) => String(r.id ?? '')).filter(Boolean);
+      if (runtimeSessionIds.length > 0) {
+        await this.deleteRuntimeMessages(runtimeSessionIds);
+        await this.relationDb.delete(RUNTIME_SESSION_TABLE, [
+          { field: 'session_key', operator: Operator.EQ, value: sessionId },
+        ]);
+      }
+    } catch (cleanupErr: unknown) {
+      this.logger?.warn?.('deleteSession: runtime/stream 思考过程数据清理失败（已跳过）', {
+        session_id: sessionId,
+        error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      });
+    }
+  }
+
+  /** Runtime 消息与 Part 级联清理（逻辑控制；先按消息收集 Part 再删消息） */
+  private async deleteRuntimeMessages(runtimeSessionIds: string[]): Promise<void> {
+    const runtimeMessages = await this.relationDb.select(RUNTIME_MESSAGE_TABLE, {
+      conditions: [{ field: 'session_id', operator: Operator.IN, value: runtimeSessionIds }],
+      fields: ['id'],
+    });
+    const runtimeMessageIds = runtimeMessages.map((r) => String(r.id ?? '')).filter(Boolean);
+    if (runtimeMessageIds.length > 0) {
+      await this.relationDb.delete(RUNTIME_MESSAGE_PART_TABLE, [
+        { field: 'msg_id', operator: Operator.IN, value: runtimeMessageIds },
+      ]);
+    }
+    await this.relationDb.delete(RUNTIME_MESSAGE_TABLE, [
+      { field: 'session_id', operator: Operator.IN, value: runtimeSessionIds },
+    ]);
   }
 
   /**

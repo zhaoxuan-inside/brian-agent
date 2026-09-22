@@ -642,132 +642,117 @@ export class VisualizationService {
     };
   }
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：127 行单方法拆为
+  // 「异常收敛编排 → 类型分派 → 11 个微型资源读取器」（原始单方法已删除，等价结构见 git 历史）。
   async soResource(input: GetResourceInput, output: GetResourceOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const { resource_type, resource_id } = input;
-
     try {
-      switch (resource_type.toLowerCase()) {
-        case 'agent': {
-          const out = new GetAgentOutput();
-          await this.agentLibrary.soAgent(
-            Object.assign(new GetAgentInput(), { agent_id: resource_id }),
-            out,
-            new AgentLibraryContext(),
-          );
-          output.resource = out.agents.length > 0 ? (out.agents[0] as unknown as Record<string, unknown>) : {};
-          break;
-        }
-        case 'llm': {
-          const out = new GetLLMOutput();
-          await this.llmAccess.soLLMById(
-            Object.assign(new GetLLMInput(), { id: resource_id }),
-            out,
-            new LLMContext(),
-          );
-          output.resource = (out.llm ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'soul': {
-          const out = new GetSoulOutput();
-          await this.soulAccess.soSoulById(
-            Object.assign(new GetSoulInput(), { id: resource_id }),
-            out,
-            new SoulContext(),
-          );
-          output.resource = (out.soul ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'skill': {
-          const out = new GetSkillOutput();
-          await this.skillAccess.soSkillById(
-            Object.assign(new GetSkillInput(), { id: resource_id }),
-            out,
-            new SkillContext(),
-          );
-          output.resource = (out.skill ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'mcp': {
-          const out = new GetMcpOutput();
-          await this.mcpAccess.soMcpById(
-            Object.assign(new GetMcpInput(), { id: resource_id }),
-            out,
-            new McpContext(),
-          );
-          output.resource = (out.mcp ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'prompt': {
-          const out = new GetPromptOutput();
-          await this.promptsAccess.soPromptById(
-            Object.assign(new GetPromptInput(), { id: resource_id }),
-            out,
-            new PromptContext(),
-          );
-          output.resource = (out.prompt ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'trace': {
-          const out = new GetTraceOutput();
-          await this.agentExecution.soTrace(
-            Object.assign(new GetTraceInput(), { trace_id: resource_id }),
-            out,
-            new AgentExecutionContext(),
-          );
-          output.resource = (out.trace ?? {}) as unknown as Record<string, unknown>;
-          break;
-        }
-        case 'info': {
-          const out = new LastNInfoOutput();
-          await this.infoCore.lastNInfo(
-            Object.assign(new LastNInfoInput(), { info_id: resource_id, lastN: 1 }),
-            out,
-            new InfoCoreContext(),
-          );
-          output.resource = out.list.length > 0 ? (out.list[0] as unknown as Record<string, unknown>) : {};
-          break;
-        }
-        case 'eval': {
-          const out = new GetEvaluationOutput();
-          await this.evolutorAgent.soEvaluation(
-            Object.assign(new GetEvaluationInput(), { conditions: [{ field: 'eval_id', operator: Operator.EQ, value: resource_id }] }),
-            out,
-            new EvolutorAgentContext(),
-          );
-          output.resource = out.evaluations.length > 0 ? (out.evaluations[0] as unknown as Record<string, unknown>) : {};
-          break;
-        }
-        case 'plan': {
-          const out = new GetPlanOutput();
-          await this.plannerAgent.soPlan(
-            Object.assign(new GetPlanInput(), { plan_id: resource_id }),
-            out,
-            new PlannerAgentContext(),
-          );
-          output.resource = out.plans.length > 0 ? (out.plans[0] as unknown as Record<string, unknown>) : {};
-          break;
-        }
-        case 'context': {
-          const out = new GetContextDetailOutput();
-          await this.agentContext.soContextDetail(
-            Object.assign(new GetContextDetailInput(), { work_id: resource_id }),
-            out,
-            new AgentContextContext(),
-          );
-          output.resource = out as unknown as Record<string, unknown>;
-          break;
-        }
-        default: {
-          output.resource = { error: `unknown resource_type: ${resource_type}` };
-        }
-      }
+      output.resource = (await this.soResourceValue(resource_type, resource_id)) as Record<string, unknown>;
     } catch (err) {
       this.logWarn(`soResource ${resource_type}/${resource_id} failed`, err);
       output.resource = { error: `soResource failed: ${resource_type}/${resource_id}` };
     }
-
     return true;
+  }
+
+  /** 资源类型分派（逻辑控制；大小写不敏感） */
+  private async soResourceValue(resourceType: string, resourceId: string): Promise<unknown> {
+    switch (resourceType.toLowerCase()) {
+      case 'agent': return this.soAgentResource(resourceId);
+      case 'llm': return this.soLlmResource(resourceId);
+      case 'soul': return this.soSoulResource(resourceId);
+      case 'skill': return this.soSkillResource(resourceId);
+      case 'mcp': return this.soMcpResource(resourceId);
+      case 'prompt': return this.soPromptResource(resourceId);
+      case 'trace': return this.soTraceResource(resourceId);
+      case 'info': return this.soInfoResource(resourceId);
+      case 'eval': return this.soEvalResource(resourceId);
+      case 'plan': return this.soPlanResource(resourceId);
+      case 'context': return this.soContextResource(resourceId);
+      default: return { error: `unknown resource_type: ${resourceType}` };
+    }
+  }
+
+  /** agent 资源读取（数据处理；库内单条） */
+  private async soAgentResource(resourceId: string): Promise<unknown> {
+    const out = new GetAgentOutput();
+    await this.agentLibrary.soAgent(Object.assign(new GetAgentInput(), { agent_id: resourceId }), out, new AgentLibraryContext());
+    return out.agents.length > 0 ? (out.agents[0] as unknown as Record<string, unknown>) : {};
+  }
+
+  /** llm 资源读取（数据处理） */
+  private async soLlmResource(resourceId: string): Promise<unknown> {
+    const out = new GetLLMOutput();
+    await this.llmAccess.soLLMById(Object.assign(new GetLLMInput(), { id: resourceId }), out, new LLMContext());
+    return (out.llm ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** soul 资源读取（数据处理） */
+  private async soSoulResource(resourceId: string): Promise<unknown> {
+    const out = new GetSoulOutput();
+    await this.soulAccess.soSoulById(Object.assign(new GetSoulInput(), { id: resourceId }), out, new SoulContext());
+    return (out.soul ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** skill 资源读取（数据处理） */
+  private async soSkillResource(resourceId: string): Promise<unknown> {
+    const out = new GetSkillOutput();
+    await this.skillAccess.soSkillById(Object.assign(new GetSkillInput(), { id: resourceId }), out, new SkillContext());
+    return (out.skill ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** mcp 资源读取（数据处理） */
+  private async soMcpResource(resourceId: string): Promise<unknown> {
+    const out = new GetMcpOutput();
+    await this.mcpAccess.soMcpById(Object.assign(new GetMcpInput(), { id: resourceId }), out, new McpContext());
+    return (out.mcp ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** prompt 资源读取（数据处理） */
+  private async soPromptResource(resourceId: string): Promise<unknown> {
+    const out = new GetPromptOutput();
+    await this.promptsAccess.soPromptById(Object.assign(new GetPromptInput(), { id: resourceId }), out, new PromptContext());
+    return (out.prompt ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** trace 资源读取（数据处理） */
+  private async soTraceResource(resourceId: string): Promise<unknown> {
+    const out = new GetTraceOutput();
+    await this.agentExecution.soTrace(Object.assign(new GetTraceInput(), { trace_id: resourceId }), out, new AgentExecutionContext());
+    return (out.trace ?? {}) as unknown as Record<string, unknown>;
+  }
+
+  /** info 资源读取（数据处理） */
+  private async soInfoResource(resourceId: string): Promise<unknown> {
+    const out = new LastNInfoOutput();
+    await this.infoCore.lastNInfo(Object.assign(new LastNInfoInput(), { info_id: resourceId, lastN: 1 }), out, new InfoCoreContext());
+    return out.list.length > 0 ? (out.list[0] as unknown as Record<string, unknown>) : {};
+  }
+
+  /** eval 资源读取（数据处理） */
+  private async soEvalResource(resourceId: string): Promise<unknown> {
+    const out = new GetEvaluationOutput();
+    await this.evolutorAgent.soEvaluation(
+      Object.assign(new GetEvaluationInput(), { conditions: [{ field: 'eval_id', operator: Operator.EQ, value: resourceId }] }),
+      out,
+      new EvolutorAgentContext(),
+    );
+    return out.evaluations.length > 0 ? (out.evaluations[0] as unknown as Record<string, unknown>) : {};
+  }
+
+  /** plan 资源读取（数据处理） */
+  private async soPlanResource(resourceId: string): Promise<unknown> {
+    const out = new GetPlanOutput();
+    await this.plannerAgent.soPlan(Object.assign(new GetPlanInput(), { plan_id: resourceId }), out, new PlannerAgentContext());
+    return out.plans.length > 0 ? (out.plans[0] as unknown as Record<string, unknown>) : {};
+  }
+
+  /** context 资源读取（数据处理） */
+  private async soContextResource(resourceId: string): Promise<unknown> {
+    const out = new GetContextDetailOutput();
+    await this.agentContext.soContextDetail(Object.assign(new GetContextDetailInput(), { work_id: resourceId }), out, new AgentContextContext());
+    return out as unknown as Record<string, unknown>;
   }
 
   async configVisualization(input: ConfigVisualizationInput, output: ConfigVisualizationOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,

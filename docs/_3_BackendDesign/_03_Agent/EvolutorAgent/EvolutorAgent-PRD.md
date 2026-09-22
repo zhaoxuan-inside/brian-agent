@@ -286,4 +286,4 @@
   - `runEvalOnce` / 评估闭环 `runEvaluationCycle` 同步直调 `evalWorkAgent`（行为不变）。
 
 **可能存在的问题**：
-  - `resolveEvalContext` 与 `evalWriterAgent` 前置段（buildSystemAgent → soAgent → LLM 解析 → 阈值）逐字重复，本次未动 evalWriterAgent（不在拆分范围）；后续可将 `resolveEvalContext` 入参放宽为 `EvalWorkAgentInput | EvalWriterAgentInput` 复用。
+  - ~~`resolveEvalContext` 与 `evalWriterAgent` 前置段逐字重复~~ **已解决（2026-09-22 方法长度拆分批次1）**：`resolveEvalContext` 入参放宽为 `{ work_id, run_id }` 结构子集并补充返回 `evolutor` 记录，`evalWriterAgent` 改为复用（同步拆分为「评估上下文 → 渲染 → LLM 打分 → 落库/派发 → 出参/trace」六段，152 行 → 编排 ≤30 行）。

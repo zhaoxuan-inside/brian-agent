@@ -20,6 +20,7 @@ import {
   GetEvolutionReportInput, GetEvolutionReportOutput,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,
   type EvalScores,
+  type WriterEvalScores,
 } from '../domain/types';
 import {
   BuildSystemAgentInput, BuildSystemAgentOutput,
@@ -68,8 +69,17 @@ function mapEval(row: Record<string, unknown>): AgentEvaluationRecord {
 interface EvalContext {
   config: EvolutorAgentConfigRecord | null;
   evolutorId: string;
+  /** EVOLUTOR 系统 Agent 记录（trace 记录 agent_name 等展示信息） */
+  evolutor?: { agent_id?: string; agent_name?: string } | null;
   targetLlmId: string;
   threshold: number;
+}
+
+/** Writer 评估 LLM 调用结果（内部类型） */
+interface WriterEvalLlmResult {
+  inputTokens: number;
+  outputTokens: number;
+  rawResponse: string;
 }
 
 export class EvolutorAgentService {
@@ -129,7 +139,7 @@ export class EvolutorAgentService {
   // ---------------------------------------------------------------------------
 
   /** 解析评估执行上下文：确保 EVOLUTOR 系统 Agent 就绪，解析目标 LLM（配置优先，缺省经 Core.matchLLM）与优化阈值。 */
-  private async resolveEvalContext(ctx: EvolutorAgentContext, input: EvalWorkAgentInput, metrics?: Metrics): Promise<EvalContext> {
+  private async resolveEvalContext(ctx: EvolutorAgentContext, input: { work_id: string; run_id: string }, metrics?: Metrics): Promise<EvalContext> {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
       work_id: input.work_id || ctx.work_id,
@@ -152,7 +162,7 @@ export class EvolutorAgentService {
     if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
       targetLlmId = await this.resolveLlm(evolutor.agent_id, metrics);
     }
-    return { config, evolutorId: buildOut.agent_id, targetLlmId, threshold: config?.optimize_threshold ?? 60 };
+    return { config, evolutorId: buildOut.agent_id, evolutor, targetLlmId, threshold: config?.optimize_threshold ?? 60 };
   }
 
   /** 读取被评估执行的 trace（best-effort）：读取失败仅缺失评估参考上下文，评分流程继续。 */
@@ -321,6 +331,9 @@ export class EvolutorAgentService {
   }
 
   // ===== 修改后的方法（2026-09-09）：评估完成即上报 evaluation.completed =====
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：152 行单方法拆为
+  // 「评估上下文 → 渲染 → LLM 打分 → 落库/派发 → 出参/trace」编排 + 子方法。
+  // 同时消灭配套遗留①：前置段与 resolveEvalContext 逐字重复（原始单方法已删除，等价结构见 git 历史）。
   async evalWriterAgent(input: EvalWriterAgentInput, output: EvalWriterAgentOutput, ctx: EvolutorAgentContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     // 错误信息（call_error / internal_error）不参与评估：直接跳过评分与优化触发
@@ -328,34 +341,10 @@ export class EvolutorAgentService {
       return true;
     }
     const startedAt = IdGenerator.now();
-    const builderCtx = Object.assign(new AgentBuilderContext(), {
-      session_id: ctx.session_id,
-      work_id: input.work_id || ctx.work_id,
-      run_id: input.run_id || ctx.run_id,
-    });
-    const buildOut = new BuildSystemAgentOutput();
-    await this.agentBuilder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'EVOLUTOR' }), buildOut, builderCtx);
-    const libCtx = Object.assign(new AgentLibraryContext(), builderCtx);
-    const getOut = new GetAgentOutput();
-    await this.agentLibrary.soAgent(
-      Object.assign(new GetAgentInput(), { agent_id: buildOut.agent_id }),
-      getOut,
-      libCtx,
-    );
-    const evolutor = getOut.agents[0];
-    const config = await this.getConfig();
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
-    let targetLlmId = config?.llm_id || '';
-    if (!targetLlmId && evolutor?.agent_id && this.llmCore) {
-      targetLlmId = await this.resolveLlm(evolutor.agent_id, metrics);
-    }
-    const threshold = config?.optimize_threshold ?? 60;
-
-    let scores = {
-      clarity: 60, informativeness: 60, user_alignment: 60, conciseness: 60, overall: 60,
-    };
+    const evalCtx = await this.resolveEvalContext(ctx, input, metrics);
+    const config = evalCtx.config;
+    let scores: WriterEvalScores = { clarity: 60, informativeness: 60, user_alignment: 60, conciseness: 60, overall: 60 };
     let suggestions: string[] = [];
-
     const prompt = await this.renderPrompt(
       config?.eval_write_prompt_template_id,
       'WriterAgent 质量评估',
@@ -366,15 +355,34 @@ export class EvolutorAgentService {
       },
       metrics,
     );
+    const llmResult = await this.execWriterEvalLlm(input, ctx, evalCtx.targetLlmId, prompt, metrics, report);
+    const parsedScores = this.parseWriterEvalScores(llmResult.rawResponse);
+    if (parsedScores) {
+      scores = parsedScores.scores;
+      suggestions = parsedScores.suggestions;
+    }
+    const needOptimize = scores.overall < evalCtx.threshold;
+    const evalId = await this.saveWriterEvaluation(input, scores, suggestions, needOptimize);
+    if (needOptimize) {
+      await this.dispatchWriterOptimize(input);
+    }
+    await this.writeWriterEvalOutput(output, input, evalCtx, evalId, scores, suggestions, needOptimize, startedAt, llmResult, metrics, report);
+    return true;
+  }
 
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let rawResponse = '';
-
+  /** Writer 评估 LLM 调用（逻辑控制；Token 归因到 Writer 评估 Agent 入账；异常回退默认值） */
+  private async execWriterEvalLlm(
+    input: EvalWriterAgentInput,
+    ctx: EvolutorAgentContext,
+    targetLlmId: string,
+    prompt: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<WriterEvalLlmResult> {
     try {
       // ===== 修改后（2026-09-14 Span 框架）：评估 LLM 打分经切面自动成为子 span =====
       const llmOut = new ExecLLMOutput();
-      const ok = await this.llmAccess.execLLM(
+      await this.llmAccess.execLLM(
         Object.assign(new ExecLLMInput(), {
           id: targetLlmId,
           prompt,
@@ -389,31 +397,39 @@ export class EvolutorAgentService {
         metrics,
         report,
       );
-      inputTokens = Number(llmOut.input_tokens ?? 0);
-      outputTokens = Number(llmOut.output_tokens ?? 0);
-      rawResponse = String(llmOut.raw_response ?? llmOut.result ?? '');
-      if (ok && llmOut.result) {
-        const parsed = parseJsonObject(llmOut.result);
-        if (parsed) {
-          const clarity = Number(parsed.clarity ?? 60);
-          const info = Number(parsed.informativeness ?? 60);
-          const align = Number(parsed.user_alignment ?? 60);
-          const conc = Number(parsed.conciseness ?? 60);
-          scores = {
-            clarity,
-            informativeness: info,
-            user_alignment: align,
-            conciseness: conc,
-            overall: Number(parsed.overall ?? Math.round((clarity + info + align + conc) / 4)),
-          };
-          suggestions = Array.isArray(parsed.suggestions)
-            ? (parsed.suggestions as unknown[]).map(String)
-            : [];
-        }
-      }
+      return {
+        inputTokens: Number(llmOut.input_tokens ?? 0),
+        outputTokens: Number(llmOut.output_tokens ?? 0),
+        rawResponse: String(llmOut.raw_response ?? llmOut.result ?? ''),
+      };
     } catch { /* defaults */ }
+    return { inputTokens: 0, outputTokens: 0, rawResponse: '' };
+  }
 
-    const needOptimize = scores.overall < threshold;
+  /** Writer 评估打分解析（数据处理；解析失败返回 null 保留默认分） */
+  private parseWriterEvalScores(rawResponse: string): { scores: WriterEvalScores; suggestions: string[] } | null {
+    const parsed = parseJsonObject(rawResponse);
+    if (!parsed) {
+      return null;
+    }
+    const clarity = Number(parsed.clarity ?? 60);
+    const info = Number(parsed.informativeness ?? 60);
+    const align = Number(parsed.user_alignment ?? 60);
+    const conc = Number(parsed.conciseness ?? 60);
+    return {
+      scores: {
+        clarity,
+        informativeness: info,
+        user_alignment: align,
+        conciseness: conc,
+        overall: Number(parsed.overall ?? Math.round((clarity + info + align + conc) / 4)),
+      },
+      suggestions: Array.isArray(parsed.suggestions) ? (parsed.suggestions as unknown[]).map(String) : [],
+    };
+  }
+
+  /** Writer 评估结果落库（逻辑控制；返回 evalId） */
+  private async saveWriterEvaluation(input: EvalWriterAgentInput, scores: WriterEvalScores, suggestions: string[], needOptimize: boolean): Promise<string> {
     const evalId = IdGenerator.generate();
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_EVALUATION_TABLE, [
@@ -429,21 +445,38 @@ export class EvolutorAgentService {
       { field: 'suggestions', value: JSON.stringify(suggestions) },
       { field: 'need_optimize', value: needOptimize ? 1 : 0 },
     ]);
+    return evalId;
+  }
 
-    if (needOptimize) {
-      await this.mqAccess.sendMQ(
-        Object.assign(new SendMQInput(), {
-          data: {
-            queue: OPTIMIZE_QUEUE,
-            payload: { agent_id: input.agent_id, run_id: input.run_id },
-          },
-        }),
-        new SendMQOutput(),
-        new MQContext(),
-      );
-    }
+  /** 低分触发 Writer 优化派发（逻辑控制；经 MQ 异步执行） */
+  private async dispatchWriterOptimize(input: EvalWriterAgentInput): Promise<void> {
+    await this.mqAccess.sendMQ(
+      Object.assign(new SendMQInput(), {
+        data: {
+          queue: OPTIMIZE_QUEUE,
+          payload: { agent_id: input.agent_id, run_id: input.run_id },
+        },
+      }),
+      new SendMQOutput(),
+      new MQContext(),
+    );
+  }
 
-    output.agent_id = buildOut.agent_id;
+  /** 出参组装 + 评估完成事件 + 执行轨迹（逻辑控制；trace best-effort） */
+  private async writeWriterEvalOutput(
+    output: EvalWriterAgentOutput,
+    input: EvalWriterAgentInput,
+    evalCtx: EvalContext,
+    evalId: string,
+    scores: WriterEvalScores,
+    suggestions: string[],
+    needOptimize: boolean,
+    startedAt: number,
+    llmResult: WriterEvalLlmResult,
+    _metrics?: Metrics,
+    report?: Report,
+  ): Promise<void> {
+    output.agent_id = evalCtx.evolutorId;
     output.eval_id = evalId;
     output.scores = scores;
     output.suggestions = suggestions;
@@ -460,18 +493,17 @@ export class EvolutorAgentService {
       need_optimize: needOptimize,
     });
     await this.recordTrace(output, {
-      agentId: buildOut.agent_id,
-      agentName: evolutor?.agent_name ?? buildOut.agent_id,
+      agentId: evalCtx.evolutorId,
+      agentName: evalCtx.evolutor?.agent_name ?? evalCtx.evolutorId,
       taskContent: input.user_query,
       scores,
       suggestions,
-      inputTokens,
-      outputTokens,
-      rawResponse,
+      inputTokens: llmResult.inputTokens,
+      outputTokens: llmResult.outputTokens,
+      rawResponse: llmResult.rawResponse,
       elapsedMs: IdGenerator.now() - startedAt,
-      templateId: config?.eval_write_prompt_template_id,
-    }, metrics);
-    return true;
+      templateId: evalCtx.config?.eval_write_prompt_template_id,
+    }, _metrics);
   }
 
   /**

@@ -580,44 +580,62 @@ export class LLMService {
    * 支持 OpenAI 兼容格式 (json.data) 与 Google / 统一格式 (json.models) 的动态解析。
    * 仅在请求成功时更新缓存时间戳。
    */
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：152 行单方法拆为
+  // 「校验 → 缓存命中 → 远端拉取 → 缓存同步 → 回读」编排 + 纯数据/IO 子方法
+  //（原始单方法已删除，等价结构见 git 历史）。
   async listLLM(input: ListLLMInput, output: ListLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     if (!input.llm_provider_id) {
       throw new ValidationError('llm_provider_id 不能为空');
     }
-
-    const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: input.llm_provider_id },
-    ]);
-    if (!row) {
-      throw new NotFoundError('LLMProvider', input.llm_provider_id);
-    }
-    const provider = row as unknown as LLMProviderRecord;
-
+    const provider = await this.soProviderRow(input.llm_provider_id);
     // 缓存命中：仅在未指定 force 且缓存未过期时直接返回本地模型列表
     if (isModelsCacheFresh(provider.models_fetched_at, input.force, IdGenerator.now())) {
-      const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
-        conditions: [
-          { field: 'llm_provider_id', operator: Operator.EQ, value: input.llm_provider_id },
-        ],
-        order_by: [{ field: 'llm_title', direction: Direction.ASC }],
-      });
-      output.list = rows as unknown as LLMCacheRecord[];
+      await this.soCachedModels(input.llm_provider_id, output);
       output.cached = true;
       return true;
     }
+    const parsedModels = await this.fetchRemoteModels(provider, output);
+    if (!parsedModels) {
+      return false;
+    }
+    await this.syncModelCache(input.llm_provider_id, parsedModels, metrics);
+    await this.updateModelsCacheTimestamp(input.llm_provider_id);
+    await this.soCachedModels(input.llm_provider_id, output);
+    output.cached = false;
+    return true;
+  }
 
+  /** 提供商行加载（数据处理；不存在即 NotFound） */
+  private async soProviderRow(providerId: string): Promise<LLMProviderRecord> {
+    const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: providerId },
+    ]);
+    if (!row) {
+      throw new NotFoundError('LLMProvider', providerId);
+    }
+    return row as unknown as LLMProviderRecord;
+  }
+
+  /** 缓存模型回读（数据处理；按 llm_title 升序写入 output.list） */
+  private async soCachedModels(providerId: string, output: ListLLMOutput): Promise<void> {
+    const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
+      conditions: [
+        { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+      ],
+      order_by: [{ field: 'llm_title', direction: Direction.ASC }],
+    });
+    output.list = rows as unknown as LLMCacheRecord[];
+  }
+
+  /** 远端拉取并解析模型列表（逻辑控制；失败写 output 错误并返回 null，不写缓存时间戳） */
+  private async fetchRemoteModels(
+    provider: LLMProviderRecord,
+    output: ListLLMOutput,
+  ): Promise<Array<{ modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }> | null> {
     const strategy = LLMStrategyFactory.soStrategyById(provider);
     const req = strategy.buildListModelsRequest(provider);
-    let parsedModels: Array<{
-      modelId: string;
-      displayName?: string;
-      description?: string;
-      maxTokens?: number;
-      raw: Record<string, unknown>;
-    }> = [];
-
     try {
       const httpInput = Object.assign(new ExecRequestInput(), {
         url: req.url,
@@ -633,104 +651,73 @@ export class LLMService {
         const errDetail = extractRemoteErrorDetail(res.status, res.bodyText);
         output.error = `获取模型列表失败: ${errDetail}`;
         output.error_code = 'REMOTE_ERROR';
-        // 请求失败时不写入/更新缓存时间戳
-        return false;
+        return null;
       }
-      const rawText = res.bodyText;
       let json: unknown = {};
       try {
-        json = JSON.parse(rawText);
+        json = JSON.parse(res.bodyText);
       } catch {
         json = {};
       }
-      parsedModels = strategy.parseListModelsResponse(json, rawText);
+      return strategy.parseListModelsResponse(json, res.bodyText);
     } catch (err) {
       output.error = err instanceof Error ? err.message : String(err);
       output.error_code = 'CONNECT_ERROR';
-      // 异常时不写入/更新缓存时间戳
-      return false;
+      return null;
     }
+  }
 
-    // upsert 到 llm_cache 表（按 llm_provider_id + llm_title 判重）
+  /** 模型缓存同步（逻辑控制）：逐条 upsert + 清理本次结果中已失效的模型 */
+  private async syncModelCache(
+    providerId: string,
+    parsedModels: Array<{ modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }>,
+    metrics?: Metrics,
+  ): Promise<void> {
     for (const m of parsedModels) {
-      const modelId = m.modelId;
-      if (!modelId) continue;
-
-      const existing = await this.relationDb.selectOne(LLM_CACHE_TABLE, [
-        {
-          field: 'llm_provider_id',
-          operator: Operator.EQ,
-          value: input.llm_provider_id,
-        },
-        { field: 'llm_title', operator: Operator.EQ, value: modelId },
-      ]);
-
-      if (existing) {
-        await this.relationDb.update(
-          LLM_CACHE_TABLE,
-          toCacheUpdatePatch(m),
-          [
-            {
-              field: 'llm_provider_id',
-              operator: Operator.EQ,
-              value: input.llm_provider_id,
-            },
-            { field: 'llm_title', operator: Operator.EQ, value: modelId },
-          ],
-        );
-      } else {
-        try {
-          await this.relationDb.insert(LLM_CACHE_TABLE, toCacheInsertRecord(input.llm_provider_id, m));
-        } catch (err) {
-          // skip duplicate insert
-          metrics?.warn('LLMService.listLLM 模型缓存写入失败（可能重复，跳过该条）', {
-            error: err instanceof Error ? err.message : String(err),
-            llm_provider_id: input.llm_provider_id,
-            model: m.modelId,
-          });
-        }
-      }
+      if (!m.modelId) continue;
+      await this.upsertModelCacheRow(providerId, m, metrics);
     }
-
     // 清理缓存中已失效的模型（本次拉取结果中已不存在的模型，如已下线的 Shutdown / Retiring）
     const freshIds = parsedModels.map((m) => m.modelId).filter((id) => !!id);
     if (freshIds.length > 0) {
       await this.relationDb.delete(LLM_CACHE_TABLE, [
-        {
-          field: 'llm_provider_id',
-          operator: Operator.EQ,
-          value: input.llm_provider_id,
-        },
-        {
-          field: 'llm_title',
-          operator: Operator.NOT_IN,
-          value: freshIds,
-        },
+        { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+        { field: 'llm_title', operator: Operator.NOT_IN, value: freshIds },
       ]);
     }
+  }
 
-    // 仅在成功获取并保存模型后更新模型列表缓存时间
-    // 刷新模型列表缓存时间戳
-    await this.relationDb.update(
-      LLM_PROVIDER_TABLE,
-      [{ field: 'models_fetched_at', value: IdGenerator.now() }],
-      [{ field: 'id', operator: Operator.EQ, value: input.llm_provider_id }],
-    );
-
-    // 返回该提供商下所有模型
-    const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
-      conditions: [
-        {
-          field: 'llm_provider_id',
-          operator: Operator.EQ,
-          value: input.llm_provider_id,
-        },
-      ],
-      order_by: [{ field: 'llm_title', direction: Direction.ASC }],
-    });
-    output.list = rows as unknown as LLMCacheRecord[];
-    output.cached = false;
-    return true;
+  /** 单条模型缓存 upsert（数据处理；按 provider_id + llm_title 判重；重复插入失败仅告警跳过） */
+  private async upsertModelCacheRow(
+    providerId: string,
+    m: { modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> },
+    metrics?: Metrics,
+  ): Promise<void> {
+    const existing = await this.relationDb.selectOne(LLM_CACHE_TABLE, [
+      { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+      { field: 'llm_title', operator: Operator.EQ, value: m.modelId },
+    ]);
+    if (existing) {
+      await this.relationDb.update(
+        LLM_CACHE_TABLE,
+        toCacheUpdatePatch(m),
+        [
+          { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+          { field: 'llm_title', operator: Operator.EQ, value: m.modelId },
+        ],
+      );
+      return;
+    }
+    try {
+      await this.relationDb.insert(LLM_CACHE_TABLE, toCacheInsertRecord(providerId, m));
+    } catch (err) {
+      // skip duplicate insert
+      metrics?.warn('LLMService.listLLM 模型缓存写入失败（可能重复，跳过该条）', {
+        error: err instanceof Error ? err.message : String(err),
+        llm_provider_id: providerId,
+        model: m.modelId,
+      });
+    }
   }
 
   private async updateModelsCacheTimestamp(providerId: string): Promise<void> {

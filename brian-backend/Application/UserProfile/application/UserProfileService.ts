@@ -221,22 +221,48 @@ export class UserProfileService {
     return true;
   }
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：133 行单方法拆为
+  // 「版本 → 语料 → 维度分析 → 落库 → 写回 → 清理 → 出参」编排 + 子方法
+  //（原始单方法已删除，等价结构见 git 历史）。
   async generateProfile(input: GenerateProfileInput, output: GenerateProfileOutput, _ctx: UserProfileContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sessionId = input.session_id;
     const config = await this.getConfig();
+    const newVersion = await this.soNextProfileVersion();
+    const conversationText = await this.soConversationText(sessionId, config);
+    const enabledDirs = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ], [{ field: 'weight', direction: Direction.DESC }]);
+    const targetDirs = input.directions && input.directions.length > 0 ? input.directions : null;
+    const filteredDirs = targetDirs
+      ? enabledDirs.filter((d) => targetDirs.includes(String(d.direction_key)))
+      : enabledDirs;
+    const dimensionData = await this.analyzeDimensions(filteredDirs, conversationText, config, metrics);
+    const summary = this.buildSummaryFromDimensions(dimensionData, enabledDirs);
+    const now = IdGenerator.now();
+    const recordId = IdGenerator.generate();
+    await this.saveProfileRecord(sessionId, newVersion, summary, recordId, now);
+    await this.saveDimensionData(recordId, dimensionData, now);
+    if (sessionId) {
+      await this.saveWriterProfile(sessionId, metrics);
+    }
+    await this.cleanupOldVersions(Number(config.profile_retention_versions ?? 20), sessionId, metrics);
+    output.profile = this.toProfileOutput(newVersion, now, sessionId, dimensionData, summary);
+    return true;
+  }
 
-    let currentMaxVersion = 0;
+  /** 解析下一个画像版本号（数据处理；全表按 version 降序取 1） */
+  private async soNextProfileVersion(): Promise<number> {
     const maxRows = await this.relationDb.select(USER_PROFILE_RECORD_TABLE, {
       order_by: [{ field: 'version', direction: Direction.DESC }],
       page: { current: 1, size: 1 },
     });
     const maxRow = maxRows.length > 0 ? maxRows[0] : null;
-    if (maxRow) {
-      currentMaxVersion = Number(maxRow.version);
-    }
-    const newVersion = currentMaxVersion + 1;
+    return (maxRow ? Number(maxRow.version) : 0) + 1;
+  }
 
+  /** 会话语料文本（数据处理；InfoCore lastN 读取，best-effort 失败回退空串） */
+  private async soConversationText(sessionId: string | undefined, config: Record<string, unknown>): Promise<string> {
     const maxSampleCount = Number(config.max_conversation_sample_count ?? 500);
     const lastNOut = new LastNInfoOutput();
     try {
@@ -249,32 +275,24 @@ export class UserProfileService {
         new InfoCoreContext(),
       );
     } catch { /* best-effort */ }
-
-    const conversationText = (lastNOut.list ?? [])
+    return (lastNOut.list ?? [])
       .map((r) => `${r.info_type}: ${r.info}`)
       .join('\n');
+  }
 
-    const targetDirs = input.directions && input.directions.length > 0
-      ? input.directions
-      : null;
-
-    const enabledDirs = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [
-      { field: 'enable', operator: Operator.EQ, value: 1 },
-    ], [{ field: 'weight', direction: Direction.DESC }]);
-
-    const filteredDirs = targetDirs
-      ? enabledDirs.filter((d) => targetDirs.includes(String(d.direction_key)))
-      : enabledDirs;
-
+  /** 逐维度 LLM 分析（逻辑控制；单维度失败以空值占位，不中断整体） */
+  private async analyzeDimensions(
+    filteredDirs: Array<Record<string, unknown>>,
+    conversationText: string,
+    config: Record<string, unknown>,
+    metrics?: Metrics,
+  ): Promise<Array<{ direction_key: string; value: string; evidence: string; confidence: number }>> {
     const dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }> = [];
-
     for (const dir of filteredDirs) {
       const key = String(dir.direction_key);
       const name = String(dir.direction_name);
       try {
-        const analysis = await this.analyzeDimensionWithLLM(
-          key, name, conversationText, dir, config, metrics,
-        );
+        const analysis = await this.analyzeDimensionWithLLM(key, name, conversationText, dir, config, metrics);
         dimensionData.push({
           direction_key: key,
           value: JSON.stringify(analysis.value ?? null),
@@ -290,11 +308,17 @@ export class UserProfileService {
         });
       }
     }
+    return dimensionData;
+  }
 
-    const summary = this.buildSummaryFromDimensions(dimensionData, enabledDirs);
-
-    const now = IdGenerator.now();
-    const recordId = IdGenerator.generate();
+  /** 画像记录落库（数据处理） */
+  private async saveProfileRecord(
+    sessionId: string | undefined,
+    newVersion: number,
+    summary: string,
+    recordId: string,
+    now: number,
+  ): Promise<void> {
     await this.relationDb.insert(USER_PROFILE_RECORD_TABLE, [
       { field: 'id', value: recordId },
       { field: 'created', value: now },
@@ -305,7 +329,14 @@ export class UserProfileService {
       { field: 'generated_at', value: now },
       { field: 'change_summary', value: newVersion === 1 ? 'Initial profile' : `Profile version ${newVersion}` },
     ]);
+  }
 
+  /** 维度数据落库（数据处理） */
+  private async saveDimensionData(
+    recordId: string,
+    dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }>,
+    now: number,
+  ): Promise<void> {
     for (const d of dimensionData) {
       await this.relationDb.insert(USER_PROFILE_DIMENSION_DATA_TABLE, [
         { field: 'id', value: IdGenerator.generate() },
@@ -318,41 +349,47 @@ export class UserProfileService {
         { field: 'confidence', value: d.confidence },
       ]);
     }
+  }
 
-    if (sessionId) {
-      try {
-        const saveOut = new SaveUserProfileOutput();
-        await this.writerAgent.saveUserProfile(
-          Object.assign(new SaveUserProfileInput(), { session_id: sessionId }),
-          saveOut,
-          new WriterAgentContext(),
-        );
-      } catch (err) {
-        /* best-effort */
-        metrics?.warn('UserProfileService.generateProfile 写回 writer 画像失败（best-effort）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_id: sessionId,
-        });
-      }
+  /** 画像写回 Writer（逻辑控制；best-effort：失败仅告警） */
+  private async saveWriterProfile(sessionId: string, metrics?: Metrics): Promise<void> {
+    try {
+      const saveOut = new SaveUserProfileOutput();
+      await this.writerAgent.saveUserProfile(
+        Object.assign(new SaveUserProfileInput(), { session_id: sessionId }),
+        saveOut,
+        new WriterAgentContext(),
+      );
+    } catch (err) {
+      /* best-effort */
+      metrics?.warn('UserProfileService.generateProfile 写回 writer 画像失败（best-effort）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
     }
+  }
 
-    await this.cleanupOldVersions(Number(config.profile_retention_versions ?? 20), sessionId, metrics);
-
+  /** 出参画像组装（数据处理；维度值反序列化） */
+  private toProfileOutput(
+    newVersion: number,
+    now: number,
+    sessionId: string | undefined,
+    dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }>,
+    summary: string,
+  ): Record<string, unknown> {
     const profile: Record<string, unknown> = {};
     for (const d of dimensionData) {
       let parsed: unknown = null;
       try { parsed = JSON.parse(d.value); } catch { parsed = d.value; }
       profile[d.direction_key] = { value: parsed, confidence: d.confidence };
     }
-
-    output.profile = {
+    return {
       version: newVersion,
       generated_at: now,
       session_id: sessionId,
       dimensions: profile,
       profile_summary: summary,
     };
-    return true;
   }
 
   async saveUserPreference(input: SaveUserPreferenceInput, _output: SaveUserPreferenceOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,

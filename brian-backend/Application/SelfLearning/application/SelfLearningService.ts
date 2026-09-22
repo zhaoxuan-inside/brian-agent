@@ -61,6 +61,26 @@ import {
   ConfigSelfLearningInput, ConfigSelfLearningOutput,
 } from '../domain/types';
 
+/** Tag 图谱边记录（内部类型） */
+interface TagGraphEdge {
+  edge_id: string;
+  from_tag_id: string;
+  to_tag_id: string;
+  edge_type: string;
+  weight: number;
+  similarity: number;
+  is_active: boolean;
+  last_activation_time: number;
+}
+
+/** Tag 图谱收集工作集（内部类型） */
+interface TagGraphCollections {
+  tagNodeMap: Map<string, { tag_id: string; tag_name: string; info_count: number; created: number }>;
+  tagActivationMap: Map<string, number>;
+  edgeList: TagGraphEdge[];
+  edgeKeySet: Set<string>;
+}
+
 export class SelfLearningService {
   // ===== 修改后的字段：系统唯一的定时器 = 随机概率触发器 =====
   // 手动触发改为"立即完整执行一次"的单轮任务，不再安装 document/tag 等 per-mode 定时器；
@@ -1659,8 +1679,39 @@ export class SelfLearningService {
   // soTagGraph
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：156 行单方法拆为
+  // 「取数 → 收集 → 建节点 → 过滤 → 裁剪 → 出参」编排 + 纯数据子方法
+  //（原始单方法已删除，等价结构见 git 历史）。
   async soTagGraph(input: GetTagGraphInput, output: GetTagGraphOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
+    const graphSelOutput = await this.soTagGraphNodes();
+    const onlyActive = input.only_active ?? true;
+    const minWeight = input.min_weight ?? 0;
+    const limit = input.limit ?? 500;
+    const collections = await this.collectTagGraph(graphSelOutput.list as unknown as Array<Record<string, unknown>>, onlyActive);
+    let filteredNodes = this.buildTagNodes(collections);
+    let filteredEdges = collections.edgeList;
+    if (onlyActive) {
+      filteredEdges = filteredEdges.filter((e) => e.is_active === true);
+      filteredNodes = this.filterNodesByEdges(filteredNodes, filteredEdges);
+    }
+    if (minWeight > 0) {
+      filteredEdges = filteredEdges.filter((e) => (e.weight as number) >= minWeight);
+      filteredNodes = this.filterNodesByEdges(filteredNodes, filteredEdges);
+    }
+    const orphanCount = this.countOrphanNodes(filteredNodes, filteredEdges);
+    if (limit > 0 && filteredNodes.length > limit) {
+      filteredNodes = this.applyTagLimit(filteredNodes, limit);
+      filteredEdges = this.filterEdgesByNodes(filteredEdges, filteredNodes);
+    }
+    output.nodes = filteredNodes;
+    output.edges = filteredEdges as unknown as Array<Record<string, unknown>>;
+    output.metadata = this.buildTagGraphMetadata(collections, orphanCount);
+    return true;
+  }
+
+  /** 图谱 Tag 节点查询（数据处理） */
+  private async soTagGraphNodes(): Promise<SelectGraphOutput> {
     const graphSelOutput = Object.assign(new SelectGraphOutput(), {});
     await this.graphDBAccess.selectGraph(
       Object.assign(new SelectGraphInput(), {
@@ -1670,90 +1721,85 @@ export class SelfLearningService {
       graphSelOutput,
       new GraphContext(),
     );
+    return graphSelOutput;
+  }
 
-    const onlyActive = input.only_active ?? true;
-    const minWeight = input.min_weight ?? 0;
-    const limit = input.limit ?? 500;
-
-    const tagNodeMap = new Map<string, { tag_id: string; tag_name: string; info_count: number; created: number }>();
-    const tagActivationMap = new Map<string, number>();
-    const edgeList: Array<Record<string, unknown>> = [];
-    const edgeKeySet = new Set<string>();
-
-    for (const node of graphSelOutput.list) {
+  /** 收集 Tag 节点信息/边/激活计数（逻辑控制；遍历图谱节点及其邻居） */
+  private async collectTagGraph(nodeList: Array<Record<string, unknown>>, onlyActive: boolean): Promise<TagGraphCollections> {
+    const collections: TagGraphCollections = {
+      tagNodeMap: new Map(),
+      tagActivationMap: new Map(),
+      edgeList: [],
+      edgeKeySet: new Set(),
+    };
+    for (const node of nodeList) {
       if (!('node_type' in node)) continue;
-      const nid = node.id;
-      const content = (node as unknown as { content?: Record<string, unknown> }).content;
-      const tagName = (content?.tag as string) || (content?.tag_name as string) || '';
-
-      let infoCount = 0;
-      if (tagName) {
-        infoCount = await this.relationDb.count('info_tag', [
-          { field: 'tag', operator: Operator.EQ, value: tagName },
-        ]);
-      }
-
-      const createdTime = (node.created as number) || 0;
-      tagNodeMap.set(nid, {
-        tag_id: nid,
-        tag_name: tagName,
-        info_count: infoCount,
-        created: createdTime,
-      });
-
-      const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
-      const neighborInput = Object.assign(new GetGraphNeighborsInput(), {
-        node_id: nid,
-        direction: GraphDirection.BOTH,
-      });
-      await this.graphDBAccess.soGraphNeighbors(neighborInput, neighbors, new GraphContext());
-
-      for (const n of neighbors.list) {
-        if (!('node_type' in n)) continue;
-        const nEdge = n as unknown as Record<string, unknown>;
-        const edgeId = (nEdge.id as string) || (nEdge.edge_id as string) || '';
-        const fromId = (nEdge.from_node_id as string) || '';
-        const toId = (nEdge.to_node_id as string) || '';
-        const edgeType = (nEdge.edge_type as string) || 'similarTo';
-        const weight = (nEdge.weight as number) || 0;
-        const similarity = (nEdge.similarity as number) || weight;
-        const isActive = (nEdge.is_active as boolean) || (nEdge.is_active as number) === 1;
-        const lastActivation = (nEdge.last_activation_time as number) || 0;
-
-        const edgeKey = `${fromId}_${toId}_${edgeType}`;
-        if (edgeKeySet.has(edgeKey)) continue;
-        edgeKeySet.add(edgeKey);
-
-        if (isActive || !onlyActive) {
-          const activationCount = (nEdge.activation_count as number) || 0;
-          tagActivationMap.set(
-            fromId,
-            (tagActivationMap.get(fromId) || 0) + activationCount,
-          );
-          tagActivationMap.set(
-            toId,
-            (tagActivationMap.get(toId) || 0) + activationCount,
-          );
-        }
-
-        edgeList.push({
-          edge_id: edgeId,
-          from_tag_id: fromId,
-          to_tag_id: toId,
-          edge_type: edgeType,
-          weight,
-          similarity,
-          is_active: isActive,
-          last_activation_time: lastActivation,
-        });
-      }
+      const nid = String(node.id);
+      collections.tagNodeMap.set(nid, await this.soTagNodeInfo(node));
+      await this.collectTagEdges(nid, node, collections, onlyActive);
     }
+    return collections;
+  }
 
-    const maxActivation = Math.max(1, ...Array.from(tagActivationMap.values(), (v) => v || 0));
+  /** 单 Tag 节点信息（数据处理；info_tag 计数 + 创建时间） */
+  private async soTagNodeInfo(node: Record<string, unknown>): Promise<{ tag_id: string; tag_name: string; info_count: number; created: number }> {
+    const nid = String(node.id);
+    const content = (node as unknown as { content?: Record<string, unknown> }).content;
+    const tagName = (content?.tag as string) || (content?.tag_name as string) || '';
+    let infoCount = 0;
+    if (tagName) {
+      infoCount = await this.relationDb.count('info_tag', [
+        { field: 'tag', operator: Operator.EQ, value: tagName },
+      ]);
+    }
+    return { tag_id: nid, tag_name: tagName, info_count: infoCount, created: (node.created as number) || 0 };
+  }
 
+  /** 邻居边收集（逻辑控制；去重 + 激活计数累计：仅 active 边计入，only_active=false 时全部计入） */
+  private async collectTagEdges(nid: string, node: Record<string, unknown>, collections: TagGraphCollections, onlyActive: boolean): Promise<void> {
+    const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
+    const neighborInput = Object.assign(new GetGraphNeighborsInput(), {
+      node_id: nid,
+      direction: GraphDirection.BOTH,
+    });
+    await this.graphDBAccess.soGraphNeighbors(neighborInput, neighbors, new GraphContext());
+    for (const n of neighbors.list) {
+      if (!('node_type' in n)) continue;
+      const nEdge = n as unknown as Record<string, unknown>;
+      const edge = this.toTagEdgeRecord(nEdge);
+      const edgeKey = `${edge.from_tag_id}_${edge.to_tag_id}_${edge.edge_type}`;
+      if (collections.edgeKeySet.has(edgeKey)) continue;
+      collections.edgeKeySet.add(edgeKey);
+      if (edge.is_active || !onlyActive) {
+        const activationCount = (nEdge.activation_count as number) || 0;
+        collections.tagActivationMap.set(edge.from_tag_id, (collections.tagActivationMap.get(edge.from_tag_id) || 0) + activationCount);
+        collections.tagActivationMap.set(edge.to_tag_id, (collections.tagActivationMap.get(edge.to_tag_id) || 0) + activationCount);
+      }
+      collections.edgeList.push(edge);
+    }
+  }
+
+/** 邻居行 → Tag 边记录（数据处理） */
+private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
+    const weight = (nEdge.weight as number) || 0;
+    return {
+      edge_id: (nEdge.id as string) || (nEdge.edge_id as string) || '',
+      from_tag_id: (nEdge.from_node_id as string) || '',
+      to_tag_id: (nEdge.to_node_id as string) || '',
+      edge_type: (nEdge.edge_type as string) || 'similarTo',
+      weight,
+      similarity: (nEdge.similarity as number) || weight,
+      is_active: (nEdge.is_active as boolean) || (nEdge.is_active as number) === 1,
+      last_activation_time: (nEdge.last_activation_time as number) || 0,
+    };
+  }
+
+  /** 构建 Tag 节点（数据处理；激活计数对数尺度映射节点大小） */
+  private buildTagNodes(collections: TagGraphCollections): Array<Record<string, unknown>> {
+    const maxActivation = Math.max(1, ...Array.from(collections.tagActivationMap.values(), (v) => v || 0));
     const nodes: Array<Record<string, unknown>> = [];
-    for (const [nid, info] of tagNodeMap) {
-      const activationCount = tagActivationMap.get(nid) || 0;
+    for (const [nid, info] of collections.tagNodeMap) {
+      const activationCount = collections.tagActivationMap.get(nid) || 0;
       const nodeSize = Math.round((0.3 + 0.7 * (Math.log(activationCount + 1) / Math.log(maxActivation + 1))) * 100) / 100;
       nodes.push({
         tag_id: nid,
@@ -1764,56 +1810,49 @@ export class SelfLearningService {
         created: info.created,
       });
     }
+    return nodes;
+  }
 
-    let filteredNodes = nodes;
-    let filteredEdges = edgeList;
-
-    if (onlyActive) {
-      filteredEdges = edgeList.filter((e) => e.is_active === true);
-      const activeTagIds = new Set<string>();
-      for (const e of filteredEdges) {
-        activeTagIds.add(e.from_tag_id as string);
-        activeTagIds.add(e.to_tag_id as string);
-      }
-      filteredNodes = nodes.filter((n) => activeTagIds.has(n.tag_id as string));
+  /** 保留与边相连的节点（数据处理） */
+  private filterNodesByEdges(nodes: Array<Record<string, unknown>>, edges: TagGraphEdge[]): Array<Record<string, unknown>> {
+    const touchedIds = new Set<string>();
+    for (const e of edges) {
+      touchedIds.add(e.from_tag_id);
+      touchedIds.add(e.to_tag_id);
     }
+    return nodes.filter((n) => touchedIds.has(n.tag_id as string));
+  }
 
-    if (minWeight > 0) {
-      filteredEdges = filteredEdges.filter((e) => (e.weight as number) >= minWeight);
-      const weightedTagIds = new Set<string>();
-      for (const e of filteredEdges) {
-        weightedTagIds.add(e.from_tag_id as string);
-        weightedTagIds.add(e.to_tag_id as string);
-      }
-      filteredNodes = filteredNodes.filter((n) => weightedTagIds.has(n.tag_id as string));
-    }
+  /** 保留与节点相连的边（数据处理） */
+  private filterEdgesByNodes(edges: TagGraphEdge[], nodes: Array<Record<string, unknown>>): TagGraphEdge[] {
+    const keptIds = new Set(nodes.map((n) => n.tag_id as string));
+    return edges.filter((e) => keptIds.has(e.from_tag_id) || keptIds.has(e.to_tag_id));
+  }
 
+  /** 孤立节点计数（数据处理；过滤后无边相连的节点） */
+  private countOrphanNodes(nodes: Array<Record<string, unknown>>, edges: TagGraphEdge[]): number {
     let orphanCount = 0;
-    for (const n of filteredNodes) {
-      const hasEdge = filteredEdges.some(
-        (e) => e.from_tag_id === n.tag_id || e.to_tag_id === n.tag_id,
-      );
+    for (const n of nodes) {
+      const hasEdge = edges.some((e) => e.from_tag_id === n.tag_id || e.to_tag_id === n.tag_id);
       if (!hasEdge) orphanCount++;
     }
+    return orphanCount;
+  }
 
-    if (limit > 0 && filteredNodes.length > limit) {
-      filteredNodes.sort((a, b) => (b.activation_count as number) - (a.activation_count as number));
-      filteredNodes = filteredNodes.slice(0, limit);
-      const limitedTagIds = new Set(filteredNodes.map((n) => n.tag_id as string));
-      filteredEdges = filteredEdges.filter(
-        (e) => limitedTagIds.has(e.from_tag_id as string) || limitedTagIds.has(e.to_tag_id as string),
-      );
-    }
+  /** 超限时按激活数裁剪节点（数据处理；激活降序截取 limit 条） */
+  private applyTagLimit(nodes: Array<Record<string, unknown>>, limit: number): Array<Record<string, unknown>> {
+    nodes.sort((a, b) => (b.activation_count as number) - (a.activation_count as number));
+    return nodes.slice(0, limit);
+  }
 
-    output.nodes = filteredNodes;
-    output.edges = filteredEdges;
-    output.metadata = {
-      total_nodes: tagNodeMap.size,
-      total_edges: edgeList.length,
-      active_edges: edgeList.filter((e) => e.is_active === true).length,
+  /** 图谱元数据组装（数据处理） */
+  private buildTagGraphMetadata(collections: TagGraphCollections, orphanCount: number): Record<string, unknown> {
+    return {
+      total_nodes: collections.tagNodeMap.size,
+      total_edges: collections.edgeList.length,
+      active_edges: collections.edgeList.filter((e) => e.is_active === true).length,
       orphan_nodes: orphanCount,
     };
-    return true;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

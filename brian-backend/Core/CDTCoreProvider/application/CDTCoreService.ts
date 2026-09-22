@@ -235,62 +235,65 @@ export class CDTCoreService {
   // 登录（含验证码支持）
   // ============================================================
 
+  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：157 行单方法拆为
+  // 「导航 → 验证码等待 → 凭据填写 → 登录校验 → 凭证落库」编排 + 子方法
+  //（原始单方法已删除，等价结构见 git 历史）。
   async login(input: CDTCoreLoginInput, output: CDTCoreLoginOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.domain) throw new ValidationError('domain 不能为空');
     if (!input.loginUrl) throw new ValidationError('loginUrl 不能为空');
-
     await this.ensureCDT();
-
     // 导航到登录页面
     await this.navigate(
       Object.assign(new CDTCoreNavigateInput(), { url: input.loginUrl }),
       new CDTCoreNavigateOutput(), new CDTCoreContext(),
     );
-
     await this.humanDelay(1000, 2000);
-
-    // 检查是否有验证码
-    let hasCaptcha = false;
-    if (input.captchaSelector) {
-      const captchaCheck = await this.exec('Runtime.evaluate', {
-        expression: `!!document.querySelector('${input.captchaSelector.replace(/'/g, "\\'")}')`,
-      });
-      hasCaptcha = !!(captchaCheck.result as { result?: { value?: boolean } })?.result?.value;
+    const captchaSolved = await this.waitForCaptchaSolved(input);
+    if (!captchaSolved) {
+      output.error = '验证码填写超时';
+      return false;
     }
-
-    if (hasCaptcha) {
-      // 弹窗提示：聚焦到 Chrome 窗口，让用户手动填写验证码
-      await this.exec('Runtime.evaluate', {
-        expression: `alert('请在本窗口中填写验证码，完成后程序将继续执行')`,
-      });
-
-      // 弹窗只阻塞当前 tab；持续轮询检测验证码是否完成
-      const timeout = (input.captchaTimeoutSeconds || 120) * 1000;
-      const start = Date.now();
-      let solvable = false;
-
-      while (Date.now() - start < timeout) {
-        const checkResult = await this.exec('Runtime.evaluate', {
-          expression: `!!document.querySelector('${input.captchaSelector!.replace(/'/g, "\\'")}')`,
-        });
-        const stillVisible = !!(checkResult.result as { result?: { value?: boolean } })?.result?.value;
-
-        if (!stillVisible) {
-          solvable = true;
-          break;
-        }
-
-        await this.humanDelay(2000, 3000);
-      }
-
-      if (!solvable) {
-        output.error = '验证码填写超时';
-        return false;
-      }
+    await this.fillLoginCredentials(input);
+    await this.humanDelay(2000, 5000);
+    if (input.loggedInIndicator && !(await this.checkLoggedIn(input))) {
+      output.error = '登录失败，未检测到登录成功标识';
+      return false;
     }
+    output.sessionId = await this.saveLoginCredential(input);
+    return true;
+  }
 
-    // 填写用户名
+  /** 元素存在性检测（数据处理；selector 单引号转义） */
+  private async soElementExists(selector: string): Promise<boolean> {
+    const checkResult = await this.exec('Runtime.evaluate', {
+      expression: `!!document.querySelector('${selector.replace(/'/g, "\\'")}')`,
+    });
+    return !!(checkResult.result as { result?: { value?: boolean } })?.result?.value;
+  }
+
+  /** 验证码等待（逻辑控制）：有验证码时弹窗提示并轮询至消失；无验证码直接通过 */
+  private async waitForCaptchaSolved(input: CDTCoreLoginInput): Promise<boolean> {
+    if (!input.captchaSelector || !(await this.soElementExists(input.captchaSelector))) {
+      return true;
+    }
+    // 弹窗提示：聚焦到 Chrome 窗口，让用户手动填写验证码（弹窗只阻塞当前 tab；持续轮询检测是否完成）
+    await this.exec('Runtime.evaluate', {
+      expression: `alert('请在本窗口中填写验证码，完成后程序将继续执行')`,
+    });
+    const timeout = (input.captchaTimeoutSeconds || 120) * 1000;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (!(await this.soElementExists(input.captchaSelector))) {
+        return true;
+      }
+      await this.humanDelay(2000, 3000);
+    }
+    return false;
+  }
+
+  /** 填写用户名/密码并提交（逻辑控制；字段与提交按钮均缺省可跳过） */
+  private async fillLoginCredentials(input: CDTCoreLoginInput): Promise<void> {
     if (input.usernameField && input.username) {
       await this.typeText(
         Object.assign(new CDTCoreTypeTextInput(), { selector: input.usernameField, text: input.username }),
@@ -298,8 +301,6 @@ export class CDTCoreService {
       );
       await this.humanDelay(500, 1000);
     }
-
-    // 填写密码
     if (input.passwordField && input.password) {
       await this.typeText(
         Object.assign(new CDTCoreTypeTextInput(), { selector: input.passwordField, text: input.password }),
@@ -307,90 +308,58 @@ export class CDTCoreService {
       );
       await this.humanDelay(500, 1500);
     }
-
-    // 提交
     if (input.submitSelector) {
       await this.click(
         Object.assign(new CDTCoreClickInput(), { selector: input.submitSelector }),
         new CDTCoreClickOutput(), new CDTCoreContext(),
       );
     }
+  }
 
-    // 等待登录完成
-    await this.humanDelay(2000, 5000);
+  /** 登录成功标识检测（逻辑控制） */
+  private async checkLoggedIn(input: CDTCoreLoginInput): Promise<boolean> {
+    return this.soElementExists(input.loggedInIndicator as string);
+  }
 
-    // 检测登录成功指示器
-    if (input.loggedInIndicator) {
-      const indicatorResult = await this.exec('Runtime.evaluate', {
-        expression: `!!document.querySelector('${input.loggedInIndicator.replace(/'/g, "\\'")}')`,
-      });
-      const loggedIn = !!(indicatorResult.result as { result?: { value?: boolean } })?.result?.value;
-
-      if (!loggedIn) {
-        output.error = '登录失败，未检测到登录成功标识';
-        return false;
-      }
-    }
-
-    // 保存 Cookies
+  /** 登录凭证落库（逻辑控制；Cookies 快照 + 按域 upsert；返回新 sessionId） */
+  private async saveLoginCredential(input: CDTCoreLoginInput): Promise<string> {
     const cookiesOut = new CDTCoreGetCookiesOutput();
-    await this.getCookies(
-      new CDTCoreGetCookiesInput(),
-      cookiesOut, new CDTCoreContext(),
-    );
-
+    await this.getCookies(new CDTCoreGetCookiesInput(), cookiesOut, new CDTCoreContext());
     const sessionId = IdGenerator.generate();
-
-    // 保存或更新登录凭证
     const existing = this.relationDb.queryRaw<CDTLoginCredentialRecord>(
       `SELECT "id" FROM "${CDT_LOGIN_CREDENTIAL_TABLE}" WHERE "domain" = ?`,
       [input.domain],
     );
-
     const now = IdGenerator.now();
     if (existing.length > 0) {
-      this.relationDb.update(
-        CDT_LOGIN_CREDENTIAL_TABLE,
-        [
-          { field: 'updated', value: now },
-          { field: 'login_url', value: input.loginUrl },
-          { field: 'username_field', value: input.usernameField },
-          { field: 'password_field', value: input.passwordField },
-          { field: 'submit_selector', value: input.submitSelector },
-          { field: 'logged_in_indicator', value: input.loggedInIndicator },
-          { field: 'captcha_selector', value: input.captchaSelector || '' },
-          { field: 'username', value: input.username },
-          { field: 'password', value: input.password },
-          { field: 'cookies_json', value: cookiesOut.cookiesJson },
-          { field: 'session_id', value: sessionId },
-          { field: 'last_login_time', value: now },
-          { field: 'login_success', value: 1 },
-        ],
-        [{ field: 'id', operator: Operator.EQ, value: existing[0].id }],
-      );
+      this.relationDb.update(CDT_LOGIN_CREDENTIAL_TABLE, this.soCredentialFields(input, cookiesOut.cookiesJson, sessionId, now), [{ field: 'id', operator: Operator.EQ, value: existing[0].id }]);
     } else {
       this.relationDb.insert(CDT_LOGIN_CREDENTIAL_TABLE, [
         { field: 'id', value: IdGenerator.generate() },
         { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'domain', value: input.domain },
-        { field: 'login_url', value: input.loginUrl },
-        { field: 'username_field', value: input.usernameField },
-        { field: 'password_field', value: input.passwordField },
-        { field: 'submit_selector', value: input.submitSelector },
-        { field: 'logged_in_indicator', value: input.loggedInIndicator },
-        { field: 'captcha_selector', value: input.captchaSelector || '' },
-        { field: 'username', value: input.username },
-        { field: 'password', value: input.password },
-        { field: 'cookies_json', value: cookiesOut.cookiesJson },
-        { field: 'session_id', value: sessionId },
-        { field: 'last_login_time', value: now },
-        { field: 'login_success', value: 1 },
+        ...this.soCredentialFields(input, cookiesOut.cookiesJson, sessionId, now),
       ]);
     }
+    return sessionId;
+  }
 
-    output.sessionId = sessionId;
-    return true;
+  /** 凭证字段组装（数据处理；update patch 与 insert record 共用主体） */
+  private soCredentialFields(input: CDTCoreLoginInput, cookiesJson: string, sessionId: string, now: number): Array<{ field: string; value: unknown }> {
+    return [
+      { field: 'updated', value: now },
+      { field: 'login_url', value: input.loginUrl },
+      { field: 'username_field', value: input.usernameField },
+      { field: 'password_field', value: input.passwordField },
+      { field: 'submit_selector', value: input.submitSelector },
+      { field: 'logged_in_indicator', value: input.loggedInIndicator },
+      { field: 'captcha_selector', value: input.captchaSelector || '' },
+      { field: 'username', value: input.username },
+      { field: 'password', value: input.password },
+      { field: 'cookies_json', value: cookiesJson },
+      { field: 'session_id', value: sessionId },
+      { field: 'last_login_time', value: now },
+      { field: 'login_success', value: 1 },
+    ];
   }
 
   // ============================================================
