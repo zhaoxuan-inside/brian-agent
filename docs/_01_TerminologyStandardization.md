@@ -1,6 +1,9 @@
 # 名词标准化
 
-`msg_id`：消息ID，用户输入，或者Agent输出等都认为是一条独立的消息；
+`msg_id`：消息ID，用户输入，或者Agent输出等都认为是一条独立的消息；统一标识为 `msg_id`（2026-09-22 裁决：SSE 协议字段、领域引用字段（selected_msg_ids/citing_msg_ids）、runtime_message_part 外键列全部统一；聊天消息概念禁用同义词 `message_id`）；
+`message_id`：队列消息ID，MQ 消息队列中信封实体的标识（MQService/MQCoreService 域专有）；与聊天消息 `msg_id` 是不同概念，禁止混用；
+`run`：运行，一次完整问答/任务在 Runtime 的执行实例（runtime_run 表，run_id 为主键）；run_id 是问答业务维度标识，与 trace_id（可观测维度）相互独立、各自成体系（口径见 RunGatewayService）；
+`assistant`：LLM 协议角色，runtime_message.role 的枚举取值之一（user/assistant/system/tool），仅限 wire 协议映射上下文使用；领域层消息产生的角色用 `info_creator_role`（USER/AGENT/SKILL/MCP/LEARNING）表达，禁止把 assistant 当领域概念扩散；
 `interact_id`：交互ID，表示一次输入和输出消息，包含一个或多个msg_id；
 `work_id`：工作ID，表示一次完整的工作ID，用户或者学习等一次输入经过整个Agent系统所有的消息的集合，包含一个或多个interact_id；
 `session_id`：用户的一个会话中的内容，包含一个或多个work_id;
@@ -8,7 +11,7 @@
 
 `provider`：Provider，通过 Repository 设计模式封装底层资源操作的统一入口，解耦具体资源与系统；Base 层包含 RelationDBProvider、GraphDBProvider、VectorDBProvider、LLMProvider、MCPProvider、MQProvider、PromptsProvider、SkillProvider、SoulProvider 共 9 个 Provider；
 `repository`：仓储，DDD 中的概念，封装数据访问的接口层，由 infrastructure 层提供具体实现；
-`context`：上下文，方法执行的环境信息，继承 Context 基类；与 input（输入参数）、output（返回内容）共同构成方法签名 `Boolean method(Input input, Context context, Output output)`；
+`context`：上下文，方法执行的环境信息，继承 Context 基类；与 input（输入参数）、output（返回内容）、metrics（衡量对象）、report（上报对象）共同构成方法签名 `Boolean method(Input input, Output output, Context context, Metrics metrics, Report report)`（五参规范见 DevStandards.md §3）；
 `input`：输入参数对象，继承 Input 基类，封装方法调用的输入参数；
 `output`：输出参数对象，继承 Output 基类，通过引用传递回传方法的执行结果；
 `aop`：面向切面编程（Aspect-Oriented Programming），通过代理模式为方法注入日志记录、耗时统计等横切关注点；
@@ -44,3 +47,4 @@
 `info_type`：信息类型，标识一条 info 记录"是什么"，用于区分请求、回复与 Agent 执行过程中的中间产物；有效值包括 REQUEST（用户请求/编排输入）、RESPONSE（模型/编排的最终回复）、THINK（Agent 思考）、SKILL（技能调用结果）、MCP（MCP 调用结果）、ACT（Agent 行动/执行）、REFLECT（Agent 反思）；
 `info_creator_role`：信息产生方角色，标识一条 info 记录"是谁产生的"；有效值包括 USER（用户）、LEARNING（自学习）、AGENT（Agent）、SKILL（技能）、MCP（MCP 工具）；
 `info_creator_id`：信息产生方实例 ID，标识具体哪个实例产生了该 info；UUID 类型，可为空；USER 与 LEARNING 没有具体实例，其值为空字符串；AGENT、SKILL、MCP 对应各自的实例 ID（如 agent_id、skill_id、mcp_id）；
+`conversation`：对话学习，SelfLearning 域的学习输入通道概念（learning source 枚举值 conversation/document 之一，指以 chat_session 历史为输入的学习模式）；conversation ≠ session（会话容器实体），禁止用 conversation 指代 session 本身（登记日期 2026-09-22）；

@@ -277,11 +277,11 @@ export class ChatService {
       let toolMsgIds = new Set<string>();
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
-        const partRows = this.relationDb.queryRaw<{ message_id: string }>(
-          `SELECT DISTINCT "message_id" FROM "runtime_message_part" WHERE "run_id" IN (${placeholders}) AND "part_type" = 'tool'`,
+        const partRows = this.relationDb.queryRaw<{ msg_id: string }>(
+          `SELECT DISTINCT "msg_id" FROM "runtime_message_part" WHERE "run_id" IN (${placeholders}) AND "part_type" = 'tool'`,
           runIds,
         );
-        toolMsgIds = new Set((partRows ?? []).map((r) => r.message_id));
+        toolMsgIds = new Set((partRows ?? []).map((r) => r.msg_id));
       }
       const runTraceMap = new Map<string, string>();
       if (runIds.length > 0) {
@@ -476,7 +476,7 @@ export class ChatService {
             const runtimeMessageIds = runtimeMessages.map((r) => String(r.id ?? '')).filter(Boolean);
             if (runtimeMessageIds.length > 0) {
               await this.relationDb.delete(RUNTIME_MESSAGE_PART_TABLE, [
-                { field: 'message_id', operator: Operator.IN, value: runtimeMessageIds },
+                { field: 'msg_id', operator: Operator.IN, value: runtimeMessageIds },
               ]);
             }
             await this.relationDb.delete(RUNTIME_MESSAGE_TABLE, [

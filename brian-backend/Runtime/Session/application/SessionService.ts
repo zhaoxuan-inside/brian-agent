@@ -142,7 +142,7 @@ export class SessionService {
       token_count: input.token_count ?? 0,
     });
     await this.relationDb.insert(RUNTIME_MESSAGE_TABLE, record);
-    output.message_id = String(record[0].value);
+    output.msg_id = String(record[0].value);
     output.seq = seq;
     return true;
   }
@@ -184,9 +184,9 @@ export class SessionService {
   async addPart(input: AddPartInput, output: AddPartOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
-    const partOrder = await this.soNextPartOrder(input.message_id);
+    const partOrder = await this.soNextPartOrder(input.msg_id);
     const record = newRecord({
-      message_id: input.message_id,
+      msg_id: input.msg_id,
       run_id: input.run_id ?? '',
       part_type: input.part_type,
       part_order: partOrder,
@@ -209,7 +209,7 @@ export class SessionService {
   /** 查询消息内下一个 Part 序号（逻辑控制） */
   private async soNextPartOrder(messageId: string): Promise<number> {
     const rows = await this.relationDb.select(RUNTIME_MESSAGE_PART_TABLE, {
-      conditions: [{ field: 'message_id', operator: Operator.EQ, value: messageId }],
+      conditions: [{ field: 'msg_id', operator: Operator.EQ, value: messageId }],
       order_by: [{ field: 'part_order', direction: 'DESC' }],
       page: { current: 1, size: 1 },
     });
@@ -288,23 +288,23 @@ export class SessionService {
     });
   }
 
-  /** 批量查询一页消息的全部 Parts（逻辑控制；按 message_id IN 一次取回） */
+  /** 批量查询一页消息的全部 Parts（逻辑控制；按 msg_id IN 一次取回） */
   private async soPartsByMessageIds(messageIds: string[]): Promise<Map<string, PartRecord[]>> {
     const partsByMessage = new Map<string, PartRecord[]>();
     if (!messageIds.length) {
       return partsByMessage;
     }
     const partRows = await this.relationDb.select(RUNTIME_MESSAGE_PART_TABLE, {
-      conditions: [{ field: 'message_id', operator: Operator.IN, value: messageIds }],
+      conditions: [{ field: 'msg_id', operator: Operator.IN, value: messageIds }],
       order_by: [{ field: 'part_order', direction: 'ASC' }],
     });
     for (const partRow of partRows) {
       const record = this.toPartRecord(partRow);
-      const bucket = partsByMessage.get(record.message_id);
+      const bucket = partsByMessage.get(record.msg_id);
       if (bucket) {
         bucket.push(record);
       } else {
-        partsByMessage.set(record.message_id, [record]);
+        partsByMessage.set(record.msg_id, [record]);
       }
     }
     return partsByMessage;
@@ -335,7 +335,7 @@ export class SessionService {
   private toPartRecord(p: Record<string, unknown>): PartRecord {
     return {
       id: String(p.id),
-      message_id: String(p.message_id),
+      msg_id: String(p.msg_id),
       run_id: String(p.run_id ?? '') || undefined,
       part_type: String(p.part_type) as PartRecord['part_type'],
       part_order: Number(p.part_order),

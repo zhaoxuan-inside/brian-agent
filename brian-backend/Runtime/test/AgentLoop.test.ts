@@ -191,7 +191,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     expect(output.result).toBe('北京今天晴，22°C。');
     expect(output.iterations).toBe(2);
     expect(output.token_usage).toEqual({ input_tokens: 18, output_tokens: 17 });
-    expect(output.message_id).toBeTruthy();
+    expect(output.msg_id).toBeTruthy();
 
     // 会话持久化：user + 2 assistant；tool Part 配对完成
     const so = new SoMessagesInput();

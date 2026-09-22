@@ -528,8 +528,8 @@ export class RunGatewayService {
               // 发送美化排版后的最终回复
               parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
               // 同步更新消息库，保证历史问答（info_raw 聚合）能读到美化后的排版
-              if (loopOutput.message_id) {
-                await this.updateAssistantMessageContent(loopOutput.message_id, finalResult);
+              if (loopOutput.msg_id) {
+                await this.updateAssistantMessageContent(loopOutput.msg_id, finalResult);
               }
             } else {
               parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
@@ -652,12 +652,12 @@ export class RunGatewayService {
       await this.relationDb.update(RUNTIME_MESSAGE_PART_TABLE, newPatch({
         content,
       }), [
-        { field: 'message_id', operator: Operator.EQ, value: messageId },
+        { field: 'msg_id', operator: Operator.EQ, value: messageId },
         { field: 'part_type', operator: Operator.EQ, value: 'text' },
       ]);
     } catch (err) {
       this.logger?.warn?.('更新 assistant 消息内容失败（best-effort）', {
-        message_id: messageId,
+        msg_id: messageId,
         error: err instanceof Error ? err.message : String(err),
       });
     }

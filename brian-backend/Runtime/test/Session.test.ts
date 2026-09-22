@@ -61,7 +61,7 @@ describe('Session', () => {
     input.content = content;
     const output = new AddMessageOutput();
     await sessionAccess.addMessage(input, output, new SessionContext());
-    return output.message_id;
+    return output.msg_id;
   }
 
   it('addSession 应该幂等：重复 session_key 返回既有 id', async () => {
@@ -100,7 +100,7 @@ describe('Session', () => {
     const partIds: string[] = [];
     for (const partType of [PartType.Reasoning, PartType.Text]) {
       const input = new AddPartInput();
-      input.message_id = mid;
+      input.msg_id = mid;
       input.part_type = partType;
       input.content = partType === PartType.Reasoning ? '思考' : '正文';
       const output = new AddPartOutput();
@@ -121,7 +121,7 @@ describe('Session', () => {
     const sessionId = await makeSession();
     const mid = await makeMessage(sessionId, 'assistant', '');
     const input = new AddPartInput();
-    input.message_id = mid;
+    input.msg_id = mid;
     input.part_type = PartType.Text;
     input.content = '你好';
     const output = new AddPartOutput();

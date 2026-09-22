@@ -91,7 +91,7 @@ export class SessionSchemaInitializer {
         "id"          TEXT    NOT NULL PRIMARY KEY,
         "created"     INTEGER NOT NULL,
         "updated"     INTEGER NOT NULL,
-        "message_id"  TEXT    NOT NULL,
+        "msg_id"      TEXT    NOT NULL,
         "run_id"      TEXT    NOT NULL DEFAULT '',
         "part_type"   TEXT    NOT NULL,
         "part_order"  INTEGER NOT NULL,
@@ -106,8 +106,16 @@ export class SessionSchemaInitializer {
         "elapsed_ms"  INTEGER NOT NULL DEFAULT 0
       )
     `);
+    // 存量库列名迁移（2026-09-22 术语统一）：聊天消息标识统一为 msg_id（与 SSE 协议、
+    // 前端契约一致）；message_id 仅保留给 MQ 队列信封概念。RENAME 后索引定义自动跟随，
+    // 索引名保持不变；列不存在（新库）或已迁移时报错忽略，幂等。
+    try {
+      this.relationDb.executeRaw(
+        `ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" RENAME COLUMN message_id TO msg_id`,
+      );
+    } catch { /* message_id 列不存在（新库或已迁移）时忽略 */ }
     this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_MESSAGE_PART_TABLE}_message" ON "${RUNTIME_MESSAGE_PART_TABLE}" ("message_id", "part_order")`,
+      `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_MESSAGE_PART_TABLE}_message" ON "${RUNTIME_MESSAGE_PART_TABLE}" ("msg_id", "part_order")`,
     );
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_MESSAGE_PART_TABLE}_status" ON "${RUNTIME_MESSAGE_PART_TABLE}" ("status")`,

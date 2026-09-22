@@ -87,7 +87,7 @@ export class ExecAgentLoopOutput extends Output {
   /** 内层循环轮数（= 消费预算数） */
   iterations!: number;
   /** 最终 assistant 消息 ID */
-  message_id?: string;
+  msg_id?: string;
 }
 
 // ---------------------------------------------------------------------------

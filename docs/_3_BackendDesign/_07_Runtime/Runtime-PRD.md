@@ -165,7 +165,7 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 |------|---------|------|
 | `runtime_session` | id, created, updated, session_key, title, agent_def_id, status, last_seq | 会话 |
 | `runtime_message` | id, created, updated, session_id, run_id, role, seq, token_usage | 消息（user/assistant） |
-| `runtime_message_part` | id, created, updated, message_id, run_id, part_type, part_order, content, tool_id, input_json, output_json, status, block_type, block_meta, token_count, elapsed_ms | Part（reasoning/text/tool/steering/subtask） |
+| `runtime_message_part` | id, created, updated, msg_id, run_id, part_type, part_order, content, tool_id, input_json, output_json, status, block_type, block_meta, token_count, elapsed_ms | Part（reasoning/text/tool/steering/subtask） |
 | `runtime_run` | id, created, updated, session_id, agent_def_id, parent_run_id, lane, status, stop_reason, queue_mode, budget_total, budget_used, accepted_at, started_at, settled_at | 运行记录 |
 | `runtime_event` | id, created, updated, session_id, run_id, seq, event_type, payload_json, ts | 持久化事件日志（重放源） |
 | `runtime_agent_def` | id, created, updated, name, mode, prompt_text, prompt_template_id, model_id, tools_json, permissions_json, temperature, budget_default, status | 声明式 Agent 定义 |

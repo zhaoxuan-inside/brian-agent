@@ -652,8 +652,8 @@ export class AgentLoopService {
     add.run_id = ctx.runId;
     add.token_count = turn.outputTokens;
     await this.session.addMessage(add, messageOut, new SessionCtx(), ctx.metrics);
-    ctx.lastMessageId = messageOut.message_id;
-    await this.persistTurnParts(ctx, messageOut.message_id, turn);
+    ctx.lastMessageId = messageOut.msg_id;
+    await this.persistTurnParts(ctx, messageOut.msg_id, turn);
   }
 
   /** 持久化轮内 Parts（逻辑控制）：reasoning/text 直存；tool pending 待配对 */
@@ -675,7 +675,7 @@ export class AgentLoopService {
   /** 新增 Part 并发布 part.created（逻辑控制）；直存 Part 落库即终态 completed；透传 metrics */
   private async addTurnPart(ctx: LoopRunContext, messageId: string, partType: PartType, content: string): Promise<void> {
     const input = new AddPartInput();
-    input.message_id = messageId;
+    input.msg_id = messageId;
     input.run_id = ctx.runId;
     input.part_type = partType;
     input.content = content;
@@ -691,7 +691,7 @@ export class AgentLoopService {
   /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制；透传 metrics） */
   private async addToolPart(ctx: LoopRunContext, messageId: string, call: ParsedToolCall): Promise<void> {
     const input = new AddPartInput();
-    input.message_id = messageId;
+    input.msg_id = messageId;
     input.run_id = ctx.runId;
     input.part_type = PartType.Tool;
     input.tool_id = call.tool_id;
@@ -844,9 +844,9 @@ export class AgentLoopService {
   /** 发布 part.created（逻辑控制） */
   private async publishPartCreated(ctx: LoopRunContext, messageId: string, partId: string, partType: PartType, _toolId?: string): Promise<void> {
     if (partType === PartType.Text) {
-      ctx.report?.pushBusinessEvent(BusinessEvent.ReplyCreated, { message_id: messageId, part_id: partId });
+      ctx.report?.pushBusinessEvent(BusinessEvent.ReplyCreated, { msg_id: messageId, part_id: partId });
     } else if (partType === PartType.Reasoning) {
-      ctx.report?.pushBusinessEvent(BusinessEvent.ThinkCreated, { message_id: messageId, part_id: partId });
+      ctx.report?.pushBusinessEvent(BusinessEvent.ThinkCreated, { msg_id: messageId, part_id: partId });
     }
     // tool Part 不发 created（由 tool.started 表达执行生命周期）
   }
@@ -866,7 +866,7 @@ export class AgentLoopService {
     output.result = ctx.result;
     output.iterations = ctx.iterations;
     output.token_usage = { input_tokens: ctx.inputTokens, output_tokens: ctx.outputTokens };
-    output.message_id = ctx.lastMessageId;
+    output.msg_id = ctx.lastMessageId;
     output.error = ctx.error;
     output.work_id = ctx.workId;
   }

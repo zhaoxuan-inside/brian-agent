@@ -1,3 +1,16 @@
+## [2026-09-22e] refactor: 术语治理——msg_id/message_id 裁决统一 + 术语表补登记
+
+**变更原因**：评审发现术语漂移违反「先登记后使用」：① 聊天消息标识 `msg_id`（SSE 协议/前端契约/领域引用）与 `message_id`（runtime_message_part 列）两套名字并存，同概念双词导致检索链路断裂；② run（641 处）/conversation（62 处）/assistant（50 处）活跃使用但未入术语表；③ 术语表自身残留旧 3 参签名与五参规范冲突。
+
+**裁决与修改**：
+  - **msg_id 统一**：聊天消息标识全局统一为 `msg_id`——runtime_message_part 列 RENAME COLUMN 幂等迁移（SessionSchemaInitializer，存量库启动自动迁移，索引定义自动跟随）、Session/Loop/Runs/Chat/dev-server 代码与 Runtime 三份 PRD 同步；`message_id` 保留给 MQ 队列信封概念（不同概念，分别登记，禁用混用）。
+  - **术语表登记**：run（运行实例；run_id 业务维度与 trace_id 可观测维度独立）、assistant（LLM 协议角色边界，域内用 info_creator_role 表达产生方）、conversation（SelfLearning 对话学习通道概念，≠session 实体）、message_id（MQ 队列消息ID）。
+  - **术语表修正**：旧 3 参签名示例改为五参规范签名。
+
+**影响的端点**：无接口行为变更；SSE 协议字段未动（本就是 msg_id）；存量 SQLite 启动时自动执行列迁移。
+
+**验证（门禁）**：typecheck 全绿；npm test 5/5 工作区通过（Runtime 47 + Application 486 含迁移库初始化路径）；lint 0 errors。
+
 ## [2026-09-22d] 修复：吞异常治理——182 处空/注释 catch 可见化（容忍保留、诊断走 Metrics 网关）
 
 **变更原因**：评审发现 329 处空/仅注释 catch 系统性吞错（业务层 181 + SchemaInitializer 幂等 23 + dev-server 51 等），失败不可见违反 DevStandards §7.1「Metrics 是日志唯一网关」与统一签名异常约定。

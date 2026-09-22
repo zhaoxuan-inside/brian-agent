@@ -31,7 +31,7 @@ CREATE TABLE runtime_message (
 
 CREATE TABLE runtime_message_part (
   id TEXT PRIMARY KEY, created TEXT, updated TEXT,
-  message_id TEXT,                   -- 引用 runtime_message.id
+  msg_id TEXT,                   -- 引用 runtime_message.id
   run_id TEXT,
   part_type TEXT,                    -- reasoning | text | tool | steering | subtask
   part_order INTEGER,
@@ -54,8 +54,8 @@ CREATE TABLE runtime_session_config ( -- 配置表（config_key 主键，与其�
 export class AddSessionInput extends Input { session_key!: string; title?: string; }
 export class AddSessionOutput extends Output { session_id!: string; }
 export class AddMessageInput extends Input { session_id!: string; run_id?: string; role!: 'user'|'assistant'; content!: string; }
-export class AddMessageOutput extends Output { message_id!: string; seq!: number; }
-export class AddPartInput extends Input { message_id!: string; run_id?: string; part_type!: PartType; content?: string; tool_id?: string; input_json?: string; block_type?: string; block_meta?: string; }
+export class AddMessageOutput extends Output { msg_id!: string; seq!: number; }
+export class AddPartInput extends Input { msg_id!: string; run_id?: string; part_type!: PartType; content?: string; tool_id?: string; input_json?: string; block_type?: string; block_meta?: string; }
 export class AddPartOutput extends Output { part_id!: string; part_order!: number; }
 export class UpdatePartInput extends Input { part_id!: string; status?: PartStatus; content_patch?: string; output_json?: string; token_count?: number; }
 export class UpdatePartOutput extends Output {}
@@ -104,5 +104,5 @@ export class ConfigSessionInput extends Input { max_context_items?: number; }
 1. **枚举化**：`MessageRole/SessionStatus/PartType/PartStatus` 以 Enum 注册（有限值域唯一注册点），DB 存储值不变。
 2. **列更名**：`runtime_message.token_usage` → `token_count`（与 Part 表同名同义；SessionSchemaInitializer 内 RENAME COLUMN 兼容迁移）。
 3. **忙锁移除**：见 §5.4；并发控制唯一入口为 Runs `session lane`。
-4. **性能**：`soMessages` 分页下推 SQL（`page: {current,size}`）+ Parts 按 `message_id IN` 批量查询，消除 N+1 与内存分页。
+4. **性能**：`soMessages` 分页下推 SQL（`page: {current,size}`）+ Parts 按 `msg_id IN` 批量查询，消除 N+1 与内存分页。
 5. **冗余消除**：`addSession` 落账 id 直接取 `newRecord` 首字段（与 `addMessage` 一致），去掉插入后回查。

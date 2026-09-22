@@ -1807,16 +1807,16 @@ async function buildThinkingBlocksFromRuntime(
     `SELECT id, role, content, seq, token_count FROM runtime_message WHERE run_id = ? ORDER BY seq ASC`,
     [runId],
   );
-  const partRows = relationDb.queryRaw<{ id: string; message_id: string; part_type: string; part_order: number; content: string; tool_id: string; input_json: string; output_json: string; status: string; elapsed_ms: number; token_count: number }>(
-    `SELECT id, message_id, part_type, part_order, content, tool_id, input_json, output_json, status, elapsed_ms, token_count
+  const partRows = relationDb.queryRaw<{ id: string; msg_id: string; part_type: string; part_order: number; content: string; tool_id: string; input_json: string; output_json: string; status: string; elapsed_ms: number; token_count: number }>(
+    `SELECT id, msg_id, part_type, part_order, content, tool_id, input_json, output_json, status, elapsed_ms, token_count
      FROM runtime_message_part WHERE run_id = ? ORDER BY part_order ASC`,
     [runId],
   );
   const partsByMessage = new Map<string, typeof partRows>();
   for (const p of partRows) {
-    const list = partsByMessage.get(p.message_id) ?? [];
+    const list = partsByMessage.get(p.msg_id) ?? [];
     list.push(p);
-    partsByMessage.set(p.message_id, list);
+    partsByMessage.set(p.msg_id, list);
   }
 
   const userMsg = msgRows.find((m) => m.role === 'user');

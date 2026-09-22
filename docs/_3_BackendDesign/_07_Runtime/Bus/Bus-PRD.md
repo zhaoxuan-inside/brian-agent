@@ -50,14 +50,14 @@ export class ConfigBusInput extends Input { heartbeat_ms?: number; retention_day
 |------|-------------|--------|-----------|
 | `run.accepted` | `{run_id, accepted_at, queued}` | Runs.submitRun | `loading` |
 | `run.status` | `{run_id, phase:'start'\|'finishing'\|'end'\|'error', stop_reason?}` | Loop/Runs | `done`/`error` |
-| `part.created` | `{run_id, message_id, part_id, part_type, tool_id?}` | Loop | `agent_created`/`agent_status` |
+| `part.created` | `{run_id, msg_id, part_id, part_type, tool_id?}` | Loop | `agent_created`/`agent_status` |
 | `part.delta` | `{run_id, part_id, field:'text'\|'reasoning', delta}` | Loop 流处理 | `agent_thinking`/`text`（打字机） |
 | `part.updated` | `{run_id, part_id, status, token_count?}` | Loop | `agent_reflection` |
 | `tool.launch` | `{run_id, part_id, tool_id, input}` | ToolExecutor | `agent_action` |
 | `tool.result` | `{run_id, part_id, tool_id, status:'ok'\|'error'\|'denied'\|'aborted', output, elapsed_ms, reason?}` | ToolExecutor | `agent_output`/`agent_error` |
 | `permission.asked` | `{run_id, ask_id, question, kind:'clarify'\|'confirm'\|'approve', patterns?}` | ask_user/权限门 | `intent_confirmation_required`/`clarification_required` |
 | `plan.updated` | `{run_id, steps:[{id, description, status}]}` | update_plan | `plan_created`/`agent_dag_created` |
-| `message.block` | `{run_id, message_id, block:{id, type, content, meta, streaming_status}}` | 块 chunker | `text`（Block 事件） |
+| `message.block` | `{run_id, msg_id, block:{id, type, content, meta, streaming_status}}` | 块 chunker | `text`（Block 事件） |
 | `error` | `{run_id?, reason, message}` | 各层 fail-loud | `error` |
 
 ## 5. 内部流程要点

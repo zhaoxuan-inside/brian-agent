@@ -81,7 +81,7 @@ export interface MessageWithParts {
  */
 export interface PartRecord {
   id: string;
-  message_id: string;
+  msg_id: string;
   run_id?: string;
   part_type: PartType;
   part_order: number;
@@ -141,7 +141,7 @@ export class AddMessageInput extends Input {
 /** addMessage 出参 */
 export class AddMessageOutput extends Output {
   /** 消息 ID */
-  message_id!: string;
+  msg_id!: string;
   /** 会话内消息序号 */
   seq!: number;
 }
@@ -153,7 +153,7 @@ export class AddMessageOutput extends Output {
 /** addPart 入参 */
 export class AddPartInput extends Input {
   /** 引用 runtime_message.id */
-  message_id!: string;
+  msg_id!: string;
   /** 引用 runtime_run.id（可选） */
   run_id?: string;
   /** Part 类型 */
