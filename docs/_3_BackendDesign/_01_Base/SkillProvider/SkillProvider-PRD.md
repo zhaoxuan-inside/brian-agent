@@ -329,13 +329,21 @@ id / created / updated 为系统字段，由 Provider 维护，不通过 Data �
 
 ### LocalSandbox
 
+- **沙箱运行时契约（2026-09-22 起生效，decisions.md 同日登记）**：python/bash 解释器是**硬性部署前置条件**，由 `SandboxRuntime.resolveSandboxRuntime` 在 SkillService 构造期按平台规范定位并做 `--version` 校验，结果注入 LocalSandbox——执行路径零平台分支、零运行时试错、零降级：
+  - Python：POSIX → `python3`；win32 → `py -3` → `python`（同一解释器的平台规范名/安装别名，属**定位**而非兜底）；版本校验必须为 Python 3.x；
+  - Bash：POSIX → `bash`；win32 → Git Bash 标准安装点（Program Files / LOCALAPPDATA）→ PATH，**显式拒绝 WSL shim**（`System32\bash.exe` 的 cwd/env 翻译语义与沙箱契约不兼容）；**Windows 部署前置 = Git for Windows**；
+  - 部署旋钮：`BRIAN_SANDBOX_PYTHON` / `BRIAN_SANDBOX_BASH` 环境变量指定即**唯一候选**（不落回自动定位），指向错误即启动失败；
+  - **fail-fast**：任一解释器缺失/版本不符 → `SandboxRuntimeError` → SkillService 构造失败 → 后端拒绝启动，错误信息含该平台的精确修复指引；不存在任何"无沙箱降级执行"路径；
+  - LocalSandbox 附带超时判定按 Node 语义（`killed/signal`）识别——修复了原 `ETIMEDOUT` 字符串匹配在 POSIX 上恒不生效、超时文案从未产出的问题。
 - 基于 child_process.execSync，在独立临时目录中执行；
 - 不依赖 Docker / chroot，适用于开发和轻量部署场景；
 - 工作目录：`/tmp/skill-sandbox-{uuid}/`，执行后通过 rmSync 销毁；
 - cwd 限定在工作目录内；
 - 参数通过环境变量 SKILL_PARAM_* 注入，子进程通过 process.env / os.environ 读取；
 - 脚本退出码非 0 时仍返回其 stdout，保留脚本打印的业务错误信息（如「缺少关键词」）；
-- 执行超时（ETIMEDOUT）或进程被杀且无输出时，返回明确的「执行超时」错误信息，不吞成空串。
+- 执行超时（killed/signal）或进程被杀且无输出时，返回明确的「执行超时」错误信息，不吞成空串。
+
+> 与 IsolatedVMSandbox 的加载链边界：isolated-vm 的「预编译缺失 → 源码编译」同样不是降级——编译产物提供**同等的 V8 隔离能力**，只是构建方式不同；两者共同满足"危险命令必须在沙箱中完成，无降级"的产品约束。
 
 ## 6. 重要内容
 

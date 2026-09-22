@@ -17,16 +17,22 @@ import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { IdGenerator } from '../../../ToolProvider/IdGenerator';
+import type { SandboxRuntime } from './SandboxRuntime';
 
 export interface LocalSandboxResult {
   stdout: string;
 }
 
 export class LocalSandbox {
+  private readonly runtime: SandboxRuntime;
   private readonly timeoutMs: number;
   private readonly maxBufferBytes: number;
 
-  constructor(timeoutMs = 15000, maxBufferBytes = 1024 * 1024) {
+  // ===== 修改后（2026-09-22 沙箱运行时契约）：解释器由启动期 resolveSandboxRuntime 解析注入，
+  // 执行路径零平台分支。原实现硬编码 `python3`/`bash`（Windows 上无 python3 命令名、bash 依赖
+  // WSL/Git Bash，属隐式环境假设），已删除（原始代码见 git 历史）。
+  constructor(runtime: SandboxRuntime, timeoutMs = 15000, maxBufferBytes = 1024 * 1024) {
+    this.runtime = runtime;
     this.timeoutMs = timeoutMs;
     this.maxBufferBytes = maxBufferBytes;
   }
@@ -57,8 +63,8 @@ export class LocalSandbox {
       }
 
       const cmd = type === 'py'
-        ? `python3 "${scriptPath}" 2>&1`
-        : `bash "${scriptPath}" 2>&1`;
+        ? `${this.runtime.python} "${scriptPath}" 2>&1`
+        : `${this.runtime.bash} "${scriptPath}" 2>&1`;
 
       let stdout = '';
       try {
@@ -73,11 +79,15 @@ export class LocalSandbox {
         // 脚本退出码非 0（如业务校验失败）时仍返回其 stdout，保留脚本打印的错误信息
         stdout = (e as { stdout?: string }).stdout ?? '';
         if (!stdout.trim()) {
-          const err = e as { code?: string | number; stderr?: string };
-          const code = String(err.code ?? '');
-          stdout = code.includes('TIMEOUT')
-            ? `执行超时（${this.timeoutMs}ms）`
-            : (err.stderr ?? String((e as Error).message ?? ''));
+          const err = e as { code?: string | number; stderr?: string; signal?: string; killed?: boolean; message?: string };
+          // ===== 修改后（2026-09-22）：超时判定按 Node 语义（execSync 超时 → killed=true 且
+          // signal=SIGTERM/SIGKILL）。原实现只匹配 err.code 含 'TIMEOUT'（Windows 侧重写法），
+          // POSIX 上超时恒落 err.stderr/message，PRD 承诺的明确超时文案从未生效。
+          if (err.killed || err.signal || String(err.code ?? '').includes('TIMEOUT') || /timed out/i.test(String(err.message ?? ''))) {
+            stdout = `执行超时（${this.timeoutMs}ms）`;
+          } else {
+            stdout = err.stderr ?? String(err.message ?? '');
+          }
         }
       }
 

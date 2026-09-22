@@ -22,6 +22,7 @@ import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
 import { SkillContext, SkillRecord, FileEntry, AddSkillInput, AddSkillOutput, GetSkillInput, GetSkillOutput, UpdateSkillInput, UpdateSkillOutput, DelSkillInput, DelSkillOutput, SoSkillInput, SoSkillOutput, ExecSkillInput, ExecSkillOutput, EnableSkillInput, EnableSkillOutput, SKILL_TABLE, SKILL_USAGE_TABLE, SKILL_CONFIG_TABLE } from '../domain/types';
+import { resolveSandboxRuntime } from '../infrastructure/sandbox/SandboxRuntime';
 
 const JS_SANDBOX_TIMEOUT_MS = 5000;
 const LOCAL_SANDBOX_TIMEOUT_MS = 15000;
@@ -36,7 +37,10 @@ export class SkillService {
     private readonly jsSandbox: ISandbox,
   ) {
     this.config = new ConfigService(relationDb, SKILL_CONFIG_TABLE);
-    this.localSandbox = new LocalSandbox(LOCAL_SANDBOX_TIMEOUT_MS);
+    // ===== 新增（2026-09-22 沙箱运行时契约）：构造期解析平台解释器并版本校验，
+    // 失败 fail-fast（SandboxRuntimeError）→ 组合根启动失败。沙箱为硬性部署契约，
+    // 缺解释器即拒绝启动，绝不做运行时降级执行。
+    this.localSandbox = new LocalSandbox(resolveSandboxRuntime(), LOCAL_SANDBOX_TIMEOUT_MS);
   }
 
   async initialize(): Promise<void> {
