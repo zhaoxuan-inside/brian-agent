@@ -14,7 +14,7 @@ import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
 import { SkillContext, SoSkillOutput, Context, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
-import type { DataObject } from '@brian-agent/base';
+import type { AddSkillInput, AddSkillOutput, DataObject } from '@brian-agent/base';
 import {
   SkillCoreContext,
   SkillCoreConfigRecord,
@@ -501,10 +501,10 @@ export class SkillCoreService {
           skill_md: String(parsed.skill_md || ''),
           enable: true,
         },
-      } as any,
-      addOut as any, new SkillContext(),
+      } as AddSkillInput,
+      addOut as unknown as AddSkillOutput, new SkillContext(),
     );
-    const newSkillId = (addOut as any).id;
+    const newSkillId = (addOut as unknown as { id?: string }).id;
     if (!newSkillId) {
       return [];
     }

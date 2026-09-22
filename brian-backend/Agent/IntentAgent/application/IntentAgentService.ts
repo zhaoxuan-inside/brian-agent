@@ -7,7 +7,7 @@ import {
   SoPromptInput, SoPromptOutput,
   SoSoulOutput, AddSoulOutput, SoulContext,
 } from '@brian-agent/base';
-import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
+import type { InfoCoreAccess, LLMCoreAccess, InfoRawRecord } from '@brian-agent/core';
 import {
   InfoCoreContext, LastNInfoInput, LastNInfoOutput,
   ContextInfoInput, ContextInfoOutput,
@@ -26,6 +26,12 @@ import {
   UnderstandRequirementInput, UnderstandRequirementOutput,
   INTENT_SOUL_BRIEF, INTENT_SOUL_CONTENT, INTENT_SOUL_USAGE,
 } from '../domain/types';
+
+/**
+ * lastNInfo 上游实际返回 InfoRawRecord（内容字段为 info，无 info_content）。
+ * 历史代码读取 info_content，运行时恒为 undefined——修复需上游结构对齐，此处仅对既有读取点做类型兜底。
+ */
+type LastNInfoRecord = InfoRawRecord & { info_content?: string };
 
 export class IntentAgentService {
   constructor(
@@ -194,7 +200,7 @@ export class IntentAgentService {
       await this.infoCore.lastNInfo(historyIn, historyOut, new InfoCoreContext());
 
       return (historyOut.list ?? [])
-        .map((info: any) => `[${info.info_creator_role || 'USER'}]: ${info.info_content}`)
+        .map((info: LastNInfoRecord) => `[${info.info_creator_role || 'USER'}]: ${info.info_content}`)
         .join('\n');
     } catch {
       return '';
@@ -213,7 +219,7 @@ export class IntentAgentService {
       await this.infoCore.context(ctxIn, ctxOut, new InfoCoreContext());
 
       return (ctxOut.categories?.pinned ?? [])
-        .map((pin: any, idx: number) => `${idx + 1}. ${pin.info ?? pin.content ?? ''}`)
+        .map((pin, idx: number) => `${idx + 1}. ${pin.info ?? pin.content ?? ''}`)
         .join('\n');
     } catch {
       return '';
@@ -235,11 +241,11 @@ export class IntentAgentService {
       const historyOut = new LastNInfoOutput();
       await this.infoCore.lastNInfo(historyIn, historyOut, new InfoCoreContext());
 
-      const matched = (historyOut.list ?? []).filter((info: any) =>
+      const matched = (historyOut.list ?? []).filter((info) =>
         allIds.includes(info.id) || (info.info_id && allIds.includes(info.info_id)),
       );
 
-      return matched.map((info: any) => `> ${info.info_content}`).join('\n');
+      return matched.map((info: LastNInfoRecord) => `> ${info.info_content}`).join('\n');
     } catch {
       return '';
     }

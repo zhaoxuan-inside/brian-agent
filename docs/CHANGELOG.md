@@ -1,3 +1,24 @@
+## [2026-09-22f] refactor: Config 模块消 any 清零——149 处 any 归零并取消 eslint 豁免
+
+**变更原因**：ConfigService.ts（145 处）/ConfigAccess.ts（4 处）共 149 处 `any` 使 Config 路由层完全绕过类型检查（实际 eslint 计数 149，超出任务预估的 104+4）；依赖（chatAccess 等 4 个跨模块 Access）与全部配置写入路由的真实类型在下游签名文件中齐备，具备诚实标注条件。
+
+**修改的方法**（仅类型注解 / `import type` / 类型断言，运行时逻辑与实参顺序零变更）：
+  - `ConfigService` 4 个依赖字段与构造参数：`any` → `ChatAccess/SelfLearningAccess/UserProfileAccess/VisualizationAccess`（同包跨模块走 `import type` 相对导入，编译期擦除不产生运行时循环依赖）。
+  - `getCurrentValue`：agent_context / visualization 分支的收集对象按实际参数位（Context 位）标注，读取处 `Record<string, unknown>` 断言；log 分支标注 `ConfigLogOutput`。
+  - `getConfigFromAccess` 泛型化 `<I, C, O extends object>`，10 个回调参数标注各模块真实 Input/Context/Output 类型。
+  - `extractConfigValue` 入参 `any` → `unknown`（TS 4.9+ `in` 窄化）。
+  - `setProviderEnabled` 9 个 enableXxx 调用标注 `EnableXxxInput/Output` 与对应 Context。
+  - 23 个 `writeXxxConfig` 路由处理器：input 标注对应模块 Input 类型（`value: unknown` 补 `as number/string/boolean` 断言），`VALID_LAYERS` 检查改 `(VALID_LAYERS as readonly string[]).includes(...)`。
+  - `ConfigAccess` 构造参数同步标注 4 个真实类型。
+  - eslint.backend.config.mjs：no-explicit-any 豁免清单全量取消（9 个业务文件 + Config 两文件），仅保留 dev-server.ts（工具链豁免，DDDStandards §6.2 登记在案）。
+  - 其余 4 文件同步清零：`AgentExecutionService`（6 处：env 接口补 `agent_type?` 后 3 处断言自然消失；StreamService meta 类型精确匹配后 3 处移除）、`IntentAgentService`（4 处：2 修复 + 2 处 `LastNInfoRecord` 最窄兜底——发现存量缺陷 `info.info_content` 恒 undefined 拼入历史 prompt，另行任务）、`SelfLearningService`（6 处：mqAccess 落真实类型 + 5 处断言收窄）、`UserProfileService`（4 处断言直接删除，上游本就满足 Condition[]/OrderBy[]）、`SkillCoreService`（3 处断言收窄，上游 SoSkillOutput 契约错位已注释标记）、`InfoCoreService`/`LogService`（各 1 处删除断言）。
+
+**关键类型决策**（详见 docs/decisions.md [2026-09-22e]）：writeXxxConfig 中名为 `output` 的局部变量历史实参位于第 3 参（Context 位），按实际参数位诚实标注为 Context 类型，不改名不换位；`writeLLMCoreQuotaConfig`（limitLLM 缺 `llm_provider_id`，运行时会抛 ValidationError）与 `writeAgentStrategyConfig`（`{config_key, value}` 语义不匹配）以断言 + 坑位警告注释标记，修复需改运行时代码，另行任务。
+
+**影响的端点**：无接口行为变更；Config 配置读写路由、Provider enable 切换、配置详情查询均为等价类型收敛。
+
+**验证（门禁）**：typecheck（@brian-agent/application）0 错误；两文件 no-explicit-any:error 专项 0 error；lint:backend 全量 0 errors；test/config.test.ts 139/139 通过。
+
 ## [2026-09-22e] refactor: 术语治理——msg_id/message_id 裁决统一 + 术语表补登记
 
 **变更原因**：评审发现术语漂移违反「先登记后使用」：① 聊天消息标识 `msg_id`（SSE 协议/前端契约/领域引用）与 `message_id`（runtime_message_part 列）两套名字并存，同概念双词导致检索链路断裂；② run（641 处）/conversation（62 处）/assistant（50 处）活跃使用但未入术语表；③ 术语表自身残留旧 3 参签名与五参规范冲突。

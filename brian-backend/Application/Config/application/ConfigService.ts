@@ -51,18 +51,44 @@ import type {
   ConfigSoulCoreInput, SoulCoreContext,
   UpdateSoulRuleInput, UpdateSoulRuleOutput,
   SoSoulRuleInput,
+  LimitLLMInput, LimitLLMOutput,
+  UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput,
+  UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput,
+  UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput,
+  UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput,
+  UpdateInfoConfigInput, UpdateInfoConfigOutput,
 } from '@brian-agent/core';
 
 import type {
   WriterAgentAccess, EvolutorAgentAccess, AgentLibraryAccess,
   AgentBuilderAccess, AgentExecutionAccess, AgentStrategyAccess, AgentContextAccess,
   PlannerAgentAccess,
+  ConfigPlannerAgentInput, ConfigPlannerAgentOutput, PlannerAgentContext,
+  ConfigWriterAgentInput, ConfigWriterAgentOutput, WriterAgentContext,
+  ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput, EvolutorAgentContext,
+  ConfigAgentContextInput, ConfigAgentContextOutput, AgentContextContext,
+  ConfigAgentLibraryInput, ConfigAgentLibraryOutput, AgentLibraryContext,
+  ConfigAgentBuilderInput, ConfigAgentBuilderOutput, AgentBuilderContext,
+  ConfigAgentExecutionInput, ConfigAgentExecutionOutput, AgentExecutionContext,
+  ConfigAgentStrategyInput, ConfigAgentStrategyOutput, AgentStrategyContext,
 } from '@brian-agent/agent';
 import type {
   LLMAccess, SoulAccess, SkillAccess, MCPAccess, PromptsAccess, LogAccess,
   MQAccess, GraphDBAccess, VectorDBAccess,
 } from '@brian-agent/base';
-import type { ConfigLogInput, LogContext } from '@brian-agent/base';
+import type {
+  ConfigLogInput, ConfigLogOutput, LogContext,
+  EnableLLMInput, EnableLLMOutput,
+  EnableSoulInput, EnableSoulOutput,
+  EnableSkillInput, EnableSkillOutput,
+  EnableMCPInput, EnableMCPOutput,
+  EnablePromptsInput, EnablePromptsOutput,
+  EnableMQInput, EnableMQOutput,
+  EnableGraphDBInput, EnableGraphDBOutput,
+  EnableVectorDBInput, EnableVectorDBOutput,
+  EnableDBInput, EnableDBOutput,
+  MQContext, GraphContext, VectorContext, DBContext,
+} from '@brian-agent/base';
 import type {
   AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput,
   DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput,
@@ -120,6 +146,16 @@ import {
 } from '../domain/types';
 import { ALL_CONFIG_REGISTRATIONS, LAYER_LABELS, MODULE_LABELS, CATEGORY_LABELS, MODULE_ENTITY_TYPES } from '../domain/configRegistrations';
 
+// 同包跨模块依赖仅做类型引用（import type 编译期擦除，不产生运行时循环依赖）
+import type { ChatAccess } from '../../Chat/access/ChatAccess';
+import type { ConfigChatInput, ConfigChatOutput, ChatContext } from '../../Chat/domain/types';
+import type { SelfLearningAccess } from '../../SelfLearning/access/SelfLearningAccess';
+import type { ConfigSelfLearningInput, ConfigSelfLearningOutput, SelfLearningContext } from '../../SelfLearning/domain/types';
+import type { UserProfileAccess } from '../../UserProfile/access/UserProfileAccess';
+import type { ConfigUserProfileInput, ConfigUserProfileOutput, UserProfileContext } from '../../UserProfile/domain/types';
+import type { VisualizationAccess } from '../../Visualization/access/VisualizationAccess';
+import type { ConfigVisualizationInput, ConfigVisualizationOutput, VisualizationContext } from '../../Visualization/domain/types';
+
 export class ConfigService {
   private readonly relationDb: RelationDBAccess;
   private readonly llmAccess: LLMAccess;
@@ -144,10 +180,10 @@ export class ConfigService {
   private readonly agentExecution: AgentExecutionAccess;
   private readonly agentStrategy: AgentStrategyAccess;
   private readonly agentContext: AgentContextAccess;
-  private readonly chatAccess: any;
-  private readonly selfLearningAccess: any;
-  private readonly userProfileAccess: any;
-  private readonly visualizationAccess: any;
+  private readonly chatAccess: ChatAccess;
+  private readonly selfLearningAccess: SelfLearningAccess;
+  private readonly userProfileAccess: UserProfileAccess;
+  private readonly visualizationAccess: VisualizationAccess;
   private readonly cronAccess: CronAccess;
 
   /** 内存静态注册表：配置项元数据直接来自 configRegistrations 静态定义（不再写 config_registry 表） */
@@ -193,10 +229,10 @@ export class ConfigService {
     agentExecution: AgentExecutionAccess,
     agentStrategy: AgentStrategyAccess,
     agentContext: AgentContextAccess,
-    chatAccess: any,
-    selfLearningAccess: any,
-    userProfileAccess: any,
-    visualizationAccess: any,
+    chatAccess: ChatAccess,
+    selfLearningAccess: SelfLearningAccess,
+    userProfileAccess: UserProfileAccess,
+    visualizationAccess: VisualizationAccess,
     cronAccess: CronAccess,
   ) {
     this.relationDb = relationDb;
@@ -235,7 +271,7 @@ export class ConfigService {
 
   async updateLayerPrivilege(input: UpdateLayerPrivilegeInput, output: UpdateLayerPrivilegeOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (!input.layer || !VALID_LAYERS.includes(input.layer as any)) {
+    if (!input.layer || !(VALID_LAYERS as readonly string[]).includes(input.layer)) {
       throw new ValidationError(`layer 必须是 ${VALID_LAYERS.join('/')} 之一`);
     }
 
@@ -763,7 +799,7 @@ export class ConfigService {
       return this.readBaseProviderConfig(configKey, baseModule);
     }
     if (configKey.startsWith('log_provider.')) {
-      const out: any = {};
+      const out = {} as ConfigLogOutput;
       await this.logAccess.configLog({} as ConfigLogInput, out, {} as LogContext);
       const cfg = (out.config ?? {}) as Record<string, unknown>;
       const field = configKey.split('.').pop() ?? '';
@@ -833,56 +869,56 @@ export class ConfigService {
     if (configKey.startsWith('planner_agent.')) {
       return this.getConfigFromAccess(
         configKey, 'planner_agent',
-        (i: any, c: any, o: any) => this.plannerAgent.configPlannerAgent(i, o, c),
+        (i: ConfigPlannerAgentInput, c: PlannerAgentContext, o: ConfigPlannerAgentOutput) => this.plannerAgent.configPlannerAgent(i, o, c),
       );
     }
     if (configKey.startsWith('writer_agent.')) {
       return this.getConfigFromAccess(
         configKey, 'writer_agent',
-        (i: any, c: any, o: any) => this.writerAgent.configWriterAgent(i, o, c),
+        (i: ConfigWriterAgentInput, c: WriterAgentContext, o: ConfigWriterAgentOutput) => this.writerAgent.configWriterAgent(i, o, c),
       );
     }
     if (configKey.startsWith('evolutor_agent.')) {
       return this.getConfigFromAccess(
         configKey, 'evolutor_agent',
-        (i: any, c: any, o: any) => this.evolutorAgent.configEvolutorAgent(i, o, c),
+        (i: ConfigEvolutorAgentInput, c: EvolutorAgentContext, o: ConfigEvolutorAgentOutput) => this.evolutorAgent.configEvolutorAgent(i, o, c),
       );
     }
     if (configKey.startsWith('agent_context.')) {
-      const out: any = {};
-      await this.agentContext.configAgentContext({} as any, {} as any, out);
+      const out = {} as AgentContextContext;
+      await this.agentContext.configAgentContext({} as ConfigAgentContextInput, {} as ConfigAgentContextOutput, out);
       const field = configKey.split('.').pop() ?? '';
-      return field ? (out[field] ?? null) : null;
+      return field ? ((out as unknown as Record<string, unknown>)[field] ?? null) : null;
     }
     if (configKey.startsWith('agent_library.')) {
       return this.getConfigFromAccess(
         configKey, 'agent_library',
-        (i: any, c: any, o: any) => this.agentLibrary.configAgentLibrary(i, o, c),
+        (i: ConfigAgentLibraryInput, c: AgentLibraryContext, o: ConfigAgentLibraryOutput) => this.agentLibrary.configAgentLibrary(i, o, c),
       );
     }
     if (configKey.startsWith('agent_builder.')) {
       return this.getConfigFromAccess(
         configKey, 'agent_builder',
-        (i: any, c: any, o: any) => this.agentBuilder.configAgentBuilder(i, o, c),
+        (i: ConfigAgentBuilderInput, c: AgentBuilderContext, o: ConfigAgentBuilderOutput) => this.agentBuilder.configAgentBuilder(i, o, c),
       );
     }
     if (configKey.startsWith('agent_execution.')) {
       return this.getConfigFromAccess(
         configKey, 'agent_execution',
-        (i: any, c: any, o: any) => this.agentExecution.configAgentExecution(i, o, c),
+        (i: ConfigAgentExecutionInput, c: AgentExecutionContext, o: ConfigAgentExecutionOutput) => this.agentExecution.configAgentExecution(i, o, c),
       );
     }
     if (configKey.startsWith('agent_strategy.')) {
       return this.getConfigFromAccess(
         configKey, 'agent_strategy',
-        (i: any, c: any, o: any) => this.agentStrategy.configAgentStrategy(i, o, c),
+        (i: ConfigAgentStrategyInput, c: AgentStrategyContext, o: ConfigAgentStrategyOutput) => this.agentStrategy.configAgentStrategy(i, o, c),
       );
     }
     // V1 编排配置分支已移除（Orchestration 模块删除）
     if (configKey.startsWith('chat.')) {
       return this.getConfigFromAccess(
         configKey, 'chat',
-        (i: any, c: any, o: any) => this.chatAccess.configChat(i, o, c),
+        (i: ConfigChatInput, c: ChatContext, o: ConfigChatOutput) => this.chatAccess.configChat(i, o, c),
       );
     }
     if (configKey.startsWith('self_learning.')) {
@@ -895,19 +931,19 @@ export class ConfigService {
       }
       return this.getConfigFromAccess(
         configKey, 'self_learning',
-        (i: any, c: any, o: any) => this.selfLearningAccess.configSelfLearning(i, o, c),
+        (i: ConfigSelfLearningInput, c: SelfLearningContext, o: ConfigSelfLearningOutput) => this.selfLearningAccess.configSelfLearning(i, o, c),
       );
     }
     if (configKey.startsWith('user_profile.')) {
       return this.getConfigFromAccess(
         configKey, 'user_profile',
-        (i: any, c: any, o: any) => this.userProfileAccess.configUserProfile(i, o, c),
+        (i: ConfigUserProfileInput, c: UserProfileContext, o: ConfigUserProfileOutput) => this.userProfileAccess.configUserProfile(i, o, c),
       );
     }
     if (configKey.startsWith('visualization.')) {
-      const out: any = {};
-      await this.visualizationAccess.configVisualization({}, {} as any, out);
-      const cfg = (out.config ?? {}) as Record<string, unknown>;
+      const out = {} as VisualizationContext;
+      await this.visualizationAccess.configVisualization({} as ConfigVisualizationInput, {} as ConfigVisualizationOutput, out);
+      const cfg = ((out as unknown as Record<string, unknown>).config ?? {}) as Record<string, unknown>;
       if (configKey.startsWith('visualization.max_nodes_per_graph')) return cfg.max_nodes_per_graph ?? null;
       if (configKey.startsWith('visualization.default_message_summary_length')) return cfg.default_message_summary_length ?? null;
       if (configKey.startsWith('visualization.resolve_content_by_default')) return cfg.resolve_content_by_default === 1;
@@ -922,7 +958,7 @@ export class ConfigService {
     return null;
   }
 
-  private extractConfigValue(out: any, _prefix: string, _configKey: string): unknown {
+  private extractConfigValue(out: unknown, _prefix: string, _configKey: string): unknown {
     if (out && typeof out === 'object') {
       if ('config' in out && out.config !== undefined) return out.config;
       if ('value' in out) return out.value;
@@ -931,13 +967,13 @@ export class ConfigService {
     return null;
   }
 
-  private async getConfigFromAccess(
+  private async getConfigFromAccess<I extends object, C extends object, O extends object>(
     _configKey: string,
     _prefix: string,
-    fn: (input: any, context: any, output: any) => Promise<boolean>,
+    fn: (input: I, context: C, output: O) => Promise<boolean>,
   ): Promise<unknown> {
-    const out: any = {};
-    await fn({}, {}, out);
+    const out = {} as O;
+    await fn({} as I, {} as C, out);
     return this.extractConfigValue(out, _prefix, _configKey);
   }
 
@@ -981,31 +1017,31 @@ export class ConfigService {
   private async setProviderEnabled(module: string, enable: boolean): Promise<void> {
     switch (module) {
       case 'llm_provider':
-        await this.llmAccess.enableLLM({ enable } as any, {} as any, {} as any);
+        await this.llmAccess.enableLLM({ enable } as EnableLLMInput, {} as EnableLLMOutput, {} as LLMContext);
         return;
       case 'soul_provider':
-        await this.soulAccess.enableSoul({ enable } as any, {} as any, {} as any);
+        await this.soulAccess.enableSoul({ enable } as EnableSoulInput, {} as EnableSoulOutput, {} as SoulContext);
         return;
       case 'skill_provider':
-        await this.skillAccess.enableSkill({ enable } as any, {} as any, {} as any);
+        await this.skillAccess.enableSkill({ enable } as EnableSkillInput, {} as EnableSkillOutput, {} as SkillContext);
         return;
       case 'mcp_provider':
-        await this.mcpAccess.enableMCP({ enable } as any, {} as any, {} as any);
+        await this.mcpAccess.enableMCP({ enable } as EnableMCPInput, {} as EnableMCPOutput, {} as McpContext);
         return;
       case 'prompts_provider':
-        await this.promptsAccess.enablePrompts({ enable } as any, {} as any, {} as any);
+        await this.promptsAccess.enablePrompts({ enable } as EnablePromptsInput, {} as EnablePromptsOutput, {} as PromptContext);
         return;
       case 'mq_provider':
-        await this.mqAccess.enableMQ({ enable } as any, {} as any, {} as any);
+        await this.mqAccess.enableMQ({ enable } as EnableMQInput, {} as EnableMQOutput, {} as MQContext);
         return;
       case 'graphdb_provider':
-        await this.graphDBAccess.enableGraphDB({ enable } as any, {} as any, {} as any);
+        await this.graphDBAccess.enableGraphDB({ enable } as EnableGraphDBInput, {} as EnableGraphDBOutput, {} as GraphContext);
         return;
       case 'vectordb_provider':
-        await this.vectorDBAccess.enableVectorDB({ enable } as any, {} as any, {} as any);
+        await this.vectorDBAccess.enableVectorDB({ enable } as EnableVectorDBInput, {} as EnableVectorDBOutput, {} as VectorContext);
         return;
       case 'relationdb_provider':
-        await this.relationDb.enableDB({ enable } as any, {} as any, {} as any);
+        await this.relationDb.enableDB({ enable } as EnableDBInput, {} as EnableDBOutput, {} as DBContext);
         return;
       default:
         throw new ValidationError(`未知 Base Provider 模块 ${module}`);
@@ -1073,14 +1109,14 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeLogProviderConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigLogInput;
       if (prefix.startsWith('log_provider.enabled')) input.enabled = value as boolean;
       else if (prefix.startsWith('log_provider.default_level')) input.default_level = value as string;
       else if (prefix.startsWith('log_provider.min_level')) input.min_level = value as string;
       else if (prefix.startsWith('log_provider.retention_days')) input.retention_days = value as number;
       else if (prefix.startsWith('log_provider.max_log_count')) input.max_log_count = value as number;
-      const output: any = {};
-      await this.logAccess.configLog(input as ConfigLogInput, output, {} as LogContext);
+      const output = {} as ConfigLogOutput;
+      await this.logAccess.configLog(input, output, {} as LogContext);
       return;
   }
 
@@ -1091,12 +1127,13 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeLLMCoreConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('llm_core.regen_rate')) input.regen_rate = value;
-      if (prefix.startsWith('llm_core.similarity_threshold')) input.similarity_threshold = value;
+      const input = {} as ConfigLLMCoreInput;
+      if (prefix.startsWith('llm_core.regen_rate')) input.regen_rate = value as number;
+      if (prefix.startsWith('llm_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.LLM_MATCH)) input.prompt_template_id = value as string;
-      const output: any = {};
-      await this.llmCore.configLLMCore(input, {} as any, output);
+      // 注意：此处第 3 参为 Context 位置（历史入参顺序如此，保持运行时行为不变）
+      const output = {} as LLMCoreContext;
+      await this.llmCore.configLLMCore(input, {} as ConfigLLMCoreOutput, output);
       return;
   }
 
@@ -1107,9 +1144,10 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeLLMCoreQuotaConfig(prefix: string, value: unknown): Promise<void> {
-      const input = { config_key: prefix, value } as any;
-      const output: any = {};
-      await this.llmCore.limitLLM(input, {} as any, output);
+      // 坑位警告：limitLLM 要求 llm_provider_id，此处历史传入 config_key/value 与真实入参不符（运行时行为保持原样，修复需改运行时代码，另行处理）
+      const input = { config_key: prefix, value } as unknown as LimitLLMInput;
+      const output = {} as LLMCoreContext;
+      await this.llmCore.limitLLM(input, {} as LimitLLMOutput, output);
       return;
   }
 
@@ -1120,12 +1158,12 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeMCPCoreConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value;
-      if (prefix.startsWith('mcp_core.similarity_threshold')) input.similarity_threshold = value;
+      const input = {} as ConfigMcpCoreInput;
+      if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value as number;
+      if (prefix.startsWith('mcp_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.MCP_MATCH)) input.prompt_template_id = value as string;
-      const output: any = {};
-      await this.mcpCore.configMCPCore(input, {} as any, output);
+      const output = {} as McpCoreContext;
+      await this.mcpCore.configMCPCore(input, {} as ConfigMcpCoreOutput, output);
       return;
   }
 
@@ -1136,12 +1174,12 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeSkillCoreConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('skill_core.regen_rate')) input.regen_rate = value;
-      if (prefix.startsWith('skill_core.similarity_threshold')) input.similarity_threshold = value;
+      const input = {} as ConfigSkillCoreInput;
+      if (prefix.startsWith('skill_core.regen_rate')) input.regen_rate = value as number;
+      if (prefix.startsWith('skill_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH)) input.prompt_template_id = value as string;
-      const output: any = {};
-      await this.skillCore.configSkillCore(input, {} as any, output);
+      const output = {} as SkillCoreContext;
+      await this.skillCore.configSkillCore(input, {} as ConfigSkillCoreOutput, output);
       return;
   }
 
@@ -1182,13 +1220,13 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeSoulCoreConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('soul_core.regen_rate')) input.regen_rate = value;
-      if (prefix.startsWith('soul_core.similarity_threshold')) input.similarity_threshold = value;
+      const input = {} as ConfigSoulCoreInput;
+      if (prefix.startsWith('soul_core.regen_rate')) input.regen_rate = value as number;
+      if (prefix.startsWith('soul_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.SOUL_MATCH)) input.prompt_template_id = value as string;
       if (prefix.startsWith('soul_core.llm_id')) input.llm_id = value as string;
-      const output: any = {};
-      await this.soulCore.configSoulCore(input, {} as any, output);
+      const output = {} as SoulCoreContext;
+      await this.soulCore.configSoulCore(input, {} as ConfigSoulCoreOutput, output);
       return;
   }
 
@@ -1229,13 +1267,13 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeInfoTagConfigConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as UpdateInfoTagConfigInput;
       if (prefix.startsWith('info_core.tag_config.llm_id')) input.llm_id = value as string;
       else if (prefix.startsWith(PROMPT_SLOTS.INFO_TAG)) input.prompt_template_id = value as string;
       else if (prefix.startsWith('info_core.tag_config.tag_top_k')) input.tag_top_k = Number(value);
       else if (prefix.startsWith('info_core.tag_config.enable')) input.enable = value ? 1 : 0;
-      const output: any = {};
-      await this.infoCore.updateInfoTagConfig(input, {} as any, output);
+      const output = {} as InfoCoreContext;
+      await this.infoCore.updateInfoTagConfig(input, {} as UpdateInfoTagConfigOutput, output);
       return;
   }
 
@@ -1246,14 +1284,14 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeInfoSummaryConfigConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as UpdateInfoSummaryConfigInput;
       if (prefix.startsWith('info_core.summary_config.llm_id')) input.llm_id = value as string;
       else if (prefix.startsWith(PROMPT_SLOTS.INFO_SUMMARY)) input.prompt_template_id = value as string;
       else if (prefix.startsWith('info_core.summary_config.enable')) input.enable = value ? 1 : 0;
       else if (prefix.startsWith('info_core.summary_config.threshold')) input.threshold = Number(value);
       else if (prefix.startsWith('info_core.summary_config.info_types')) input.info_types = value as string;
-      const output: any = {};
-      await this.infoCore.updateInfoSummaryConfig(input, {} as any, output);
+      const output = {} as InfoCoreContext;
+      await this.infoCore.updateInfoSummaryConfig(input, {} as UpdateInfoSummaryConfigOutput, output);
       return;
   }
 
@@ -1264,12 +1302,12 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeInfoVectorConfigConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as UpdateInfoVectorConfigInput;
       if (prefix.startsWith('info_core.vector_config.llm_id')) input.llm_id = value as string;
       else if (prefix.startsWith('info_core.vector_config.dimension')) input.dimension = Number(value);
       else if (prefix.startsWith('info_core.vector_config.enable')) input.enable = value ? 1 : 0;
-      const output: any = {};
-      await this.infoCore.updateInfoVectorConfig(input, {} as any, output);
+      const output = {} as InfoCoreContext;
+      await this.infoCore.updateInfoVectorConfig(input, {} as UpdateInfoVectorConfigOutput, output);
       return;
   }
 
@@ -1280,7 +1318,7 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeInfoContextConfigConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as UpdateInfoContextConfigInput;
       if (prefix.startsWith('info_core.context_config.base_timeline_count')) input.base_timeline_count = Number(value);
       else if (prefix.startsWith('info_core.context_config.base_tag_relative_count')) input.base_tag_relative_count = Number(value);
       else if (prefix.startsWith('info_core.context_config.base_similarity_count')) input.base_similarity_count = Number(value);
@@ -1290,8 +1328,8 @@ export class ConfigService {
       else if (prefix.startsWith('info_core.context_config.total')) input.total = Number(value);
       else if (prefix.startsWith('info_core.context_config.enable_snapshot_persistence')) input.enable_snapshot_persistence = value ? 1 : 0;
       else if (prefix.startsWith('info_core.context_config.priority_order')) input.priority_order = String(value);
-      const output: any = {};
-      await this.infoCore.updateInfoContextConfig(input, {} as any, output);
+      const output = {} as InfoCoreContext;
+      await this.infoCore.updateInfoContextConfig(input, {} as UpdateInfoContextConfigOutput, output);
       return;
   }
 
@@ -1302,10 +1340,10 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeInfoCoreConfigConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as UpdateInfoConfigInput;
       if (prefix.startsWith('info_core.config.alive_max_days')) input.alive_max_days = Number(value);
-      const output: any = {};
-      await this.infoCore.updateInfoConfig(input, {} as any, output);
+      const output = {} as InfoCoreContext;
+      await this.infoCore.updateInfoConfig(input, {} as UpdateInfoConfigOutput, output);
       return;
   }
 
@@ -1316,13 +1354,13 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writePlannerAgentConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigPlannerAgentInput;
       if (prefix.startsWith('planner_agent.complexity_decompose_threshold')) input.complexity_decompose_threshold = value as number;
       else if (prefix.startsWith(PROMPT_SLOTS.PLAN)) input.plan_prompt_template_id = value as string;
       else if (prefix.startsWith('planner_agent.max_subtask_count')) input.max_subtask_count = value as number;
       else if (prefix.startsWith('planner_agent.llm_id')) input.llm_id = value as string;
-      const output: any = {};
-      await this.plannerAgent.configPlannerAgent(input, {} as any, output);
+      const output = {} as PlannerAgentContext;
+      await this.plannerAgent.configPlannerAgent(input, {} as ConfigPlannerAgentOutput, output);
       return;
   }
 
@@ -1333,15 +1371,15 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeWriterAgentConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigWriterAgentInput;
       if (prefix.startsWith(PROMPT_SLOTS.WRITE)) input.write_prompt_template_id = value as string;
       else if (prefix.startsWith('writer_agent.llm_id')) input.llm_id = value as string;
       else if (prefix.startsWith('writer_agent.default_language')) input.default_language = value as string;
       else if (prefix.startsWith('writer_agent.default_style')) input.default_style = value as string;
       else if (prefix.startsWith('writer_agent.default_depth')) input.default_depth = value as string;
       else if (prefix.startsWith('writer_agent.default_format')) input.default_format = value as string;
-      const output: any = {};
-      await this.writerAgent.configWriterAgent(input, {} as any, output);
+      const output = {} as WriterAgentContext;
+      await this.writerAgent.configWriterAgent(input, {} as ConfigWriterAgentOutput, output);
       return;
   }
 
@@ -1352,7 +1390,7 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeEvolutorAgentConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigEvolutorAgentInput;
       if (prefix.startsWith(PROMPT_SLOTS.EVAL_WORK)) input.eval_work_prompt_template_id = value as string;
       else if (prefix.startsWith(PROMPT_SLOTS.EVAL_WRITE)) input.eval_write_prompt_template_id = value as string;
       else if (prefix.startsWith('evolutor_agent.optimize_threshold')) input.optimize_threshold = value as number;
@@ -1360,8 +1398,8 @@ export class ConfigService {
       else if (prefix.startsWith('evolutor_agent.eval_schedule_interval_ms')) input.eval_schedule_interval_ms = value as number;
       else if (prefix.startsWith('evolutor_agent.eval_batch_size')) input.eval_batch_size = value as number;
       else if (prefix.startsWith('evolutor_agent.llm_id')) input.llm_id = value as string;
-      const output: any = {};
-      await this.evolutorAgent.configEvolutorAgent(input, {} as any, output);
+      const output = {} as EvolutorAgentContext;
+      await this.evolutorAgent.configEvolutorAgent(input, {} as ConfigEvolutorAgentOutput, output);
       return;
   }
 
@@ -1372,11 +1410,11 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeAgentContextConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigAgentContextInput;
       if (prefix.startsWith('agent_context.max_context_items')) input.max_context_items = value as number;
       else if (prefix.startsWith('agent_context.enable_snapshot_persistence')) input.enable_snapshot_persistence = value as boolean;
-      const output: any = {};
-      await this.agentContext.configAgentContext(input, {} as any, output);
+      const output = {} as AgentContextContext;
+      await this.agentContext.configAgentContext(input, {} as ConfigAgentContextOutput, output);
       return;
   }
 
@@ -1387,13 +1425,13 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeAgentLibraryConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
-      if (prefix.startsWith('agent_library.regen_rate')) input.regen_rate = value;
-      else if (prefix.startsWith('agent_library.similarity_threshold')) input.similarity_threshold = value;
+      const input = {} as ConfigAgentLibraryInput;
+      if (prefix.startsWith('agent_library.regen_rate')) input.regen_rate = value as number;
+      else if (prefix.startsWith('agent_library.similarity_threshold')) input.similarity_threshold = value as number;
       else if (prefix.startsWith(PROMPT_SLOTS.AGENT_MATCH)) input.prompt_template_id = value as string;
       else if (prefix.startsWith('agent_library.max_agent_count')) input.max_agent_count = value as number;
-      const output: any = {};
-      await this.agentLibrary.configAgentLibrary(input, {} as any, output);
+      const output = {} as AgentLibraryContext;
+      await this.agentLibrary.configAgentLibrary(input, {} as ConfigAgentLibraryOutput, output);
       return;
   }
 
@@ -1404,11 +1442,11 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeAgentBuilderConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigAgentBuilderInput;
       if (prefix.startsWith(PROMPT_SLOTS.TASK_ANALYSIS)) input.task_analysis_prompt_template_id = value as string;
       else if (prefix.startsWith('agent_builder.auto_optimize')) input.auto_optimize = value as boolean;
-      const output: any = {};
-      await this.agentBuilder.configAgentBuilder(input, {} as any, output);
+      const output = {} as AgentBuilderContext;
+      await this.agentBuilder.configAgentBuilder(input, {} as ConfigAgentBuilderOutput, output);
       return;
   }
 
@@ -1419,14 +1457,14 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeAgentExecutionConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigAgentExecutionInput;
       if (prefix.startsWith(PROMPT_SLOTS.THINK)) input.think_prompt_template_id = value as string;
       else if (prefix.startsWith(PROMPT_SLOTS.REFLECT)) input.reflect_prompt_template_id = value as string;
       else if (prefix.startsWith(PROMPT_SLOTS.ANSWER)) input.answer_prompt_template_id = value as string;
       else if (prefix.startsWith('agent_execution.default_max_iterations')) input.default_max_iterations = value as number;
       else if (prefix.startsWith('agent_execution.async_worker_interval')) input.async_worker_interval = value as number;
-      const output: any = {};
-      await this.agentExecution.configAgentExecution(input, {} as any, output);
+      const output = {} as AgentExecutionContext;
+      await this.agentExecution.configAgentExecution(input, {} as ConfigAgentExecutionOutput, output);
       return;
   }
 
@@ -1437,9 +1475,10 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeAgentStrategyConfig(prefix: string, value: unknown): Promise<void> {
-      const input = { config_key: prefix, value } as any;
-      const output: any = {};
-      await this.agentStrategy.configAgentStrategy(input, {} as any, output);
+      // 坑位警告：configAgentStrategy 入参为 default_strategy_id/match_prompt_template_id，此处历史传入 config_key/value 为结构兼容但语义不匹配（运行时行为保持原样，修复需改运行时代码，另行处理）
+      const input = { config_key: prefix, value } as ConfigAgentStrategyInput;
+      const output = {} as AgentStrategyContext;
+      await this.agentStrategy.configAgentStrategy(input, {} as ConfigAgentStrategyOutput, output);
       return;
   }
 
@@ -1480,12 +1519,12 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeChatConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigChatInput;
       if (prefix.startsWith('chat.max_messages_per_session')) input.max_messages_per_session = Number(value);
       else if (prefix.startsWith('chat.sse_heartbeat_interval_ms')) input.sse_heartbeat_interval_ms = Number(value);
       else if (prefix.startsWith('chat.default_history_lastN')) input.default_history_lastN = Number(value);
-      const output: any = {};
-      await this.chatAccess.configChat(input, {} as any, output);
+      const output = {} as ChatContext;
+      await this.chatAccess.configChat(input, {} as ConfigChatOutput, output);
       return;
   }
 
@@ -1502,7 +1541,7 @@ export class ConfigService {
         await this.cronAccess.setCronTask(Object.assign(new SetCronTaskInput(), { name: taskName, cron: value as string }), new SetCronTaskOutput(), new CronContext());
         return;
       }
-      const input: any = {};
+      const input = {} as ConfigSelfLearningInput;
       if (prefix.startsWith('self_learning.random_factor')) input.random_factor = Number(value);
       else if (prefix.startsWith('self_learning.document_weight')) input.document_weight = Number(value);
       else if (prefix.startsWith('self_learning.conversation_weight')) input.conversation_weight = Number(value);
@@ -1516,8 +1555,8 @@ export class ConfigService {
       else if (prefix.startsWith('self_learning.chunk_overlap_ratio')) input.chunk_overlap_ratio = Number(value);
       else if (prefix.startsWith(PROMPT_SLOTS.DOCUMENT_QUERY)) input.document_query_prompt_template_id = value as string;
       else if (prefix.startsWith('self_learning.document_query_llm_id')) input.document_query_llm_id = value as string;
-      const output: any = {};
-      await this.selfLearningAccess.configSelfLearning(input, {} as any, output);
+      const output = {} as SelfLearningContext;
+      await this.selfLearningAccess.configSelfLearning(input, {} as ConfigSelfLearningOutput, output);
       return;
   }
 
@@ -1528,14 +1567,14 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeUserProfileConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigUserProfileInput;
       if (prefix.startsWith('user_profile.auto_generate_interval_ms')) input.auto_generate_interval_ms = Number(value);
       else if (prefix.startsWith(PROMPT_SLOTS.PROFILE_ANALYSIS)) input.profile_analysis_prompt_template_id = value as string;
       else if (prefix.startsWith('user_profile.max_conversation_sample_count')) input.max_conversation_sample_count = Number(value);
       else if (prefix.startsWith('user_profile.profile_retention_versions')) input.profile_retention_versions = Number(value);
       else if (prefix.startsWith('user_profile.min_confidence_threshold')) input.min_confidence_threshold = Number(value);
-      const output: any = {};
-      await this.userProfileAccess.configUserProfile(input, {} as any, output);
+      const output = {} as UserProfileContext;
+      await this.userProfileAccess.configUserProfile(input, {} as ConfigUserProfileOutput, output);
       return;
   }
 
@@ -1546,12 +1585,12 @@ export class ConfigService {
    * @param value 配置值
    */
   private async writeVisualizationConfig(prefix: string, value: unknown): Promise<void> {
-      const input: any = {};
+      const input = {} as ConfigVisualizationInput;
       if (prefix.startsWith('visualization.max_nodes_per_graph')) input.max_nodes_per_graph = value as number;
       else if (prefix.startsWith('visualization.default_message_summary_length')) input.default_message_summary_length = value as number;
       else if (prefix.startsWith('visualization.resolve_content_by_default')) input.resolve_content_by_default = value as boolean;
-      const output: any = {};
-      await this.visualizationAccess.configVisualization(input, {} as any, output);
+      const output = {} as VisualizationContext;
+      await this.visualizationAccess.configVisualization(input, {} as ConfigVisualizationOutput, output);
       return;
   }
 

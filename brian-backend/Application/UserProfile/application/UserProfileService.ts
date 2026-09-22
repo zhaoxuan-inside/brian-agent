@@ -140,7 +140,7 @@ export class UserProfileService {
         : [];
       const allConds = [...conditions];
       const recs = await this.relationDb.select(USER_PROFILE_RECORD_TABLE, {
-        conditions: allConds as any,
+        conditions: allConds,
         order_by: [{ field: 'version', direction: Direction.DESC }],
         page: { current: 1, size: 1 },
       });
@@ -669,8 +669,8 @@ export class UserProfileService {
         direction: o.direction as typeof Dir.ASC,
       }));
       const results = await this.relationDb.select(table, {
-        conditions: mappedConditions as any,
-        order_by: mappedOrderBy as any,
+        conditions: mappedConditions,
+        order_by: mappedOrderBy,
         page: limitRow !== undefined ? { current: 1, size: limitRow } : undefined,
       });
       rows.push(...results);
@@ -981,7 +981,7 @@ export class UserProfileService {
       const evalOut = new GetEvaluationOutput();
       const evalIn = Object.assign(new GetEvaluationInput(), {});
       await this.evolutorAgent.soEvaluation(evalIn, evalOut, new EvolutorAgentContext());
-      const evaluations = (evalOut as any).evaluations ?? [];
+      const evaluations = evalOut.evaluations ?? [];
       evaluationCount = evaluations.length;
       if (evaluationCount > 0) {
         let sumOverall = 0;

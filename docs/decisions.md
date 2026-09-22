@@ -2,6 +2,12 @@
 
 > 非显而易见的取舍记录：只记「为什么这么做」，不记流水账；能被 git 历史回答的问题不记。
 
+## [2026-09-22e] Config 模块消 any：按「实际参数位」诚实标注，不迁就变量名
+
+**决策**：ConfigService/ConfigAccess 清零 149 处 any 时，writeXxxConfig 系列中名为 `output` 的局部变量实际处于被调方法第 3 参（Context 位），类型按实际参数位标注为对应 Context（变量名不改、实参顺序不动）；`limitLLM`/`configAgentStrategy` 历史传入的 `{config_key, value}` 与真实入参类型不符，用 `as unknown as`（或结构兼容单断言）+ 坑位警告注释标记，不重构运行时。
+**原因**：消 any 的目的让类型如实描述运行时；按变量名「想当然」标注成 Output 会被迫换实参顺序（改变对象流向）或产生谎言类型。`limitLLM` 实测缺 `llm_provider_id` 会在运行时抛 ValidationError（`llm_core.quota_*` 路由现状），修复必须改上游入参构造，超出「仅类型注解」边界。
+**备选**：把 output 变量改名为 ctx / 内联进调用点（弃用——超出类型注解改动边界）；直接修 limitLLM 入参构造（推迟——属行为修复，另行任务）。
+
 ## [2026-09-22c] 旧实现不再注释保留，统一依赖 git 历史承载
 
 **决策**：重构/修改方法时不再按 dev 工作流步骤 7 将原实现注释保留在源码中；旧实现由 git 历史承载，源码只保留「修改后」的 why 注释。

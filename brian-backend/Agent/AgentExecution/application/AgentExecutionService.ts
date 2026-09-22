@@ -105,7 +105,7 @@ interface StepResult {
 interface AgentExecutionEnv {
   input: ExecAgentInput;
   ctx: AgentExecutionContext;
-  agent: { agent_id: string; soul_id: string };
+  agent: { agent_id: string; soul_id: string; agent_type?: string };
   skillIds: string[];
   mcpIds: string[];
   skills: { id: string; brief: string; work: string }[];
@@ -1273,8 +1273,8 @@ export class AgentExecutionService {
     }, {
       work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
-      agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    } as any).catch(() => {});
+      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
+    }).catch(() => {});
   }
 
   private pushAct(env: AgentExecutionEnv, nodeId: string, actOut: ActOutput, iteration: number): void {
@@ -1287,8 +1287,8 @@ export class AgentExecutionService {
     }, {
       work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
-      agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    } as any).catch(() => {});
+      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
+    }).catch(() => {});
   }
 
   private pushReflect(env: AgentExecutionEnv, nodeId: string, reflectOut: ReflectOutput, iteration: number): void {
@@ -1301,8 +1301,8 @@ export class AgentExecutionService {
     }, {
       work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
       agent_id: input.agent_id, agent_name: agentName,
-      agent_type: (agent as any)?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    } as any).catch(() => {});
+      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
+    }).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------

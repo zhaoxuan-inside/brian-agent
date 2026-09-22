@@ -1925,7 +1925,7 @@ const rawPriority = priorityOrderStr
     if (input.priority_order !== undefined) {
       dataInput.priority_order = String(input.priority_order);
     }
-    await this.upsertConfigRow(INFO_CONTEXT_CONFIG_TABLE, dataInput as any, {
+    await this.upsertConfigRow(INFO_CONTEXT_CONFIG_TABLE, dataInput, {
       defaultRecord: {
         base_timeline_count: 500,
         base_tag_relative_count: 200,

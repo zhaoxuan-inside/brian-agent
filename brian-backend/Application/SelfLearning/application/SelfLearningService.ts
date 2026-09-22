@@ -3,7 +3,7 @@ import { Metrics, Report } from '@brian-agent/base';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RelationDBAccess, SelectDBInput, SelectDBOutput, SelectOneDBInput, SelectOneDBOutput, UpdateDBInput, UpdateDBOutput, CountDBInput, CountDBOutput, TransactionDBInput, TransactionDBOutput, Operator, DataObject, DBContext, IdGenerator, NotFoundError, ValidationError, ExecLLMInput, ExecLLMOutput, LLMContext, ExecPromptInput, ExecPromptOutput, PromptContext, SoPromptInput, SoPromptOutput, SoSoulOutput, AddSoulOutput, GetSoulInput, GetSoulOutput, SoulContext, PROMPT_IDS, getBuiltinTemplate, renderTemplate, InfoType, type Logger, type Condition } from '@brian-agent/base';
-import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess, SoulAccess } from '@brian-agent/base';
+import type { GraphDBAccess, ChunkAccess, LLMAccess, PromptsAccess, SoulAccess, MQAccess } from '@brian-agent/base';
 import type { AgentDefAccess } from '@brian-agent/runtime';
 import { DeclareAgentInput, DeclareAgentOutput, SoAgentDefsInput, SoAgentDefsOutput, AgentDefContext, AgentMode, AgentDefStatus } from '@brian-agent/runtime';
 import type {
@@ -88,7 +88,7 @@ export class SelfLearningService {
     private readonly writerAgent: WriterAgentAccess,
     private readonly graphDBAccess: GraphDBAccess,
     private readonly chunkAccess: ChunkAccess,
-    private readonly mqAccess: any,
+    private readonly mqAccess: MQAccess,
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
     private readonly logger?: Logger,
@@ -1541,7 +1541,7 @@ export class SelfLearningService {
       let scannedNodes = 0;
       for (const node of graphSelOutput.list) {
         if (!('node_type' in node)) continue;
-        const content = (node as any).content as Record<string, unknown> | undefined;
+        const content = (node as unknown as { content?: Record<string, unknown> }).content;
         if (!content) continue;
 
         const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
@@ -1555,7 +1555,7 @@ export class SelfLearningService {
 
         for (const edgeRow of neighbors.list) {
           try {
-            const edge = (edgeRow as any);
+            const edge = edgeRow as unknown as Record<string, unknown>;
             const edgeId = edge.id as string | undefined;
             if (!edgeId) continue;
             await this.graphDBAccess.activateGraphEdge(
@@ -1633,7 +1633,7 @@ export class SelfLearningService {
 
         if (neighbors.list.length === 0) {
           try {
-            const content = (node as any).content as Record<string, unknown> | undefined;
+            const content = (node as unknown as { content?: Record<string, unknown> }).content;
             const tagName = content?.tag as string | undefined;
             if (tagName) {
               const graphTagInput = Object.assign(new GraphTagInput(), { tag_id: node.id });
@@ -1683,7 +1683,7 @@ export class SelfLearningService {
     for (const node of graphSelOutput.list) {
       if (!('node_type' in node)) continue;
       const nid = node.id;
-      const content = (node as any).content as Record<string, unknown> | undefined;
+      const content = (node as unknown as { content?: Record<string, unknown> }).content;
       const tagName = (content?.tag as string) || (content?.tag_name as string) || '';
 
       let infoCount = 0;
@@ -1710,7 +1710,7 @@ export class SelfLearningService {
 
       for (const n of neighbors.list) {
         if (!('node_type' in n)) continue;
-        const nEdge = (n as any);
+        const nEdge = n as unknown as Record<string, unknown>;
         const edgeId = (nEdge.id as string) || (nEdge.edge_id as string) || '';
         const fromId = (nEdge.from_node_id as string) || '';
         const toId = (nEdge.to_node_id as string) || '';

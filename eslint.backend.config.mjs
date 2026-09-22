@@ -38,20 +38,4 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
-  {
-    files: [
-      'brian-backend/Agent/AgentExecution/application/AgentExecutionService.ts',
-      'brian-backend/Agent/IntentAgent/application/IntentAgentService.ts',
-      'brian-backend/Application/Config/access/ConfigAccess.ts',
-      'brian-backend/Application/Config/application/ConfigService.ts',
-      'brian-backend/Application/SelfLearning/application/SelfLearningService.ts',
-      'brian-backend/Application/UserProfile/application/UserProfileService.ts',
-      'brian-backend/Base/LogProvider/application/LogService.ts',
-      'brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts',
-      'brian-backend/Core/SkillCoreProvider/application/SkillCoreService.ts',
-    ],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-    },
-  },
 ];

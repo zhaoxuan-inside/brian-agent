@@ -21,6 +21,12 @@ import type {
   PlannerAgentAccess,
 } from '@brian-agent/agent';
 
+// 同包跨模块依赖仅做类型引用（import type 编译期擦除，不产生运行时循环依赖）
+import type { ChatAccess } from '../../Chat/access/ChatAccess';
+import type { SelfLearningAccess } from '../../SelfLearning/access/SelfLearningAccess';
+import type { UserProfileAccess } from '../../UserProfile/access/UserProfileAccess';
+import type { VisualizationAccess } from '../../Visualization/access/VisualizationAccess';
+
 import type {
   LLMAccess, SoulAccess, SkillAccess, MCPAccess, PromptsAccess, LogAccess,
   MQAccess, GraphDBAccess, VectorDBAccess,
@@ -109,10 +115,10 @@ export class ConfigAccess {
     agentExecution: AgentExecutionAccess,
     agentStrategy: AgentStrategyAccess,
     agentContext: AgentContextAccess,
-    chatAccess: any,
-    selfLearningAccess: any,
-    userProfileAccess: any,
-    visualizationAccess: any,
+    chatAccess: ChatAccess,
+    selfLearningAccess: SelfLearningAccess,
+    userProfileAccess: UserProfileAccess,
+    visualizationAccess: VisualizationAccess,
     cronAccess: CronAccess,
     logger?: Logger,
   ) {

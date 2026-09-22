@@ -19,7 +19,7 @@ import { ConfigService } from '../../shared/config/ConfigService';
 import { ComponentDisabledError, ValidationError } from '../../shared/errors';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator } from '../../shared/query';
-import type { Condition } from '../../shared/query';
+import type { Condition, OrderBy, Page } from '../../shared/query';
 import { buildLogConditions, rowToLogRecord } from '../domain/services/LogDomainService';
 import {
   LogContext,
@@ -606,7 +606,7 @@ export class LogService {
     const page = Math.max(1, Math.floor(options.page ?? 1) || 1);
     const pageSize = Math.min(500, Math.max(1, Math.floor(options.pageSize ?? 50) || 50));
 
-    const selectOpts: Record<string, unknown> = {
+    const selectOpts: { conditions?: Condition[]; order_by?: OrderBy[]; page?: Page } = {
       order_by: [{ field: 'created', direction: 'DESC' }],
       page: { current: page, size: pageSize },
     };
@@ -614,7 +614,7 @@ export class LogService {
       selectOpts.conditions = conditions;
     }
 
-    const rows = await this.relationDb.select(LOG_RECORD_TABLE, selectOpts as any);
+    const rows = await this.relationDb.select(LOG_RECORD_TABLE, selectOpts);
     const total = await this.relationDb.count(LOG_RECORD_TABLE, conditions);
 
     const logs: LogRecord[] = rows.map((r) => this.rowToLogRecord(r));
