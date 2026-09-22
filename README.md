@@ -2,42 +2,36 @@
 
 <a id="top"></a>
 
-# Brian-Agent
+<img src="README/hero.svg" alt="Brian-Agent —— AI 的记忆，不该是黑盒，而该是一张你能亲手改的地图" width="100%" />
 
-### AI 的记忆，不该是黑盒，而该是一张你能**亲手改的地图**
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
+[![Node](https://img.shields.io/badge/Node.js-22.x-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?style=for-the-badge&logo=vue.js&logoColor=white)](https://vuejs.org)
+[![Tests](https://img.shields.io/badge/tests-1800%2B-brightgreen?style=for-the-badge)](#quality)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=for-the-badge)](#install)
 
-**本地运行 · 开源 · 解压即用**
+[亮点功能](#features) · [安装与部署](#install) · [架构](#architecture) · [文档](#docs) · [交流群](#community)
 
-这不是又一个聊天框。它把你的对话、资料和想法，慢慢养成一个**记得住你、也会自己长大**的个人 Agent。数据全在自己机器上，模型自己选。
-
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/Node.js-22.x-339933?logo=node.js&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?logo=vue.js&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1800%2B-brightgreen)
-
-[亮点功能](#features) · [安装与部署](#install) · [架构一览](#architecture) · [质量与测试](#quality) · [文档](#docs) · [交流群](#community)
-
-<img src="README/image.png" width="860" alt="Brian-Agent：左侧 ChatMap 记忆地图，右侧对话" />
+<img src="README/image.png" width="880" alt="Brian-Agent 产品截图：左侧 ChatMap 记忆地图，右侧对话" />
 
 *左边，是你和 AI 的全部记忆画成的一张可操作地图；右边，是正常的对话问答。*
 
-| **7** 路混合记忆召回 | **13+** 家模型提供商 | **100%** 数据留在本机 | **0** 依赖安装 |
-|:---:|:---:|:---:|:---:|
-| 钉选/引用/时间线/图谱/向量/全文/随机 | OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎… | 对话、记忆、资料、画像不上传 | 发行包内置运行时，解压即用 |
+<img src="README/stats.svg" width="880" alt="Brian-Agent 核心数据一览" />
 
 </div>
 
 ---
 
+<div align="center">
+
 ## 😮‍💨 你一定经历过
 
-> **你：** 我们不是说好只看周末吗？
->
-> **AI：** 抱歉，我没有看到相关信息。
->
-> **你（第 17 次）：** 于是又把三天前那两段对话翻出来，重新贴了一遍。
+</div>
+
+<div align="center">
+  <img src="README/pain.svg" width="700" alt="第 50 轮，它忘了第 3 轮" />
+</div>
 
 问题不在模型不够聪明，而在**「记忆方式」错了**——现在几乎所有 AI 的记忆都只有一招：把最近 N 轮硬塞进上下文。
 
@@ -47,9 +41,17 @@ Brian-Agent 的答案：**把记忆变成一张你能看见、能操作、能生
 
 <a id="features"></a>
 
+<div align="center">
+
 ## ✨ 亮点功能
 
-### 01 · 记忆地图 —— 你终于能「看见」AI 记住了什么
+</div>
+
+<h3 align="center">🗺️ 01 · 记忆地图 —— 你终于能「看见」AI 记住了什么</h3>
+
+<div align="center">
+  <img src="README/map.svg" width="880" alt="记忆地图：消息节点 + 引用连线 + Pin" />
+</div>
 
 打开对话页，左边不是滚动的气泡，而是一张关系网。每条消息是一个节点，连线是它引用过的关系。更关键的是——**这张图可以操作**：
 
@@ -63,51 +65,47 @@ Brian-Agent 的答案：**把记忆变成一张你能看见、能操作、能生
 
 > **结果很直接：** 上下文更短、回答更准、Token 更省——而且你第一次确切知道，AI 这一轮到底「记得」了什么。
 
-### 02 · 越长越懂你 —— 它不只是记住，它会长
+<h3 align="center">🌱 02 · 越长越懂你 —— 它不只是记住，它会长</h3>
 
 你说过的每句话、AI 回过的每段内容，都会在后台被悄悄加工：生成摘要、抽取标签、算出语义向量、提取关键词。时间一长，这些零散信息自己长出了关系——
 
 **涌现图（Tag Graph）**：聊了两个月后打开它，你会发现「旅行规划、天气、地铁出行、博物馆」竟然连成了一整片——这是你自己的知识结构，第一次被真实地画了出来。
 
 <div align="center">
-  <img src="README/image-2.png" width="800" alt="涌现图：标签之间自动涌现的关联网络" />
+  <img src="README/image-2.png" width="820" alt="涌现图：标签之间自动涌现的关联网络" />
 </div>
 
 **关键词图（Keyword Graph）**：「灵光一闪」也可以被复现——大脑里的联想往往是被某一个词激活的。点一个词，牵出一整片相关记忆。
 
 <div align="center">
-  <img src="README/image-3.png" width="800" alt="关键词图：被一个词激活的联想网络" />
+  <img src="README/image-3.png" width="820" alt="关键词图：被一个词激活的联想网络" />
 </div>
 
 | 🔗 发现你从没意识到的联系 | 🧭 顺着网找记忆 | ✨ 恰到好处地「走神」 |
 |---|---|---|
 | 节点越大关联越多，颜色越红出现越频繁。有时你会盯着图愣一下：「原来我最近一直在纠结这件事。」 | 除了字面相似，它还沿标签和关键词的关系去捞旧事，常能想起靠搜索根本找不到的过去。 | 检索时掺入极少量看似无关的记忆，避免每次只盯着眼前那点上下文。最好的灵感，常来自意料之外。 |
 
-> 七路混合召回：`钉选 → 引用 → 时间线 → 标签图谱 → 向量语义 → 全文关键词 → 随机采样`，按优先级互补取材，单路失败自动降级，绝不只靠向量相似度。
+> **七路混合召回**：`钉选 → 引用 → 时间线 → 标签图谱 → 向量语义 → 全文关键词 → 随机采样`，按优先级互补取材，单路失败自动降级，绝不只靠向量相似度。
 
-### 03 · 可见的思考 —— 它会主动停下来问：「你是这个意思吗？」
+<h3 align="center">🔍 03 · 可见的思考 —— 它会主动停下来问：「你是这个意思吗？」</h3>
+
+<div align="center">
+  <img src="README/confirm.svg" width="720" alt="需求理解确认：匹配度与判断依据透明可见" />
+</div>
 
 AI 最让人不安的，是你永远不知道它「以为」你要什么。Brian-Agent 把这一层彻底摊开：
 
-- **理解没把握时，它先问你，而不是硬答。** 把「它理解成的需求」「匹配度」「判断依据」摆给你看，再让你决定（匹配度 0.62 / 阈值 0.75 · 判断依据：问题过于宽泛）；
-- **整条链路可见。** 它怎么理解需求、选了哪个模型、调了哪些工具、每一步花了多久、烧了多少 Token——清清楚楚，没有一个黑盒；
+- **理解没把握时，它先问你，而不是硬答。** 把「它理解成的需求」「匹配度」「判断依据」摆给你看，再让你决定；
 - **每次回答都有评分和优化建议。** 点「评估结果」，就能看到这次回答被打了多少分、哪里还能更好；
 - **失败也能复盘。** 错误回复会完整保留并标注，附带可复制的 TraceID，定位问题不求人。
 
-| 执行时间线 | 耗时 |
-|---|:---:|
-| ① 需求理解 Agent | 0.8s |
-| ② 选择 Agent 与模型 | 1.2s |
-| ③ 组件装配 · Skill / MCP | 2.1s |
-| ④ 多轮思考与工具执行 | 6.4s |
-| ⑤ 评估 Agent 质量打分 | 1.1s |
-| ⑥ 写作 Agent 美化排版 | 0.8s |
-
-*总耗时 12.4s · 输入 3,148 Token · 5 次工具调用 · 1 次需求确认*
+<div align="center">
+  <img src="README/timeline.svg" width="820" alt="思考过程执行时间线：六个阶段全程可见" />
+</div>
 
 > 一个愿意承认「我可能理解错了」的 AI，比一个永远自信地答错的 AI，可信太多。
 
-### 04 · 第二大脑 —— 把你的 100 篇笔记，喂成一个会回答的第二大脑
+<h3 align="center">🧠 04 · 第二大脑 —— 把你的 100 篇笔记，喂成会回答的第二大脑</h3>
 
 你电脑里一定躺着几百篇 Markdown 笔记，写了就再也没打开过。资料库让它们重新活过来：
 
@@ -115,12 +113,12 @@ AI 最让人不安的，是你永远不知道它「以为」你要什么。Brian
 |---|---|
 | 📂 **一个路径就接进来** | 支持直接添加本地目录，自动扫描成目录树，内容完全留在本机 |
 | 📖 **开启自学习，让它替你读书** | 系统空闲时自动阅读文档，把长文切块、提炼成知识点，沉淀进记忆网络。下次提问自然参与回答 |
-| 🎯 **选中一段，当场就问** | 框选看不懂的段落 → 右键「解释选中内容」→ 答案固定成卡片贴在文档旁，下次打开还在 |
+| 🎯 **选中一段，当场就问** | 框选看不懂的段落 → 右键「解释选中内容」→ 答案固定成卡片贴在文档旁（纸质书边注形态），下次打开还在 |
 | 💡 **不止积累，还给洞察** | 模式识别 / 趋势分析 / 异常检测 / 关联发现——比如发现一个反复出现却一直被你忽略的主题 |
 | 🎚️ **学不学、多主动，你说了算** | 随机因子调高，它空闲时更爱自发学习；想安静，随时暂停 |
 | 👤 **它会慢慢形成「你」的画像** | 行业、知识领域、文风、学习倾向持续更新，并保留历史版本，能看到「它眼中的我」的变化 |
 
-### 05 · 一支会自我进化的 Agent 团队
+<h3 align="center">🤖 05 · 一支会自我进化的 Agent 团队</h3>
 
 一次问答背后是一支分工明确的 Agent 团队，而非单个大模型裸奔：
 
@@ -140,18 +138,22 @@ flowchart LR
 - **CDT 浏览器自动化**：Chrome 指纹反检测（bot.sannysoft.com 14+ 检测项实测通过）+ **继承本机 Chrome 登录态**，自动化直接操作你已登录的站点；
 - **技能沙箱**：技能代码在 isolated-vm（V8 隔离实例）中硬隔离执行，沙箱初始化失败直接拒绝启动，绝不静默降级。
 
-### 06 · 你的数据，从头到尾都在你手里
+<h3 align="center">🔒 06 · 你的数据，从头到尾都在你手里</h3>
 
 | 🔒 全在本机 | 🔑 API Key 自己保管 | 📦 解压即用 | 🧩 开源，可自建 |
 |---|---|---|---|
-| 对话、记忆、资料、画像，全在本机，不上传，不经过任何第三方服务器。 | 内置 OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎等目录，用哪家、花多少你说了算，还能设每日/每月用量上限。 | 发行包内含运行环境，Linux / macOS / Windows 全覆盖，目标机器无需安装任何依赖；支持离线安装、程序与数据分离，升级重装都不丢数据。 | Apache 2.0，代码全开放。个人用是本地 Agent，想给团队用也能改造成服务。 |
+| 对话、记忆、资料、画像，全在本机，不上传，不经过任何第三方服务器。 | 内置 OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎等目录，用哪家、花多少你说了算，还能设每日/每月用量上限。 | 发行包内含运行环境，Linux / macOS / Windows 全覆盖，目标机器无需安装任何依赖；程序与数据分离，升级重装都不丢数据。 | Apache 2.0，代码全开放。个人用是本地 Agent，想给团队用也能改造成服务。 |
 
 ---
 
+<div align="center">
+
 ## ⚖️ 一张表看懂：它和「套壳聊天」的差距
 
+</div>
+
 | 你在意的事 | 常见聊天产品 | Brian-Agent |
-|---|---|---|
+|:---:|---|---|
 | 长对话记忆 | 自动塞最近 N 轮，容易断片 | 勾选引用 + Pin，你说了算 |
 | 记忆长什么样 | 一堆散乱历史 | 一张可拖可点、能看见关系的记忆地图 |
 | 越用越懂你 | 基本不变 | 主动学习、知识沉淀、画像持续更新 |
@@ -165,19 +167,15 @@ flowchart LR
 
 <a id="install"></a>
 
+<div align="center">
+
 ## 🚀 安装与部署
 
-### 60 秒上手
+</div>
 
-```bash
-# 当前发布阶段：本地构建离线包安装（方式 C / D 不依赖外部发布）
-python3 packaging/pack.py --targets linux-x64        # 构建机需 Node 22；win32-x64/darwin-* 同理
-./packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz   # 或直接解压便携包
-
-brian start                 # 启动后端(:8000) + 前端
-# ▲ Brian-Agent 运行中  →  http://127.0.0.1:8000
-# · 打开 /config 填入你的 API Key，开始对话
-```
+<div align="center">
+  <img src="README/terminal.svg" width="760" alt="brian start 终端示意" />
+</div>
 
 ### 系统要求
 
@@ -242,6 +240,8 @@ python3 packaging/pack.py --skip-chromium                 # 不内置 Chrome（�
 ./packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz        # Linux/macOS
 .\install.ps1 -From dist-pack\brian-agent-win32-x64.zip                     # Windows
 sudo dpkg -i dist-pack/brian-agent-linux-x64.deb                            # Linux .deb（含 /usr/bin/brian）
+
+brian start        # 启动 → http://127.0.0.1:8000，打开 /config 填入 API Key 即可对话
 ```
 
 </details>
@@ -331,7 +331,11 @@ npm update -g brian-agent                          # npm 方式（待 npm 包发
 
 <a id="architecture"></a>
 
+<div align="center">
+
 ## 🏗️ 架构一览
+
+</div>
 
 npm workspaces 单仓库，后端按 DDD 分为 5 个严格分层的包，依赖单向：`base ← core ← runtime ← agent ← application`；前端经 Vite 代理访问后端。
 
@@ -351,7 +355,11 @@ npm workspaces 单仓库，后端按 DDD 分为 5 个严格分层的包，依赖
 
 <a id="quality"></a>
 
+<div align="center">
+
 ## 🧪 质量与测试
+
+</div>
 
 全仓库统一五参方法签名（`Promise<boolean> method(input, context, output, …)`）+ AOP 织入，506 个公开方法由脚本自动生成索引。
 
@@ -368,7 +376,11 @@ npm run docs:index    # 重新生成方法自动索引
 
 <a id="docs"></a>
 
+<div align="center">
+
 ## 📚 文档
+
+</div>
 
 | 文档 | 内容 |
 |------|------|
@@ -384,6 +396,8 @@ npm run docs:index    # 重新生成方法自动索引
 
 <a id="community"></a>
 
+<div align="center">
+
 ## 💬 交流
 
 使用技巧、问题反馈、更新预告都在群里。扫下面的二维码，或直接搜索群号加入。
@@ -394,8 +408,6 @@ npm run docs:index    # 重新生成方法自动索引
 | 扫码加入，或 QQ 搜索群号 | 微信扫一扫，直接进群（群满时可先加 QQ 群备用） |
 
 ---
-
-<div align="center">
 
 **Brian-Agent · 一个会记住你、也会自己长大的本地个人 Agent**
 

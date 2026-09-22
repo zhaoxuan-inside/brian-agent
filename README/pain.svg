@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="300" viewBox="0 0 840 300" font-family="-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC',sans-serif">
+  <defs>
+    <style>
+      .who { font-size: 11px; fill: #6B7280; }
+      .say { font-size: 14.5px; fill: #1F2937; font-weight: 600; }
+      .fade { animation: fadein 0.6s ease forwards; }
+      @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="840" height="300" rx="18" fill="#FFFFFF" stroke="#D1D1D6"/>
+
+  <!-- 用户气泡 1 -->
+  <g class="fade">
+    <rect x="500" y="44" width="300" height="62" rx="14" fill="#E8F1FF" stroke="#B3D4FF"/>
+    <text class="who" x="520" y="66">你</text>
+    <text class="say" x="520" y="90">我们不是说好只看周末吗？</text>
+  </g>
+
+  <!-- AI 气泡 -->
+  <g class="fade">
+    <rect x="40" y="136" width="280" height="62" rx="14" fill="#F5F5F7" stroke="#E5E5EA"/>
+    <text class="who" x="60" y="158">AI</text>
+    <text class="say" x="60" y="182">抱歉，我没有看到相关信息。</text>
+  </g>
+
+  <!-- 用户气泡 2（第 17 次） -->
+  <g class="fade">
+    <rect x="430" y="228" width="370" height="62" rx="14" fill="#E8F1FF" stroke="#B3D4FF"/>
+    <text class="who" x="450" y="250">你（第 17 次）</text>
+    <text class="say" x="450" y="274">于是又把三天前那两段对话翻出来，重新贴了一遍。</text>
+  </g>
+
+  <!-- 左下强调角标 -->
+  <g class="fade">
+    <rect x="40" y="236" width="150" height="42" rx="21" fill="#FFF2F2" stroke="#FFC9C9"/>
+    <text x="115" y="263" text-anchor="middle" font-size="13.5" fill="#D93025" font-weight="700">第 50 轮，忘了第 3 轮</text>
+  </g>
+</svg>

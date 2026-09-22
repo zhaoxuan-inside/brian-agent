@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" font-family="-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC',sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050810"/>
+      <stop offset="1" stop-color="#0C1526"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0" r="1.1">
+      <stop offset="0" stop-color="#007AFF" stop-opacity="0.28"/>
+      <stop offset="0.6" stop-color="#007AFF" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#007AFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="slogan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4DA3FF"/>
+      <stop offset="0.5" stop-color="#AF52DE"/>
+      <stop offset="1" stop-color="#32ADE6"/>
+    </linearGradient>
+    <pattern id="dots" width="30" height="30" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#3A5A8C" opacity="0.4"/>
+    </pattern>
+    <style>
+      .flow { stroke-dashoffset: 0; animation: dashflow 2.4s linear infinite; }
+      @keyframes dashflow { to { stroke-dashoffset: -24.2; } }
+      .pulse { animation: pinpulse 2s ease-in-out infinite; }
+      @keyframes pinpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+      .float1 { animation: floaty 7s ease-in-out infinite; }
+      .float2 { animation: floaty 8s ease-in-out 1.2s infinite; }
+      @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+    </style>
+  </defs>
+
+  <rect width="1200" height="420" rx="20" fill="url(#bg)"/>
+  <rect width="1200" height="420" rx="20" fill="url(#dots)"/>
+  <rect width="1200" height="420" rx="20" fill="url(#glow)"/>
+
+  <!-- 左侧装饰节点群 -->
+  <g class="float1">
+    <path class="flow" d="M 96 286 C 140 286 130 236 176 236" fill="none" stroke="#4DA3FF" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="0.1 12" opacity="0.85"/>
+    <path d="M 96 286 C 150 286 216 300 258 300" fill="none" stroke="#4DA3FF" stroke-width="1.5" opacity="0.5"/>
+    <rect x="176" y="216" width="92" height="40" rx="10" fill="#0D1830" stroke="#2E4A6B"/>
+    <rect x="76" y="264" width="92" height="44" rx="10" fill="#0D1830" stroke="#2E4A6B"/>
+    <rect x="258" y="284" width="86" height="36" rx="10" fill="#0D1830" stroke="#2E4A6B"/>
+    <circle class="pulse" cx="254" cy="224" r="4" fill="#FF9500"/>
+    <circle cx="70" cy="262" r="3" fill="#32ADE6" opacity="0.9"/>
+  </g>
+  <!-- 右侧装饰节点群 -->
+  <g class="float2">
+    <path class="flow" d="M 1104 300 C 1064 300 1074 250 1030 250" fill="none" stroke="#AF52DE" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="0.1 12" opacity="0.8"/>
+    <path d="M 1104 300 C 1054 300 984 312 944 312" fill="none" stroke="#AF52DE" stroke-width="1.5" opacity="0.5"/>
+    <rect x="938" y="230" width="92" height="40" rx="10" fill="#0D1830" stroke="#3A2E6B"/>
+    <rect x="1104" y="278" width="92" height="44" rx="10" fill="#0D1830" stroke="#3A2E6B"/>
+    <circle class="pulse" cx="1030" cy="250" r="4" fill="#FF9500"/>
+    <circle cx="1136" cy="212" r="3" fill="#4DA3FF" opacity="0.9"/>
+    <circle cx="920" cy="210" r="2.4" fill="#32ADE6" opacity="0.7"/>
+  </g>
+
+  <!-- 主标题 -->
+  <text x="600" y="152" text-anchor="middle" font-size="58" font-weight="800" fill="#FFFFFF" letter-spacing="1">Brian-Agent</text>
+
+  <!-- 渐变标语 -->
+  <text x="600" y="216" text-anchor="middle" font-size="27" font-weight="700" fill="url(#slogan)">AI 的记忆，不该是黑盒，而该是一张你能亲手改的地图</text>
+
+  <!-- 副标语 -->
+  <text x="600" y="262" text-anchor="middle" font-size="15.5" fill="#8E93A8">本地运行 · 开源 · 解压即用 —— 不是又一个聊天框，而是一个记得住你、也会自己长大的个人 Agent</text>
+
+  <!-- 特性胶囊 -->
+  <g font-size="13" fill="#9FC0FF">
+    <rect x="377" y="304" width="80" height="30" rx="15" fill="#0F1830" stroke="#2A3A55"/>
+    <text x="417" y="324" text-anchor="middle">记忆地图</text>
+    <rect x="467" y="304" width="80" height="30" rx="15" fill="#0F1830" stroke="#2A3A55"/>
+    <text x="507" y="324" text-anchor="middle">自我进化</text>
+    <rect x="557" y="304" width="94" height="30" rx="15" fill="#0F1830" stroke="#2A3A55"/>
+    <text x="604" y="324" text-anchor="middle">可见的思考</text>
+    <rect x="661" y="304" width="80" height="30" rx="15" fill="#0F1830" stroke="#2A3A55"/>
+    <text x="701" y="324" text-anchor="middle">第二大脑</text>
+    <rect x="751" y="304" width="80" height="30" rx="15" fill="#0F1830" stroke="#2A3A55"/>
+    <text x="791" y="324" text-anchor="middle">数据归属</text>
+  </g>
+
+  <!-- 底部提示线 -->
+  <text x="600" y="382" text-anchor="middle" font-size="12.5" fill="#5C6780">数据全在自己机器上 · 模型自己选 · OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎 等 13+ 家任选</text>
+</svg>
