@@ -13,6 +13,7 @@ import { useCountUp } from '@/composables/useCountUp'
 import { useTypewriter } from '@/composables/useTypewriter'
 import { useOnceVisible } from '@/composables/useOnceVisible'
 import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
+import { layoutChipsInCard } from '@/utils/cardChipLayout'
 
 // ===== 原始实现（保留作为参考）：静态截图，已替换为下方动态组件 =====
 // import heroMap from '@/assets/home/hero-map.png'
@@ -44,8 +45,7 @@ function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 }
 
-// ===== 首页展示卡片的静态数据 =====
-const growCards = [
+// ===== 首页展示卡片的静态数据 =====const growCards = [
   { icon: markRaw(Network), title: '发现你从没意识到的联系', text: '节点越大关联越多，颜色越红出现越频繁。有时你会盯着图愣一下：「原来我最近一直在纠结这件事。」' },
   { icon: markRaw(Compass), title: '顺着网找记忆', text: '除了字面相似，它还沿标签和关键词的关系去捞旧事，常能想起靠搜索根本找不到的过去。' },
   { icon: markRaw(Sparkles), title: '恰到好处地「走神」', text: '检索时掺入极少量看似无关的记忆，避免每次只盯着眼前那点上下文。最好的灵感，常来自意料之外。' },
@@ -70,13 +70,40 @@ const timelineOverview = [
   { value: '5', label: '工具调用' },
   { value: '1', label: '需求确认' },
 ]
-const mapNodes = [
-  { id: 'n1', x: 45, y: 60, w: 210, h: 90, title: '北京今天天气怎么样？', sub: '提问' },
-  { id: 'n2', x: 45, y: 250, w: 210, h: 115, title: '多云转小雨 29/21℃', sub: '风力 3 级 · 傍晚有雨', pinned: true },
-  { id: 'n3', x: 495, y: 255, w: 210, h: 115, title: '追问：适合穿什么？', sub: '引用了上一条天气' },
-  { id: 'n4', x: 495, y: 455, w: 210, h: 70, title: '短袖 + 薄外套 + 雨伞', sub: '' },
-  { id: 'n5', x: 665, y: 70, w: 220, h: 120, title: '下午去博物馆还是商场？', sub: '勾选了「天气」作为依据' },
-  { id: 'n6', x: 665, y: 270, w: 220, h: 120, title: '建议上午户外，下午室内', sub: '点节点可跳回原文', pinned: true },
+// ===== 记忆地图示意：整齐两行三列网格（与 Hero 同款布局语义），节点悬浮高亮 + 连线入场 =====
+interface MapCardChip { label: string; kind: 'blue' | 'gray' | 'eval' }
+
+interface MapCard {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  time: string
+  title: string
+  sub: string
+  chips: MapCardChip[]
+  chars: string
+  pinned?: boolean
+}
+
+// ===== 原始实现（保留作为参考）：尺寸不一、行列错位的自由布点，图例浮层遮挡卡片 =====
+// const mapNodes = [
+//   { id: 'n1', x: 45, y: 60, w: 210, h: 90, title: '北京今天天气怎么样？', sub: '提问' },
+//   { id: 'n2', x: 45, y: 250, w: 210, h: 115, title: '多云转小雨 29/21℃', sub: '风力 3 级 · 傍晚有雨', pinned: true },
+//   { id: 'n3', x: 495, y: 255, w: 210, h: 115, title: '追问：适合穿什么？', sub: '引用了上一条天气' },
+//   { id: 'n4', x: 495, y: 455, w: 210, h: 70, title: '短袖 + 薄外套 + 雨伞', sub: '' },
+//   { id: 'n5', x: 665, y: 70, w: 220, h: 120, title: '下午去博物馆还是商场？', sub: '勾选了「天气」作为依据' },
+//   { id: 'n6', x: 665, y: 270, w: 220, h: 120, title: '建议上午户外，下午室内', sub: '点节点可跳回原文', pinned: true },
+// ]
+// 两行三列：列 x=40/340/640（宽 250），行 y=50/250（高 140）
+const mapNodes: MapCard[] = [
+  { id: 'n1', x: 40, y: 50, w: 250, h: 140, time: '13:02', title: '北京今天天气怎么样？', sub: '提问 · 开启话题', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }], chars: '8字' },
+  { id: 'n2', x: 340, y: 50, w: 250, h: 140, time: '13:02', title: '多云转小雨 29/21℃', sub: '风力 3 级 · 傍晚有雨', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }, { label: '思考过程', kind: 'blue' }], chars: '188字', pinned: true },
+  { id: 'n5', x: 640, y: 50, w: 250, h: 140, time: '13:03', title: '下午去博物馆还是商场？', sub: '勾选了「天气」作为依据', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '10字' },
+  { id: 'n3', x: 40, y: 250, w: 250, h: 140, time: '13:03', title: '追问：适合穿什么？', sub: '引用了上一条天气', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }], chars: '6字' },
+  { id: 'n4', x: 340, y: 250, w: 250, h: 140, time: '13:03', title: '短袖 + 薄外套 + 雨伞', sub: '按天气与场合生成', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }, { label: '评估结果', kind: 'eval' }], chars: '28字' },
+  { id: 'n6', x: 640, y: 250, w: 250, h: 140, time: '13:04', title: '建议上午户外，下午室内', sub: '点节点可跳回原文', chips: [{ label: '引用 2', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '302字', pinned: true },
 ]
 
 // ===== 统计数字 =====
@@ -114,12 +141,13 @@ interface MapEdge {
 //   { from: 'n2', to: 'n5', solid: false, d: 'M250,300 L720,120', delay: '1.1s' },
 //   { from: 'n5', to: 'n6', solid: true, d: 'M775,190 L775,270', delay: '1.4s' },
 // ]
+// 连线全部沿网格正交方向：问答链 = solid，引用 / 勾选依据 = dashed
 const mapEdges: MapEdge[] = [
-  { from: 'n1', fromSide: 'bottom', to: 'n2', toSide: 'top', alongA: 0.42, alongB: 0.58, solid: true, delay: '0.2s' },
-  { from: 'n2', fromSide: 'right', to: 'n3', toSide: 'left', solid: false, delay: '0.5s' },
-  { from: 'n3', fromSide: 'bottom', to: 'n4', toSide: 'top', alongA: 0.45, alongB: 0.55, solid: true, delay: '0.8s' },
-  { from: 'n2', fromSide: 'right', to: 'n5', toSide: 'left', solid: false, delay: '1.1s' },
-  { from: 'n5', fromSide: 'bottom', to: 'n6', toSide: 'top', alongA: 0.45, alongB: 0.55, solid: true, delay: '1.4s' },
+  { from: 'n1', fromSide: 'right', to: 'n2', toSide: 'left', solid: true, delay: '0.15s' },
+  { from: 'n2', fromSide: 'right', to: 'n5', toSide: 'left', solid: false, delay: '0.4s' },
+  { from: 'n2', fromSide: 'bottom', to: 'n3', toSide: 'top', solid: false, delay: '0.65s' },
+  { from: 'n3', fromSide: 'right', to: 'n4', toSide: 'left', solid: true, delay: '0.9s' },
+  { from: 'n5', fromSide: 'bottom', to: 'n6', toSide: 'top', solid: true, delay: '1.15s' },
 ]
 
 const nodeById = new Map<string, typeof mapNodes[number]>(mapNodes.map((n) => [n.id, n]))
@@ -307,12 +335,14 @@ onUnmounted(() => {
 
         <div class="grid lg:grid-cols-2 gap-10 mt-10 items-start">
           <div ref="mapEl" v-reveal class="block-card relative overflow-hidden" :class="{ 'home-map-drawn': mapDrawn }">
+            <!-- ===== 原始实现（保留作为参考）：绝对定位图例浮层，会遮挡右下角卡片 =====
             <div class="absolute right-4 bottom-4 z-10 text-[11.5px] leading-7 text-right bg-white/70 dark:bg-black/40 backdrop-blur px-3 py-2 rounded-lg border border-apple-gray-200/60 dark:border-apple-gray-700/60">
               <div><i class="home-legend-dot" style="border-color:#007AFF"></i>提问 / 回答</div>
               <div><i class="home-legend-dot" style="border-color:#AF52DE"></i>引用关系（可勾选）</div>
               <div><i class="home-legend-dot" style="border-color:#FF9500"></i>Pin（永久生效）</div>
             </div>
-            <svg viewBox="0 0 900 540" class="w-full h-auto block" @mouseleave="hoveredNode = null">
+            ===== 图例已移至画布下方页脚条，不再遮挡任何卡片 ===== -->
+            <svg viewBox="0 0 900 450" class="w-full h-auto block" @mouseleave="hoveredNode = null">
               <path
                 v-for="(e, i) in mapEdgePaths" :key="e.from + e.to"
                 class="home-mline" :class="{ solid: e.solid, hot: isEdgeHot(e) }"
@@ -326,11 +356,23 @@ onUnmounted(() => {
               </g>
               <g v-for="n in mapNodes" :key="n.id" class="cursor-pointer" @mouseenter="hoveredNode = n.id" @click="hoveredNode = n.id">
                 <rect class="home-mnode" :class="{ hot: hoveredNode === n.id }" :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="12" />
-                <text class="home-mtxt" :x="n.x + 15" :y="n.y + 30">{{ n.title }}</text>
-                <text v-if="n.sub" class="home-mtxt dim" :x="n.x + 15" :y="n.y + 58">{{ n.sub }}</text>
-                <circle v-if="n.pinned" class="home-pin" :cx="n.x + n.w - 20" :cy="n.y + 22" r="4.2" />
+                <text class="home-mtime" :x="n.x + 14" :y="n.y + 19">{{ n.time }}</text>
+                <circle v-if="n.pinned" class="home-pin" :cx="n.x + n.w - 18" :cy="n.y + 16" r="4.2" />
+                <text class="home-mtxt" :x="n.x + 14" :y="n.y + 42">{{ n.title }}</text>
+                <text v-if="n.sub" class="home-mtxt dim" :x="n.x + 14" :y="n.y + 60">{{ n.sub }}</text>
+                <g v-for="(c, ci) in layoutChipsInCard(n.chips, n)" :key="ci">
+                  <rect class="home-mchip" :class="c.kind" :x="c.x" :y="c.y" :width="c.w" height="14" rx="7" />
+                  <text class="home-mchip-txt" :class="c.kind" :x="c.x + c.w / 2" :y="c.y + 10">{{ c.label }}</text>
+                </g>
+                <text class="home-mchars" :x="n.x + n.w - 12" :y="n.y + n.h - 7" text-anchor="end">{{ n.chars }}</text>
               </g>
             </svg>
+            <!-- 图例页脚条：不再浮于画布之上 -->
+            <div class="flex flex-wrap items-center justify-center gap-x-7 gap-y-1 px-4 py-3 border-t border-apple-gray-200/60 dark:border-apple-gray-700/60 text-[11.5px] text-apple-gray-500 dark:text-apple-gray-400">
+              <span><i class="home-legend-dot" style="border-color:#007AFF"></i>提问 / 回答</span>
+              <span><i class="home-legend-dot" style="border-color:#AF52DE"></i>引用关系（可勾选）</span>
+              <span><i class="home-legend-dot" style="border-color:#FF9500"></i>Pin（永久生效）</span>
+            </div>
           </div>
 
           <div>

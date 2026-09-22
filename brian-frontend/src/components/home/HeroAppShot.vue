@@ -6,11 +6,13 @@ import {
 } from '@lucide/vue'
 import { useOnceVisible } from '@/composables/useOnceVisible'
 import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
+import { layoutChipsInCard, type LaidChip } from '@/utils/cardChipLayout'
 
 // HeroAppShot：首页 Hero 主视觉的动态演示——
-// 左侧 ChatMap 记忆地图：平滑贝塞尔连线 + 节点漂浮 + 假鼠标演示循环
-// （点击复选框勾选上下文 → 点击 Pin 钉住消息，对应功能态随之点亮）；
-// 右侧对话区消息依次浮现 + 输入框光标闪烁。替代原静态截图 hero-map.png。
+// 左侧 ChatMap：整齐的两列三行网格（纵向问答链 + 横向引用，与真实 ChatMap 布局语义一致），
+// 假鼠标演示「多选上下文」：依次勾选两条消息 → 钉住一条指令 → 右侧回答点亮
+// 「基于勾选 2 条 + 钉住 1 条生成」；右侧对话区消息依次浮现 + 输入框光标闪烁。
+// 替代原静态截图 hero-map.png。
 
 interface HeroChip { label: string; kind: 'blue' | 'gray' | 'eval' }
 
@@ -28,16 +30,18 @@ interface HeroNode {
   chars: string
 }
 
-const CHECK_ID = 'n3'
+const CHECK1_ID = 'n3'
+const CHECK2_ID = 'n5'
 const PIN_ID = 'n6'
 
+// 两列三行对齐网格：列 x=36/352（宽 252），行 y=30/186/378
 const mapNodes: HeroNode[] = [
-  { id: 'n1', x: 26, y: 26, w: 238, h: 104, time: '2026-08-27 13:02', title: '北京天气怎么样？', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }, { label: '思考过程', kind: 'blue' }, { label: '评估结果', kind: 'eval' }], chars: '8字' },
-  { id: 'n2', x: 372, y: 22, w: 242, h: 104, time: '2026-08-27 13:05', title: '推荐今天适合去的地方', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '10字' },
-  { id: 'n3', x: 26, y: 218, w: 254, h: 150, time: '2026-08-27 13:03', title: '北京今日天气', sub: '多云转小雨 29℃/21℃ · 傍晚有雨', sub2: '风力 3 级 · 来源：中国天气网', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }, { label: '思考过程', kind: 'blue' }], chars: '188字' },
-  { id: 'n4', x: 388, y: 210, w: 226, h: 118, time: '2026-08-27 13:03', title: '适合什么穿搭？', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }], chars: '6字' },
-  { id: 'n5', x: 136, y: 462, w: 242, h: 132, time: '2026-08-27 13:04', title: '8月27日北京多云转小雨…', sub: '短袖打底、薄外套、晴雨两用伞', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '350字' },
-  { id: 'n6', x: 434, y: 444, w: 184, h: 124, time: '2026-08-27 13:47', title: '回复的内容不要啰嗦', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }], chars: '9字' },
+  { id: 'n1', x: 36, y: 30, w: 252, h: 104, time: '2026-08-27 13:02', title: '北京天气怎么样？', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }, { label: '思考过程', kind: 'blue' }, { label: '评估结果', kind: 'eval' }], chars: '8字' },
+  { id: 'n2', x: 352, y: 30, w: 252, h: 104, time: '2026-08-27 13:05', title: '今日游玩推荐', sub: '室内首选：国博 · 科技馆 · 天文馆', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '508字' },
+  { id: 'n3', x: 36, y: 186, w: 252, h: 140, time: '2026-08-27 13:03', title: '北京今日天气', sub: '多云转小雨 29℃/21℃ · 傍晚有雨', sub2: '风力 3 级 · 来源：中国天气网', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }, { label: '思考过程', kind: 'blue' }], chars: '188字' },
+  { id: 'n4', x: 352, y: 186, w: 252, h: 140, time: '2026-08-27 13:05', title: '穿搭建议', sub: '短袖打底 + 薄外套 + 晴雨两用伞', chips: [{ label: '引用 2', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }, { label: '评估结果', kind: 'eval' }], chars: '6字' },
+  { id: 'n5', x: 36, y: 378, w: 252, h: 140, time: '2026-08-27 13:03', title: '适合穿什么？', sub: '追问 · 引用了上一条天气', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }], chars: '6字' },
+  { id: 'n6', x: 352, y: 378, w: 252, h: 140, time: '2026-08-27 13:47', title: '回复的内容不要啰嗦', sub: '风格指令 · 长期有效', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }], chars: '9字' },
 ]
 
 interface HeroEdge {
@@ -51,7 +55,7 @@ interface HeroEdge {
   delay: string
 }
 
-// 节点间引用关系：solid = 上下文延续（连线绘制 + 流动光点），dashed = 引用跳转（点状虚线）
+// 连线全部沿网格正交方向：纵向 = 问答链（solid），横向 = 引用关系（dashed）
 // ===== 原始实现（保留作为参考）：手写坐标路径，卡片尺寸/位置调整后锚点即脱靶 =====
 // const mapEdges = [
 //   { d: 'M244,80 C288,80 292,68 336,68', solid: false, delay: '0.3s' },
@@ -61,11 +65,11 @@ interface HeroEdge {
 //   { d: 'M430,442 C400,442 396,464 376,464', solid: false, delay: '1.2s' },
 // ]
 const mapEdges: HeroEdge[] = [
-  { from: 'n1', fromSide: 'right', to: 'n2', toSide: 'left', solid: false, delay: '0.3s' },
-  { from: 'n1', fromSide: 'bottom', to: 'n3', toSide: 'top', alongA: 0.45, alongB: 0.55, solid: true, delay: '0.1s' },
-  { from: 'n3', fromSide: 'right', to: 'n4', toSide: 'left', solid: false, delay: '0.6s' },
-  { from: 'n4', fromSide: 'bottom', to: 'n5', toSide: 'top', solid: true, delay: '0.9s' },
-  { from: 'n5', fromSide: 'right', to: 'n6', toSide: 'left', solid: false, delay: '1.2s' },
+  { from: 'n1', fromSide: 'bottom', to: 'n3', toSide: 'top', solid: true, delay: '0.1s' },
+  { from: 'n2', fromSide: 'bottom', to: 'n4', toSide: 'top', solid: true, delay: '0.35s' },
+  { from: 'n3', fromSide: 'bottom', to: 'n5', toSide: 'top', solid: false, delay: '0.6s' },
+  { from: 'n3', fromSide: 'right', to: 'n4', toSide: 'left', solid: false, delay: '0.85s' },
+  { from: 'n5', fromSide: 'right', to: 'n6', toSide: 'left', solid: false, delay: '1.1s' },
 ]
 
 const nodeById = new Map<string, HeroNode>(mapNodes.map((n) => [n.id, n]))
@@ -78,36 +82,6 @@ const edgePaths = computed(() => mapEdges.flatMap((e) => {
 }))
 
 const solidEdgePaths = computed(() => edgePaths.value.filter((e) => e.solid))
-
-interface LaidChip extends HeroChip { x: number; y: number; w: number }
-
-function chipWidth(label: string) {
-  let w = 12
-  for (const ch of label) w += ch.charCodeAt(0) > 0x2e80 ? 8.4 : 4.9
-  return w
-}
-
-// 胶囊布局：按卡片宽度自动换行，行底对齐（两行时先上后下）
-function layoutChips(n: HeroNode): LaidChip[] {
-  const rows: LaidChip[][] = [[]]
-  let rowW = 0
-  n.chips.forEach((c) => {
-    const w = chipWidth(c.label)
-    if (rowW > 0 && rowW + w + 4 > n.w - 24) { rows.push([]); rowW = 0 }
-    rows[rows.length - 1].push({ ...c, x: 0, y: 0, w })
-    rowW += w + 4
-  })
-  const out: LaidChip[] = []
-  rows.forEach((row, r) => {
-    let cx = n.x + 12
-    const cy = n.y + n.h - 20 - (rows.length - 1 - r) * 17
-    row.forEach((c) => {
-      out.push({ ...c, x: cx, y: cy })
-      cx += c.w + 4
-    })
-  })
-  return out
-}
 
 const chatCards = [
   {
@@ -122,37 +96,42 @@ const chatCards = [
   },
   {
     who: 'user',
-    title: '回复的内容不要啰嗦',
+    title: '结合天气和穿搭，明天去哪玩？',
     chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 1', kind: 'gray' }],
-    chars: '9字',
+    chars: '15字',
   },
   {
     who: 'ai',
-    title: '北京今日（8月27日）游玩推荐',
+    title: '北京明日游玩推荐',
     lines: [
-      '今日多云转小雨，优先安排室内或半户外，下午 4 点后转入室内。',
-      '室内首选：国家博物馆（免费需预约）、中国科技馆、北京天文馆。',
-      '出行提醒：带伞、薄外套、防滑鞋；下午 4 点后尽量安排室内项目。',
+      '明日多云转小雨：优先国博（免费需预约）、中国科技馆，下午转室内。',
+      '按你的穿搭习惯：薄外套 + 晴雨两用伞，防滑鞋。',
     ],
-    chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }, { label: '评估结果', kind: 'eval' }],
+    chips: [{ label: '引用 2', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }, { label: '评估结果', kind: 'eval' }],
     chars: '217字',
   },
 ]
 
-// ===== 假鼠标演示：勾选复选框 → Pin 钉住，循环播放对应功能态 =====
+// ===== 假鼠标演示：勾选两条 → 钉住一条 → 回答基于所选生成，循环播放 =====
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const checked = ref(false)
+const sel1 = ref(false)
+const sel2 = ref(false)
 const pinned = ref(false)
+const answerReady = ref(false)
 const pressing = ref(false)
-const cursor = ref({ x: 586, y: 592 })
+const cursor = ref({ x: 556, y: 572 })
 const ripple = ref<{ x: number; y: number; k: number } | null>(null)
 
-const REST = { x: 586, y: 592 }
-const CHECK_NODE = mapNodes.find((n) => n.id === CHECK_ID) as HeroNode
+const checkedCount = computed(() => (sel1.value ? 1 : 0) + (sel2.value ? 1 : 0))
+
+const REST = { x: 556, y: 572 }
+const CHECK1_NODE = mapNodes.find((n) => n.id === CHECK1_ID) as HeroNode
+const CHECK2_NODE = mapNodes.find((n) => n.id === CHECK2_ID) as HeroNode
 const PIN_NODE = mapNodes.find((n) => n.id === PIN_ID) as HeroNode
-// 光标尖角落在控件左上（勾选框中心 / pin 图标中心）
-const CHECK_POINT = { x: CHECK_NODE.x + CHECK_NODE.w - 34, y: CHECK_NODE.y + 10 }
+// 光标尖角落在控件中心附近（复选框 / Pin 图标）
+const CHECK1_POINT = { x: CHECK1_NODE.x + CHECK1_NODE.w - 35, y: CHECK1_NODE.y + 10 }
+const CHECK2_POINT = { x: CHECK2_NODE.x + CHECK2_NODE.w - 35, y: CHECK2_NODE.y + 10 }
 const PIN_POINT = { x: PIN_NODE.x + PIN_NODE.w - 20, y: PIN_NODE.y + 10 }
 
 const timers: ReturnType<typeof setTimeout>[] = []
@@ -177,15 +156,19 @@ function press(apply: () => void, at: { x: number; y: number }) {
 
 function runDemo() {
   clearTimers()
-  checked.value = false
+  sel1.value = false
+  sel2.value = false
   pinned.value = false
+  answerReady.value = false
   cursor.value = { ...REST }
-  after(500, () => { cursor.value = { ...CHECK_POINT } })
-  after(1450, () => press(() => { checked.value = true }, CHECK_POINT))
-  after(2700, () => { cursor.value = { ...PIN_POINT } })
-  after(3650, () => press(() => { pinned.value = true }, PIN_POINT))
-  after(4800, () => { cursor.value = { ...REST } })
-  after(8400, runDemo)
+  after(400, () => { cursor.value = { ...CHECK1_POINT } })
+  after(1250, () => press(() => { sel1.value = true }, CHECK1_POINT))
+  after(2450, () => { cursor.value = { ...CHECK2_POINT } })
+  after(3300, () => press(() => { sel2.value = true }, CHECK2_POINT))
+  after(4600, () => { cursor.value = { ...PIN_POINT } })
+  after(5450, () => press(() => { pinned.value = true }, PIN_POINT))
+  after(6600, () => { cursor.value = { ...REST }; answerReady.value = true })
+  after(11000, runDemo)
 }
 
 const rootEl = ref<Element | null>(null)
@@ -193,9 +176,11 @@ const entered = ref(false)
 useOnceVisible(rootEl, () => {
   entered.value = true
   if (reduceMotion) {
-    // 降级：直接呈现「已勾选 + 已钉住」终态，不播演示
-    checked.value = true
+    // 降级：直接呈现「两条已勾选 + 已钉住 + 回答点亮」终态，不播演示
+    sel1.value = true
+    sel2.value = true
     pinned.value = true
+    answerReady.value = true
   } else {
     runDemo()
   }
@@ -205,7 +190,7 @@ onUnmounted(clearTimers)
 </script>
 
 <template>
-  <div ref="rootEl" class="select-none" :class="{ on: entered }" role="img" aria-label="Brian-Agent 对话页演示：左侧 ChatMap 记忆地图，假鼠标演示勾选上下文与 Pin 钉住；右侧对话问答">
+  <div ref="rootEl" class="select-none" :class="{ on: entered }" role="img" aria-label="Brian-Agent 对话页演示：左侧 ChatMap 记忆地图为整齐两列网格，假鼠标演示勾选多条消息与 Pin 钉住，右侧回答基于所选消息生成">
     <!-- 应用窗口 -->
     <div class="rounded-xl overflow-hidden bg-[#161619] border border-white/[.08] shadow-2xl">
       <!-- 顶部导航栏 -->
@@ -225,7 +210,7 @@ onUnmounted(clearTimers)
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-[1.42fr_1fr] md:divide-x divide-y md:divide-y-0 divide-white/[.06]">
-        <!-- 左：记忆地图（含假鼠标演示） -->
+        <!-- 左：记忆地图（整齐网格 + 假鼠标多选演示） -->
         <svg viewBox="0 0 640 620" class="w-full h-auto block">
           <defs>
             <marker id="hf-arrow" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
@@ -248,16 +233,20 @@ onUnmounted(clearTimers)
               <animateMotion :path="e.d" dur="2.8s" repeatCount="indefinite" :begin="`${-i * 0.9}s`" />
             </circle>
           </g>
-          <g v-for="(n, ni) in mapNodes" :key="n.id" class="hf-in" :style="{ animationDelay: ni * 0.12 + 's' }">
+          <g v-for="(n, ni) in mapNodes" :key="n.id" class="hf-in" :style="{ animationDelay: ni * 0.1 + 's' }">
             <g class="hf-float" :style="{ animationDelay: (ni % 3) * 1.3 + 's' }">
               <rect
                 class="hf-card" :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="10"
-                :class="{ 'on-check': checked && n.id === CHECK_ID, 'on-pin': pinned && n.id === PIN_ID }"
+                :class="{ 'on-check': (sel1 && n.id === CHECK1_ID) || (sel2 && n.id === CHECK2_ID), 'on-pin': pinned && n.id === PIN_ID }"
               />
               <text class="hf-time" :x="n.x + 12" :y="n.y + 17">{{ n.time }}</text>
 
               <!-- 复选框：勾选后进入本轮上下文 -->
-              <g class="hf-check" :class="{ on: checked && n.id === CHECK_ID }" :transform="`translate(${n.x + n.w - 42}, ${n.y + 7})`">
+              <g
+                class="hf-check"
+                :class="{ on: (sel1 && n.id === CHECK1_ID) || (sel2 && n.id === CHECK2_ID) }"
+                :transform="`translate(${n.x + n.w - 42}, ${n.y + 7})`"
+              >
                 <rect width="13" height="13" rx="3" />
                 <path class="hf-check-mark" d="M2.8,6.8 L5.6,9.6 L10.4,3.6" />
               </g>
@@ -276,23 +265,37 @@ onUnmounted(clearTimers)
               <text class="hf-title" :x="n.x + 12" :y="n.y + 40">{{ n.title }}</text>
               <text v-if="n.sub" class="hf-sub" :x="n.x + 12" :y="n.y + 58">{{ n.sub }}</text>
               <text v-if="n.sub2" class="hf-sub" :x="n.x + 12" :y="n.y + 73">{{ n.sub2 }}</text>
-              <g v-for="(c, ci) in layoutChips(n)" :key="ci">
+              <g v-for="(c, ci) in layoutChipsInCard(n.chips, n)" :key="ci">
                 <rect
-                  class="hf-chip" :class="[c.kind, { lit: checked && n.id === 'n4' && c.kind === 'blue' }]"
+                  class="hf-chip" :class="[c.kind, { lit: checkedCount === 2 && n.id === 'n4' && c.kind === 'blue' }]"
                   :x="c.x" :y="c.y" :width="c.w" height="13" rx="6.5"
                 />
-                <text class="hf-chip-txt" :class="[c.kind, { lit: checked && n.id === 'n4' && c.kind === 'blue' }]" :x="c.x + c.w / 2" :y="c.y + 9.5">{{ c.label }}</text>
+                <text
+                  class="hf-chip-txt" :class="[c.kind, { lit: checkedCount === 2 && n.id === 'n4' && c.kind === 'blue' }]"
+                  :x="c.x + c.w / 2" :y="c.y + 9.5"
+                >{{ c.label }}</text>
               </g>
               <text class="hf-chars" :x="n.x + n.w - 12" :y="n.y + n.h - 7" text-anchor="end">{{ n.chars }}</text>
             </g>
           </g>
 
-          <!-- 功能提示气泡（跟随演示状态出现） -->
-          <g class="hf-tip" :class="{ show: checked }" :transform="`translate(${CHECK_NODE.x + 4}, ${CHECK_NODE.y - 34})`">
-            <rect class="hf-tip-box blue" width="138" height="24" rx="12" />
-            <text class="hf-tip-txt blue" x="69" y="16">已勾选进本轮上下文</text>
+          <!-- 上下文状态胶囊（实时计数，体现多选） -->
+          <g class="hf-status" :class="{ active: checkedCount > 0 || pinned }" transform="translate(36, 570)">
+            <rect width="168" height="26" rx="13" />
+            <circle cx="14" cy="13" r="3.2" class="hf-status-dot" />
+            <text x="30" y="17">本轮上下文：选中 {{ checkedCount }} · 钉住 {{ pinned ? 1 : 0 }}</text>
           </g>
-          <g class="hf-tip" :class="{ show: pinned }" :transform="`translate(${PIN_NODE.x + PIN_NODE.w - 142}, ${PIN_NODE.y - 34})`">
+
+          <!-- 功能提示气泡（跟随演示状态出现） -->
+          <g class="hf-tip" :class="{ show: sel1 && !sel2 }" :transform="`translate(${CHECK1_NODE.x + 4}, ${CHECK1_NODE.y - 32})`">
+            <rect class="hf-tip-box" width="150" height="24" rx="12" />
+            <text class="hf-tip-txt" x="75" y="16">已勾选 · 还可继续多选</text>
+          </g>
+          <g class="hf-tip" :class="{ show: sel2 }" :transform="`translate(${CHECK2_NODE.x + 4}, ${CHECK2_NODE.y - 32})`">
+            <rect class="hf-tip-box" width="150" height="24" rx="12" />
+            <text class="hf-tip-txt" x="75" y="16">已选 2 条 · 一并作答</text>
+          </g>
+          <g class="hf-tip" :class="{ show: pinned }" :transform="`translate(${PIN_NODE.x + 62}, ${PIN_NODE.y - 32})`">
             <rect class="hf-tip-box amber" width="138" height="24" rx="12" />
             <text class="hf-tip-txt amber" x="69" y="16">已钉住 · 每轮生效</text>
           </g>
@@ -312,12 +315,12 @@ onUnmounted(clearTimers)
         <div class="bg-[#1B1B1E] flex flex-col min-h-0">
           <div class="flex-1 p-3 space-y-2.5">
             <template v-for="(m, mi) in chatCards" :key="mi">
-              <!-- 用户消息：带头像 + Pin 高亮 -->
+              <!-- 用户消息 -->
               <div v-if="m.who === 'user'" class="hc-msg flex items-start gap-2" style="animation-delay: 0.5s">
                 <span class="hc-avatar"><User :size="11" /></span>
                 <div class="hc-card flex-1">
                   <div class="flex items-center text-[9.5px] text-apple-gray-500">
-                    13:47
+                    13:48
                     <span class="ml-auto flex items-center gap-2">
                       <i class="hc-check" />
                       <span class="relative inline-flex">
@@ -335,9 +338,10 @@ onUnmounted(clearTimers)
                 </div>
               </div>
 
-              <!-- AI 消息 -->
+              <!-- AI 消息（最后一条：演示「基于所选消息生成」） -->
               <div v-else class="hc-msg" :style="{ animationDelay: (mi === 0 ? 0.15 : 0.85) + 's' }">
-                <div class="hc-card">
+                <div class="hc-card" :class="{ 'hc-answered': answerReady && mi === 2 }">
+                  <span v-if="answerReady && mi === 2" class="hc-badge">✓ 基于勾选 2 条 + 钉住 1 条生成</span>
                   <p v-if="m.title" class="text-[11.5px] font-semibold text-apple-gray-100 mb-1">{{ m.title }}</p>
                   <p v-for="(line, li) in m.lines" :key="li" class="text-[10.5px] leading-[1.6] text-apple-gray-300">{{ line }}</p>
                   <div class="hc-chips mt-1.5">
@@ -390,6 +394,14 @@ onUnmounted(clearTimers)
 .hf-pinbtn.on .hf-pinbtn-glyph { stroke: #FF9F0A; }
 .hf-pinbtn-ring { fill: none; stroke: rgba(255, 69, 58, 0.85); stroke-width: 1.4; animation: hf-pulse 1.6s ease-in-out infinite; }
 
+/* 上下文状态胶囊 */
+.hf-status rect { fill: rgba(255, 255, 255, 0.05); stroke: rgba(255, 255, 255, 0.1); transition: 0.3s; }
+.hf-status text { fill: #6E6E73; font-size: 10px; transition: 0.3s; }
+.hf-status-dot { fill: #5A5A5F; transition: 0.3s; }
+.hf-status.active rect { fill: rgba(10, 132, 255, 0.12); stroke: rgba(10, 132, 255, 0.4); }
+.hf-status.active text { fill: #6DB2FF; }
+.hf-status.active .hf-status-dot { fill: #0A84FF; }
+
 /* 功能提示气泡 */
 .hf-tip { opacity: 0; transition: opacity 0.35s ease, transform 0.35s ease; }
 .hf-tip.show { opacity: 1; }
@@ -427,7 +439,9 @@ onUnmounted(clearTimers)
 .hc-msg { opacity: 0; }
 .on .hc-msg { animation: hc-up 0.6s ease forwards; }
 .hc-avatar { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(10, 132, 255, 0.18); color: #6DB2FF; display: grid; place-items: center; margin-top: 2px; }
-.hc-card { background: #232327; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; padding: 8px 10px; }
+.hc-card { background: #232327; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; padding: 8px 10px; transition: border-color 0.4s, box-shadow 0.4s; }
+.hc-card.hc-answered { border-color: rgba(10, 132, 255, 0.55); box-shadow: 0 0 14px rgba(10, 132, 255, 0.18); }
+.hc-badge { display: inline-block; margin-bottom: 5px; padding: 2px 8px; border-radius: 999px; font-size: 9px; background: rgba(10, 132, 255, 0.16); color: #6DB2FF; border: 1px solid rgba(10, 132, 255, 0.4); animation: hc-up 0.4s ease; }
 .hc-check { display: inline-block; width: 9px; height: 9px; border: 1px solid #5A5A5F; border-radius: 2px; }
 .hc-ring { position: absolute; inset: -3px -4px; border: 1.2px solid rgba(255, 69, 58, 0.85); border-radius: 4px; animation: hf-pulse 2s infinite; }
 .hc-fold { font-size: 9px; color: #6E6E73; margin: 2px 0; }
@@ -451,7 +465,7 @@ onUnmounted(clearTimers)
 
 @media (prefers-reduced-motion: reduce) {
   .hf-in, .on .hf-in, .hc-msg, .on .hc-msg { opacity: 1; animation: none; }
-  .hf-float, .hf-pinbtn-ring, .hc-ring, .hc-cursor, .hf-tip { animation: none; transition: none; }
+  .hf-float, .hf-pinbtn-ring, .hc-ring, .hc-cursor, .hc-badge, .hf-tip { animation: none; transition: none; }
   .hf-edge, .on .hf-edge, .on .hf-edge.solid, .on .hf-edge:not(.solid) { opacity: 0.9; stroke-dashoffset: 0; animation: none; }
 }
 </style>

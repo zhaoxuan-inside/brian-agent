@@ -1,3 +1,21 @@
+## [2026-09-22m] refactor: Hero 地图网格化重排 + 假鼠标升级为「多选上下文」演示
+
+**变更原因**：用户评审「卡片排布凌乱、没体现复选框可多选并针对多条选中消息回答」：原之字形 6 卡布局锚点交错显乱；演示只勾选一条消息，未覆盖「多选 + 基于所选回答」的核心能力。
+
+**修改的内容**（`HeroAppShot.vue`）：
+  - 卡片重排为**两列三行对齐网格**（列 x=36/352 等宽 252，行 y=30/186/378 等高对齐）：左列 = 天气问答链（问 → 答 → 追问），右列 = 延伸回答与指令；连线全部沿网格正交方向（纵向 solid 问答链 / 横向 dashed 引用），与真实 ChatMap 布局语义一致，消除斜线与交错。
+  - 演示升级为**多选叙事**（约 11s/轮）：勾选「北京今日天气」（气泡「已勾选 · 还可继续多选」）→ 勾选「适合穿什么？」（气泡「已选 2 条 · 一并作答」）→ 钉住「回复的内容不要啰嗦」（Pin 橙色 + 红环 + 气泡）→ 右侧回答卡点亮（蓝色辉光 + 徽章「✓ 基于勾选 2 条 + 钉住 1 条生成」，回答标题改为「北京明日游玩推荐」，用户提问改为「结合天气和穿搭，明天去哪玩？」）→ 复位重播。
+  - 新增**上下文状态胶囊**（地图左下角）：实时显示「本轮上下文：选中 N · 钉住 N」，随演示点亮。
+  - 穿搭建议卡「引用 2」胶囊在两条都勾选后点亮，右侧回答卡「引用 2」与之呼应。
+  - `prefers-reduced-motion` 降级为「2 条已勾选 + 已钉住 + 回答点亮」静态终态。
+
+**影响的端点**：仅前端首页 `/`，无接口变更。
+
+**可能存在的问题**：
+  - 演示为定时器状态机（11s/轮），长期停留持续重播；reduced-motion 下不运行。
+
+**验证**：vue-tsc 0 错误；eslint 0 problems；`npm run build` 通过（HomeView 56.58 kB）；vitest 117/122（5 个失败为既有基线）；headless Chrome 目检 reduced-motion 终态（双勾选/钉住/状态胶囊/回答徽章齐全）与正常模式演示进行态（光标按压帧）。
+
 ## [2026-09-22l] fix: CDT 反检测脚本两处静默失效（Page.enable 缺失 + webdriver 实例级伪装暴露）
 
 **变更原因**：真机验证反爬表现时发现 JS 层指纹伪装整体未生效：① `injectAntiDetection` 从未调用 `Page.enable`，而 Chrome 在 Page domain 未 enable 时 `Page.addScriptToEvaluateOnNewDocument` 应答成功但注入永不生效（对照实验：enable 后同一脚本正常注入）——webdriver/cores/mem/languages/isTrusted 覆盖全部静默丢失；② webdriver 用实例级 defineProperty 伪装，被 sannysoft「WebDriver (New)」（`_.has(navigator,'webdriver')` 只查自有属性）识破。
@@ -55,6 +73,7 @@
 
 **验证**：vue-tsc 0 错误；eslint 0 problems；vitest 117/122（新增 3 用例全绿，5 个失败为既有基线）；`npm run build` 通过（HomeView 55.56 kB）；headless Chrome 目检：reduced-motion 终态（勾选/钉住/气泡/点亮齐全）+ 正常模式假鼠标按压帧。
 
+## [2026-09-22k] refactor: 首页消息卡片连线优雅化——手写坐标路径 → edgePath 几何生成 + 流动光点
 
 **变更原因**：评审反馈「消息框的连线不够优雅」：HeroAppShot 与 HomeView 记忆地图的连线为手写坐标折线/硬斜线，锚点随卡片几何漂移，直线与折角生硬，虚线样式粗糙（`4 5` 平头虚线）。
 

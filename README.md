@@ -1,12 +1,14 @@
 <div align="center">
 
+<a id="top"></a>
+
 # Brian-Agent
 
-**不是做一个"工具"，而是做一个"人"**
+### AI 的记忆，不该是黑盒，而该是一张你能**亲手改的地图**
 
-一个具备**记忆、人格、反思与自我进化**能力的个人智能 Agent
+**本地运行 · 开源 · 解压即用**
 
-ChatMap 上下文自主控制 · 七源混合记忆召回 · 多 Agent 协作 · 自我进化闭环 · 浏览器自动化
+这不是又一个聊天框。它把你的对话、资料和想法，慢慢养成一个**记得住你、也会自己长大**的个人 Agent。数据全在自己机器上，模型自己选。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/Node.js-22.x-339933?logo=node.js&logoColor=white)
@@ -15,149 +17,265 @@ ChatMap 上下文自主控制 · 七源混合记忆召回 · 多 Agent 协作 ·
 ![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?logo=vue.js&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-1800%2B-brightgreen)
 
+[亮点功能](#features) · [安装与部署](#install) · [架构一览](#architecture) · [质量与测试](#quality) · [文档](#docs) · [交流群](#community)
+
+<img src="README/image.png" width="860" alt="Brian-Agent：左侧 ChatMap 记忆地图，右侧对话" />
+
+*左边，是你和 AI 的全部记忆画成的一张可操作地图；右边，是正常的对话问答。*
+
+| **7** 路混合记忆召回 | **13+** 家模型提供商 | **100%** 数据留在本机 | **0** 依赖安装 |
+|:---:|:---:|:---:|:---:|
+| 钉选/引用/时间线/图谱/向量/全文/随机 | OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎… | 对话、记忆、资料、画像不上传 | 发行包内置运行时，解压即用 |
+
 </div>
 
 ---
 
-## 🌟 亮点速览
+## 😮‍💨 你一定经历过
 
-| | 亮点 | 一句话说明 |
-|---|------|-----------|
-| 🗺️ | **ChatMap 对话图谱** | 对话即图谱：只引用你勾选的消息构建上下文，上下文由你掌控 |
-| 📌 | **Memory Pin** | 钉住重要消息，永不被滑动窗口冲刷 |
-| 🧠 | **七源混合记忆召回** | 钉选/引用/时间线/标签图/向量/全文/随机，像人脑一样取材 |
-| 🕸️ | **涌现图 & 关键词图** | 共现图谱自动挖掘记忆中的隐藏关联，重现"灵光一闪" |
-| 🤖 | **多 Agent 协作** | 意图理解 → 动态组队 → 规划 → 执行 → 写作 → 评估进化 |
-| 🧬 | **自我进化闭环** | 从文档/对话/图谱三种模式学习，Evolutor Agent 定期评估并生成进化报告 |
-| 👤 | **Soul 人格 & 用户画像** | 按任务匹配人格灵魂，对话中持续沉淀你的画像 |
-| 🌐 | **CDT 浏览器自动化** | Chrome 指纹反检测 + 继承本机登录态，开箱即可操作你已登录的站点 |
-| 📖 | **资料库阅读器** | 划词即问"读伴"，问答以纸质书边注形态对齐正文 |
-| 🔒 | **技能沙箱** | isolated-vm 硬隔离执行技能代码，fail-fast 不降级 |
-| 🔍 | **思考全透明** | 上下文构成、ReAct 思考流、任务/Agent DAG 全程可视可回溯 |
-| 📦 | **自包含发行包** | 内置 Node 运行时 + 原生模块 + Chrome，目标机零依赖解压即用 |
+> **你：** 我们不是说好只看周末吗？
+>
+> **AI：** 抱歉，我没有看到相关信息。
+>
+> **你（第 17 次）：** 于是又把三天前那两段对话翻出来，重新贴了一遍。
+
+问题不在模型不够聪明，而在**「记忆方式」错了**——现在几乎所有 AI 的记忆都只有一招：把最近 N 轮硬塞进上下文。
+
+Brian-Agent 的答案：**把记忆变成一张你能看见、能操作、能生长的地图。**
 
 ---
+
+<a id="features"></a>
 
 ## ✨ 亮点功能
 
-### 1. ChatMap 对话图谱 —— 上下文由你掌控
+### 01 · 记忆地图 —— 你终于能「看见」AI 记住了什么
 
-只问答你关心的信息，摒弃无用信息进入上下文：上下文的构建**只采用被引用（勾选）的消息**，
-不会加载无关消息，实现对话上下文的自主控制。无限画布支持缩放、平移、节点拖拽对齐。
+打开对话页，左边不是滚动的气泡，而是一张关系网。每条消息是一个节点，连线是它引用过的关系。更关键的是——**这张图可以操作**：
 
-<div align="center">
-  <img src="README/image.png" width="800" alt="ChatMap 可视化控制" />
-</div>
-
-### 2. Memory Pin 机制 —— 强制模型注意力
-
-对话轮数过多、上下文过长时，重要信息可能被忽略或丢失。只需 **Pin 住消息**，
-它就会永远留在上下文的关键位置，不被滑动窗口冲刷。
+- **想让 AI 参考哪段旧对话，就勾选哪段。** 本轮回答只读取「你勾选的消息 + 你钉住的消息」，其余一律不进上下文。记忆不再靠它猜，而是你说了算；
+- **关键信息，Pin 一次永久生效。** 「我在戒烟，别再推荐酒吧」「代码统一用 TypeScript」——钉住后每轮都在场，不用反复叮嘱；
+- **点一下节点，就跳回原文。** 想复盘两周前那次决策怎么来的？直接点过去。
 
 <div align="center">
-  <img src="README/image-1.png" width="640" alt="Memory Pin 机制" />
+  <img src="README/image-1.png" width="640" alt="Memory Pin：把关键消息钉在上下文里" />
 </div>
 
-### 3. 七源混合记忆召回 —— 像人脑一样取材
+> **结果很直接：** 上下文更短、回答更准、Token 更省——而且你第一次确切知道，AI 这一轮到底「记得」了什么。
 
-构建上下文时，系统按优先级从七个互补的来源采集素材，单一来源失败自动降级、不阻断整体：
+### 02 · 越长越懂你 —— 它不只是记住，它会长
 
-| 来源 | 机制 | 解决什么问题 |
-|------|------|-------------|
-| `PINNED` | 用户钉选的消息 | 重要信息强制在场 |
-| `CITING` | ChatMap 勾选引用 | 用户显式控制上下文 |
-| `TIMELINE` | 最近 N 条时间线 | 顺承当前话题 |
-| `TAG_RELATIVE` | 标签共现图谱搜索 | 时间距离过远的关联信息 |
-| `SIMILARITY` | LanceDB 向量语义检索 | 语义相近但措辞不同的历史 |
-| `KEYWORD` | SQLite FTS5 + BM25 全文匹配 | 被某个词"激活"的记忆 |
-| `RANDOM` | 会话/全局随机采样 | 模拟人脑偶然回忆，防止上下文过于狭窄 |
+你说过的每句话、AI 回过的每段内容，都会在后台被悄悄加工：生成摘要、抽取标签、算出语义向量、提取关键词。时间一长，这些零散信息自己长出了关系——
 
-> 向量 + 全文 + 图谱三路混合检索，不只依赖向量相似度，检索质量显著优于单路召回。
-
-### 4. 涌现图与关键词图 —— 提升 Memory 质量
-
-**信息页面**（`/info`）提供两个基于**共现关系**的知识图谱，帮助用户发现记忆中的隐藏关联：
-
-**涌现图（Tag Graph）** —— 系统理解请求内容后，通过标签图谱搜索，选中与当前请求最相关的信息，
-找回时间距离过远而容易丢失的记忆。
+**涌现图（Tag Graph）**：聊了两个月后打开它，你会发现「旅行规划、天气、地铁出行、博物馆」竟然连成了一整片——这是你自己的知识结构，第一次被真实地画了出来。
 
 <div align="center">
-  <img src="README/image-2.png" width="800" alt="涌现图（Tag Graph）" />
+  <img src="README/image-2.png" width="800" alt="涌现图：标签之间自动涌现的关联网络" />
 </div>
 
-**关键词图（Keyword Graph）** —— 大脑中有些灵光一闪，是被某一个词激活的。
-通过关键词图的关联性搜索，重现这种"灵光一闪"。
+**关键词图（Keyword Graph）**：「灵光一闪」也可以被复现——大脑里的联想往往是被某一个词激活的。点一个词，牵出一整片相关记忆。
 
 <div align="center">
-  <img src="README/image-3.png" width="800" alt="关键词图（Keyword Graph）" />
+  <img src="README/image-3.png" width="800" alt="关键词图：被一个词激活的联想网络" />
 </div>
 
-> 两个图谱的价值在于：**自动发现记忆中的涌现模式**——用户可能从未意识到的标签/关键词之间的关联
-> 被自动挖掘并可视化，帮助用户理解和审视自己的知识结构；同时反向服务于上下文构建
-> （`TAG_RELATIVE` 与 `KEYWORD` 维度），让检索利用结构化的共现关系而非仅靠向量相似度。
+| 🔗 发现你从没意识到的联系 | 🧭 顺着网找记忆 | ✨ 恰到好处地「走神」 |
+|---|---|---|
+| 节点越大关联越多，颜色越红出现越频繁。有时你会盯着图愣一下：「原来我最近一直在纠结这件事。」 | 除了字面相似，它还沿标签和关键词的关系去捞旧事，常能想起靠搜索根本找不到的过去。 | 检索时掺入极少量看似无关的记忆，避免每次只盯着眼前那点上下文。最好的灵感，常来自意料之外。 |
 
-### 5. 多 Agent 协作 —— 各司其职的"团队"
+> 七路混合召回：`钉选 → 引用 → 时间线 → 标签图谱 → 向量语义 → 全文关键词 → 随机采样`，按优先级互补取材，单路失败自动降级，绝不只靠向量相似度。
+
+### 03 · 可见的思考 —— 它会主动停下来问：「你是这个意思吗？」
+
+AI 最让人不安的，是你永远不知道它「以为」你要什么。Brian-Agent 把这一层彻底摊开：
+
+- **理解没把握时，它先问你，而不是硬答。** 把「它理解成的需求」「匹配度」「判断依据」摆给你看，再让你决定（匹配度 0.62 / 阈值 0.75 · 判断依据：问题过于宽泛）；
+- **整条链路可见。** 它怎么理解需求、选了哪个模型、调了哪些工具、每一步花了多久、烧了多少 Token——清清楚楚，没有一个黑盒；
+- **每次回答都有评分和优化建议。** 点「评估结果」，就能看到这次回答被打了多少分、哪里还能更好；
+- **失败也能复盘。** 错误回复会完整保留并标注，附带可复制的 TraceID，定位问题不求人。
+
+| 执行时间线 | 耗时 |
+|---|:---:|
+| ① 需求理解 Agent | 0.8s |
+| ② 选择 Agent 与模型 | 1.2s |
+| ③ 组件装配 · Skill / MCP | 2.1s |
+| ④ 多轮思考与工具执行 | 6.4s |
+| ⑤ 评估 Agent 质量打分 | 1.1s |
+| ⑥ 写作 Agent 美化排版 | 0.8s |
+
+*总耗时 12.4s · 输入 3,148 Token · 5 次工具调用 · 1 次需求确认*
+
+> 一个愿意承认「我可能理解错了」的 AI，比一个永远自信地答错的 AI，可信太多。
+
+### 04 · 第二大脑 —— 把你的 100 篇笔记，喂成一个会回答的第二大脑
+
+你电脑里一定躺着几百篇 Markdown 笔记，写了就再也没打开过。资料库让它们重新活过来：
+
+| 能力 | 说明 |
+|---|---|
+| 📂 **一个路径就接进来** | 支持直接添加本地目录，自动扫描成目录树，内容完全留在本机 |
+| 📖 **开启自学习，让它替你读书** | 系统空闲时自动阅读文档，把长文切块、提炼成知识点，沉淀进记忆网络。下次提问自然参与回答 |
+| 🎯 **选中一段，当场就问** | 框选看不懂的段落 → 右键「解释选中内容」→ 答案固定成卡片贴在文档旁，下次打开还在 |
+| 💡 **不止积累，还给洞察** | 模式识别 / 趋势分析 / 异常检测 / 关联发现——比如发现一个反复出现却一直被你忽略的主题 |
+| 🎚️ **学不学、多主动，你说了算** | 随机因子调高，它空闲时更爱自发学习；想安静，随时暂停 |
+| 👤 **它会慢慢形成「你」的画像** | 行业、知识领域、文风、学习倾向持续更新，并保留历史版本，能看到「它眼中的我」的变化 |
+
+### 05 · 一支会自我进化的 Agent 团队
 
 一次问答背后是一支分工明确的 Agent 团队，而非单个大模型裸奔：
 
-```
-IntentAgent 理解意图 → AgentBuilder 动态组建系统 Agent（AgentLibrary 统一管理）
-     ↓
-PlannerAgent 任务拆解（任务 DAG + 复杂度/优先级 + 支持重规划 replan）
-     ↓
-工作 Agent 执行（工具调用 / MCP / 技能 / 浏览器）
-     ↓
-WriterAgent 汇总作答（绑定专属 Soul 人格与人类友好阐述协议）
-     ↓
-EvolutorAgent 评估打分 → 反馈闭环 → 进化报告
+```mermaid
+flowchart LR
+    A["IntentAgent<br/>理解意图"] --> B["AgentBuilder<br/>动态组队"]
+    B --> C["PlannerAgent<br/>任务拆解 DAG · 支持重规划"]
+    C --> D["工作 Agent<br/>工具 / MCP / 技能 / 浏览器"]
+    D --> E["WriterAgent<br/>专属人格 · 人类友好阐述"]
+    E --> F["EvolutorAgent<br/>评估打分 · 进化报告"]
+    F -. 反馈闭环 .-> B
 ```
 
-前端全程可视化：**任务 DAG 流水图**、**Agent DAG 执行状态图**（灰=待执行/黄=进行中/绿=成功/红=失败）、
-**Canvas 绘制的 ReAct 思考流**，每一步的输入输出都可点开回溯。
+- **多 Agent 协作**：意图理解 → 动态组建系统 Agent（AgentLibrary 统一管理）→ 任务 DAG 规划 → 执行 → 人格化写作 → 评估进化；任务 DAG 流水图、Agent 执行状态图（灰=待执行/黄=进行中/绿=成功/红=失败）全程可视化；
+- **Soul 人格**：每个 Agent 绑定人格灵魂（身份定位、信条、纪律），按任务语义自动生成匹配的人格；
+- **自我进化闭环**：从文档 / 对话 / Tag 图三种模式自学习，Evolutor Agent 定期评估并产出进化报告；
+- **CDT 浏览器自动化**：Chrome 指纹反检测（bot.sannysoft.com 14+ 检测项实测通过）+ **继承本机 Chrome 登录态**，自动化直接操作你已登录的站点；
+- **技能沙箱**：技能代码在 isolated-vm（V8 隔离实例）中硬隔离执行，沙箱初始化失败直接拒绝启动，绝不静默降级。
 
-### 6. 自我进化闭环 —— 学习 → 评估 → 进化
+### 06 · 你的数据，从头到尾都在你手里
 
-- **三种自学习模式**（学习页可独立开关 + 随机因子滑杆模拟偶然性）：
-  从文档学习（抽取知识点与洞察）、从对话学习（提取偏好与知识模式）、Tag 图维护（连接标签/激活图边/老化孤立标签）；
-- **Evolutor Agent** 定期评估工作 Agent 与 Writer 的表现，产出评估分数与进化报告；
-- **反馈闭环**：用户反馈与 Agent 自评统一进入监控页，差评可追溯至具体执行过程。
-
-### 7. Soul 人格 & 用户画像
-
-- **Soul**：每个 Agent 绑定人格灵魂（身份定位、信条、纪律），Planner/Writer 各有专属人格，
-  新建 Agent 时按任务语义自动生成匹配的 Soul；
-- **用户画像**：对话中持续沉淀你的偏好与知识背景（含历史版本管理），并反哺 Writer 的表达风格。
-
-### 8. CDT 浏览器自动化 —— 反检测 + 登录态继承
-
-基于 Chrome DevTools Protocol 的浏览器自动化，两处差异化能力：
-
-- **指纹反检测**：`navigator.webdriver` 在原型级重定义、UA/平台/语言伪装，
-  bot.sannysoft.com 14+ 检测项实测全部通过；
-- **登录态种子**：配置本机 Chrome profile 后，Cookies + Local Storage 自动播种进产品浏览器——
-  自动化直接继承你已登录的站点，无需在产品内重新登录。
-
-### 9. 资料库阅读器 —— 纸质书边注式问答
-
-学习资料库内置三栏阅读器（目录 + 正文 + 读伴）：**划词右键即可向"读伴"提问**，
-问答以编号下划线标注在原文位置，宽屏下以**纸质书边注（marginalia）形态**对齐显示在正文空白处；
-文档编辑后标注自动模糊重对齐，实在对不上才标记"原文已变更"。
-
-### 10. 技能沙箱 —— 硬隔离执行
-
-技能代码在 **isolated-vm（V8 隔离实例）** 中执行（各平台 prebuilt 二进制随包分发），
-辅以本地解释器沙箱；沙箱是硬性部署契约——初始化失败直接拒绝启动，绝不静默降级执行。
-
-### 11. 思考全透明 —— 可解释、可回溯、可干预
-
-- **ThinkingContext**：完整展示本次问答的上下文构成（各来源引用了哪些消息、画像、最近工作）；
-- **人机协作卡片**：Agent 主动反问（AskUser）、工具执行授权（Permission，支持"记住选择"）、意图确认；
-- **监控页**：系统健康/资源/Token 消耗趋势/模型分布、日志多维过滤（级别/来源/trace_id）、反馈处理记录；
-- **配置中心**：13 家模型供应商与 MCP 市场开箱即用，所有配置变更均有历史记录与 Diff 对比。
+| 🔒 全在本机 | 🔑 API Key 自己保管 | 📦 解压即用 | 🧩 开源，可自建 |
+|---|---|---|---|
+| 对话、记忆、资料、画像，全在本机，不上传，不经过任何第三方服务器。 | 内置 OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎等目录，用哪家、花多少你说了算，还能设每日/每月用量上限。 | 发行包内含运行环境，Linux / macOS / Windows 全覆盖，目标机器无需安装任何依赖；支持离线安装、程序与数据分离，升级重装都不丢数据。 | Apache 2.0，代码全开放。个人用是本地 Agent，想给团队用也能改造成服务。 |
 
 ---
 
-## 🚀 快速开始（开发模式）
+## ⚖️ 一张表看懂：它和「套壳聊天」的差距
+
+| 你在意的事 | 常见聊天产品 | Brian-Agent |
+|---|---|---|
+| 长对话记忆 | 自动塞最近 N 轮，容易断片 | 勾选引用 + Pin，你说了算 |
+| 记忆长什么样 | 一堆散乱历史 | 一张可拖可点、能看见关系的记忆地图 |
+| 越用越懂你 | 基本不变 | 主动学习、知识沉淀、画像持续更新 |
+| 本地资料 | 通常不支持 | 本地 Markdown 资料库 + 自学习 + 选中即问 |
+| 思考透明 | 黑盒 | 需求确认、工具调用、耗时与评分全可见 |
+| 数据归属 | 在平台服务器 | 全在本机，API Key 自己保管 |
+| 模型选择 | 平台指定 | 主流提供商任选，含用量限额 |
+| 部署形态 | 只能用云 | 本地运行，也能自建为服务 |
+
+---
+
+<a id="install"></a>
+
+## 🚀 安装与部署
+
+### 60 秒上手
+
+```bash
+# 当前发布阶段：本地构建离线包安装（方式 C / D 不依赖外部发布）
+python3 packaging/pack.py --targets linux-x64        # 构建机需 Node 22；win32-x64/darwin-* 同理
+./packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz   # 或直接解压便携包
+
+brian start                 # 启动后端(:8000) + 前端
+# ▲ Brian-Agent 运行中  →  http://127.0.0.1:8000
+# · 打开 /config 填入你的 API Key，开始对话
+```
+
+### 系统要求
+
+| 项目 | 要求 |
+|------|------|
+| 操作系统 | Linux x64 · macOS（Intel / Apple Silicon）· Windows x64 |
+| Node.js | 仅 **npm 安装方式**需要 18+；一键脚本 / 发行包 / 便携模式**无需 Node**（运行时已内置） |
+| 磁盘 | 预留 1GB 以上（发行包内置 Chrome for Testing 时更大） |
+| 网络 | 调用模型 API 需可访问对应提供商端点；MCP / 浏览器自动化按需 |
+
+### 四种安装方式
+
+> **发布状态说明**：方式 A / B 依赖 GitHub Releases 上传 4 个平台产物与 npm 包发布——**当前仓库尚未发布**，
+> 暂不可用；请先使用 **方式 C / D**（本地构建，完全自包含，三平台均已验证可行）。
+> 发布流程见 [packaging/npm/README.md](packaging/npm/README.md)（创建 Release `v<版本>` 并上传平台压缩包 → `npm publish`）。
+
+<details>
+<summary><b>方式 A · 一键脚本（Linux / macOS）— 待 Release 发布后可用</b></summary>
+
+无需 Node，脚本自动从 GitHub Releases 下载对应平台发行包并完成安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/packaging/install.sh | bash
+
+# 可选参数
+#   --systemd     安装后自动注册 systemd 常驻服务
+#   --from <file> 离线安装本地已有的发行包
+
+# Windows（PowerShell）
+iwr https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/packaging/install.ps1 -OutFile install.ps1; .\install.ps1
+```
+
+</details>
+
+<details>
+<summary><b>方式 B · npm 全局包（已有 Node 18+ 的机器）— 待 npm 包发布后可用</b></summary>
+
+```bash
+npm i -g brian-agent
+```
+
+postinstall 自动识别平台并下载运行时与原生模块，装完即可在**任意目录**使用 `brian` 命令
+（下载失败不阻断安装，可稍后 `npm rebuild -g brian-agent` 重试）。
+
+</details>
+
+<details open>
+<summary><b>方式 C · 离线安装（本地构建，当前推荐）✅</b></summary>
+
+在有网的构建机上打好发行包，拷贝到目标机器离线安装——不依赖任何外部发布，三平台均可：
+
+```bash
+# 构建机：一键打包全部 4 个目标 + .deb + SHA256SUMS（要求构建机为 Node 22）
+python3 packaging/pack.py
+python3 packaging/pack.py --targets linux-x64,win32-x64   # 仅指定目标
+python3 packaging/pack.py --skip-chromium                 # 不内置 Chrome（体积 -150MB/目标）
+
+# 产物在 dist-pack/：Linux/macOS 为 .tar.gz，Windows 为 .zip，Linux 另有 .deb
+# 支持在任一平台交叉打包全部目标（Linux 产 .deb 需本机有 dpkg-deb）
+
+# 目标机：离线安装
+./packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz        # Linux/macOS
+.\install.ps1 -From dist-pack\brian-agent-win32-x64.zip                     # Windows
+sudo dpkg -i dist-pack/brian-agent-linux-x64.deb                            # Linux .deb（含 /usr/bin/brian）
+```
+
+</details>
+
+<details open>
+<summary><b>方式 D · 便携模式（免安装，解压即用）✅</b></summary>
+
+不装进系统也可以——解压直接运行，数据落在包内 `data/`，适合 U 盘随身携带：
+
+```bash
+tar -xzf brian-agent-linux-x64.tar.gz && cd brian-agent-linux-x64
+./brian.sh start                    # Windows: brian.cmd start
+```
+
+| 平台 | 产物 | 启动方式 |
+|------|------|---------|
+| Linux | `brian-agent-linux-x64.tar.gz` 或 `.deb` | 解压后 `./brian.sh start`；`.deb` 安装后直接用 `brian` 命令（/usr/bin/brian） |
+| macOS（Intel / Apple Silicon） | `brian-agent-darwin-*.tar.gz` | 解压 → `xattr -dr com.apple.quarantine brian-agent-*` → `./brian.sh start` * |
+| Windows | `brian-agent-win32-x64.zip` | 解压 → `brian.cmd start`（前台：`brian.cmd serve`） |
+
+\* Intel Mac（darwin-x64）暂未内置 isolated-vm 预编译二进制，JS 技能沙箱自动降级禁用（启动时警告，其余功能完整）；Apple Silicon 不受影响。
+
+</details>
+
+### 常驻服务（systemd，Linux 可选）
+
+`.deb` 安装后服务已注册，直接启用即可；一键脚本加 `--systemd` 参数也会自动安装：
+
+```bash
+sudo systemctl enable --now brian-agent   # 开机自启 + 立即启动
+systemctl status brian-agent              # 查看状态
+```
+
+### 开发模式（源码运行）
 
 ```bash
 git clone https://github.com/zhaoxuan-inside/brian-agent.git brian-agent && cd brian-agent
@@ -167,88 +285,55 @@ npm install          # 安装依赖（postinstall 自动就位原生模块）
 ./brian start        # 启动后端(:8000) + 前端(:5173)
 ./brian open         # 浏览器打开前端
 
-# 常用
-./brian start backend        # 仅启动后端
-./brian serve                # 前台 headless 模式
-./brian doctor               # 环境与依赖自检
-./brian stop                 # 停止全部
+# 开发调试
+./brian dev          # 前台全栈，改完代码看日志，Ctrl+C 关闭
+./brian serve        # 只跑后端（headless）
 ```
 
-后端默认监听 `http://127.0.0.1:8000`，前端 Vite(:5173) 代理 `/api` 与 `/ws`。
-环境变量：`BRIAN_PORT`、`BRIAN_HOST`。日常管理详见 [docs/使用手册.md](docs/使用手册.md)。
+### brian CLI 命令速查
 
-> 首次启动后需在 `/config` 页面配置模型供应商与 API Key，即可开始对话
-> （内置 13 家主流提供商目录：OpenAI / Anthropic / DeepSeek / 智谱 / 通义 / 火山引擎…）。
+| 命令 | 说明 | 命令 | 说明 |
+|------|------|------|------|
+| `brian start [backend\|frontend]` | 后台启动（默认全部） | `brian stop [service]` | 停止（先 SIGTERM 优雅关闭） |
+| `brian restart [service]` | 重启 | `brian status` | 查看运行状态与访问地址 |
+| `brian logs [service]` | 实时跟踪日志 | `brian open` | 浏览器打开前端（未运行则自动启动） |
+| `brian dev` | 前台全栈（Ctrl+C 一键停止） | `brian serve` | 前台 headless 后端 |
+| `brian doctor` | 环境与依赖自检 | `brian clean` | 清理 /tmp 日志与 PID 残留 |
 
-## 📦 打包分发与安装
+### 环境变量
 
-把系统打成**自包含发行包**：内置 Node.js 运行时、全部原生依赖、前端页面与
-Chrome for Testing（浏览器自动化用），目标机器**无需安装任何依赖**，解压即用。
-
-### 一键打包（构建机执行）
-
-```bash
-# 全部 4 个目标 + .deb + SHA256SUMS（要求构建机为 Node 22）
-python3 packaging/pack.py
-
-# 常用变体
-python3 packaging/pack.py --targets linux-x64,win32-x64   # 指定目标
-python3 packaging/pack.py --skip-chromium                 # 不内置 Chrome（体积 -150MB/目标）
-```
-
-产物在 `dist-pack/`：Linux/macOS 为 `.tar.gz`，Windows 为 `.zip`，Linux 另有 `.deb`。
-
-### 全局安装（推荐，Hermes 式体验）
-
-任选其一，安装后即可在**任意目录**使用 `brian` 命令：
-
-```bash
-# 方式 A：npm 全局包（已有 Node 18+ 的机器；postinstall 自动下载对应平台运行时）
-npm i -g brian-agent
-
-# 方式 B：一键脚本（Linux/macOS，无需 Node；从 GitHub Releases 下载）
-curl -fsSL https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/packaging/install.sh | bash
-# Windows（PowerShell）:
-iwr https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/packaging/install.ps1 -OutFile install.ps1; .\install.ps1
-
-# 方式 C：离线安装（本地已有的发行包，Linux/macOS）
-./packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz
-```
-
-### 安装（免安装便携模式）
-
-不安装直接使用也可以——解压即用，数据落在包内 `data/`：
-
-```bash
-tar -xzf brian-agent-linux-x64.tar.gz && cd brian-agent-linux-x64
-./brian.sh start                     # Windows: brian.cmd start
-```
-
-| 平台 | 产物 | 便携模式启动 |
-|------|------|-------------|
-| Linux | `brian-agent-linux-x64.tar.gz` 或 `.deb` | 解压后 `./brian.sh start`；`.deb` 安装后直接用 `brian` 命令（/usr/bin/brian） |
-| macOS（Intel/Apple Silicon） | `brian-agent-darwin-*.tar.gz` | 解压 → `xattr -dr com.apple.quarantine brian-agent-*` → `./brian.sh start` |
-| Windows | `brian-agent-win32-x64.zip` | 解压 → `brian.cmd start`（前台：`brian.cmd serve`） |
-
-启动后浏览器打开 **http://127.0.0.1:8000**。停止：`brian stop`（便携模式 `./brian.sh stop`）。对外监听：`BRIAN_HOST=0.0.0.0`。
-
-Linux 可选 systemd 常驻：安装包内含 `systemd/brian-agent.service`（.deb 已装好，可用 `sudo systemctl enable --now brian-agent`）；一键脚本加 `--systemd` 参数自动安装。
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `BRIAN_PORT` | `8000` | 后端端口（前端开发模式 Vite 固定 5173，代理 `/api` 与 `/ws`） |
+| `BRIAN_HOST` | `127.0.0.1` | 监听地址，对外服务设 `0.0.0.0` |
+| `BRIAN_DATA_DIR` | `~/.brian-agent`（Windows `%APPDATA%\brian-agent`） | 数据目录；便携模式固定为包内 `data/` |
 
 ### 首次运行须知
 
 - 包内**不含数据库**：`data/` 在首次运行时自动创建（表结构与默认配置种子自动初始化）；
-- **通用目录数据已随包预置**：模型提供商列表（OpenAI/Anthropic/DeepSeek/智谱/通义等 13 家）与 MCP 提供商列表（阿里云百炼/ModelScope/GitHub/Smithery 等）在首次运行时自动导入；
-- **个人数据不打包**（API Key、对话、记忆等）：提供商目录不含 API Key，需在 `/config` 页选择提供商并填入自己的 Key 才能开始对话；
-- 数据目录默认 `~/.brian-agent`（Windows `%APPDATA%\brian-agent`，`BRIAN_DATA_DIR` 可改，便携模式设为包内 `data/`）；端口 `BRIAN_PORT`（默认 8000）、监听地址 `BRIAN_HOST`（默认 127.0.0.1）；
-- **升级/重装不影响数据**（程序与数据分离）；
-- Windows 首次运行若被 SmartScreen 拦截，选择「仍要运行」。
+- **通用目录数据已随包预置**：13 家模型提供商目录与 MCP 提供商列表（阿里云百炼 / ModelScope / GitHub / Smithery 等）首次运行时自动导入；提供商目录**不含 API Key**，需在 `/config` 页选择提供商并填入自己的 Key 才能开始对话；
+- **个人数据不打包**：API Key、对话、记忆等只存在于你的数据目录；
+- **程序与数据分离**：升级、重装都不影响数据；Windows 首次运行若被 SmartScreen 拦截，选择「仍要运行」。
 
-详见 [packaging/README.md](packaging/README.md) 与 [docs/打包部署.md](docs/打包部署.md)。
+### 升级
+
+```bash
+npm update -g brian-agent                          # npm 方式（待 npm 包发布后可用）
+./packaging/install.sh --from <新版发行包>          # 离线方式：重新执行即可覆盖升级
+# 或覆盖解压新发行包 / sudo dpkg -i 新 .deb
+```
+
+数据目录与程序目录独立，升级后对话、记忆、配置原样保留。
+
+> 更多打包原理与部署细节见 [packaging/README.md](packaging/README.md) 与 [docs/打包部署.md](docs/打包部署.md)。
+
+---
+
+<a id="architecture"></a>
 
 ## 🏗️ 架构一览
 
-npm workspaces 单仓库，后端按 DDD 分为 5 个严格分层的包，依赖单向：
-`base ← core ← runtime ← agent ← application`；前端经 Vite 代理访问后端。
+npm workspaces 单仓库，后端按 DDD 分为 5 个严格分层的包，依赖单向：`base ← core ← runtime ← agent ← application`；前端经 Vite 代理访问后端。
 
 | 包 | 层级 | 职责 |
 |----|------|------|
@@ -262,10 +347,13 @@ npm workspaces 单仓库，后端按 DDD 分为 5 个严格分层的包，依赖
 
 **技术栈**：TypeScript · 纯 `node:http` + `ws`（无 Web 框架）· better-sqlite3 / isolated-vm / LanceDB（离线预编译原生件）· SSE 流式 · Node 22。
 
-**工程质量**：全仓库统一五参方法签名（`Promise<boolean> method(input, context, output, …)`）+
-AOP 织入，506 个公开方法由脚本自动生成索引；后端五层 vitest **1800+ 用例**。
+---
+
+<a id="quality"></a>
 
 ## 🧪 质量与测试
+
+全仓库统一五参方法签名（`Promise<boolean> method(input, context, output, …)`）+ AOP 织入，506 个公开方法由脚本自动生成索引。
 
 ```bash
 npm run test          # 后端 5 层 vitest（1800+ 用例，逐工作区聚合执行）
@@ -275,6 +363,10 @@ npm run lint:backend  # 后端 ESLint
 npm run build         # 按依赖顺序构建全部（前端含 vue-tsc 类型检查）
 npm run docs:index    # 重新生成方法自动索引
 ```
+
+---
+
+<a id="docs"></a>
 
 ## 📚 文档
 
@@ -288,8 +380,25 @@ npm run docs:index    # 重新生成方法自动索引
 | [docs/_1_DevStandards/DevStandards.md](docs/_1_DevStandards/DevStandards.md) | 开发强制规范（方法签名 / AOP / 分层） |
 | [docs/TODO-List.md](docs/TODO-List.md) | 待开发功能清单 |
 
+---
+
+<a id="community"></a>
+
 ## 💬 交流
 
-| QQ 群 | 微信群 |
-|-------|--------|
-| <img src="README/QQ群聊：Brian%20Agent.jpg" width="200" alt="QQ 群" /> | <img src="README/WeChat群聊：Brian%20Agent.jpg" width="200" alt="微信群" /> |
+使用技巧、问题反馈、更新预告都在群里。扫下面的二维码，或直接搜索群号加入。
+
+| QQ 群（群号 `942758906`） | 微信群 |
+|:---:|:---:|
+| <img src="README/QQ群聊：Brian%20Agent.jpg" width="220" alt="QQ 群二维码" /> | <img src="README/WeChat群聊：Brian%20Agent.jpg" width="220" alt="微信群二维码" /> |
+| 扫码加入，或 QQ 搜索群号 | 微信扫一扫，直接进群（群满时可先加 QQ 群备用） |
+
+---
+
+<div align="center">
+
+**Brian-Agent · 一个会记住你、也会自己长大的本地个人 Agent**
+
+GitHub · TypeScript · Vue 3 · Apache 2.0
+
+</div>
