@@ -8,7 +8,7 @@
  *
  * 本模块只做"协议 → 状态"映射，不发起请求；请求与生命周期编排见 useChatStream。
  */
-import type { Block, TextBlock, ThinkingBlock, TaskDagNode, TaskDagEdge, DagNodeItem, DagEdgeItem, DagExecutionStep } from '@/api/types'
+import type { Block, TextBlock, ThinkingBlock } from '@/api/types'
 import type { useSessionStore } from '@/stores/session'
 import type { useChatUiStore } from '@/stores/chatUi'
 
@@ -38,7 +38,7 @@ export interface ChatStreamEventHandler {
   reset: (clearTrace?: boolean) => void
 }
 
-import { BusinessEvent, SseTransportEvent, EVENT_UI_STYLE } from './sseEventTypes'
+import { BusinessEvent, SseTransportEvent } from './sseEventTypes'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -737,11 +737,6 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       kind: 'tool',
       target: partId ? `tool-${partId}` : 'agent-0',
     })
-  }
-
-  /** tool.launch（v2 协议）→ 动作轨迹（同 started；同 part_id 命中同一块做更新，不重复建块） */
-  function onToolLaunch(ctx: StreamEventCtx) {
-    onAgentAction(ctx)
   }
 
   // ===== 修改后的方法（2026-09-12）：tool.result 回填 ToolInvocation 块 =====

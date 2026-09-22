@@ -14,6 +14,20 @@
 
 **验证**：typecheck（@brian-agent/core）0 错误；core vitest 197/197 全绿；analyze-method-length 30 中 InfoCoreService 仅余 saveInfo（90 行，另行任务）；InfoCoreService.ts eslint 0 error。
 
+## [2026-09-22i] chore: Nit 清理——前端死代码与未用 import、豁免条款补登
+
+**变更原因**：评审 Nit 级遗留：① 前端 25 个 no-unused-vars warning（ConfigView 16 个未用图标 import + 2 个未用类型、chatStreamEvents 5 个未用 DAG 类型 + 1 个未用常量 + 1 个死函数）；② `analyze:methods` 在 docs/MethodIndex 残留 method-length-report.md 副本（bfdea75 已从库中删除但脚本仍会再生成）；③ RelationDBAccess 便捷方法偏离五参签名属有意豁免但未登记。
+
+**修改的内容**：
+  - `chatStreamEvents.ts`：删除死函数 `onToolLaunch`（v2 协议已无 tool.launch 事件，分发表无注册，仅 3 行转发包装）；移除 5 个未用 DAG 类型与 EVENT_UI_STYLE import。
+  - `ConfigView.vue`：移除 16 个未用图标 import 与 2 个未用类型 import。
+  - `analyze-method-length.mjs` 报告输出位置维持，残留副本删除（脚本按需再生成，不入库）。
+  - DDDStandards §6.2 豁免条款补登第 ④ 条：RelationDBAccess 便捷方法为数据层原语，不受五参签名约束，业务代码不得绕过 access 直接持有。
+
+**影响的端点**：无（前端仅删除确认未引用的代码；图标经 vue-eslint-parser 模板检测确认未用）。
+
+**验证（门禁）**：前端 lint 0 problems（25→0）；后端 lint 0 errors。
+
 ## [2026-09-22h] docs: 文档骨架补齐——全局索引 + Explan 重写 + Access 层 JSDoc 100%
 
 **变更原因**：评审发现缺全局索引（需求→文档→代码三跳不可达）、Explan.md 过期（路径错误/层描述复制粘贴错误/漏登术语表与决策记录等 6 处）、AgentExecutionAccess 与 ChatAccess 共 23 个公开方法 0 JSDoc（违反 DDDStandards §5 质量门）、过期 SelfLearning PRD stub 与正本并存。

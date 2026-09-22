@@ -2,10 +2,10 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Cpu, Bot, Workflow, AppWindow, Server, Database, Boxes, Table2,
-  Heart, Wand2, GitBranch, Brain, GraduationCap, HardDrive,
-  Lightbulb, Library, RefreshCw, ClipboardList, Briefcase, PenLine, List,
-  Settings, FileText, Network, User, MessageCircle, Sparkles,
+  Bot, Boxes,
+  Heart, Wand2, GitBranch,
+  Lightbulb, RefreshCw, List,
+  Settings, FileText, Network,
   ChevronRight, Trash2, Loader2, Check, AlertCircle,
   CheckSquare, Square,
   Star, FlaskConical, X, Save, Layers, Eraser,
@@ -22,7 +22,7 @@ import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, v
 import type { VectorSearchInfo } from '@/api'
 import type { ConfigTreeLayer, MQMessage, MQStats, McpUsageRecord } from '@/api/types'
 
-import { NAV_SECTIONS, type NavSection, type NavSubSection } from '@/utils/configDisplay'
+import { NAV_SECTIONS } from '@/utils/configDisplay'
 
 const navSections = NAV_SECTIONS
 

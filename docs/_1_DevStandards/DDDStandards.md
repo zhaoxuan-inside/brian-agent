@@ -93,7 +93,7 @@
 
 1. `tsc --noEmit` 0 错误；该层 vitest 全绿。
 2. 模块内 `as any` / `: any` 为 0（2026-09-22 起全量执行，eslint no-explicit-any 豁免仅留 dev-server.ts）；无 `console.log`；无注释保留的旧实现。
-   > **豁免条款（2026-09-22）**：① SchemaInitializer 的空 catch 属 DDL 幂等容忍（"列/表/索引已存在"为预期分支），允许保留，但须有注释说明幂等判定条件；② dev-server.ts 与 AopProxy.ts 的 console 属工具链最后通道，须带 `eslint-disable-next-line no-console` 显式豁免；③ LogService 的 catch 禁走 metrics/logger（会递归回 addLog），静默 + 注释说明。
+   > **豁免条款（2026-09-22）**：① SchemaInitializer 的空 catch 属 DDL 幂等容忍（"列/表/索引已存在"为预期分支），允许保留，但须有注释说明幂等判定条件；② dev-server.ts 与 AopProxy.ts 的 console 属工具链最后通道，须带 `eslint-disable-next-line no-console` 显式豁免；③ LogService 的 catch 禁走 metrics/logger（会递归回 addLog），静默 + 注释说明；④ `RelationDBAccess` 的便捷方法（selectOne/select/insert/update/delete/count/executeRaw/transactionRaw/walCheckpoint）为 `(table, ...)` 签名——它们是数据层原语而非业务方法，五参签名约束业务方法；业务代码不得绕过模块 access 直接持有 RelationDBAccess 写业务逻辑。
 3. 公开方法 JSDoc 覆盖率 100%。
 4. 方法索引重生成（`npm run docs:index`）且包含本模块全部 access 方法。
 5. 对应 PRD 已同步（签名/方法名/新增方法章节/代码变更记录）。
