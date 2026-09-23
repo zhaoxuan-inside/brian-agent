@@ -55,6 +55,17 @@ export class SkillCoreSchemaInitializer {
       this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch { /* column already exists */ }
 
+    // ===== 2026-09-22 迁移：四层瀑布配置 —— GitHub 检索层与完整自建层（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "github_token" TEXT NOT NULL DEFAULT ''`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "github_search_enabled" INTEGER NOT NULL DEFAULT 1`);
+    } catch { /* column already exists */ }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "auto_generate_enabled" INTEGER NOT NULL DEFAULT 1`);
+    } catch { /* column already exists */ }
+
     // agent_skill 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 skill_ids_json；
     // 旧库残留表不再读写）
 

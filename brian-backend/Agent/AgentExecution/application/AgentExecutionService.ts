@@ -255,8 +255,9 @@ export class AgentExecutionService {
     await this.agentStrategy.soStrategyById(
       Object.assign(new GetStrategyInput(), { strategy_id: agent.strategy_id }), stratOut, new AgentStrategyContext(),
     );
-    const skillsLoaded = await this.loadSkills(input.agent_id, ctx);
-    const mcpsLoaded = await this.loadMcps(input.agent_id, ctx);
+    // ===== 修改后（2026-09-22）：传入清洗后的 task_content，四层瀑布匹配链路才有任务语义 =====
+    const skillsLoaded = await this.loadSkills(input.agent_id, input.task_content ?? '', ctx);
+    const mcpsLoaded = await this.loadMcps(input.agent_id, input.task_content ?? '', ctx);
     // ===== Agent 绑定资源 DB 校验（Soul/Prompt/Skill/MCP）：失效绑定剔除后再进入执行 =====
     const resourceValidation = await validateAgentResources({
       agentId: input.agent_id, soulId: agent.soul_id, promptId: agent.prompt_template_id,
@@ -1409,8 +1410,9 @@ export class AgentExecutionService {
   /**
    * 读取 Agent 当前绑定的 Skill 列表（绑定唯一事实源 = agent 表 skill_ids_json）。
    * 绑定经 matchSkill 的 bound_skill_ids 确定性水合（Core 不再持有绑定）。
+   * taskContent（清洗后任务内容）供无绑定时四层瀑布匹配（判定合并排序/GitHub/自建）使用。
    */
-  private async loadSkills(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; brief: string; work: string }[]> {
+  private async loadSkills(agentId: string, taskContent: string, ctx: AgentExecutionContext): Promise<{ id: string; brief: string; work: string }[]> {
     try {
       const boundSkillIds = await this.soBoundComponentIds(agentId, ComponentKind.Skill);
       const out = new MatchSkillOutput();
@@ -1419,6 +1421,7 @@ export class AgentExecutionService {
           agent_id: agentId,
           context_id: ctx.session_id || '',
           run_id: ctx.run_id || '',
+          task_content: taskContent,
           bound_skill_ids: boundSkillIds,
         }),
         out,
@@ -1442,8 +1445,9 @@ export class AgentExecutionService {
   /**
    * 读取 Agent 当前绑定的 MCP 列表（绑定唯一事实源 = agent 表 mcp_ids_json）。
    * 绑定经 matchMCP 的 bound_mcp_ids 确定性水合。
+   * taskContent（清洗后任务内容）供无绑定时四层瀑布匹配（判定合并排序/提供商市场）使用。
    */
-  private async loadMcps(agentId: string, ctx: AgentExecutionContext): Promise<{ id: string; title: string; brief: string }[]> {
+  private async loadMcps(agentId: string, taskContent: string, ctx: AgentExecutionContext): Promise<{ id: string; title: string; brief: string }[]> {
     try {
       const boundMcpIds = await this.soBoundComponentIds(agentId, ComponentKind.Mcp);
       const out = new MatchMcpOutput();
@@ -1452,6 +1456,7 @@ export class AgentExecutionService {
           agent_id: agentId,
           context_id: ctx.session_id || '',
           run_id: ctx.run_id || '',
+          task_content: taskContent,
           bound_mcp_ids: boundMcpIds,
         }),
         out,

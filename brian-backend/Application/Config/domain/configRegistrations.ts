@@ -226,6 +226,7 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('mcp_core', 'basic', 'vector_similarity_threshold', 'MCP 任务向量命中阈值', 'DOUBLE', 0.8, '同义任务缓存命中的向量余弦阈值（0.0-1.0）；命中后直接复用上次组件选择'),
   core('mcp_core', 'basic', 'match_cache_ttl_ms', 'MCP 匹配缓存过期（ms）', 'INT', 600000, '组件匹配结果缓存 TTL；0 或极小值会让每问都重跑组件排序'),
   core('mcp_core', 'basic', 'match_cache_capacity', 'MCP 匹配缓存容量', 'INT', 500, '组件匹配结果缓存最大条目数（FIFO 淘汰）'),
+  core('mcp_core', 'basic', 'market_install_enabled', 'MCP 提供商市场获取开关', 'BOOLEAN', true, '本地无命中且任务需要 MCP 时，经 mcp_provider 市场检索并自动安装+启动外部 MCP；关闭后返回空'),
 
   // --- SkillCoreProvider ---
   core('skill_core', 'basic', 'similarity_threshold', 'Skill 相似度阈值', 'DOUBLE', 0.7, '第1层算法匹配与第2层LLM打分阈值 (0.0-1.0)'),
@@ -235,6 +236,9 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   core('skill_core', 'basic', 'vector_similarity_threshold', 'Skill 任务向量命中阈值', 'DOUBLE', 0.8, '组件匹配缓存相似度命中阈值（0.0-1.0）：同义任务复用上次组件选择'),
   core('skill_core', 'basic', 'match_cache_ttl_ms', 'Skill 匹配缓存过期（ms）', 'INT', 600000, '组件匹配结果缓存 TTL'),
   core('skill_core', 'basic', 'match_cache_capacity', 'Skill 匹配缓存容量', 'INT', 500, '组件匹配结果缓存最大条目数（FIFO 淘汰）'),
+  core('skill_core', 'basic', 'github_token', 'GitHub API Token', 'STRING', '', 'GitHub 外部检索用（可选）；匿名搜索配额 10 次/分钟，配置后提升配额并启用 Code Search（精确 SKILL.md 检索）'),
+  core('skill_core', 'basic', 'github_search_enabled', 'Skill GitHub 检索开关', 'BOOLEAN', true, '本地无合格 Skill 且任务需要时，从 GitHub 检索 SKILL.md 并导入本地（enable=true）'),
+  core('skill_core', 'basic', 'auto_generate_enabled', 'Skill 完整自建开关', 'BOOLEAN', true, '本地+GitHub 均无果时由 LLM 自建完整 Skill（skill_md+scripts+references）；关闭后返回空'),
   core('skill_core', 'opt_rule', 'opt_rule.days', '优化规则观察天数', 'INT', 30, '技能淘汰/优化规则的观察窗口'),
   core('skill_core', 'opt_rule', 'opt_rule.min_usage_count', '优化规则最小使用次数', 'INT', 5, '低于此次数的技能可能被淘汰'),
 

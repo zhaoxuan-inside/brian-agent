@@ -13,8 +13,8 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SkillContext, SoSkillOutput, Context, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
-import type { AddSkillInput, AddSkillOutput, DataObject } from '@brian-agent/base';
+import { SkillContext, SoSkillOutput, Context, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, PROMPT_TEMPLATE_TABLE, AddSkillOutput } from '@brian-agent/base';
+import type { AddSkillInput, DataObject, FileEntry } from '@brian-agent/base';
 import {
   SkillCoreContext,
   SkillCoreConfigRecord,
@@ -38,8 +38,16 @@ import {
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
 import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
-import { parseRankingCandidates, filterByThreshold, type RankedCandidate } from '../../shared/RankingParser';
+import { parseNeedRankingResult, filterByThreshold, type NeedRankingResult, type RankedCandidate } from '../../shared/RankingParser';
 import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
+import { GitHubSkillClient, type ParsedSkillMd } from '../infrastructure/GitHubSkillClient';
+
+/** 完整自建（Layer-4）单次生成的 max_tokens 上限：需覆盖 skill_md + scripts + references JSON */
+const GENERATE_MAX_TOKENS = 3000;
+/** 自建文件清单上限（scripts 与 references 各自） */
+const GENERATED_FILE_MAX_COUNT = 3;
+/** 自建单文件内容长度上限（字符） */
+const GENERATED_FILE_MAX_CHARS = 20000;
 
 /**
  * SkillCoreProvider 应用服务。
@@ -65,6 +73,7 @@ export class SkillCoreService {
     private readonly skillAccess: SkillAccess,
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
+    private readonly githubClient?: GitHubSkillClient,
   ) {
     this.configStore = new SingleRowConfigStore<SkillCoreConfigRecord>(relationDb, {
       table: SKILL_CORE_CONFIG_TABLE,
@@ -78,7 +87,7 @@ export class SkillCoreService {
   // ---------------------------------------------------------------------------
 
   /**
-   * 为 Agent 匹配 Skill（三层统一匹配/选择/自生成逻辑）。
+   * 为 Agent 匹配 Skill（四层瀑布：需求判定合并排序 → 本地 → GitHub → 自建）。
    */
   async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -93,11 +102,16 @@ export class SkillCoreService {
       return true;
     }
 
-    // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排） =====
+    // ===== 缓存命中水合（重复任务零 LLM；bypass_cache 强制全量重排；含负缓存命中） =====
     const cached = input.bypass_cache
       ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t, context)) }
       : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
     const cachedIds = (cached.record?.result ?? []).map((r) => r.id);
+    if (cached.record && cachedIds.length === 0) {
+      // 负缓存命中：LLM 曾判定该任务不需要 Skill，直接返回空
+      output.skills = [];
+      return true;
+    }
     if (cachedIds.length > 0) {
       const hydrated = await this.hydrateSkillsOrNone(cachedIds);
       if (hydrated.length > 0) {
@@ -116,22 +130,44 @@ export class SkillCoreService {
     );
     const availableSkills = skillOutput.list;
 
-    // ===== 第 1.5 层：simpleSimilarity 匹配历史/关联特征（纯打分，不落库） =====
-    // ===== 第 2 层：LLM 打分推荐 =====
-    // ===== 修改后（2026-09-11）：score_threshold 淘汰后的空结果 = "无合格组件"，不再逐题自生成（防生成风暴）；
-    // Layer-3 自生成仅在库内无可启用 Skill 时进行 =====
-    let ranked: Array<{ skill_id: string; skill_brief: string; relevance: number }> = [];
-    if (availableSkills.length === 0) {
-      ranked = await this.generateSkill(agent_id, context);
-    } else {
-      ranked = await this.rankSkillsByLLM(agent_id, context_id, run_id, availableSkills, config, input.task_content ?? '', context);
+    // ===== 第 2 层：LLM 需求判定与排序合并 =====
+    const judged = await this.rankSkillsByLLM(agent_id, context_id, run_id, availableSkills, config, input.task_content ?? '', context);
+    if (judged === null) {
+      // 模板/LLM 失败：保守返回空（不写负缓存、不触发外部获取，可重试）
+      output.skills = [];
+      return true;
+    }
+    if (!judged.need) {
+      // 负缓存：任务不需要 Skill，重复任务零 LLM
+      await this.commitMatchCache(input.task_content ?? '', cached.query, [], context);
+      output.skills = [];
+      return true;
     }
 
-    // ===== 匹配结果入缓存（MD5 + 任务向量；复用 lookup 阶段向量） =====
-    if (availableSkills.length > 0 && ranked.length > 0) {
+    const ranked = filterByThreshold(judged.candidates, config.score_threshold ?? ScoreThreshold.Default)
+      .map((c) => this.toSkillEntry(c, availableSkills))
+      .filter((e): e is MatchedSkillEntry => e != null);
+
+    // ===== 本地命中 → 入缓存返回 =====
+    if (ranked.length > 0) {
       await this.commitMatchCache(input.task_content ?? '', cached.query, ranked, context);
+      output.skills = ranked;
+      return true;
     }
-    output.skills = ranked;
+
+    // ===== 第 3 层：GitHub 外部检索（need=true 且本地无合格者） =====
+    const imported = await this.importSkillFromGitHub(judged.keywords, config, context);
+    if (imported) {
+      output.skills = [imported];
+      return true;
+    }
+
+    // ===== 第 4 层：完整自建（GitHub 也无果；auto_generate_enabled 可关） =====
+    if (!config.auto_generate_enabled) {
+      output.skills = [];
+      return true;
+    }
+    output.skills = await this.generateSkill(agent_id, input.task_content ?? '', context);
     return true;
   }
 
@@ -283,7 +319,7 @@ export class SkillCoreService {
    */
   async configSkillCore(input: ConfigSkillCoreInput, output: ConfigSkillCoreOutput, _context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined) {
+    if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined || input.github_token !== undefined || input.github_search_enabled !== undefined || input.auto_generate_enabled !== undefined) {
       const updateData: Array<{ field: string; value: unknown }> = [];
       if (input.regen_rate !== undefined) {
         if (input.regen_rate < 0 || input.regen_rate > 100) {
@@ -334,6 +370,16 @@ export class SkillCoreService {
         }
         updateData.push({ field: 'match_cache_capacity', value: input.match_cache_capacity });
       }
+      // ===== 2026-09-22：四层瀑布配置（GitHub 检索 / 完整自建） =====
+      if (input.github_token !== undefined) {
+        updateData.push({ field: 'github_token', value: input.github_token });
+      }
+      if (input.github_search_enabled !== undefined) {
+        updateData.push({ field: 'github_search_enabled', value: input.github_search_enabled ? 1 : 0 });
+      }
+      if (input.auto_generate_enabled !== undefined) {
+        updateData.push({ field: 'auto_generate_enabled', value: input.auto_generate_enabled ? 1 : 0 });
+      }
       await this.configStore.upsert(updateData);
     }
     // ===== 2026-09-11：配置变更即清缓存 + 应用缓存参数 =====
@@ -341,6 +387,9 @@ export class SkillCoreService {
     const config = await this.getConfig();
     output.regen_rate = config.regen_rate;
     output.prompt_template_id = config.prompt_template_id;
+    output.github_token = config.github_token;
+    output.github_search_enabled = config.github_search_enabled;
+    output.auto_generate_enabled = config.auto_generate_enabled;
     return true;
   }
 
@@ -372,6 +421,9 @@ export class SkillCoreService {
       vector_similarity_threshold: VectorSimilarity.Default,
       match_cache_ttl_ms: MatchCache.TtlMs,
       match_cache_capacity: MatchCache.Capacity,
+      github_token: '',
+      github_search_enabled: true,
+      auto_generate_enabled: true,
     };
   }
 
@@ -410,7 +462,28 @@ export class SkillCoreService {
   }
 
   /** 获取 Skill 匹配模板 ID（逻辑控制） */
+  // ===== 原始方法（保留作为参考；2026-09-23 被上方修改后版本替代：原版 LIKE 命中不区分 is_system，
+  // 用户自建同标题模板会劫持隐式回退，旧契约输出导致 need=false 误降级——真机取证见 [2026-09-22r]）=====
+  // private async soMatchPromptTemplateId(): Promise<string> {
+  //   const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+  //     { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
+  //   ]);
+  //   if (row && row.id) return String(row.id);
+  //   const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+  //     { field: 'enable', operator: Operator.EQ, value: 1 },
+  //   ]);
+  //   if (anyRow && anyRow.id) return String(anyRow.id);
+  //   throw new ProcessingError('未找到 Skill 匹配提示词模板');
+  // }
+
+  // ===== 修改后（2026-09-23）：隐式回退优先 is_system=1 的 builtin 契约模板；
+  // 用户自定义模板应通过 config.prompt_template_id 显式指定，不再被同标题用户行劫持 =====
   private async soMatchPromptTemplateId(): Promise<string> {
+    const builtin = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
+      { field: 'is_system', operator: Operator.EQ, value: 1 },
+    ]);
+    if (builtin && builtin.id) return String(builtin.id);
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
       { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
     ]);
@@ -441,8 +514,10 @@ export class SkillCoreService {
     }
   }
 
+  // ===== 修改后（2026-09-22）：需求判定与排序合并（need/keywords/candidates 契约） =====
   /**
-   * LLM 排序（逻辑控制）：统一 `[{"id","score"}]` 百分制输出 + score_threshold 截断。
+   * LLM 需求判定与排序（逻辑控制）：统一 need/keywords/candidates 契约输出。
+   * need=true 无合格候选时由调用方触发外部获取层。
    */
   private async rankSkillsByLLM(
     agentId: string,
@@ -452,27 +527,32 @@ export class SkillCoreService {
     config: SkillCoreConfigRecord,
     taskContent: string,
     matchCtx?: Context,
-  ): Promise<MatchedSkillEntry[]> {
-    const skillsJson = JSON.stringify(
-      availableSkills.map((s) => ({ id: s.id, name: s.name ?? '', skill_brief: s.skill_brief })),
-    );
-    const promptText = await this.renderPrompt(config.prompt_template_id, {
-      agent_id: agentId,
-      context_id: contextId,
-      run_id: runId,
-      task_content: taskContent,
-      skills: skillsJson,
-    });
-    const result = await this.soRankLLM({
-      id: '',
-      prompt: promptText,
-      temperature: 0.1,
-      max_tokens: 300,
-    } as ExecLLMInput, matchCtx);
-    const threshold = config.score_threshold ?? ScoreThreshold.Default;
-    return filterByThreshold(parseRankingCandidates(result), threshold)
-      .map((c) => this.toSkillEntry(c, availableSkills))
-      .filter((e): e is MatchedSkillEntry => e != null);
+  ): Promise<NeedRankingResult | null> {
+    // 模板渲染失败/LLM 失败统一降级 null（调用方保守返回空，不触发外部获取、不写负缓存）
+    try {
+      const skillsJson = JSON.stringify(
+        availableSkills.map((s) => ({ id: s.id, name: s.name ?? '', skill_brief: s.skill_brief })),
+      );
+      const promptText = await this.renderPrompt(config.prompt_template_id, {
+        agent_id: agentId,
+        context_id: contextId,
+        run_id: runId,
+        task_content: taskContent,
+        skills: skillsJson,
+      });
+      const result = await this.soRankLLM({
+        id: '',
+        prompt: promptText,
+        temperature: 0.1,
+        max_tokens: 300,
+      } as ExecLLMInput, matchCtx);
+      if (!result) {
+        return null;
+      }
+      return parseNeedRankingResult(result);
+    } catch {
+      return null;
+    }
   }
 
   /** 候选 → MatchedSkillEntry（数据处理；未知 id 丢弃） */
@@ -484,36 +564,135 @@ export class SkillCoreService {
     return { skill_id: skill.id, skill_brief: skill.skill_brief, relevance: candidate.score / 100 };
   }
 
-  /** 第 3 层 Skill 自生成（逻辑控制；原 matchSkill 内联生成逻辑抽出复用） */
-  private async generateSkill(agentId: string, matchCtx?: Context): Promise<MatchedSkillEntry[]> {
-    const genPrompt = `Based on agent_id: ${agentId}, please generate a new skill name, brief description, and markdown code block for this task. Return JSON: {"name": "...", "skill_brief": "...", "skill_md": "..."}`;
-    const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: 600 } as ExecLLMInput, matchCtx);
+  // ===== 原始方法（保留作为参考；2026-09-22 升级为完整自建 generateSkill + 新增 importSkillFromGitHub）=====
+  // /** 第 3 层 Skill 自生成（逻辑控制；原 matchSkill 内联生成逻辑抽出复用） */
+  // private async generateSkill(agentId: string, matchCtx?: Context): Promise<MatchedSkillEntry[]> {
+  //   const genPrompt = `Based on agent_id: ${agentId}, please generate a new skill name, brief description, and markdown code block for this task. Return JSON: {"name": "...", "skill_brief": "...", "skill_md": "..."}`;
+  //   const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: 600 } as ExecLLMInput, matchCtx);
+  //   const parsed = JsonParser.parseObject(genRes);
+  //   if (!parsed || !parsed.name) {
+  //     return [];
+  //   }
+  //   const addOut = new SoSkillOutput();
+  //   await this.skillAccess.addSkill(
+  //     {
+  //       data: {
+  //         name: String(parsed.name),
+  //         skill_brief: String(parsed.skill_brief || ''),
+  //         skill_md: String(parsed.skill_md || ''),
+  //         enable: true,
+  //       },
+  //     } as AddSkillInput,
+  //     addOut as unknown as AddSkillOutput, new SkillContext(),
+  //   );
+  //   const newSkillId = (addOut as unknown as { id?: string }).id;
+  //   if (!newSkillId) {
+  //     return [];
+  //   }
+  //   return [{ skill_id: String(newSkillId), skill_brief: String(parsed.skill_brief || ''), relevance: 1.0 }];
+  // }
+
+  /**
+   * 第 3 层 GitHub 外部检索导入（逻辑控制；github_search_enabled 可关，未注入客户端时跳过）。
+   * 命中 → addSkill 落库（enable=true，流程闭环）→ 返回 MatchedSkillEntry；未命中/失败返回 null。
+   */
+  private async importSkillFromGitHub(
+    keywords: string[],
+    config: SkillCoreConfigRecord,
+    matchCtx?: Context,
+  ): Promise<MatchedSkillEntry | null> {
+    if (!config.github_search_enabled || !this.githubClient || keywords.length === 0) {
+      return null;
+    }
+    const hits = await this.githubClient.searchSkills(keywords, config.github_token ?? '');
+    for (const hit of hits) {
+      const parsed = await this.githubClient.fetchSkillMd(hit, config.github_token ?? '');
+      if (!parsed) continue;
+      const entry = await this.addImportedSkill(parsed);
+      if (entry) return entry;
+    }
+    return null;
+  }
+
+  /** GitHub 命中内容落库（数据处理；失败返回 null） */
+  private async addImportedSkill(parsed: ParsedSkillMd): Promise<MatchedSkillEntry | null> {
+    const addOut = new AddSkillOutput();
+    await this.skillAccess.addSkill(
+      {
+        data: {
+          name: parsed.name,
+          skill_brief: parsed.skill_brief,
+          skill_md: parsed.skill_md,
+          enable: true,
+        },
+      } as AddSkillInput,
+      addOut, new SkillContext(),
+    );
+    if (!addOut.id) {
+      return null;
+    }
+    return { skill_id: addOut.id, skill_brief: parsed.skill_brief, relevance: 1.0 };
+  }
+
+  // ===== 修改后（2026-09-22）：第 4 层完整自建 —— skill_md + scripts + references（原来仅纯 skill_md）=====
+  // ===== 修改后（2026-09-23）：系统级任务允许生成 main.py / main.sh（LocalSandbox 有真实 IO）；
+  // 原提示词硬编码 main.js（IsolatedVMSandbox 无 IO），自建 Skill 永远无法做本机观测类任务（原始文案见 git 历史）=====
+  /** 第 4 层 Skill 完整自建（逻辑控制；落库 enable=true，下次任务本地可命中） */
+  private async generateSkill(agentId: string, taskContent: string, matchCtx?: Context): Promise<MatchedSkillEntry[]> {
+    const genPrompt = [
+      'Based on the task below, generate a complete reusable skill.',
+      'Return JSON only: {"name": "...", "skill_brief": "...", "skill_md": "full SKILL.md content in markdown",',
+      ' "scripts": [{"name": "main.js or main.py or main.sh", "content": "..."}], "references": [{"name": "notes.md", "content": "..."}]}.',
+      'Rules: skill_md contains trigger conditions, usage instructions and workflow (markdown).',
+      'scripts: only when executable logic helps.',
+      'For pure computation use JavaScript ("main.js", sandboxed, no IO, entry function executed against params).',
+      'For system-level tasks (hardware / disk / memory / network / environment inspection) use Python ("main.py", stdlib only) or Bash ("main.sh"): read the local machine and print exactly ONE JSON object to stdout (keep stderr silent).',
+      'references: optional supporting documents. Keep each file under 20000 chars, at most 3 files per directory.',
+      '',
+      `agent_id: ${agentId}`,
+      `task: ${taskContent}`,
+    ].join('\n');
+    const genRes = await this.soRankLLM({ id: '', prompt: genPrompt, max_tokens: GENERATE_MAX_TOKENS } as ExecLLMInput, matchCtx);
     const parsed = JsonParser.parseObject(genRes);
     if (!parsed || !parsed.name) {
       return [];
     }
-    const addOut = new SoSkillOutput();
+    const addOut = new AddSkillOutput();
     await this.skillAccess.addSkill(
       {
         data: {
           name: String(parsed.name),
           skill_brief: String(parsed.skill_brief || ''),
           skill_md: String(parsed.skill_md || ''),
+          scripts: this.toFileEntries(parsed.scripts),
+          references: this.toFileEntries(parsed.references),
           enable: true,
         },
       } as AddSkillInput,
-      addOut as unknown as AddSkillOutput, new SkillContext(),
+      addOut, new SkillContext(),
     );
-    const newSkillId = (addOut as unknown as { id?: string }).id;
-    if (!newSkillId) {
+    if (!addOut.id) {
       return [];
     }
-    return [{ skill_id: String(newSkillId), skill_brief: String(parsed.skill_brief || ''), relevance: 1.0 }];
+    return [{ skill_id: addOut.id, skill_brief: String(parsed.skill_brief || ''), relevance: 1.0 }];
   }
 
-  /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
+  /** LLM 生成的文件清单 → FileEntry[]（数据处理；截断超限文件，防提示词注入撑爆存储） */
+  private toFileEntries(raw: unknown): FileEntry[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const entries: FileEntry[] = [];
+    for (const item of raw.slice(0, GENERATED_FILE_MAX_COUNT)) {
+      const name = String((item as Record<string, unknown>)?.name ?? '').trim();
+      const content = String((item as Record<string, unknown>)?.content ?? '').slice(0, GENERATED_FILE_MAX_CHARS);
+      if (name && content) entries.push({ name, content });
+    }
+    return entries.length > 0 ? entries : undefined;
+  }
+
+  // ===== 修改后（2026-09-22）：负缓存支持 —— need=false 时空结果也入缓存（重复任务零 LLM） =====
+  /** 匹配缓存提交（数据处理；ranked 为空即负缓存条目，仅参与 MD5/向量命中直接返回空） */
   private async commitMatchCache(taskContent: string, embedding: number[] | null, ranked: MatchedSkillEntry[], matchCtx?: Context): Promise<void> {
-    if (!taskContent || ranked.length === 0) {
+    if (!taskContent) {
       return;
     }
     const query = embedding?.length ? embedding : await this.matchCache.embedOf(taskContent, (t) => this.embedTask(t, matchCtx).catch(() => [] as number[]));
@@ -602,7 +781,16 @@ export class SkillCoreService {
       vector_similarity_threshold: Number(row.vector_similarity_threshold ?? VectorSimilarity.Default),
       match_cache_ttl_ms: Number(row.match_cache_ttl_ms ?? MatchCache.TtlMs),
       match_cache_capacity: Number(row.match_cache_capacity ?? MatchCache.Capacity),
+      github_token: String(row.github_token ?? ''),
+      github_search_enabled: this.toConfigBoolean(row.github_search_enabled, true),
+      auto_generate_enabled: this.toConfigBoolean(row.auto_generate_enabled, true),
     };
+  }
+
+  /** 配置布尔解析（数据处理；SQLite INTEGER 0/1，未定义回退默认值） */
+  private toConfigBoolean(value: unknown, defaultValue: boolean): boolean {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    return value === 1 || value === '1' || value === true || value === 'true';
   }
 
   private toSkillOptRuleRecord(row: Record<string, unknown>): SkillOptRuleRecord {

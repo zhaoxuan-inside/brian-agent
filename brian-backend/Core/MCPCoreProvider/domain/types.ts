@@ -19,6 +19,8 @@ export interface McpCoreConfigRecord {
   match_cache_ttl_ms: number;
   /** 匹配缓存容量（2026-09-11 新增，默认 500） */
   match_cache_capacity: number;
+  /** 提供商市场获取层开关（2026-09-22 新增，默认 true；本地无命中时经 mcp_provider 安装外部 MCP） */
+  market_install_enabled: boolean;
 }
 
 // --- matchMCP ---
@@ -62,6 +64,8 @@ export class ConfigMcpCoreInput extends Input {
   match_cache_ttl_ms?: number;
   /** 匹配缓存容量（2026-09-11 新增） */
   match_cache_capacity?: number;
+  /** 提供商市场获取层开关（2026-09-22 新增） */
+  market_install_enabled?: boolean;
 }
 export class ConfigMcpCoreOutput extends Output {
   config: McpCoreConfigRecord | null = null;

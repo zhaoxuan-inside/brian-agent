@@ -36,6 +36,11 @@ export class MCPCoreSchemaInitializer {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch { /* column already exists */ }
 
+    // ===== 2026-09-22 迁移：提供商市场获取层开关（老库补列） =====
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "market_install_enabled" INTEGER NOT NULL DEFAULT 1`);
+    } catch { /* column already exists */ }
+
     // agent_mcp 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 mcp_ids_json；旧库残留表不再读写）
 
     // agent_mcp_usage 表（评估依据；键为 (agent_id, mcp_id)，与绑定解耦。

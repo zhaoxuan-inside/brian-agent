@@ -27,7 +27,7 @@ export {
   SKILL_CONFIG_TABLE,
 } from './domain/types';
 
-export type { SkillData, SkillRecord } from './domain/types';
+export type { SkillData, SkillRecord, FileEntry } from './domain/types';
 
 // sandbox 接口与实现
 export type { ISandbox, SandboxResult } from './infrastructure/sandbox/ISandbox';

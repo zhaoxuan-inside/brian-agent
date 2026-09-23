@@ -36,6 +36,12 @@ export interface SkillCoreConfigRecord {
   match_cache_ttl_ms: number;
   /** 匹配缓存容量（2026-09-11 新增，默认 500） */
   match_cache_capacity: number;
+  /** GitHub API Token（可选；2026-09-22 新增。匿名搜索配额 10 次/分钟，配置后提升配额并启用 Code Search） */
+  github_token: string;
+  /** GitHub 外部检索层开关（2026-09-22 新增，默认 true） */
+  github_search_enabled: boolean;
+  /** 完整自建层开关（2026-09-22 新增，默认 true；关闭后本地+GitHub 均无果时返回空） */
+  auto_generate_enabled: boolean;
 }
 
 /** agent_skill 表记录 */
@@ -189,6 +195,12 @@ export class ConfigSkillCoreInput extends Input {
   match_cache_ttl_ms?: number;
   /** 匹配缓存容量（2026-09-11 新增） */
   match_cache_capacity?: number;
+  /** GitHub API Token（可选；2026-09-22 新增） */
+  github_token?: string;
+  /** GitHub 外部检索层开关（2026-09-22 新增） */
+  github_search_enabled?: boolean;
+  /** 完整自建层开关（2026-09-22 新增） */
+  auto_generate_enabled?: boolean;
 }
 
 /** configSkillCore 出参 */
@@ -197,6 +209,12 @@ export class ConfigSkillCoreOutput extends Output {
   regen_rate = 0;
   /** Prompt 模板 ID */
   prompt_template_id = '';
+  /** GitHub API Token（2026-09-22 新增） */
+  github_token = '';
+  /** GitHub 外部检索层开关（2026-09-22 新增） */
+  github_search_enabled = true;
+  /** 完整自建层开关（2026-09-22 新增） */
+  auto_generate_enabled = true;
 }
 
 // ---------------------------------------------------------------------------

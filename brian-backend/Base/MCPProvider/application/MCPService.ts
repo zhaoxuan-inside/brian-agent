@@ -355,21 +355,29 @@ export class MCPService {
 
     let mcpList: Array<{ title: string; brief: string; installCmd: string }> = [];
     try {
-      const respHttpInput = Object.assign(new ExecRequestInput(), { url: `${String(provider.mcp_provider_url)}/mcps`, timeout_ms: 30000 });
-      const respHttpOutput = new ExecRequestOutput();
-      await this.http.execRequest(respHttpInput, respHttpOutput, new HttpContext());
-      const resp = respHttpOutput.response;
-      if (resp.ok) {
-        const data = JSON.parse(resp.bodyText) as Array<{
-          title?: string;
-          brief?: string;
-          install_cmd?: string;
-        }>;
-        mcpList = data.map((item) => ({
-          title: item.title ?? 'unknown',
-          brief: item.brief ?? '',
-          installCmd: item.install_cmd ?? `npm install ${item.title}`,
-        }));
+      const providerCode = String((provider as Record<string, unknown>).provider_code || '');
+      // ===== 2026-09-23：github provider = npm registry 市场（原 /mcps 端点对 npmjs 是 404，
+      // 市场层拉不到任何清单——真机取证 [2026-09-22s]）。清单 = 官方 @modelcontextprotocol/server-github
+      // 置顶 + 'github mcp' 搜索合并（去重，上限 30 条）=====
+      if (providerCode === 'github') {
+        mcpList = await this.fetchNpmMarketList();
+      } else {
+        const respHttpInput = Object.assign(new ExecRequestInput(), { url: `${String(provider.mcp_provider_url)}/mcps`, timeout_ms: 30000 });
+        const respHttpOutput = new ExecRequestOutput();
+        await this.http.execRequest(respHttpInput, respHttpOutput, new HttpContext());
+        const resp = respHttpOutput.response;
+        if (resp.ok) {
+          const data = JSON.parse(resp.bodyText) as Array<{
+            title?: string;
+            brief?: string;
+            install_cmd?: string;
+          }>;
+          mcpList = data.map((item) => ({
+            title: item.title ?? 'unknown',
+            brief: item.brief ?? '',
+            installCmd: item.install_cmd ?? `npm install ${item.title}`,
+          }));
+        }
       }
     } catch (err) {
       // API 调用失败时返回空列表
@@ -412,6 +420,46 @@ export class MCPService {
   // -------------------------------------------------------------------------
   // MCP 管理
   // -------------------------------------------------------------------------
+
+  /** GET JSON（数据处理；失败返回 null） */
+  private async fetchJson<T>(url: string): Promise<T | null> {
+    const input = Object.assign(new ExecRequestInput(), { url, method: 'GET', timeout_ms: 30000 });
+    const output = new ExecRequestOutput();
+    try {
+      await this.http.execRequest(input, output, new HttpContext());
+    } catch {
+      return null;
+    }
+    if (!output.response?.ok) return null;
+    try {
+      return JSON.parse(output.response.bodyText) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  /** npm registry 市场清单（数据处理）：官方 GitHub MCP 置顶 + 'github mcp' 搜索合并（去重，上限 30 条） */
+  private async fetchNpmMarketList(): Promise<Array<{ title: string; brief: string; installCmd: string }>> {
+    const list: Array<{ title: string; brief: string; installCmd: string }> = [];
+    const official = await this.fetchJson<{ name?: string; description?: string }>(
+      'https://registry.npmjs.org/@modelcontextprotocol/server-github',
+    );
+    if (official?.name) {
+      list.push({ title: official.name, brief: official.description ?? 'MCP server for using the GitHub API', installCmd: `npm install -g ${official.name}` });
+    }
+    const search = await this.fetchJson<{ objects?: Array<{ package?: { name?: string; description?: string } }> }>(
+      'https://registry.npmjs.org/-/v1/search?text=github%20mcp&size=25',
+    );
+    const seen = new Set(list.map((l) => l.title));
+    for (const obj of search?.objects ?? []) {
+      const pkg = obj.package;
+      if (!pkg?.name || seen.has(pkg.name)) continue;
+      seen.add(pkg.name);
+      list.push({ title: pkg.name, brief: pkg.description ?? '', installCmd: `npm install -g ${pkg.name}` });
+      if (list.length >= 30) break;
+    }
+    return list;
+  }
 
   /** 安装 MCP（PRD 3.2.1）- 通过 npm 安装并生成命令 */
   async installMcp(input: InstallMcpInput, output: InstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,

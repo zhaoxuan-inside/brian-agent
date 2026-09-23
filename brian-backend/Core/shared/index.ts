@@ -15,8 +15,10 @@ export { vectorCosineSimilarity, simpleSimilarity, shouldReuseByRegenRate } from
 export { FifoCache } from './FifoCache';
 export {
   parseRankingCandidates,
+  parseNeedRankingResult,
   filterByThreshold,
   type RankedCandidate,
+  type NeedRankingResult,
 } from './RankingParser';
 export { VectorMatchCache, buildCacheKey, type MatchCacheRecord } from './VectorMatchCache';
 export {

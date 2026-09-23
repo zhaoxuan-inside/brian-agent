@@ -9,26 +9,35 @@
 
 ### 2.1. 匹配MCP（matchMCP）
 
-**功能**：为要处理的工作匹配所需要的MCP
-**入参**：
-- input：MatchMCPInput（继承 Input），包含以下字段：
-  - agent_id：Agent ID
-  - interact_id：交互 ID
-- context：MatchMCPContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
-- output：MatchMCPOutput（继承 Output），承载返回内容：
-  - mcp_ids：匹配的 MCP ID 列表
-**处理流程**：
+**功能**：为要处理的工作匹配所需要的 MCP。
 
-1. 调用 RelationDBProvider.selectDB 根据 `agent_id` 查询 `agent_mcp` 表，获取该 Agent 已绑定的 mcp_id 列表；
-2. 若存在绑定的 MCP：生成随机数（0-100），若随机数 >= regen_rate（从 `mcp_core_config` 表读取，默认 75），则直接返回已绑定的 mcp_id 列表（复用已有绑定）；
-3. 若随机数 < regen_rate 或不存在绑定，执行重新匹配流程：
-   a. 根据 `interact_id` 和 `agent_id` 调用 `InfoCore.context` 接口获取当前工作内容；
-   b. 调用 MCPProvider.soMcp 加载所有**已启用（enable=1）**的 MCP，再按实时运行状态过滤出**运行中（status='running'）**的 MCP，获取各 MCP 的 ID 和简要描述（mcp_brief）；
-   c. 若可用 MCP 列表为空，直接返回空列表（无 MCP 可用）；
-   d. 调用 RelationDBProvider.selectOneDB 查询 `mcp_core_config` 表获取 `prompt_template_id`；
-   e. 将工作内容和 MCP 列表（ID + brief）与 `prompt_template_id` 调用 PromptsProvider.execPrompt 构建 MCP 匹配 prompt；
-   f. 调用 LLMProvider.execLLM 由模型推荐合适的 mcp_id 列表（LLM 输出需包含选中的 mcp_id JSON 数组，解析提取）；
-4. 返回匹配到的 mcp_id 列表；
+**入参**：
+- input：MatchMcpInput（继承 Input），包含以下字段：
+  - agent_id：Agent ID
+  - context_id：交互上下文 ID
+  - run_id：交互记录 ID
+  - task_content：当前任务内容（无绑定时四层瀑布匹配的任务语义来源，2026-09-22 起必传）
+  - bound_mcp_ids：调用方传入的既有绑定（传入时确定性水合，不再按任务重选）
+  - bypass_cache：跳过匹配缓存
+- context：McpCoreContext
+- output：MatchMcpOutput，承载返回内容：
+  - mcp_ids：匹配的 MCP ID 列表
+  - mcp_details：匹配的 MCP 安装记录列表
+
+**处理流程（四层瀑布，2026-09-22；无自建层 —— MCP 是常驻进程，无法即时生成即用）**：
+
+1. **第 1 层 绑定水合**：`bound_mcp_ids` 非空 → 直接返回（绑定唯一事实源 = Agent 表 mcp_ids_json）；
+2. **缓存命中水合**：MD5 + 任务向量两级缓存；正缓存命中 → 返回；**负缓存命中**（曾判定不需要 MCP）→ 返回空；
+3. **第 2 层 LLM 需求判定与排序合并**（空库也判定，防闲聊任务触发市场安装）：
+   - 渲染模板（"MCP 匹配推荐"，输出契约 `{"need": bool, "keywords": [...], "candidates": [{"id","score"}]}`）；
+   - need=false → 写负缓存，返回空；
+   - 本地命中（过 score_threshold）→ 正缓存返回；
+   - 模板/LLM 失败 → 保守返回空（不写缓存、不触发市场获取，可重试）；
+4. **第 3 层 提供商市场获取**（need=true 且本地无命中；`market_install_enabled` 可关）：
+   - 遍历启用中的 `mcp_provider` → `listMcp` 拉市场清单（mcp_cache，TTL 内零 API 调用；单提供商失败跳过）；
+   - LLM 对市场候选按任务排序（"MCP 市场匹配"模板，旧数组契约，取最高分）；
+   - 命中 → `installMcp` 安装（npm 安装 + mcp_install 落库 enable=1）→ `startMcp` 启动（stdio 拉起进程 / http 远程注册，本次任务即可用；启动失败不回滚安装）→ 返回新 mcp_install id；
+5. 全部无果 → 返回空。
 
 ### 2.2. 自动优化任务（optimizeMCP）
 
@@ -52,24 +61,27 @@
 
 ### 2.3. 配置（configMCPCore）
 
-SET 行为：接受 `regen_rate` 和 `prompt_template_id` 作为可选更新字段，仅更新传入的非空字段。返回更新后的当前配置。
+SET 行为：接受可选更新字段，仅更新传入的字段。返回更新后的当前配置。
 **入参**：
-- input：ConfigMCPCoreInput（继承 Input），包含以下字段：
+- input：ConfigMcpCoreInput（继承 Input），包含以下字段：
   - regen_rate：重新选择MCP的概率（可选）
   - prompt_template_id：模板prompt ID（可选）
-- context：ConfigMCPCoreContext（继承 Context），会话上下文（session_id, work_id, interact_id 等）
-- output：ConfigMCPCoreOutput（继承 Output），承载返回内容：
-  - regen_rate：当前生效的重新选择概率
-  - prompt_template_id：当前生效的模板prompt ID
+  - score_threshold / vector_similarity_threshold：排序采纳与向量命中阈值（可选）
+  - match_cache_ttl_ms / match_cache_capacity：匹配缓存参数（可选）
+  - market_install_enabled：提供商市场获取层开关（可选，默认 true，2026-09-22 新增）
+- context：McpCoreContext
+- output：ConfigMcpCoreOutput，承载返回内容：
+  - config：当前生效的完整配置（含 market_install_enabled）
 
 **处理流程**：
 
 1. 调用 RelationDBProvider.selectOneDB 查询 `mcp_core_config` 表获取当前配置；
 2. 若 `regen_rate` 非空：校验为 0-100 的整数，更新 regen_rate 字段；
 3. 若 `prompt_template_id` 非空：校验 PromptsProvider.soPrompt 中是否存在该 prompt_template_id，存在则更新，否则返回 false；
-4. 调用 RelationDBProvider.updateDB 将变更后的配置写入 `mcp_core_config` 表；
+4. 若 `market_install_enabled` 非空：更新市场获取层开关（2026-09-22 新增）；
+5. 调用 RelationDBProvider.updateDB 将变更后的配置写入 `mcp_core_config` 表；
 
-**返回**：更新后的当前配置（regen_rate、prompt_template_id）
+**返回**：更新后的当前配置（完整 McpCoreConfigRecord）
 
 ## 重要内容
 

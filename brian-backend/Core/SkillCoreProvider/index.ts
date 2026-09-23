@@ -5,6 +5,10 @@
 // access 层
 export { SkillCoreAccess } from './access/SkillCoreAccess';
 
+// infrastructure 层（GitHub 外部检索）
+export { GitHubSkillClient, parseSkillMd } from './infrastructure/GitHubSkillClient';
+export type { GitHubSkillHit, ParsedSkillMd } from './infrastructure/GitHubSkillClient';
+
 // domain 层类型
 export {
   SkillCoreContext,

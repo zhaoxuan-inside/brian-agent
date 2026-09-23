@@ -1,3 +1,116 @@
+## [2026-09-22s] feat: github provider 接入 npm registry 市场 + MCPCore 全真链路联测（GitHub MCP 安装即用）
+
+**变更原因**：用户要求「调用 MCPCore 找 GitHub MCP，找到现在 star 最多的模型」。取证发现：github provider（url=registry.npmjs.org）走通用 `GET {url}/mcps` 协议——npmjs 无此端点（404），四个 provider 市场清单全为空，市场层形同虚设。github provider 的真实意图是 npm registry 市场，需为其实现清单拉取分支。
+
+**修改的内容**：
+  - `Base/MCPProvider/application/MCPService.ts` listMcp：provider_code='github' 分支走 `fetchNpmMarketList`（新增私有方法：官方 `@modelcontextprotocol/server-github` 置顶 + npm search 'github mcp' top25 合并去重，上限 30 条，`install_cmd=npm install -g <pkg>`）；其余 provider 保持原 `/mcps` 协议不变。
+  - `Base` 已重新 `npm run build`（dist 同步）。
+  - 新增 `Core/test/MCPCoreGithubLive.test.ts`（opt-in：`BRIAN_LIVE_MCPCORE=1`，需清代理环境变量）：拷贝真实库 → 真实 MCPCoreAccess + 真实 LLM → matchMCP 市场获取 → execMcp 调用 search_repositories。
+
+**影响的端点**：
+  - `matchMCP`（Agent 执行）：github provider 市场从空清单变为真实 npm 清单，安装即用闭环打通；
+  - `listMcp`：github provider 清单来源变更（npm registry），其余 provider 不受影响。
+
+**可能存在的问题**：
+  - npm search 'github mcp' 相关性排序不含官方包（置顶合并兜底）；官方 TS 版 server-github 已归档（2025.4.8），未跟踪 Go 版官方服务器（非 npm 分发）。
+  - installMcp 的 execSync(npm install -g) 同步阻塞（120s 超时）问题仍在（见 [2026-09-22o]）。
+  - server-github 匿名调用 GitHub API：搜索限额 10 次/分钟（本机代理环境对 GitHub 域不通，需直连运行）。
+
+**验证**：Base tsc/build/eslint 0 问题；Base 845 passed；Core 228 passed + 3 skipped；真机联测通过（17s）——LLM#1 need 判定 `{"need":true,"keywords":["GitHub","star","repository"]}` → 市场清单（npm registry 直连）→ LLM#2 选型 server-github 95 分 → installMcp+startMcp → execMcp search_repositories(query='model sort:stars') 2.8s 返回真实 GitHub 数据：**ollama/ollama**（181,498 stars，描述含 models）为当前 GitHub 上 star 最多的模型相关仓库。
+
+## [2026-09-22r] fix: SkillCore 全真链路三处修复（自建 py/sh、回退防劫持、种子原位升级）+ 磁盘分析真机联测
+
+**变更原因**：用户要求「调用 SkillCore 分析本机的磁盘使用情况」。全真瀑布联测（真实 Ark LLM + 真实库副本）连环取证，暴露四个问题：
+1. `generateSkill` 提示词硬编码 `main.js`（IsolatedVMSandbox 无 IO）——自建 Skill 永远做不了本机观测类任务；
+2. 模板隐式回退 `LIKE '%Skill 匹配%'` 不区分 is_system——真实库用户自建模板（`251fef0b`，旧 relevance 契约）劫持回退（且 `skill_core_config.prompt_template_id` 本就显式指向它），旧契约输出导致 `parseNeedRankingResult` 保守降级 need=false；
+3. `PromptCatalogAccess.seedOne` 按 def.id（`builtin.*`）查找，老版本 catalog 以 UUID 种子化的旧行永远不被刷新，新旧两行并存；且老库可能同时存在 UUID 旧行与 builtin. 新行，回退按 rowid 命中陈旧行（旧契约下模型给无关 Skill 打 100 分的实测乱象即源于此）；`refreshUnchanged` 的 UPDATE 条件写死 `def.id`，对按标题命中的 UUID 行静默失效；
+4. `PromptsAccess.initialize` 从未调用 `catalog.seed()`（2026-09-11 移除播种后 catalog 只构造未接线），代码升级的模板契约永远无法同步到既有库。
+另发现工程陷阱：Core 测试中 `@brian-agent/base` 解析到 Base/dist（package.json main），Base 源码修改后必须 `npm run build` 才在 Core 测试生效。
+
+**修改的内容**：
+  - `Core/SkillCoreProvider/application/SkillCoreService.ts` generateSkill：系统级任务（硬件/磁盘/内存/网络/环境观测）允许生成 `main.py`（Python stdlib）或 `main.sh`，要求 stdout 输出单段 JSON、stderr 静默；纯计算仍用 `main.js`。
+  - `SkillCoreService.soMatchPromptTemplateId` / `MCPCoreService.soMatchPromptTemplateId` / `soMarketPromptTemplateId`：隐式回退优先 `is_system=1` 的 builtin 契约模板（用户自定义模板须经 config.prompt_template_id 显式指定）。
+  - `Base/PromptCatalog/access/PromptCatalogAccess.ts` seedOne：id 未命中后按「同标题 + is_system=1」原位刷新老版本 UUID 种子行（保 id 引用不断链、不产生重复行），legacy 检查前置使 UUID 旧行与 builtin. 新行并存时也收敛到当前契约；refreshUnchanged 的 UPDATE 条件改用行自身 id。
+  - `Base/PromptsProvider/access/PromptsAccess.ts` initialize：接线 `catalog.seed()` 启动期幂等种子化（未编辑 is_system 行随代码升级刷新，用户/自定义模板不受影响）→ 既有库下次启动自愈。
+  - `Base` 已重新 `npm run build`（dist 同步上述修复）。
+  - 新增 `Core/test/SkillCoreDiskLive.test.ts`（opt-in：`BRIAN_LIVE_SKILLCORE=1`）：拷贝真实库 → 真实 SkillCoreAccess + 真实 LLM → matchSkill 四层瀑布 → execSkill 真机执行 → 磁盘分析 JSON（LLM 生成结构不定，递归查找数值字段断言量纲）；LLM 调用追踪代理 + 模板行诊断输出。
+
+**影响的端点**：
+  - `matchSkill` / `matchMCP`（Agent 执行）：模板解析链路修复后 need/keywords 契约在既有库真实生效；
+  - `execAgent`：自建层可产出带 py/sh 的系统观测 Skill 并由 execSkill 真机执行。
+
+**可能存在的问题**：
+  - 真实库 `skill_core_config.prompt_template_id` 仍显式指向用户旧契约模板（本次真实库未改动）——需用户决策：更新该模板为 need/keywords 契约，或清空配置走 builtin；`mcp_core_config.prompt_template_id`（`31c4d572`，"MCP 工具匹配"）同理。
+  - 自建 Skill 每次生成结构/命名由 LLM 决定（同名 addSkill 幂等去重），跨任务可能产生多个变体。
+  - 旧契约（id/score 数组）经 RankingParser 兼容解析为 need=true，但无 keywords——GitHub 层空关键词快速跳过；依赖旧模板的库建议尽快升级。
+
+**验证**：Core tsc 0 错误；Core 228 passed + 2 skipped（两个 opt-in 联测默认跳过）；Base 845 passed；真机联测通过——matchSkill 22s（need=true + keywords=["disk usage analysis","system monitoring","filesystem statistics"] → GitHub 0 命中 → LLM#2 自建 3000 tokens）产出 `disk_usage_analyzer`（main.py，skill_md 1141 字）落库 enable=true，execSkill 22ms 返回按挂载点全量分析：`/` 210.8GB 总量 / 184.6GB 已用 / **87.6% 使用率**，VMware 共享盘 0.76%，summary 汇总 1.94%。
+
+## [2026-09-22q] test: GitHub 第 3 层真机联测（opt-in）+ 代理环境根因取证
+
+**变更原因**：用户问「为什么没有从 GitHub 上面找 Skill」。排查结论：(1) 此前资源采集演示走的是 SkillProvider.execSkill（Base 数据层）手工 addSkill，未进 Core 层 matchSkill 瀑布，GitHub 检索属第 3 层故未触发；(2) 实测发现**本机代理环境变量（https_proxy=192.168.1.100:7890）对 api.github.com / raw.githubusercontent.com TLS 掐断**，而 HttpService 读到代理变量后全部外部请求走代理且**失败不降级直连、不支持 NO_PROXY**（HttpService.ts:61-86），直连反而通——带代理运行时 GitHub 层会静默空手而归。
+
+**修改的内容**：
+  - 新增 `Core/test/GitHubSkillLive.test.ts`（opt-in：`BRIAN_LIVE_GITHUB=1` 才运行，默认 skip）：
+    - 阶段 A 直测 `GitHubSkillClient.searchSkills(['document','skills'], '')`（真实网络，匿名 Repository Search 通道 + 根目录 SKILL.md 探测）；
+    - 阶段 B `fetchSkillMd` frontmatter 解析；
+    - 阶段 C 完整 matchSkill 瀑布（stub LLM need=true + keywords → GitHub 层导入 → 落库 enable=true）。
+  - 无源码改动（HttpService 代理策略是否改造待用户决策）。
+
+**影响的端点**：无接口变更。
+
+**可能存在的问题**：
+  - **HttpService 代理策略**：外部请求一律走代理（读 HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy/ALL_PROXY），无 NO_PROXY 豁免、代理失败不回退直连；代理坏时 GitHub 层静默空结果。可选修复：进程级清代理启动后端 / 支持 NO_PROXY / 代理失败降级直连重试。
+  - 匿名 Repository Search 只探测 top5 仓库**根目录** SKILL.md，命中率依赖关键词（实测 `agent+skills` 0 命中、`document+skills` 命中 2）；配置 github_token 启用 Code Search（`filename:SKILL.md`）可大幅提升命中。
+  - 匿名搜索配额 10 次/分钟；个别 raw 域名连接存在黑洞挂起（15s 超时兜底）。
+
+**验证**：清代理后 `BRIAN_LIVE_GITHUB=1` 真机全链路通过——searchSkills 1345ms 命中 2（PleasePrompto/notebooklm-skill、anbeime/skill），fetchSkillMd 94ms 解析出 name=notebooklm，matchSkill 610ms 导入落库；带代理对照同用例 302ms 0 命中（TLS 掐断）。Core tsc 0 错误、eslint 0 problems、套件 227 passed + 1 skipped（联测默认跳过）。
+
+## [2026-09-22p] test: SkillProvider.execSkill 真机资源采集验证（system-resource-report）
+
+**变更原因**：用户要求「通过 SkillProvider 获取到本机的资源使用情况」——此前 execSkill 链路仅有 stub 化单测（LocalSandbox 的 py/sh 执行从未在真机跑过真实脚本拿真实数据），需以真实 Skill 端到端验证执行机制。
+
+**修改的内容**：
+  - 新增 `Base/test/SkillExecResource.test.ts`（2 用例）：
+    - **真机采集**：addSkill 落库 `system-resource-report`（含 `scripts/collect.py`：仅标准库，读 /proc/meminfo、/proc/stat 双采样算 CPU busy%、/proc/loadavg、shutil.disk_usage，stdout 输出单段 JSON）→ `SkillAccess.execSkill({id, params:{}})` → LocalSandbox 真实 Python 3.12 执行 → JSON 断言（cpu_count/mem_used_percent 0-100/loadavg 3 元素/hostname 与 os.hostname() 一致）→ SKILL_USAGE_TABLE 当日 usage_count=1（execSkill 副作用验证）。非 Linux 平台 skipIf 跳过采集用例。
+    - **禁用护栏**：updateSkill 行级 enable=false → execSkill 抛「Skill 已禁用」（注：enableSkill 是服务级开关，行级禁用走 updateSkill）。
+  - 无源码改动（纯新增测试验证既有链路）。
+
+**影响的端点**：无接口变更；验证 `SkillAccess.execSkill`（Agent 执行 Worker 调工具的同一入口）。
+
+**可能存在的问题**：
+  - LocalSandbox 以 `2>&1` 合并 stderr 进 stdout，采集脚本必须保持 stderr 静默（否则污染 JSON）；collect.py 已满足。
+  - 采集脚本依赖 /proc（Linux）；其他平台依赖 skipIf 跳过，若需跨平台采集需按平台分支实现。
+
+**验证**：Base tsc --noEmit 0 错误、eslint 0 problems；`SkillExecResource.test.ts` 2/2 通过（真机输出：4 核 / 负载 0.80/1.08/0.99 / CPU 10.2% / 内存 63.3%（15941.4MB 中已用 10095MB）/ 磁盘 87.6%（196.3GB 余 15.1GB））；Base 全量 845/845 通过。
+
+## [2026-09-22o] feat: Skill/MCP 匹配升级四层瀑布（需求判定合并排序 → 本地 → 外部获取 → 自建）
+
+**变更原因**：原 matchSkill/matchMCP 对每个任务都跑 LLM 排序（闲聊类任务也花排序 token），无"是否需要组件"判定；本地无果时无外部获取层；generateSkill 仅在库空时生成纯 skill_md（无 scripts/references）；且 AgentExecutionService.loadSkills/loadMcps 不传 task_content，匹配链路无任务语义。
+
+**修改的内容**：
+  - **Core/shared/RankingParser**：新增判定合并契约解析 `parseNeedRankingResult`（`{"need", "keywords", "candidates"}`，兼容旧数组格式；解析失败一律 need=false 保守降级）。
+  - **Base/PromptCatalog**：`Skill 匹配排序` / `MCP 匹配推荐` 模板补上缺失的 `{{task_content}}` 变量（原模板根本没有任务内容！），输出契约升级为 need/keywords/candidates；新增 `MCP 市场匹配` 模板（市场选型用旧数组契约）。用户未编辑的 DB 行经 seed_hash 机制随代码刷新。
+  - **SkillCoreProvider**：matchSkill 四层瀑布——①绑定水合 → ②缓存（新增负缓存：need=false 空结果入缓存，重复任务零 LLM）→ ③GitHub 外部检索（新增 `GitHubSkillClient`：Code Search `filename:SKILL.md` 需 token，匿名 401 自动降级 Repository Search + 根目录探测；命中解析 frontmatter 导入 enable=true，同名校验幂等）→ ④完整自建（generateSkill 升级：skill_md + scripts + references，≤3 文件/≤20000 字符/`GENERATE_MAX_TOKENS=3000`，落库 enable=true 闭环）。
+  - **MCPCoreProvider**：matchMCP 四层瀑布（无自建层）——①②同上 → ③**提供商市场获取**（用户决策：不走 GitHub）：遍历启用 mcp_provider → listMcp 汇总市场候选 → LLM 市场选型（"MCP 市场匹配"模板，取最高分）→ installMcp + startMcp（安装即启动，流程闭环）。
+  - **配置链路**：skill_core_config 加 `github_token`/`github_search_enabled`/`auto_generate_enabled` 列，mcp_core_config 加 `market_install_enabled` 列（schema 迁移补列、SingleRowConfigStore 默认行、configSkillCore/configMCPCore 校验）；configRegistrations 静态注册 + Config 应用读写路由接线。
+  - **AgentExecutionService**：loadSkills/loadMcps 增加 taskContent 参数并传入 matchSkill/matchMCP（清洗后任务内容，判定合并与瀑布匹配的任务语义来源）。
+  - **Base/SkillProvider**：index 补导出 `FileEntry` 类型。
+  - 新增测试：`Core/test/shared/RankingParser.test.ts`（13 用例：新契约解析/兼容降级/阈值）、`Core/test/SkillCoreWaterfall.test.ts`（7 用例：负缓存/本地命中/GitHub 导入/完整自建/开关/乱码降级）、`Core/test/MCPCoreWaterfall.test.ts`（4 用例：负缓存/市场获取闭环/开关/空清单）、`Core/test/SkillMcpMatchE2E.test.ts`（6 用例：真实 PromptCatalog 种子 + 模板标题回退 + 变量渲染无残留占位符 + 契约解析 + 瀑布分流全链路，Skill/MCP 各 3/2 场景 + GitHub keywords 透传）。
+
+**影响的端点**：
+  - `execAgent`（Agent 执行）：无绑定时按任务内容走四层瀑布，闲聊任务不再触发 LLM 排序（负缓存）；
+  - `configSkillCore` / `configMCPCore`（配置中心）：新增配置项可读可写；
+  - PromptCatalog 种子化：未编辑的匹配模板自动升级。
+
+**可能存在的问题**：
+  - GitHub Code Search 匿名 401（GitHub 强制要求认证），未配置 github_token 时走 Repository Search 降级通道，命中率低；建议配置中心配置 token。
+  - 市场获取层 installMcp 内部 execSync（npm install，120s 超时）同步阻塞 event loop，匹配期间请求性能受影响；startMcp 失败不回滚安装（MCP 已落库可手动启动）。
+  - mcp_core_config 未加 github_token 列（MCP 走提供商市场，非 GitHub 直连，与用户确认的"各 core_config 各存一列"前提已变化）。
+  - 负缓存判定与"库内新增 Skill"存在最长 TTL（默认 10 分钟）的发现延迟。
+
+**验证**：typecheck 全绿（Base/Core/Agent/Application tsc --noEmit 0 错误）；eslint 0 problems；测试全绿——Base 843、Core 227（含新增 30，含 Skill/MCP 匹配链路 E2E 6 用例）、Agent 118、Application 489。
+
 ## [2026-09-22n] refactor: 「01 · 记忆地图」网格化重排——消除遮挡与凌乱
 
 **变更原因**：用户评审「01 · 记忆地图消息框排布凌乱且存在大量遮挡」：原自由布点卡片尺寸不一（h 70~120）、三列位置参差（x 45/495/665、行错位 50/250/255/455）、斜线穿越画布，绝对定位图例浮层压住右下角两张卡片。

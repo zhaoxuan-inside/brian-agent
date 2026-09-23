@@ -16,6 +16,7 @@ import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
 import { AopProxy, type Logger } from '@brian-agent/base';
 import { SkillCoreSchemaInitializer } from '../infrastructure/SkillCoreSchemaInitializer';
+import { GitHubSkillClient } from '../infrastructure/GitHubSkillClient';
 import { SkillCoreService } from '../application/SkillCoreService';
 import {
   SkillCoreContext,
@@ -77,6 +78,7 @@ export class SkillCoreAccess {
       skillAccess,
       llmAccess,
       promptsAccess,
+      new GitHubSkillClient(),
     );
     this.service = AopProxy.wrap(rawService, { logger });
   }

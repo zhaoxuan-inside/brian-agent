@@ -16,24 +16,31 @@
 - input：MatchSkillInput（继承 Input），包含以下字段：
   - agent_id：Agent ID
   - context_id：交互上下文 ID
-  - interact_id：交互记录 ID
-- context：SkillCoreContext（继承 Context）
-- output：MatchSkillOutput（继承 Output），承载返回内容：
+  - run_id：交互记录 ID
+  - task_content：当前任务内容（无绑定时四层瀑布匹配的任务语义来源，2026-09-22 起必传）
+  - bound_skill_ids：调用方传入的既有绑定（传入时确定性水合，不再按任务重选）
+  - bypass_cache：跳过匹配缓存
+- context：SkillCoreContext
+- output：MatchSkillOutput，承载返回内容：
   - skills：匹配到的 Skill 列表（MatchedSkillEntry[]，含 skill_id、skill_brief、relevance）
 
-**处理流程**：
+**处理流程（四层瀑布，2026-09-22）**：
 
-1. 调用 RelationDBProvider 根据 `agent_id` 查询 `agent_skill` 表，检查是否有已缓存的绑定；
-2. 若存在缓存绑定且在 regen_rate 窗口内：直接返回缓存结果（skill_id + skill_brief）；
-3. 否则执行重新匹配：
-   a. 调用 SkillProvider.soSkill 加载所有已启用的 Skill（`enable = true`），获取各 Skill 的 id、skill_brief、skill_md 等字段；
-   b. 若可用 Skill 列表为空，直接返回空列表；
-   c. 从 `skill_core_config` 表获取 `prompt_template_id`；
-   d. 若指定了 prompt_template_id，使用 PromptsProvider.execPrompt 渲染模板；否则使用 **默认 Prompt**：将每个 Skill 的 skill_brief 和 skill_md 拼接为 Prompt，由 LLM 按相关性排序；
-   e. 调用 LLMProvider.execLLM 由模型推荐合适的 skill_id 列表（LLM 输出 JSON 数组，格式：`[{"skill_brief": "...", "relevance": 0.95}]`）；
-   f. 解析 LLM 返回，按 skill_brief 匹配到 Skill ID；
-4. 持久化匹配结果到 agent_skill 表（幂等，利用 agent_id + skill_id 联合唯一索引）；
-5. 返回匹配到的 skill_id 列表；
+1. **第 1 层 绑定水合**：`bound_skill_ids` 非空 → 直接从 Skill 表水合返回（绑定唯一事实源 = Agent 表 skill_ids_json）；
+2. **缓存命中水合**：MD5（任务前缀）+ 任务向量两级缓存（`mcp/skill_core_config` 的 TTL/容量/向量阈值可配）；
+   - 正缓存命中 → 水合 Skill 返回（重复任务零 LLM）；
+   - **负缓存命中**（该任务曾被判定不需要 Skill）→ 直接返回空；
+3. **第 2 层 LLM 需求判定与排序合并**：渲染匹配模板（"Skill 匹配排序"，输出契约 `{"need": bool, "keywords": [...], "candidates": [{"id","score"}]}`）；
+   - LLM 判定任务不需要 Skill（need=false，如闲聊）→ 写负缓存，返回空；
+   - 本地候选过 score_threshold → 正缓存，返回；
+   - 模板/LLM 失败 → 保守返回空（不写缓存、不触发外部获取，可重试）；
+4. **第 3 层 GitHub 外部检索**（need=true 且本地无合格者；`github_search_enabled` 可关）：
+   - 由 LLM 输出的英文 keywords 检索 GitHub：Code Search（`filename:SKILL.md`，需 token，匿名 401 自动降级）→ Repository Search 降级（top 仓库根目录探测 SKILL.md）；
+   - 命中 → raw 拉取 → 解析 frontmatter（name/description）→ `addSkill` 导入本地（enable=true，流程闭环，同名校验幂等）→ 返回；
+5. **第 4 层 完整自建**（GitHub 也无果；`auto_generate_enabled` 可关）：
+   - LLM 基于任务生成完整 Skill：name / skill_brief / skill_md / scripts（≤3 个，≤20000 字符）/ references（≤3 个，≤20000 字符）；
+   - `addSkill` 落库（enable=true，下次任务本地可命中）→ 返回；
+6. 全部无果 → 返回空。
 
 **LLM 匹配提示词（默认模板）**：
 - 向 LLM 发送每个 Skill 的 `skill_brief`（简述）和 `skill_md`（SKILL.md 全文）
@@ -117,16 +124,22 @@
 
 ### 2.6. 配置（configSkillCore）
 
-**功能**：获取或更新 skill_core_config 配置（SET 语义）。接受 `regen_rate` 和 `prompt_template_id` 作为可选更新字段，仅更新传入的非空字段。返回更新后的当前配置。
+**功能**：获取或更新 skill_core_config 配置（SET 语义）。接受可选更新字段，仅更新传入的字段。返回更新后的当前配置。
 
 **入参**：
 - input：ConfigSkillCoreInput（继承 Input），包含以下字段：
   - regen_rate：重新选择 Skill 的概率（可选）
   - prompt_template_id：模板 Prompt ID（可选）
+  - score_threshold：排序候选采纳阈值 0-100（可选）
+  - vector_similarity_threshold：任务向量命中阈值 0.0-1.0（可选）
+  - match_cache_ttl_ms / match_cache_capacity：匹配缓存参数（可选）
+  - github_token：GitHub API Token（可选，2026-09-22 新增；匿名搜索配额 10 次/分钟，配置后提升配额并启用 Code Search）
+  - github_search_enabled：GitHub 外部检索层开关（可选，默认 true）
+  - auto_generate_enabled：完整自建层开关（可选，默认 true）
 - context：SkillCoreContext
 - output：ConfigSkillCoreOutput：
-  - regen_rate：当前生效的重新选择概率
-  - prompt_template_id：当前生效的模板 Prompt ID
+  - regen_rate / prompt_template_id：当前生效配置
+  - github_token / github_search_enabled / auto_generate_enabled：当前生效配置（2026-09-22 新增）
 
 **处理流程**：
 

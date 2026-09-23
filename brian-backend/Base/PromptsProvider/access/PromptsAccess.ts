@@ -73,12 +73,24 @@ export class PromptsAccess {
     this.catalog = new PromptCatalogAccess(relationDb);
   }
 
-  // ===== 修改后的方法（移除代码内置 Prompt 播种，统一由 PromptProvider / DB 模板管理） =====
+  // ===== 原始方法（保留作为参考；2026-09-11 曾移除代码内置 Prompt 播种，统一由 DB 模板管理）=====
+  // /**
+  //  * 初始化组件：写入默认配置并恢复 enabled 状态。
+  //  */
+  // async initialize(): Promise<void> {
+  //   await this.service.initialize();
+  // }
+
+  // ===== 修改后（2026-09-23）：恢复启动期幂等种子化。PromptCatalog.seed 仅刷新未编辑的
+  // is_system 行（md5==seed_hash 判定），用户/自定义模板不受影响；原移除后 catalog 只构造
+  // 未调用，代码升级的模板契约（如 2026-09-22 Skill/MCP 匹配 need/keywords 契约）永远不会
+  // 同步到既有库——真机取证见 [2026-09-22r] =====
   /**
-   * 初始化组件：写入默认配置并恢复 enabled 状态。
+   * 初始化组件：写入默认配置、恢复 enabled 状态并幂等种子化 builtin Prompt 目录。
    */
   async initialize(): Promise<void> {
     await this.service.initialize();
+    await this.catalog.seed();
   }
 
   /** 新增 Prompt */

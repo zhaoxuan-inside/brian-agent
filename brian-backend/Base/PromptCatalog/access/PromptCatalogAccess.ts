@@ -32,7 +32,27 @@ export class PromptCatalogAccess {
     }
   }
 
+  // ===== 原始方法（保留作为参考；2026-09-23 被下方修改后版本替代：老版本 catalog 以 UUID 为
+  // 模板 id 种子化，按 def.id 查不到旧行就直接插入 builtin. 新行——老库同名系统模板永不刷新，
+  // 新旧两行并存且隐式回退可能命中陈旧契约——真机取证见 [2026-09-22r]）=====
+  // private async seedOne(def: BuiltinPromptDef, now: number): Promise<void> {
+  //   const canonicalHash = md5(def.template);
+  //   const existing = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+  //     { field: 'id', operator: Operator.EQ, value: def.id },
+  //   ]) as Record<string, unknown> | null;
+  //   if (existing) {
+  //     await this.refreshUnchanged(existing, def, canonicalHash);
+  //     return;
+  //   }
+  //   await this.relationDb.insert(PROMPT_TEMPLATE_TABLE, this.toInsertFields(def, now, canonicalHash));
+  // }
+
+  // ===== 修改后（2026-09-23）：id 未命中时按「同标题 + is_system=1」查找老版本种子行，
+  // 未编辑（md5==seed_hash）则原位刷新模板与 seed_hash（保 UUID id 不变，外部引用不断链，
+  // 且不再产生 builtin. 重复行）；用户已编辑的旧行保留用户版本并跳过插入 =====
   /** 单条种子（逻辑控制）：缺失即插入；已存在行按 seed_hash 判定是否刷新模板 */
+  // ===== 修改后（2026-09-23b）：legacy 同标题检查前置——老库可能同时存在 UUID 旧行与
+  // builtin. 新行（历史脏数据），legacy 前置保证旧行也被原位刷新，隐式回退无论命中哪行都是新契约 =====
   private async seedOne(def: BuiltinPromptDef, now: number): Promise<void> {
     const canonicalHash = md5(def.template);
     const existing = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
@@ -40,12 +60,24 @@ export class PromptCatalogAccess {
     ]) as Record<string, unknown> | null;
     if (existing) {
       await this.refreshUnchanged(existing, def, canonicalHash);
+    }
+    const legacy = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.EQ, value: def.title },
+      { field: 'is_system', operator: Operator.EQ, value: 1 },
+    ]) as Record<string, unknown> | null;
+    if (legacy) {
+      await this.refreshUnchanged(legacy, def, canonicalHash);
+      return;
+    }
+    if (existing) {
       return;
     }
     await this.relationDb.insert(PROMPT_TEMPLATE_TABLE, this.toInsertFields(def, now, canonicalHash));
   }
 
   /** 用户未改动（模板 md5 == 上次种子指纹）的最新化（数据处理 → 执行 UPDATE） */
+  // ===== 修改后（2026-09-23）：UPDATE 条件改用 existing 行自身 id（原版写死 def.id，
+  // 对按标题命中的老版本 UUID 行永远匹配 0 行、刷新静默失效）=====
   private async refreshUnchanged(existing: Record<string, unknown>, def: BuiltinPromptDef, canonicalHash: string): Promise<void> {
     const untouched = md5(String(existing['prompt_template'] ?? '')) === String(existing.seed_hash ?? '');
     const emptyHash = !String(existing.seed_hash ?? '');
@@ -59,7 +91,7 @@ export class PromptCatalogAccess {
         { field: 'prompt_template', value: def.template },
         { field: 'seed_hash', value: canonicalHash },
       ],
-      [{ field: 'id', operator: Operator.EQ, value: def.id }],
+      [{ field: 'id', operator: Operator.EQ, value: String(existing['id']) }],
     );
   }
 

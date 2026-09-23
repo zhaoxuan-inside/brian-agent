@@ -1047,6 +1047,9 @@ export class ConfigService {
   private async readSkillCoreValue(configKey: string): Promise<ConfigValueMatch> {
     const simple = configKey.startsWith('skill_core.regen_rate')
       || configKey.startsWith('skill_core.similarity_threshold')
+      || configKey.startsWith('skill_core.github_token')
+      || configKey.startsWith('skill_core.github_search_enabled')
+      || configKey.startsWith('skill_core.auto_generate_enabled')
       || configKey.startsWith(PROMPT_SLOTS.SKILL_MATCH);
     if (simple) {
       const out = new ConfigSkillCoreOutput();
@@ -1300,7 +1303,7 @@ export class ConfigService {
     [(prefix) => prefix.startsWith('llm_core.regen_rate') || prefix.startsWith('llm_core.similarity_threshold') || prefix.startsWith(PROMPT_SLOTS.LLM_MATCH), (prefix, value) => this.writeLLMCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('llm_core.quota_'), (prefix, value) => this.writeLLMCoreQuotaConfig(prefix, value)],
     [(prefix) => prefix.startsWith('mcp_core.'), (prefix, value) => this.writeMCPCoreConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('skill_core.regen_rate') || prefix.startsWith('skill_core.similarity_threshold') || prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH), (prefix, value) => this.writeSkillCoreConfig(prefix, value)],
+    [(prefix) => prefix.startsWith('skill_core.regen_rate') || prefix.startsWith('skill_core.similarity_threshold') || prefix.startsWith('skill_core.github_') || prefix.startsWith('skill_core.auto_generate_enabled') || prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH), (prefix, value) => this.writeSkillCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('skill_core.opt_rule'), (prefix, value) => this.writeSkillOptRuleConfig(prefix, value)],
     [(prefix) => prefix.startsWith('soul_core.regen_rate') || prefix.startsWith('soul_core.similarity_threshold') || prefix.startsWith(PROMPT_SLOTS.SOUL_MATCH) || prefix.startsWith('soul_core.llm_id'), (prefix, value) => this.writeSoulCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('soul_core.opt_rule'), (prefix, value) => this.writeSoulOptRuleConfig(prefix, value)],
@@ -1405,6 +1408,7 @@ export class ConfigService {
       if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value as number;
       if (prefix.startsWith('mcp_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.MCP_MATCH)) input.prompt_template_id = value as string;
+      if (prefix.startsWith('mcp_core.market_install_enabled')) input.market_install_enabled = value as boolean;
       const output = {} as McpCoreContext;
       await this.mcpCore.configMCPCore(input, {} as ConfigMcpCoreOutput, output);
       return;
@@ -1421,6 +1425,9 @@ export class ConfigService {
       if (prefix.startsWith('skill_core.regen_rate')) input.regen_rate = value as number;
       if (prefix.startsWith('skill_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH)) input.prompt_template_id = value as string;
+      if (prefix.startsWith('skill_core.github_token')) input.github_token = value as string;
+      if (prefix.startsWith('skill_core.github_search_enabled')) input.github_search_enabled = value as boolean;
+      if (prefix.startsWith('skill_core.auto_generate_enabled')) input.auto_generate_enabled = value as boolean;
       const output = {} as SkillCoreContext;
       await this.skillCore.configSkillCore(input, {} as ConfigSkillCoreOutput, output);
       return;
