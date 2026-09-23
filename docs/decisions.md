@@ -2,6 +2,13 @@
 
 > 非显而易见的取舍记录：只记「为什么这么做」，不记流水账；能被 git 历史回答的问题不记。
 
+## [2026-09-23] 依赖安全清零：vendored isolated-vm 摘除 prebuild 死链；vite/vitest 升最新稳定线
+
+**决策**：① 移除 vendored isolated-vm（`Base/SkillProvider/infrastructure/sandbox/vendor/isolated-vm`）devDependencies 中的 `prebuild@^13.0.1`；② vitest 全 workspace 一次性升 ^5.0.1、frontend vite ^5→^8.3.0 + plugin-vue ^6.0.9、@types/node 全线 ^22，不做中间过渡版本（如 vitest 3.2.x 保守跳板）。
+**原因**：① npm audit 剩余 4 条 moderate（request SSRF 链）全部来自 prebuild@13→node-ninja→request 死链；全仓 grep 无任何流程引用 prebuild CLI，prebuilt 二进制产出工作流为 `node-gyp rebuild` + `copy-prebuilt.js`（`brian-backend/prebuilt/<module>/<platform>/node<abi>/` 布局非 prebuild 产物格式），摘除零功能影响。② 中间跳板版本（vitest 3.x）仍落在漏洞范围（≤3.2.5），修一次到位；vitest 1.6→5 主要破坏点为异步断言强制 await 与 pool/配置类型收紧，实测仅 Base 两处测试断言未 await 需修，runner 行为兼容。
+**备选**：prebuild 链换 `overrides` 强升（弃用——request/node-ninja API 无兼容新版本，覆盖终会点名 break）；vite 只升 6.4.3 保守过渡（弃用——属漏洞版线上边缘，二次迁移成本更高）。
+**影响**：`npm audit` 25→0；构建/测试门禁验收标准不变（npm test / build:frontend / lint 同一套）；Runtime test 2 失败与 frontend chat e2e 5 失败为另会话进行中改动的既有失败，与本决策无关。
+
 ## [2026-09-22e] Config 模块消 any：按「实际参数位」诚实标注，不迁就变量名
 
 **决策**：ConfigService/ConfigAccess 清零 149 处 any 时，writeXxxConfig 系列中名为 `output` 的局部变量实际处于被调方法第 3 参（Context 位），类型按实际参数位标注为对应 Context（变量名不改、实参顺序不动）；`limitLLM`/`configAgentStrategy` 历史传入的 `{config_key, value}` 与真实入参类型不符，用 `as unknown as`（或结构兼容单断言）+ 坑位警告注释标记，不重构运行时。
@@ -77,3 +84,10 @@
 **决策**：HeroAppShot 与 HomeView 记忆地图的消息卡片连线由新增 `src/utils/edgePath.ts`（edgeAnchor/smoothEdgePath，任意尺寸矩形 + 任意边锚点）生成；不复用 `chatMapGeometry.ts` 的 verticalEdgePath/citationEdgePath。
 **原因**：后者与 ChatMap 布局强耦合（NODE_W/NODE_H 常量、节点左上角定位约定、仅纵向/引用两类边），泛化它会触碰生产 ChatMap 及其测试，属顺手重构。
 **备选**：继续手写坐标路径（弃用——卡片几何一变锚点即脱靶，且直线/折角生硬）。
+
+## [2026-09-23] 委派结果不逐条回传父循环，采用"父 run 收敛后 join + 写作 Agent 唯一收口"
+
+**决策**：delegate 子任务的结果不在父循环内逐条 push 回传，而是：子 run 落隔离子会话（`${sessionKey}::sub:${runId}`），父 run Loop 收敛后 join 全部子 run（超时 180s），子结果并入写作 Agent 的 agent_results 统一产出唯一最终回复；subagent run 不注入 delegate（委派链一级封顶）；子 run 不执行评估/写作。
+**原因**：事故 trace 22f3ce79 —— 旧 fire-and-forget 委派下，父 run 收不到结果被迫重复委派、子代理继续递归委派成四级链；每个子 run 各自走评估+写作成为独立"小问答"；委派任务被持久化为 user 角色消息，一次问答在对话区"派生"出四次问答。写作收口（WriterAgent-PRD §1"汇总所有 Work Agent 结果"）与消息角色不变量（session 时间线 user 行只来自真实用户）都要求确定性收口而非异步注入。
+**备选**：Tools-PRD 原"push 式回传经 steering 队列注入父循环"（弃用——子结果注入时机不确定会扰动父循环决策，且共享会话消息会互相污染各 run 上下文；若未来需要执行中吸收子结果，再以"子结果注入 steering + 独立组件范围消息"扩展）。
+**影响**：主 run 结算时间延长至 join 完成（受 LLM 配额/网络影响时外层 waitRun 300s 兜底）；父子关系为内存登记，重启丢失后 join 空集语义自洽；subagent lane 串行执行（既有行为），join 超时下未完成子任务如实标注进写作。

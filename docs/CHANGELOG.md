@@ -1,3 +1,19 @@
+## [2026-09-23] chore(deps): 依赖安全告警彻底清零（npm audit 25→0）+ vite/vitest/前端工具链升级
+
+**变更原因**：用户要求彻底消除 npm install 输出的 deprecation 与 25 条安全告警。前序提交（`3e65378`：overrides + uuid ^11.1.1 + build 链补 shared；`a70abdd`：摘除 vendored isolated-vm 的 prebuild 死链 devDep）已清 21 条，本条完成剩余 4 条（esbuild/vite/vite-node/vitest 开发链）。
+
+**修改的内容**：
+  - 依赖升级：frontend `vite ^8.3.0`、`vitest ^5.0.1`、`@vitejs/plugin-vue ^6.0.9`；backend 5 workspace `vitest ^1.6.0→^5.0.1`；全部 6 处 `@types/node ^20.12.7→^22.0.0`（vitest 5 peerOptional 要求）。
+  - 配置：Core/Agent/Application tsconfig `exclude` 补 `vitest.config.ts`（对齐 Base/Runtime 既有先例，vitest 5 下配置文件 API 类型变化导致 tsc TS2769）。
+  - 测试：Base `LLMProvider.test.ts` / `RelationDBProvider.test.ts` 两处异步断言补 `await`（vitest 5 将未 await 异步断言升级为错误）。
+
+**影响的端点**：无（开发工具链变更，运行时代码零改动；运行期依赖未动）。
+
+**可能存在的问题**：
+  - Runtime test 2 失败（`RuntimeGateway.test.ts` 组件绑定/Soul 注入断言）与 frontend chat e2e 5 失败（chat 链路 HTTP 501）均为另会话进行中改动（dev-server/ChatService/RunGatewayService WIP）的既有失败，与本变更无关，待该改动自带测试收敛。
+
+**验证**：npm audit `found 0 vulnerabilities`；build:backend 全绿（台 shared 首位）；build:frontend（vue-tsc + vite 8.3.0）全绿；npm test：Base 845/845、core 228+3skipped、agent 118/118、application 489/489 全通过，runtime 输出见上；frontend lint 0 error（1 存量 warning）。
+
 ## [2026-09-22s] feat: github provider 接入 npm registry 市场 + MCPCore 全真链路联测（GitHub MCP 安装即用）
 
 **变更原因**：用户要求「调用 MCPCore 找 GitHub MCP，找到现在 star 最多的模型」。取证发现：github provider（url=registry.npmjs.org）走通用 `GET {url}/mcps` 协议——npmjs 无此端点（404），四个 provider 市场清单全为空，市场层形同虚设。github provider 的真实意图是 npm registry 市场，需为其实现清单拉取分支。
@@ -2423,3 +2439,10 @@
   - 宣传页文案当前为中文硬编码（与对话页等既有页面中文硬编码做法一致），未接入 i18n；后续若需英文版需补齐文案词条；
   - 首页图片资源约 1.6MB（PNG 截图为主），首屏懒加载已对二维码启用（loading=lazy），截图区随路由懒加载拆包，弱网首访可再考虑转 WebP；
   - e2e 中 chat 发送链路 5 个用例因后端在改代码（Chat 模块 501）失败，需后端改动完成后单独修复验证。
+## [2026-09-23] 委派收口改造：子会话隔离 + 子 run join + 写作 Agent 唯一收口
+
+**事故**：trace 22f3ce79（"检查系统磁盘还有多少可用"）—— 一次问答在对话区"派生"出四次问答，全部以"我无法执行系统命令"收场；委派任务文本以 user 角色持久化污染对话区、LLM 上下文与 info_raw。
+
+**修复**：见 Runs-PRD / Tools-PRD §[2026-09-23] 与 docs/decisions.md 同日条目。核心：`RunGatewayService`（finishRunByLane / joinChildRuns / collectChildResults / updateDelegatePartOutputs / soRunSessionId / registerDelegation）、`AgentDefService.matchAgentDef`（agent_ref 直选层）、`delegateTool`（回执带 run_id + parent_run_id/agent_ref 透传）、`ChatService.syncRuntimeMessagesToInfoRaw`（lane 过滤）、`dev-server.ts`（桥接补全）、`scripts/cleanup-subagent-messages.mjs`（存量清理，已执行）。
+
+**验证**：typecheck 全 workspace 通过；lint 通过（SkillCoreService.ts:602 未用变量为既有错误，stash 复测确认，已记 TODO）；RuntimeGateway/AgentLoop/Tools/AgentDefVectorMatch/Session/AskUser/Chat 共 116 用例通过（RuntimeGateway 2 个既有失败与本次无关，stash 复测确认）；新增 2 个委派收口用例（子会话隔离 + join 汇总写作 / subagent 不执行写作）。E2E 冒烟受阻：LLM provider 429 AccountQuotaExceeded（5 小时配额，2026-09-24 01:01 重置），配额恢复后可发一次问答复验。

@@ -407,13 +407,13 @@ describe('RelationDBProvider', () => {
         expect(output.affected_rows).toBe(0);
       });
 
-      it('should throw error for non-existent table', () => {
+      it('should throw error for non-existent table', async () => {
         const input: InsertDBInput = Object.assign(new InsertDBInput(), {
           table: 'nonexistent_table_xyz',
           data: [{ field: 'x', value: 1 }],
         });
         const output = new InsertDBOutput();
-        expect(() => access.insertDB(input, output, new DBContext())).rejects.toThrow();
+        await expect(async () => access.insertDB(input, output, new DBContext())).rejects.toThrow();
       });
     });
 

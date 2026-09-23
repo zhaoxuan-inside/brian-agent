@@ -592,7 +592,7 @@ describe('LLMProvider', () => {
       const modelRows = relationDb.select('llm_cache', {
         conditions: [{ field: 'llm_provider_id', operator: Operator.EQ, value: addOut.id }],
       });
-      expect(modelRows).resolves.toHaveLength(0);
+      await expect(modelRows).resolves.toHaveLength(0);
     });
 
     it('ids 与 conditions 都没传应该抛出 ValidationError', async () => {

@@ -18,9 +18,9 @@
     "@brian-agent/agent": "file:../Agent"
   },
   "devDependencies": {
-    "@types/node": "^20.12.7",
+    "@types/node": "^22.0.0",
     "typescript": "^5.9.3",
-    "vitest": "^1.6.0"
+    "vitest": "^5.0.1"
   },
   "license": "Apache-2.0"
 }
