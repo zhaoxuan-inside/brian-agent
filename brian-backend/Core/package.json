@@ -15,7 +15,7 @@
     "@brian-agent/base": "file:../Base",
     "@node-rs/jieba": "^2.0.1",
     "magic-string": "^0.30.21",
-    "uuid": "^9.0.1"
+    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
