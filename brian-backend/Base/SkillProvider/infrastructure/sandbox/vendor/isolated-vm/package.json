@@ -17,8 +17,7 @@
     "prebuild-install": "^7.1.2"
   },
   "devDependencies": {
-    "isolated-vm": ".",
-    "prebuild": "^13.0.1"
+    "isolated-vm": "."
   },
   "binary": {
     "module_path": "out"
