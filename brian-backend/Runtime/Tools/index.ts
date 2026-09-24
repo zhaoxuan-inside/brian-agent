@@ -17,6 +17,9 @@ export {
   SoToolsOutput,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
+  RegisterRunSkillToolsInput,
+  RegisterSkillToolsOutput,
+  ClearRunToolsInput,
   ConfigToolInput,
   ConfigToolOutput,
 } from './domain/types';

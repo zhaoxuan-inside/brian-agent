@@ -22,6 +22,8 @@ import {
   SoToolsOutput,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
+  RegisterRunSkillToolsInput,
+  RegisterSkillToolsOutput,
   ConfigToolInput,
   ConfigToolOutput,
   AnyToolDef,
@@ -39,6 +41,7 @@ import {
 import { updatePlanTool } from './planTool';
 import { delegateTool } from './delegateTool';
 import { execTool } from './execTool';
+import { buildSkillToolDefs } from './skillTool';
 import { askUserTool } from './askUserTool';
 
 /** 默认结果截断上限（字符） */
@@ -63,6 +66,15 @@ export class ToolService {
    * 下次查询自动重建。zodToJSONSchema 对同一 def 输出确定，缓存安全。
    */
   private readonly specCache = new Map<string, ToolSpecJson>();
+
+  // ===== 2026-09-24 新增（Tool ⊕ Skill 合并；Tools-PRD §14）：run 作用域工具注册表 =====
+  /** run 级动态工具（绑定的 Skill 以一等工具进 wire，id = skill_<id>；rule：绑定即授权；Loop 结束清理） */
+  private readonly runTools = new Map<string, Map<string, AnyToolDef>>();
+
+  /** run 作用域 def 解析（数据处理）：registry 未命中时按 run 注册表兜底 */
+  private soRunDef(runId: string, toolId: string): AnyToolDef | undefined {
+    return runId ? this.runTools.get(runId)?.get(toolId) : undefined;
+  }
 
   constructor(
     private readonly deps: BuiltinToolDeps = {},
@@ -166,7 +178,8 @@ export class ToolService {
   /** 执行单工具调用（逻辑控制） */
   async execTool(input: ExecToolInput, output: ExecToolOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const def = this.registry.get(input.tool_id);
+    // ===== 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 工具兜底（绑定即授权，走同表权限语义）=====
+    const def = this.registry.get(input.tool_id) ?? this.soRunDef(input.run_id ?? '', input.tool_id);
     if (!def) {
       throw new NotFoundError('Tool', input.tool_id);
     }
@@ -256,19 +269,64 @@ export class ToolService {
   async soTools(input: SoToolsInput, output: SoToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const ids = input.tool_ids?.length ? input.tool_ids : Array.from(this.registry.keys());
+    const runTools = input.run_id ? this.runTools.get(input.run_id) : undefined;
     output.specs = ids
-      .filter((id) => this.registry.has(id))
-      .map((id) => this.soCachedSpec(id));
+      .map((id) => this.soCachedSpec(id))
+      .filter((spec): spec is ToolSpecJson => Boolean(spec));
+    // ===== 2026-09-24 Tool ⊕ Skill 合并：绑定 Skill 的 run 级一等工具并入 wire 规格（原实现 registry-only 过滤，runTools 在 SoToolsInput 无 run_id 时不可见）=====
+    if (runTools) {
+      for (const [id, toolDef] of runTools) {
+        if (!input.tool_ids?.length || input.tool_ids.includes(id)) {
+          output.specs.push(this.toSpecJson(toolDef));
+        }
+      }
+    }
     return true;
   }
 
-  /** 规格缓存查询（数据处理；miss 重建并回填） */
-  private soCachedSpec(id: string): ToolSpecJson {
+  // -------------------------------------------------------------------------
+  // run 级 Skill 工具注册（Tool ⊕ Skill 合并核心）
+  // -------------------------------------------------------------------------
+
+  /** 注册 run 级 Skill 一等工具（逻辑控制；工具清单生成依赖 deps.skillAccess；幂等覆盖本 run 清单） */
+  async registerRunSkillTools(input: RegisterRunSkillToolsInput, output: RegisterSkillToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.run_id) {
+      throw new ValidationError('registerRunSkillTools 需要 run_id');
+    }
+    const skillAccess = this.deps.skillAccess;
+    if (!skillAccess) {
+      throw new ValidationError('Skill Provider 未注入（skillAccess 为空）');
+    }
+    if (input.skill_ids.length === 0) {
+      this.runTools.delete(input.run_id);
+      output.registered = [];
+      return true;
+    }
+    const defs = await buildSkillToolDefs(input.skill_ids, skillAccess as never);
+    this.runTools.set(input.run_id, new Map(defs.map((toolDef) => [toolDef.id, toolDef])));
+    output.registered = defs.map((toolDef) => toolDef.id);
+    return true;
+  }
+
+  /** 清理 run 级注册表（逻辑控制；Loop settle 调用，防会话性工具滞留全局） */
+  async clearRunTools(input: { run_id: string }, _context: ToolContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    this.runTools.delete(input.run_id);
+    return true;
+  }
+
+  /** 规格缓存查询（数据处理；registry miss 返回 undefined —— runTools 由调用方合并） */
+  private soCachedSpec(id: string): ToolSpecJson | undefined {
     const cached = this.specCache.get(id);
     if (cached) {
       return cached;
     }
-    const spec = this.toSpecJson(this.registry.get(id)!);
+    const registered = this.registry.get(id);
+    if (!registered) {
+      return undefined;
+    }
+    const spec = this.toSpecJson(registered);
     this.specCache.set(id, spec);
     return spec;
   }

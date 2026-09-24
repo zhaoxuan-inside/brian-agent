@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-24T03:04:14.879Z；方法总数：509
+> 生成时间：2026-09-24T07:12:30.449Z；方法总数：512
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -34,12 +34,12 @@
 | Core | [SkillCoreProvider](./Core/SkillCoreProvider.md) | 6 |
 | Core | [SoulCoreProvider](./Core/SoulCoreProvider.md) | 8 |
 | **Core 小计** | | **75** |
-| Runtime | [Agents](./Runtime/Agents.md) | 7 |
+| Runtime | [Agents](./Runtime/Agents.md) | 8 |
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
 | Runtime | [Runs](./Runtime/Runs.md) | 13 |
 | Runtime | [Session](./Runtime/Session.md) | 7 |
-| Runtime | [Tools](./Runtime/Tools.md) | 6 |
-| **Runtime 小计** | | **37** |
+| Runtime | [Tools](./Runtime/Tools.md) | 8 |
+| **Runtime 小计** | | **40** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |
 | Agent | [AgentExecution](./Agent/AgentExecution.md) | 10 |
@@ -57,4 +57,4 @@
 | Application | [UserProfile](./Application/UserProfile.md) | 13 |
 | Application | [Visualization](./Application/Visualization.md) | 10 |
 | **Application 小计** | | **112** |
-| **总计** | | **509** |
+| **总计** | | **512** |

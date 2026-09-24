@@ -2465,3 +2465,7 @@
 ## [2026-09-24c] 思维模型判据工具面感知（trace 008ca7ae 复盘）
 
 decideThoughtMode 从"绑定数"升级"工具面"判定（exec/cdt_browser 计入 ReAct 观察点）；决定顺序重排（prepareLoopInput → decideThoughtMode），判据以 wire 侧工具一致为准。E2E 实校：空绑定+exec 的 run → thought.selected=ReAct（"另有 2 个可执行/可观察原语"），执行与思考同构。
+
+## [2026-09-24d] Tool ⊕ Skill 合并（Skill 一等工具；MCP 独立保留）
+
+绑定 Skill 直接以 skill_<id> 一等工具进 wire 清单（绑定即授权），run 作用域注册表随 Loop 生命周期管理；skill_exec 间接 gate 从默认注入移除（本体保留兼容）；thought 判据/能力档案语义自动归一。详见 Tools-PRD §14 与 decisions.md。

@@ -1016,12 +1016,17 @@ export class RunGatewayService {
    * - 仅剩纯编排原语（update_plan/delegate/ask_user）且无任何绑定 → CoT。
    * 判据入参改为 loop 组装后的实际工具清单（单一事实源，与 wire 侧可见工具一致）。
    */
-  private static readonly OBSERVABLE_TOOL_IDS = new Set(['exec', 'cdt_browser', 'skill_exec', 'mcp_exec']);
+  private static readonly OBSERVABLE_TOOL_IDS = new Set(['exec', 'cdt_browser', 'mcp_exec']);
+
+  /** 可观察原语判定（数据处理；skill 一等工具以 skill_ 前缀列入清单即观察/执行载体） */
+  private static isObservableTool(toolId: string): boolean {
+    return RunGatewayService.OBSERVABLE_TOOL_IDS.has(toolId) || toolId.startsWith('skill_');
+  }
 
   /** 思维模型选定（数据处理；工具清单携带观察原语即 ReAct） */
   private decideThoughtMode(toolIds: string[], skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
     const hasBinding = skillCount > 0 || mcpCount > 0;
-    const observableCount = toolIds.filter((id) => RunGatewayService.OBSERVABLE_TOOL_IDS.has(id)).length;
+    const observableCount = toolIds.filter((id) => RunGatewayService.isObservableTool(id)).length;
     if (hasBinding || observableCount > 0) {
       return {
         mode: 'ReAct',
@@ -1077,14 +1082,22 @@ export class RunGatewayService {
     loopInput.budget = { total: input.budget_total ?? snapshot.budget_total };
     const boundSkills = (snapshot.tools ?? []).filter((t) => t.kind === 'skill').map((t) => t.id);
     const boundMcps = (snapshot.tools ?? []).filter((t) => t.kind === 'mcp').map((t) => t.id);
-    // 工具可见性显式清单：skill_exec/mcp_exec 仅在组件已绑定时注入（其余为通用原语工具；
-    // 2026-09-22：编排三件套齐备，ask_user Deferred 挂起默认注入）
-    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate', 'ask_user', 'exec'];
-    if ((input.lane_kind ?? LaneKind.Session) === LaneKind.Subagent) {
-      loopInput.tools = ['cdt_browser', 'update_plan', 'ask_user', 'exec'];
+    // ===== 修改后（2026-09-24 用户裁决 Tool ⊕ Skill 合并）：绑定的 Skill 直接以一等工具
+    // （skill_<id>）列入 wire 工具清单，与内置原语同席同权限语义（绑定即授权，免 skill_exec 间接
+    // gate）；注入的 skill 工具在 Loop prepareLoopContext 注册（run 级）。
+    // MCP 保持独立：mcp_exec + component_scope.mcps 通道不变。
+    // 原实现（skill_exec 组件端口注入）见上注释保留：
+    //   loopInput.tools = ['cdt_browser','update_plan','delegate','ask_user','exec'];
+    //   if (boundSkills.length) loopInput.tools.push('skill_exec');
+    const isSubagent = (input.lane_kind ?? LaneKind.Session) === LaneKind.Subagent;
+    loopInput.tools = ['cdt_browser', 'update_plan', 'exec'];
+    if (!isSubagent) {
+      loopInput.tools.push('delegate', 'ask_user');
+    } else {
+      loopInput.tools.push('ask_user');
     }
-    if (boundSkills.length) {
-      loopInput.tools.push('skill_exec');
+    for (const skillId of boundSkills) {
+      loopInput.tools.push(`skill_${skillId}`);
     }
     if (boundMcps.length) {
       loopInput.tools.push('mcp_exec');

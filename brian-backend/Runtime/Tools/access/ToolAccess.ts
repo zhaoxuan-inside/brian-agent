@@ -21,6 +21,9 @@ import {
   SoToolsOutput,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
+  RegisterRunSkillToolsInput,
+  RegisterSkillToolsOutput,
+  ClearRunToolsInput,
   ConfigToolInput,
   ConfigToolOutput,
 } from '../domain/types';
@@ -67,6 +70,18 @@ export class ToolAccess {
   async soTools(input: SoToolsInput, output: SoToolsOutput, context: ToolContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soTools(input, output, context, metrics, report);
+  }
+
+  /** 注册 run 级 Skill 一等工具（2026-09-24 Tool ⊕ Skill 合并；透传） */
+  async registerRunSkillTools(input: RegisterRunSkillToolsInput, output: RegisterSkillToolsOutput, context: ToolContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.registerRunSkillTools(input, output, context, metrics, report);
+  }
+
+  /** 清理 run 级工具（透传；Loop settle 调用） */
+  async clearRunTools(input: ClearRunToolsInput, context: ToolContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.clearRunTools(input, context, metrics, report);
   }
 
   /** 模块配置 */

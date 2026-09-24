@@ -104,3 +104,9 @@
 **原因**：事故 trace 008ca7ae（"统计 GitHub 目录已克隆项目数"）——"代码仓库审计员"空绑定且携 exec，思考过程构造"纯知识类任务/CoT"（thought.selected reason 固定文案"无须 Skill"叠加），实际执行是 6 轮 exec 行动-观察——观察者视角"思考与执行不相符"。
 **备选**：CoT 判据随 AgentPurpose 启发式（弃用——内容判断不可靠）；多次执行真实统计（弃用——多走 LLM）。
 **影响**：thought.selected/loop.turn.started 事件与实际执行形态一致；测试 RuntimeGateway 16/16（含新一致判据用例）。
+
+## [2026-09-24] Tool ⊕ Skill 合并为单一工具体系（MCP 独立保留）
+
+**决策**：绑定的 Skill 以一等工具（skill_<id>）直接进入 wire 工具清单，与内置原语同表同权限语义（绑定即授权）；run 作用域注册（ToolService.runTools，Loop settle 清理）；skill_exec 间接 gate 从默认注入路径移除（工具本体保留兼容）。MCP 通道（mcp_exec + component_scope.mcps）独立运行不动。
+**原因**：Tool/Skill 平行管线（匹配/绑定/注入/执行门/判据五条线）反复产生同族漂移缺陷（thought 判据漏原语、能力档案漏内置面、双注册事实源）；单一工具体系消除"两个定位重复的概念"（用户裁决）。
+**备选**：维持双体系仅统一判据（弃用——判据修了管线漂移仍在）；Skill/MCP 一并合并（弃用——用户明确 MCP 独立）。

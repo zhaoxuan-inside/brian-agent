@@ -16,6 +16,9 @@ import {
   SoToolsOutput,
   RegisterBuiltinToolsInput,
   RegisterBuiltinToolsOutput,
+  RegisterRunSkillToolsInput,
+  RegisterSkillToolsOutput,
+  ClearRunToolsInput,
 } from '../Tools/domain/types';
 import { zodToJSONSchema } from '../Tools/domain/zodToJsonSchema';
 import { skillExecTool } from '../Tools/application/builtinTools';
@@ -269,6 +272,98 @@ describe('ToolService', () => {
     await toolAccess.execTool(exec, out, new ToolContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('MCP Provider 未注入');
+  });
+});
+
+// ===== 2026-09-24 新增（Tool ⊕ Skill 合并回归）：Skill 一等工具 run 级注册 =====
+describe('Tool ⊕ Skill（run 级一等工具；Tools-PRD §14）', () => {
+  let relationDb: RelationDBAccess;
+  let toolAccess: ToolAccess;
+  let mockSkill: {
+    soSkillById: ReturnType<typeof vi.fn>;
+    execSkill: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(async () => {
+    relationDb = new RelationDBAccess({ dbPath: ':memory:', autoCreateConfigTable: true });
+    await relationDb.initialize();
+    mockSkill = {
+      soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
+        output.skill = { id: input.id, name: '磁盘巡检', skill_brief: '查询磁盘可用空间并汇总', skill_md: '# disk-checker\n\n当用户问磁盘时使用', enable: true };
+        return true;
+      }),
+      execSkill: vi.fn(async (input: ExecSkillInput, output: ExecSkillOutput) => {
+        output.result = `skill-run:${input.id}`;
+        return true;
+      }),
+    };
+    toolAccess = new ToolAccess(relationDb, { skillAccess: mockSkill as never });
+    await toolAccess.initialize();
+    await toolAccess.registerBuiltinTools(new RegisterBuiltinToolsInput(), new RegisterBuiltinToolsOutput(), new ToolContext());
+  });
+
+  it('registerRunSkillTools：绑定 Skill 转为一等工具（skill_<id>），soTools 经 run_id 并入规格', async () => {
+    const runId = 'run-merge-1';
+    const reg = new RegisterRunSkillToolsInput();
+    reg.run_id = runId;
+    reg.skill_ids = ['11111111-2222-3333-4444-555555555555'];
+    const regOut = new RegisterSkillToolsOutput();
+    await toolAccess.registerRunSkillTools(reg, regOut, new ToolContext());
+    expect(regOut.registered).toEqual(['skill_11111111-2222-3333-4444-555555555555']);
+
+    // wire 规格合并：run 级工具与内置原语同表出现
+    const soIn = new SoToolsInput();
+    soIn.run_id = runId;
+    soIn.tool_ids = ['exec', 'skill_11111111-2222-3333-4444-555555555555'];
+    const soOut = new SoToolsOutput();
+    await toolAccess.soTools(soIn, soOut, new ToolContext());
+    const ids = soOut.specs.map((s) => s.id);
+    expect(ids).toContain('exec');
+    expect(ids).toContain('skill_11111111-2222-3333-4444-555555555555');
+    const skillSpec = soOut.specs.find((s) => s.id.startsWith('skill_'));
+    expect(skillSpec?.description).toContain('磁盘巡检');
+    expect(skillSpec?.description).toContain('磁盘时使用');
+  });
+
+  it('run 级 Skill 工具 execTool 直调（绑定即授权，免 skill_exec 间接 gate）', async () => {
+    const runId = 'run-exec-skill';
+    await toolAccess.registerRunSkillTools(
+      Object.assign(new RegisterRunSkillToolsInput(), { run_id: runId, skill_ids: ['s-1'] }),
+      new RegisterSkillToolsOutput(),
+      new ToolContext(),
+    );
+    const exec = new ExecToolInput();
+    exec.tool_id = 'skill_s-1';
+    exec.raw_args = '{"params":{"city":"北京"}}';
+    exec.run_id = runId;
+    const out = new ExecToolOutput();
+    await toolAccess.execTool(exec, out, new ToolContext());
+    expect(out.result.status).toBe('ok');
+    expect(out.result.output).toContain('skill-run:s-1');
+    expect(mockSkill.execSkill).toHaveBeenCalledTimes(1);
+  });
+
+  it('run 级工具不污染全局：clearRunTools 后 execTool 回 NotFound，未绑定的其他 run 不可见', async () => {
+    const runId = 'run-clear';
+    await toolAccess.registerRunSkillTools(
+      Object.assign(new RegisterRunSkillToolsInput(), { run_id: runId, skill_ids: ['s-2'] }),
+      new RegisterSkillToolsOutput(),
+      new ToolContext(),
+    );
+    await toolAccess.clearRunTools(Object.assign(new ClearRunToolsInput(), { run_id: runId }), new ToolContext());
+    const soIn = new SoToolsInput();
+    soIn.run_id = runId;
+    soIn.tool_ids = ['skill_s-2'];
+    const soOut = new SoToolsOutput();
+    await toolAccess.soTools(soIn, soOut, new ToolContext());
+    expect(soOut.specs.length).toBe(0);
+
+    // execTool 对未注册工具的既有语义：抛 NotFoundError（run 级清理后即回到未注册态）
+    const exec = new ExecToolInput();
+    exec.tool_id = 'skill_s-2';
+    exec.raw_args = '{}';
+    exec.run_id = runId;
+    await expect(toolAccess.execTool(exec, new ExecToolOutput(), new ToolContext())).rejects.toThrow('Tool 不存在');
   });
 });
 

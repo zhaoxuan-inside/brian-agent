@@ -200,3 +200,27 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
 **可能存在的问题**：
   - shell 模式承载完整 shell 语法（管道/重定向），拦截维度依赖用户确权；后续如需白名单命令前缀另立任务；
   - 子进程 stdin 已关闭，交互式命令会在输出截断/超时后强杀（不会挂死 run）。
+
+## 14. Tool ⊕ Skill 合并：Skill 一等工具（2026-09-24 用户裁决定版）
+
+**裁决**：Tool 与 Skill 合并为同一工具体系；Skill 与 MCP 独立运行（MCP 通道 mcp_exec + component_scope.mcps 不动）。
+
+**变更原因**：Tool/Skill 双体系的平行管线（匹配/绑定/注入/执行门/判据五条线各一套）造成同族缺陷反复——thought 判据漏内置原语（trace 008ca7ae）、能力档案漏内置面、dev-server 双注册事实源漂移（trace e77f0bb4）。收敛为单一工具体系后，"绑定即授权"成为唯一语义。
+
+**修改的方法**：
+  - `Tools/application/skillTool.ts`（新增）— `toSkillToolDef`/`buildSkillToolDefs`：绑定 Skill 直接构建为一等 ToolDef（id=`skill_<skill_id>`，description = 名称+简述+skill_md 首段适用性摘要，参数 `{params}`）；execute 复用 `SkillAccess.execSkill` 脚本沙箱（js/py/sh），返回 ToolResult 形状。
+  - `ToolService` — 新增 run 作用域注册表 `runTools`（Map<run_id, Map<tool_id, def>>）与 `registerRunSkillTools`/`clearRunTools`；`soTools` 按 `SoToolsInput.run_id` 合并 run 级规格；`execTool` 解析 registry → runTools 兜底。全局 registry 不被会话性工具污染，Loop settle 清理。
+  - `Loop/AgentLoopService` — `prepareLoopContext` 注册 run 级 Skill 工具（失败降级仅影响该 run 的 Skill 可见性）；`settleLoop` 清理（best-effort）；`soLoopToolSpecs` 携带 run_id。
+  - `Runs/RunGatewayService.prepareLoopInput` — 绑定 Skill 以 `skill_<id>` 进入 wire 工具清单（不再注入 `skill_exec` 间接 gate；MCP 的 mcp_exec 保持）；`decideThoughtMode` 可观察原语判据同步（`skill_` 前缀计入）。
+  - `skill_exec` 工具本体保留注册（既有调用方/测试兼容），仅从默认注入路径移除。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 绑定 Skill 的 Agent：模型直接看到 `skill_<id>` 工具（名称+适用性描述），调用即执行沙箱脚本，权限语义与内置原语一致（Loop 权限门统一询问，trust 机制可记住）；
+  - `component_scope.skills` 字段保留（run 级注册数据源 + 能力档案/评估语义），`component_scope.mcps` 不变。
+
+**验证**：Tools.test 20/20（run 级注册/直调执行/清理不污染 3 新用例）；RuntimeGateway 17/17（合并注入+端到端 skill 工具执行落库断言：tool Part completed + output 含沙箱结果）；全工作区 1700+ 用例全过；E2E 冒烟（真实 run）：thought_mode=ReAct、exec 权限链正常、run finished。
+
+**可能存在的问题**：
+  - `skill_<uuid>` 作为 wire function name 长度 42 字符（OpenAI 限制 64 内，安全）；如未来 skill id 形态变化需保前缀约定；
+  - run 级注册表为内存态（服务重启即空，run 亦不在内存，语义自洽）；
+  - `skill_exec` 仍可显式注册使用（兼容期），后续版本可在评估无调用方后移除。

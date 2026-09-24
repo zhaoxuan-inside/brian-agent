@@ -70,6 +70,9 @@ import {
   SoToolsInput,
   SoToolsOutput,
   ToolContext,
+  RegisterRunSkillToolsInput,
+  RegisterSkillToolsOutput,
+  ClearRunToolsInput,
 } from '../../Tools';
 
 /** 循环内轮读取消息上限（soMessages limit） */
@@ -211,7 +214,10 @@ export class AgentLoopService {
     this.runControllers.set(input.run_id, controller);
     try {
       this.wireExternalSignal(input, controller);
-      const specs = await this.soLoopToolSpecs(input.tools, metrics);
+      // ===== 2026-09-24 Tool ⊕ Skill 合并：先注册 run 级 Skill 一等工具（绑定即授权），
+      // soTools 合并 wire specs（原实现仅 registry 查询，见上方法注释保留）=====
+      await this.registerRunSkillTools(input, metrics);
+      const specs = await this.soLoopToolSpecs(input.tools, input.run_id, metrics);
       await this.persistUserMessage(input, metrics);
       await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key, report }, RunPhase.Start);
       return this.prepareContextFields(input, budget, controller, specs, metrics, report);
@@ -284,13 +290,36 @@ export class AgentLoopService {
     await this.session.addMessage(add, new AddMessageOutput(), new SessionCtx(), metrics);
   }
 
-  /** 解析本轮可见工具规格（逻辑控制；透传 metrics） */
-  private async soLoopToolSpecs(toolIds?: string[], metrics?: Metrics): Promise<ToolSpecJson[]> {
+  /** 解析本轮可见工具规格（逻辑控制；透传 metrics；run_id 供 ToolService 合并 run 级工具）
+   *  2026-09-24 Tool ⊕ Skill 合并：runTools 注册表经 soTools 并入（原实现无 run 上下文） */
+  private async soLoopToolSpecs(toolIds: string[] | undefined, runId: string, metrics?: Metrics): Promise<ToolSpecJson[]> {
     const soIn = new SoToolsInput();
     soIn.tool_ids = toolIds;
+    soIn.run_id = runId;
     const soOut = new SoToolsOutput();
     await this.tool.soTools(soIn, soOut, new ToolCtx(), metrics);
     return soOut.specs;
+  }
+
+  /** 注册 run 级 Skill 一等工具（逻辑控制；失败降级只影响 Skill 可见性，不阻断 run） */
+  private async registerRunSkillTools(input: ExecAgentLoopInput, metrics?: Metrics): Promise<void> {
+    const skillIds = (input.component_scope?.skills ?? []).filter(Boolean);
+    if (!skillIds.length) {
+      return;
+    }
+    try {
+      await this.tool.registerRunSkillTools(
+        Object.assign(new RegisterRunSkillToolsInput(), { run_id: input.run_id, skill_ids: skillIds }),
+        new RegisterSkillToolsOutput(),
+        new ToolCtx(),
+        metrics,
+      );
+    } catch (err) {
+      this.logger?.warn?.('run 级 Skill 工具注册失败（该 run 的 Skill 不入工具清单）', {
+        run_id: input.run_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -871,9 +900,18 @@ export class AgentLoopService {
     output.work_id = ctx.workId;
   }
 
-  /** 收尾（逻辑控制）：刷新缓冲 + 注销 run controller + run.status 结算事件 */
+  /** 收尾（逻辑控制）：刷新缓冲 + run 工具注销 + 注销 run controller + run.status 结算事件 */
   private async settleLoop(ctx: LoopRunContext): Promise<void> {
     this.flushDeltaBuffer(ctx);
+    // ===== 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 工具清理（best-effort）=====
+    try {
+      await this.tool.clearRunTools(
+        Object.assign(new ClearRunToolsInput(), { run_id: ctx.runId }),
+        new ToolCtx(),
+      );
+    } catch {
+      // 注册表由 ToolService 自体内控；失败不影响结算
+    }
     this.runControllers.delete(ctx.runId);
     const phase = ctx.stopReason === LoopStopReason.Stop ? RunPhase.End : RunPhase.Error;
     if (phase === RunPhase.Error) {

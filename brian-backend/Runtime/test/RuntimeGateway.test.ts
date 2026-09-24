@@ -97,8 +97,23 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         );
       },
     });
-    const toolAccess = new ToolAccess(relationDb, {});
+    const toolAccess = new ToolAccess(relationDb, {
+      // 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 一等工具注册依赖 skillAccess
+      skillAccess: {
+        soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
+          output.skill = input.id === '11111111-2222-3333-4444-555555555555'
+            ? { id: input.id, name: '磁盘巡检', skill_brief: '查询磁盘可用空间并汇总', skill_md: '# 磁盘巡检\n\n当用户询问磁盘空间时使用', enable: true }
+            : null;
+          return true;
+        }),
+        execSkill: vi.fn(async (input: { id: string }, output: { result?: unknown }) => {
+          output.result = `skill-exec:${input.id}`;
+          return true;
+        }),
+      } as never,
+    });
     await toolAccess.initialize();
+    await toolAccess.registerBuiltinTools(new RegisterBuiltinToolsInput(), new RegisterBuiltinToolsOutput(), new ToolContext());
 
     // Prompt 模板统一由 prompt_template 表承载
     const promptsAccessForSeed = new PromptsAccess(relationDb);
@@ -770,6 +785,53 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(writerAgentResults.length).toBe(2);
     const childEntry = writerAgentResults.find((r) => r.task_content?.includes('子任务：查询磁盘可用空间'));
     expect(childEntry?.result).toContain('磁盘可用 128GB');
+  });
+
+  // ===== 2026-09-24 新增（Tool ⊕ Skill 合并回归）：绑定 Skill 以一等工具注入 wire =====
+  it('合并注入：绑定 Skill 的 run 工具清单含 skill_<id>（一等工具）且不再注入 skill_exec', async () => {
+    // 预置一个绑定 skill 的 def（复用 exact 匹配路径：签名即任务文本）
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, name TEXT, skill_brief TEXT, skill_md TEXT, scripts TEXT, enable INTEGER)`);
+    relationDb.executeRaw(`INSERT OR REPLACE INTO skill (id, created, updated, name, skill_brief, skill_md, scripts, enable) VALUES
+      ('11111111-2222-3333-4444-555555555555', 1, 1, '磁盘巡检', '查询磁盘可用空间并汇总', '# 磁盘巡检\n\n当用户询问磁盘空间时使用', '', 1)`);
+    relationDb.executeRaw(`INSERT OR REPLACE INTO agent (id, created, updated, agent_id, agent_name, agent_type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, usage_count, eval_score, enable, agent_purpose) VALUES (
+      'agent-disk-row', 1, 1, 'agent-disk', '磁盘巡检员', 'WORKER', 'strat-1', '', '["11111111-2222-3333-4444-555555555555"]', '[]', 'sig-disk', 0, 0, 1, '磁盘巡检'
+    )`);
+    relationDb.executeRaw(`INSERT OR REPLACE INTO runtime_agent_def (id, created, updated, name, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
+      ('def-disk', 1, 1, '磁盘巡检员', 'primary', 'agent-disk', '[general] 帮我巡检磁盘空间', '', '', '', '', NULL, 60, 'active', '磁盘巡检')`);
+
+    // 首轮发起 skill 工具调用（finalTurn 不带 tools —— 断言必须看首轮），次轮 stop 收敛
+    execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+      output.finish_reason = 'tool-calls';
+      output.result = '我先巡检磁盘。';
+      output.tool_calls = [{
+        index: 0, id: 'call_skill_1', tool_id: 'skill_11111111-2222-3333-4444-555555555555',
+        arguments: '{"params":{}}',
+      }];
+      return true;
+    });
+    const merged = await submit('帮我巡检磁盘空间');
+    const wait = new WaitRunInput();
+    wait.run_id = merged.runId;
+    await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
+    // exact 签名命中 def-disk（[general] 帮我巡检磁盘空间）
+    const firstCall = execLLMEventsMock.mock.calls.find((c: unknown[]) =>
+      (c[0] as ExecLLMEventsInput).tools?.some((t) => t.tool_id.startsWith('skill_')));
+    expect(firstCall).toBeTruthy();
+    const llmInput = firstCall![0] as ExecLLMEventsInput;
+    const toolIds = (llmInput.tools ?? []).map((t) => t.tool_id);
+    expect(toolIds).toContain('skill_11111111-2222-3333-4444-555555555555');
+    expect(toolIds).toContain('exec');
+    expect(toolIds).not.toContain('skill_exec');
+    const skillSpec = (llmInput.tools ?? []).find((t) => t.tool_id.startsWith('skill_'));
+    expect(skillSpec?.description).toContain('磁盘巡检');
+    // 端到端：模型调用 skill 一等工具 → run 级注册表解析 → execSkill 沙箱链路执行（Part 落库为证）
+    const partRows = relationDb.queryRaw<{ tool_id: string; output_json: string; status: string }>(
+      `SELECT "tool_id", "output_json", "status" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" LIKE 'skill_%'`,
+      [merged.runId],
+    );
+    expect(partRows?.length).toBe(1);
+    expect(partRows![0].status).toBe('completed');
+    expect(partRows![0].output_json).toContain('skill-exec:11111111-2222-3333-4444-555555555555');
   });
 
   it('subagent run 不执行评估/写作（子 run 结算即收敛，收口在父 run 的写作 Agent）', async () => {

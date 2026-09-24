@@ -150,6 +150,8 @@ export class ExecToolOutput extends Output {
 export class SoToolsInput extends Input {
   /** 可见工具 id 列表（空=全部已注册） */
   tool_ids?: string[];
+  /** 运行标识（run 级 Skill 一等工具规格合并依据；2026-09-24 Tool ⊕ Skill 合并） */
+  run_id?: string;
 }
 
 /** soTools 出参 */
@@ -163,6 +165,26 @@ export class SoToolsOutput extends Output {
 // ---------------------------------------------------------------------------
 
 /** registerBuiltinTools 入参（幂等；内置工具经注入的 Provider 执行） */
+// ===== 2026-09-24 新增（Tool ⊕ Skill 合并）：run 级 Skill 一等工具注册 =====
+/** registerRunSkillTools 入参（绑定的 Skill 直接转为一等工具进了 wire 工具清单） */
+export class RegisterRunSkillToolsInput extends Input {
+  /** 引用 runtime_run.id（run 作用域注册，Loop 结束清理） */
+  run_id!: string;
+  /** 本次 run 绑定的 Skill id（agent.skill_ids_json 就地执行匹配） */
+  skill_ids: string[] = [];
+}
+
+/** registerRunSkillTools 出参 */
+export class RegisterSkillToolsOutput extends Output {
+  /** 注册成功的工具 id 列表（= skill_<id>） */
+  registered: string[] = [];
+}
+
+/** clearRunTools 入参（Loop settle 调用） */
+export class ClearRunToolsInput extends Input {
+  run_id!: string;
+}
+
 export class RegisterBuiltinToolsInput extends Input {
   /** 启用的内置工具（缺省全部：skill_exec/mcp_exec/cdt_browser/update_plan/delegate/ask_user） */
   enabled?: string[];

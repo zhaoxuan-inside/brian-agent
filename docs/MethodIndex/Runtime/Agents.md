@@ -15,3 +15,4 @@
 | `soAgentDefs` | `input: SoAgentDefsInput, output: SoAgentDefsOutput, context: AgentDefContext, metrics?:...` | `Promise<boolean>` | 查询定义列表 |
 | `configAgentDef` | `input: ConfigAgentDefInput, output: ConfigAgentDefOutput, context: AgentDefContext, met...` | `Promise<boolean>` | 模块配置 |
 | `killErroredAgent` | `input: KillErroredAgentInput, output: KillErroredAgentOutput, context: AgentDefContext,...` | `Promise<boolean>` | 错误 Agent 立即杀死（错误 run 结算即触发；disable def + system 归属硬删除） |
+| `invalidateAgentBindingCache` | `` | `void` | 绑定缓存失效（逻辑控制；AgentLibrary 绑定落库后调用 —— 候选能力档案以库中最新事实为准） |
