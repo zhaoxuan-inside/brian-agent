@@ -2454,3 +2454,10 @@
 **修复**：RunCore 匹配契约（need/keywords/candidates）对齐（RankingParser confirmed 标记），SkillCore/MCPCore 负缓存确认治理 + GitHub/market 兜底，判定终态事件分维度，模板迁移（fix-matching-prompts.mjs 幂等双通道落地），exec 原语补齐（不进信任表，用户确权一次），身份模板精准匹配修复（LIKE '%身份%' 生产身份劫持）；详见 Runtime-PRD/Tools-PRD 同日条目与 decisions.md。
 
 **验证**：typecheck / lint 全绿；单测 RuntimeGateway 15/15（两个基线失败教训一并治愈）、SkillCoreWaterfall 9/9（新增 3）、MCPCore/RankingParser/Tools 全量 15/15、17/17；全工作区 test 1684+ all pass。
+
+## [2026-09-24b] 路由能力感知判据 + 内置注册单一事实源（trace e77f0bb4 终局修复）
+
+- Agent 匹配"用途/签名"字面判据升级"能力档案"judging：候选注入绑定 skill/mcp 能力面，bound_count=0 的空壳 Agent 对数据获取类任务不得越 0.6 分；SO 匹配模板双行同步（Agent 匹配 / Agent 匹配评估）为 capability-aware-contract；
+- dev-server 工具注册数组去除硬编码占位值（exec 注册生效——上一轮修复被此占位清单静默剔除的最后一环）；
+- invalidateAgentBindingCache：绑定落库后候选能力档案实时失效；
+- 端到端实校（trace 新进程）：路由正确 → 系统性能监测员（built）→ exec 真实 host 数据 → Writer 收口 → "最近 1 分钟的 CPU 使用率约 10.7%"（真实数据正常）。

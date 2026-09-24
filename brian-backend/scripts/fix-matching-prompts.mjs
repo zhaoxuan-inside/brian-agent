@@ -49,6 +49,45 @@ const SKILL_TEMPLATE = `<skill_selection_protocol version="need-and-candidates-c
   </output_contract>
 </skill_selection_protocol>`;
 
+/** Agent 匹配模板（能力感知判定契约；替换旧"用途/签名字面相似"契约）
+ *  两个落点：AGENT_MATCH_MAIN_ID = 生产 agent_library_config 引用的"Agent 匹配"（5ddc44a1）；
+ *           AGENT_MATCH_FALLBACK_ID = soMatchPromptTemplateId 精确标题回退的"Agent 匹配评估"（2bb266b9）——
+ *  同契约双行同步，杜绝 LIKE/EQ 命中点不同而拿到旧契约模板（契约漂移免责） */
+const AGENT_MATCH_MAIN_ID = '5ddc44a1-b168-4894-8553-e64b167fcb73';
+const AGENT_MATCH_FALLBACK_ID = '2bb266b9-0b2a-4739-b5ad-974bc9f16ed2';
+
+/** Agent 匹配模板（能力感知判定契约；替换旧"用途/签名字面相似"契约） */
+const AGENT_TEMPLATE = `<agent_match_protocol version="capability-aware-contract">
+  <identity>
+    <role>Agent 匹配评估专家</role>
+    <purpose>按"任务所需能力 vs 候选 Agent 可执行能力"判定路由，而非用途文字的字面相似</purpose>
+  </identity>
+
+  <selection_input>
+    <task_content><![CDATA[{{ task_content }}]]></task_content>
+    <candidates>{{ candidates }}</candidates>
+  </selection_input>
+
+  <judgement_rules>
+    <rule priority="1">先判任务所需的「能力类别」：host_exec（命令执行/资源查询：磁盘、CPU、内存、进程、网络）、data_fetch（外部数据/网页/接口）、plan_or_delegate（任务拆分/委派）、pure_language（纯语言应答、闲聊、创作）。</rule>
+    <rule priority="2">候选的 capabilities（skills/mcps/bound_count）是其"可执行能力"的唯一凭据；purpose/task_signature 只是任务方向描述，不构成能力证据。</rule>
+    <rule priority="3">硬规则：任务需要 host_exec 或 data_fetch，而候选 capabilities.bound_count=0（无任何绑定 Skill/MCP）→ 不得单凭"系统/状态/通用"字面相似给出 0.6 以上分数。</rule>
+    <rule priority="4">purpose 为"覆盖通用领域/日常问答/自检/状态报告/问候"类泛化 Agent，对数据获取与命令执行类任务一律视为能力不足，score 不超过 0.4；若不存在能力相容者，agent_id 返回空字符串，由系统构建新 Agent。</rule>
+    <rule priority="5">0.7+ 采纳分需"能力契合 + 方向契合"双满足。</rule>
+  </judgement_rules>
+
+  <output_contract>
+    <instruction>仅输出一个合法 JSON 对象，不要任何其他文字、Markdown 围栏或 XML 标签。</instruction>
+    <schema>{"agent_id": "选中的 agent_id；无合适 Agent 时为空字符串", "score": 0.0 到 1.0 的匹配得分, "reason": "所需能力类别 + 候选能力核对 + 打分理由"}</schema>
+    <prohibitions>
+      <rule>agent_id 必须来自 candidates 列表，禁止虚构</rule>
+      <rule>score 必须为 0.0~1.0 数字</rule>
+      <rule>无合适 Agent 时 agent_id 为空字符串，score 为 0.0</rule>
+      <rule>禁止输出 JSON 之外的任何文本</rule>
+    </prohibitions>
+  </output_contract>
+</agent_match_protocol>`;
+
 /** MCP 匹配模板（need/keywords/candidates 判定合并契约；替换旧中文排名散文模板） */
 const MCP_TEMPLATE = `<mcp_selection_protocol version="need-and-candidates-contract">
   <identity>
@@ -97,10 +136,13 @@ function apply(templateId, brief, content) {
   return 'updated';
 }
 
+const r3 = apply(AGENT_MATCH_MAIN_ID, 'Agent 匹配模板（生产 config 引用）', AGENT_TEMPLATE);
+const r4 = apply(AGENT_MATCH_FALLBACK_ID, 'Agent 匹配评估模板（精确标题回退）', AGENT_TEMPLATE);
+
 const r1 = apply('251fef0b-5082-4767-aaaa-f39c4d75d7f5', 'Skill 匹配模板', SKILL_TEMPLATE);
 const r2 = apply('31c4d572-41db-407a-a694-891cd0ac475c', 'MCP 匹配模板', MCP_TEMPLATE);
 db.pragma('wal_checkpoint(FULL)');
 db.close();
-console.log(`结果：skill=${r1}, mcp=${r2}`);
-const failed = r1 === 'missing' || r2 === 'missing';
+console.log(`结果：skill=${r1}, mcp=${r2}, agent_main=${r3}, agent_fallback=${r4}`);
+const failed = r1 === 'missing' || r2 === 'missing' || r3 === 'missing' || r4 === 'missing';
 process.exit(failed ? 1 : 0);

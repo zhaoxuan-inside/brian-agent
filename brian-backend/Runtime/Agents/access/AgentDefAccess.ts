@@ -74,4 +74,9 @@ export class AgentDefAccess {
   ): Promise<boolean> {
     return this.service.killErroredAgent(input, output, context, metrics, report);
   }
+  /** 绑定缓存失效（逻辑控制；AgentLibrary 绑定落库后调用 —— 候选能力档案以库中最新事实为准） */
+  invalidateAgentBindingCache(): void {
+    this.service.invalidateAgentBindingCache();
+  }
+
 }

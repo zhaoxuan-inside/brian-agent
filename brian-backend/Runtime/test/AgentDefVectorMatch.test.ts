@@ -50,14 +50,17 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
     // Agent 匹配提示词模板（回退 LLM 裁判路径渲染用）
     relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
       '22222222-3333-4444-5555-666666666666', 1, 1, 'Agent 匹配评估', 'Agent 匹配评估提示词',
-      '评估候选 Agent 与任务的匹配度，输出 JSON: {"score": 90, "reason": "匹配", "agent_id": "{{task_content}}"}', 1, 1
+      '评估候选 Agent 与任务的匹配度（能力感知：任务所需能力 vs candidates[].capabilities）。输出 JSON: {"score": 90, "reason": "匹配", "agent_id": "选中者"}。\n\n任务：{{task_content}}\n\n候选：{{candidates}}', 1, 1
     )`);
-    // agent_library_config：match_prompt_template_id 指向模板
+    // agent_library_config：schema 对齐生产（prompt_template_id 指向匹配模板）——
+    // 2026-09-24 修复：列名曾与生产不一致，config-first 读取悬空回退 catalog 同名模板（契约漂移复现）
     relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_library_config (
       id TEXT PRIMARY KEY, created INTEGER, updated INTEGER,
-      match_prompt_template_id TEXT, match_score_threshold REAL, match_vector_threshold REAL
+      prompt_template_id TEXT NOT NULL, similarity_threshold REAL NOT NULL DEFAULT 0.7,
+      max_agent_count INTEGER NOT NULL DEFAULT 100, regen_rate INTEGER NOT NULL DEFAULT 75,
+      match_score_threshold INTEGER NOT NULL DEFAULT 70
     )`);
-    relationDb.executeRaw(`INSERT INTO agent_library_config (id, created, updated, match_prompt_template_id) VALUES ('cfg', 1, 1, '22222222-3333-4444-5555-666666666666')`);
+    relationDb.executeRaw(`INSERT INTO agent_library_config (id, created, updated, prompt_template_id) VALUES ('cfg', 1, 1, '22222222-3333-4444-5555-666666666666')`);
 
     // LLM 裁判 mock：一律给 90 分命中第一个候选
     execLLMMock = vi.fn(async (_input: ExecLLMInput, output: ExecLLMOutput) => {
@@ -130,5 +133,21 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
     const result = await match('周末帮我推荐几个适合出行的城市散步路线');
     expect(result.matched_by).toBe('llm');
     expect(execLLMMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('LLM 裁判候选注入能力面（capabilities.bound_count/skills，判据从字面相似升级为能力核对）', async () => {
+    // 绑定 skill 后候选应带能力面（2026-09-24 事故 e77f0bb4 根因修复回归）
+    relationDb.executeRaw(`UPDATE agent SET skill_ids_json = '["11111111-2222-3333-4444-555555555555"]' WHERE agent_id='agent-travel'`);
+    // 绑定落库后主动失效预热缓存（生产语义：AgentLibrary.bindAgentComponent 同点失效）
+    agentDefAccess.invalidateAgentBindingCache();
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, name TEXT, skill_brief TEXT, skill_md TEXT, scripts TEXT, enable INTEGER)`);
+    relationDb.executeRaw(`INSERT INTO skill (id, created, updated, name, skill_brief, skill_md, scripts, enable) VALUES
+      ('11111111-2222-3333-4444-555555555555', 1, 1, '磁盘巡检', '查询磁盘可用空间', '# disk', '', 1)`);
+    // 任务文本避开向量命中（'出行'/'行情'关键字），强制进入 LLM 裁判层
+    await match('统计宿主机CPU使用率');
+    const prompt = (execLLMMock.mock.calls[0][0] as ExecLLMInput).prompt;
+    expect(prompt).toContain('capabilities');
+    expect(prompt).toContain('bound_count');
+    expect(prompt).toContain('磁盘巡检');
   });
 });

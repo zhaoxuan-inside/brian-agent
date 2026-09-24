@@ -223,6 +223,12 @@ export class AgentDefService {
     }
   }
 
+  /** 绑定缓存失效（逻辑控制；AgentLibrary 绑定落库后调用 —— 候选能力档案以库中最新事实为准） */
+  invalidateAgentBindingCache(): void {
+    this.agentBindingCache.clear();
+    this.agentBindingCacheUpdatedAt = 0;
+  }
+
   /** agent 绑定行查询（数据处理；缓存优先，TTL 过期按需重读；best-effort 不因缺表报错） */
   private async soAgentBinding(agentRef: string): Promise<AgentBindingRow | null> {
     if (agentRef && this.agentBindingCacheUpdatedAt > Date.now() - AgentDefService.ASSET_CACHE_TTL_MS) {
@@ -376,6 +382,83 @@ export class AgentDefService {
   /** 按 agent_ref 直选定义（数据处理：agent_ref 匹配 def.agent_ref 或 def.id） */
   private soDefByAgentRef(defs: AgentDefRecord[], agentRef: string): AgentDefRecord | null {
     return defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
+  }
+
+  // ===== 2026-09-24 新增（事故 e77f0bb4 根因修复配套）：路由候选能力档案 =====
+  /** 候选能力档案（数据处理；soAgentBinding 复用启动预热缓存）：
+   *  agent_id / agent_name / purpose / task_signature / agent_type /
+   *  capabilities = { skills: [skill 简述], mcps: [mcp 简述], bound_count }
+   *  判据语义（模板承载硬规则）：bound_count=0 的候选对"需命令执行/外部数据"的任务不得高分。
+   *  名称回退：skill 表 name/skill_brief、mcp_install 表 mcp_title（查无则留空 id） */
+  private async soCandidateProfiles(defs: AgentDefRecord[]): Promise<Array<Record<string, unknown>>> {
+    const profiles: Array<Record<string, unknown>> = [];
+    for (const def of defs) {
+      const binding = def.agent_ref ? await this.soAgentBinding(def.agent_ref) : null;
+      const skillIds = binding ? this.soJsonIdArray(binding.skill_ids_json) : [];
+      const mcpIds = binding ? this.soJsonIdArray(binding.mcp_ids_json) : [];
+      const defTools = this.parseDefTools(def);
+      const mergedSkills = this.uniqueJoin(skillIds, defTools.skills);
+      const mergedMcps = this.uniqueJoin(mcpIds, defTools.mcps);
+      profiles.push({
+        agent_id: def.agent_ref || def.id,
+        agent_name: def.name,
+        purpose: def.agent_purpose || def.task_signature,
+        task_signature: def.task_signature,
+        agent_type: def.mode,
+        capabilities: {
+          skills: this.soNamesByIds(mergedSkills, 'skill', 'name', 'skill_brief'),
+          mcps: this.soNamesByIds(mergedMcps, 'mcp_install', 'mcp_title', 'mcp_brief'),
+          bound_count: this.uniqueJoin(skillIds, defTools.skills).length + this.uniqueJoin(mcpIds, defTools.mcps).length,
+        },
+      });
+    }
+    return profiles;
+  }
+
+  /** def.tools_json 解析（数据处理；无则空数组） */
+  private parseDefTools(def: AgentDefRecord): { skills: string[]; mcps: string[] } {
+    if (!def.tools_json) {
+      return { skills: [], mcps: [] };
+    }
+    const parsed = parseJsonObject(def.tools_json);
+    const skills = Array.isArray(parsed?.skills) ? (parsed!.skills as unknown[]).map(String) : [];
+    const mcps = Array.isArray(parsed?.mcps) ? (parsed!.mcps as unknown[]).map(String) : [];
+    return { skills, mcps };
+  }
+
+  /** 维度去重（数据处理） */
+  private uniqueJoin(ids: string[], extra: string[]): string[] {
+    const set = new Set<string>();
+    for (const raw of [...ids, ...extra]) {
+      const v = String(raw ?? '').trim();
+      if (v) {
+        set.add(v);
+      }
+    }
+    return [...set];
+  }
+
+  /** 按 id 查询展示名（数据处理；table 一次性 IN 查询拼接） */
+  private soNamesByIds(ids: string[], table: string, nameCol: string, fallbackCol: string): string[] {
+    if (!ids.length) {
+      return [];
+    }
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = this.relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT "id", "${nameCol}" AS "n1", "${fallbackCol}" AS "n2" FROM "${table}" WHERE "id" IN (${placeholders})`,
+        ids,
+      ) ?? [];
+      const list: string[] = [];
+      for (const row of rows) {
+        const name = String(row.n1 ?? '').trim();
+        const fallback = String(row.n2 ?? '').trim();
+        list.push(name || fallback || String(row.id ?? ''));
+      }
+      return list;
+    } catch {
+      return [];
+    }
   }
 
   /** L1 精确命中（数据处理：签名完全一致） */
@@ -535,13 +618,27 @@ export class AgentDefService {
   // prompt 仅经 prompt_template 表渲染（删除硬编码内存回退，缺失 fail-loud） =====
   /** L3 LLM 打分命中（逻辑控制；经 LLMAccess.execLLM，Prompt 为 Agent 匹配模板渲染；透传 metrics；
    * 2026-09-14：Token 归因维度经 match 入参透传——work_id 为 Agent 选择执行标识，run_id = 一次问答） */
+  /** L3 LLM 打分命中（原始方法，保留作为参考）：候选只给"用途/签名"字面文本，判据无能力感知 ——
+   *  字面相似（"系统状态"/"CPU" 字面同族）即可拿高分，空壳 Agent（覆盖通用领域）成为路由吞口
+   *  （事故 trace e77f0bb4：CPU 统计再次误匹配运行状态确认官）。完整原文见 git 历史 8523bfc。 */
+  // private async soLLMRankedDef(input: MatchAgentDefInput, defs: AgentDefRecord[], metrics?: Metrics, report?: Report): Promise<AgentDefRecord | null> {
+  //   const adoptThreshold = await this.soMatchScoreThreshold();
+  //   const taskContent = input.task_content;
+  //   const candidates = defs
+  //     .map((def, index) => `${index + 1}. agent_id=${def.agent_ref || def.id} 用途: ${def.name} — ${this.defBrief(def)}`)
+  //     .join('\n');
+  //   const matchPromptId = await this.soMatchPromptTemplateId();
+  //   const prompt = await this.renderMatchPrompt(matchPromptId, { task_content: taskContent, candidates });
+  //   ...（LLM 调用 / parse / intent.analyzed 上报逻辑与本修改后版本一致）
+  // }
+
+  /** L3 LLM 打分命中（逻辑控制）：能力感知判据 —— 2026-09-24 事故 e77f0bb4 根因修复（原实现见上方注释保留）。
+   *  核心变更：候选注入能力面（绑定 Skill/MCP 摘要），匹配模板按"任务所需能力 vs 候选可执行能力"
+   *  判定，字面相似不再决定命运；能力错位（任务需命令执行/外部数据而候选无任何能力）→ score 封顶 0.4。 */
   private async soLLMRankedDef(input: MatchAgentDefInput, defs: AgentDefRecord[], metrics?: Metrics, report?: Report): Promise<AgentDefRecord | null> {
-    // ===== 2026-09-11：采纳阈值读配置（agent_library_config.match_score_threshold，配置中心 Agent 库参数页可调） =====
     const adoptThreshold = await this.soMatchScoreThreshold();
     const taskContent = input.task_content;
-    const candidates = defs
-      .map((def, index) => `${index + 1}. agent_id=${def.agent_ref || def.id} 用途: ${def.name} — ${this.defBrief(def)}`)
-      .join('\n');
+    const candidates = JSON.stringify(await this.soCandidateProfiles(defs));
     const matchPromptId = await this.soMatchPromptTemplateId();
     const prompt = await this.renderMatchPrompt(matchPromptId, { task_content: taskContent, candidates });
     // ===== 修改后（2026-09-14）：LLM 打分调用前上报 intent.started —— 意图打分 LLM 单次实测 19s+
@@ -598,8 +695,11 @@ export class AgentDefService {
       );
       if (rows?.[0]?.prompt_template_id) return String(rows[0].prompt_template_id);
     } catch { /* best effort */ }
+    // ===== 修改后（2026-09-24）：LIKE '%Agent 匹配%' 同族漂移（第三处实证：库中"Agent 匹配"
+    // 与"Agent 匹配评估"同命中且无排序确定性）→ 精确标题 + is_system 双条件，见上注释保留：
+    //   selectOne(PROMPT_TEMPLATE_TABLE, [{ field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' }]);
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' },
+      { field: 'prompt_template_title', operator: Operator.EQ, value: 'Agent 匹配评估' },
     ]);
     if (row && row.id) return String(row.id);
     throw new ValidationError('未找到 Agent 匹配提示词模板');

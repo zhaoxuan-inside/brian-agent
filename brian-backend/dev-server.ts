@@ -764,8 +764,12 @@ async function buildContext() {
     },
   }, logger);
   await runtimeToolAccess.initialize();
+  // ===== 修改后（2026-09-24 事故 e77f0bb4 复盘）：enabled 硬编码清单与 ToolService 默认注册表
+  // 双事实源漂移 → 新增内置工具（exec）被此占位清单静默剔除，模型永远看不到（wire 侧 tools 明细）。
+  // 不再显式传 enabled，注册集合唯一事实源 = ToolService 默认集（含全部内置工具），见上方注释保留：
+  //   const builtinRegIn = new RegisterBuiltinToolsInput();
+  //   builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user'];
   const builtinRegIn = new RegisterBuiltinToolsInput();
-  builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user'];
   const builtinRegOut = new RegisterBuiltinToolsOutput();
   await runtimeToolAccess.registerBuiltinTools(builtinRegIn, builtinRegOut, new RuntimeToolContext());
   logger.info('[startup] runtime builtin tools', String(builtinRegOut.registered ?? []));

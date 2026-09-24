@@ -219,3 +219,25 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 **可能存在的问题**：
   - `confirmed=true` 但 LLM 给出 need=false，负缓存继续生效（语义 unchanged）；若发现 LLM 习惯性把磁盘/温度类任务判 need=false，复核匹配模板措辞；
   - 模板更新为运营资产（config 可调），若被改回旧契约依赖 parseNeedRankingResult confirmed=false:not writable → 扩容不触发，不会死锁但不自动恢复（PRD §匹配语义段）已记录；
+
+### [2026-09-24·2] 路由能力感知判据 + 内置工具单一事实源（事故 trace e77f0bb4 根因终局修复）
+
+**变更原因**：复盘 trace e77f0bb4（"统计最近1分钟的CPU使用率"）—— 委派收口修复后路由再度劫持：① LLM 裁判候选只注入"用途/签名"字面文本，"运行状态确认官"（拍照 purpose"覆盖通用领域"的空壳）借"系统/CPU"字面相似拿高分 ≥70 采纳；② `exec` 经 `prepareLoopInput` 注入了 wire 请求清单，但 dev-server 启动期 registerBuiltinTools 用**硬编码 enabled 占位清单**（不含 exec）覆盖默认注册表 → `soLoopToolSpecs` 查不到 spec 被静默剔除 —— 模型 reasoning 原文自述"没有直接系统命令工具"（双事实源漂移，继承同族缺陷：LIKE/EQ 命中漂移的三连实例）；③ `soMatchPromptTemplateId` 生产 config 行指向 5ddc44a1（'Agent 匹配'），而计划期模板迁移曾落在 2bb266b9（'Agent 匹配评估'）——生效模板与修复模板错位。
+
+**修改的方法**：
+  - `Runtime/Agents/AgentDefService.soLLMRankedDef`（原始实现注释保留）— 候选从"用途/签名字面文本"升级为 **soCandidateProfiles 能力档案**（agent_id/name/purpose/task_signature/agent_type + capabilities{skills[简述]、mcps[简述]、bound_count}；def.tools_json + agent 绑定合并去重、skill/mcp 展示名解析）；token 维度沿用 run/work 传播。
+  - `Runtime/Agents/AgentDefService.invalidateAgentBindingCache`（新增）+ `AgentDefAccess` 透传 —— AgentLibrary 绑定落库后主动失效，候选能力档案以库中最新事实为准。
+  - `Runtime/Agents/AgentDefService.soMatchStringTemplateId`（soMatchPromptTemplateId）— fallback 尚未修（LIKE '%Agent 匹配%' 同族漂移第三处实证：库中"Agent 匹配"与"Agent 匹配评估"同命中且无排序确定性），精确标题 'Agent 匹配评估' 兜底。
+  - `brian-backend/scripts/fix-matching-prompts.mjs` 扩展 — Agent 匹配双行同步迁移（5ddc44a1 生产 config 引用 + 2bb266b9 精确标题回退）为 capability-aware 契约：判据"任务所需能力类别（host_exec/data_fetch/plan_or_delegate/pure_language）vs 候选 capabilities"；**硬规则**：任务需要命令执行/外部数据而候选 bound_count=0 → score 不得超过 0.4；实时匹配告警"字面相似禁止越 0.6"。
+  - `dev-server.ts` — 移除 registerBuiltinTools 的 enabled 硬编码占位清单（继承 ToolService 默认集单一事实源，含 exec）。
+  - 生产模板已迁移落地（prompt_template 表三行：Agent 匹配 / Agent 匹配评估 / Skill / MCP）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 需要命令执行/外部数据类任务 → L3 裁判必须核对绑定能力，空壳 Agent（bound_count=0 且泛化用途）不得再高分劫持；无相容者走新建 Agent（agent.built）。
+  - 工具内增 exec 后：能力面扩容（执行权限首次经权限卡，用户批准"记住"后按信任机制放行）。
+
+**验证（端到端追踪 trace 事件证据）**：真实 run —— agent.selected=系统性能监测员（matched_by=built）→ `permission.asked(exec: uptime && nproc && cat /proc/loadavg)` → user 批准 remember 后 trust 自动放行（auto_approved=true）→ `tool.result(exec, exit_code=0, loadavg/top 真实输出)` → Writer 收口 685 字 → 最终回复"最近 1 分钟的 CPU 使用率约 10.7%（8 核 / 负载 1.05 / us 9.97% / sy 1.11% / id 88.92%）+ 进程占用表"；skill/mcp.selected detail=judged_unneeded（confirmed=true，判定已通）；单测 Sketch 4/4（能力面注入 + invalidateAgentBindingCache 回归）。
+
+**可能存在的问题**：
+  - 判据模板为运营资产，如被人工改回旧契约（无 capability-aware-contract marker），系统退化字面相似路由（无自动恢复）；fix-matching-prompts.mjs 幂等可重跑恢复；
+  - 老的运行状态确认官 def 依然 active（与其匹配的任务"我是运行正常吗"直接签中）——保留期待 phone do it，仅靠能力判据降分。
