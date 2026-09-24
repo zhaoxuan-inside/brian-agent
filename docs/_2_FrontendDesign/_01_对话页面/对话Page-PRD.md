@@ -560,3 +560,14 @@
 - **可能存在的问题**：
   - 若某些编排路径仅通过 `agent.output`（`tool.result` 承载）交付最终答案而无 `reply.delta`，对话区正文将不再展示该路径的答案（可观测回归点）。
   - ToolInvocation 卡靠右后与 Feedback 块、错误块的左右混排需在后续回归中确认视觉一致性。
+
+### [2026-09-24] 对话区去除工具执行圆球 + 授权卡确认（用户反馈）
+
+**变更原因**：① 对话区用状态圆球（ToolCallBlock）展示每个工具的执行情况，对话区视觉噪音大；工具执行详情本就完整收口在思考过程弹窗（实时可看、历史可回放）——对话区不需要重复的图形化状态。② 授权卡"没看到"排查结论：授权确认**设计上只在思考过程弹窗内展示**（permission.asked → ensureLiveThinkingOpen 自动弹出弹窗，顶部"等待授权"区可拒绝/允许/始终允许；对话区 timeline 过滤 permission 卡为既定设计）——实测新数据链路完整：stream_event permission.asked 已发出、/api/chat/permission/answer 应答接受、thinking?run_id 历史回放 permissions/timeline 齐备；用户现场未看到通常因页面当时不在该会话/弹窗被关闭——页面在对话页时必自动弹出思考窗。
+
+**修改的方法**：
+  - `components/blocks/BlockRenderer.vue` — ToolInvocation 分支不再渲染（原映射注释保留）；工具状态仅在思考过程弹窗（ThinkingModal）的 toolTraces/timeline 展示。
+
+**影响**：
+  - 对话区：无工具状态圆球（更干净）；打字机/文本/代码块不变。
+  - 思考过程弹窗：工具执行（含 exec 每次调用、参数、真实输出、耗时）与授权卡片不变，依旧实时置顶。
