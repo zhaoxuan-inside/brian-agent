@@ -145,7 +145,34 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it('need=false → 返回空 + 负缓存（第二次调用零 LLM）', async () => {
+  // ===== 2026-09-24 新增（trace 3eea3bea 根治回归）：重复即沉淀 =====
+  it('负缓存第二次命中强制走全链扩容（重复提问 = 沉淀价值实证，LLM 语义猜想不再一票否决）', async () => {
+    await seedMatchTemplate('');
+    const github = stubGithub([], null);
+    // 第 1 轮：need=false（显式 confirmed）→ 负缓存；第 2 轮（负缓存计数达标清除）：重判 need=true
+    // → 本地无匹配 → GitHub（keywords 兜底）→ miss → 自建成功
+    const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => {
+      o.result = (execLlm.mock.calls.length === 1)
+        ? '{"need": false, "keywords": [], "candidates": []}'
+        : '{"need": true, "keywords": ["memory", "usage"], "candidates": []}';
+      return true;
+    });
+    const service = buildService({ execLLM: execLlm, embedLLM: async (_i, o) => { o.embedding = [0.1]; return true; } } as never, github);
+
+    // 第一次：need=false → 空绑定 + 负缓存
+    const out1 = new MatchSkillOutput();
+    await service.matchSkill(matchInput('a1', '分析系统内存占用情况'), out1, ctx);
+    expect(out1.skills).toEqual([]);
+    expect(out1.detail).toBe('judged_unneeded');
+    expect(github.searchSkills).not.toHaveBeenCalled();
+
+    // 第二次（同任务重复出现）：负缓存命中计数 → 清除 → 走全链（重判 → GitHub → 自建）
+    const out2 = new MatchSkillOutput();
+    await service.matchSkill(matchInput('a1', '分析系统内存占用情况'), out2, ctx);
+    expect(github.searchSkills).toHaveBeenCalled();
+  });
+
+  it('need=false（本地无匹配）→ 返回空 + 负缓存；重复出现强制重判（2026-09-24 语义升级）', async () => {
     await seedMatchTemplate('');
     const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => { o.result = '{"need": false, "keywords": [], "candidates": []}'; return true; });
     const llm = { execLLM: execLlm, embedLLM: async (_i: unknown, o: { embedding?: number[] }) => { o.embedding = [0.1]; return true; } } as unknown as LLMAccessType;
@@ -154,12 +181,14 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     const out1 = new MatchSkillOutput();
     await service.matchSkill(matchInput('a1', '你好'), out1, ctx);
     expect(out1.skills).toEqual([]);
+    expect(out1.detail).toBe('judged_unneeded');
 
+    // 第二次：负缓存命中 → 计数清除 → 强制重判（重复即沉淀；原"零 LLM 短路"语义退役）。
+    // 重判仍 need=false（LLM 每次都给 false）→ 再次写负缓存 → 第三次命中又计数清除 → 间歇重试节奏
     const out2 = new MatchSkillOutput();
     await service.matchSkill(matchInput('a1', '你好'), out2, ctx);
     expect(out2.skills).toEqual([]);
-    // 排序 LLM 仅首次调用（第二次负缓存命中）
-    expect(execLlm).toHaveBeenCalledTimes(1);
+    expect(execLlm).toHaveBeenCalledTimes(2);
   });
 
   it('本地命中：need=true 且候选过阈值 → 返回本地 Skill', async () => {
@@ -257,6 +286,21 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     // 修复语义（2026-09-24，trace 95b8e237）：解析失败不落负缓存 —— 同任务第二次仍重判（可自愈）
     await service.matchSkill(matchInput('a1', '任意任务'), new MatchSkillOutput(), ctx);
     expect(execLlm).toHaveBeenCalledTimes(2);
+  });
+
+  it('绑定与 need 解耦：need=false 但存在合格候选（>=90）→ 仍绑定本地 Skill（trace 3eea3bea 修复回归）', async () => {
+    await seedMatchTemplate('');
+    const addOut = new (await import('@brian-agent/base')).AddSkillOutput();
+    await skillAccess.addSkill({ data: { name: 'memory-profiler', skill_brief: '系统内存分析方法论', skill_md: '# memory\n\n内存任务时使用', enable: true } } as never, addOut, new (await import('@brian-agent/base')).SkillContext());
+    // LLM 判 need=false（如保守误判）但候选打了 95 分
+    const llm = stubLlm([`{"need": false, "keywords": [], "candidates": [{"id": "${addOut.id}", "score": 95}]}`]);
+    const service = buildService(llm, stubGithub([], null));
+    const out = new MatchSkillOutput();
+    await service.matchSkill(matchInput('a1', '分析系统内存占用'), out, ctx);
+    // 解耦语义：有合格候选即绑定，need 不再是绑定门禁
+    expect(out.skills).toHaveLength(1);
+    expect(out.skills[0].skill_id).toBe(addOut.id);
+    expect(out.detail).toBe('local_hit');
   });
 
   it('need=true 但 keywords 空 → GitHub 检索以任务文本兜底（扩容层不再静默跳过）', async () => {

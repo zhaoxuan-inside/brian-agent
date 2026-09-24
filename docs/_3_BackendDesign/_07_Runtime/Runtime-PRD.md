@@ -241,3 +241,21 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 **可能存在的问题**：
   - 判据模板为运营资产，如被人工改回旧契约（无 capability-aware-contract marker），系统退化字面相似路由（无自动恢复）；fix-matching-prompts.mjs 幂等可重跑恢复；
   - 老的运行状态确认官 def 依然 active（与其匹配的任务"我是运行正常吗"直接签中）——保留期待 phone do it，仅靠能力判据降分。
+
+### [2026-09-24·3] Skill 沉淀判定根治：绑定解耦 + 重复即沉淀（trace 3eea3bea 复盘）
+
+**变更原因**：复盘 trace 3eea3bea（"分析系统内存占用情况"）——任务由 exec 原语高质量完成（11 次真实命令调用），但 Skill 全程未使用（skill.detail=judged_unneeded）。根因三层：① **绑定被 need 门禁短路**——LLM 判 need=false 时连本地合格候选也放弃绑定；② **need 判定语义不可靠**——判定模板已升级"沉淀价值"语义（sedimentation-value-contract），LLM 仍判 false（15 token 输出；候选库全为协议类技能时上下文直觉压倒规则文本 —— **同族 judge 缺陷第三次实证**：字面/候选语境带偏判定是 LLM 元问题判断的系统性偏置，模板措辞约束力有限）；③ **负缓存把不可靠判定固化为 10 分钟短路**，同任务重复出现也无自愈路径。
+
+**修复（行为信号替代语义猜想）**：
+  - `Core/SkillCoreProvider/SkillCoreService.matchSkill` — **绑定与 need 解耦**：本地合格候选（>=阈值）直接绑定（local_hit，不再要求 need=true）；need 降级为"扩容门禁"（本地无匹配时判定该模式是否值得沉淀：纯对话/一次性问答不扩容）。
+  - `Core/shared/VectorMatchCache.countNegativeMiss`（新增）— **重复即沉淀**：负缓存命中计数，同任务第二次出现即清除负缓存、强制走全链（重判 → GitHub → 自建），扩容成功写正缓存、失败写回负缓存形成**间歇重试节奏**（每个任务签名最多一半调用走 LLM/扩容，防生成风暴仍然成立）。LLM 的一次"不值得"不再永久否决 —— 用户重复提问即沉淀价值的最可靠实证。
+  - `scripts/fix-matching-prompts.mjs` — Skill 匹配模板升级 sedimentation-value-contract（明确告知：原语已内建、Skill 价值=可复用方法论沉淀、need 为沉淀判定与库存无关、纯对话才 false），生产库已落地。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 同类任务第二次出现时触发 Skill 扩容链（GitHub 检索/自动生成）并绑定到 Agent；下次起 skill_<id> 一等工具直接入 wire（Tool ⊕ Skill 合并后的完整闭环：探索 → 沉淀 → 复用）。
+
+**验证**：SkillCoreWaterfall 11/11（新增"need=false + 合格候选仍绑定"+"负缓存第二次强制扩容"两用例；"第二次零 LLM"旧语义用例按升级后语义改写）；SkillMcpMatchE2E 闲聊用例同步（第二次重判 = 2 次 LLM）；全工作区 5 套件全过；生产实跑 R1/R2 复核（R2 判定 LLM 遇 REMOTE_ERROR 瞬断 → judge_failed 不写负缓存，下次自愈重判 —— 降级路径符合设计）。
+
+**可能存在的问题**：
+  - exact 命中既有 def 时组件瀑布整体跳过（绑定冻结在 def 创建时）——重复任务若首次绑定为空，后续不补绑定（同签名负缓存计数不介入）；沉淀绑定目前仅发生在新建 Agent 场景，已有 def 的技能补绑依赖评估驱动（Evolutor）另立任务；
+  - judge_failed/REMOTE_ERROR 依赖外部 LLM 服务稳定性，瞬断时本轮不沉淀（不写负缓存，下次自动重试）。

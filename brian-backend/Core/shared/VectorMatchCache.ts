@@ -20,6 +20,8 @@ export interface MatchCacheRecord {
   embedding: number[];
   result: Array<{ id: string; score: number }>;
   ts: number;
+  /** 负缓存命中计数（2026-09-24 重复即沉淀：>=1 次后同任务强制重判，行为信号替代 LLM 猜想） */
+  negativeMiss?: number;
 }
 
 export class VectorMatchCache {
@@ -86,6 +88,31 @@ export class VectorMatchCache {
   /** 写缓存（数据处理；embedding 可为空数组 —— 仅参与 MD5 一级命中，不参与相似度层） */
   commit(key: string, embedding: number[], result: Array<{ id: string; score: number }>): void {
     this.store.set(key, { key, embedding: embedding ?? [], result, ts: Date.now() });
+  }
+
+  /**
+   * 负缓存命中计数（逻辑控制；2026-09-24 重复即沉淀，trace 3eea3bea 根治）：
+   * LLM 判"不沉淀"（need=false）的结论天然不可靠（三次实证：judge 语义被候选语境带偏）。
+   * 行为信号替代语义猜想 —— 同任务再次出现即沉淀价值的实证：
+   * 命中负缓存时计数 +1；计数超过 forceRefetchAfter（默认 0，即第二次出现）后清除该条目，
+   * 本次即走全链（重判 + 扩容：GitHub/自建），扩容成功即写正缓存；扩容再次失败则写回负缓存，
+   * 形成间歇重试节奏（每个任务签名最多一半调用走 LLM/扩容 —— 防风暴仍然成立）。
+   * @returns true = 本次命中已达阈值并已清除（调用方应视为未命中，直接走全链）
+   */
+  countNegativeMiss(task: string, forceRefetchAfter = 0): boolean {
+    const key = buildCacheKey(task);
+    const record = this.store.get(key);
+    if (!record || record.result.length > 0) {
+      return false;
+    }
+    const miss = (record.negativeMiss ?? 0) + 1;
+    if (miss > forceRefetchAfter) {
+      this.store.delete(key);
+      return true;
+    }
+    record.negativeMiss = miss;
+    record.ts = Date.now();
+    return false;
   }
 
   /** 清空（配置变更时调用） */

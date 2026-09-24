@@ -126,10 +126,21 @@ export class SkillCoreService {
       : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
     const cachedIds = (cached.record?.result ?? []).map((r) => r.id);
     if (cached.record && cachedIds.length === 0) {
-      // 负缓存命中：LLM 曾显式判定该任务不需要 Skill，直接返回空
-      output.skills = [];
-      output.detail = 'negative_cache_hit';
-      return true;
+      // ===== 修改后（2026-09-24 trace 3eea3bea 根治）：重复即沉淀 ——
+      // 负缓存（LLM 曾判"不沉淀"）命中即计数；同任务第二次出现时清除负缓存走全链
+      // （行为信号替代 LLM 语义猜想：重复提问 = 沉淀价值的可靠实证）。
+      // 原实现（负缓存命中直接返回空，TTL 内同任务永久短路扩容）见下方注释保留：
+      //   output.skills = []; output.detail = 'negative_cache_hit'; return true;
+      if (this.matchCache.countNegativeMiss(input.task_content ?? '')) {
+        // 第二次出现：负缓存已清除，fallthrough 走全链（重判 + GitHub/自建扩容）
+        _metrics?.info?.('SkillCore 负缓存达到重复阈值：同任务二次出现，强制重判并触发扩容（重复即沉淀）', {
+          agent_id, run_id: run_id ?? '', task: String(input.task_content ?? '').slice(0, 80),
+        });
+      } else {
+        output.skills = [];
+        output.detail = 'negative_cache_hit';
+        return true;
+      }
     }
     if (cachedIds.length > 0) {
       const hydrated = await this.hydrateSkillsOrNone(cachedIds);
@@ -167,8 +178,23 @@ export class SkillCoreService {
       _metrics?.warn?.('SkillCore 任务判定失败（模板/LLM 异常，保守空返回，不落负缓存）', { agent_id, run_id: input.run_id ?? '' });
       return true;
     }
+    // ===== 修改后（2026-09-24 trace 3eea3bea 复盘）：绑定与 need 解耦 =====
+    // need 从"绑定门禁"降级为"扩容门禁"——有合格候选即绑定（原实现 need=false 连本地命中也短路）；
+    // need=false 仅在"本地无合格候选"时拦住外部扩容（沉淀价值判定：纯对话/一次性问答不沉淀）。
+    const ranked = filterByThreshold(judged.candidates, config.score_threshold ?? ScoreThreshold.Default)
+      .map((c) => this.toSkillEntry(c, availableSkills))
+      .filter((e): e is MatchedSkillEntry => e != null);
+
+    // ===== 本地命中 → 入缓存返回（need 无关：有匹配就绑） =====
+    if (ranked.length > 0) {
+      await this.commitMatchCache(input.task_content ?? '', cached.query, ranked, context);
+      output.skills = ranked;
+      output.detail = 'local_hit';
+      return true;
+    }
+
     if (!judged.need) {
-      // 任务不需要 Skill：仅 LLM 显式判定（confirmed）才落负缓存；
+      // 本地无匹配 + 判定不值得沉淀：仅 LLM 显式判定（confirmed）才落负缓存；
       // 解析失败/空数组兜底（confirmed=false）视为判定不可靠，不得固化
       output.skills = [];
       if (judged.confirmed) {
@@ -178,18 +204,6 @@ export class SkillCoreService {
         output.detail = 'parse_failed';
         _metrics?.warn?.('SkillCore 判定输出解析失败（不写负缓存，避免固化错误结论）', { agent_id, run_id: input.run_id });
       }
-      return true;
-    }
-
-    const ranked = filterByThreshold(judged.candidates, config.score_threshold ?? ScoreThreshold.Default)
-      .map((c) => this.toSkillEntry(c, availableSkills))
-      .filter((e): e is MatchedSkillEntry => e != null);
-
-    // ===== 本地命中 → 入缓存返回 =====
-    if (ranked.length > 0) {
-      await this.commitMatchCache(input.task_content ?? '', cached.query, ranked, context);
-      output.skills = ranked;
-      output.detail = 'local_hit';
       return true;
     }
 

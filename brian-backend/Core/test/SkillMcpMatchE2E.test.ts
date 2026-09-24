@@ -158,11 +158,12 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     expectNoPlaceholder(prompts[0]);
     expect(github.searchSkills).not.toHaveBeenCalled();
 
-    // 第二次同任务：负缓存命中，零 LLM、零 GitHub
+    // ===== 2026-09-24 语义升级（trace 3eea3bea 根治）：负缓存不再永久零 LLM ——
+    // 重复出现即强制重判（重复即沉淀的行为信号），重判仍 need=false 则写回负缓存（间歇重试）
     const out2 = new MatchSkillOutput();
     await service.matchSkill(matchInput('你好，今天心情不错'), out2, ctx);
     expect(out2.skills).toEqual([]);
-    expect(execLlm).toHaveBeenCalledTimes(1);
+    expect(execLlm).toHaveBeenCalledTimes(2);
   });
 
   it('本地命中：need=true + 候选过阈值 → 返回本地 Skill（prompt 含候选 brief 与任务）', async () => {
