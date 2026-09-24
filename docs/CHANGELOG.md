@@ -2461,3 +2461,7 @@
 - dev-server 工具注册数组去除硬编码占位值（exec 注册生效——上一轮修复被此占位清单静默剔除的最后一环）；
 - invalidateAgentBindingCache：绑定落库后候选能力档案实时失效；
 - 端到端实校（trace 新进程）：路由正确 → 系统性能监测员（built）→ exec 真实 host 数据 → Writer 收口 → "最近 1 分钟的 CPU 使用率约 10.7%"（真实数据正常）。
+
+## [2026-09-24c] 思维模型判据工具面感知（trace 008ca7ae 复盘）
+
+decideThoughtMode 从"绑定数"升级"工具面"判定（exec/cdt_browser 计入 ReAct 观察点）；决定顺序重排（prepareLoopInput → decideThoughtMode），判据以 wire 侧工具一致为准。E2E 实校：空绑定+exec 的 run → thought.selected=ReAct（"另有 2 个可执行/可观察原语"），执行与思考同构。

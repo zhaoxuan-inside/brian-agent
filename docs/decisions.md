@@ -97,3 +97,10 @@
 **决策**：组件匹配瀑布的 need 判定只回答"任务是否需要外部能力/事实/执行"（由匹配模板承载、判定不受本地库存影响），库存匹配由 candidates/阈值单独表达；need=false 仅在 LLM 显式判定（confirmed）时写负缓存，解析失败/空数组兜底禁止写入并上报 parse_failed 终态；GitHub/市场层的检索关键词为空时以任务文本兜底。
 **原因**：事故 trace 95b8e237 —— 模板契约与代码契约漂移叠加"保守 false 也落负缓存"双重缺陷，使四层瀑布的扩容层（GitHub 导入/自建）架构性死锁（skill 表升级后 0 新增），且统一"无强匹配即空绑定"文案掩盖真实走向。
 **备选**：给 need 判定加代码侧启发式（关键字白名单）提判（弃用——不可维护且冒名判定）；全部走自建不加 GitHub 层（弃用——自建 LLM 生成质量需外部锚点）。
+
+## [2026-09-24] 思维模型判据从"绑定组件数"升级为"工具面感知"
+
+**决策**：CoT/ReAct 判定取消"仅以绑定 Skill/MCP 数"的单一判据，改为以 loop 组装后的实际工具清单为单一事实源：绑定 Skill/MCP 或工具面含可执行/可观察原语（exec / cdt_browser，已注入的 skill_exec/mcp_exec 同计入）→ ReAct；仅剩编排原语（update_plan/delegate/ask_user）且无绑定 → CoT。
+**原因**：事故 trace 008ca7ae（"统计 GitHub 目录已克隆项目数"）——"代码仓库审计员"空绑定且携 exec，思考过程构造"纯知识类任务/CoT"（thought.selected reason 固定文案"无须 Skill"叠加），实际执行是 6 轮 exec 行动-观察——观察者视角"思考与执行不相符"。
+**备选**：CoT 判据随 AgentPurpose 启发式（弃用——内容判断不可靠）；多次执行真实统计（弃用——多走 LLM）。
+**影响**：thought.selected/loop.turn.started 事件与实际执行形态一致；测试 RuntimeGateway 16/16（含新一致判据用例）。

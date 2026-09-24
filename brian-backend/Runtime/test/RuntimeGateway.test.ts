@@ -596,6 +596,38 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   // 不变量 B：delegate 回执带 run_id，父子关系登记
   // 不变量 C：主 run join 全部子 run 后由写作 Agent 统一收口（agent_results 含子结果）；
   //          subagent run 不执行评估/写作、不注入 delegate（委派链一级封顶）
+  // ===== 2026-09-24 新增（事故 trace 008ca7ae 回归）：思维模型与实际执行一致 =====
+  // 空绑定但工具面含 exec 的 run → 旧判据固定输出"纯知识类任务/CoT"，实际却多轮 exec 行动-观察，
+  // 思考过程与执行表述不相符；修复后含 exec/cdt_browser 的工具面判 ReAct
+  it('decideThoughtMode：空绑定但工具面含 exec（宿主原语）判 ReAct（ thought 与执行一致）', async () => {
+    // 通过 stream_event thought.selected 验证：先触发一个含 exec 的 run
+    const sessionKey2 = 'sess-thought-mode';
+    const regOut2 = new RegisterStreamOutput();
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: sessionKey2, writer: () => true }),
+      regOut2,
+      new StreamContext(),
+    );
+    const submitIn2 = new SubmitRunInput();
+    submitIn2.session_key = sessionKey2;
+    submitIn2.user_message = '统计宿主机CPU使用率';
+    const submitOut2 = new SubmitRunOutput();
+    const report2 = new Report({ session_id: sessionKey2, session_key: sessionKey2, stream_endpoint_id: regOut2.endpoint_id });
+    await gateway.submitRun(submitIn2, submitOut2, new RunGatewayContext(), undefined, report2);
+    const wait2 = new WaitRunInput();
+    wait2.run_id = submitOut2.run_id;
+    await gateway.waitRun(wait2, new WaitRunOutput(), new RunGatewayContext(), undefined, report2);
+    await new Promise((r) => setTimeout(r, 100));
+
+    const row = relationDb.queryRaw<{ payload_json: string }>(
+      `SELECT payload_json FROM stream_event WHERE session_key = ? AND event_type = 'thought.selected' ORDER BY seq DESC LIMIT 1`,
+      [sessionKey2],
+    );
+    const thought = row?.[0]?.payload_json ?? '';
+    expect(thought).toContain('"thought_mode":"ReAct"');
+    expect(thought).toContain('可执行/可观察原语');
+  });
+
   it('委派收口：delegate 子 run 落隔离子会话，主 run join 后写作 Agent 汇总子结果', async () => {
     let callSeq = 0;
     const mainLlm = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {

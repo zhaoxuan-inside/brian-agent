@@ -509,9 +509,14 @@ export class RunGatewayService {
       });
       const snapshot = await this.soSnapshot(matchOut.def_id, runId, input, parent?.metrics, parent?.report);
       const { skillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
-      const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
-      this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
+      // ===== 修改后（2026-09-24，原顺序见注释）：先组装 loop 工具清单再判思维模型 ——
+      // 判据入参 = wire 侧实际工具（单一事实源），内置 exec/cdt_browser 计入 ReAct 判定
+      //（原实现 skillCount/mcpCount 判据漏内置原语 → "统计类型"任务被标 CoT 却多轮 exec，
+      // 思考过程与实际执行表述不相符，事故 trace 008ca7ae）：
+      //   const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
       const loopInput = this.prepareLoopInput(runId, input, sessionId, snapshot);
+      const thoughtMode = this.decideThoughtMode(loopInput.tools ?? [], skillCount, mcpCount);
+      this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
       this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
       const loopOutput = new ExecAgentLoopOutput();
       await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
@@ -996,26 +1001,36 @@ export class RunGatewayService {
     return snapOutput.snapshot;
   }
 
-  // ===== 2026-09-19 新增：思维模型选定（数据处理） =====
+  // ===== 2026-09-19 新增：思维模型选定（数据处理）；2026-09-24 工具面感知（事故 trace 008ca7ae 复盘） =====
   /**
-   * CoT/ReAct 判定规则（确定性，无随机）：
-   * - 有绑定 Skill 或 MCP（即存在外部工具/事实查询能力）→ ReAct：
-   *   执行形态是「行动→观察→再决策」的外部交互闭环，需 ReAct 的 Reason-Act 循环防止一次性幻觉调用；
-   * - 无外部工具（纯知识类直答任务）→ CoT：
-   *   无外部观察点，ReAct 的 Act 环节退化，一步链式推理（上下文 → 分析 → 结论）耗时最低，
-   *   且 Loop 允许每轮 continue（工具仍可由通用原语触发，只是不作为主要交互形态）。
-   * 逐轮体现在 loop.turn.started（thought_mode）与 thought.selected 事件 payload.reason。
+   * CoT/ReAct 判定规则（确定性，无随机）。
+   * ===== 原始方法（保留作为参考）=====
+   * 仅以"绑定 Skill/MCP 数"判 ReAct：skillCount>0 或 mcpCount>0 → ReAct，否则 CSoT/CoT
+   *   （reason 文案固定为"纯知识类任务，无外部观察点"）。
+   * 缺陷：内置宿主原语（exec/cdt_browser）与绑定组件无关且不计入 —— "代码仓库审计员"
+   * 之类空绑定 Agent 携 exec 时被标为 CoT 一步推理，但实际执行是 6 轮 exec 观察
+   * （思考过程显示 CoT/无须 Skill，执行却是行动-观察链条）→ 描述与执行不相符。
+   * ==== 修改后 ====
+   * - 有绑定 Skill/MCP，或工具面含可观察/执行原语（exec / cdt_browser，以及注入时已判定的
+   *   skill_exec/mcp_exec）→ ReAct：存在真实外部观察点，「行动→观察→再决策」闭环成立；
+   * - 仅剩纯编排原语（update_plan/delegate/ask_user）且无任何绑定 → CoT。
+   * 判据入参改为 loop 组装后的实际工具清单（单一事实源，与 wire 侧可见工具一致）。
    */
-  private decideThoughtMode(skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
-    if (skillCount > 0 || mcpCount > 0) {
+  private static readonly OBSERVABLE_TOOL_IDS = new Set(['exec', 'cdt_browser', 'skill_exec', 'mcp_exec']);
+
+  /** 思维模型选定（数据处理；工具清单携带观察原语即 ReAct） */
+  private decideThoughtMode(toolIds: string[], skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
+    const hasBinding = skillCount > 0 || mcpCount > 0;
+    const observableCount = toolIds.filter((id) => RunGatewayService.OBSERVABLE_TOOL_IDS.has(id)).length;
+    if (hasBinding || observableCount > 0) {
       return {
         mode: 'ReAct',
-        reason: `绑定了 ${skillCount} 个 Skill / ${mcpCount} 个 MCP，执行需「行动→观察→再决策」的外部交互闭环，选用 ReAct`,
+        reason: `执行需「行动→观察→再决策」的外部交互闭环：绑定 ${skillCount} 个 Skill / ${mcpCount} 个 MCP${observableCount > 0 ? `，另有 ${observableCount} 个可执行/可观察原语（exec/cdt_browser 等）` : ''}，选用 ReAct`,
       };
     }
     return {
       mode: 'CoT',
-      reason: '无绑定 Skill/MCP（纯知识类任务，无外部观察点），ReAct 的 Act 环节退化，选用 CoT 一步链式推理',
+      reason: '无绑定组件且无外部观察/执行原语（纯知识类直答任务），ReAct 的 Act 环节退化，选用 CoT 一步链式推理',
     };
   }
 
