@@ -49,3 +49,5 @@
 `info_creator_role`：信息产生方角色，标识一条 info 记录"是谁产生的"；有效值包括 USER（用户）、LEARNING（自学习）、AGENT（Agent）、SKILL（技能）、MCP（MCP 工具）；
 `info_creator_id`：信息产生方实例 ID，标识具体哪个实例产生了该 info；UUID 类型，可为空；USER 与 LEARNING 没有具体实例，其值为空字符串；AGENT、SKILL、MCP 对应各自的实例 ID（如 agent_id、skill_id、mcp_id）；
 `conversation`：对话学习，SelfLearning 域的学习输入通道概念（learning source 枚举值 conversation/document 之一，指以 chat_session 历史为输入的学习模式）；conversation ≠ session（会话容器实体），禁止用 conversation 指代 session 本身（登记日期 2026-09-22）；
+`capability`：能力，智能体在运行时可调用的功能集合，系统中只有两大一等能力概念：Skill（技能，含系统内置技能与沉淀技能）与 MCP（外部工具通道）；系统中不再存在独立的「Tool」领域概念（2026-09-24 裁决：原内置 Tool 全部转化为系统内置 Skill，wire 统一以 `skill_builtin-*` 一等呈现；OpenAI wire 字段 tools、DB 列 tool_id、事件枚举 tool.* 等仅作为序列化协议与存储保留，非领域概念）；
+`skill_builtin`：系统内置技能，原 5 大内置原语（exec、cdt_browser、update_plan、delegate、ask_user）转化为系统技能后的唯一标识（`skill_builtin-exec` 命令执行、`skill_builtin-browser` 浏览器操作、`skill_builtin-plan` 计划维护、`skill_builtin-delegate` 子任务委派、`skill_builtin-ask-user` 用户询问）；作为代码常量由 SkillRuntimeService 装配，与沉淀技能同表同权限同 wire 呈现；

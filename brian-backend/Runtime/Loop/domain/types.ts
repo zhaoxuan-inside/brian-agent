@@ -54,8 +54,9 @@ export class ExecAgentLoopInput extends Input {
   system?: string;
   /** LLM ID（llm_available.id；空串/缺省=默认模型故障降级队列） */
   llm_id?: string;
-  /** 可见工具 id 列表（空=全部已注册工具） */
-  tools?: string[];
+  /** 可见技能 id 列表（系统 skill_builtin-* + 绑定 skill_<id> + mcp_exec；空=全部已注册）
+   *  2026-09-24 概念退役（Tool → Skill）：领域字段 tools 更名 skills；LLM wire 协议字段名（tools）不变 */
+  skills?: string[];
   /** 组件选择范围（match 阶段选定；执行门依据：skill_exec/mcp_exec 仅可调用范围内的 id） */
   component_scope?: { skills: string[]; mcps: string[] };
   /** 预算规格（缺省 total=60 + 宽限收尾） */

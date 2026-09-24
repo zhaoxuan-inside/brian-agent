@@ -10,8 +10,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { RelationDBAccess } from '@brian-agent/base';
-import { askUserTool } from '../Tools/application/askUserTool';
-import type { ToolExecutionContext } from '../Tools/domain/types';
+import { askUserSkill } from '../SkillRuntime/application/askUserSkill';
+import type { SkillExecutionContext } from '../SkillRuntime/domain/types';
 import { RunGatewayService } from '../Runs/application/RunGatewayService';
 import { SessionAccess } from '../Session/access/SessionAccess';
 import { RunsSchemaInitializer } from '../Runs/infrastructure/RunsSchemaInitializer';
@@ -27,13 +27,13 @@ import {
 } from '../Runs/domain/types';
 import { SoMessagesInput, SoMessagesOutput, SessionContext } from '../Session/domain/types';
 
-describe('askUserTool（编排原语）', () => {
-  const baseCtx = { run_id: 'run-1', session_key: 's-1' } as ToolExecutionContext;
+describe('askUserSkill（系统技能）', () => {
+  const baseCtx = { run_id: 'run-1', session_key: 's-1' } as SkillExecutionContext;
 
   it('应该发出 permission.asked 并在应答后返回 ok 结果', async () => {
     const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
     let release: ((r: { answer: string; answered: boolean }) => void) | undefined;
-    const tool = askUserTool({
+    const tool = askUserSkill({
       waitAnswer: () => new Promise((resolve) => { release = resolve; }),
     });
     const pending = tool.execute({ question: '用哪个数据库？', kind: 'clarify' }, {
@@ -50,7 +50,7 @@ describe('askUserTool（编排原语）', () => {
   });
 
   it('超时未应答应该返回 error 结果（模型可自行收尾）', async () => {
-    const tool = askUserTool({
+    const tool = askUserSkill({
       waitAnswer: async () => ({ answer: '', answered: false }),
     });
     const result = await tool.execute({ question: '确认执行？' }, baseCtx);
@@ -59,8 +59,8 @@ describe('askUserTool（编排原语）', () => {
   });
 
   it('缺 run 上下文时应该 fail-loud', async () => {
-    const tool = askUserTool({ waitAnswer: async () => ({ answer: 'x', answered: true }) });
-    await expect(tool.execute({ question: 'q' }, {} as ToolExecutionContext)).rejects.toThrow('run 上下文');
+    const tool = askUserSkill({ waitAnswer: async () => ({ answer: 'x', answered: true }) });
+    await expect(tool.execute({ question: 'q' }, {} as SkillExecutionContext)).rejects.toThrow('run 上下文');
   });
 });
 

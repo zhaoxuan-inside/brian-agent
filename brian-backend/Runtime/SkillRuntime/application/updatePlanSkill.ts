@@ -8,8 +8,8 @@
 
 import { z } from 'zod';
 import { ValidationError } from '@brian-agent/base';
-import { ToolResultStatus } from '../domain/types';
-import type { ToolDef, ToolExecutionContext } from '../domain/types';
+import { SkillResultStatus } from '../domain/types';
+import type { SkillDef, SkillExecutionContext } from '../domain/types';
 
 /** plan 步骤状态（有限值域） */
 export enum PlanStepStatus {
@@ -61,9 +61,9 @@ export function renderPlanText(steps: PlanStep[]): string {
 }
 
 /** update_plan 编排原语工具 */
-export function updatePlanTool(): ToolDef<{ plan: Array<{ step: string; status?: string }> }> {
+export function updatePlanSkill(): SkillDef<{ plan: Array<{ step: string; status?: string }> }> {
   return {
-    id: 'update_plan',
+    id: 'skill_builtin-plan',
     description:
       '更新并展示当前任务的多步计划（过程性计划卡）。status 取值 pending/in_progress/completed；至多一个步骤为 in_progress。',
     parameters: z.object({
@@ -74,14 +74,14 @@ export function updatePlanTool(): ToolDef<{ plan: Array<{ step: string; status?:
         }),
       ),
     }),
-    async execute(args, ctx: ToolExecutionContext) {
+    async execute(args, ctx: SkillExecutionContext) {
       if (!ctx.run_id) {
         throw new ValidationError('update_plan 需要 run 上下文（run_id 为空）');
       }
       const steps = preparePlanSteps(args.plan);
       plans.set(ctx.run_id, steps);
       ctx.emitEvent?.('plan.updated', { steps });
-      return { status: ToolResultStatus.Ok, output: `计划已更新（${steps.length} 步）：\n${renderPlanText(steps)}` };
+      return { status: SkillResultStatus.Ok, output: `计划已更新（${steps.length} 步）：\n${renderPlanText(steps)}` };
     },
   };
 }

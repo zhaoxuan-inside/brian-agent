@@ -4,14 +4,14 @@
  * 职责（Loop-PRD §3）：
  * 1. 经 AopProxy.wrap 封装 AgentLoopService，注入日志与耗时切面；
  * 2. 提供 5 参签名（Input, Output, Context, Metrics?, Report?）调用入口；
- * 3. 依赖注入：LLMAccess（Base）/ SessionAccess / EventBusAccess / ToolAccess（Runtime）。
+ * 3. 依赖注入：LLMAccess（Base）/ SessionAccess / EventBusAccess / SkillRuntimeAccess（Runtime）。
  */
 
 import type { RelationDBAccess, Metrics, Report, Logger, LLMAccess } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import { AgentLoopService, type PermissionAudit } from '../application/AgentLoopService';
 import type { SessionAccess } from '../../Session';
-import type { ToolAccess } from '../../Tools';
+import type { SkillRuntimeAccess } from '../../SkillRuntime';
 /** 权限门鸭子接口（Runs 实现；工具执行前询问，应答后继续/拒绝） */
 export interface PermissionGate {
   /** 挂起等待应答（permission.asked 已由 Loop 经 Report 下发；tool_id 命中信任表时直接放行） */
@@ -40,9 +40,9 @@ import {
 export class LoopAccess {
   private readonly service: AgentLoopService;
 
-  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, tool: ToolAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate, permissionAudit?: PermissionAudit,
+  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, skillRuntime: SkillRuntimeAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate, permissionAudit?: PermissionAudit,
   ) {
-    const rawService = new AgentLoopService(llm, session, tool, logger, queue, permissionGate, permissionAudit);
+    const rawService = new AgentLoopService(llm, session, skillRuntime, logger, queue, permissionGate, permissionAudit);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentLoopService;
   }
 

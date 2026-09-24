@@ -23,7 +23,7 @@ import {
 } from '@brian-agent/base';
 import { RegisterStreamInput, RegisterStreamOutput, StreamContext } from '../../Base/StreamProvider/domain/types';
 import { SessionAccess } from '../Session/access/SessionAccess';
-import { ToolAccess } from '../Tools/access/ToolAccess';
+import { SkillRuntimeAccess } from '../SkillRuntime/access/SkillRuntimeAccess';
 import { LoopAccess } from '../Loop/access/LoopAccess';
 import {
   AddSessionInput,
@@ -37,10 +37,10 @@ import {
   ExecAgentLoopOutput,
 } from '../Loop/domain/types';
 import {
-  RegisterBuiltinToolsInput,
-  RegisterBuiltinToolsOutput,
-  ToolContext,
-} from '../Tools/domain/types';
+  RegisterBuiltinSkillsInput,
+  RegisterBuiltinSkillsOutput,
+  SkillRuntimeContext,
+} from '../SkillRuntime/domain/types';
 import type { LLMAccess } from '@brian-agent/base';
 
 describe('AgentLoop（DIRECT 场景端到端）', () => {
@@ -49,7 +49,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   let sessionAccess: SessionAccess;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let streamAccess: any;
-  let toolAccess: ToolAccess;
+  let skillRuntimeAccess: SkillRuntimeAccess;
   let loopAccess: LoopAccess;
   let mockSkill: { execSkill: ReturnType<typeof vi.fn> };
   let mockLlm: { execLLMEvents: ReturnType<typeof vi.fn> };
@@ -76,18 +76,24 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
       },
     });
     mockSkill = {
+      soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
+        output.skill = input.id === 'weather'
+          ? { id: 'weather', name: '天气查询', skill_brief: '查询城市天气并汇总', skill_md: '# weather\n\n天气任务时使用', enable: true }
+          : null;
+        return true;
+      }),
       execSkill: vi.fn(async (_i: unknown, output: { result: unknown }) => {
         output.result = '北京天气：晴，22°C';
         return true;
       }),
     };
-    toolAccess = new ToolAccess(relationDb, { skillAccess: mockSkill as never });
-    await toolAccess.initialize();
-    const regIn = new RegisterBuiltinToolsInput();
-    regIn.enabled = ['skill_exec'];
-    await toolAccess.registerBuiltinTools(regIn, new RegisterBuiltinToolsOutput(), new ToolContext());
+    skillRuntimeAccess = new SkillRuntimeAccess(relationDb, { skillAccess: mockSkill as never });
+    await skillRuntimeAccess.initialize();
+    const regIn = new RegisterBuiltinSkillsInput();
+    regIn.enabled = ['mcp_exec'];
+    await skillRuntimeAccess.registerBuiltinSkills(regIn, new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
     mockLlm = { execLLMEvents: vi.fn() };
-    loopAccess = new LoopAccess(relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess);
+    loopAccess = new LoopAccess(relationDb, mockLlm as unknown as LLMAccess, sessionAccess, skillRuntimeAccess);
     await loopAccess.initialize();
     const add = new AddSessionInput();
     add.session_key = `sess-${Date.now()}`;
@@ -109,6 +115,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     input.user_message = '北京今天天气怎么样？';
     input.system = '你是任务执行代理，可用工具完成查询。';
     input.llm_id = '';
+    input.skills = ['skill_weather'];
     input.component_scope = { skills: ['weather'], mcps: [] };
     if (overrides) {
       Object.assign(input, overrides);
@@ -154,7 +161,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
         output.finish_reason = 'tool-calls';
         output.result = '我查一下天气';
         output.tool_calls = [{
-          index: 0, id: 'call_1', tool_id: 'skill_exec',
+          index: 0, id: 'call_1', tool_id: 'skill_weather',
           arguments: '{"skill_id":"weather","params":{"city":"北京"}}',
         }];
         output.input_tokens = 10;
@@ -169,7 +176,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
         const assistant = input.messages![1];
         expect(assistant.tool_calls?.[0]).toMatchObject({
           id: 'call_1',
-          function: { name: 'skill_exec' },
+          function: { name: 'skill_weather' },
         });
         expect(input.messages![2]).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: '北京天气：晴，22°C' });
         // 最终轮直播增量（轮中合帧保守进 think，轮末全文进 reply，见下断言）
@@ -242,7 +249,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
         output.finish_reason = 'tool-calls';
         output.result = '继续';
         output.tool_calls = [{
-          index: 0, id: `call_${Math.random()}`, tool_id: 'skill_exec',
+          index: 0, id: `call_${Math.random()}`, tool_id: 'skill_weather',
           arguments: '{"skill_id":"w","params":{}}',
         }];
         return true;
@@ -276,7 +283,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     mockSkill.execSkill.mockClear();
     let asked: Array<Record<string, unknown>> = [];
     const gated = new LoopAccess(
-      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess,
+      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, skillRuntimeAccess,
       undefined, undefined,
       { wait: async (i) => { asked.push({ permission_id: i.permission_id }); return { approved: false }; } },
     );
@@ -286,7 +293,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
         input.on_event?.({ type: 'text_delta', delta: '需要调用工具' });
         output.finish_reason = 'tool-calls';
         output.result = '需要调用工具';
-        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_exec', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
+        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_weather', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
         return true;
       })
       .mockImplementationOnce(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -312,7 +319,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   it('权限门：批准时工具正常执行', async () => {
     mockSkill.execSkill.mockClear();
     const gated = new LoopAccess(
-      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, toolAccess,
+      relationDb, mockLlm as unknown as LLMAccess, sessionAccess, skillRuntimeAccess,
       undefined, undefined,
       { wait: async () => ({ approved: true }) },
     );
@@ -321,7 +328,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
       .mockImplementationOnce(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
         output.finish_reason = 'tool-calls';
         output.result = '需要调用工具';
-        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_exec', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
+        output.tool_calls = [{ index: 0, id: 'call_perm', tool_id: 'skill_weather', arguments: '{"skill_id":"weather","params":{"city":"北京"}}' }];
         return true;
       })
       .mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {

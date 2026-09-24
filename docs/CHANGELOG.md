@@ -2469,3 +2469,11 @@ decideThoughtMode 从"绑定数"升级"工具面"判定（exec/cdt_browser 计�
 ## [2026-09-24d] Tool ⊕ Skill 合并（Skill 一等工具；MCP 独立保留）
 
 绑定 Skill 直接以 skill_<id> 一等工具进 wire 清单（绑定即授权），run 作用域注册表随 Loop 生命周期管理；skill_exec 间接 gate 从默认注入移除（本体保留兼容）；thought 判据/能力档案语义自动归一。详见 Tools-PRD §14 与 decisions.md。
+
+## [2026-09-24e] Tool 概念彻底退役，由 Skill 与 MCP 全面代替
+
+- 彻底移除 Tool 领域概念：原 5 大内置原语全面转化为系统内置 Skill（`skill_builtin-exec` / `skill_builtin-browser` / `skill_builtin-plan` / `skill_builtin-delegate` / `skill_builtin-ask-user`）；
+- `Runtime/Tools` 模块全面重构并更名为 `Runtime/SkillRuntime`（`SkillRuntimeService` / `SkillRuntimeAccess`）；
+- `skill_exec` 间接 gate 彻底删除；wire 工具清单统一由系统技能 + 绑定技能 + MCP gate 构成；
+- 提供 `scripts/migrate-system-skills.mjs` 自动迁移 `trusted_tools` 配置；
+- 全工作区 1748 个用例 100% 通过；typecheck / lint 0 错误。

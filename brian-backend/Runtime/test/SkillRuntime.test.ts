@@ -5,25 +5,26 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { z } from 'zod';
 import { RelationDBAccess, SkillContext, ExecSkillInput, ExecSkillOutput } from '@brian-agent/base';
-import { ToolAccess } from '../Tools/access/ToolAccess';
+import { SkillRuntimeAccess } from '../SkillRuntime/access/SkillRuntimeAccess';
 import {
-  ToolContext,
-  RegisterToolInput,
-  RegisterToolOutput,
-  ExecToolInput,
-  ExecToolOutput,
-  SoToolsInput,
-  SoToolsOutput,
-  RegisterBuiltinToolsInput,
-  RegisterBuiltinToolsOutput,
-  RegisterRunSkillToolsInput,
-  RegisterSkillToolsOutput,
-  ClearRunToolsInput,
-} from '../Tools/domain/types';
-import { zodToJSONSchema } from '../Tools/domain/zodToJsonSchema';
-import { skillExecTool } from '../Tools/application/builtinTools';
-import { execTool } from '../Tools/application/execTool';
-import type { AnyToolDef } from '../Tools/domain/types';
+  SkillRuntimeContext,
+  RegisterSkillInput,
+  RegisterSkillOutput,
+  ExecSkillInput,
+  ExecSkillOutput,
+  SoSkillsInput,
+  SoSkillsOutput,
+  RegisterBuiltinSkillsInput,
+  RegisterBuiltinSkillsOutput,
+  RegisterRunSkillsInput,
+  RegisterSkillsOutput,
+  ClearRunSkillsInput,
+} from '../SkillRuntime/domain/types';
+import { mcpExecTool } from '../SkillRuntime/application/mcpGate';
+import { zodToJSONSchema } from '../SkillRuntime/domain/zodToJsonSchema';
+import { execCommandSkill } from '../SkillRuntime/application/execCommandSkill';
+import type { AnyToolDef } from '../SkillRuntime/domain/types';
+import { mcpExecTool } from '../SkillRuntime/application/mcpGate';
 
 describe('zodToJSONSchema', () => {
   it('object/string/number/boolean 应该转换正确（required 判定）', () => {
@@ -71,11 +72,11 @@ describe('zodToJSONSchema', () => {
   });
 });
 
-describe('ToolService', () => {
+describe('SkillRuntimeService', () => {
   describe('update_plan（编排原语）', () => {
     it('应该持久化计划并发出 plan.updated 事件；违反至多一个 in_progress 不变量时拒绝', async () => {
-      const { updatePlanTool } = await import('../Tools/application/planTool');
-      const tool = updatePlanTool();
+      const { updatePlanSkill } = await import('../SkillRuntime/application/updatePlanSkill');
+      const tool = updatePlanSkill();
       const emitted: Array<{ type: string; payload: unknown }> = [];
       const ok = await tool.execute(
         { plan: [
@@ -104,7 +105,7 @@ describe('ToolService', () => {
   });
 
   let relationDb: RelationDBAccess;
-  let toolAccess: ToolAccess;
+  let skillRuntimeAccess: SkillRuntimeAccess;
   let mockSkill: { execSkill: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
@@ -116,8 +117,8 @@ describe('ToolService', () => {
         return true;
       }),
     };
-    toolAccess = new ToolAccess(relationDb, { skillAccess: mockSkill as never });
-    await toolAccess.initialize();
+    skillRuntimeAccess = new SkillRuntimeAccess(relationDb, { skillAccess: mockSkill as never });
+    await skillRuntimeAccess.initialize();
   });
 
   function makeDef(id: string): AnyToolDef {
@@ -132,39 +133,39 @@ describe('ToolService', () => {
     };
   }
 
-  it('registerTool/execTool 应该执行并返回配对结果', async () => {
-    const reg = new RegisterToolInput();
+  it('registerTool/execSkill 应该执行并返回配对结果', async () => {
+    const reg = new RegisterSkillInput();
     reg.def = makeDef('custom_a');
-    await toolAccess.registerTool(reg, new RegisterToolOutput(), new ToolContext());
-    const exec = new ExecToolInput();
+    await skillRuntimeAccess.registerSkill(reg, new RegisterSkillOutput(), new SkillRuntimeContext());
+    const exec = new ExecSkillInput();
     exec.tool_id = 'custom_a';
     exec.raw_args = '{"x":7}';
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
+    const out = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result).toEqual({ status: 'ok', output: 'ran custom_a with 7' });
   });
 
   it('非法参数应该回流模型反馈错误（不抛错）', async () => {
-    const reg = new RegisterToolInput();
+    const reg = new RegisterSkillInput();
     reg.def = makeDef('custom_b');
-    await toolAccess.registerTool(reg, new RegisterToolOutput(), new ToolContext());
-    const exec = new ExecToolInput();
+    await skillRuntimeAccess.registerSkill(reg, new RegisterSkillOutput(), new SkillRuntimeContext());
+    const exec = new ExecSkillInput();
     exec.tool_id = 'custom_b';
     exec.raw_args = '{"x":"not-a-number"}';
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
+    const out = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('invalid arguments');
     // 非 JSON 也回流
     exec.raw_args = '{bad json';
-    const out2 = new ExecToolOutput();
-    await toolAccess.execTool(exec, out2, new ToolContext());
+    const out2 = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out2, new SkillRuntimeContext());
     expect(out2.result.status).toBe('error');
     expect(out2.result.output).toContain('invalid arguments');
   });
 
   it('execute 抛错应该归一为配对 error 结果', async () => {
-    const reg = new RegisterToolInput();
+    const reg = new RegisterSkillInput();
     reg.def = {
       id: 'boom',
       description: '抛错工具',
@@ -173,112 +174,76 @@ describe('ToolService', () => {
         throw new Error('kapow');
       },
     };
-    await toolAccess.registerTool(reg, new RegisterToolOutput(), new ToolContext());
-    const exec = new ExecToolInput();
+    await skillRuntimeAccess.registerSkill(reg, new RegisterSkillOutput(), new SkillRuntimeContext());
+    const exec = new ExecSkillInput();
     exec.tool_id = 'boom';
     exec.raw_args = '{}';
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
+    const out = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('kapow');
   });
 
-  it('soTools 应该输出 JSON Schema 规格', async () => {
-    const reg = new RegisterToolInput();
+  it('soSkills 应该输出 JSON Schema 规格', async () => {
+    const reg = new RegisterSkillInput();
     reg.def = makeDef('spec_tool');
-    await toolAccess.registerTool(reg, new RegisterToolOutput(), new ToolContext());
-    const so = new SoToolsInput();
-    const out = new SoToolsOutput();
-    await toolAccess.soTools(so, out, new ToolContext());
+    await skillRuntimeAccess.registerSkill(reg, new RegisterSkillOutput(), new SkillRuntimeContext());
+    const so = new SoSkillsInput();
+    const out = new SoSkillsOutput();
+    await skillRuntimeAccess.soSkills(so, out, new SkillRuntimeContext());
     const spec = out.specs.find((s) => s.id === 'spec_tool');
     expect(spec).toBeDefined();
     expect(spec!.parameters).toMatchObject({ type: 'object', required: ['x'] });
   });
 
   it('未注册工具应该 fail-loud（NotFoundError）', async () => {
-    const exec = new ExecToolInput();
+    const exec = new ExecSkillInput();
     exec.tool_id = 'missing';
     exec.raw_args = '{}';
-    await expect(toolAccess.execTool(exec, new ExecToolOutput(), new ToolContext()))
+    await expect(skillRuntimeAccess.execSkill(exec, new ExecSkillOutput(), new SkillRuntimeContext()))
       .rejects.toMatchObject({ error_code: 'NOT_FOUND' });
   });
 
-  it('registerBuiltinTools 应该注册 skill_exec 并经 Provider 执行', async () => {
-    const reg = new RegisterBuiltinToolsInput();
-    reg.enabled = ['skill_exec'];
-    const regOut = new RegisterBuiltinToolsOutput();
-    await toolAccess.registerBuiltinTools(reg, regOut, new ToolContext());
-    expect(regOut.registered).toEqual(['skill_exec']);
-    const exec = new ExecToolInput();
-    exec.tool_id = 'skill_exec';
-    exec.raw_args = '{"skill_id":"s1","params":{}}';
-    exec.component_scope = { skills: ['s1'], mcps: [] };
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
-    expect(out.result.status).toBe('ok');
-    expect(out.result.output).toBe('skill:s1 ok');
-    expect(mockSkill.execSkill).toHaveBeenCalled();
-  });
-
-  it('skill_exec 无组件绑定时应拒执行（选/执分离执行门）', async () => {
-    const reg = new RegisterBuiltinToolsInput();
-    reg.enabled = ['skill_exec'];
-    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
-    const exec = new ExecToolInput();
-    exec.tool_id = 'skill_exec';
-    exec.raw_args = '{"skill_id":"weather","params":{}}';
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
-    expect(out.result.status).toBe('error');
-    expect(out.result.output).toContain('Agent 未绑定任何 Skill');
-  });
-
-  it('skill_exec 绑定清单外的 id 应拒执行并回示可用清单', async () => {
-    const reg = new RegisterBuiltinToolsInput();
-    reg.enabled = ['skill_exec'];
-    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
-    const exec = new ExecToolInput();
-    exec.tool_id = 'skill_exec';
-    exec.raw_args = '{"skill_id":"weather","params":{}}';
-    exec.component_scope = { skills: ['s1'], mcps: [] };
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
-    expect(out.result.status).toBe('error');
-    expect(out.result.output).toContain('不在本运行的组件绑定范围内');
-    expect(out.result.output).toContain('s1');
+  // ===== 2026-09-24 概念退役（Tool → Skill）：skill_exec 间接 gate 用例随概念删除 =====
+  // 原三个用例（skill_exec 注册执行/无绑定拒绝/越界拒绝）验证的选/执分离语义已由
+  // 绑定技能一等化（绑定即授权）与 mcp gate（独立保留）分别承接。
+  it('registerBuiltinSkills 默认仅注册 mcp gate（系统技能走 run 级注册，不占全局表）', async () => {
+    const regOut = new RegisterBuiltinSkillsOutput();
+    await skillRuntimeAccess.registerBuiltinSkills(new RegisterBuiltinSkillsInput(), regOut, new SkillRuntimeContext());
+    expect(regOut.registered).toEqual(['mcp_exec']);
   });
 
   it('内置工具 id 不可被覆盖', async () => {
-    const reg = new RegisterBuiltinToolsInput();
-    reg.enabled = ['skill_exec'];
-    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
-    const override = new RegisterToolInput();
+    const reg = new RegisterBuiltinSkillsInput();
+    reg.enabled = ['mcp_exec'];
+    await skillRuntimeAccess.registerBuiltinSkills(reg, new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
+    const override = new RegisterSkillInput();
     override.def = {
-      ...skillExecTool({}),
+      ...mcpExecTool({}),
       execute: async () => ({ status: 'ok', output: 'hijacked' }),
     };
-    await expect(toolAccess.registerTool(override, new RegisterToolOutput(), new ToolContext()))
+    await expect(skillRuntimeAccess.registerSkill(override, new RegisterSkillOutput(), new SkillRuntimeContext()))
       .rejects.toMatchObject({ error_code: 'VALIDATION_ERROR' });
   });
 
   it('mcp_exec 未注入时应 fail-loud（配对 error 结果）', async () => {
-    const reg = new RegisterBuiltinToolsInput();
+    const reg = new RegisterBuiltinSkillsInput();
     reg.enabled = ['mcp_exec'];
-    await toolAccess.registerBuiltinTools(reg, new RegisterBuiltinToolsOutput(), new ToolContext());
-    const exec = new ExecToolInput();
+    await skillRuntimeAccess.registerBuiltinSkills(reg, new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
+    const exec = new ExecSkillInput();
     exec.tool_id = 'mcp_exec';
     exec.raw_args = '{"mcp_id":"m1","params":{}}';
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
+    const out = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('MCP Provider 未注入');
   });
 });
 
 // ===== 2026-09-24 新增（Tool ⊕ Skill 合并回归）：Skill 一等工具 run 级注册 =====
-describe('Tool ⊕ Skill（run 级一等工具；Tools-PRD §14）', () => {
+describe('Skill 一等能力（run 级注册；Tools-PRD §14 → SkillRuntime）', () => {
   let relationDb: RelationDBAccess;
-  let toolAccess: ToolAccess;
+  let skillRuntimeAccess: SkillRuntimeAccess;
   let mockSkill: {
     soSkillById: ReturnType<typeof vi.fn>;
     execSkill: ReturnType<typeof vi.fn>;
@@ -297,94 +262,97 @@ describe('Tool ⊕ Skill（run 级一等工具；Tools-PRD §14）', () => {
         return true;
       }),
     };
-    toolAccess = new ToolAccess(relationDb, { skillAccess: mockSkill as never });
-    await toolAccess.initialize();
-    await toolAccess.registerBuiltinTools(new RegisterBuiltinToolsInput(), new RegisterBuiltinToolsOutput(), new ToolContext());
+    skillRuntimeAccess = new SkillRuntimeAccess(relationDb, { skillAccess: mockSkill as never });
+    await skillRuntimeAccess.initialize();
+    await skillRuntimeAccess.registerBuiltinSkills(new RegisterBuiltinSkillsInput(), new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
   });
 
-  it('registerRunSkillTools：绑定 Skill 转为一等工具（skill_<id>），soTools 经 run_id 并入规格', async () => {
+  it('registerRunSkills：绑定 Skill 转为一等工具（skill_<id>），soSkills 经 run_id 并入规格', async () => {
     const runId = 'run-merge-1';
-    const reg = new RegisterRunSkillToolsInput();
+    const reg = new RegisterRunSkillsInput();
     reg.run_id = runId;
     reg.skill_ids = ['11111111-2222-3333-4444-555555555555'];
-    const regOut = new RegisterSkillToolsOutput();
-    await toolAccess.registerRunSkillTools(reg, regOut, new ToolContext());
-    expect(regOut.registered).toEqual(['skill_11111111-2222-3333-4444-555555555555']);
+    const regOut = new RegisterSkillsOutput();
+    await skillRuntimeAccess.registerRunSkills(reg, regOut, new SkillRuntimeContext());
+    // 2026-09-24 概念退役语义：run 级注册 = 系统内置技能（无依赖可装配的 exec/plan）∪ 绑定技能
+    expect(regOut.registered).toContain('skill_11111111-2222-3333-4444-555555555555');
+    expect(regOut.registered).toContain('skill_builtin-exec');
+    expect(regOut.registered).toContain('skill_builtin-plan');
 
     // wire 规格合并：run 级工具与内置原语同表出现
-    const soIn = new SoToolsInput();
+    const soIn = new SoSkillsInput();
     soIn.run_id = runId;
-    soIn.tool_ids = ['exec', 'skill_11111111-2222-3333-4444-555555555555'];
-    const soOut = new SoToolsOutput();
-    await toolAccess.soTools(soIn, soOut, new ToolContext());
+    soIn.skill_ids = ['skill_builtin-exec', 'skill_11111111-2222-3333-4444-555555555555'];
+    const soOut = new SoSkillsOutput();
+    await skillRuntimeAccess.soSkills(soIn, soOut, new SkillRuntimeContext());
     const ids = soOut.specs.map((s) => s.id);
-    expect(ids).toContain('exec');
+    expect(ids).toContain('skill_builtin-exec');
     expect(ids).toContain('skill_11111111-2222-3333-4444-555555555555');
-    const skillSpec = soOut.specs.find((s) => s.id.startsWith('skill_'));
+    const skillSpec = soOut.specs.find((s) => s.id === 'skill_11111111-2222-3333-4444-555555555555');
     expect(skillSpec?.description).toContain('磁盘巡检');
     expect(skillSpec?.description).toContain('磁盘时使用');
   });
 
-  it('run 级 Skill 工具 execTool 直调（绑定即授权，免 skill_exec 间接 gate）', async () => {
+  it('run 级 Skill 工具 execSkill 直调（绑定即授权，免 skill_exec 间接 gate）', async () => {
     const runId = 'run-exec-skill';
-    await toolAccess.registerRunSkillTools(
-      Object.assign(new RegisterRunSkillToolsInput(), { run_id: runId, skill_ids: ['s-1'] }),
-      new RegisterSkillToolsOutput(),
-      new ToolContext(),
+    await skillRuntimeAccess.registerRunSkills(
+      Object.assign(new RegisterRunSkillsInput(), { run_id: runId, skill_ids: ['s-1'] }),
+      new RegisterSkillsOutput(),
+      new SkillRuntimeContext(),
     );
-    const exec = new ExecToolInput();
+    const exec = new ExecSkillInput();
     exec.tool_id = 'skill_s-1';
     exec.raw_args = '{"params":{"city":"北京"}}';
     exec.run_id = runId;
-    const out = new ExecToolOutput();
-    await toolAccess.execTool(exec, out, new ToolContext());
+    const out = new ExecSkillOutput();
+    await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result.status).toBe('ok');
     expect(out.result.output).toContain('skill-run:s-1');
     expect(mockSkill.execSkill).toHaveBeenCalledTimes(1);
   });
 
-  it('run 级工具不污染全局：clearRunTools 后 execTool 回 NotFound，未绑定的其他 run 不可见', async () => {
+  it('run 级工具不污染全局：clearRunSkills 后 execSkill 回 NotFound，未绑定的其他 run 不可见', async () => {
     const runId = 'run-clear';
-    await toolAccess.registerRunSkillTools(
-      Object.assign(new RegisterRunSkillToolsInput(), { run_id: runId, skill_ids: ['s-2'] }),
-      new RegisterSkillToolsOutput(),
-      new ToolContext(),
+    await skillRuntimeAccess.registerRunSkills(
+      Object.assign(new RegisterRunSkillsInput(), { run_id: runId, skill_ids: ['s-2'] }),
+      new RegisterSkillsOutput(),
+      new SkillRuntimeContext(),
     );
-    await toolAccess.clearRunTools(Object.assign(new ClearRunToolsInput(), { run_id: runId }), new ToolContext());
-    const soIn = new SoToolsInput();
+    await skillRuntimeAccess.clearRunSkills(Object.assign(new ClearRunSkillsInput(), { run_id: runId }), new SkillRuntimeContext());
+    const soIn = new SoSkillsInput();
     soIn.run_id = runId;
-    soIn.tool_ids = ['skill_s-2'];
-    const soOut = new SoToolsOutput();
-    await toolAccess.soTools(soIn, soOut, new ToolContext());
+    soIn.skill_ids = ['skill_s-2'];
+    const soOut = new SoSkillsOutput();
+    await skillRuntimeAccess.soSkills(soIn, soOut, new SkillRuntimeContext());
     expect(soOut.specs.length).toBe(0);
 
-    // execTool 对未注册工具的既有语义：抛 NotFoundError（run 级清理后即回到未注册态）
-    const exec = new ExecToolInput();
+    // execSkill 对未注册工具的既有语义：抛 NotFoundError（run 级清理后即回到未注册态）
+    const exec = new ExecSkillInput();
     exec.tool_id = 'skill_s-2';
     exec.raw_args = '{}';
     exec.run_id = runId;
-    await expect(toolAccess.execTool(exec, new ExecToolOutput(), new ToolContext())).rejects.toThrow('Tool 不存在');
+    await expect(skillRuntimeAccess.execSkill(exec, new ExecSkillOutput(), new SkillRuntimeContext())).rejects.toThrow('Tool 不存在');
   });
 });
 
-describe('execTool（宿主命令执行）', () => {
+describe('execSkill（宿主命令执行）', () => {
   it('echo 命令返回真实 stdout 与 exit_code=0', async () => {
-    const tool = execTool();
-    const result = await tool.execute({ command: 'echo hello-exec', timeout_s: 10 }, new ToolContext() as never);
+    const tool = execCommandSkill();
+    const result = await tool.execute({ command: 'echo hello-exec', timeout_s: 10 }, new SkillRuntimeContext() as never);
     expect(result.status).toBe('ok');
     expect(result.output).toContain('hello-exec');
     expect(result.output).toContain('exit_code=0');
   });
 
   it('非零退出码如实上报（不伪装成功）', async () => {
-    const tool = execTool();
-    const result = await tool.execute({ command: 'exit 3', timeout_s: 10 }, new ToolContext() as never);
+    const tool = execCommandSkill();
+    const result = await tool.execute({ command: 'exit 3', timeout_s: 10 }, new SkillRuntimeContext() as never);
     expect(result.output).toContain('exit_code=3');
   });
 
   it('超时强制终止并注明', async () => {
-    const tool = execTool();
-    const result = await tool.execute({ command: 'sleep 5', timeout_s: 1 }, new ToolContext() as never);
+    const tool = execCommandSkill();
+    const result = await tool.execute({ command: 'sleep 5', timeout_s: 1 }, new SkillRuntimeContext() as never);
     expect(result.output).toContain('超时终止');
   });
 });

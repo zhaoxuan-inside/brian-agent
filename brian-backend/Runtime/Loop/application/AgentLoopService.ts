@@ -25,7 +25,7 @@ import type {
 } from '@brian-agent/base';
 
 import { BusinessEvent } from '@brian-agent/base';
-import type { ToolSpecJson } from '../../Tools';
+import type { SkillSpecJson } from '../../SkillRuntime';
 import {
   LLMContext,
   ExecLLMEventsInput,
@@ -36,7 +36,7 @@ import {
 } from '@brian-agent/base';
 import { DEFAULT_BUDGET_TOTAL, IterationBudget, AbortReason, RunPhase } from '../../shared/types';
 import type { SessionAccess } from '../../Session';
-import type { ToolAccess } from '../../Tools';
+import type { SkillRuntimeAccess } from '../../SkillRuntime';
 import {
   ExecAgentLoopInput,
   ExecAgentLoopOutput,
@@ -65,15 +65,15 @@ import {
   SessionContext,
 } from '../../Session';
 import {
-  ExecToolInput,
-  ExecToolOutput,
-  SoToolsInput,
-  SoToolsOutput,
-  ToolContext,
-  RegisterRunSkillToolsInput,
-  RegisterSkillToolsOutput,
-  ClearRunToolsInput,
-} from '../../Tools';
+  ExecSkillInput,
+  ExecSkillOutput,
+  SoSkillsInput,
+  SoSkillsOutput,
+  SkillRuntimeContext,
+  RegisterRunSkillsInput,
+  RegisterSkillsOutput,
+  ClearRunSkillsInput,
+} from '../../SkillRuntime';
 
 /** 循环内轮读取消息上限（soMessages limit） */
 const LOOP_MESSAGE_LIMIT = 100;
@@ -95,7 +95,7 @@ interface LoopRunContext {
   idleWatchdogMs?: number;
   budget: IterationBudget;
   controller: AbortController;
-  specs: ToolSpecJson[];
+  specs: SkillSpecJson[];
   /** 组件选择范围（match 阶段选定；执行门依据，透传 execTool→ToolExecutionContext） */
   componentScope?: { skills: string[]; mcps: string[] };
   stopReason: LoopStopReason;
@@ -159,7 +159,7 @@ export class AgentLoopService {
   constructor(
     private readonly llm: LLMAccess,
     private readonly session: SessionAccess,
-    private readonly tool: ToolAccess,
+    private readonly skillRuntime: SkillRuntimeAccess,
     private readonly logger?: Logger,
     /** 会话级队列（steering/followup；RunGateway 注入，鸭子接口不反向依赖） */
     private readonly queue?: LoopQueue,
@@ -216,8 +216,8 @@ export class AgentLoopService {
       this.wireExternalSignal(input, controller);
       // ===== 2026-09-24 Tool ⊕ Skill 合并：先注册 run 级 Skill 一等工具（绑定即授权），
       // soTools 合并 wire specs（原实现仅 registry 查询，见上方法注释保留）=====
-      await this.registerRunSkillTools(input, metrics);
-      const specs = await this.soLoopToolSpecs(input.tools, input.run_id, metrics);
+      await this.registerRunSkills(input, metrics);
+      const specs = await this.soLoopSkillSpecs(input.skills, input.run_id, metrics);
       await this.persistUserMessage(input, metrics);
       await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key, report }, RunPhase.Start);
       return this.prepareContextFields(input, budget, controller, specs, metrics, report);
@@ -232,7 +232,7 @@ export class AgentLoopService {
     input: ExecAgentLoopInput,
     budget: IterationBudget,
     controller: AbortController,
-    specs: ToolSpecJson[],
+    specs: SkillSpecJson[],
     metrics?: Metrics,
     report?: Report,
   ): LoopRunContext {
@@ -292,25 +292,22 @@ export class AgentLoopService {
 
   /** 解析本轮可见工具规格（逻辑控制；透传 metrics；run_id 供 ToolService 合并 run 级工具）
    *  2026-09-24 Tool ⊕ Skill 合并：runTools 注册表经 soTools 并入（原实现无 run 上下文） */
-  private async soLoopToolSpecs(toolIds: string[] | undefined, runId: string, metrics?: Metrics): Promise<ToolSpecJson[]> {
-    const soIn = new SoToolsInput();
-    soIn.tool_ids = toolIds;
+  private async soLoopSkillSpecs(skillIds: string[] | undefined, runId: string, metrics?: Metrics): Promise<SkillSpecJson[]> {
+    const soIn = new SoSkillsInput();
+    soIn.skill_ids = skillIds;
     soIn.run_id = runId;
-    const soOut = new SoToolsOutput();
-    await this.tool.soTools(soIn, soOut, new ToolCtx(), metrics);
+    const soOut = new SoSkillsOutput();
+    await this.skillRuntime.soSkills(soIn, soOut, new ToolCtx(), metrics);
     return soOut.specs;
   }
 
-  /** 注册 run 级 Skill 一等工具（逻辑控制；失败降级只影响 Skill 可见性，不阻断 run） */
-  private async registerRunSkillTools(input: ExecAgentLoopInput, metrics?: Metrics): Promise<void> {
+  /** 注册 run 级 Skill 一等工具（逻辑控制；系统内置技能 + 绑定技能一体注册；失败降级只影响 Skill 可见性） */
+  private async registerRunSkills(input: ExecAgentLoopInput, metrics?: Metrics): Promise<void> {
     const skillIds = (input.component_scope?.skills ?? []).filter(Boolean);
-    if (!skillIds.length) {
-      return;
-    }
     try {
-      await this.tool.registerRunSkillTools(
-        Object.assign(new RegisterRunSkillToolsInput(), { run_id: input.run_id, skill_ids: skillIds }),
-        new RegisterSkillToolsOutput(),
+      await this.skillRuntime.registerRunSkills(
+        Object.assign(new RegisterRunSkillsInput(), { run_id: input.run_id, skill_ids: skillIds }),
+        new RegisterSkillsOutput(),
         new ToolCtx(),
         metrics,
       );
@@ -633,20 +630,20 @@ export class AgentLoopService {
     const toolParts = message.parts.filter((p) => p.part_type === PartType.Tool);
     const text = message.parts.find((p) => p.part_type === PartType.Text)?.content ?? message.content;
     const toolCalls = toolParts
-      .map((p) => this.toWireToolCall(p))
-      .filter((c): c is WireToolCall => Boolean(c));
+      .map((p) => this.toWireSkillCall(p))
+      .filter((c): c is WireSkillCall => Boolean(c));
     if (toolCalls.length) {
       wire.push({ role: 'assistant', content: text, tool_calls: toolCalls });
     } else if (text) {
       wire.push({ role: 'assistant', content: text });
     }
     for (const part of toolParts) {
-      wire.push(this.toToolResultMessage(part));
+      wire.push(this.toSkillResultMessage(part));
     }
   }
 
   /** tool Part → wire tool_call（数据处理；缺 tool_call_id 视为损坏不派生） */
-  private toWireToolCall(part: PartRecord): WireToolCall | null {
+  private toWireSkillCall(part: PartRecord): WireSkillCall | null {
     const meta = this.parseToolMeta(part.input_json);
     if (!meta.tool_call_id) {
       return null;
@@ -659,7 +656,7 @@ export class AgentLoopService {
   }
 
   /** tool Part → wire tool 结果消息（数据处理） */
-  private toToolResultMessage(part: PartRecord): LLMMessage {
+  private toSkillResultMessage(part: PartRecord): LLMMessage {
     const meta = this.parseToolMeta(part.input_json);
     return {
       role: 'tool',
@@ -694,7 +691,7 @@ export class AgentLoopService {
       await this.addTurnPart(ctx, messageId, PartType.Text, turn.text);
     }
     for (const call of turn.toolCalls ?? []) {
-      await this.addToolPart(ctx, messageId, call);
+      await this.addSkillPart(ctx, messageId, call);
     }
   }
 
@@ -718,7 +715,7 @@ export class AgentLoopService {
   }
 
   /** 新增 tool Part（input_json = {tool_call_id, arguments}）并发布事件（逻辑控制；透传 metrics） */
-  private async addToolPart(ctx: LoopRunContext, messageId: string, call: ParsedToolCall): Promise<void> {
+  private async addSkillPart(ctx: LoopRunContext, messageId: string, call: ParsedToolCall): Promise<void> {
     const input = new AddPartInput();
     input.msg_id = messageId;
     input.run_id = ctx.runId;
@@ -737,21 +734,21 @@ export class AgentLoopService {
   /** 顺序执行本轮 tool_calls（逻辑控制；配对结果回流；权限门：执行前询问） */
   private async consumeToolCalls(ctx: LoopRunContext, toolCalls: ParsedToolCall[]): Promise<void> {
     for (const call of toolCalls) {
-      const part = await this.soToolPart(ctx, call);
+      const part = await this.soSkillPart(ctx, call);
       if (!part) {
         continue;
       }
       const approved = await this.askPermission(ctx, call);
       if (!approved) {
-        await this.completeToolPart(ctx, part.id, call, {
+        await this.completeSkillPart(ctx, part.id, call, {
           status: 'error',
           output: `工具 ${call.tool_id} 被用户拒绝执行（permission denied）`,
         });
         continue;
       }
       await this.markPartRunning(ctx, part.id, call);
-      const result = await this.execLoopTool(ctx, call);
-      await this.completeToolPart(ctx, part.id, call, result);
+      const result = await this.execLoopSkill(ctx, call);
+      await this.completeSkillPart(ctx, part.id, call, result);
     }
   }
 
@@ -799,7 +796,7 @@ export class AgentLoopService {
   }
 
   /** 查询本轮 tool Part（逻辑控制；按 message + tool_call_id 匹配） */
-  private async soToolPart(ctx: LoopRunContext, call: ParsedToolCall): Promise<PartRecord | null> {
+  private async soSkillPart(ctx: LoopRunContext, call: ParsedToolCall): Promise<PartRecord | null> {
     if (!ctx.lastMessageId) {
       return null;
     }
@@ -837,8 +834,8 @@ export class AgentLoopService {
   }
 
   /** 执行工具（逻辑控制；execTool 配对结果语义；透传 metrics） */
-  private async execLoopTool(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number }> {
-    const input = new ExecToolInput();
+  private async execLoopSkill(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number }> {
+    const input = new ExecSkillInput();
     input.tool_id = call.tool_id;
     input.raw_args = call.arguments;
     input.run_id = ctx.runId;
@@ -849,13 +846,13 @@ export class AgentLoopService {
     input.emitEvent = (type: string, payload: unknown) => {
       ctx.report?.pushBusinessEvent(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });
     };
-    const output = new ExecToolOutput();
-    await this.tool.execTool(input, output, new ToolCtx(), ctx.metrics, ctx.report);
+    const output = new ExecSkillOutput();
+    await this.skillRuntime.execSkill(input, output, new ToolCtx(), ctx.metrics, ctx.report);
     return output.result;
   }
 
   /** 完成配对：Part 状态机 + tool.result 事件（逻辑控制；透传 metrics） */
-  private async completeToolPart(ctx: LoopRunContext, partId: string, call: ParsedToolCall, result: { status: string; output: string; elapsed_ms?: number },
+  private async completeSkillPart(ctx: LoopRunContext, partId: string, call: ParsedToolCall, result: { status: string; output: string; elapsed_ms?: number },
   ): Promise<void> {
     const upd = new UpdatePartInput();
     upd.part_id = partId;
@@ -905,8 +902,8 @@ export class AgentLoopService {
     this.flushDeltaBuffer(ctx);
     // ===== 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 工具清理（best-effort）=====
     try {
-      await this.tool.clearRunTools(
-        Object.assign(new ClearRunToolsInput(), { run_id: ctx.runId }),
+      await this.skillRuntime.clearRunSkills(
+        Object.assign(new ClearRunSkillsInput(), { run_id: ctx.runId }),
         new ToolCtx(),
       );
     } catch {
@@ -972,10 +969,10 @@ export class AgentLoopService {
 /** 上下文别名简写（避免每处 new 完整类名） */
 class SessionCtx extends SessionContext {}
 class LLMCtx extends LLMContext {}
-class ToolCtx extends ToolContext {}
+class ToolCtx extends SkillRuntimeContext {}
 
 /** wire 侧工具调用（LLMMessage.tool_calls 元素） */
-interface WireToolCall {
+interface WireSkillCall {
   id: string;
   type: 'function';
   function: { name: string; arguments: string };

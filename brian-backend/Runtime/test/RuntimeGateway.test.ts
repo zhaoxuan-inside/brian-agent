@@ -31,8 +31,8 @@ import { StreamAccess } from '../../Base/StreamProvider/access/StreamAccess';
 import { RegisterStreamInput, RegisterStreamOutput, PushEventToEndpointInput, PushEventToEndpointOutput } from '../../Base/StreamProvider/domain/types';
 import { StreamContext } from '../../Base/StreamProvider/domain/types';
 import { Report } from '@brian-agent/base';
-import { ToolAccess } from '../Tools/access/ToolAccess';
-import { RegisterBuiltinToolsInput, RegisterBuiltinToolsOutput, ToolContext } from '../Tools/domain/types';
+import { SkillRuntimeAccess } from '../SkillRuntime/access/SkillRuntimeAccess';
+import { RegisterBuiltinSkillsInput, RegisterBuiltinSkillsOutput, SkillRuntimeContext } from '../SkillRuntime/domain/types';
 import { PromptsAccess } from '@brian-agent/base';
 import { LoopAccess } from '../Loop/access/LoopAccess';
 import { AgentDefAccess } from '../Agents/access/AgentDefAccess';
@@ -97,7 +97,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         );
       },
     });
-    const toolAccess = new ToolAccess(relationDb, {
+    const skillRuntimeAccess = new SkillRuntimeAccess(relationDb, {
       // 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 一等工具注册依赖 skillAccess
       skillAccess: {
         soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
@@ -112,8 +112,8 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         }),
       } as never,
     });
-    await toolAccess.initialize();
-    await toolAccess.registerBuiltinTools(new RegisterBuiltinToolsInput(), new RegisterBuiltinToolsOutput(), new ToolContext());
+    await skillRuntimeAccess.initialize();
+    await skillRuntimeAccess.registerBuiltinSkills(new RegisterBuiltinSkillsInput(), new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
 
     // Prompt 模板统一由 prompt_template 表承载
     const promptsAccessForSeed = new PromptsAccess(relationDb);
@@ -172,7 +172,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       drainSteering: (sessionKey: string) => gatewayRef.drainSteeringFor(sessionKey),
       takeFollowup: (sessionKey: string) => gatewayRef.takeFollowupFor(sessionKey),
     };
-    loopAccess = new LoopAccess(relationDb, mockLlm, sessionAccess, toolAccess, undefined, queueBridge);
+    loopAccess = new LoopAccess(relationDb, mockLlm, sessionAccess, skillRuntimeAccess, undefined, queueBridge);
     await loopAccess.initialize();
     gateway = new RunGatewayAccess(relationDb, sessionAccess, agentDefAccess, loopAccess);
     await gateway.initialize();
@@ -468,15 +468,15 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
   it('信任工具表：configRuns 全量覆盖可撤销信任', async () => {
     const cfgIn = new ConfigRunsInput();
-    cfgIn.trusted_tools = ['skill_exec'];
+    cfgIn.trusted_tools = ['mcp_exec'];
     const cfgOut = new ConfigRunsOutput();
     await gateway.configRuns(cfgIn, cfgOut, new RunGatewayContext());
-    expect(cfgOut.trusted_tools).toEqual(['skill_exec']);
+    expect(cfgOut.trusted_tools).toEqual(['mcp_exec']);
 
     // skill_exec 自动放行；旧信任 cdt_browser 已被覆盖掉，需重新询问（挂起可被应答唤醒）
     const autoIn = new WaitPermissionInput();
     autoIn.permission_id = 'perm-revoke-1';
-    autoIn.tool_id = 'skill_exec';
+    autoIn.tool_id = 'mcp_exec';
     const autoOut = new WaitPermissionOutput();
     await gateway.waitPermission(autoIn, autoOut, new RunGatewayContext());
     expect(autoOut.auto_approved).toBe(true);
@@ -652,17 +652,17 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         output.finish_reason = 'tool-calls';
         output.result = '我来委派子任务查询磁盘。';
         output.tool_calls = [{
-          index: 0, id: 'call_del_1', tool_id: 'delegate',
+          index: 0, id: 'call_del_1', tool_id: 'skill_builtin-delegate',
           arguments: JSON.stringify({ task_content: '子任务：查询磁盘可用空间' }),
         }];
-      } else if (input.tools?.some((t) => t.tool_id === 'delegate')) {
+      } else if (input.tools?.some((t) => t.tool_id === 'skill_builtin-delegate')) {
         // 主 run 轮2：观察受理回执后收敛
         output.finish_reason = 'stop';
         output.result = '子任务已委派，等待汇总。';
         output.tool_calls = [];
       } else {
         // 子 run（subagent lane，无 delegate 工具）：直答子任务
-        expect(input.tools?.some((t) => t.tool_id === 'delegate')).toBe(false);
+        expect(input.tools?.some((t) => t.tool_id === 'skill_builtin-delegate')).toBe(false);
         output.finish_reason = 'stop';
         output.result = '磁盘可用 128GB。';
         output.tool_calls = [];
@@ -684,9 +684,9 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         return true;
       }),
     };
-    // 局部组合：ToolAccess 带 runGateway 桥接（delegate 可用），与 dev-server 接线一致
+    // 局部组合：SkillRuntimeAccess 带 runGateway 桥接（delegate 可用），与 dev-server 接线一致
     let delegatingGatewayRef: RunGatewayAccess;
-    const toolAccessDelegating = new ToolAccess(relationDb, {
+    const skillRuntimeAccessDelegating = new SkillRuntimeAccess(relationDb, {
       runGateway: {
         submitRun: async (input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string; parent_run_id?: string }) => {
           const i = Object.assign(new SubmitRunInput(), input);
@@ -696,13 +696,13 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         },
       },
     });
-    await toolAccessDelegating.initialize();
-    await toolAccessDelegating.registerBuiltinTools(
-      Object.assign(new RegisterBuiltinToolsInput(), {}),
-      new RegisterBuiltinToolsOutput(),
-      new ToolContext(),
+    await skillRuntimeAccessDelegating.initialize();
+    await skillRuntimeAccessDelegating.registerBuiltinSkills(
+      Object.assign(new RegisterBuiltinSkillsInput(), {}),
+      new RegisterBuiltinSkillsOutput(),
+      new SkillRuntimeContext(),
     );
-    const loopAccessDelegating = new LoopAccess(relationDb, mockLlmDelegating, sessionAccess, toolAccessDelegating, undefined, {
+    const loopAccessDelegating = new LoopAccess(relationDb, mockLlmDelegating, sessionAccess, skillRuntimeAccessDelegating, undefined, {
       drainSteering: (sessionKey: string) => delegatingGatewayRef.drainSteeringFor(sessionKey),
       takeFollowup: (sessionKey: string) => delegatingGatewayRef.takeFollowupFor(sessionKey),
     });
@@ -746,7 +746,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(subRows?.length).toBe(1);
     const subRunId = String(subRows![0].id);
     const receiptParts = relationDb.queryRaw<{ output_json: string }>(
-      `SELECT "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" = 'delegate'`,
+      `SELECT "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" = 'skill_builtin-delegate'`,
       [submitOut.run_id],
     );
     expect(receiptParts?.length).toBe(1);
@@ -820,9 +820,9 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const llmInput = firstCall![0] as ExecLLMEventsInput;
     const toolIds = (llmInput.tools ?? []).map((t) => t.tool_id);
     expect(toolIds).toContain('skill_11111111-2222-3333-4444-555555555555');
-    expect(toolIds).toContain('exec');
-    expect(toolIds).not.toContain('skill_exec');
-    const skillSpec = (llmInput.tools ?? []).find((t) => t.tool_id.startsWith('skill_'));
+    expect(toolIds).toContain('skill_builtin-exec');
+    expect(toolIds).not.toContain('mcp_exec');
+    const skillSpec = (llmInput.tools ?? []).find((t) => t.tool_id === 'skill_11111111-2222-3333-4444-555555555555');
     expect(skillSpec?.description).toContain('磁盘巡检');
     // 端到端：模型调用 skill 一等工具 → run 级注册表解析 → execSkill 沙箱链路执行（Part 落库为证）
     const partRows = relationDb.queryRaw<{ tool_id: string; output_json: string; status: string }>(

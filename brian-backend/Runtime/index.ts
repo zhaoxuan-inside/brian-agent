@@ -42,28 +42,28 @@ export {
 } from './Loop';
 
 // Tools：工具框架（zod 校验回流 · 编排原语工具化）（阶段2）
-export { ToolAccess } from './Tools';
+export { SkillRuntimeAccess } from './SkillRuntime';
 export {
-  ToolContext,
-  RegisterToolInput,
-  RegisterToolOutput,
-  ExecToolInput,
-  ExecToolOutput,
-  SoToolsInput,
-  SoToolsOutput,
-  RegisterBuiltinToolsInput,
-  RegisterBuiltinToolsOutput,
+  SkillRuntimeContext,
+  RegisterSkillInput,
+  RegisterSkillOutput,
+  ExecSkillInput,
+  ExecSkillOutput,
+  SoSkillsInput,
+  SoSkillsOutput,
+  RegisterBuiltinSkillsInput,
+  RegisterBuiltinSkillsOutput,
   ConfigToolInput,
   ConfigToolOutput,
-} from './Tools';
+} from './SkillRuntime';
 export type {
-  ToolResult,
-  ToolExecutionContext,
-  ToolDef,
-  AnyToolDef,
-  ToolSpecJson,
-} from './Tools';
-export { zodToJSONSchema } from './Tools';
+  SkillResult,
+  SkillExecutionContext,
+  SkillDef,
+  AnySkillDef,
+  SkillSpecJson,
+} from './SkillRuntime';
+export { zodToJSONSchema } from './SkillRuntime';
 
 // Agents：声明式定义 · 确定性匹配 · 组件快照（阶段3 前置）
 export { AgentDefAccess, AgentsSchemaInitializer } from './Agents';

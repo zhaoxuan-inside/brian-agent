@@ -1,7 +1,7 @@
 # Brian-Agent 方法索引
 
 > 由 `npm run docs:index` 自动生成（TS AST 解析各层 access 层公开方法），请勿手工编辑。
-> 生成时间：2026-09-24T11:05:01.536Z；方法总数：512
+> 生成时间：2026-09-24T12:30:27.689Z；方法总数：512
 
 方法命名规范见 `docs/_1_DevStandards/DevStandards.md`；分层与复用规范见 `docs/_1_DevStandards/DDDStandards.md`。
 
@@ -38,7 +38,7 @@
 | Runtime | [Loop](./Runtime/Loop.md) | 4 |
 | Runtime | [Runs](./Runtime/Runs.md) | 13 |
 | Runtime | [Session](./Runtime/Session.md) | 7 |
-| Runtime | [Tools](./Runtime/Tools.md) | 8 |
+| Runtime | [SkillRuntime](./Runtime/SkillRuntime.md) | 8 |
 | **Runtime 小计** | | **40** |
 | Agent | [AgentBuilder](./Agent/AgentBuilder.md) | 5 |
 | Agent | [AgentContext](./Agent/AgentContext.md) | 3 |

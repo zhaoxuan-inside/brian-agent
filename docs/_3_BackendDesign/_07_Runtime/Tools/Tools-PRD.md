@@ -224,3 +224,35 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
   - `skill_<uuid>` 作为 wire function name 长度 42 字符（OpenAI 限制 64 内，安全）；如未来 skill id 形态变化需保前缀约定；
   - run 级注册表为内存态（服务重启即空，run 亦不在内存，语义自洽）；
   - `skill_exec` 仍可显式注册使用（兼容期），后续版本可在评估无调用方后移除。
+
+## 15. Tool 概念彻底退役：完全由 Skill 和 MCP 承接（2026-09-24 用户裁决）
+
+**裁决**：项目中彻底消除独立的「Tool」领域概念，由 **Skill** 与 **MCP** 两大一等能力完全代替。
+
+**变更原因**：此前系统维持 Tool 与 Skill 双概念并存，导致能力认知与管线实现多次严重漂移（thought 判据漏原语、能力档案漏内置面、双注册事实源）。彻底收敛后，模型可见的能力只有两大类：
+- **Skill**（技能）：包含系统内置技能（`skill_builtin-*`，原 5 大原语）与沉淀技能（`skill_<id>`，本地/GitHub/自建）；
+- **MCP**（外部通道）：独立的第三方工具通道（`mcp_exec` + `component_scope.mcps`）。
+
+**修改的方法**：
+  - `Runtime/Tools` 模块全面重构并更名为 `Runtime/SkillRuntime`（`SkillRuntimeService` / `SkillRuntimeAccess` / `SkillDef` / `SkillSpecJson` / `SkillResult`）；
+  - 原 5 大内置原语全面升级为系统内置 Skill（`builtinSkills.ts`）：
+    - `exec` → `skill_builtin-exec`（命令执行技能）
+    - `cdt_browser` → `skill_builtin-browser`（浏览器操作技能）
+    - `update_plan` → `skill_builtin-plan`（计划维护技能）
+    - `delegate` → `skill_builtin-delegate`（子任务委派技能）
+    - `ask_user` → `skill_builtin-ask-user`（用户询问技能）
+  - `skill_exec` 间接 gate 随概念退役彻底删除；
+  - `SkillRuntimeService` 默认全局注册表仅保留 `mcp_exec`，所有系统技能与绑定技能全部通过 `registerRunSkills` 走 run 作用域注册；
+  - `RunGatewayService.prepareLoopInput` 生成的 `loopInput.skills` 统一采用 `skill_builtin-*` + `skill_<id>` + `mcp_exec`；
+  - `Loop/AgentLoopService` 内部 `tool` 变量与方法全面更名（`soLoopSkillSpecs`, `execLoopSkill` 等）；
+  - `scripts/migrate-system-skills.mjs` — 自动将 `runtime_runs_config.trusted_tools` 中的旧 ID 迁移为新 `skill_builtin-*` ID。
+
+**物理层保留说明**（协议与存储保持稳定）：
+  - OpenAI LLM 调用的 `tools` 协议字段、`role: 'tool'` 消息协议；
+  - 数据库 `runtime_message_part.tool_id` / `part_type = 'tool'` 存储列；
+  - SSE `tool.started` / `tool.result` 事件名（前端兼容）。
+  以上均为底层序列化协议与存储实现细节，不再代表系统领域概念。
+
+**验证**：
+  - 全工作区 5 大测试套件 1748 个用例 100% 全部通过；
+  - `npm run typecheck` 0 错误；`npm run lint:backend` 0 错误 0 警告。

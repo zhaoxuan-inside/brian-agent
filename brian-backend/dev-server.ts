@@ -12,10 +12,10 @@ import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaIni
 import { RelationDBAccess } from './Base/RelationDBProvider';
 import {
   SessionAccess,
-  ToolAccess as RuntimeToolAccess,
-  RegisterBuiltinToolsInput,
-  RegisterBuiltinToolsOutput,
-  ToolContext as RuntimeToolContext,
+  SkillRuntimeAccess,
+  RegisterBuiltinSkillsInput,
+  RegisterBuiltinSkillsOutput,
+  SkillRuntimeContext as RuntimeSkillContext,
   LoopAccess,
   AgentDefAccess,
   RunGatewayAccess,
@@ -730,7 +730,7 @@ async function buildContext() {
   // ---- Runtime v2（编排内核；Chat v2 分流依赖）----
   const runtimeSessionAccess = new SessionAccess(relationDb, logger);
   await runtimeSessionAccess.initialize();
-  const runtimeToolAccess = new RuntimeToolAccess(relationDb, {
+  const runtimeSkillAccess = new SkillRuntimeAccess(relationDb, {
     skillAccess,
     mcpAccess,
     cdtCore,
@@ -763,15 +763,15 @@ async function buildContext() {
       },
     },
   }, logger);
-  await runtimeToolAccess.initialize();
+  await runtimeSkillAccess.initialize();
   // ===== 修改后（2026-09-24 事故 e77f0bb4 复盘）：enabled 硬编码清单与 ToolService 默认注册表
   // 双事实源漂移 → 新增内置工具（exec）被此占位清单静默剔除，模型永远看不到（wire 侧 tools 明细）。
   // 不再显式传 enabled，注册集合唯一事实源 = ToolService 默认集（含全部内置工具），见上方注释保留：
   //   const builtinRegIn = new RegisterBuiltinToolsInput();
   //   builtinRegIn.enabled = ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user'];
-  const builtinRegIn = new RegisterBuiltinToolsInput();
-  const builtinRegOut = new RegisterBuiltinToolsOutput();
-  await runtimeToolAccess.registerBuiltinTools(builtinRegIn, builtinRegOut, new RuntimeToolContext());
+  const builtinRegIn = new RegisterBuiltinSkillsInput();
+  const builtinRegOut = new RegisterBuiltinSkillsOutput();
+  await runtimeSkillAccess.registerBuiltinSkills(builtinRegIn, builtinRegOut, new RuntimeSkillContext());
   logger.info('[startup] runtime builtin tools', String(builtinRegOut.registered ?? []));
 
   // RunGateway 与 Loop 的队列互相绑定：Loop 经鸭子接口消费 gateway 的 steering/followup 队列
@@ -867,7 +867,7 @@ async function buildContext() {
       }
     },
   };
-  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeToolAccess, logger, loopQueueBridge, permissionGateBridge, permissionAuditBridge);
+  const runtimeLoopAccess = new LoopAccess(relationDb, llmAccess, runtimeSessionAccess, runtimeSkillAccess, logger, loopQueueBridge, permissionGateBridge, permissionAuditBridge);
   await runtimeLoopAccess.initialize();
   const runtimeAgentDefAccess = new AgentDefAccess(relationDb, llmAccess, {
     agentBuilder,

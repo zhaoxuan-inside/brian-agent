@@ -91,6 +91,7 @@ import {
   RUNTIME_RUN_TABLE,
   RUNTIME_RUNS_CONFIG_TABLE,
 } from '../domain/types';
+import { LEGACY_TOOL_TO_SKILL_ID } from '../../SkillRuntime';
 
 /** 输出评估接口（鸭子类型，由组合根注入 Evolutor 适配器） */
 export interface OutputEvaluator {
@@ -515,7 +516,7 @@ export class RunGatewayService {
       // 思考过程与实际执行表述不相符，事故 trace 008ca7ae）：
       //   const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
       const loopInput = this.prepareLoopInput(runId, input, sessionId, snapshot);
-      const thoughtMode = this.decideThoughtMode(loopInput.tools ?? [], skillCount, mcpCount);
+      const thoughtMode = this.decideThoughtMode(loopInput.skills ?? [], skillCount, mcpCount);
       this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
       this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
       const loopOutput = new ExecAgentLoopOutput();
@@ -631,7 +632,7 @@ export class RunGatewayService {
       return;
     }
     const parts = this.relationDb.queryRaw<{ id: string; output_json: string }>(
-      `SELECT "id", "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "part_type" = 'tool' AND "tool_id" = 'delegate'`,
+      `SELECT "id", "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "part_type" = 'tool' AND "tool_id" = 'skill_builtin-delegate'`,
       [runId],
     ) ?? [];
     for (const part of parts) {
@@ -1016,17 +1017,23 @@ export class RunGatewayService {
    * - 仅剩纯编排原语（update_plan/delegate/ask_user）且无任何绑定 → CoT。
    * 判据入参改为 loop 组装后的实际工具清单（单一事实源，与 wire 侧可见工具一致）。
    */
-  private static readonly OBSERVABLE_TOOL_IDS = new Set(['exec', 'cdt_browser', 'mcp_exec']);
+  /** 可观察技能集合（2026-09-24 概念退役重定义）：系统执行类技能（命令/浏览器）+ MCP gate；
+   *  绑定技能（skill_<id>，沙箱可执行）同属观察载体；系统编排类技能（plan/ask-user）不计 */
+  private static readonly OBSERVABLE_SKILL_IDS = new Set(['skill_builtin-exec', 'skill_builtin-browser', 'mcp_exec']);
+  private static readonly ORCHESTRATION_SKILL_IDS = new Set(['skill_builtin-plan', 'skill_builtin-ask-user']);
 
-  /** 可观察原语判定（数据处理；skill 一等工具以 skill_ 前缀列入清单即观察/执行载体） */
-  private static isObservableTool(toolId: string): boolean {
-    return RunGatewayService.OBSERVABLE_TOOL_IDS.has(toolId) || toolId.startsWith('skill_');
+  /** 可观察技能判定（数据处理） */
+  private static isObservableSkill(skillId: string): boolean {
+    if (RunGatewayService.OBSERVABLE_SKILL_IDS.has(skillId)) {
+      return true;
+    }
+    return skillId.startsWith('skill_') && !RunGatewayService.ORCHESTRATION_SKILL_IDS.has(skillId);
   }
 
   /** 思维模型选定（数据处理；工具清单携带观察原语即 ReAct） */
-  private decideThoughtMode(toolIds: string[], skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
+  private decideThoughtMode(skillIds: string[], skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
     const hasBinding = skillCount > 0 || mcpCount > 0;
-    const observableCount = toolIds.filter((id) => RunGatewayService.isObservableTool(id)).length;
+    const observableCount = skillIds.filter((id) => RunGatewayService.isObservableSkill(id)).length;
     if (hasBinding || observableCount > 0) {
       return {
         mode: 'ReAct',
@@ -1089,18 +1096,17 @@ export class RunGatewayService {
     // 原实现（skill_exec 组件端口注入）见上注释保留：
     //   loopInput.tools = ['cdt_browser','update_plan','delegate','ask_user','exec'];
     //   if (boundSkills.length) loopInput.tools.push('skill_exec');
+    // ===== 2026-09-24 概念退役（Tool → Skill）：wire 可见清单 = 系统内置技能 ∪ 绑定技能 ∪ MCP gate =====
     const isSubagent = (input.lane_kind ?? LaneKind.Session) === LaneKind.Subagent;
-    loopInput.tools = ['cdt_browser', 'update_plan', 'exec'];
+    loopInput.skills = ['skill_builtin-exec', 'skill_builtin-browser', 'skill_builtin-plan', 'skill_builtin-ask-user'];
     if (!isSubagent) {
-      loopInput.tools.push('delegate', 'ask_user');
-    } else {
-      loopInput.tools.push('ask_user');
+      loopInput.skills.push('skill_builtin-delegate');
     }
     for (const skillId of boundSkills) {
-      loopInput.tools.push(`skill_${skillId}`);
+      loopInput.skills.push(`skill_${skillId}`);
     }
     if (boundMcps.length) {
-      loopInput.tools.push('mcp_exec');
+      loopInput.skills.push('mcp_exec');
     }
     loopInput.component_scope = { skills: boundSkills, mcps: boundMcps };
     return loopInput;
@@ -1349,7 +1355,8 @@ export class RunGatewayService {
     // ===== 新增（2026-09-12）：信任工具直接放行（不注册 waiter、不弹窗等待）=====
     if (input.tool_id) {
       const trusted = await this.soTrustedTools();
-      if (trusted.has(input.tool_id)) {
+      const legacyId = Object.entries(LEGACY_TOOL_TO_SKILL_ID).find(([, newId]) => newId === input.tool_id)?.[0];
+      if (trusted.has(input.tool_id) || (legacyId && trusted.has(legacyId))) {
         output.approved = true;
         output.answered = true;
         output.auto_approved = true;
