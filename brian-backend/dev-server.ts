@@ -735,6 +735,7 @@ async function buildContext() {
     mcpAccess,
     cdtCore,
     // delegate 子代理委派：迟绑定 gateway（构造顺序 Tool→Loop→Gateway，运行期才调用）
+    // 2026-09-23 委派收口：透传 agent_ref/parent_run_id（父子登记 + 直选路由），取回 run_id 供回执引用
     runGateway: {
       submitRun: async (input) => {
         const { SubmitRunInput, SubmitRunOutput, RunGatewayContext } = await import('./Runtime');
@@ -743,8 +744,12 @@ async function buildContext() {
           user_message: input.user_message,
           lane_kind: input.lane_kind,
           queue_mode: input.queue_mode,
+          agent_ref: input.agent_ref,
+          parent_run_id: input.parent_run_id,
         });
-        await runtimeGatewayRef.submitRun(i, new SubmitRunOutput(), new RunGatewayContext());
+        const o = new SubmitRunOutput();
+        await runtimeGatewayRef.submitRun(i, o, new RunGatewayContext());
+        return { run_id: o.run_id };
       },
     },
     // ===== 新增（2026-09-22）：ask_user 挂起等待：迟绑定 gateway（Deferred 在 RunGateway 侧）=====

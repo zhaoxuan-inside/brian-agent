@@ -253,3 +253,30 @@ submitRun ──ack──► accepted(queued)
   - ask_user 挂起期间 run 停留在 running（与权限门同构），会话忙锁阻止同会话新 run——多端同会话第二端消息将按 steer 入队，答复后一并消化；
   - 服务重启丢失 userAskWaiters 内存态，挂起中的 ask_user 随遗留 run 收敛路径（convergeOrphanRuns）结算为 aborted，前端卡片呈未应答终态；
   - 前端 ask_user 提问卡（问题+文本输入）属阶段4 前端 v2 协议改造范围，当前 permission.asked 事件仅可确认/拒绝。
+
+### [2026-09-23] 委派收口改造：子会话隔离 + 子 run join + 写作 Agent 唯一收口（事故 trace 22f3ce79 复盘）
+
+**变更原因**：复盘 trace 22f3ce79（"检查系统磁盘还有多少可用"）：① `persistUserMessage` 对所有 lane 无差别写 role=user —— subagent run 把委派任务当用户发言写进共享会话，一次问答在对话区"派生"出四次问答；且这些假 user 消息污染后续所有 LLM 上下文与 info_raw（syncRuntimeMessagesToInfoRaw 把它们同步为 REQUEST）；② delegate 为 fire-and-forget：无 run_id、无 parent_run_id、结果不回传，父 run 收不到子结果被迫重复委派，子代理继续向下递归委派（四级链）；③ `executeRun` 对所有 lane 共享评估+写作路径 —— 每个子 run 各自成"小问答"各自产出最终回复，主 run 不等子 run 结算，写作 Agent 只收到主 Agent 自己一条结果（WriterAgent-PRD §1 要求"汇总所有 Work Agent 结果"，Tools-PRD §6.3 设计的"push 式回传"从未实现）。
+
+**修改的方法**：
+  - `RunGatewayService.executeRun`（原实现注释保留）— 拆出 `finishRunByLane`：仅 session lane（前台问答）在 Loop 收敛后执行 `joinChildRuns`（限时 180s 轮询全部子 run 结算）→ `collectChildResults`（任务=子会话首条 user 消息；结果=子会话最后一条 assistant 消息）→ `updateDelegatePartOutputs`（delegate 工具结果从"已受理"回写为子任务实际结果摘要，受理回执中 run_id 配对）→ 评估 → 写作；收口后 run 才 settleRun。
+  - `RunGatewayService.executeRunWriting`（原实现注释保留）— `agent_results = 主 Agent 结果 + 全部子 run 结果`（子结果超时未完成的如实标注状态）。
+  - `RunGatewayService.soRunSessionId`（新增）/ `soSubSessionKey`（新增）— subagent lane 的消息落隔离子会话 `${sessionKey}::sub:${runId}`：不变量 = 主会话时间线 role=user 只来自真实用户输入；委派任务在子会话内即首条 user 消息，语义自洽；lane/队列/记忆召回仍用父 session_key（并发与排队语义不变）。
+  - `RunGatewayService.prepareLoopInput` — subagent run 不注入 `delegate`（委派链一级封顶，杜绝子代理递归委派）。
+  - `RunGatewayService.submitRun`（原实现注释保留）/ `registerDelegation`（新增）— `parent_run_id` 存在即登记父子关系（内存 Map：父 run → 子 run 列表；steer 复用活动 run id 情形不登记）。
+  - `Runs/domain/types` — `SubmitRunInput` 新增 `parent_run_id / agent_ref`。
+  - `AgentDefService.matchAgentDef` — 新增 agent_ref 直选层（`soDefByAgentRef`，位于 exact 之前）：委派指定既有 Agent 时不经语义匹配直接命中，杜绝委派任务被误路由；`MatchAgentDefInput` 新增 `agent_ref`；`RunGatewayService.matchAgent` 透传。
+  - `Tools/application/delegateTool.ts` — 重写（原版见 git 历史）：`DelegateDeps.submitRun` 改为返回 `{run_id}` 并透传 `parent_run_id / agent_ref`；受理回执携带 run_id 并明确"结果将统一汇总，请勿重复委派"；`Tools/application/builtinTools.ts` 的 `BuiltinToolDeps.runGateway` 签名同步。
+  - `dev-server.ts` — delegate 桥接补全（原实现丢弃 agent_ref、返回 void），返回 run_id。
+  - `Application/Chat/application/ChatService.syncRuntimeMessagesToInfoRaw` — 按 `runtime_run.lane` 过滤：subagent run 的消息不再同步进对话历史（抽象的是历史脏数据兜底，新数据经子会话隔离已不落主会话）。
+  - `brian-backend/scripts/cleanup-subagent-messages.mjs`（新增）— 一次性清理脚本（runtime_message / runtime_message_part / info_raw 中 subagent run 脏数据；默认 dry-run，`--commit` 执行）。本次已清理事故 trace 22f3ce79 的 4 个 subagent run / 10 条消息 / 14 个 Part / 2 行 info_raw。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 含委派的问答：最终回复唯一产出点 = 写作 Agent（汇总主 Agent 与全部子 run 结果）；主 run 结算时间延长至 join 完成（子 run 串行 + 各自预算，超时 180s 上限；外层 `waitRun` 300s 兜底不变）；
+  - 委派链语义：delegate 指定 `agent_ref` 时精准路由；子代理无 delegate 工具，链长恒为 1；
+  - 对话历史（info_raw 同步）— subagent 过程消息不再出现在对话区。
+
+**可能存在的问题**：
+  - 父子关系登记为内存 Map，服务重启丢失（重启后 join 返回空集——主 run 也不在内存，语义自洽；waitRun 超时兜底）；
+  - 子 run 结果摘要回写 delegate Part 截断 500 字，完整内容在子会话（`${sessionKey}::sub:${runId}`）可审计；
+  - subagent lane 当前实际串行（activeRunId 兼作单活动锁，与 LANE_CONCURRENCY=8 的设计存在偏差）——历史行为，join 语义下串行反而简单可控，并行化另立任务。

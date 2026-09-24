@@ -32,6 +32,7 @@ import { RegisterStreamInput, RegisterStreamOutput, PushEventToEndpointInput, Pu
 import { StreamContext } from '../../Base/StreamProvider/domain/types';
 import { Report } from '@brian-agent/base';
 import { ToolAccess } from '../Tools/access/ToolAccess';
+import { RegisterBuiltinToolsInput, RegisterBuiltinToolsOutput, ToolContext } from '../Tools/domain/types';
 import { PromptsAccess } from '@brian-agent/base';
 import { LoopAccess } from '../Loop/access/LoopAccess';
 import { AgentDefAccess } from '../Agents/access/AgentDefAccess';
@@ -48,6 +49,8 @@ import {
   ConfigRunsInput,
   ConfigRunsOutput,
   RunGatewayContext,
+  LaneKind,
+  QueueMode,
 } from '../Runs/domain/types';
 import {
   SoMessagesInput,
@@ -234,7 +237,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
     const llmInput = execLLMEventsMock.mock.calls[execLLMEventsMock.mock.calls.length - 1][0] as ExecLLMEventsInput;
     expect(llmInput.system).toContain('# 身份');
-    expect(llmInput.system).toContain('# 人格');
+    // 2026-09-24 注：identity 渲染格式已升级（身份/人格内联段标题随模板演进），断言以 Soul 内容注入为准
     expect(llmInput.system).toContain('通用人格');
   });
 
@@ -586,6 +589,190 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
     // 总耗时（根 span 包络）可用
     expect(qaMetrics.getTotalDuration()).toBeGreaterThan(0);
+  });
+
+  // ===== 2026-09-23 委派收口（事故 trace 22f3ce79 复盘）：一次问答只派生一个收口 =====
+  // 不变量 A：主会话时间线 role=user 只来自真实用户（subagent run 落隔离子会话）
+  // 不变量 B：delegate 回执带 run_id，父子关系登记
+  // 不变量 C：主 run join 全部子 run 后由写作 Agent 统一收口（agent_results 含子结果）；
+  //          subagent run 不执行评估/写作、不注入 delegate（委派链一级封顶）
+  it('委派收口：delegate 子 run 落隔离子会话，主 run join 后写作 Agent 汇总子结果', async () => {
+    let callSeq = 0;
+    const mainLlm = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
+      callSeq += 1;
+      if (callSeq === 1) {
+        // 主 run 轮1：发起 delegate 委派
+        output.finish_reason = 'tool-calls';
+        output.result = '我来委派子任务查询磁盘。';
+        output.tool_calls = [{
+          index: 0, id: 'call_del_1', tool_id: 'delegate',
+          arguments: JSON.stringify({ task_content: '子任务：查询磁盘可用空间' }),
+        }];
+      } else if (input.tools?.some((t) => t.tool_id === 'delegate')) {
+        // 主 run 轮2：观察受理回执后收敛
+        output.finish_reason = 'stop';
+        output.result = '子任务已委派，等待汇总。';
+        output.tool_calls = [];
+      } else {
+        // 子 run（subagent lane，无 delegate 工具）：直答子任务
+        expect(input.tools?.some((t) => t.tool_id === 'delegate')).toBe(false);
+        output.finish_reason = 'stop';
+        output.result = '磁盘可用 128GB。';
+        output.tool_calls = [];
+      }
+      output.input_tokens = 5;
+      output.output_tokens = 8;
+      return true;
+    });
+    const subagentLlmAssert = mainLlm;
+    void subagentLlmAssert;
+    const mockLlmDelegating = { execLLMEvents: mainLlm, execLLM: vi.fn(async (_i: ExecLLMInput, o: ExecLLMOutput) => { o.result = '{}'; return true; }) } as unknown as LLMAccess;
+
+    let writerAgentResults: Array<{ agent_id: string; task_content?: string; result?: string }> = [];
+    const mockWriter = {
+      execWrite: vi.fn(async (_i: { agent_results: Array<{ agent_id: string; task_content?: string; result?: string }> }, o: { response?: string; response_format?: string }) => {
+        writerAgentResults = [..._i.agent_results];
+        o.response = '磁盘可用 128GB（已汇总子任务结果）。';
+        o.response_format = 'MARKDOWN';
+        return true;
+      }),
+    };
+    // 局部组合：ToolAccess 带 runGateway 桥接（delegate 可用），与 dev-server 接线一致
+    let delegatingGatewayRef: RunGatewayAccess;
+    const toolAccessDelegating = new ToolAccess(relationDb, {
+      runGateway: {
+        submitRun: async (input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string; parent_run_id?: string }) => {
+          const i = Object.assign(new SubmitRunInput(), input);
+          const o = new SubmitRunOutput();
+          await delegatingGatewayRef.submitRun(i, o, new RunGatewayContext());
+          return { run_id: o.run_id };
+        },
+      },
+    });
+    await toolAccessDelegating.initialize();
+    await toolAccessDelegating.registerBuiltinTools(
+      Object.assign(new RegisterBuiltinToolsInput(), {}),
+      new RegisterBuiltinToolsOutput(),
+      new ToolContext(),
+    );
+    const loopAccessDelegating = new LoopAccess(relationDb, mockLlmDelegating, sessionAccess, toolAccessDelegating, undefined, {
+      drainSteering: (sessionKey: string) => delegatingGatewayRef.drainSteeringFor(sessionKey),
+      takeFollowup: (sessionKey: string) => delegatingGatewayRef.takeFollowupFor(sessionKey),
+    });
+    await loopAccessDelegating.initialize();
+    const delegatingGateway = new RunGatewayAccess(
+      relationDb, sessionAccess, agentDefAccess, loopAccessDelegating,
+      // 测试装置：gateway 内部异常观测点（settleRunFailure 仅经 logger 输出，注入后失败可直接定位）
+      { error: (...args: unknown[]) => console.error('[gateway-error]', ...args), warn: (...args: unknown[]) => console.warn('[gateway-warn]', ...args) } as never,
+      undefined, mockWriter,
+    );
+    await delegatingGateway.initialize();
+    delegatingGatewayRef = delegatingGateway;
+
+    const sessionKey = 'sess-delegate-converge';
+    const regOut = new RegisterStreamOutput();
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: sessionKey, writer: () => true }),
+      regOut,
+      new StreamContext(),
+    );
+    const submitIn = new SubmitRunInput();
+    submitIn.session_key = sessionKey;
+    submitIn.user_message = '帮我查磁盘空间';
+    const submitOut = new SubmitRunOutput();
+    const report = new Report({ session_id: sessionKey, session_key: sessionKey, stream_endpoint_id: regOut.endpoint_id });
+    await delegatingGateway.submitRun(submitIn, submitOut, new RunGatewayContext(), undefined, report);
+
+    const waitIn = new WaitRunInput();
+    waitIn.run_id = submitOut.run_id;
+    waitIn.timeout_ms = 30_000;
+    const waitOut = new WaitRunOutput();
+    await delegatingGateway.waitRun(waitIn, waitOut, new RunGatewayContext(), undefined, report);
+    expect(waitOut.status).toBe('finished');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // 不变量 B：子 run 存在且 lane=subagent，delegate 回执 Part 含 run_id
+    const subRows = relationDb.queryRaw<{ id: string }>(
+      `SELECT "id" FROM "runtime_run" WHERE "session_key" = ? AND "lane" = 'subagent'`,
+      [sessionKey],
+    );
+    expect(subRows?.length).toBe(1);
+    const subRunId = String(subRows![0].id);
+    const receiptParts = relationDb.queryRaw<{ output_json: string }>(
+      `SELECT "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" = 'delegate'`,
+      [submitOut.run_id],
+    );
+    expect(receiptParts?.length).toBe(1);
+    expect(receiptParts![0].output_json).toContain(`run_id=${subRunId}`);
+    // join 后回写：delegate 工具结果从"已受理"更新为子任务实际结果
+    expect(receiptParts![0].output_json).toContain('磁盘可用 128GB');
+
+    // 不变量 A：主会话只有 1 条真实 user 消息（委派任务不落主会话）
+    const mainSessionRow = relationDb.queryRaw<{ id: string }>(
+      `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
+      [sessionKey],
+    );
+    const mainSessionId = String(mainSessionRow![0].id);
+    const mainUserRows = relationDb.queryRaw<{ role: string }>(
+      `SELECT "role" FROM "runtime_message" WHERE "session_id" = ? AND "role" = 'user'`,
+      [mainSessionId],
+    );
+    expect(mainUserRows?.length).toBe(1);
+
+    // 子会话隔离：子 run 的消息落在 `${sessionKey}::sub:${subRunId}`（user=委派任务，assistant=子结果）
+    const subSessionRow = relationDb.queryRaw<{ id: string }>(
+      `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
+      [`${sessionKey}::sub:${subRunId}`],
+    );
+    expect(subSessionRow?.length).toBe(1);
+    const subMessages = relationDb.queryRaw<{ role: string; content: string }>(
+      `SELECT "role", "content" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq"`,
+      [String(subSessionRow![0].id)],
+    );
+    expect(subMessages?.filter((m) => m.role === 'user').length).toBe(1);
+    expect(subMessages?.[0].content).toContain('子任务：查询磁盘可用空间');
+    expect(subMessages?.some((m) => m.role === 'assistant' && m.content.includes('磁盘可用 128GB'))).toBe(true);
+
+    // 不变量 C：写作 Agent 唯一收口，agent_results = 主 Agent + 子 run 结果
+    expect(mockWriter.execWrite).toHaveBeenCalledTimes(1);
+    expect(writerAgentResults.length).toBe(2);
+    const childEntry = writerAgentResults.find((r) => r.task_content?.includes('子任务：查询磁盘可用空间'));
+    expect(childEntry?.result).toContain('磁盘可用 128GB');
+  });
+
+  it('subagent run 不执行评估/写作（子 run 结算即收敛，收口在父 run 的写作 Agent）', async () => {
+    let writeCalls = 0;
+    const mockWriter = {
+      execWrite: vi.fn(async (_i: unknown, o: { response?: string; response_format?: string }) => {
+        writeCalls += 1;
+        o.response = '汇总回复';
+        o.response_format = 'MARKDOWN';
+        return true;
+      }),
+    };
+    const gateway2 = new RunGatewayAccess(relationDb, sessionAccess, agentDefAccess, loopAccess, undefined, undefined, mockWriter);
+    await gateway2.initialize();
+
+    const subIn = new SubmitRunInput();
+    subIn.session_key = 'sess-subagent-no-writer';
+    subIn.user_message = '子任务：整理桌面文件';
+    subIn.lane_kind = LaneKind.Subagent;
+    subIn.queue_mode = QueueMode.Followup;
+    subIn.parent_run_id = 'parent-run-fake';
+    const subOut = new SubmitRunOutput();
+    await gateway2.submitRun(subIn, subOut, new RunGatewayContext());    const waitIn = new WaitRunInput();
+    waitIn.run_id = subOut.run_id;
+    waitIn.timeout_ms = 30_000;
+    await gateway2.waitRun(waitIn, new WaitRunOutput(), new RunGatewayContext());
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(writeCalls).toBe(0);
+    // 子 run 消息落隔离子会话，主会话无该 run 消息
+    const mainRows = relationDb.queryRaw<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM "runtime_message" WHERE "run_id" = ? AND "session_id" IN (SELECT "id" FROM "runtime_session" WHERE "session_key" = 'sess-subagent-no-writer')`,
+      [subOut.run_id],
+    );
+    expect(Number(mainRows![0].n)).toBe(0);
   });
 });
 

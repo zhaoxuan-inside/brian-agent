@@ -65,3 +65,10 @@
 - `GET /api/config/history` — 查询全局变更历史（支持时间范围过滤）
 
 **状态**：✅ 已完成（2026-09-22：config_history 表 + updateConfig 变更记录 + 全局/单配置项 2 个查询端点；前端 history API + ConfigValueDiff（原语单行/多行 LCS 行级 diff）+ ConfigHistoryModal + 保存前 Diff 确认弹窗；见 Config-PRD 同日变更记录）
+
+## 2026-09-23 登记项
+
+- [ ] `Core/SkillCoreProvider/application/SkillCoreService.ts:602` — lint 错误 `matchCtx` 未使用（`_` 前缀即可）——既有问题（委派收口改动 stash 复测确认），顺其见_FINISH 另立提交修复，未混入本次；
+- [ ] embedding 服务可用性 — `InfoCoreService.generateEmbedding` 返回空向量（SIMILARITY 召回静默退化），且 Agent 向量匹配层随之失效（silently 回退 LLM 裁判）；需显式告警与选型修复；
+- [ ] delegate 同任务重复提交硬去重（当前靠工具描述纪律约束，见 Tools-PRD §12 可能存在的问题）；
+- [ ] subagent lane 与 `LANE_CONCURRENCY[subagent]=8` 设计对齐（当前 activeRunId 兼作单活动锁致实际串行，Runs-PRD [2026-09-23] 已登记）；

@@ -100,6 +100,7 @@ export class MCPCoreService {
     if (input.bound_mcp_ids && input.bound_mcp_ids.length > 0) {
       output.mcp_ids = input.bound_mcp_ids;
       output.mcp_details = availableMcps.length > 0 ? await this.getMcpDetails(input.bound_mcp_ids) : [];
+      output.detail = 'local_hit';
       return true;
     }
 
@@ -111,28 +112,42 @@ export class MCPCoreService {
       const ids = cached.record.result.map((r) => r.id);
       output.mcp_ids = ids;
       output.mcp_details = this.toMcpDetails(ids, availableMcps);
+      output.detail = ids.length > 0 ? 'local_hit' : 'negative_cache_hit';
       return true;
     }
 
     // ===== 第 2 层：LLM 需求判定与排序合并（空库也判定，防闲聊任务触发市场安装） =====
     let rankedIds: string[] = [];
+    // token 维度传播：判定上下文装入 run_id/work_id/session（llm_call_log 可按 run 归因）
     const judged = await this.rankMcpsWithLLM(
       availableMcps,
       input,
       config.prompt_template_id,
-      context,
+      Object.assign(new McpCoreContext(), {
+        run_id: input.run_id ?? '',
+        session_id: input.context_id ?? '',
+        work_id: input.run_id ?? '',
+      }),
     );
     if (judged === null) {
       // 模板/LLM 失败：保守返回空（不写负缓存、不触发市场获取，可重试）
       output.mcp_ids = [];
       output.mcp_details = [];
+      output.detail = 'judge_failed';
       return true;
     }
     if (!judged.need) {
-      // 负缓存：任务不需要 MCP，重复任务零 LLM
-      await this.commitMatchCache(input.task_content ?? '', cached.query, [], context);
+      // 任务不需要 MCP：仅 LLM 显式判定（confirmed）才落负缓存；
+      // 解析失败/空数组兜底（confirmed=false）视为判定不可靠，不得固化
+      //（2026-09-24 修复：原实现 need=false 一律负缓存，解析失败永久短路市场获取层）
       output.mcp_ids = [];
       output.mcp_details = [];
+      if (judged.confirmed) {
+        output.detail = 'judged_unneeded';
+        await this.commitMatchCache(input.task_content ?? '', cached.query, [], context);
+      } else {
+        output.detail = 'parse_failed';
+      }
       return true;
     }
     const threshold = config.score_threshold ?? ScoreThreshold.Default;
@@ -146,6 +161,7 @@ export class MCPCoreService {
       await this.commitMatchCache(input.task_content ?? '', cached.query, rankedIds, context);
       output.mcp_ids = rankedIds;
       output.mcp_details = this.toMcpDetails(rankedIds, availableMcps);
+      output.detail = 'local_hit';
       return true;
     }
 
@@ -153,16 +169,19 @@ export class MCPCoreService {
     if (!config.market_install_enabled) {
       output.mcp_ids = [];
       output.mcp_details = [];
+      output.detail = 'local_miss_market_disabled';
       return true;
     }
     const marketId = await this.installMcpFromMarket(input.task_content ?? '', context);
     if (!marketId) {
       output.mcp_ids = [];
       output.mcp_details = [];
+      output.detail = 'market_miss';
       return true;
     }
     output.mcp_ids = [marketId];
     output.mcp_details = await this.getMcpDetails([marketId]);
+    output.detail = 'market_installed';
     return true;
   }
 

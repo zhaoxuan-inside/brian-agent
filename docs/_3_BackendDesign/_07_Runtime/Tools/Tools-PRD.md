@@ -166,3 +166,37 @@ export class ConfigToolInput extends Input { default_max_output?: number; parall
 
 **可能存在的问题**：
   - re-exec 后 pid 归零（真实子进程 pid 无法从端口反查），需强杀时只能经 `stopCDT`（killProcess 对 pid=0 no-op）→ 依赖端点探活兜底，若浏览器真死则走正常清理路径。
+
+## 12. delegate 委派收口：回执带 run_id + parent_run_id/agent_ref 透传（2026-09-23）
+
+**变更原因**：事故 trace 22f3ce79 复盘（详见 Runs-PRD §[2026-09-23]）。原 delegate 为 fire-and-forget：受理回执无 run_id、不透传 parent_run_id / agent_ref（桥接层丢弃），子任务结果不回传父 run —— 模型因收不到结果语义被迫重复委派，子代理再向下递归委派（四级委派链），且 Tools-PRD §56 设计的 push 式回传从未实现。收口语义重新设计：**子任务结果不在循环内逐条回传，而是父 run 收敛后 join 全部子 run、由写作 Agent 统一汇总为唯一最终回复**（链长一级封顶，子代理无 delegate 工具）。
+
+**修改的方法**：
+  - `Tools/application/delegateTool.ts` — 重写（原版见 git 历史）：`DelegateDeps.submitRun` 返回 `{run_id}` 并透传 `agent_ref / parent_run_id`；受理回执携带 `run_id=<id>` 并注明"结果必将统一汇总、请勿重复委派同任务"；工具描述更新委派纪律。
+  - `Tools/application/builtinTools.ts` — `BuiltinToolDeps.runGateway` 签名同步（返回 `{run_id}`、入参增 parent_run_id）。
+  - `dev-server.ts` — delegate 桥接补全（原实现丢弃 agent_ref、返回 void）。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — 委派问答：delegate 工具卡受理后，join 完成时工具结果由"已受理"回写为子任务实际结果摘要（run_id 配对）。
+
+**可能存在的问题**：
+  - 模型若仍循旧习惯在受理后追问结果，回执文本已明确告知等待统一汇总；幂等去重未做硬拦截（同任务重复 delegate 仍会受理新子 run，靠提示词纪律约束——若实测仍重复，另行加同内容在途去重）。
+
+## 13. exec 宿主命令执行原语（2026-09-24 · OpenClaw 对齐补齐）
+
+**变更原因**：事故 trace 95b8e237（"我现在还有多少可用的磁盘"）——Agent 唯一可得原语是 `cdt_browser`（浏览器沙箱 evaluate，无宿主权限）、Skill/MCP 通道产出技能后同样需要可运行脚本的宿主底座；OpenClaw 2.0 工具策略中 exec/process/read 为一等公民原语，本项目宿主执行长期缺位，导致"编排正确但工作不闭环"（Agent 只能给说明书）。
+
+**修改的方法**：
+  - `Runtime/Tools/application/execTool.ts`（新增）— `child_process.spawn`（shell 模式、stdin 关闭防交互挂死）、超时默认 60s 强杀、`ExecAgentLoopInput.signal` 贯通（abort 即 SIGKILL）、输出截断 8000 字（沿 CDT_CONTENT_MAX 惯例）、stderr 分段展示、exit_code 如实透出。
+  - `Tools/application/ToolService.ts` — `BUILTIN_TOOL_IDS` 与 `registerBuiltinTools` 默认注册表加入 `exec`；`prepareBuiltinCandidates` 装配（无组件依赖）。
+  - `RunGatewayService.prepareLoopInput` — session lane 与 subagent lane 工具清单均注入 `exec`。
+  - 安全边界 — `exec` **不进信任表默认项**：首次执行必经 Loop 权限门（permission.asked 卡片），用户批准且"记住"后按既有 trust 机制自动放行。
+
+**影响的端点**：
+  - `POST /api/chat/stream` — Agent 对宿主类任务（磁盘/进程/网络）可直接取回真实数据；权限卡仅在首次出现。
+
+**验证**：Tools.test.ts 新增 3 用例（echo/非零退出码/超时强杀）全过；Runtime 全量回归 15/15。
+
+**可能存在的问题**：
+  - shell 模式承载完整 shell 语法（管道/重定向），拦截维度依赖用户确权；后续如需白名单命令前缀另立任务；
+  - 子进程 stdin 已关闭，交互式命令会在输出截断/超时后强杀（不会挂死 run）。

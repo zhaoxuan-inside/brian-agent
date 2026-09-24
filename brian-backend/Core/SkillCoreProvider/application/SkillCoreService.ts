@@ -88,6 +88,23 @@ export class SkillCoreService {
 
   /**
    * 为 Agent 匹配 Skill（四层瀑布：需求判定合并排序 → 本地 → GitHub → 自建）。
+   * 原始方法（保留作为参考）：
+   *  - need=false 一律负缓存短路（解析失败也会被判 false → 永久短路扩容层，事故 trace 95b8e237）；
+   *  - GitHub 检索 keywords 为空直接 return —— 判定端忘给 words 时扩容层再次静默跳过。
+   */
+  // async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
+  // ): Promise<boolean> {
+  //   ...（原文见 git 历史，逻辑同下但 :140-145 need=false 未验 confirmed 落负缓存、:159 keywords 空即 return）
+  // }
+
+  /**
+   * 为 Agent 匹配 Skill（四层瀑布：需求判定合并排序 → 本地 → GitHub → 自建）。
+   * 2026-09-24 三处修复（事故 trace 95b8e237 根因闭环）：
+   *  ① need=false 仅在 confirmed（LLM 显式判定）时写负缓存 —— 解析失败/空数组兜底不得
+   *    固化为业务结论（原实现 need=false 一律负缓存，见上方注释保留）；
+   *  ② GitHub 检索 keywords 空时以任务文本兜底 —— 扩容层不再因 LLM 忘给 words 静默跳过；
+   *  ③ output.detail 记录判定终态（judged_unneeded / negative_cache_hit / no_inventory /
+   *    threshold_filtered / github_miss / generated / local_hit），供事件层分维度可观测。
    */
   async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -99,6 +116,7 @@ export class SkillCoreService {
     // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
     if (input.bound_skill_ids && input.bound_skill_ids.length > 0) {
       output.skills = await this.enrichMatchedSkills(input.bound_skill_ids);
+      output.detail = 'local_hit';
       return true;
     }
 
@@ -108,14 +126,16 @@ export class SkillCoreService {
       : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
     const cachedIds = (cached.record?.result ?? []).map((r) => r.id);
     if (cached.record && cachedIds.length === 0) {
-      // 负缓存命中：LLM 曾判定该任务不需要 Skill，直接返回空
+      // 负缓存命中：LLM 曾显式判定该任务不需要 Skill，直接返回空
       output.skills = [];
+      output.detail = 'negative_cache_hit';
       return true;
     }
     if (cachedIds.length > 0) {
       const hydrated = await this.hydrateSkillsOrNone(cachedIds);
       if (hydrated.length > 0) {
         output.skills = hydrated;
+        output.detail = 'local_hit';
         return true;
       }
       this.matchCache.clear();
@@ -131,16 +151,33 @@ export class SkillCoreService {
     const availableSkills = skillOutput.list;
 
     // ===== 第 2 层：LLM 需求判定与排序合并 =====
-    const judged = await this.rankSkillsByLLM(agent_id, context_id, run_id, availableSkills, config, input.task_content ?? '', context);
+    // 判定语义（由匹配模板承载）：need 只回答"任务是否需要外部能力/事实/执行"，不看本地库存；
+    // 库存匹配由 candidates 单独回答。库存无货 ≠ 任务不需要（否则扩容层死锁）。
+    // token 维度传播：判定上下文装入 run_id/work_id/session（llm_call_log 可按 run 归因）
+    const judgeCtx = Object.assign(new SkillCoreContext(), {
+      run_id: input.run_id ?? '',
+      session_id: input.context_id ?? '',
+      work_id: input.run_id ?? '',
+    });
+    const judged = await this.rankSkillsByLLM(agent_id, context_id, run_id, availableSkills, config, input.task_content ?? '', judgeCtx);
     if (judged === null) {
       // 模板/LLM 失败：保守返回空（不写负缓存、不触发外部获取，可重试）
       output.skills = [];
+      output.detail = 'judge_failed';
+      _metrics?.warn?.('SkillCore 任务判定失败（模板/LLM 异常，保守空返回，不落负缓存）', { agent_id, run_id: input.run_id ?? '' });
       return true;
     }
     if (!judged.need) {
-      // 负缓存：任务不需要 Skill，重复任务零 LLM
-      await this.commitMatchCache(input.task_content ?? '', cached.query, [], context);
+      // 任务不需要 Skill：仅 LLM 显式判定（confirmed）才落负缓存；
+      // 解析失败/空数组兜底（confirmed=false）视为判定不可靠，不得固化
       output.skills = [];
+      if (judged.confirmed) {
+        output.detail = 'judged_unneeded';
+        await this.commitMatchCache(input.task_content ?? '', cached.query, [], context);
+      } else {
+        output.detail = 'parse_failed';
+        _metrics?.warn?.('SkillCore 判定输出解析失败（不写负缓存，避免固化错误结论）', { agent_id, run_id: input.run_id });
+      }
       return true;
     }
 
@@ -152,22 +189,34 @@ export class SkillCoreService {
     if (ranked.length > 0) {
       await this.commitMatchCache(input.task_content ?? '', cached.query, ranked, context);
       output.skills = ranked;
+      output.detail = 'local_hit';
       return true;
     }
 
-    // ===== 第 3 层：GitHub 外部检索（need=true 且本地无合格者） =====
-    const imported = await this.importSkillFromGitHub(judged.keywords, config, context);
+    // ===== 第 3 层：GitHub 外部检索（need=true 且本地无合格者；keywords 空时以任务文本兜底） =====
+    const searchWords = judged.keywords.length > 0
+      ? judged.keywords
+      : [String(input.task_content ?? '').slice(0, 64)];
+    const imported = await this.importSkillFromGitHub(searchWords, config, context);
     if (imported) {
       output.skills = [imported];
+      output.detail = 'github_imported';
       return true;
     }
 
     // ===== 第 4 层：完整自建（GitHub 也无果；auto_generate_enabled 可关） =====
     if (!config.auto_generate_enabled) {
       output.skills = [];
+      output.detail = 'github_miss_generate_disabled';
+      _metrics?.warn?.('SkillCore 本地与 GitHub 均无合格命中，且自动生成已关闭', { agent_id, keywords: searchWords });
       return true;
     }
-    output.skills = await this.generateSkill(agent_id, input.task_content ?? '', context);
+    const generated = await this.generateSkill(agent_id, input.task_content ?? '', context);
+    output.skills = generated;
+    output.detail = generated.length > 0 ? 'generated' : 'generate_failed';
+    if (generated.length === 0) {
+      _metrics?.warn?.('SkillCore 自生成未产出可用技能（LLM 输出解析或落库失败）', { agent_id, run_id: input.run_id });
+    }
     return true;
   }
 
@@ -599,7 +648,7 @@ export class SkillCoreService {
   private async importSkillFromGitHub(
     keywords: string[],
     config: SkillCoreConfigRecord,
-    matchCtx?: Context,
+    _matchCtx?: Context,
   ): Promise<MatchedSkillEntry | null> {
     if (!config.github_search_enabled || !this.githubClient || keywords.length === 0) {
       return null;

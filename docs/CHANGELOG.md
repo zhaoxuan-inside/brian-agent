@@ -2446,3 +2446,11 @@
 **修复**：见 Runs-PRD / Tools-PRD §[2026-09-23] 与 docs/decisions.md 同日条目。核心：`RunGatewayService`（finishRunByLane / joinChildRuns / collectChildResults / updateDelegatePartOutputs / soRunSessionId / registerDelegation）、`AgentDefService.matchAgentDef`（agent_ref 直选层）、`delegateTool`（回执带 run_id + parent_run_id/agent_ref 透传）、`ChatService.syncRuntimeMessagesToInfoRaw`（lane 过滤）、`dev-server.ts`（桥接补全）、`scripts/cleanup-subagent-messages.mjs`（存量清理，已执行）。
 
 **验证**：typecheck 全 workspace 通过；lint 通过（SkillCoreService.ts:602 未用变量为既有错误，stash 复测确认，已记 TODO）；RuntimeGateway/AgentLoop/Tools/AgentDefVectorMatch/Session/AskUser/Chat 共 116 用例通过（RuntimeGateway 2 个既有失败与本次无关，stash 复测确认）；新增 2 个委派收口用例（子会话隔离 + join 汇总写作 / subagent 不执行写作）。E2E 冒烟受阻：LLM provider 429 AccountQuotaExceeded（5 小时配额，2026-09-24 01:01 重置），配额恢复后可发一次问答复验。
+
+## [2026-09-24] 组件匹配契约同步 + 负缓存确认治理 + exec 宿主原语 + 身份模板精准命中（trace 95b8e237 闭环）
+
+**事故**：trace 95b8e237——Agent 面对"查磁盘"任务手无宿主原语（唯一 cdt_browser 沙箱 JS）；Skill/MCP 机制注册齐备却因匹配模板停留在旧契约+解析失败均落负缓存而全链空转，"一次现场 build 全部空绑定"，工作不闭环。
+
+**修复**：RunCore 匹配契约（need/keywords/candidates）对齐（RankingParser confirmed 标记），SkillCore/MCPCore 负缓存确认治理 + GitHub/market 兜底，判定终态事件分维度，模板迁移（fix-matching-prompts.mjs 幂等双通道落地），exec 原语补齐（不进信任表，用户确权一次），身份模板精准匹配修复（LIKE '%身份%' 生产身份劫持）；详见 Runtime-PRD/Tools-PRD 同日条目与 decisions.md。
+
+**验证**：typecheck / lint 全绿；单测 RuntimeGateway 15/15（两个基线失败教训一并治愈）、SkillCoreWaterfall 9/9（新增 3）、MCPCore/RankingParser/Tools 全量 15/15、17/17；全工作区 test 1684+ all pass。

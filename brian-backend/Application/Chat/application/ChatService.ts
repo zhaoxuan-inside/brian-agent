@@ -273,6 +273,20 @@ export class ChatService {
       // assistant 消息兜底保留（预算耗尽/异常导致无纯文本最终轮时仍有 RESPONSE）。
       // wire 历史走 runtime_* 表，不受此显示侧过滤影响。
       const runIds = Array.from(new Set(rows.map((r) => r.run_id).filter(Boolean)));
+      // ===== 新增（2026-09-23 委派收口）：subagent run 的消息不同步到对话历史 =====
+      // 委派任务文本是系统内部委派（非用户发言），旧实现曾把它以 REQUEST 角色同步进
+      // 对话区（事故 trace 22f3ce79：一次问答"派生两次问答"）。新数据经子会话隔离已不落
+      // 主会话；此处按 run lane 过滤兜底历史脏数据，不变量：对话区 user 行只来自真实用户。
+      const subagentRunIds = new Set<string>(
+        runIds.length === 0 ? [] : (() => {
+          const placeholders = runIds.map(() => '?').join(',');
+          const laneRows = this.relationDb.queryRaw<{ id: string }>(
+            `SELECT "id" FROM "runtime_run" WHERE "id" IN (${placeholders}) AND "lane" = 'subagent'`,
+            runIds,
+          );
+          return (laneRows ?? []).map((r) => String(r.id));
+        })(),
+      );
       // ===== 修改后（2026-09-14 trace 源头治理）：历史行不再盖当轮 traceId =====
       // 原行为：迟到补齐的历史行（本轮之外的 run）也被盖上当轮 traceId，造成
       // "两次提问 traceId 相同"的污染（事故 trace 989acae9：上一轮 run 因进程重启
@@ -306,6 +320,8 @@ export class ChatService {
 
       for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
         const msg = rows[rowIdx];
+        // subagent run 的消息（委派任务/子代理过程输出）不进对话历史（2026-09-23 委派收口）
+        if (msg.run_id && subagentRunIds.has(msg.run_id)) continue;
         // 空内容占位行（如 run 超时未回复的 assistant 行）跳过，不落库也不中断
         if (!msg.content || msg.content.trim() === '') continue;
         // 中间轮叙述跳过（兜底保留每 run 最后一条）

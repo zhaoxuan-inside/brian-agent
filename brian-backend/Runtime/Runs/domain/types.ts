@@ -95,6 +95,10 @@ export class SubmitRunInput extends Input {
   budget_total?: number;
   /** Lane 种类（缺省 session；delegate 子代理用 subagent，curator 用 background） */
   lane_kind?: LaneKind;
+  /** 委派父 run（delegate 提交时必填；主 run 据此 join 子 run 并收口写作） */
+  parent_run_id?: string;
+  /** 委派指定既有 Agent（agent.agent_id；命中后跳过瀑布直选 def） */
+  agent_ref?: string;
 }
 
 /** submitRun 出参（两段式 ack） */

@@ -294,6 +294,20 @@ export class AgentDefService {
       throw new ValidationError('task_content 不能为空');
     }
     const defs = await this.soActiveDefs();
+    // ===== 新增（2026-09-23）：agent_ref 直选层 —— delegate 委派指定既有 Agent 时不经任何
+    // 语义匹配直接命中（委派任务的执行者由委派方显式指定，误路由零容忍）=====
+    const referred = input.agent_ref ? this.soDefByAgentRef(defs, input.agent_ref) : null;
+    if (referred) {
+      output.def_id = referred.id;
+      output.matched_by = AgentMatchLayer.Exact;
+      output.def = referred;
+      report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
+        def_id: referred.id,
+        agent_name: referred.name,
+        matched_by: 'ref',
+      });
+      return true;
+    }
     const exact = this.soExactMatch(defs, input.task_content, input.task_domain);
     if (exact) {
       output.def_id = exact.id;
@@ -358,6 +372,11 @@ export class AgentDefService {
    */
   //   }
   // }
+
+  /** 按 agent_ref 直选定义（数据处理：agent_ref 匹配 def.agent_ref 或 def.id） */
+  private soDefByAgentRef(defs: AgentDefRecord[], agentRef: string): AgentDefRecord | null {
+    return defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
+  }
 
   /** L1 精确命中（数据处理：签名完全一致） */
   private soExactMatch(defs: AgentDefRecord[], taskContent: string, domain?: string): AgentDefRecord | null {
@@ -879,15 +898,32 @@ export class AgentDefService {
   }
 
   /** 默认身份提示词模板 ID 读取（逻辑控制；DB 查询标题含 '身份' 的模板，缺失回退首个启用模板） */
+  // ===== 修改后（2026-09-24 事故 trace 95b8e237 复盘配套）：原实现 LIKE '%身份%' 不区分
+  // is_system，新增"文档伴读身份"等同类标题模板后命中顺序不确定 —— 生产 Agent 身份被
+  // 随机劫持为"文档伴读"人格（失败用例"组件绑定收敛/Soul 注入"实证）。改为 source 声明式
+  // 精确标题 + is_system 双条件兜底，身份来源不可漂移 =====
+  // 原方法注释保留（见上方注释块）：
+  // private async soDefaultIdentityTemplateId(): Promise<string> {
+  //   const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+  //     { field: 'prompt_template_title', operator: Operator.LIKE, value: '%身份%' },
+  //   ]);
+  //   if (row && row.id) return String(row.id);
+  //   const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+  //     { field: 'enable', operator: Operator.EQ, value: 1 },
+  //   ]);
+  //   if (anyRow && anyRow.id) return String(anyRow.id);
+  //   throw new ValidationError('未找到可用的身份提示词模板');
+  // }
   private async soDefaultIdentityTemplateId(): Promise<string> {
-    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%身份%' },
+    const identityRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'prompt_template_title', operator: Operator.EQ, value: 'Brian 身份声明' },
+      { field: 'is_system', operator: Operator.EQ, value: 1 },
     ]);
-    if (row && row.id) return String(row.id);
-    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'enable', operator: Operator.EQ, value: 1 },
+    if (identityRow && identityRow.id) return String(identityRow.id);
+    const systemRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+      { field: 'is_system', operator: Operator.EQ, value: 1 },
     ]);
-    if (anyRow && anyRow.id) return String(anyRow.id);
+    if (systemRow && systemRow.id) return String(systemRow.id);
     throw new ValidationError('未找到可用的身份提示词模板');
   }
 

@@ -27,6 +27,10 @@ export interface NeedRankingResult {
   /** LLM 从任务提炼的英文检索关键词（供 GitHub / 提供商市场搜索；need=true 时输出） */
   keywords: string[];
   candidates: RankedCandidate[];
+  /** 2026-09-24 新增：need 是否为 LLM 显式判定（显式 need 字段，或旧数组契约非空数组）。
+   *  confirmed=false（解析失败/空数组保守兜底）不得写入负缓存 —— 把 LLM 的失败
+   *  固化为"任务不需要组件"的业务结论是事故 trace 95b8e237 的根因之一 */
+  confirmed: boolean;
 }
 
 /**
@@ -41,9 +45,9 @@ export function parseNeedRankingResult(text: string): NeedRankingResult {
   if (objectResult) return objectResult;
   const legacy = parseRankingCandidates(text);
   if (legacy.length > 0) {
-    return { need: true, keywords: [], candidates: legacy };
+    return { need: true, keywords: [], candidates: legacy, confirmed: true };
   }
-  return { need: false, keywords: [], candidates: [] };
+  return { need: false, keywords: [], candidates: [], confirmed: false };
 }
 
 /** 对象契约解析（数据处理）：{need, keywords, candidates}；字段缺失时按保守语义回退 */
@@ -74,7 +78,7 @@ function parseObjectContract(text: string): NeedRankingResult | null {
   const candidates = Array.isArray(item.candidates)
     ? item.candidates.map(toCandidate).filter((c): c is RankedCandidate => c != null)
     : [];
-  return { need, keywords, candidates };
+  return { need, keywords, candidates, confirmed: true };
 }
 
 /** 去除 Markdown 代码围栏（数据处理） */

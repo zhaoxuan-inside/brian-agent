@@ -116,6 +116,8 @@ export class MatchAgentDefInput extends Input {
   session_id?: string;
   /** 上下文 ID（组件 match 透传） */
   context_id?: string;
+  /** 指定既有 Agent（agent.agent_id / runtime_agent_def.id；命中即直选，跳过瀑布） */
+  agent_ref?: string;
   /** 强制新建（跳过复用层） */
   force_new?: boolean;
 }

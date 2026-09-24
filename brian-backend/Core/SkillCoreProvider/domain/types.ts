@@ -101,6 +101,11 @@ export interface MatchedSkillEntry {
 export class MatchSkillOutput extends Output {
   /** 匹配到的 Skill 列表 */
   skills: MatchedSkillEntry[] = [];
+  /** 2026-09-24 新增：判定终态（local_hit / negative_cache_hit / judged_unneeded /
+   *  parse_failed / judge_failed / github_imported / github_miss_generate_disabled /
+   *  generated / generate_failed），供事件层分维度可观测（事故 trace 95b8e237：
+   *  统一"无强匹配即空绑定"文案掩盖了判定层真实走向） */
+  detail = '';
 }
 
 // ---------------------------------------------------------------------------

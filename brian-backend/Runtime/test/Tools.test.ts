@@ -19,6 +19,7 @@ import {
 } from '../Tools/domain/types';
 import { zodToJSONSchema } from '../Tools/domain/zodToJsonSchema';
 import { skillExecTool } from '../Tools/application/builtinTools';
+import { execTool } from '../Tools/application/execTool';
 import type { AnyToolDef } from '../Tools/domain/types';
 
 describe('zodToJSONSchema', () => {
@@ -268,5 +269,27 @@ describe('ToolService', () => {
     await toolAccess.execTool(exec, out, new ToolContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('MCP Provider 未注入');
+  });
+});
+
+describe('execTool（宿主命令执行）', () => {
+  it('echo 命令返回真实 stdout 与 exit_code=0', async () => {
+    const tool = execTool();
+    const result = await tool.execute({ command: 'echo hello-exec', timeout_s: 10 }, new ToolContext() as never);
+    expect(result.status).toBe('ok');
+    expect(result.output).toContain('hello-exec');
+    expect(result.output).toContain('exit_code=0');
+  });
+
+  it('非零退出码如实上报（不伪装成功）', async () => {
+    const tool = execTool();
+    const result = await tool.execute({ command: 'exit 3', timeout_s: 10 }, new ToolContext() as never);
+    expect(result.output).toContain('exit_code=3');
+  });
+
+  it('超时强制终止并注明', async () => {
+    const tool = execTool();
+    const result = await tool.execute({ command: 'sleep 5', timeout_s: 1 }, new ToolContext() as never);
+    expect(result.output).toContain('超时终止');
   });
 });

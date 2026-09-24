@@ -38,6 +38,9 @@ export class MatchMcpInput extends Input {
 export class MatchMcpOutput extends Output {
   mcp_ids: string[] = [];
   mcp_details: McpInstallRecord[] = [];
+  /** 2026-09-24 新增：判定终态（local_hit / negative_cache_hit / judged_unneeded /
+   *  parse_failed / judge_failed / market_installed / market_miss，对齐 MatchSkillOutput.detail） */
+  detail = '';
 }
 
 // --- optMCP ---

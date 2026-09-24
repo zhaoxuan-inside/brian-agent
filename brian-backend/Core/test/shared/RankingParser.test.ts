@@ -13,6 +13,7 @@ describe('RankingParser.parseNeedRankingResult（判定合并契约）', () => {
     expect(result.keywords).toEqual(['weather', 'forecast']);
     expect(result.candidates).toHaveLength(2);
     expect(result.candidates[0]).toEqual({ id: 's1', score: 95 });
+    expect(result.confirmed).toBe(true);
   });
 
   it('should parse object contract with need=false', () => {
@@ -20,6 +21,20 @@ describe('RankingParser.parseNeedRankingResult（判定合并契约）', () => {
     const result = parseNeedRankingResult(text);
     expect(result.need).toBe(false);
     expect(result.candidates).toEqual([]);
+    expect(result.confirmed).toBe(true);
+  });
+
+  it('legacy 数组契约 → confirmed=true（LLM 显式输出）', () => {
+    const result = parseNeedRankingResult('[{"id": "s1", "score": 80}]');
+    expect(result.need).toBe(true);
+    expect(result.confirmed).toBe(true);
+  });
+
+  it('解析失败/空数组兜底 → confirmed=false（不得落负缓存）', () => {
+    expect(parseNeedRankingResult('这不是 JSON').confirmed).toBe(false);
+    expect(parseNeedRankingResult('').confirmed).toBe(false);
+    expect(parseNeedRankingResult('[{}]').confirmed).toBe(false);
+    expect(parseNeedRankingResult('[]').confirmed).toBe(false);
   });
 
   it('should tolerate markdown code fence wrapping', () => {

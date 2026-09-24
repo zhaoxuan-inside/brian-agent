@@ -49,8 +49,9 @@ export interface BuiltinToolDeps {
   skillAccess?: SkillAccess;
   mcpAccess?: MCPAccess;
   cdtCore?: CDTCoreAccess;
-  /** 子代理委派入口（RunGatewayAccess.submitRun 适配；缺省 delegate 工具 fail-loud） */
-  runGateway?: { submitRun(input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string }): Promise<void> };
+  /** 子代理委派入口（RunGatewayAccess.submitRun 适配；缺省 delegate 工具 fail-loud；
+   *  2026-09-23 委派收口：透传 parent_run_id（父子登记），返回 run_id（回执引用 + 结果配对） */
+  runGateway?: { submitRun(input: { session_key: string; lane_kind: string; queue_mode: string; user_message: string; agent_ref?: string; parent_run_id?: string }): Promise<{ run_id: string }> };
   /** ask_user 挂起等待入口（RunGatewayAccess.waitUserAnswer 适配；缺省 ask_user 工具 fail-loud） */
   askUserGate?: { waitAnswer(input: { ask_id: string; run_id: string; session_key: string }): Promise<{ answer: string; answered: boolean }> };
 }

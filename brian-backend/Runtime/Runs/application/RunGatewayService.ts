@@ -131,6 +131,14 @@ export class RunGatewayService {
   /** 结算 waiter 注册表：run_id → waiter（HTTP 流式端点 await 结算） */
   private readonly waiters = new Map<string, Waiter>();
 
+  // ===== 2026-09-23 新增：委派父子关系登记（delegate → subagent run） =====
+  /** 父 run → 子 run id 列表（受理顺序登记；主 run 收口前 join 全部子 run） */
+  private readonly childRuns = new Map<string, string[]>();
+  /** 子 run join 超时（子 run 串行排队 + 各自预算收敛；超时放弃等待、未完成子任务如实标注进写作） */
+  private static readonly SUB_JOIN_TIMEOUT_MS = 180_000;
+  /** join 轮询间隔毫秒 */
+  private static readonly SUB_JOIN_POLL_MS = 500;
+
   // ===== 2026-09-14 新增：评估 Agent 执行策略默认值（runtime_runs_config 可调） =====
   /** 评估异步后台执行默认值（评估 LLM 实测 18-20s，不阻塞写作与结算） */
   private static readonly EVAL_ASYNC_DEFAULT = true;
@@ -252,7 +260,36 @@ export class RunGatewayService {
   // submitRun（两段式）
   // -------------------------------------------------------------------------
 
-  /** 提交运行（逻辑控制；立即 ack；统一解析 runtime_session.id 落账） */
+  /** 提交运行（原始方法，保留作为参考） */
+  // async submitRun(input: SubmitRunInput, output: SubmitRunOutput, _context: RunGatewayContext, metrics?: Metrics, report?: Report,
+  // ): Promise<boolean> {
+  //   this.ensureEnabled();
+  //   if (!input.session_key || !input.user_message) {
+  //     throw new ValidationError('session_key/user_message 不能为空');
+  //   }
+  //   const runtimeSessionId = await this.soRuntimeSessionId(input.session_key);
+  //   const laneKey = this.soLaneKey(input);
+  //   const lane = this.soLane(laneKey);
+  //   output.accepted_at = IdGenerator.now();
+  //   const parent = { metrics, report };
+  //   if (lane.activeRunId) {
+  //     const queued = await this.enqueueByQueueMode(lane, input, runtimeSessionId, parent);
+  //     output.run_id = queued.runId;
+  //     output.queued = queued.queued;
+  //     output.steered = queued.steered;
+  //     return true;
+  //   }
+  //   const runId = await this.startRun(input, runtimeSessionId, parent);
+  //   output.run_id = runId;
+  //   output.queued = false;
+  //   output.steered = false;
+  //   await this.publishRunAccepted(input.session_key, runId, report, metrics);
+  //   return true;
+  // }
+
+  /** 提交运行（逻辑控制；立即 ack；统一解析 runtime_session.id 落账；
+   *  2026-09-23 委派收口：parent_run_id 存在时登记父子关系，主 run 收口前 join 子 run）
+   *  原实现（无父子登记）见上方注释保留 */
   async submitRun(input: SubmitRunInput, output: SubmitRunOutput, _context: RunGatewayContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -264,19 +301,35 @@ export class RunGatewayService {
     const lane = this.soLane(laneKey);
     output.accepted_at = IdGenerator.now();
     const parent = { metrics, report };
+    let runId: string;
     if (lane.activeRunId) {
       const queued = await this.enqueueByQueueMode(lane, input, runtimeSessionId, parent);
+      runId = queued.runId;
       output.run_id = queued.runId;
       output.queued = queued.queued;
       output.steered = queued.steered;
-      return true;
+    } else {
+      runId = await this.startRun(input, runtimeSessionId, parent);
+      output.run_id = runId;
+      output.queued = false;
+      output.steered = false;
+      await this.publishRunAccepted(input.session_key, runId, report, metrics);
     }
-    const runId = await this.startRun(input, runtimeSessionId, parent);
-    output.run_id = runId;
-    output.queued = false;
-    output.steered = false;
-    await this.publishRunAccepted(input.session_key, runId, report, metrics);
+    // steer 模式返回活动 run id（非本提交的新 run），不属于委派登记范围
+    if (!output.steered) {
+      this.registerDelegation(input, runId);
+    }
     return true;
+  }
+
+  /** 委派关系登记（数据处理；parent_run_id 存在即登记，主 run join 依据） */
+  private registerDelegation(input: SubmitRunInput, runId: string): void {
+    if (!input.parent_run_id) {
+      return;
+    }
+    const siblings = this.childRuns.get(input.parent_run_id) ?? [];
+    siblings.push(runId);
+    this.childRuns.set(input.parent_run_id, siblings);
   }
 
   /** 发布 run.accepted（逻辑控制；两段式受理回执，经 Report→StreamProvider 保存/投递；
@@ -402,15 +455,51 @@ export class RunGatewayService {
     return activeRunId;
   }
 
-  // ===== 修改后的方法 =====
-  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 结算；透传 metrics 并在结束时落地入库；异常必收敛
-   *  ===== 修改后（2026-09-19 上下文前置）：① 第一步先构建基本上下文（会话时间线 + 跨会话多层静态记忆），
-   *  之后意图分析/Agent 构建/组件装配/Loop 执行全部依赖该基本上下文（静态记忆随 system 注入，意图/执行共享）；
-   *  ② 组件装配完成后即选思维模型（CoT/ReAct）并上报 thought.selected（含选择理由）；
-   *  ③ Loop 执行期间逐轮上下文/结果/终止决策由 Loop 上报（loop.turn.*）===== */
+  /** 执行运行（原始方法，保留作为参考）
+   *  原实现：所有 lane 共享同一执行路径（匹配→快照→循环→评估→写作），
+   *  subagent run 同样执行评估/写作，且主 run 不等待子 run、写作只收到主 Agent 自己的结果。 */
+  // private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
+  //   let matchOut: MatchAgentDefOutput | undefined;
+  //   try {
+  //     const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
+  //     matchOut = await this.matchAgent(runId, input, parent?.metrics, parent?.report);
+  //     parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
+  //       def_id: matchOut.def_id,
+  //       agent_name: matchOut.def.name,
+  //       matched_by: matchOut.matched_by,
+  //     });
+  //     const snapshot = await this.soSnapshot(matchOut.def_id, runId, input, parent?.metrics, parent?.report);
+  //     const { skillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
+  //     const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
+  //     this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
+  //     const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
+  //     this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
+  //     const loopOutput = new ExecAgentLoopOutput();
+  //     await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
+  //     if (loopOutput.stop_reason === LoopStopReason.Stop && loopOutput.result) {
+  //       await this.executeRunEvaluation(runId, input, matchOut, loopOutput, parent);
+  //       await this.executeRunWriting(runId, input, matchOut, loopOutput, parent);
+  //     }
+  //     if (loopInput.defer_final_reply && loopOutput.stop_reason === LoopStopReason.Stop) {
+  //       parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+  //     }
+  //     await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
+  //     await this.recordRunOutcome(runId, input, matchOut, loopOutput, parent);
+  //   } catch (err) {
+  //     await this.settleRunFailure(runId, input, matchOut, err, parent);
+  //   }
+  // }
+
+  /** 执行运行（逻辑控制）：匹配 → 快照 → 循环 → 子 run join → 评估/写作（仅 session lane）→ 结算
+   *  2026-09-23 委派收口改造（原实现见上方注释保留）：
+   *  ① subagent lane 的消息落隔离子会话（不变量：主会话时间线 role=user 只来自真实用户输入）；
+   *  ② 仅 session lane（前台问答）执行评估+写作，且写作前 join 全部子 run、汇总子结果 —— 一次问答
+   *    的最终回复唯一收口 = 写作 Agent（WriterAgent-PRD §1：汇总所有 Work Agent 结果）；
+   *  ③ subagent run 不再执行评估/写作（避免每个子 run 各自成"小问答"、多次产出最终回复）。 */
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
     let matchOut: MatchAgentDefOutput | undefined;
     try {
+      const sessionId = await this.soRunSessionId(runId, input, runtimeSessionId);
       const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
       matchOut = await this.matchAgent(runId, input, parent?.metrics, parent?.report);
       parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
@@ -422,22 +511,140 @@ export class RunGatewayService {
       const { skillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
       const thoughtMode = this.decideThoughtMode(skillCount, mcpCount);
       this.publishThoughtModeSelected(thoughtMode, skillCount, mcpCount, parent?.report);
-      const loopInput = this.prepareLoopInput(runId, input, runtimeSessionId, snapshot);
+      const loopInput = this.prepareLoopInput(runId, input, sessionId, snapshot);
       this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
       const loopOutput = new ExecAgentLoopOutput();
       await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
-      if (loopOutput.stop_reason === LoopStopReason.Stop && loopOutput.result) {
-        await this.executeRunEvaluation(runId, input, matchOut, loopOutput, parent);
-        await this.executeRunWriting(runId, input, matchOut, loopOutput, parent);
-      }
-      if (loopInput.defer_final_reply && loopOutput.stop_reason === LoopStopReason.Stop) {
-        parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
-      }
+      await this.finishRunByLane(runId, input, runtimeSessionId, matchOut, loopInput, loopOutput, parent);
       await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
       await this.recordRunOutcome(runId, input, matchOut, loopOutput, parent);
     } catch (err) {
       await this.settleRunFailure(runId, input, matchOut, err, parent);
     }
+  }
+
+  /** run 消息归属会话解析（逻辑控制）：session lane = 主会话；subagent lane = 隔离子会话
+   *  （`${sessionKey}::sub:${runId}`，委派任务在子会话内即首条 user 消息，语义正确且不污染主时间线） */
+  private async soRunSessionId(runId: string, input: SubmitRunInput, runtimeSessionId: string): Promise<string> {
+    if ((input.lane_kind ?? LaneKind.Session) !== LaneKind.Subagent) {
+      return runtimeSessionId;
+    }
+    return this.soRuntimeSessionId(this.soSubSessionKey(input.session_key, runId));
+  }
+
+  /** 子会话键（数据处理） */
+  private soSubSessionKey(sessionKey: string, runId: string): string {
+    return `${sessionKey}::sub:${runId}`;
+  }
+
+  /** 按 lane 收尾（逻辑控制）：session lane = join 子 run → 评估 → 写作（唯一收口）；subagent = 直接收敛 */
+  private async finishRunByLane(
+    runId: string,
+    input: SubmitRunInput,
+    runtimeSessionId: string,
+    matchOut: MatchAgentDefOutput,
+    loopInput: ExecAgentLoopInput,
+    loopOutput: ExecAgentLoopOutput,
+    parent?: { metrics?: Metrics; report?: Report },
+  ): Promise<void> {
+    if (loopOutput.stop_reason !== LoopStopReason.Stop || !loopOutput.result) {
+      return;
+    }
+    if ((input.lane_kind ?? LaneKind.Session) !== LaneKind.Session) {
+      return;
+    }
+    const childResults = await this.joinChildRuns(runId);
+    const collected = await this.collectChildResults(runtimeSessionId, runId, childResults);
+    await this.updateDelegatePartOutputs(runId, collected);
+    await this.executeRunEvaluation(runId, input, matchOut, loopOutput, parent);
+    await this.executeRunWriting(runId, input, matchOut, loopOutput, parent, collected);
+    if (loopInput.defer_final_reply) {
+      parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+    }
+  }
+
+  /** 等待全部子 run 结算（逻辑控制；超时放弃等待，未完成子任务由 collect 按状态如实标注） */
+  private async joinChildRuns(runId: string): Promise<string[]> {
+    const childIds = this.childRuns.get(runId) ?? [];
+    if (!childIds.length) {
+      return [];
+    }
+    const deadline = Date.now() + RunGatewayService.SUB_JOIN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const rows = await Promise.all(childIds.map((id) => this.soRunRow(id)));
+      const allSettled = rows.every((row) => row && this.isSettledStatus(String(row.status)));
+      if (allSettled) {
+        return childIds;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RunGatewayService.SUB_JOIN_POLL_MS));
+    }
+    this.logger?.warn?.('子 run join 超时（放弃等待，未完成子任务如实标注进写作）', { run_id: runId, child_count: childIds.length });
+    return childIds;
+  }
+
+  /** 收集子 run 结果（逻辑控制）：任务文本 = 子会话首条 user 消息；结果 = 子会话最后一条 assistant 消息；
+   *  收集后无条件清登记（join 超时/空集也不滞留内存） */
+  private async collectChildResults(runtimeSessionId: string, runId: string, childIds: string[]): Promise<Map<string, { agent_id: string; task_content: string; result: string }>> {
+    const collected = new Map<string, { agent_id: string; task_content: string; result: string }>();
+    for (const childId of childIds) {
+      const outcome = await this.soChildOutcome(runtimeSessionId, childId);
+      if (outcome) {
+        collected.set(childId, outcome);
+      }
+    }
+    this.childRuns.delete(runId);
+    return collected;
+  }
+
+  /** 子 run 执行结果解析（逻辑控制；子会话内任务/结果消息各取其一，未结算标注进行中） */
+  private async soChildOutcome(runtimeSessionId: string, childId: string): Promise<{ agent_id: string; task_content: string; result: string } | null> {
+    void runtimeSessionId;
+    const row = await this.soRunRow(childId);
+    if (!row) {
+      return null;
+    }
+    const subSessionId = await this.soRuntimeSessionId(this.soSubSessionKey(String(row.session_key), childId));
+    const messages = this.relationDb.queryRaw<{ role: string; content: string }>(
+      `SELECT "role", "content" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq"`,
+      [subSessionId],
+    ) ?? [];
+    const task = messages.find((m) => m.role === 'user')?.content ?? '';
+    const result = [...messages].reverse().find((m) => m.role === 'assistant' && m.content && m.content.trim())?.content ?? '';
+    const settled = this.isSettledStatus(String(row.status));
+    const agentName = this.soComponentName(String(row.agent_def_id ?? ''), 'runtime_agent_def', 'name') || '子代理';
+    return {
+      agent_id: agentName,
+      task_content: task,
+      result: settled ? (result || `（子任务 ${childId} 无输出）`) : `（子任务 ${childId} 超时未完成，状态：${String(row.status)}）`,
+    };
+  }
+
+  /** 回写主 run 的 delegate 工具结果（逻辑控制）：受理回执中的 run_id 与子结果配对，
+   *  工具结果从"已受理"更新为子任务实际结果摘要（供写作上下文与后续轮次 wire 派生看到真实结果） */
+  private async updateDelegatePartOutputs(runId: string, collected: Map<string, { agent_id: string; task_content: string; result: string }>): Promise<void> {
+    if (!collected.size) {
+      return;
+    }
+    const parts = this.relationDb.queryRaw<{ id: string; output_json: string }>(
+      `SELECT "id", "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "part_type" = 'tool' AND "tool_id" = 'delegate'`,
+      [runId],
+    ) ?? [];
+    for (const part of parts) {
+      const childId = this.parseRunIdFromReceipt(part.output_json);
+      const outcome = childId ? collected.get(childId) : undefined;
+      if (!outcome) {
+        continue;
+      }
+      await this.relationDb.update(RUNTIME_MESSAGE_PART_TABLE, newPatch({
+        output_json: `子任务完成（run_id=${childId}，Agent=${outcome.agent_id}）：${outcome.result.slice(0, 500)}`,
+      }), [{ field: 'id', operator: Operator.EQ, value: part.id }]);
+    }
+  }
+
+  /** 受理回执 → 子 run id 解析（数据处理；回执文本含 "run_id=<id>"） */
+  private parseRunIdFromReceipt(outputJson?: string): string | null {
+    const matched = /run_id=([A-Za-z0-9_-]+)/.exec(outputJson ?? '');
+    return matched ? matched[1] : null;
   }
 
   /** 发布组件装配完成事件（逻辑控制；补充组件名称便于时间线展示，返回思维模型判定所需计数） */
@@ -525,13 +732,48 @@ export class RunGatewayService {
     await this.runWorkEvaluation(runId, input, matchOut, loopOutput, evalWorkId, parent);
   }
 
-  /** 执行写作 Agent 美化输出（逻辑控制；写作成功同步消息库，失败/未产出降级为原始输出 ReplyDelta） */
+  /** 执行写作 Agent 美化输出（原始方法，保留作为参考）
+   *  原实现：agent_results 只含主 Agent 自己的结果，委派子 Agent 的执行结果从不进入写作收口。 */
+  // private async executeRunWriting(
+  //   runId: string,
+  //   input: SubmitRunInput,
+  //   matchOut: MatchAgentDefOutput,
+  //   loopOutput: ExecAgentLoopOutput,
+  //   parent?: { metrics?: Metrics; report?: Report },
+  // ): Promise<void> {
+  //   if (!this.writer) return;
+  //   try {
+  //     const writeWorkId = IdGenerator.generate();
+  //     parent?.report?.pushBusinessEvent(BusinessEvent.WriterStarted, { work_id: writeWorkId });
+  //     const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
+  //     const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: writeWorkId, run_id: runId };
+  //     const writeOk = await this.writer.execWrite({
+  //       work_id: writeWorkId,
+  //       run_id: runId,
+  //       user_query: input.user_message,
+  //       agent_results: [{ agent_id: matchOut.def.name, task_content: input.user_message, result: loopOutput.result }],
+  //     }, writeOut, writeCtx, parent?.metrics, parent?.report);
+  //     if (writeOk && writeOut.response) {
+  //       await this.applyWriterResult(writeOut.response, writeOut, loopOutput, parent);
+  //     } else {
+  //       parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+  //     }
+  //   } catch (err) {
+  //     this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
+  //     parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+  //   }
+  // }
+
+  /** 执行写作 Agent 美化输出（逻辑控制；写作成功同步消息库，失败/未产出降级为原始输出 ReplyDelta）；
+   *  2026-09-23 收口修复：agent_results = 主 Agent 结果 + 全部子 run 结果（WriterAgent-PRD §1：
+   *  汇总所有 Work Agent 执行结果；原实现只喂主 Agent 一条，见上方注释保留） */
   private async executeRunWriting(
     runId: string,
     input: SubmitRunInput,
     matchOut: MatchAgentDefOutput,
     loopOutput: ExecAgentLoopOutput,
     parent?: { metrics?: Metrics; report?: Report },
+    childResults?: Map<string, { agent_id: string; task_content: string; result: string }>,
   ): Promise<void> {
     if (!this.writer) return;
     try {
@@ -539,11 +781,15 @@ export class RunGatewayService {
       parent?.report?.pushBusinessEvent(BusinessEvent.WriterStarted, { work_id: writeWorkId });
       const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
       const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: writeWorkId, run_id: runId };
+      const agentResults = [
+        { agent_id: matchOut.def.name, task_content: input.user_message, result: loopOutput.result },
+        ...(childResults?.size ? [...childResults.values()] : []),
+      ];
       const writeOk = await this.writer.execWrite({
         work_id: writeWorkId,
         run_id: runId,
         user_query: input.user_message,
-        agent_results: [{ agent_id: matchOut.def.name, task_content: input.user_message, result: loopOutput.result }],
+        agent_results: agentResults,
       }, writeOut, writeCtx, parent?.metrics, parent?.report);
       if (writeOk && writeOut.response) {
         await this.applyWriterResult(writeOut.response, writeOut, loopOutput, parent);
@@ -715,7 +961,8 @@ export class RunGatewayService {
     return addOut.session_id;
   }
 
-  /** 确定性匹配（逻辑控制；透传 metrics；执行框架先生成本阶段 work_id，Token 归因到 Agent 选择执行） */
+  /** 确定性匹配（逻辑控制；透传 metrics；执行框架先生成本阶段 work_id，Token 归因到 Agent 选择执行；
+   *  2026-09-23：透传 agent_ref —— delegate 指定既有 Agent 时跳过瀑布直选，杜绝委派任务被误路由） */
   private async matchAgent(runId: string, input: SubmitRunInput, metrics?: Metrics, report?: Report): Promise<MatchAgentDefOutput> {
     const matchInput = new MatchAgentDefInput();
     matchInput.task_content = input.user_message;
@@ -723,6 +970,7 @@ export class RunGatewayService {
     matchInput.run_id = runId;
     matchInput.work_id = IdGenerator.generate();
     matchInput.context_id = input.context_id ?? '';
+    matchInput.agent_ref = input.agent_ref ?? '';
     const matchOutput = new MatchAgentDefOutput();
     await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), metrics, report);
     return matchOutput;
@@ -793,7 +1041,9 @@ export class RunGatewayService {
   /** Loop 入参组装（2026-09-11 选/执分离：工具可见性由 match 阶段组件绑定驱动；
    * 未绑定 Skill → 不注入 skill_exec；未绑定 MCP → 不注入 mcp_exec；
    * component_scope 携带选定 id 清单，作为执行门的唯一合法范围；
-   * 2026-09-14：run_id = 一次问答（runtime_run.id），work_id = 执行框架生成的本次 Agent 执行标识） */  private prepareLoopInput(
+   * 2026-09-14：run_id = 一次问答（runtime_run.id），work_id = 执行框架生成的本次 Agent 执行标识；
+   * 2026-09-23 收口治理：subagent run 不注入 delegate —— 委派链一级封顶，主 run 的写作 Agent 是
+   * 唯一收口，杜绝子代理向下递归委派形成多级"小问答"） */  private prepareLoopInput(
     runId: string,
     input: SubmitRunInput,
     runtimeSessionId: string,
@@ -814,7 +1064,10 @@ export class RunGatewayService {
     const boundMcps = (snapshot.tools ?? []).filter((t) => t.kind === 'mcp').map((t) => t.id);
     // 工具可见性显式清单：skill_exec/mcp_exec 仅在组件已绑定时注入（其余为通用原语工具；
     // 2026-09-22：编排三件套齐备，ask_user Deferred 挂起默认注入）
-    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate', 'ask_user'];
+    loopInput.tools = ['cdt_browser', 'update_plan', 'delegate', 'ask_user', 'exec'];
+    if ((input.lane_kind ?? LaneKind.Session) === LaneKind.Subagent) {
+      loopInput.tools = ['cdt_browser', 'update_plan', 'ask_user', 'exec'];
+    }
     if (boundSkills.length) {
       loopInput.tools.push('skill_exec');
     }
@@ -1182,9 +1435,14 @@ export class RunGatewayService {
     return true;
   }
 
-  /** 用户答复落库（逻辑控制；role=user 归因原 run，下一轮 wire 派生自动包含） */
+  /** 用户答复落库（逻辑控制；role=user 归因原 run，下一轮 wire 派生自动包含；
+   *  2026-09-23 委派收口配套：按 run 的 lane 解析归属会话 —— subagent run 的答复落其隔离子会话
+   *  （该 run 下一轮 wire 派生从子会话读取响应；主会话时间线的 user 行不变量不被打破） */
   private async persistUserAnswer(sessionKey: string, runId: string, answer: string, metrics?: Metrics): Promise<void> {
-    const sessionId = await this.soRuntimeSessionId(sessionKey, metrics);
+    const row = await this.soRunRow(runId);
+    const lane = String(row?.lane ?? LaneKind.Session);
+    const targetKey = lane === LaneKind.Subagent ? this.soSubSessionKey(sessionKey, runId) : sessionKey;
+    const sessionId = await this.soRuntimeSessionId(targetKey, metrics);
     const add = new AddMessageInput();
     add.session_id = sessionId;
     add.role = MessageRole.User;

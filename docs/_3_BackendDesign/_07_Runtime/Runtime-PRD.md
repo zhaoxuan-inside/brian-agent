@@ -193,3 +193,29 @@ POST /api/chat/stream（SSE 长连接，仅订阅）
 3. **唯一注册点**：后端 `Base/shared/base/BusinessEvent.ts`（`BusinessEvent` 26 成员 + `SseTransportEvent` 3 成员 + `businessEventMsgType`：reply.delta/think.delta → TEXT，其余 TRACE）；前端 `composables/sseEventTypes.ts` 同构 mirror + `EVENT_UI_STYLE` 展示样式映射表（area: text/thinking/action/output/lifecycle/error × tone: default/success/error/muted）。新增事件必须同步登记。
 4. **生产方覆盖**：全部 26 个业务事件均有生产方（`part.updated`/`message.block` 为阶段4 预留）；问答过程覆盖：上下文构建（context.built，含当轮 wire 消息与 system prompt）、Agent 选择（agent.selected，匹配层）、组件选定（agent.components，Soul/Skill/MCP/Prompt/LLM 清单）、意图识别（intent.analyzed，LLM 匹配评估打分）、Agent 构建（agent.built，未命中新建）、LLM/Prompt/Skill/MCP 选定（llm.selected / prompt.selected / skill.selected / mcp.selected，soAgentSnapshot 组件解析各维完成即报）、思考/回复增量、工具执行、计划/权限、run 生命周期、评估结论（evaluation.completed，Evolutor 对 Work/Writer Agent 的评分，离线闭环路径无流会话静默降级）。
 5. **生产方通路**：业务事件一律经 `report.pushBusinessEvent`（Report 携带端点 ID）→ StreamProvider 持久化/投递；禁止直调 streamAccess 发业务事件。
+
+### [2026-09-24] 组件匹配契约同步 + 负缓存确认治理 + 判定终态可观测（事故 trace 95b8e237 根因闭环）
+
+**变更原因**：复盘 trace 95b8e237（"我现在还有多少可用的磁盘"）：① 2026-09-22 组件匹配升级为 need/keywords/candidates 判定合并契约后，生产库两份匹配模板（Skill 251fef0b / MCP 31c4d572）仍停留旧契约（skill 旧数组输出 /[对方中文排名散文 markdown]），新版解析器对待旧输出必然判定 need=false（含 confirmed 未判定语义混淆）→ 负缓存短路 GitHub 导入与自动生成，四层瀑布扩容口径死锁（skill 表自 9/22 契约升级后再无新增技能）；② 解析失败/空数组保守兜底也被 `need=false` 一并写负缓存，LLM 单次失败永久固化为"任务不需要组件"；③ GitHub 层在 keywords 为空时静默跳过；④ `SkillSelected/McpSelected` 事件统一"无强匹配即空绑定"文案，掩盖判定层真实走向；⑤ 组件判定 LLM 调用 run_id 维度不传播（llm_call_log 无 run_id，案发 uncontrollable）。
+
+**修改的方法**：
+  - `Core/shared/RankingParser` — `NeedRankingResult` 新增 `confirmed`（显式 LLM 判定 vs 保守兜底）；`parseNeedRankingResult` 三出口全量标记。
+  - `Core/SkillCoreProvider/application/SkillCoreService.matchSkill`（原实现注释保留）— need=false 仅 confirmed 时写负缓存；`detail` 判定终态（local_hit/negative_cache_hit/judged_unneeded/parse_failed/judge_failed/github_imported/github_miss_generate_disabled/generated/generate_failed）供事件层分维度；GitHub keywords 空 → 以任务文本兜底；判定上下文装入 run_id/work_id/session（token 归因按 run 维度齐备）。
+  - `Core/MCPCoreProvider/application/MCPCoreService.matchMCP` — 同款 confirmed 负缓存治理 + 判定终态（local_hit/negative_cache_hit/judged_unneeded/parse_failed/judge_failed/local_miss_market_disabled/market_installed/market_miss）+ token 维度传播。
+  - `Core/MCPCoreProvider/domain/types` / `Core/SkillCoreProvider/domain/types` — `MatchSkillOutput`/`MatchMcpOutput` 新增 `detail`。
+  - `Agent/AgentBuilderService.matchSkillForBuild` / `matchMcpForBuild` — 事件 reason 透传判定终态（match_detail=终点字）。
+  - NEW `Runtime/Agents/AgentDefService.soDefaultIdentityTemplateId` — 原 `LIKE '%身份%'` 过宽导致身份模板命中顺序不确定（生产实证被"文档伴读身份"劫持，失败用例"组件绑定收敛/Soul 注入"回归），改为 source 声明式精确标题 `Brian 身份声明` + `is_system=1` 双条件兜底——身份来源不可漂移（原方法注释保留）。
+  - `brian-backend/scripts/fix-matching-prompts.mjs`（新增）— 两份匹配模板迁移为 need/keywords/candidates 判定合并契约（判断语义：need=任务是否需要外部能力/事实/执行，不以库存有无判定；排除"候选无货判任务不需要"死锁路径）；幂等可重跑。
+  - 全部匹配模板已生产实例迁移落地（skill/mcp 双通道）。
+
+**影响的端点**：
+  - 构建期组件装配（agent.built 链）— matchSkill/matchMCP 判定进入反馈修正闭环：need=confirmed=false 不会写负缓存；need=true + 库存无 → GitHub/市场/自建连通可达；
+  - SkillSelected/McpSelected 事件 reason 分维可据（match_detail=…），解析失败/负缓存不再用统一"无强匹配即空绑定"虚化；
+  - llm_call_log 中组件判定 LLM 记录 run_id/session 维度齐备；
+  - Agent 身份模板不再随机劫持（identity 精确至“Brian 身份声明”）。
+
+**验证**：SkillCoreWaterfall 9/9（3 新用例：负缓存不固化 / keywords 空兜底 / 自建终点）；RankingParser 15/15（confirmed 三态）；Tools.test 17/17（exec 3 新用例）；RuntimeGateway 15/15（两个基线失败一并治愈——由身份模板命中劫持实证引起）。
+
+**可能存在的问题**：
+  - `confirmed=true` 但 LLM 给出 need=false，负缓存继续生效（语义 unchanged）；若发现 LLM 习惯性把磁盘/温度类任务判 need=false，复核匹配模板措辞；
+  - 模板更新为运营资产（config 可调），若被改回旧契约依赖 parseNeedRankingResult confirmed=false:not writable → 扩容不触发，不会死锁但不自动恢复（PRD §匹配语义段）已记录；

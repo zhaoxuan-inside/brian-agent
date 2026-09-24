@@ -244,13 +244,46 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     expect(out.skills).toHaveLength(1);
   });
 
-  it('LLM 输出异常（乱码）→ need=false 保守降级，不触发外部获取', async () => {
+  it('LLM 输出异常（乱码）→ need=false 保守降级，detail=parse_failed，负缓存不固化', async () => {
     await seedMatchTemplate('');
     const github = stubGithub([], null);
-    const service = buildService(stubLlm(['这不是 JSON']), github);
+    const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => { o.result = '这不是 JSON'; return true; });
+    const service = buildService({ execLLM: execLlm, embedLLM: async (_i, o) => { o.embedding = [0.1]; return true; } } as never, github);
     const out = new MatchSkillOutput();
     await service.matchSkill(matchInput('a1', '任意任务'), out, ctx);
     expect(out.skills).toEqual([]);
+    expect(out.detail).toBe('parse_failed');
     expect(github.searchSkills).not.toHaveBeenCalled();
+    // 修复语义（2026-09-24，trace 95b8e237）：解析失败不落负缓存 —— 同任务第二次仍重判（可自愈）
+    await service.matchSkill(matchInput('a1', '任意任务'), new MatchSkillOutput(), ctx);
+    expect(execLlm).toHaveBeenCalledTimes(2);
+  });
+
+  it('need=true 但 keywords 空 → GitHub 检索以任务文本兜底（扩容层不再静默跳过）', async () => {
+    await seedMatchTemplate('');
+    const github = stubGithub([], null);
+    const service = buildService(stubLlm(['{"need": true, "keywords": [], "candidates": []}']), github);
+    const out = new MatchSkillOutput();
+    await service.matchSkill(matchInput('a1', '查一下系统磁盘的可用空间'), out, ctx);
+    expect(github.searchSkills).toHaveBeenCalled();
+    const words = (github.searchSkills as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    expect(words.length).toBeGreaterThan(0);
+    expect(words[0]).toContain('磁盘');
+  });
+
+  it('github miss → auto_generate 兜底生成技能（四层瀑布终点闭环）', async () => {
+    await seedMatchTemplate('');
+    const github = stubGithub([], null);
+    const genJson = JSON.stringify({ name: 'disk-checker', skill_brief: '磁盘检测技能', skill_md: '# disk-checker\n\ndf -h' });
+    const llm = stubLlm([
+      '{"need": true, "keywords": ["disk"], "candidates": []}',
+      `{"name": "disk-checker", "skill_brief": "磁盘检测技能", "skill_md": "# disk-checker"}`,
+    ]);
+    const service = buildService(llm, github);
+    const out = new MatchSkillOutput();
+    await service.matchSkill(matchInput('a1', '查磁盘'), out, ctx);
+    // 自建产物直接进入绑定清单（本轮 run 立即可用）
+    expect(out.skills.length).toBe(1);
+    expect(out.detail).toBe('generated');
   });
 });

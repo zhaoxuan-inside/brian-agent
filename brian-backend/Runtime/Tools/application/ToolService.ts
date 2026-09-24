@@ -38,13 +38,14 @@ import {
 } from './builtinTools';
 import { updatePlanTool } from './planTool';
 import { delegateTool } from './delegateTool';
+import { execTool } from './execTool';
 import { askUserTool } from './askUserTool';
 
 /** 默认结果截断上限（字符） */
 const DEFAULT_MAX_OUTPUT = 8000;
 
 /** 内置工具 id（不可被自定义工具覆盖） */
-const BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user']);
+const BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user', 'exec']);
 
 /**
  * ToolService。
@@ -113,7 +114,7 @@ export class ToolService {
   /** 注册内置工具（逻辑控制；幂等；enabled 缺省全部） */
   async registerBuiltinTools(input: RegisterBuiltinToolsInput, output: RegisterBuiltinToolsOutput, _context: ToolContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    const enabled = new Set(input.enabled ?? ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user']);
+    const enabled = new Set(input.enabled ?? ['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate', 'ask_user', 'exec']);
     const candidates = this.prepareBuiltinCandidates();
     for (const def of candidates) {
       if (!enabled.has(def.id)) {
@@ -141,6 +142,7 @@ export class ToolService {
         }
         return this.deps.runGateway.submitRun(input);
       } }),
+      execTool(),
       askUserTool({ waitAnswer: (input) => {
         if (!this.deps.askUserGate) {
           throw new ValidationError('ask_user 未接线（askUserGate 未注入）');

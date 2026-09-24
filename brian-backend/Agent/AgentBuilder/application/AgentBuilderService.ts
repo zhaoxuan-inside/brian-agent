@@ -409,7 +409,7 @@ export class AgentBuilderService {
     report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
       source: 'build',
       skills: (skillOut.skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
-      reason: 'skillCore.matchSkill 按任务语义选定技能清单（无强匹配即空绑定）',
+      reason: `skillCore.matchSkill 判定终态=match_detail=${skillOut.detail ?? 'unknown'}（技能数 ${(skillOut.skills ?? []).length}）`,
       skills_count: (skillOut.skills ?? []).length,
     });
     return skillOut;
@@ -433,7 +433,7 @@ export class AgentBuilderService {
     report?.pushBusinessEvent(BusinessEvent.McpSelected, {
       stage: 'build',
       mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, brief: '' })),
-      reason: 'mcpCore.matchMCP 按任务语义选定外部工具通道（无强匹配即空绑定）',
+      reason: `mcpCore.matchMCP 判定终态=match_detail=${mcpOut.detail ?? 'unknown'}（MCP 数 ${(mcpOut.mcp_ids ?? []).length}）`,
       mcps_count: (mcpOut.mcp_ids ?? []).length,
     });
     return mcpOut;

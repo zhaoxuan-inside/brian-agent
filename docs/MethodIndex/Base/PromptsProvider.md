@@ -8,7 +8,7 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `initialize` | `` | `Promise<void>` | 初始化组件：写入默认配置并恢复 enabled 状态。 |
+| `initialize` | `` | `Promise<void>` | 初始化组件：写入默认配置、恢复 enabled 状态并幂等种子化 builtin Prompt 目录。 |
 | `addPrompt` | `input: AddPromptInput, output: AddPromptOutput, context: PromptContext, metrics?: Metri...` | `Promise<boolean>` | 新增 Prompt |
 | `delPrompt` | `input: DelPromptInput, output: DelPromptOutput, context: PromptContext, metrics?: Metri...` | `Promise<boolean>` | 删除 Prompt |
 | `updatePrompt` | `input: UpdatePromptInput, output: UpdatePromptOutput, context: PromptContext, metrics?:...` | `Promise<boolean>` | 更新 Prompt |
