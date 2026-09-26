@@ -559,7 +559,7 @@ watch(
     >
       <div
         v-if="visible"
-        class="thinking-overlay fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        class="thinking-overlay fixed inset-0 z-modal flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
         @click.self="close"
       >
         <div
@@ -572,7 +572,7 @@ watch(
               </span>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">思考过程</h3>
+                  <h3 class="text-[15px] font-semibold tracking-tight text-apple-gray-900 dark:text-apple-gray-50">思考过程</h3>
                   <Loader2 v-if="thinkingLoading || overallStreaming" :size="13" class="animate-spin text-brian-blue" />
                   <span v-else-if="pendingPermissions.length > 0" class="px-1.5 py-0.5 rounded-md text-4xs font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
                   <span v-else-if="!targetMsgId && chatUi.runActive" class="px-1.5 py-0.5 rounded-md text-4xs font-medium bg-brian-blue/10 text-brian-blue">思考中</span>

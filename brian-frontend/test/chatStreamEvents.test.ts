@@ -27,7 +27,7 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     const handler = createChatStreamEventHandler(session, ui)
     const botMsgId = 'msg-bot-123'
 
-    // 1. 意图分析事件到达（早期无 agentId）
+    
     handler.handle(
       {
         event: 'intent.analyzed',
@@ -44,7 +44,7 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     expect(firstBlock.type).toBe('ThinkingChain')
     expect(firstBlock.content).toContain('[意图分析] 打分 100（采纳）')
 
-    // 2. 命中 Agent 事件到达
+    
     handler.handle(
       {
         event: 'agent.selected',
@@ -54,13 +54,13 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
       botMsgId,
     )
 
-    // 应复用同一个 ThinkingBlock，而不是新建一个
+    
     expect(session.blocks.length).toBe(1)
     const updatedBlock = session.blocks[0] as ThinkingBlock
     expect(updatedBlock.agentInfo?.name).toBe('w2-general-专业助手-fa0f8c2e')
     expect(updatedBlock.content).toContain('[Agent 匹配]')
 
-    // 3. 深度思考增量到达
+    
     handler.handle(
       {
         event: 'think.delta',
@@ -98,27 +98,27 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     const handler = createChatStreamEventHandler(session, ui)
     const botMsgId = 'msg-bot-789'
 
-    // 1. run.accepted 受理
+    
     handler.handle({ event: 'run.accepted', run_id: 'run-test-123' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(1)
     expect(ui.liveTimeline[0].title).toBe('开始受理请求')
 
-    // 2. intent.analyzed 意图识别
+    
     handler.handle({ event: 'intent.analyzed', score: 100, adopted: true, reason: '用户想散步' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(2)
     expect(ui.liveTimeline[1].title).toContain('需求确认 / 意图分析')
 
-    // 3. agent.selected 选中 Agent
+    
     handler.handle({ event: 'agent.selected', agent_name: '散步推荐专家', matched_by: 'llm' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(3)
     expect(ui.liveTimeline[2].title).toBe('选中 Agent：散步推荐专家')
 
-    // 4. agent.components 组件装配
+    
     handler.handle({ event: 'agent.components', soul_id: 'soul-123', llm_id: 'gpt-4' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(4)
     expect(ui.liveTimeline[3].title).toBe('组件装配完成')
 
-    // 5. context.built 构建上下文
+    
     handler.handle({
       event: 'context.built',
       round: 1,
@@ -128,8 +128,8 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     }, botMsgId)
     expect(ui.liveTimeline.length).toBe(5)
     expect(ui.liveTimeline[4].title).toBe('构建上下文：第 1 轮 · 1 条消息')
-    // ===== 修改后（2026-09-14）：环节耗时直读事件 payload 自带 elapsed_ms；
-    // 无计时的旧事件不伪造耗时（|| 1 假数据兜底已删除）；payload 携带时原样透传 =====
+    
+    
     expect(ui.liveTimeline[4].elapsedMs).toBeUndefined()
     handler.handle({
       event: 'context.built',
@@ -141,8 +141,8 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     }, botMsgId)
     expect(ui.liveTimeline.length).toBe(6)
     expect(ui.liveTimeline[5].elapsedMs).toBe(23)
-    // 实时上下文轮次应落库（供「基础上下文」轮次卡片定位 data-anchor=ctx-1）
-    // ===== 修改后（2026-09-14）：第 2 轮 context.built（带 elapsed_ms）追加，共 2 个轮次 =====
+    
+    
     expect(ui.liveContextRounds.length).toBe(2)
     expect(ui.liveContextRounds[0]).toMatchObject({
       round: 1,
@@ -151,12 +151,12 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     })
     expect(ui.liveContextRounds[0].messages[0]).toMatchObject({ role: 'user', content: '推荐去哪散步？' })
 
-    // 6. think.delta 深度思考
+    
     handler.handle({ event: 'think.delta', delta: '推荐去奥林匹克森林公园散步。' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(7)
     expect(ui.liveTimeline[6].title).toContain('Agent 深度推理思考')
 
-    // 7. run.finished 完成
+    
     handler.handle({ event: 'run.finished', stop_reason: 'stop' }, botMsgId)
     expect(ui.liveTimeline.length).toBe(8)
     expect(ui.liveTimeline[7].title).toBe('执行完成')
@@ -180,7 +180,7 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
 
     const item = ui.liveTimeline[ui.liveTimeline.length - 1]
     expect(item.title).toContain('需求确认 / 意图分析')
-    // 名称写入深度思考块内容；原始 ID 仅经 tooltip 悬浮可见
+    
     const block = session.blocks[0] as ThinkingBlock
     expect(block.content).toContain('→ 天气查询专家')
     expect(block.content).not.toContain('eb154464')
@@ -213,7 +213,7 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
     expect(item.detail).toContain('Prompt Brian 身份模板')
     expect(item.detail).not.toContain('Soul soul-123')
     expect(item.detail).not.toContain('LLM llm-789')
-    // 原始组件 ID 通过 tooltip 悬浮可见
+    
     expect(item.tooltip).toContain('soul-123')
     expect(item.tooltip).toContain('llm-789')
     expect(item.tooltip).toContain('skill-a')
@@ -228,7 +228,7 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
 
     handler.handle({ event: 'context.built', round: 1, message_count: 2, messages: [{ role: 'user', content: '问A' }] }, botMsgId)
     handler.handle({ event: 'context.built', round: 2, message_count: 3, messages: [{ role: 'assistant', content: '答B' }] }, botMsgId)
-    // 同一轮重复事件（工具轮次重发）不重复追加，保留最新内容
+    
     handler.handle({ event: 'context.built', round: 1, message_count: 4, messages: [{ role: 'user', content: '问A（更新）' }] }, botMsgId)
 
     expect(ui.liveContextRounds.length).toBe(2)

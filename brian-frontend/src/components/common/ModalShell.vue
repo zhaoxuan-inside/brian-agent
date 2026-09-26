@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * ModalShell —— 统一弹层骨架(ADR-008 令牌契约)
- * 遮罩统一 bg-black/50、z-modal 层级、Esc 关闭、焦点圈闭(focus trap)、aria-modal。
+ * 遮罩统一 bg-black/40 backdrop-blur-[2px]、z-modal 层级、Esc 关闭、焦点圈闭(focus trap)、aria-modal。
  * 内容样式由调用方通过默认插槽决定;panelClass 可覆盖面板外观。
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -87,7 +87,7 @@ onBeforeUnmount(() => lockBody(false))
     >
       <div
         v-if="open"
-        class="fixed inset-0 z-modal flex items-center justify-center p-4 bg-black/50"
+        class="fixed inset-0 z-modal flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-[2px]"
         role="dialog"
         aria-modal="true"
         :aria-label="label || title || '对话框'"
@@ -103,11 +103,11 @@ onBeforeUnmount(() => lockBody(false))
         >
           <div
             ref="shellRef"
-            class="relative w-full bg-white dark:bg-apple-gray-800 rounded-3xl shadow-lift dark:shadow-lift-dark border border-apple-gray-200/60 dark:border-apple-gray-700/60 animate-pop-in"
+            class="relative flex flex-col w-full max-w-[calc(100vw-2rem)] bg-white dark:bg-apple-gray-800 rounded-2xl shadow-lift dark:shadow-lift-dark border border-apple-gray-200/60 dark:border-apple-gray-700/60 max-h-[85vh] animate-pop-in"
             :class="panelClass"
           >
-            <header v-if="title" class="flex items-center justify-between px-5 pt-4 pb-2">
-              <h2 class="text-base font-semibold">{{ title }}</h2>
+            <header v-if="title" class="flex-shrink-0 flex items-center justify-between px-5 pt-4 pb-2">
+              <h2 class="text-[15px] font-semibold tracking-tight">{{ title }}</h2>
               <button
                 type="button"
                 class="icon-btn"
@@ -117,10 +117,10 @@ onBeforeUnmount(() => lockBody(false))
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
             </header>
-            <div class="px-5 pb-5">
+            <div class="flex-1 min-h-0 px-5 pb-5 overflow-y-auto">
               <slot />
             </div>
-            <footer v-if="$slots.footer" class="flex items-center justify-end gap-2 px-5 pb-5 pt-1">
+            <footer v-if="$slots.footer" class="flex-shrink-0 flex items-center justify-end gap-2 px-5 pb-5 pt-1">
               <slot name="footer" />
             </footer>
           </div>

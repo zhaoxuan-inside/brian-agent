@@ -120,7 +120,7 @@ const statusLabel = computed(() => {
         </div>
       </div>
 
-      <div v-if="showAddLib" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showAddLib = false">
+      <div v-if="showAddLib" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]" @click.self="showAddLib = false">
         <div class="block-card w-full max-w-md mx-4 p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold">添加资料库</h3>
@@ -352,7 +352,7 @@ const statusLabel = computed(() => {
       </template>
 
       <Teleport to="body">
-        <div v-if="askDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" @click.self="askDialog = null">
+        <div v-if="askDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-6" @click.self="askDialog = null">
           <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6">
             <h3 class="text-lg font-semibold mb-2 flex items-center gap-1.5"><Sparkles :size="16" class="text-brian-blue" /> 询问读伴</h3>
             <p class="text-xs text-apple-gray-400 mb-4">选中内容：<span class="text-apple-gray-600 dark:text-apple-gray-300">{{ askDialog.selectionText.slice(0, 80) }}{{ askDialog.selectionText.length > 80 ? '…' : '' }}</span></p>
@@ -380,7 +380,7 @@ const statusLabel = computed(() => {
       </Teleport>
 
       <Teleport to="body">
-        <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" @click.self="cancelDeleteFile">
+        <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-6" @click.self="cancelDeleteFile">
           <div class="w-full max-w-md rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6">
             <h3 class="text-lg font-semibold mb-2 flex items-center gap-1.5 text-error-red"><Trash2 :size="16" /> 删除文档</h3>
             <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300">

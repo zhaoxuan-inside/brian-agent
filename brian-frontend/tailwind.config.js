@@ -20,13 +20,13 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+        sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', 'Helvetica Neue', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
       },
       // 字号阶梯:10/11/12/14/16/18 六级收敛,替代任意值 text-[Npx]
       fontSize: {
-        '4xs': ['10px', { lineHeight: '14px' }],
-        '2xs': ['11px', { lineHeight: '16px' }]
+        '4xs': ['11px', { lineHeight: '16px' }],
+        '2xs': ['12px', { lineHeight: '18px' }]
       },
       // 圆角阶梯(有意为之的 iOS 语言):xl=控件胶囊 28px,2xl=卡片 16px,3xl=大面板 20px
       borderRadius: {

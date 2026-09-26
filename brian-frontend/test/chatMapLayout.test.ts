@@ -8,7 +8,6 @@ import {
   type ChatMapLayoutEdge,
 } from '@/utils/chatMapLayout'
 
-// 引用节点额外横向间距与列宽的比例
 const CITATION_EXTRA_RATIO = 60 / CHAT_MAP_COL_W
 
 function node(id: string, infoType: string, created: number): ChatMapLayoutNode {
@@ -66,10 +65,10 @@ describe('chatMapLayout', () => {
 
     expect(colOf(byId(nodes, 'q1'))).toBe(0)
     expect(colOf(byId(nodes, 'a1'))).toBe(0)
-    // q2 和 a2 同属引用列，共享同一 X 偏移（居中对齐）
+    
     expect(colOf(byId(nodes, 'q2'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
     expect(colOf(byId(nodes, 'a2'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
-    expect(colOf(byId(nodes, 'q2'))).toBe(colOf(byId(nodes, 'a2'))) // 居中对齐
+    expect(colOf(byId(nodes, 'q2'))).toBe(colOf(byId(nodes, 'a2')))
     expect(rowOf(byId(nodes, 'q2'))).toBe(rowOf(byId(nodes, 'a1')))
     expect(rowOf(byId(nodes, 'a2'))).toBe(rowOf(byId(nodes, 'q2')) + 1)
   })
@@ -84,7 +83,7 @@ describe('chatMapLayout', () => {
 
     layoutChatMap(nodes, edges)
 
-    // q3 引用 a1(row1) 与 a2(row3)，取最靠下的 a2(row3) 对齐
+    
     expect(rowOf(byId(nodes, 'q3'))).toBe(3)
     expect(colOf(byId(nodes, 'q3'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
   })
@@ -101,10 +100,10 @@ describe('chatMapLayout', () => {
 
     expect(colOf(byId(nodes, 'q2'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
     expect(colOf(byId(nodes, 'a2'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
-    expect(colOf(byId(nodes, 'q2'))).toBe(colOf(byId(nodes, 'a2'))) // 居中对齐
+    expect(colOf(byId(nodes, 'q2'))).toBe(colOf(byId(nodes, 'a2')))
     expect(colOf(byId(nodes, 'q3'))).toBeCloseTo(2 + CITATION_EXTRA_RATIO, 1)
     expect(colOf(byId(nodes, 'a3'))).toBeCloseTo(2 + CITATION_EXTRA_RATIO, 1)
-    expect(colOf(byId(nodes, 'q3'))).toBe(colOf(byId(nodes, 'a3'))) // 居中对齐
+    expect(colOf(byId(nodes, 'q3'))).toBe(colOf(byId(nodes, 'a3')))
     expect(rowOf(byId(nodes, 'q3'))).toBe(rowOf(byId(nodes, 'a2')))
   })
 
@@ -118,9 +117,9 @@ describe('chatMapLayout', () => {
 
     layoutChatMap(nodes, edges)
 
-    // q2/a2/q3/a3 同属引用列，共享同一 X 偏移
+    
     expect(colOf(byId(nodes, 'q3'))).toBeCloseTo(1 + CITATION_EXTRA_RATIO, 1)
-    expect(colOf(byId(nodes, 'q3'))).toBe(colOf(byId(nodes, 'a2'))) // 居中对齐
+    expect(colOf(byId(nodes, 'q3'))).toBe(colOf(byId(nodes, 'a2')))
     expect(rowOf(byId(nodes, 'q3'))).toBe(rowOf(byId(nodes, 'a2')) + 1)
   })
 })

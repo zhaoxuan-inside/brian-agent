@@ -707,7 +707,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
     <Teleport to="body">
       <div
         v-if="fbDetailOpen"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
         @click.self="closeFeedbackDetail"
       >
         <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">

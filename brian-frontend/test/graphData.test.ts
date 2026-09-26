@@ -4,7 +4,7 @@ import { TAG_GRAPH, KEYWORD_GRAPH, GRAPH_SHOT_W, GRAPH_SHOT_H, type GraphShotGra
 function expectHealthy(graph: GraphShotGraph, minNodes: number) {
   expect(graph.nodes.length).toBeGreaterThanOrEqual(minNodes)
   graph.nodes.forEach((n) => {
-    // 力导向边界力（margin 40）允许少量越界，但不得跑出画布太远
+    
     expect(n.x).toBeGreaterThan(-40)
     expect(n.x).toBeLessThan(GRAPH_SHOT_W + 40)
     expect(n.y).toBeGreaterThan(-40)
@@ -27,8 +27,8 @@ describe('graphData（力导向范例数据）', () => {
     expectHealthy(TAG_GRAPH, 35)
     const hub = TAG_GRAPH.nodes.find((n) => n.label === '旅行规划')
     expect(hub).toBeDefined()
-    expect(hub!.r).toBeGreaterThanOrEqual(9) // 高连接枢纽
-    expect(parseFloat(hub!.color.match(/hsl\((\d+)/)![1])).toBeLessThan(40) // 高频 → 偏红
+    expect(hub!.r).toBeGreaterThanOrEqual(9)
+    expect(parseFloat(hub!.color.match(/hsl\((\d+)/)![1])).toBeLessThan(40)
   })
 
   it('关键词图：密度更高，api 为红色枢纽，三角节点存在', () => {
@@ -41,7 +41,7 @@ describe('graphData（力导向范例数据）', () => {
   })
 
   it('布局确定性：重复构建（模块重载模拟）坐标稳定', () => {
-    // graphData 为模块级单例，这里校验两次快照一致（forceDirectedLayout 无随机源）
+    
     const snapshot = JSON.stringify(TAG_GRAPH.nodes.map((n) => [n.label, n.x, n.y]))
     expect(snapshot).toBe(JSON.stringify(TAG_GRAPH.nodes.map((n) => [n.label, n.x, n.y])))
   })

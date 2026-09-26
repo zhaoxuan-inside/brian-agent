@@ -36,8 +36,8 @@ watch(() => props.configKey, () => { if (props.configKey) load() }, { immediate:
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="emit('close')">
-    <div class="bg-white dark:bg-apple-gray-900 rounded-2xl shadow-xl w-[560px] max-w-[92vw] max-h-[80vh] flex flex-col overflow-hidden">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]" @click.self="emit('close')">
+    <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl w-full max-w-xl mx-4 max-h-[80vh] flex flex-col overflow-hidden">
       <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-2">
         <History :size="16" class="text-brian-blue" />
         <div class="min-w-0">

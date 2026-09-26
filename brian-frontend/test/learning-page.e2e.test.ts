@@ -12,8 +12,7 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
-  // 清理：停掉 start 用例启动的全部学习定时器（DOCUMENT/RANDOM/CONVERSATION/TAG_MAINTENANCE），
-  // 避免 vitest 因活跃 setInterval 挂起
+
   if (apiBase) {
     try {
       await fetch(`${apiBase}/api/learning/stop`, {
@@ -21,7 +20,7 @@ afterAll(async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ learning_mode: 'ALL' }),
       });
-    } catch { /* server may already be closed */ }
+    } catch {  }
   }
   if (server) await stopTestServer(server);
   cleanupE2ETempDirs();
@@ -129,7 +128,6 @@ describe('Learning Page - Task Registry E2E (任务条)', () => {
     const start = await api('/api/learning/start', { method: 'POST', body: JSON.stringify({ mode: 'from-document' }) });
     expect(start.status).toBe(200);
 
-    // 任务注册表：任务应已登记（可能仍在 running 或已完成）
     const tasks = await api('/api/learning/tasks');
     expect(tasks.status).toBe(200);
     expect(Array.isArray(tasks.body.tasks)).toBe(true);
@@ -147,9 +145,7 @@ describe('Learning Page - Progress E2E', () => {
   it('TC-LEARN-019: should get learning progress', async () => {
     const res = await api('/api/learning/progress-enhanced');
     expect(res.status).toBe(200);
-    // ===== 原始断言（保留作为参考）：progress-enhanced 已演进为三模式契约（mode/running/randomFactor/queueSize/modes）=====
-    // expect(res.body.status !== undefined).toBe(true);
-    // expect(Array.isArray(res.body.queue)).toBe(true);
+
     expect(typeof res.body.mode).toBe('string');
     expect(typeof res.body.running).toBe('boolean');
     expect(typeof res.body.randomFactor).toBe('number');

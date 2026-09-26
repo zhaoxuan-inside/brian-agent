@@ -146,7 +146,7 @@ onMounted(loadTasks)
         <div
           v-for="task in tasks"
           :key="task.name"
-          class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+          class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 min-h-[8.5rem] flex flex-col cursor-pointer"
           @click="openRuns(task)"
         >
           <div class="mb-2">

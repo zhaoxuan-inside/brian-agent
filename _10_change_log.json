@@ -141,6 +141,26 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-006",
+      "date": "2026-09-26",
+      "requirement": "用户反馈:字体不优雅/字号不协调/弹窗与页面不匹配/小窗下文字压缩差,要求对齐 Apple 等大厂处理。T-F09 字体系统(CJK 感知栈 system-ui 优先+PingFang/雅黑/Noto;字号阶梯 4xs 10→11、2xs 11→12;全局 tabular-nums);T-F10 弹窗体系(ModalShell 16px 圆角+85vh 限高内滚+小屏宽度保护+背板 40%+2px 材质模糊;25 处背板统一;ConfigHistoryModal 深色底与弹性宽度;ThinkingModal 标题 15px;CronView 卡片去固定宽高比);T-F11 文字压缩核查(chips wrap/break-words 已具备)",
+      "changed_files": [
+        "brian-frontend/tailwind.config.js",
+        "brian-frontend/src/styles/globals.css",
+        "brian-frontend/src/components/common/ModalShell.vue",
+        "brian-frontend/src/components/config/ConfigHistoryModal.vue",
+        "brian-frontend/src/components/chat/ThinkingModal.vue",
+        "brian-frontend/src/views/CronView.vue",
+        "brian-frontend/src/views/ConfigView.vue",
+        "brian-frontend/src/components/info/LibraryTab.vue",
+        "brian-frontend/src/components/chat/(背板统一涉及 10 文件)"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }

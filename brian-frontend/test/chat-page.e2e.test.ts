@@ -79,7 +79,7 @@ describe('Chat Page - Session Management E2E', () => {
     expect(deleted).toBeFalsy();
   });
 
-  // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[] 删除多个会话 =====
+  
   it('TC-CHAT-068: should batch delete multiple sessions', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { fuzzyLocate, normalizeForFuzzy, FUZZY_MATCH_THRESHOLD } from '@/composables/useLibraryTab'
 
-/** 字符重合度（顺序无关计数交集），与实现评分口径一致 */
 function similarity(a: string, b: string): number {
   const x = normalizeForFuzzy(a).text
   const y = normalizeForFuzzy(b).text
@@ -57,7 +56,7 @@ describe('fuzzyLocate（编辑后咨询标注重锚定）', () => {
     const selection = '梯度下降法：学习率决定了收敛速度，以及最终精度'
     const res = fuzzyLocate(full, selection)
     expect(res).not.toBeNull()
-    // 标点差异被归一化抹平，命中区域应与选中文本高度重合
+    
     expect(similarity(full.slice(res!.start, res!.end), selection))
       .toBeGreaterThanOrEqual(FUZZY_MATCH_THRESHOLD)
     expect(normalizeForFuzzy(full.slice(res!.start, res!.end)).text)

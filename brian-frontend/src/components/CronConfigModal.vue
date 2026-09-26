@@ -106,7 +106,7 @@ function save() {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      class="fixed inset-0 z-modal flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
       @click.self="emit('close')"
     >
       <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-lg mx-4 overflow-hidden">

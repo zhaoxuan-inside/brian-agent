@@ -4,9 +4,7 @@ import fs from 'node:fs';
 import { vi } from 'vitest';
 import { RelationDBAccess, IdGenerator, LLMAccess, MCPAccess, SoulAccess, SkillAccess, PromptsAccess, GraphDBAccess, MQAccess, LogAccess } from '@brian-agent/base';
 import { InfoCoreAccess, LLMCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess, MQCoreAccess } from '@brian-agent/core';
-import { AgentLibraryAccess, AgentStrategyAccess, AgentBuilderAccess, AgentExecutionAccess, AgentContextAccess, PlannerAgentAccess, WriterAgentAccess, EvolutorAgentAccess } from '@brian-agent/agent';
-// ===== 原始导入（保留作为参考）：V1 编排框架已在 Runtime v2 重构中删除（commit b31f289），学习页文档学习已去编排化 =====
-// import { OrchestrationEntryAccess, OrchestrationStrategyAccess, OrchestrationExecutionAccess, OrchestrationVisualizationAccess, JSONNodeAccess } from '@brian-agent/orchestration';
+import { AgentLibraryAccess, AgentStrategyAccess, AgentBuilderAccess, AgentExecutionAccess, AgentContextAccess, WriterAgentAccess, EvolutorAgentAccess } from '@brian-agent/agent';
 
 const brianAppRoot = path.resolve(__dirname, '../../brian-backend/Application');
 
@@ -29,7 +27,7 @@ const tempDirs: string[] = [];
 
 function resetSeq() { _seq = 0; }
 function makeTempDir(): string {
-  // 基础目录可能不存在（干净环境），先递归创建
+
   fs.mkdirSync('/tmp/opencode', { recursive: true });
   const dir = fs.mkdtempSync(path.join('/tmp/opencode', 'brian-e2e-test-'));
   tempDirs.push(dir);
@@ -38,7 +36,7 @@ function makeTempDir(): string {
 
 export function cleanupE2ETempDirs() {
   for (const dir of tempDirs) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {  }
   }
   tempDirs.length = 0;
 }
@@ -50,7 +48,7 @@ function createMockLogger(): any {
 function addColumnIfNotExists(relationDb: any, table: string, column: string, type: string): void {
   try {
     relationDb.executeRaw(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${type}`);
-  } catch { /* column exists */ }
+  } catch {  }
 }
 
 function mockExternalLLMMethods(llmAccess: any) {
@@ -140,15 +138,9 @@ export interface E2ETestContext {
   agentContext: any;
   agentBuilder: any;
   agentExecution: any;
-  plannerAgent: any;
   writerAgent: any;
   evolutorAgent: any;
-  // ===== 原始字段（保留作为参考）：V1 编排已删除 =====
-  // orchestrationExecution: any;
-  // orchestrationVisualization: any;
-  // jsonNode: any;
-  // orchestrationStrategy: any;
-  // orchestrationEntry: any;
+
   selfLearningAccess: any;
   chatAccess: any;
 }
@@ -168,7 +160,7 @@ export async function setupE2ETestEnvironment(): Promise<E2ETestContext> {
   mockExternalLLMMethods(llmAccess);
 
   const mcpAccess = new MCPAccess(relationDb, logger);
-  try { await (mcpAccess as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (mcpAccess as any).initialize?.(); } catch {  }
   mockExternalMCPMethods(mcpAccess);
 
   const soulAccess = new SoulAccess(relationDb, logger);
@@ -204,10 +196,10 @@ export async function setupE2ETestEnvironment(): Promise<E2ETestContext> {
   await llmCore.initialize();
 
   const mcpCore = new MCPCoreAccess(relationDb, mcpAccess, llmAccess, promptsAccess, logger);
-  try { await (mcpCore as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (mcpCore as any).initialize?.(); } catch {  }
 
   const skillCore = new SkillCoreAccess(relationDb, skillAccess, llmAccess, promptsAccess, logger);
-  try { await (skillCore as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (skillCore as any).initialize?.(); } catch {  }
 
   const soulCore = new SoulCoreAccess(relationDb, soulAccess, llmAccess, promptsAccess, logger);
   await soulCore.initialize();
@@ -232,27 +224,8 @@ export async function setupE2ETestEnvironment(): Promise<E2ETestContext> {
   const writerAgent = new WriterAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, agentBuilder, agentLibrary, soulAccess, logger);
   await writerAgent.initialize();
 
-  const plannerAgent = new PlannerAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, agentBuilder, agentLibrary, logger);
-  await plannerAgent.initialize();
-
   const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, logger);
   await evolutorAgent.initialize();
-
-  // ===== 原始编排装配（保留作为参考）：V1 编排框架已删除，学习页文档学习改为 LLM 直采（callLLMJson）=====
-  // const orchestrationExecution = new OrchestrationExecutionAccess(relationDb, agentBuilder, agentExecution, agentLibrary, infoCore, mqAccess, mqCore, logger);
-  // await orchestrationExecution.initialize();
-  //
-  // const orchestrationVisualization = new OrchestrationVisualizationAccess(relationDb, agentLibrary, agentExecution, logger);
-  // await orchestrationVisualization.initialize();
-  //
-  // const jsonNode = new JSONNodeAccess(relationDb, infoCore, agentBuilder, writerAgent, plannerAgent, evolutorAgent, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger);
-  // await jsonNode.initialize();
-  //
-  // const orchestrationStrategy = new OrchestrationStrategyAccess(relationDb, agentBuilder, plannerAgent, writerAgent, evolutorAgent, orchestrationExecution, jsonNode, mqCore, logger);
-  // await orchestrationStrategy.initialize();
-  //
-  // const orchestrationEntry = new OrchestrationEntryAccess(relationDb, infoCore, writerAgent, orchestrationStrategy, orchestrationExecution, llmAccess, promptsAccess, mqAccess, mqCore, logger);
-  // await orchestrationEntry.initialize();
 
   const schemaInitModule = await getChatSchemaInitModule();
   const chatAccessModule = await getChatAccessModule();
@@ -260,10 +233,9 @@ export async function setupE2ETestEnvironment(): Promise<E2ETestContext> {
   const ChatAccess = chatAccessModule.ChatAccess;
 
   new ChatSchemaInitializer(relationDb).init();
-  // Runtime v2 后 ChatAccess 构造签名为 (relationDb, infoCore, logger?, streamAccess?, runtime?)
+
   const chatAccess = new ChatAccess(relationDb, infoCore, logger);
 
-  // SelfLearning（学习页真实后端）：依赖与 dev-server 装配一致
   const { ChunkAccess } = await import('@brian-agent/base');
   const chunkAccess = new ChunkAccess(logger);
   const { access: selfLearningAccessModule, types: selfLearningTypes } = await getSelfLearningModules();
@@ -278,7 +250,7 @@ export async function setupE2ETestEnvironment(): Promise<E2ETestContext> {
     graphDBAccess, mqAccess, logAccess, vectorDbAccess,
     infoCore, llmCore, mcpCore, skillCore, soulCore, mqCore,
     agentLibrary, agentStrategy, agentContext, agentBuilder, agentExecution,
-    plannerAgent, writerAgent, evolutorAgent,
+    writerAgent, evolutorAgent,
     selfLearningAccess,
     selfLearningTypes,
     chatAccess,
@@ -309,7 +281,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
       const params = url.searchParams;
       const body = method === 'POST' || method === 'PUT' || method === 'DELETE' ? await jsonBody(req) : {};
 
-      // ---- Chat Routes (Real Backend) ----
       if (method === 'GET' && pathname === '/api/chat/list') {
         const input: any = { keyword: params.get('keyword') || undefined };
         const output: any = {};
@@ -348,21 +319,11 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         sendJson(res, 200, { exchanges: output.messages || [] });
 
       } else if (method === 'POST' && pathname === '/api/chat/send') {
-        // ===== 原始路由（保留作为参考）：submitWork 已在 Runtime v2 重构中删除，
-        // 新发送链路走 RunGateway（需 streamAccess/runtimeGateway/session 装配），属对话页专项，暂不在 e2e 装配范围 =====
-        // const input: any = {
-        //   session_id: body.session_id || body.sessionId,
-        //   msg_content: body.msg_content || body.content,
-        //   citing_msg_ids: body.citing_msg_ids || body.citingIds,
-        // };
-        // const output: any = {};
-        // const context: any = {};
-        // await ctx.chatAccess.submitWork(input, context, output);
-        // sendJson(res, 200, { msgId: output.run_id, workId: output.work_id });
+
         sendJson(res, 501, { error: 'chat send 已迁移 Runtime v2（RunGateway），e2e 装配未覆盖，见 TR-对话页面' });
 
       } else if (method === 'DELETE' && pathname === '/api/chat/session') {
-        // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[]，镜像 dev-server 语义 =====
+
         const rawIds = body.session_ids;
         const sessionIds = Array.isArray(rawIds) ? rawIds.map((x: unknown) => String(x)).filter(Boolean) : [];
         if (sessionIds.length === 0) { sendJson(res, 400, { error: 'session_ids 必须为非空数组' }); return; }
@@ -413,7 +374,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         await ctx.chatAccess.updateSessionTitle(input, output, context);
         sendJson(res, 200, { success: true, session_id: sid, session_title: newTitle });
 
-      // ---- Memory Routes ----
       } else if (method === 'GET' && pathname === '/api/memory/list') {
         const input: any = { keyword: params.get('keyword') || undefined };
         const output: any = {};
@@ -448,7 +408,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         await ctx.chatAccess.soSession(input, output, context);
         sendJson(res, 200, { totalMemories: output.total || 0, byType: {} });
 
-      // ---- Config Routes ----
       } else if (method === 'GET' && pathname === '/api/config') {
         sendJson(res, 200, { config: { layers: { BASE: { readable: true, writable: true } } } });
 
@@ -478,7 +437,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
       } else if (method === 'GET' && pathname === '/api/config/mcp') {
         sendJson(res, 200, []);
 
-      // ---- Skill Routes ----
       } else if (method === 'GET' && pathname === '/api/skill') {
         const skInput: any = {};
         const skOutput: any = {};
@@ -492,7 +450,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
       } else if (method === 'DELETE' && pathname.startsWith('/api/skill/')) {
         sendJson(res, 200, { success: true });
 
-      // ---- Agent Routes ----
       } else if (method === 'GET' && pathname === '/api/agent') {
         const aInput: any = {};
         const aOutput: any = {};
@@ -506,7 +463,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
       } else if (method === 'DELETE' && pathname.startsWith('/api/agent/')) {
         sendJson(res, 200, { success: true });
 
-      // ---- MCP Routes ----
       } else if (method === 'GET' && pathname === '/api/mcp') {
         const mcpInput: any = {};
         const mcpOutput: any = {};
@@ -517,35 +473,6 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
       } else if (method === 'GET' && pathname === '/api/mcp/market') {
         sendJson(res, 200, { market: [] });
 
-      // ---- Learning Routes（真实 SelfLearningAccess，镜像 dev-server 语义）----
-      // ===== 原始 Mock 路由（保留作为参考）=====
-      // } else if (method === 'POST' && pathname === '/api/learning/start') {
-      //   sendJson(res, 200, { success: true });
-      //
-      // } else if (method === 'POST' && pathname === '/api/learning/stop') {
-      //   sendJson(res, 200, { success: true });
-      //
-      // } else if (method === 'PUT' && pathname === '/api/learning/mode') {
-      //   sendJson(res, 200, { success: true });
-      //
-      // } else if (method === 'PUT' && pathname === '/api/learning/driver-weights') {
-      //   sendJson(res, 200, { success: true });
-      //
-      // } else if (method === 'GET' && pathname === '/api/learning/stats') {
-      //   sendJson(res, 200, { totalLearnCount: 0, knowledgeCount: 0, insightCount: 0, weeklyLearnCount: 0 });
-      //
-      // } else if (method === 'GET' && pathname === '/api/learning/progress-enhanced') {
-      //   sendJson(res, 200, { currentTask: null, queue: [], status: 'IDLE' });
-      //
-      // } else if (method === 'GET' && pathname === '/api/learning/queue') {
-      //   sendJson(res, 200, { tasks: [] });
-      //
-      // } else if (method === 'GET' && pathname === '/api/learning/knowledge') {
-      //   sendJson(res, 200, { items: [] });
-      //
-      // } else if (method === 'GET' && pathname === '/api/learning/insights') {
-      //   sendJson(res, 200, { items: [] });
-      // }
       } else if (pathname.startsWith('/api/learning/')) {
         const T = ctx.selfLearningTypes;
         const sl = ctx.selfLearningAccess;
@@ -569,7 +496,7 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
           sendJson(res, 200, { success: true });
 
         } else if (method === 'POST' && pathname === '/api/learning/stop') {
-          // 支持显式 learning_mode（e2e 清理用 'ALL' 停掉全部定时器）；默认镜像 dev-server 语义
+
           const rawMode = String(body.learning_mode || body.mode || '');
           const backendMode = rawMode ? mapMode(rawMode) : 'ALL';
           await sl.stopLearning(
@@ -693,18 +620,15 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
         const exists = !!(body.path && body.path.length > 0);
         sendJson(res, 200, { exists, isReadable: exists, isWritable: exists });
 
-      // ---- Feedback Routes ----
       } else if (method === 'POST' && pathname === '/api/feedback') {
         sendJson(res, 200, { success: true });
 
-      // ---- Profile Routes ----
       } else if (method === 'GET' && /\/api\/profile\//.test(pathname)) {
         sendJson(res, 200, { language: 'zh-CN', style: 'friendly', depth: 'detailed', format: 'markdown' });
 
       } else if (method === 'PUT' && /\/api\/profile\//.test(pathname)) {
         sendJson(res, 200, { success: true });
 
-      // ---- Monitor Routes ----
       } else if (method === 'GET' && pathname === '/api/monitor/health-all') {
         sendJson(res, 200, {
           components: [

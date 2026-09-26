@@ -37,6 +37,8 @@
     @apply font-sans antialiased text-apple-gray-900 dark:text-apple-gray-50 bg-white dark:bg-apple-dark-bg;
     margin: 0;
     padding: 0;
+    /* 中文正文以系统 UI 字体渲染;数字统一等宽,统计/时间不跳宽 */
+    font-variant-numeric: tabular-nums;
   }
   * { @apply border-apple-gray-200 dark:border-apple-gray-700; }
 

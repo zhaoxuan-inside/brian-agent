@@ -3691,7 +3691,7 @@ watch(activeSubSection, async (val) => {
             <Teleport to="body">
               <div
                 v-if="mqModalVisible"
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
                 @click.self="mqModalVisible = false"
               >
                 <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-2xl mx-4 overflow-hidden flex flex-col h-[85vh] max-h-[800px]">
@@ -3860,7 +3860,7 @@ watch(activeSubSection, async (val) => {
             <Teleport to="body">
               <div
                 v-if="vectordbModalVisible"
-                class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
                 @click.self="vectordbModalVisible = false"
               >
                 <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-3xl mx-4 overflow-hidden flex flex-col h-[85vh] max-h-[800px]">
@@ -4646,7 +4646,7 @@ watch(activeSubSection, async (val) => {
 
             <Teleport to="body">
               <Transition name="modal">
-                <div v-if="mcpConfigModalVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="closeMcpConfigModal">
+                <div v-if="mcpConfigModalVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px]" @click.self="closeMcpConfigModal">
                   <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
                     <h2 class="text-lg font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-1">
                       {{ mcpProviders.find(p => (p.provider_code || p.id) === mcpConfigProviderId)?._displayName || '' }} 配置
@@ -4994,7 +4994,7 @@ watch(activeSubSection, async (val) => {
           <Teleport to="body">
             <Transition name="modal">
               <div v-if="orchStrategyDetailVisible" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeOrchStrategyDetail" />
+                <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeOrchStrategyDetail" />
                 <div class="relative w-full max-w-3xl bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden max-h-[85vh] flex flex-col">
                   <div class="flex items-center justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
                     <div class="flex items-center gap-2.5 min-w-0">
@@ -5188,7 +5188,7 @@ watch(activeSubSection, async (val) => {
               @contextmenu="onBrowserContextMenu"
             >
               <img :src="cdtPageFrame" alt="Remote Browser" class="w-full pointer-events-none" draggable="false" />
-              <div class="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/50 text-white text-4xs">
+              <div class="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/40 backdrop-blur-[2px] text-white text-4xs">
                 <span class="w-1.5 h-1.5 rounded-full bg-success-green animate-pulse" />
                 实时画面（250ms 刷新）
               </div>
@@ -5283,7 +5283,7 @@ watch(activeSubSection, async (val) => {
           </div>
 
           <Teleport to="body">
-            <div v-if="profileDirModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="closeProfileDirModal">
+            <div v-if="profileDirModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]" @click.self="closeProfileDirModal">
               <div class="w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6">
                 <h3 class="text-lg font-semibold mb-4">{{ editingProfileDir ? '编辑维度' : '添加维度' }}</h3>
                 <div class="space-y-3">
@@ -5395,7 +5395,7 @@ watch(activeSubSection, async (val) => {
         <Teleport to="body">
           <Transition name="modal">
             <div v-if="strategyDetailVisible" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-              <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeStrategyDetail" />
+              <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeStrategyDetail" />
               <div class="relative w-full max-w-2xl bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden max-h-[85vh] flex flex-col">
                 <div class="flex items-center justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
                   <div class="flex items-center gap-2">
@@ -5484,7 +5484,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="searchVisible" class="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSearch" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeSearch" />
         <div class="relative w-full max-w-lg bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
           <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <Search :size="16" class="text-apple-gray-400" />
@@ -5520,7 +5520,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="providerModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeProviderModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeProviderModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5649,7 +5649,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="modelModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeModelModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeModelModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5759,7 +5759,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="soulModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSoulModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeSoulModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5799,7 +5799,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="skillModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSkillModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeSkillModal" />
         <div class="relative w-full max-w-2xl max-h-[90vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5868,7 +5868,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="skillTestModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSkillTestModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeSkillTestModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5902,7 +5902,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="agentModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeAgentModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeAgentModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5974,7 +5974,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="promptModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closePromptModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closePromptModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6029,7 +6029,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="showResetConfirm" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="cancelReset" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="cancelReset" />
         <div class="relative w-full max-w-md bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
           <div class="px-6 pt-6 pb-2">
             <div class="flex items-center gap-3 mb-4">
@@ -6072,7 +6072,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="infoTypesModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeInfoTypesModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeInfoTypesModal" />
         <div class="relative w-full max-w-md max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6130,7 +6130,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="modal">
       <div v-if="priorityOrderModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closePriorityOrderModal" />
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closePriorityOrderModal" />
         <div class="relative w-full max-w-md max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6190,7 +6190,7 @@ watch(activeSubSection, async (val) => {
     </Transition>
 
     <Transition name="fade">
-      <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="diffConfirm = null">
+      <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]" @click.self="diffConfirm = null">
         <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
           <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800">
             <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">确认修改</h3>

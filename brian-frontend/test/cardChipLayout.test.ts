@@ -16,7 +16,7 @@ describe('cardChipLayout', () => {
   })
 
   it('wraps chips that exceed the card inner width', () => {
-    // 窄卡（内宽 156）迫使第 4 个胶囊换行：第二行排在第一行下方、更贴卡片底部
+    
     const laid = layoutChipsInCard(chips, { ...card, w: 180 })
     expect(laid.filter((c) => c.y === laid[0].y).length).toBe(3)
     expect(laid[3].y).toBe(laid[0].y + 17)
