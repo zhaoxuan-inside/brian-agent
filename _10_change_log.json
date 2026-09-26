@@ -161,6 +161,18 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-007",
+      "date": "2026-09-26",
+      "requirement": "用户要求思考过程弹窗显示任务执行全程所有信息。T-F12:新增『请求与回复』区(运行原文,取 target 消息及其相邻消息);时间线详情去 line-clamp-3 完整显示(pre-wrap);时间线去内层 384px 限高随弹窗滚动;执行内容区新增『全部展开/收起』(节点+技能调用+授权一键展开,含输入参数/返回结果);既有 全量上下文轮次/节点 fields/授权参数/深度思考 io 保持",
+      "changed_files": [
+        "brian-frontend/src/components/chat/ThinkingModal.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }

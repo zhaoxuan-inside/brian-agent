@@ -2,7 +2,7 @@
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   X, Brain, Loader2, ChevronRight, ChevronDown, Clock3, Zap, Wrench,
-  ShieldCheck, MessagesSquare, ListTree, Check, Bot, Cpu, FileText, Sparkles, Layers,
+  ShieldCheck, MessagesSquare, ListTree, Check, Bot, Cpu, FileText, Sparkles, Layers, MessageSquareText,
   CheckCircle2, XCircle, CircleDot,
 } from '@lucide/vue'
 import { useSessionStore } from '@/stores/session'
@@ -31,6 +31,26 @@ const thinkingBlocks = computed<ThinkingBlock[]>(() => {
 })
 
 const historyTrace = computed<ThinkingTrace | null>(() => (targetMsgId.value ? chatUi.thinkingTrace : null))
+
+/** 运行的用户请求与最终回复(target 消息及其相邻消息,缺失时优雅降级) */
+const runExchange = computed<{ request: string; reply: string } | null>(() => {
+  const id = targetMsgId.value;
+  if (!id) return null;
+  const msgs = sessionStore.messages;
+  const idx = msgs.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+  const target = msgs[idx];
+  if (!target) return null;
+  if (target.role === 'user') {
+    const reply = msgs.slice(idx + 1).find((m) => m.role === 'assistant');
+    return { request: target.content, reply: reply?.content ?? '' };
+  }
+  let request = '';
+  for (let i = idx - 1; i >= 0; i -= 1) {
+    if (msgs[i].role === 'user') { request = msgs[i].content; break; }
+  }
+  return { request, reply: target.content };
+});
 
 const contextBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
@@ -260,6 +280,24 @@ function togglePerm(key: string) {
   if (next.has(key)) next.delete(key)
   else next.add(key)
   expandedPerms.value = next
+}
+
+function executionAllExpanded(): boolean {
+  return runNodes.value.every((n) => expandedNodes.value.has(n.targetKey))
+    && toolTraces.value.every((t) => expandedTools.value.has(String(t.partId || t.index)))
+    && answeredPermissions.value.every((p) => expandedPerms.value.has(p.permissionId || `${p.toolId}-${p.askedAt}`));
+}
+
+function toggleAllExecution() {
+  if (executionAllExpanded()) {
+    expandedNodes.value = new Set();
+    expandedTools.value = new Set();
+    expandedPerms.value = new Set();
+  } else {
+    expandedNodes.value = new Set(runNodes.value.map((n) => n.targetKey));
+    expandedTools.value = new Set(toolTraces.value.map((t) => String(t.partId || t.index)));
+    expandedPerms.value = new Set(answeredPermissions.value.map((p) => p.permissionId || `${p.toolId}-${p.askedAt}`));
+  }
 }
 
 function toggleNode(key: string) {
@@ -695,6 +733,24 @@ watch(
                 </div>
               </section>
 
+              <section v-if="runExchange && (runExchange.request || runExchange.reply)" class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 p-4">
+                <div class="flex items-center gap-2 mb-3">
+                  <MessageSquareText :size="14" class="text-brian-blue flex-shrink-0" />
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">请求与回复</h4>
+                  <span class="text-2xs text-apple-gray-400">本次运行的原文</span>
+                </div>
+                <div class="space-y-2.5">
+                  <div v-if="runExchange.request" class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 p-3">
+                    <p class="text-4xs font-medium text-apple-gray-400 mb-1">用户请求</p>
+                    <p class="text-2xs leading-relaxed text-apple-gray-700 dark:text-apple-gray-200 whitespace-pre-wrap break-words">{{ runExchange.request }}</p>
+                  </div>
+                  <div v-if="runExchange.reply" class="rounded-xl bg-brian-blue/[0.04] dark:bg-brian-blue/10 p-3">
+                    <p class="text-4xs font-medium text-brian-blue mb-1">最终回复</p>
+                    <p class="text-2xs leading-relaxed text-apple-gray-700 dark:text-apple-gray-200 whitespace-pre-wrap break-words">{{ runExchange.reply }}</p>
+                  </div>
+                </div>
+              </section>
+
               <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
                 <button class="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/60 transition-colors" @click="secContext = !secContext">
                   <MessagesSquare :size="14" class="text-brian-blue flex-shrink-0" />
@@ -734,7 +790,7 @@ watch(
                   <div
                     v-if="timeline.length > 0"
                     ref="timelineListRef"
-                    class="max-h-96 overflow-y-auto pr-1 py-0.5 pl-0.5"
+                    class="pr-1 py-0.5 pl-0.5"
                   >
                     <ol
                       class="relative ml-2 border-l-2 border-apple-gray-100 dark:border-apple-gray-700/80 space-y-1"
@@ -759,7 +815,7 @@ watch(
                               <span v-if="item.elapsedMs" class="text-4xs tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(item.elapsedMs) }}</span>
                               <span v-if="item.target" class="text-4xs text-brian-blue opacity-0 group-hover:opacity-100 transition-opacity">查看详情 →</span>
                             </div>
-                            <p v-if="item.detail" class="mt-0.5 text-2xs leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words line-clamp-3">{{ item.detail }}</p>
+                            <p v-if="item.detail" class="mt-0.5 text-2xs leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words whitespace-pre-wrap">{{ item.detail }}</p>
                           </div>
                         </div>
                       </li>
@@ -780,6 +836,10 @@ watch(
                   <Brain :size="14" class="text-brian-blue flex-shrink-0" />
                   <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行内容</h4>
                   <span class="text-2xs text-apple-gray-400">{{ toolTraces.length }} 次工具 · {{ answeredPermissions.length }} 次授权 · {{ agentDetailBlocks.length }} 个思考 · {{ runNodes.length }} 个节点</span>
+                  <button
+                    class="ml-auto px-2 py-1 rounded-lg text-4xs font-medium text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0"
+                    @click="toggleAllExecution"
+                  >{{ executionAllExpanded() ? '全部收起' : '全部展开' }}</button>
                 </div>
                 <div class="p-4 space-y-6">
 
