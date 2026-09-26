@@ -1,10 +1,3 @@
-/**
- * @fileoverview StreamProvider 服务实现。
- *
- * 管理 SSE 连接生命周期、心跳保活、并发 Agent 消息隔离缓冲、文本切片（2-5 字符打字机）
- * 以及基于 BrianSSEMessage 协议的结构化数据推送。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import type { Logger } from '../../shared/aop/AopProxy';
@@ -31,7 +24,7 @@ import {
 
 interface ActiveSessionStream {
   sessionId: string;
-  /** SSE 端点 ID（registerStream 生成；前端请求时携带，按 ID 定位端点） */
+  
   endpointId: string;
   writer: StreamWriter;
   heartbeatTimer: NodeJS.Timeout | null;
@@ -43,11 +36,11 @@ interface ActiveSessionStream {
 
 export class StreamService {
   private readonly sessions = new Map<string, ActiveSessionStream>();
-  /** SSE 端点 ID → session_id（Report 携带端点 ID 上报时按此定位具体连接） */
+  
   private readonly endpoints = new Map<string, string>();
-  /** 事件 seq 进程内缓存（每 session_key 严格递增；DB MAX 为持久事实源） */
+  
   private readonly eventSeqCache = new Map<string, number>();
-  /** 每 session_key 发布串行链（保证 fire-and-forget 场景下 seq 与投递顺序一致） */
+  
   private readonly eventChains = new Map<string, Promise<void>>();
   private configCache: StreamConfigRecord | null = null;
 
@@ -56,9 +49,8 @@ export class StreamService {
     private readonly logger?: Logger,
   ) {}
 
-  /**
-   * 读取或获取流配置缓存
-   */
+  
+
   async getConfig(): Promise<StreamConfigRecord> {
     if (this.configCache) return this.configCache;
     try {
@@ -70,7 +62,7 @@ export class StreamService {
         return this.configCache;
       }
     } catch (err) {
-      /* ignore */
+      
       this.logger?.warn?.('StreamService.getConfig 读取流配置失败，使用默认配置', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -85,13 +77,8 @@ export class StreamService {
     };
   }
 
-  /**
-   * 按端点 ID 推送业务事件（事件流的保存 + 在线投递；Report 携带端点 ID 调用）。
-   *
-   * - 持久化：事件写入 stream_event（每 session_key 严格递增 seq，发布按会话串行化保证顺序）；
-   * - 投递：按端点 ID 定位 SSE 连接，经 v1 兼容格式化映射后写帧；端点不存在时仅持久化（供重放）；
-   * - 未映射的事件类型（如 run.accepted/part.created）仅持久化（审计），不产生 SSE 帧。
-   */
+  
+
   async publishEvent(
     input: { endpoint_id: string; session_key: string; run_id?: string; type: string; payload: unknown },
     output: PushEventToEndpointOutput,
@@ -99,7 +86,7 @@ export class StreamService {
     if (!input.endpoint_id || !input.session_key || !input.type) {
       throw new ValidationError('endpoint_id/session_key/type 不能为空');
     }
-    // 每 session_key 串行化：fire-and-forget 调用下保证 seq 分配与帧写入顺序一致
+    
     const prev = this.eventChains.get(input.session_key) ?? Promise.resolve();
     const current = prev.then(() => this.publishEventInternal(input, output));
     this.eventChains.set(input.session_key, current.catch(() => undefined));
@@ -107,7 +94,7 @@ export class StreamService {
     return true;
   }
 
-  /** 发布内部实现（逻辑控制）：seq 分配 → 落库 → 端点投递 */
+  
   private async publishEventInternal(
     input: { endpoint_id: string; session_key: string; run_id?: string; type: string; payload: unknown },
     output: PushEventToEndpointOutput,
@@ -127,7 +114,7 @@ export class StreamService {
         { field: 'ts', value: now },
       ]);
     } catch (err) {
-      // 事件落库失败不影响在线投递（审计缺一条，优先保证流不中断）
+      
       this.logger?.warn?.('StreamService.publishEvent 事件落库失败（审计缺失，在线投递继续）', {
         error: err instanceof Error ? err.message : String(err),
         session_key: input.session_key,
@@ -145,7 +132,7 @@ export class StreamService {
     }
   }
 
-  /** 分配下一条事件 seq（逻辑控制；进程缓存 + DB MAX 持久事实源） */
+  
   private async nextEventSeq(sessionKey: string): Promise<number> {
     const cached = this.eventSeqCache.get(sessionKey);
     if (cached !== undefined) {
@@ -161,7 +148,7 @@ export class StreamService {
     return next;
   }
 
-  /** 按端点 ID 写帧（逻辑控制；返回是否实际投递） */
+  
   private writeEventToEndpoint(endpointId: string, type: string, payload: unknown): boolean {
     const sessionId = this.endpoints.get(endpointId);
     if (!sessionId) {
@@ -175,7 +162,7 @@ export class StreamService {
     return true;
   }
 
-  /** v2 原生帧组装（数据处理）：event = BusinessEvent 协议名，msg_type 按语义映射，data = 协议载荷 */
+  
   private formatEventFrame(type: string, payload: unknown): BrianSSEMessage {
     return {
       msg_id: IdGenerator.generate(),
@@ -192,9 +179,8 @@ export class StreamService {
     };
   }
 
-  /**
-   * 端点事件重放（断线恢复）：after_seq 之后按 seq 升序重放到端点（保存的事件流）。
-   */
+  
+
   async replayEvents(
     input: { endpoint_id: string; session_key: string; after_seq?: number },
     output: ReplayEndpointEventsOutput,
@@ -225,9 +211,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 注册 / 接管某个 session 的 SSE 连接
-   */
+  
+
   async registerStream(
     input: RegisterStreamInput,
     output: RegisterStreamOutput,
@@ -238,7 +223,7 @@ export class StreamService {
       return false;
     }
 
-    // 若当前会话已有未关闭的连接，先平滑关闭旧连接
+    
     if (this.sessions.has(session_id)) {
       this.closeSessionInternal(session_id, 'Replaced by new connection');
     }
@@ -259,7 +244,7 @@ export class StreamService {
     };
     this.endpoints.set(endpointId, session_id);
 
-    // 启动心跳定时器
+    
     streamItem.heartbeatTimer = setInterval(() => {
       if (streamItem.closed) {
         if (streamItem.heartbeatTimer) clearInterval(streamItem.heartbeatTimer);
@@ -284,10 +269,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 向指定 session 推送结构化 SSE 消息。
-   * 支持多 Agent 并发隔离、自动分片打字机输出。
-   */
+  
+
   async pushStream<T = unknown>(
     input: PushStreamInput<T>,
     output: PushStreamOutput,
@@ -304,74 +287,109 @@ export class StreamService {
     const channelKey = `${input.work_id || ''}_${input.agent_id || 'main'}_${input.node_id || ''}`;
     let accumulated = session.channelLengths.get(channelKey) ?? 0;
 
-    // 检查是否需要对文本进行打字机 chunk 分片
     const isTextChunkable =
       Boolean(input.enable_chunking) &&
       typeof input.data === 'string' &&
       input.data.length > 0;
 
     if (isTextChunkable) {
-      const fullText = input.data as unknown as string;
-      const fullLength = fullText.length;
-      let currentIndex = 0;
-      let lastMsgId = '';
-      let lastSeq = session.seq;
-
-      while (currentIndex < fullLength) {
-        if (session.closed) break;
-
-        const chunkSize = Math.floor(Math.random() * (maxChunk - minChunk + 1)) + minChunk;
-        const chunk = fullText.slice(currentIndex, currentIndex + chunkSize);
-        currentIndex += chunk.length;
-        accumulated += chunk.length;
-
-        const sseMsg: BrianSSEMessage<{ chunk: string; is_last_chunk: boolean }> = {
-          msg_id: IdGenerator.generate(),
-          seq: session.seq++,
-          session_id: input.session_id,
-          run_id: input.run_id || '',
-          work_id: input.work_id || '',
-          agent_id: input.agent_id,
-          agent_name: input.agent_name,
-          agent_type: input.agent_type,
-          node_id: input.node_id,
-          task_id: input.task_id,
-          event: input.event,
-          msg_type: input.msg_type || 'TEXT',
-          full_length: fullLength,
-          chunk_length: chunk.length,
-          accumulated_length: accumulated,
-          timestamp: IdGenerator.now(),
-          data: {
-            chunk,
-            is_last_chunk: currentIndex >= fullLength,
-          },
-        };
-
-        lastMsgId = sseMsg.msg_id;
-        lastSeq = sseMsg.seq;
-        this.writeFrame(session, sseMsg);
-
-        if (input.chunk_delay_ms && input.chunk_delay_ms > 0 && currentIndex < fullLength) {
-          await new Promise((resolve) => setTimeout(resolve, input.chunk_delay_ms));
-        }
-      }
-
-      session.channelLengths.set(channelKey, accumulated);
-      output.msg_id = lastMsgId;
-      output.seq = lastSeq;
-      output.pushed = true;
-      return true;
+      return await this.pushChunkedText(session, input, output, channelKey, accumulated, minChunk, maxChunk);
     }
 
-    // 非 chunk 分片的普通结构化消息推送（如 DAG 事件、上下文构建事件、Agent构建事件、控制事件等）
+    return this.pushSingleFrame(session, input, output, channelKey, accumulated);
+  }
+
+  private async pushChunkedText<T = unknown>(
+    session: ActiveSessionStream,
+    input: PushStreamInput<T>,
+    output: PushStreamOutput,
+    channelKey: string,
+    accumulated: number,
+    minChunk: number,
+    maxChunk: number,
+  ): Promise<boolean> {
+    const fullText = input.data as unknown as string;
+    const fullLength = fullText.length;
+    let currentIndex = 0;
+    let lastMsgId = '';
+    let lastSeq = session.seq;
+
+    while (currentIndex < fullLength) {
+      if (session.closed) break;
+
+      const chunkSize = Math.floor(Math.random() * (maxChunk - minChunk + 1)) + minChunk;
+      const chunk = fullText.slice(currentIndex, currentIndex + chunkSize);
+      currentIndex += chunk.length;
+      accumulated += chunk.length;
+
+      const sseMsg = this.buildChunkFrame(session, input, chunk, fullLength, accumulated, currentIndex >= fullLength);
+
+      lastMsgId = sseMsg.msg_id;
+      lastSeq = sseMsg.seq;
+      this.writeFrame(session, sseMsg);
+
+      if (input.chunk_delay_ms && input.chunk_delay_ms > 0 && currentIndex < fullLength) {
+        await new Promise((resolve) => setTimeout(resolve, input.chunk_delay_ms));
+      }
+    }
+
+    session.channelLengths.set(channelKey, accumulated);
+    output.msg_id = lastMsgId;
+    output.seq = lastSeq;
+    output.pushed = true;
+    return true;
+  }
+
+  private buildChunkFrame<T = unknown>(
+    session: ActiveSessionStream,
+    input: PushStreamInput<T>,
+    chunk: string,
+    fullLength: number,
+    accumulated: number,
+    isLastChunk: boolean,
+  ): BrianSSEMessage<{ chunk: string; is_last_chunk: boolean }> {
+    const msgId = IdGenerator.generate();
+    const seq = session.seq++;
+    return {
+      msg_id: msgId,
+      seq,
+      session_id: input.session_id,
+      run_id: input.run_id || '',
+      work_id: input.work_id || '',
+      agent_id: input.agent_id,
+      agent_name: input.agent_name,
+      agent_type: input.agent_type,
+      node_id: input.node_id,
+      task_id: input.task_id,
+      event: input.event,
+      msg_type: input.msg_type || 'TEXT',
+      full_length: fullLength,
+      chunk_length: chunk.length,
+      accumulated_length: accumulated,
+      timestamp: IdGenerator.now(),
+      data: {
+        chunk,
+        is_last_chunk: isLastChunk,
+      },
+    };
+  }
+
+  private pushSingleFrame<T = unknown>(
+    session: ActiveSessionStream,
+    input: PushStreamInput<T>,
+    output: PushStreamOutput,
+    channelKey: string,
+    accumulated: number,
+  ): boolean {
     const fullLength = typeof input.data === 'string' ? input.data.length : 1;
     accumulated += fullLength;
     session.channelLengths.set(channelKey, accumulated);
 
+    const msgId = IdGenerator.generate();
+    const seq = session.seq++;
     const sseMsg: BrianSSEMessage<T> = {
-      msg_id: IdGenerator.generate(),
-      seq: session.seq++,
+      msg_id: msgId,
+      seq,
       session_id: input.session_id,
       run_id: input.run_id || '',
       work_id: input.work_id || '',
@@ -397,9 +415,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 关闭指定 session 的 SSE 流
-   */
+  
+
   async closeStream(
     input: CloseStreamInput,
     output: CloseStreamOutput,
@@ -409,9 +426,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 查询活跃连接状态
-   */
+  
+
   async soStreamStats(output: GetStreamStatsOutput): Promise<boolean> {
     const active: string[] = [];
     for (const [sid, item] of this.sessions.entries()) {
@@ -422,9 +438,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 更新配置
-   */
+  
+
   async configStream(
     input: ConfigStreamInput,
     output: ConfigStreamOutput,
@@ -452,9 +467,8 @@ export class StreamService {
     return true;
   }
 
-  /**
-   * 底层写入 SSE 帧数据
-   */
+  
+
   private writeFrame(session: ActiveSessionStream, msg: BrianSSEMessage): void {
     if (session.closed) return;
     try {
@@ -468,9 +482,8 @@ export class StreamService {
     }
   }
 
-  /**
-   * 内部清理与关闭会话
-   */
+  
+
   private closeSessionInternal(sessionId: string, reason?: string): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
@@ -484,7 +497,7 @@ export class StreamService {
     try {
       session.onClose?.();
     } catch (err) {
-      /* ignore */
+      
       this.logger?.warn?.('StreamService.closeSessionInternal onClose 回调异常（会话清理继续）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: sessionId,

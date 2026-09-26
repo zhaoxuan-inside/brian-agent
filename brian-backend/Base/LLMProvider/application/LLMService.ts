@@ -1,18 +1,3 @@
-/**
- * @fileoverview LLMProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（通过 IConfigStorage / executeRaw / queryRaw）操作关系数据库，
- * 依赖 ConfigService 管理 llm_config 配置表。
- *
- * 实现所有用例：addLLMProvider / updateLLMProvider / delLLMProvider / soLLMProvider /
- * testLLMProvider / listLLM / addLLM / delLLM / updateLLM / soLLM / execLLM /
- * visualizedLLM / enableLLM。
- *
- * LLMProvider 是 LLM 的唯一操作入口，上层不可直接调用 LLM 提供商 API。
- * 对外 API 调用采用 OpenAI 兼容协议（/v1/models、/v1/chat/completions），
- * 通过 HttpAccess 统一发起 HTTP 请求（代理/超时由 ToolProvider 集中处理）。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import { Context } from '../../shared/base/Context';
@@ -49,10 +34,8 @@ import {
   toCacheUpdatePatch,
 } from '../domain/services/LLMCacheDomainService';
 
-/** testLLMProvider 默认连接超时时间（毫秒） */
 const TEST_TIMEOUT_MS = 10000;
 
-/** 单次 execLLMEvents 尝试结果（模块内部） */
 interface EventsSingleResult {
   ok: boolean;
   text?: string;
@@ -64,48 +47,29 @@ interface EventsSingleResult {
   error?: string;
   error_code?: string;
   aborted_reason?: AbortReasonKind;
-  /** 本候选是否已向 on_event 产出过事件（修复②：已发事件则禁止降级） */
+
   emitted_events?: boolean;
 }
 
-/** listLLM 默认请求超时时间（毫秒） */
 const LIST_TIMEOUT_MS = 30000;
 
-/** 模型列表缓存有效期（毫秒），默认 1 小时 */
-
-// ===== 2026-09-11：调用超时改为可配置（llm_config：exec_timeout_ms / embed_timeout_ms，配置中心 LLM Provider 页可调） =====
-/** execLLM 默认请求超时时间（毫秒；配置中心可调） */
 const EXEC_TIMEOUT_DEFAULT_MS = 120000;
 
-/** embedLLM 超时时间（毫秒；embedding 服务不可达时快速失败，防拖垮调用链；配置中心可调） */
 const EMBED_TIMEOUT_DEFAULT_MS = 15000;
 
-/**
- * LLMProvider 应用服务。
- *
- * LLMProvider 是 LLM 的唯一操作入口，上层不可直接调用 LLM 提供商 API。
- * LLM 数据与配置项均存储于关系数据库（由 RelationDBProvider 管理）。
- */
 export class LLMService {
-  /** 运行时内存中的启用状态，供各操作快速校验 */
+
   private enabled = true;
 
-  /** 是否已执行 closeLLM（终态标记） */
   private closed = false;
 
-  /** 请求超时（毫秒；llm_config.exec_timeout_ms，2026-09-11 起可配置） */
   private execTimeoutMs = EXEC_TIMEOUT_DEFAULT_MS;
-  /** embedding 请求超时（毫秒；llm_config.embed_timeout_ms，2026-09-11 起可配置） */
+
   private embedTimeoutMs = EMBED_TIMEOUT_DEFAULT_MS;
 
   private readonly config: ConfigService;
   private readonly http: HttpAccess;
 
-  /**
-   * @param relationDb RelationDBProvider 接入层
-   * @param logger 可选日志记录器
-   * @param promptsAccess 可选 PromptsProvider 接入层（genLLMAttr 依赖）
-   */
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly logger?: Logger,
@@ -115,27 +79,15 @@ export class LLMService {
     this.http = new HttpAccess(new ConfigService(relationDb, TOOL_CONFIG_TABLE));
   }
 
-  // -------------------------------------------------------------------------
-  // 初始化
-  // -------------------------------------------------------------------------
-
-  /**
-   * 初始化组件：写入默认配置并恢复 enabled 状态。
-   *
-   * PRD 3.4.2 注：组件初始化时从 llm_config 读取 enabled 状态以恢复上次的可用状态。
-   */
   async initialize(): Promise<void> {
     this.enabled = await this.config.getBoolean('enabled', true);
-    // ===== 2026-09-11：超时参数读配置（llm_config 表；缺省枚举默认值） =====
+
     const execMs = await this.config.getInt('exec_timeout_ms', EXEC_TIMEOUT_DEFAULT_MS);
     const embedMs = await this.config.getInt('embed_timeout_ms', EMBED_TIMEOUT_DEFAULT_MS);
     this.execTimeoutMs = execMs > 0 ? execMs : EXEC_TIMEOUT_DEFAULT_MS;
     this.embedTimeoutMs = embedMs > 0 ? embedMs : EMBED_TIMEOUT_DEFAULT_MS;
   }
 
-  /**
-   * 校验组件是否启用，未启用时抛出 ComponentDisabledError。
-   */
   private ensureEnabled(): void {
     if (this.closed) {
       throw new DatabaseError(
@@ -147,36 +99,10 @@ export class LLMService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 工具方法
-  // -------------------------------------------------------------------------
-
-  /**
-   * 构造 LLM 提供商 API 端点地址。
-   *
-   * 自动处理基址是否包含 /v1 后缀的情况：
-   * - 基址为 `https://api.openai.com` + `v1/models` -> `https://api.openai.com/v1/models`
-   * - 基址为 `https://api.openai.com/v1` + `v1/models` -> `https://api.openai.com/v1/models`
-   *
-   * @param baseUrl 提供商基址
-   * @param apiPath API 路径（如 'v1/models'、'v1/chat/completions'）
-   * @returns 完整端点地址
-   */
   private buildEndpoint(baseUrl: string, apiPath: string): string {
     return `${baseUrl.replace(/\/+$/, '')}/${apiPath.replace(/^\/+/, '')}`;
   }
 
-  /**
-    * 更新 LLM 当日使用次数与 Token 用量（upsert 语义）。
-    *
-    * 若当天记录已存在则 usage_count + 1 且累计 input_tokens / output_tokens，
-    * 否则新增一条记录。
-    * 仅当 execLLM / embedLLM 调用成功时调用本方法。
-    *
-    * @param llmEnableId 启用的 LLM ID（llm_available.id）
-    * @param inputTokens 本次调用输入 Token 数
-    * @param outputTokens 本次调用输出 Token 数
-    */
   private async upsertUsage(
     llmEnableId: string,
     inputTokens = 0,
@@ -215,12 +141,6 @@ export class LLMService {
     }
   }
 
-  /**
-   * Token 明细账落账（LLMProvider 统一管理）。
-   * 每次 LLM 调用记一条（成功 status=ok / 失败 status=error），
-   * 只记提供商返回真实值，不做预测；附带调用方来源与模型快照。
-   * best-effort：失败不阻断主流程。
-   */
   private async logCall(args: {
     llmId: string; session_id?: string; run_id?: string; work_id?: string; caller?: string;
     input_tokens?: number; output_tokens?: number; duration_ms?: number;
@@ -249,7 +169,7 @@ export class LLMService {
         }),
       );
     } catch (err) {
-      /* 明细账失败不阻断主流程 */
+
       this.logger?.warn?.('LLMService.logCall 明细账落账失败（best-effort 不阻断主流程）', {
         error: err instanceof Error ? err.message : String(err),
         llm_id: args.llmId,
@@ -257,10 +177,6 @@ export class LLMService {
     }
   }
 
-  /**
-   * 业务维度回填（数据处理）：session_id / run_id / work_id / caller
-   * 优先取 Context（问答业务维度随 Context 传播），回退 Input 显式值。
-   */
   private applyDims(
     input: { session_id?: string; run_id?: string; work_id?: string; caller?: string },
     context?: Context,
@@ -271,9 +187,6 @@ export class LLMService {
     input.caller = input.caller || context?.caller || '';
   }
 
-  /**
-   * 按 session / interact / work 分级统计 Token（均为明细账求和；run_id = 一次问答，work_id = 一次 Agent/Tool 执行）。
-   */
   async soTokenUsage(
     input: SoTokenUsageInput, output: SoTokenUsageOutput,
     _context: LLMContext,
@@ -304,15 +217,6 @@ export class LLMService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // LLM 提供商管理
-  // -------------------------------------------------------------------------
-
-  /**
-   * 新增 LLM 提供商（addLLMProvider）。
-   *
-   * PRD 3.1.1 条：向系统中新增一个 LLM 提供商。
-   */
   async addLLMProvider(input: AddLLMProviderInput, output: AddLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -327,7 +231,6 @@ export class LLMService {
     const id = IdGenerator.generate();
     const now = IdGenerator.now();
 
-    // 未显式指定配额时，从 llm_config 读取全局默认配额（0 = 不限制）
     const [dTokensDay, dTokensWeek, dTokensMonth, dCallsDay, dCallsWeek, dCallsMonth] = await Promise.all([
       this.config.getInt('default_quota_tokens_per_day', 0),
       this.config.getInt('default_quota_tokens_per_week', 0),
@@ -360,12 +263,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 更新 LLM 提供商（updateLLMProvider）。
-   *
-   * PRD 3.1.2 条：支持按 ID 或按条件更新。
-   * 资源级启用/禁用通过本方法修改 enable 字段实现。
-   */
   async updateLLMProvider(input: UpdateLLMProviderInput, output: UpdateLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -424,12 +321,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 删除 LLM 提供商（delLLMProvider）。
-   *
-   * PRD 3.1.3 条：支持按 ID 批量删除或按条件删除。
-   * 级联清理该提供商下关联的 LLM 模型记录（llm_model 表）。
-   */
   async delLLMProvider(input: DelLLMProviderInput, output: DelLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -441,7 +332,6 @@ export class LLMService {
       ? [{ field: 'id', operator: Operator.IN, value: input.ids }]
       : input.conditions!;
 
-    // 先确定待删除的 provider IDs（用于级联清理 llm_model）
     let providerIds: string[] = [];
     if (input.ids) {
       providerIds = input.ids;
@@ -459,7 +349,6 @@ export class LLMService {
     );
     output.affected_rows = affected;
 
-    // 级联清理关联记录
     if (providerIds.length > 0) {
       await this.relationDb.delete(LLM_CACHE_TABLE, [
         { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
@@ -484,12 +373,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 搜索 LLM 提供商（soLLMProvider）。
-   *
-   * PRD 3.1.4 条：支持关键词、条件过滤、排序、分页。
-   * 关键词匹配 llm_provider_title。
-   */
   async soLLMProvider(input: SoLLMProviderInput, output: SoLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -521,14 +404,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 测试 LLM 提供商连接（testLLMProvider）。
-   *
-   * PRD 3.1.5 条：向提供商地址发起网络连通性测试，返回连通状态和响应时间。
-   * 使用 HTTP GET 请求，只要收到响应即视为连通（connected=true），
-   * 网络错误或超时视为不可达（connected=false）。
-   */
-  // ===== 修改后的方法 =====
   async testLLMProvider(input: TestLLMProviderInput, output: TestLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -561,7 +436,7 @@ export class LLMService {
       const res = httpOutput.response;
       output.response_time_ms = Date.now() - start;
       output.status_code = res.status;
-      // 只要收到 HTTP 响应即视为连通（即使状态码非 2xx）
+
       output.connected = true;
     } catch (err) {
       output.response_time_ms = Date.now() - start;
@@ -572,17 +447,6 @@ export class LLMService {
     return true;
   }
 
-  // ===== 修改后的方法 =====
-  /**
-   * 获取 LLM 模型列表（listLLM）。
-   *
-   * PRD 3.1.6 条：从 LLM 提供商 API 获取可用的模型列表并缓存到本地。
-   * 支持 OpenAI 兼容格式 (json.data) 与 Google / 统一格式 (json.models) 的动态解析。
-   * 仅在请求成功时更新缓存时间戳。
-   */
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：152 行单方法拆为
-  // 「校验 → 缓存命中 → 远端拉取 → 缓存同步 → 回读」编排 + 纯数据/IO 子方法
-  //（原始单方法已删除，等价结构见 git 历史）。
   async listLLM(input: ListLLMInput, output: ListLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -590,7 +454,7 @@ export class LLMService {
       throw new ValidationError('llm_provider_id 不能为空');
     }
     const provider = await this.soProviderRow(input.llm_provider_id);
-    // 缓存命中：仅在未指定 force 且缓存未过期时直接返回本地模型列表
+
     if (isModelsCacheFresh(provider.models_fetched_at, input.force, IdGenerator.now())) {
       await this.soCachedModels(input.llm_provider_id, output);
       output.cached = true;
@@ -607,7 +471,6 @@ export class LLMService {
     return true;
   }
 
-  /** 提供商行加载（数据处理；不存在即 NotFound） */
   private async soProviderRow(providerId: string): Promise<LLMProviderRecord> {
     const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
       { field: 'id', operator: Operator.EQ, value: providerId },
@@ -618,7 +481,6 @@ export class LLMService {
     return row as unknown as LLMProviderRecord;
   }
 
-  /** 缓存模型回读（数据处理；按 llm_title 升序写入 output.list） */
   private async soCachedModels(providerId: string, output: ListLLMOutput): Promise<void> {
     const rows = await this.relationDb.select(LLM_CACHE_TABLE, {
       conditions: [
@@ -629,7 +491,6 @@ export class LLMService {
     output.list = rows as unknown as LLMCacheRecord[];
   }
 
-  /** 远端拉取并解析模型列表（逻辑控制；失败写 output 错误并返回 null，不写缓存时间戳） */
   private async fetchRemoteModels(
     provider: LLMProviderRecord,
     output: ListLLMOutput,
@@ -667,7 +528,6 @@ export class LLMService {
     }
   }
 
-  /** 模型缓存同步（逻辑控制）：逐条 upsert + 清理本次结果中已失效的模型 */
   private async syncModelCache(
     providerId: string,
     parsedModels: Array<{ modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }>,
@@ -677,7 +537,7 @@ export class LLMService {
       if (!m.modelId) continue;
       await this.upsertModelCacheRow(providerId, m, metrics);
     }
-    // 清理缓存中已失效的模型（本次拉取结果中已不存在的模型，如已下线的 Shutdown / Retiring）
+
     const freshIds = parsedModels.map((m) => m.modelId).filter((id) => !!id);
     if (freshIds.length > 0) {
       await this.relationDb.delete(LLM_CACHE_TABLE, [
@@ -687,7 +547,6 @@ export class LLMService {
     }
   }
 
-  /** 单条模型缓存 upsert（数据处理；按 provider_id + llm_title 判重；重复插入失败仅告警跳过） */
   private async upsertModelCacheRow(
     providerId: string,
     m: { modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> },
@@ -711,7 +570,7 @@ export class LLMService {
     try {
       await this.relationDb.insert(LLM_CACHE_TABLE, toCacheInsertRecord(providerId, m));
     } catch (err) {
-      // skip duplicate insert
+
       metrics?.warn('LLMService.listLLM 模型缓存写入失败（可能重复，跳过该条）', {
         error: err instanceof Error ? err.message : String(err),
         llm_provider_id: providerId,
@@ -728,15 +587,6 @@ export class LLMService {
     );
   }
 
-  // -------------------------------------------------------------------------
-  // LLM 模型管理
-  // -------------------------------------------------------------------------
-
-  /**
-   * 新增 LLM（addLLM）。
-   *
-   * PRD 3.2.1 条：将一个 LLM 模型添加到启用列表（llm_enable 表）。
-   */
   async addLLM(input: AddLLMInput, output: AddLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -768,11 +618,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 删除 LLM（delLLM）。
-   *
-   * PRD 3.2.2 条：支持按 ID 批量删除或按条件删除。
-   */
   async delLLM(input: DelLLMInput, output: DelLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -803,49 +648,42 @@ export class LLMService {
         await this.relationDb.delete('agent_llm', [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* 表可能不存在 */ }
-      try {
-        await this.relationDb.update('planner_agent_config', [
-          { field: 'llm_id', value: '' },
-        ], [
-          { field: 'llm_id', operator: Operator.IN, value: modelIds },
-        ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('evolutor_agent_config', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('writer_agent_config', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('self_learning_config', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('self_learning_config', [
           { field: 'document_query_llm_id', value: '' },
         ], [
           { field: 'document_query_llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('user_profiles', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
-      } catch { /* ignore */ }
+      } catch {  }
       try {
         await this.relationDb.update('soul_core_config', [
           { field: 'llm_id', value: '' },
@@ -853,7 +691,7 @@ export class LLMService {
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
       } catch (err) {
-        /* ignore */
+
         metrics?.warn('LLMService.delLLM 清理 soul_core_config 引用失败（表可能不存在）', {
           error: err instanceof Error ? err.message : String(err),
           llm_ids: modelIds.join(','),
@@ -868,13 +706,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 更新 LLM（updateLLM）。
-   *
-   * PRD 3.2.3 条：支持按 ID 或按条件更新，仅允许更新 llm_enable 表中的信息。
-   * 资源级启用/禁用通过本方法修改 enable 字段实现。
-   * llm_provider_id 为引用字段，不可通过本方法修改。
-   */
   async updateLLM(input: UpdateLLMInput, output: UpdateLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -912,12 +743,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 搜索可用模型（soLLM）。
-   *
-   * 支持关键词搜索 llm_title、条件过滤、排序、分页。
-   * 合并了原 soLLMById 的功能。
-   */
   async soLLM(input: SoLLMInput, output: SoLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -949,34 +774,6 @@ export class LLMService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // LLM 调用
-  // -------------------------------------------------------------------------
-
-  /**
-   * 调用 LLM（execLLM）。
-   *
-   * 处理流程：
-   * 1. 若未传 ID，自动查找 is_default=1 且 enable=1 的默认模型；
-   * 2. 根据 ID 获取可用模型（llm_available）及提供商（llm_provider）；
-   * 3. 构造 OpenAI 兼容 POST 请求，调用提供商 chat API；
-   * 4. 提取 result、input_tokens、output_tokens、duration_ms；
-   * 5. 更新 llm_usage 表当天 usage_count。
-   *
-   * 支持的入参字段：
-   * - prompt: 用户消息内容（必填）
-   * - system: 系统提示词（可选，前置为 system 消息）
-   * - temperature: 采样温度（可选）
-   * - max_tokens: 最大 Token 数（可选，未指定时使用模型默认 max_tokens）
-   * - extra: 其他参数原样传入请求体
-   */
-  // ===== 新增方法（2026-09-11）：单次 LLM 调用统计回填（Metrics + INFO 日志，best-effort 不影响主流程） =====
-  /**
-   * 回填单次 LLM 调用统计到 Metrics 并记录 INFO 日志。
-   *
-   * - Metrics.recordLLMUsage：累积到 metrics.llm_usage（AOP 落 log_record 时随序列化携带）；
-   * - metrics.info：直接落 log_record（INFO 级别，含 trace_id，监控页可按 TraceId 关联）。
-   */
   private recordLLMCallMetrics(metrics?: Metrics, usage?: {
     llm_id?: string;
     attempt?: number;
@@ -1004,14 +801,10 @@ export class LLMService {
         duration_ms: usage.duration_ms,
       });
     } catch {
-      /* best effort：统计回填失败不阻断主流程；metrics/logger 通道自身故障时再打日志
-         可能同样失败并向调用方抛出（反噬业务），故此处保持静默 */
+
     }
   }
 
-  // ===== 修改后的方法：支持模型故障自动降级回退（指定模型 -> 默认模型 -> 启用模型1 -> 启用模型2 ...） =====
-  // 当 input.no_fallback 为 true 时，仅尝试指定模型，不降级到其他模型
-  // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
   async execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -1021,7 +814,6 @@ export class LLMService {
       throw new ValidationError('prompt 不能为空');
     }
 
-    // 解析候选模型队列（按优先级排序并去重）
     const candidateIds = await this.resolveCandidateModels(input.id, metrics);
     if (candidateIds.length === 0) {
       if (input.id) {
@@ -1034,7 +826,6 @@ export class LLMService {
     let lastError = '';
     let lastErrorCode = '';
 
-    // no_fallback 模式：仅尝试第一个候选模型（即指定的模型），不降级
     const maxAttempts = input.no_fallback ? 1 : candidateIds.length;
 
     for (let i = 0; i < maxAttempts; i++) {
@@ -1043,7 +834,7 @@ export class LLMService {
       const ok = await this.executeSingleLLM(currentId, input, startTime, singleOutput);
       if (ok) {
         Object.assign(output, singleOutput);
-        // 过程可观测（2026-09-11）：单次 LLM 调用统计回填 Metrics（token + 耗时）
+
         this.recordLLMCallMetrics(metrics, {
           llm_id: currentId,
           attempt: i + 1,
@@ -1075,7 +866,6 @@ export class LLMService {
       );
     }
 
-    // 若仅传入了一个 ID 且无任何其他候选模型可用，且属于特定异常类型
     if (candidateIds.length === 1 && (lastErrorCode === 'NOT_FOUND' || lastErrorCode === 'VALIDATION_ERROR')) {
       if (lastErrorCode === 'NOT_FOUND') {
         throw new NotFoundError('LLM', candidateIds[0]);
@@ -1083,8 +873,6 @@ export class LLMService {
       throw new ValidationError(lastError);
     }
 
-    // no_fallback 模式（如模型测试）仅调用指定模型，直接回传该模型自身的调用错误，
-    // 不包装成"所有可用模型均调用失败"的降级语义
     if (input.no_fallback) {
       output.error = lastError || '模型调用失败';
       output.error_code = lastErrorCode || 'EXEC_FAILED';
@@ -1098,18 +886,6 @@ export class LLMService {
     return false;
   }
 
-  /**
-   * 调用 LLM 原生消息 + 原生工具调用流（execLLMEvents，Runtime v2 · 阶段 0）。
-   *
-   * 处理流程（Loop-PRD §4）：
-   * 1. 校验入参（messages 优先，兼容 prompt/system）；
-   * 2. 解析候选模型队列（复用 resolveCandidateModels 故障降级语义）；
-   * 3. 每个候选经 LLMEventsRunner 发起 SSE 流，归一化事件经 input.on_event 回调；
-   * 4. 成功后聚合 result/reasoning/tool_calls/finish_reason/usage 并记 usage；
-   * 5. **真取消**：外部 signal 触发 → AbortedError 立即上抛（不触发降级）；
-   *    空闲看门狗（默认 30s 连续无 chunk）→ AbortedError('timeout') 同样上抛。
-   */
-  // ===== 修改后（2026-09-11）：成功路径回填 Metrics LLM 调用统计（token 用量 + 单次调用耗时） =====
   async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -1127,7 +903,7 @@ export class LLMService {
       const single = await this.executeEventsSingle(candidateIds[i], input, input.signal);
       if (single.ok) {
         this.fillEventsOutput(output, single, startTime, input);
-        // 过程可观测（2026-09-11）：单次 LLM 调用统计回填 Metrics（token + 耗时）
+
         this.recordLLMCallMetrics(metrics, {
           llm_id: candidateIds[i],
           attempt: i + 1,
@@ -1142,7 +918,7 @@ export class LLMService {
       if (single.aborted_reason) {
         throw new AbortedError(single.aborted_reason, lastError);
       }
-      // 修复②：候选已向 on_event 产出过事件 → 禁止降级（避免跨候选混合流，消费方无法区分）
+
       if (single.emitted_events) {
         this.logger?.debug(`LLMEvents candidate ${candidateIds[i]} 已产出流事件，禁止降级`);
         break;
@@ -1155,9 +931,6 @@ export class LLMService {
     return false;
   }
 
-  /**
-   * 校验 execLLMEvents 入参（数据处理）。
-   */
   private validateEventsInput(input: ExecLLMEventsInput): void {
     const hasMessages = Array.isArray(input.messages) && input.messages.length > 0;
     const hasPrompt = typeof input.prompt === 'string' && input.prompt.length > 0;
@@ -1169,9 +942,6 @@ export class LLMService {
     }
   }
 
-  /**
-   * 执行单候选模型的事件流（逻辑控制）：请求构造 → Runner → usage 记账。
-   */
   private async executeEventsSingle(
     llmId: string,
     input: ExecLLMEventsInput,
@@ -1179,7 +949,7 @@ export class LLMService {
   ): Promise<EventsSingleResult> {
     let emitted = false;
     const startedAt = Date.now();
-    // 修复②：包装 on_event 记录产出标志（成功与异常路径均可判定是否禁止降级）
+
     const onEvent = input.on_event
       ? (event: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => {
           emitted = true;
@@ -1240,9 +1010,6 @@ export class LLMService {
     }
   }
 
-  /**
-   * 构造 execLLMEvents 请求（数据处理）：模型/提供商查库校验 → 策略构造。
-   */
   private async buildEventsRequest(
     llmId: string,
     input: ExecLLMEventsInput,
@@ -1271,9 +1038,6 @@ export class LLMService {
     return strategy.buildChatEventsRequest(provider, llm, input);
   }
 
-  /**
-   * 成功路径填充输出（数据处理）。
-   */
   private fillEventsOutput(
     output: ExecLLMEventsOutput,
     single: EventsSingleResult,
@@ -1290,9 +1054,6 @@ export class LLMService {
     output.wire_messages = input ? this.prepareWireMessages(input) : [];
   }
 
-  /**
-   * 准备实际发往模型的 wire 消息（数据处理，与策略侧拼装语义一致；system 前置/替换首条）。
-   */
   private prepareWireMessages(input: ExecLLMEventsInput): LLMMessage[] {
     const messages: LLMMessage[] = input.messages?.length ? [...input.messages] : [];
     if (input.system) {
@@ -1308,15 +1069,6 @@ export class LLMService {
     return messages;
   }
 
-  /**
-   * 构建候选模型队列（按优先级排序并去重）：
-   * 1. 显式指定的模型 (input.id)
-   * 2. 默认模型 (is_default = 1 且 enable = 1)
-   * 3. 数据库中其余所有启用的模型 (enable = 1)
-   *
-   * 所有候选均过滤掉 embedding 向量模型：execLLM 面向文本/多模态生成，
-   * 向量模型（如 nomic-embed-text）不具备对话能力，不可作为文本生成候选。
-   */
   private async resolveCandidateModels(specifiedId?: string, metrics?: Metrics): Promise<string[]> {
     const candidates: string[] = [];
     const added = new Set<string>();
@@ -1328,12 +1080,10 @@ export class LLMService {
       }
     };
 
-    // 1. 显式指定的模型
     if (specifiedId) {
       addCandidate(specifiedId);
     }
 
-    // 2. 系统默认模型（仅文本/多模态，排除 embedding）
     try {
       const defaultRows = await this.relationDb.select(LLM_AVAILABLE_TABLE, {
         conditions: [
@@ -1346,13 +1096,12 @@ export class LLMService {
         addCandidate((row as unknown as LLMAvailableRecord).id);
       }
     } catch (err) {
-      /* ignore */
+
       metrics?.warn('LLMService.resolveCandidateModels 读取默认模型失败，跳过默认候选', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
 
-    // 3. 其余所有已启用的模型（仅文本/多模态，排除 embedding）
     try {
       const allEnabledRows = await this.relationDb.select(LLM_AVAILABLE_TABLE, {
         conditions: [
@@ -1364,7 +1113,7 @@ export class LLMService {
         addCandidate((row as unknown as LLMAvailableRecord).id);
       }
     } catch (err) {
-      /* ignore */
+
       metrics?.warn('LLMService.resolveCandidateModels 读取启用模型列表失败，跳过该批候选', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -1373,9 +1122,6 @@ export class LLMService {
     return candidates;
   }
 
-  /**
-   * 单个模型的底层推理请求执行
-   */
   private async executeSingleLLM(
     llmId: string,
     input: ExecLLMInput,
@@ -1396,13 +1142,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 查询并校验可用模型（逻辑控制；不存在/禁用/embedding 类型时回填错误并返回 null）。
-   *
-   * execLLM 走 OpenAI 兼容 chat 接口，仅 text / vision 类型模型可用；
-   * embedding 向量模型（如 nomic-embed-text）不支持 chat 补全，必须排除。
-   * 历史数据可能缺少 llm_type，视为默认 text 以保证向后兼容。
-   */
   private async soValidatedLLM(llmId: string, output: ExecLLMOutput): Promise<LLMAvailableRecord | null> {
     const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: llmId },
@@ -1426,7 +1165,6 @@ export class LLMService {
     return llm;
   }
 
-  /** 查询并校验模型提供商（逻辑控制；不存在/禁用时回填错误并返回 null） */
   private async soValidatedLLMProvider(llm: LLMAvailableRecord, output: ExecLLMOutput): Promise<LLMProviderRecord | null> {
     const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
       { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
@@ -1445,7 +1183,6 @@ export class LLMService {
     return provider;
   }
 
-  /** 执行流式单模型调用（逻辑控制；委托 LLMEventsRunner 引擎，失败回填错误且不落调用日志） */
   private async executeSingleLLMStreaming(
     llmId: string,
     input: ExecLLMInput,
@@ -1468,7 +1205,6 @@ export class LLMService {
     return true;
   }
 
-  /** 组装单模型流式事件入参（数据处理；no_fallback 固定 true，text_delta 桥接 onDelta 回调） */
   private soSingleEventsInput(llmId: string, input: ExecLLMInput): ExecLLMEventsInput {
     return Object.assign(new ExecLLMEventsInput(), {
       id: llmId,
@@ -1489,7 +1225,6 @@ export class LLMService {
     });
   }
 
-  /** 执行非流式单模型调用（逻辑控制；HTTP 失败/解析异常回填错误并落调用日志） */
   private async executeSingleLLMRequest(
     llmId: string,
     strategy: ILLMProviderStrategy,
@@ -1518,7 +1253,6 @@ export class LLMService {
     return true;
   }
 
-  /** 发起对话推理 HTTP 请求（逻辑控制；超时取 llm_config.exec_timeout_ms） */
   private async execChatHttpRequest(req: HttpRequestOptions) {
     const httpInput = Object.assign(new ExecRequestInput(), {
       url: req.url,
@@ -1532,7 +1266,6 @@ export class LLMService {
     return httpOutput.response;
   }
 
-  /** 解析并回填对话推理响应（数据处理；JSON 解析失败按空对象交策略解析兜底） */
   private fillChatResponse(
     rawText: string,
     strategy: ILLMProviderStrategy,
@@ -1555,7 +1288,6 @@ export class LLMService {
     output.duration_ms = Date.now() - startTime;
   }
 
-  /** 记录对话调用失败日志（逻辑控制；复用 logCall，error 口径统一） */
   private async logChatError(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void> {
     await this.logCall({
       llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
@@ -1563,9 +1295,8 @@ export class LLMService {
     });
   }
 
-  /** 记录对话调用成功用量与日志（逻辑控制；upsert llm_usage 当日计数 + logCall ok 口径） */
   private async recordChatSuccess(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void> {
-    // 成功后更新 llm_usage 表当天的 usage_count 与 token 用量
+
     await this.upsertUsage(llmId, output.input_tokens, output.output_tokens);
     await this.logCall({
       llmId,
@@ -1580,33 +1311,11 @@ export class LLMService {
     });
   }
 
-  /**
-   * 调用 LLM 生成向量（embedLLM）。
-   *
-   * 面向 llm_type = 'embedding' 的模型，调用 OpenAI 兼容的
-   * `POST {base}/v1/embeddings` 接口，请求体为 `{ model, input }`。
-   *
-   * 处理流程：
-   * 1. 若未传 ID，自动查找 llm_type='embedding' 且 enable=1 的模型；
-   * 2. 根据 ID 获取可用模型及提供商；
-   * 3. 校验模型类型为 embedding；
-   * 4. 调用向量化 API，解析 data[0].embedding 作为结果；
-   * 5. 更新 llm_usage 表当天 usage_count。
-   */
   async embedLLM(input: EmbedLLMInput, output: EmbedLLMOutput, context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     this.applyDims(input, context);
-    if (!input.id) {
-      const defaultEmbedding = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
-        { field: 'llm_type', operator: Operator.EQ, value: 'embedding' },
-        { field: 'enable', operator: Operator.EQ, value: 1 },
-      ]);
-      if (!defaultEmbedding) {
-        throw new ValidationError('id 不能为空，且无可用默认 embedding 模型');
-      }
-      input.id = (defaultEmbedding as unknown as LLMAvailableRecord).id;
-    }
+    await this.resolveEmbedInputId(input);
     const text = String(input.input ?? '');
     if (!text) {
       throw new ValidationError('input 不能为空');
@@ -1614,80 +1323,125 @@ export class LLMService {
 
     const startTime = Date.now();
 
-    const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: input.id },
-    ]);
-    if (!llmRow) {
-      throw new NotFoundError('LLM', input.id);
-    }
-    const llm = llmRow as unknown as LLMAvailableRecord;
-    if (!llm.enable) {
-      throw new ValidationError(`LLM ${input.id} 已禁用`);
-    }
-    if (llm.llm_type !== 'embedding') {
-      throw new ValidationError(`LLM ${input.id} 类型为 ${llm.llm_type}，不支持向量化调用`);
+    const llm = await this.soEmbeddingLLM(input.id);
+    const provider = await this.soEnabledEmbedProvider(llm.llm_provider_id);
+    const strategy = LLMStrategyFactory.soStrategyById(provider);
+    const req = strategy.buildEmbedRequest(provider, llm, input);
+
+    try {
+      const res = await this.execEmbedHttpRequest(req);
+      if (!res.ok) {
+        return await this.failEmbedCall(input, output, startTime, 'REMOTE_ERROR', `向量化调用失败: HTTP ${res.status} ${res.bodyText}`);
+      }
+      this.fillEmbedResponse(res.bodyText, strategy, startTime, output);
+    } catch (err) {
+      return await this.failEmbedCall(input, output, startTime, 'CONNECT_ERROR', err instanceof Error ? err.message : String(err));
     }
 
+    await this.recordEmbedSuccess(input, output);
+    return true;
+  }
+
+  private async resolveEmbedInputId(input: EmbedLLMInput): Promise<void> {
+    if (input.id) {
+      return;
+    }
+    const defaultEmbedding = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
+      { field: 'llm_type', operator: Operator.EQ, value: 'embedding' },
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ]);
+    if (!defaultEmbedding) {
+      throw new ValidationError('id 不能为空，且无可用默认 embedding 模型');
+    }
+    input.id = (defaultEmbedding as unknown as LLMAvailableRecord).id;
+  }
+
+  private async soEmbeddingLLM(llmId: string): Promise<LLMAvailableRecord> {
+    const llm = await this.soExistingLLM(llmId);
+    if (!llm.enable) {
+      throw new ValidationError(`LLM ${llmId} 已禁用`);
+    }
+    if (llm.llm_type !== 'embedding') {
+      throw new ValidationError(`LLM ${llmId} 类型为 ${llm.llm_type}，不支持向量化调用`);
+    }
+    return llm;
+  }
+
+  private async soExistingLLM(llmId: string): Promise<LLMAvailableRecord> {
+    const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: llmId },
+    ]);
+    if (!llmRow) {
+      throw new NotFoundError('LLM', llmId);
+    }
+    return llmRow as unknown as LLMAvailableRecord;
+  }
+
+  private async soEnabledEmbedProvider(llmProviderId: string): Promise<LLMProviderRecord> {
     const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
+      { field: 'id', operator: Operator.EQ, value: llmProviderId },
     ]);
     if (!providerRow) {
-      throw new NotFoundError('LLMProvider', llm.llm_provider_id);
+      throw new NotFoundError('LLMProvider', llmProviderId);
     }
     const provider = providerRow as unknown as LLMProviderRecord;
     if (!provider.enable) {
       throw new ValidationError(`LLMProvider ${provider.id} 已禁用`);
     }
+    return provider;
+  }
 
-    const strategy = LLMStrategyFactory.soStrategyById(provider);
-    const req = strategy.buildEmbedRequest(provider, llm, input);
+  private async execEmbedHttpRequest(req: HttpRequestOptions) {
+    const httpInput = Object.assign(new ExecRequestInput(), {
+      url: req.url,
+      method: req.headers ? req.method : req.method,
+      headers: req.headers,
+      body: req.body,
 
+      timeout_ms: this.embedTimeoutMs,
+    });
+    const httpOutput = new ExecRequestOutput();
+    await this.http.execRequest(httpInput, httpOutput, new HttpContext());
+    return httpOutput.response;
+  }
+
+  private async failEmbedCall(
+    input: EmbedLLMInput,
+    output: EmbedLLMOutput,
+    startTime: number,
+    errorCode: string,
+    error: string,
+  ): Promise<boolean> {
+    output.error = error;
+    output.error_code = errorCode;
+    output.duration_ms = Date.now() - startTime;
+    await this.logCall({
+      llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+      duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+    });
+    return false;
+  }
+
+  private fillEmbedResponse(
+    rawText: string,
+    strategy: ILLMProviderStrategy,
+    startTime: number,
+    output: EmbedLLMOutput,
+  ): void {
+    output.raw_response = rawText;
+    let json: unknown = {};
     try {
-      const httpInput = Object.assign(new ExecRequestInput(), {
-        url: req.url,
-        method: req.headers ? req.method : req.method,
-        headers: req.headers,
-        body: req.body,
-        // ===== 2026-09-11：embedding 走独立短超时（一次卡死会拖垮匹配缓存命中链路） =====
-        timeout_ms: this.embedTimeoutMs,
-      });
-      const httpOutput = new ExecRequestOutput();
-      await this.http.execRequest(httpInput, httpOutput, new HttpContext());
-      const res = httpOutput.response;
-      if (!res.ok) {
-        const errText = res.bodyText;
-        output.error = `向量化调用失败: HTTP ${res.status} ${errText}`;
-        output.error_code = 'REMOTE_ERROR';
-        output.duration_ms = Date.now() - startTime;
-        await this.logCall({
-          llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-          duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
-        });
-        return false;
-      }
-      const rawText = res.bodyText;
-      output.raw_response = rawText;
-      let json: unknown = {};
-      try {
-        json = JSON.parse(rawText);
-      } catch {
-        json = {};
-      }
-      const parsed = strategy.parseEmbedResponse(json, rawText);
-      output.embedding = parsed.embedding;
-      output.input_tokens = parsed.inputTokens;
-      output.duration_ms = Date.now() - startTime;
-    } catch (err) {
-      output.error = err instanceof Error ? err.message : String(err);
-      output.error_code = 'CONNECT_ERROR';
-      output.duration_ms = Date.now() - startTime;
-      await this.logCall({
-        llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-        duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
-      });
-      return false;
+      json = JSON.parse(rawText);
+    } catch {
+      json = {};
     }
+    const parsed = strategy.parseEmbedResponse(json, rawText);
+    output.embedding = parsed.embedding;
+    output.input_tokens = parsed.inputTokens;
+    output.duration_ms = Date.now() - startTime;
+  }
 
+  private async recordEmbedSuccess(input: EmbedLLMInput, output: EmbedLLMOutput): Promise<void> {
     await this.upsertUsage(input.id, output.input_tokens, 0);
     await this.logCall({
       llmId: input.id,
@@ -1698,18 +1452,8 @@ export class LLMService {
       output_tokens: 0,
       duration_ms: output.duration_ms,
     });
-    return true;
   }
 
-  /**
-   * 一键补全模型属性（genLLMAttr）。
-   *
-   * 流程：
-   * 1. 读取待补全的模型（llm_available）及其提供商名称；
-   * 2. 调用 PromptsProvider 渲染内置「模型属性生成」Prompt；
-   * 3. 调用大模型生成「简介」与「模型用途」（模型选择：默认模型 → 启用的第一个模型）；
-   * 4. 解析 JSON 结果并保存到 llm_available（llm_brief / model_usage）。
-   */
   async genLLMAttr(input: GenLLMAttrInput, output: GenLLMAttrOutput, _context: LLMContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -1717,64 +1461,13 @@ export class LLMService {
       throw new ValidationError('id 不能为空');
     }
 
-    // 1. 读取待补全的模型信息
-    const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: input.id },
-    ]);
-    if (!llmRow) {
-      throw new NotFoundError('LLM', input.id);
-    }
-    const llm = llmRow as unknown as LLMAvailableRecord;
-
-    // 2. 读取提供商名称
-    let providerTitle = '';
-    try {
-      const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-        { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
-      ]);
-      providerTitle =
-        (providerRow as unknown as LLMProviderRecord | null)?.llm_provider_title ?? '';
-    } catch (err) {
-      /* ignore */
-      metrics?.warn('LLMService.genLLMAttr 读取提供商名称失败，使用空值继续生成属性', {
-        error: err instanceof Error ? err.message : String(err),
-        llm_id: input.id,
-      });
-    }
-
-    // 3. 通过 PromptsProvider 渲染 Prompt
-    let prompt = '';
-    if (this.promptsAccess) {
-      const soPromptOut = new SoPromptOutput();
-      await this.promptsAccess.soPrompt(
-        Object.assign(new SoPromptInput(), { keyword: '模型属性生成' }),
-        soPromptOut,
-        new PromptContext(),
-      );
-      const templateId = soPromptOut.list?.find((p) => p.enable !== false)?.id;
-      if (templateId) {
-        const execPromptInput = Object.assign(new ExecPromptInput(), {
-          id: templateId,
-          variables: {
-            model_name: llm.llm_title,
-            llm_type: llm.llm_type || 'text',
-            provider_title: providerTitle,
-          },
-        });
-        const execPromptOutput = new ExecPromptOutput();
-        await this.promptsAccess.execPrompt(
-          execPromptInput,
-          execPromptOutput, new PromptContext(),
-        );
-        prompt = execPromptOutput.prompt || '';
-      }
-    }
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud（模板统一由 prompt_template 表承载） =====
+    const llm = await this.soExistingLLM(input.id);
+    const providerTitle = await this.soGenAttrProviderTitle(llm.llm_provider_id, input.id, metrics);
+    const prompt = await this.soGenAttrPrompt(llm, providerTitle);
     if (!prompt) {
       throw new ValidationError('模型属性生成 Prompt 不可用');
     }
 
-    // 4. 调用大模型生成属性（空 id 复用 execLLM 的默认模型 → 启用模型降级顺序）
     const execInput = Object.assign(new ExecLLMInput(), { id: '', prompt, caller: 'LLMService.genLLMAttr' });
     const execOutput = new ExecLLMOutput();
     const ok = await this.execLLM(execInput, execOutput, new LLMContext());
@@ -1784,36 +1477,95 @@ export class LLMService {
       return false;
     }
 
-    // 5. 解析 JSON 结果（容忍 Markdown 代码块包裹）
     let brief = '';
     let usage = '';
     try {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(execOutput.result);
-      } catch {
-        const cleaned = execOutput.result
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-        parsed = JSON.parse(cleaned);
-      }
-      const obj = parsed as Record<string, unknown>;
-      brief = typeof obj.llm_brief === 'string' ? obj.llm_brief.trim() : '';
-      usage = typeof obj.model_usage === 'string' ? obj.model_usage.trim() : '';
+      const attrs = this.parseGenAttrAttrs(execOutput.result);
+      brief = attrs.brief;
+      usage = attrs.usage;
     } catch {
       output.error = '解析大模型返回的模型属性失败';
       output.error_code = 'PARSE_ERROR';
       return false;
     }
 
+    return this.saveGenAttrResult(input, brief, usage, output);
+  }
+
+  private async soGenAttrProviderTitle(providerId: string, llmId: string, metrics?: Metrics): Promise<string> {
+    try {
+      const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: providerId },
+      ]);
+      return (providerRow as unknown as LLMProviderRecord | null)?.llm_provider_title ?? '';
+    } catch (err) {
+      metrics?.warn('LLMService.genLLMAttr 读取提供商名称失败，使用空值继续生成属性', {
+        error: err instanceof Error ? err.message : String(err),
+        llm_id: llmId,
+      });
+      return '';
+    }
+  }
+
+  private async soGenAttrPrompt(llm: LLMAvailableRecord, providerTitle: string): Promise<string> {
+    if (!this.promptsAccess) {
+      return '';
+    }
+    const soPromptOut = new SoPromptOutput();
+    await this.promptsAccess.soPrompt(
+      Object.assign(new SoPromptInput(), { keyword: '模型属性生成' }),
+      soPromptOut,
+      new PromptContext(),
+    );
+    const templateId = soPromptOut.list?.find((p) => p.enable !== false)?.id;
+    if (!templateId) {
+      return '';
+    }
+    const execPromptInput = Object.assign(new ExecPromptInput(), {
+      id: templateId,
+      variables: {
+        model_name: llm.llm_title,
+        llm_type: llm.llm_type || 'text',
+        provider_title: providerTitle,
+      },
+    });
+    const execPromptOutput = new ExecPromptOutput();
+    await this.promptsAccess.execPrompt(
+      execPromptInput,
+      execPromptOutput, new PromptContext(),
+    );
+    return execPromptOutput.prompt || '';
+  }
+
+  private parseGenAttrAttrs(result: string): { brief: string; usage: string } {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result);
+    } catch {
+      const cleaned = result
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      parsed = JSON.parse(cleaned);
+    }
+    const obj = parsed as Record<string, unknown>;
+    return {
+      brief: typeof obj.llm_brief === 'string' ? obj.llm_brief.trim() : '',
+      usage: typeof obj.model_usage === 'string' ? obj.model_usage.trim() : '',
+    };
+  }
+
+  private async saveGenAttrResult(
+    input: GenLLMAttrInput,
+    brief: string,
+    usage: string,
+    output: GenLLMAttrOutput,
+  ): Promise<boolean> {
     if (!brief && !usage) {
       output.error = '大模型未返回有效的模型属性';
       output.error_code = 'EMPTY_RESULT';
       return false;
     }
-
-    // 6. 保存到 llm_available
     await this.relationDb.update(
       LLM_AVAILABLE_TABLE,
       [
@@ -1823,24 +1575,11 @@ export class LLMService {
       ],
       [{ field: 'id', operator: Operator.EQ, value: input.id }],
     );
-
     output.llm_brief = brief;
     output.model_usage = usage;
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 可视化与运维
-  // -------------------------------------------------------------------------
-
-  /**
-   * 可视化数据（visualizedLLM）。
-   *
-   * PRD 3.4.1 条：根据 scope 获取 LLM 服务的可视化信息。
-   * - health：LLM 服务健康状态（连接状态、响应时间、启用状态）；
-   * - volume：数据量（提供商数、模型数、启用 LLM 数、调用记录数）；
-   * - diskUsage：占用磁盘空间（基于 SQLite page_size * page_count）。
-   */
   async visualizedLLM(input: VisualizedLLMInput, output: VisualizedLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -1889,15 +1628,6 @@ export class LLMService {
     return true;
   }
 
-  /**
-   * 启用/禁用 LLM 组件（enableLLM）。
-   *
-   * PRD 3.4.2 条：运行时控制 LLM 组件的可用状态。
-   * 状态同步持久化到 llm_config，组件初始化时恢复。
-   * 禁用期间所有 LLM 操作将返回失败（LLM 组件未启用）。
-   *
-   * 注：closeLLM 为终态操作，执行后不可通过本方法恢复，需重新初始化组件。
-   */
   async enableLLM(input: EnableLLMInput, _output: EnableLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (this.closed) {

@@ -33,10 +33,9 @@ import {
 } from '../domain/types';
 
 export class UserProfileService {
-  /** 自动生成画像的定时器 */
+
   private autoGenerateTimer: ReturnType<typeof setInterval> | null = null;
 
-  /** 是否正在执行自动生成（避免并发重入） */
   private autoGenerating = false;
 
   constructor(
@@ -113,27 +112,56 @@ export class UserProfileService {
   ): Promise<boolean> {
     const sessionId = input.session_id;
     output.session_id = sessionId;
+    const writerPreferences = await this.loadWriterPreferences(sessionId, metrics);
+    const latestRecord = await this.loadLatestProfileRecord(sessionId);
+    const enabledDirs = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [
+      { field: 'enable', operator: Operator.EQ, value: 1 },
+    ], [{ field: 'weight', direction: Direction.DESC }]);
+    const now = IdGenerator.now();
+    const profileConfig = await this.getConfig();
+    const minConfidence = Number(profileConfig.min_confidence_threshold ?? 0.5);
+    const prevVersionDimensions = await this.loadPrevVersionDimensions(sessionId, latestRecord);
+    const storedDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> = latestRecord
+      ? await this.loadStoredDimensions(String(latestRecord.id))
+      : {};
+    const dimensions = await this.aggregateDimensions(sessionId, enabledDirs, storedDimensions, prevVersionDimensions, writerPreferences, latestRecord, minConfidence, metrics);
+    const profileSummary = this.resolveProfileSummary(latestRecord, dimensions, writerPreferences);
+    const evolutionTrend = await this.loadEvolutionTrend(sessionId);
+    output.profile_version = latestRecord ? Number(latestRecord.version) : 0;
+    output.generated_at = latestRecord ? Number(latestRecord.generated_at) : now;
+    output.dimensions = dimensions;
+    output.profile_summary = profileSummary;
+    output.evolution_trend = evolutionTrend;
+    return true;
+  }
 
-    let writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string } | null = null;
-    if (sessionId) {
-      try {
-        const wo = new WriterGetUserProfileOutput();
-        await this.writerAgent.soUserProfile(
-          Object.assign(new WriterGetUserProfileInput(), { session_id: sessionId }),
-          wo,
-          new WriterAgentContext(),
-        );
-        writerPreferences = wo.user_profile;
-      } catch (err) {
-        /* best-effort */
-        metrics?.warn('UserProfileService.soUserProfile 读取 writer 偏好失败（best-effort，画像继续）', {
-          error: err instanceof Error ? err.message : String(err),
-          session_id: sessionId,
-        });
-      }
+  private async loadWriterPreferences(
+    sessionId: string | undefined,
+    metrics?: Metrics,
+  ): Promise<{
+    language: string; style: string; depth: string; format: string; additional_preferences: string;
+  } | null> {
+    if (!sessionId) {
+      return null;
     }
+    try {
+      const wo = new WriterGetUserProfileOutput();
+      await this.writerAgent.soUserProfile(
+        Object.assign(new WriterGetUserProfileInput(), { session_id: sessionId }),
+        wo,
+        new WriterAgentContext(),
+      );
+      return wo.user_profile;
+    } catch (err) {
+      metrics?.warn('UserProfileService.soUserProfile 读取 writer 偏好失败（best-effort，画像继续）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_id: sessionId,
+      });
+      return null;
+    }
+  }
 
-    let latestRecord: Record<string, unknown> | null = null;
+  private async loadLatestProfileRecord(sessionId: string | undefined): Promise<Record<string, unknown> | null> {
     try {
       const conditions = sessionId
         ? [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]
@@ -144,60 +172,71 @@ export class UserProfileService {
         order_by: [{ field: 'version', direction: Direction.DESC }],
         page: { current: 1, size: 1 },
       });
-      if (recs.length > 0) latestRecord = recs[0];
-    } catch { /* best-effort */ }
+      if (recs.length > 0) {
+        return recs[0];
+      }
+    } catch {  }
+    return null;
+  }
 
-    const enabledDirs = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [
-      { field: 'enable', operator: Operator.EQ, value: 1 },
-    ], [{ field: 'weight', direction: Direction.DESC }]);
-
+  private async aggregateDimensions(
+    sessionId: string | undefined,
+    enabledDirs: Array<Record<string, unknown>>,
+    storedDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>,
+    prevVersionDimensions: Record<string, string> | null,
+    writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string } | null,
+    latestRecord: Record<string, unknown> | null,
+    minConfidence: number,
+    metrics?: Metrics,
+  ): Promise<Record<string, unknown>> {
     const dimensions: Record<string, unknown> = {};
-    const now = IdGenerator.now();
-
-    // 读取最低置信度阈值，与 soProfileByVersion 保持一致，过滤低置信度维度
-    const profileConfig = await this.getConfig();
-    const minConfidence = Number(profileConfig.min_confidence_threshold ?? 0.5);
-
-    // 前一个已生成版本的维度数据，用于计算每个维度的稳定性（stable/drifting/emerging）
-    const prevVersionDimensions = await this.loadPrevVersionDimensions(sessionId, latestRecord);
-
-    // 最新版本已生成的 LLM 分析维度（与 generateProfile / soProfileByVersion 同一数据源）
-    const storedDimensions = latestRecord
-      ? await this.loadStoredDimensions(String(latestRecord.id))
-      : {};
-
     for (const dir of enabledDirs) {
       const key = String(dir.direction_key);
       try {
-        let result: { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> };
-        if (storedDimensions[key]) {
-          // 优先使用已生成的 LLM 分析维度，保证与配置/版本详情一致
-          result = storedDimensions[key];
-        } else {
-          // 未生成画像或该维度未被分析时，实时聚合作为初略画像
-          result = await this.aggregateDimension(key, sessionId, writerPreferences, latestRecord, metrics);
-        }
+        const result = await this.loadDimensionResult(key, sessionId, storedDimensions, writerPreferences, latestRecord, metrics);
         if (result.confidence < minConfidence) continue;
         (result as Record<string, unknown>).stability = this.determineStability(key, result.value, prevVersionDimensions);
         (result as Record<string, unknown>).direction_key = key;
         (result as Record<string, unknown>).direction_name = String(dir.direction_name);
         dimensions[key] = result;
       } catch (err) {
-        // skip failed dimensions
         metrics?.warn('UserProfileService.soUserProfile 维度实时聚合失败（跳过该维度）', {
           error: err instanceof Error ? err.message : String(err),
           direction_key: key,
         });
       }
     }
+    return dimensions;
+  }
 
-    let profileSummary = '';
-    if (latestRecord?.profile_summary) {
-      profileSummary = String(latestRecord.profile_summary);
-    } else {
-      profileSummary = this.buildFallbackSummary(dimensions, writerPreferences);
+  private async loadDimensionResult(
+    key: string,
+    sessionId: string | undefined,
+    storedDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>,
+    writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string } | null,
+    latestRecord: Record<string, unknown> | null,
+    metrics?: Metrics,
+  ): Promise<{ value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> {
+    if (storedDimensions[key]) {
+      return storedDimensions[key];
     }
+    return this.aggregateDimension(key, sessionId, writerPreferences, latestRecord, metrics);
+  }
 
+  private resolveProfileSummary(
+    latestRecord: Record<string, unknown> | null,
+    dimensions: Record<string, unknown>,
+    writerPreferences: {
+      language: string; style: string; depth: string; format: string; additional_preferences: string;
+    } | null,
+  ): string {
+    if (latestRecord?.profile_summary) {
+      return String(latestRecord.profile_summary);
+    }
+    return this.buildFallbackSummary(dimensions, writerPreferences);
+  }
+
+  private async loadEvolutionTrend(sessionId: string | undefined): Promise<Array<{ version: number; generated_at: number; profile_summary: string; change_summary: string }>> {
     const trendRows = await this.queryTable(USER_PROFILE_RECORD_TABLE,
       sessionId
         ? [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]
@@ -206,24 +245,14 @@ export class UserProfileService {
       undefined,
       20,
     );
-    const evolutionTrend = trendRows.map((r) => ({
+    return trendRows.map((r) => ({
       version: Number(r.version),
       generated_at: Number(r.generated_at),
       profile_summary: String(r.profile_summary ?? ''),
       change_summary: String(r.change_summary ?? ''),
     }));
-
-    output.profile_version = latestRecord ? Number(latestRecord.version) : 0;
-    output.generated_at = latestRecord ? Number(latestRecord.generated_at) : now;
-    output.dimensions = dimensions;
-    output.profile_summary = profileSummary;
-    output.evolution_trend = evolutionTrend;
-    return true;
   }
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：133 行单方法拆为
-  // 「版本 → 语料 → 维度分析 → 落库 → 写回 → 清理 → 出参」编排 + 子方法
-  //（原始单方法已删除，等价结构见 git 历史）。
   async generateProfile(input: GenerateProfileInput, output: GenerateProfileOutput, _ctx: UserProfileContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sessionId = input.session_id;
@@ -251,7 +280,6 @@ export class UserProfileService {
     return true;
   }
 
-  /** 解析下一个画像版本号（数据处理；全表按 version 降序取 1） */
   private async soNextProfileVersion(): Promise<number> {
     const maxRows = await this.relationDb.select(USER_PROFILE_RECORD_TABLE, {
       order_by: [{ field: 'version', direction: Direction.DESC }],
@@ -261,7 +289,6 @@ export class UserProfileService {
     return (maxRow ? Number(maxRow.version) : 0) + 1;
   }
 
-  /** 会话语料文本（数据处理；InfoCore lastN 读取，best-effort 失败回退空串） */
   private async soConversationText(sessionId: string | undefined, config: Record<string, unknown>): Promise<string> {
     const maxSampleCount = Number(config.max_conversation_sample_count ?? 500);
     const lastNOut = new LastNInfoOutput();
@@ -274,13 +301,12 @@ export class UserProfileService {
         lastNOut,
         new InfoCoreContext(),
       );
-    } catch { /* best-effort */ }
+    } catch {  }
     return (lastNOut.list ?? [])
       .map((r) => `${r.info_type}: ${r.info}`)
       .join('\n');
   }
 
-  /** 逐维度 LLM 分析（逻辑控制；单维度失败以空值占位，不中断整体） */
   private async analyzeDimensions(
     filteredDirs: Array<Record<string, unknown>>,
     conversationText: string,
@@ -311,7 +337,6 @@ export class UserProfileService {
     return dimensionData;
   }
 
-  /** 画像记录落库（数据处理） */
   private async saveProfileRecord(
     sessionId: string | undefined,
     newVersion: number,
@@ -331,7 +356,6 @@ export class UserProfileService {
     ]);
   }
 
-  /** 维度数据落库（数据处理） */
   private async saveDimensionData(
     recordId: string,
     dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }>,
@@ -351,7 +375,6 @@ export class UserProfileService {
     }
   }
 
-  /** 画像写回 Writer（逻辑控制；best-effort：失败仅告警） */
   private async saveWriterProfile(sessionId: string, metrics?: Metrics): Promise<void> {
     try {
       const saveOut = new SaveUserProfileOutput();
@@ -361,7 +384,7 @@ export class UserProfileService {
         new WriterAgentContext(),
       );
     } catch (err) {
-      /* best-effort */
+
       metrics?.warn('UserProfileService.generateProfile 写回 writer 画像失败（best-effort）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: sessionId,
@@ -369,7 +392,6 @@ export class UserProfileService {
     }
   }
 
-  /** 出参画像组装（数据处理；维度值反序列化） */
   private toProfileOutput(
     newVersion: number,
     now: number,
@@ -584,7 +606,6 @@ export class UserProfileService {
       ]);
     }
 
-    // 自动生成间隔变更时重新调度
     if (input.auto_generate_interval_ms !== undefined) {
       this.scheduleAutoGeneration(metrics);
     }
@@ -593,16 +614,10 @@ export class UserProfileService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // 自动生成画像调度
-  // ---------------------------------------------------------------------------
-
-  /** 启动自动生成画像调度（按 auto_generate_interval_ms 间隔周期触发 generateProfile） */
   startAutoGeneration(): void {
     this.scheduleAutoGeneration();
   }
 
-  /** 停止自动生成画像调度 */
   stopAutoGeneration(): void {
     if (this.autoGenerateTimer) {
       clearInterval(this.autoGenerateTimer);
@@ -610,7 +625,6 @@ export class UserProfileService {
     }
   }
 
-  /** 读取配置中的 auto_generate_interval_ms 并（重新）调度 */
   private async scheduleAutoGeneration(metrics?: Metrics): Promise<void> {
     this.stopAutoGeneration();
     try {
@@ -626,14 +640,13 @@ export class UserProfileService {
         });
       }, interval);
     } catch (err) {
-      /* best-effort */
+
       metrics?.warn('UserProfileService.scheduleAutoGeneration 读取画像配置失败（跳过自动生成调度）', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  /** 执行一次自动生成（全局画像，无 session 过滤） */
   private async runAutoGeneration(): Promise<void> {
     if (this.autoGenerating) return;
     this.autoGenerating = true;
@@ -647,10 +660,6 @@ export class UserProfileService {
       this.autoGenerating = false;
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
 
   private async queryTable(
     table: string,
@@ -694,7 +703,7 @@ export class UserProfileService {
       const result = this.relationDb.queryRaw(sql, params);
       rows.push(...result);
     } catch {
-      // fallback to using select
+
       const { Operator: Op, Direction: Dir } = await import('@brian-agent/base');
       const mappedConditions = conditions.map((c) => ({
         field: c.field,
@@ -741,7 +750,7 @@ export class UserProfileService {
         try { evidence = JSON.parse(String(d.evidence ?? '[]')); } catch { evidence = d.evidence as Array<Record<string, unknown>>; }
         map[key] = { value, confidence: Number(d.confidence), evidence };
       }
-    } catch { /* ignore */ }
+    } catch {  }
     return map;
   }
 
@@ -880,7 +889,7 @@ export class UserProfileService {
           evidence.push({ source: 'recent_messages', type: 'sample', sample });
         }
       } catch (err) {
-        /* best-effort */
+
         metrics?.warn('UserProfileService.aggregateLanguagePreference 最近消息采样失败（仅用 writer 偏好兜底）', {
           error: err instanceof Error ? err.message : String(err),
           session_id: sessionId,
@@ -941,7 +950,7 @@ export class UserProfileService {
           }
         }
       } catch (err) {
-        /* best-effort */
+
         metrics?.warn('UserProfileService.aggregateKnowledgeInterest 关系召回查询失败（仅用标签统计兜底）', {
           error: err instanceof Error ? err.message : String(err),
           session_id: sessionId,
@@ -962,7 +971,7 @@ export class UserProfileService {
         evidence.push({ source: 'tag_statistics', top_tags: interests });
         confidence = Math.min(0.8, interests.length * 0.08);
       }
-    } catch { /* best-effort */ }
+    } catch {  }
 
     return { value: interests, confidence, evidence };
   }
@@ -988,7 +997,7 @@ export class UserProfileService {
           avgLength = Math.round(Number(countRows[0]?.avg_len ?? 0));
           evidence.push({ source: 'info_raw', message_count: messageCount, avg_message_length: avgLength });
         }
-      } catch { /* best-effort */ }
+      } catch {  }
 
       try {
         const citeOut = new SoCitationEdgesOutput();
@@ -996,7 +1005,7 @@ export class UserProfileService {
         citingFrequency = citeOut.edges.length;
         evidence.push({ source: 'graph_citation', citing_count: citingFrequency });
       } catch (err) {
-        /* best-effort */
+
         metrics?.warn('UserProfileService.aggregateInteractionHabit 引用边统计失败（citing_frequency 降级为 0）', {
           error: err instanceof Error ? err.message : String(err),
           session_id: sessionId,
@@ -1024,13 +1033,13 @@ export class UserProfileService {
         let sumOverall = 0;
         for (const e of evaluations) {
           let scores: Record<string, number> = {};
-          try { scores = JSON.parse(String(e.scores ?? '{}')); } catch { /* ignore */ }
+          try { scores = JSON.parse(String(e.scores ?? '{}')); } catch {  }
           sumOverall += scores.overall ?? 0;
         }
         avgOverall = Math.round((sumOverall / evaluationCount) * 100) / 100;
       }
       evidence.push({ source: 'evolutor_agent', evaluation_count: evaluationCount, avg_overall_score: avgOverall });
-    } catch { /* best-effort */ }
+    } catch {  }
 
     const sensitivityValue = { evaluation_count: evaluationCount, avg_overall_score: avgOverall };
     const confidence = evaluationCount > 0 ? Math.min(0.85, evaluationCount * 0.05) : 0.1;
@@ -1151,7 +1160,7 @@ export class UserProfileService {
           new LLMCoreContext(),
         );
       } catch (err) {
-        /* best-effort usage recording */
+
         metrics?.warn('UserProfileService.analyzeDimensionWithLLM LLM 用量记录失败（跳过记账）', {
           error: err instanceof Error ? err.message : String(err),
           direction_key: directionKey,
@@ -1166,7 +1175,6 @@ export class UserProfileService {
     }
   }
 
-  /** 渲染 Prompt：DB（prompt_template 表）模板；缺省按标题动态查找；缺失 fail-loud */
   private async renderPrompt(
     templateId: string | undefined,
     fallbackTitle: string,
@@ -1244,7 +1252,7 @@ export class UserProfileService {
       if (d.confidence >= 0.3) {
         const name = dirNameMap[d.direction_key] || d.direction_key;
         let val: unknown = d.value;
-        try { val = JSON.parse(d.value); } catch { /* use raw */ }
+        try { val = JSON.parse(d.value); } catch {  }
         const display = typeof val === 'object' ? JSON.stringify(val).slice(0, 60) : String(val).slice(0, 60);
         parts.push(`${name}: ${display}`);
       }
@@ -1280,7 +1288,7 @@ export class UserProfileService {
         ]);
       }
     } catch (err) {
-      /* best-effort */
+
       metrics?.warn('UserProfileService.cleanupOldVersions 历史版本清理失败（保留全部版本）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: sessionId,
