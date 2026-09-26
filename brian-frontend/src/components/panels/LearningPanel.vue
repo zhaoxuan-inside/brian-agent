@@ -197,9 +197,9 @@ onUnmounted(() => {
             :class="t.status === 'running'
               ? 'border-brian-blue/40 bg-brian-blue/5 text-brian-blue'
               : t.status === 'failed'
-                ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400'
+                ? 'border-error-red/100 dark:border-error-red/100 bg-error-red/100 dark:bg-error-red//40 text-error-red/100 dark:text-error-red/100'
                 : t.status === 'skipped'
-                  ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400'
+                  ? 'border-warning-orange/100 dark:border-warning-orange/100 bg-warning-orange/100 dark:bg-warning-orange//40 text-warning-orange/100 dark:text-warning-orange/100'
                   : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 text-apple-gray-500 dark:text-apple-gray-400'"
             :title="t.error || t.detail || `${t.label} · ${taskStatusText(t.status)}`"
           >

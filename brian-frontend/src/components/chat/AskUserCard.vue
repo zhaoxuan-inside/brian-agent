@@ -41,7 +41,7 @@ function submit() {
             <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-100">Agent 请求{{ kindLabel }}</p>
             <p class="text-xs text-apple-gray-400 mt-0.5">答复将作为对话下一条消息发送给 Agent</p>
           </div>
-          <span class="ml-auto flex-shrink-0 text-xs font-medium" :class="askUser.status === 'answered' ? 'text-green-600 dark:text-green-400' : 'text-apple-gray-500 dark:text-apple-gray-400'">
+          <span class="ml-auto flex-shrink-0 text-xs font-medium" :class="askUser.status === 'answered' ? 'text-success-green dark:text-success-green/80' : 'text-apple-gray-500 dark:text-apple-gray-400'">
             {{ statusLabel }}
           </span>
         </div>

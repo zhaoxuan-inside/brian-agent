@@ -54,7 +54,7 @@ const {
             :y1="guide.type === 'vertical' ? guide.start : guide.position"
             :x2="guide.type === 'vertical' ? guide.position : guide.end"
             :y2="guide.type === 'vertical' ? guide.end : guide.position"
-            stroke="#2563eb"
+            stroke="var(--brian-accent)"
             stroke-width="1"
             stroke-dasharray="4 4"
             opacity="0.6"

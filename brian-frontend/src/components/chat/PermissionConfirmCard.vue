@@ -25,8 +25,8 @@ const argsText = computed(() => {
 
 const statusMeta = computed(() => {
   switch (props.permission.status) {
-    case 'allowed': return { text: '已允许', cls: 'text-green-600 dark:text-green-400' }
-    case 'denied': return { text: '已拒绝', cls: 'text-red-500 dark:text-red-400' }
+    case 'allowed': return { text: '已允许', cls: 'text-success-green dark:text-success-green/80' }
+    case 'denied': return { text: '已拒绝', cls: 'text-error-red dark:text-error-red/80' }
     default: return { text: '等待授权', cls: 'text-apple-gray-500 dark:text-apple-gray-400' }
   }
 })
@@ -54,7 +54,7 @@ const interactive = computed(() => props.permission.status === 'pending' && !pro
         </div>
         <div v-if="permission.status === 'pending'" class="px-4 py-3 border-t border-apple-gray-100 dark:border-apple-gray-800 flex items-center justify-end gap-2">
           <button
-            class="px-3 py-1.5 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 flex items-center gap-1"
+            class="px-3 py-1.5 rounded-lg text-sm text-error-red dark:text-error-red/80 hover:bg-error-red/10 dark:hover:bg-error-red/10 disabled:opacity-50 flex items-center gap-1"
             :disabled="!interactive"
             @click="emit('confirm', false, false)"
           >
@@ -81,7 +81,7 @@ const interactive = computed(() => props.permission.status === 'pending' && !pro
         </div>
       </div>
     </div>
-    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 flex items-center justify-center mt-1">
+    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 dark:bg-brian-blue//40 text-brian-blue dark:text-brian-blue/70 flex items-center justify-center mt-1">
       <Brain :size="16" />
     </div>
   </div>

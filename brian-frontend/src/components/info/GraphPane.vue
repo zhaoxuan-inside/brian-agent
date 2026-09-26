@@ -97,7 +97,7 @@ function setSvgRef(el: unknown) {
               v-for="(edge, i) in g.edges" :key="'e-' + i"
               :x1="g.nodePosMap.get(edge.source)?.x ?? 0" :y1="g.nodePosMap.get(edge.source)?.y ?? 0"
               :x2="g.nodePosMap.get(edge.target)?.x ?? 0" :y2="g.nodePosMap.get(edge.target)?.y ?? 0"
-              :stroke="g.isEdgeHighlighted(edge) ? '#0071e3' : '#d1d1d6'"
+              :stroke="g.isEdgeHighlighted(edge) ? 'var(--brian-accent-ink)' : 'var(--brian-line)'"
               :stroke-width="g.isEdgeHighlighted(edge) ? 2 : 1"
               :opacity="g.isEdgeHighlighted(edge) ? 0.9 : Math.min(0.15 + edge.weight * 0.1, 0.55)"
             />
@@ -111,17 +111,17 @@ function setSvgRef(el: unknown) {
             >
               <circle
                 :cx="node.x" :cy="node.y" :r="node.r"
-                :fill="g.selected === node.id || g.hoveredId === node.id ? '#0071e3' : node.color"
+                :fill="g.selected === node.id || g.hoveredId === node.id ? 'var(--brian-accent-ink)' : node.color"
                 :opacity="g.isNodeDimmed(node.id) ? 0.12 : 0.9"
                 class="transition-opacity"
               />
-              <text :x="node.x" :y="node.y + node.r + 10" text-anchor="middle" class="text-[7px] font-medium pointer-events-none" fill="#6e6e73" v-if="g.showLabels">{{ node.name }}</text>
+              <text :x="node.x" :y="node.y + node.r + 10" text-anchor="middle" class="text-[7px] font-medium pointer-events-none" fill="var(--brian-ink-2)" v-if="g.showLabels">{{ node.name }}</text>
             </g>
             <g v-if="g.hoveredId" pointer-events="none">
               <template v-for="node in g.layoutNodes.filter(n => n.id === g.hoveredId)" :key="'tooltip-' + node.id">
-                <rect :x="node.x - 70" :y="node.y - node.r - 46" width="140" height="38" rx="6" fill="rgba(0,0,0,0.78)" />
+                <rect :x="node.x - 70" :y="node.y - node.r - 46" width="140" height="38" rx="6" fill="var(--brian-tooltip-bg)" />
                 <text :x="node.x" :y="node.y - node.r - 28" text-anchor="middle" class="text-2xs font-medium" fill="#ffffff">{{ node.name }}</text>
-                <text :x="node.x" :y="node.y - node.r - 15" text-anchor="middle" class="text-4xs" fill="#d1d1d6">关联 {{ node.degree }} · 激活 {{ node.weight }}</text>
+                <text :x="node.x" :y="node.y - node.r - 15" text-anchor="middle" class="text-4xs" fill="var(--brian-line)">关联 {{ node.degree }} · 激活 {{ node.weight }}</text>
               </template>
             </g>
           </g>

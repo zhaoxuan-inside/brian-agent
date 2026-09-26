@@ -64,9 +64,9 @@ async function copyTraceId() {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 80) return 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/40'
-  if (score >= 60) return 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/40'
-  return 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/40'
+  if (score >= 80) return 'text-success-green dark:text-success-green/80 bg-success-green/100 dark:bg-success-green//40'
+  if (score >= 60) return 'text-warning-orange dark:text-warning-orange/80 bg-warning-orange/10 dark:bg-warning-orange//40'
+  return 'text-error-red dark:text-error-red/80 bg-error-red/10 dark:bg-error-red//40'
 }
 
 function formatTime(ts: number): string {
@@ -87,9 +87,9 @@ function formatTime(ts: number): string {
       <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-xl mx-4 overflow-hidden flex flex-col max-h-[80vh]">
         <div class="px-5 py-3.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between flex-shrink-0">
           <div class="flex items-center gap-2">
-            <Gauge :size="16" class="text-amber-600 dark:text-amber-400" />
+            <Gauge :size="16" class="text-warning-orange dark:text-warning-orange/80" />
             <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">评估结果</h3>
-            <Loader2 v-if="loading" :size="13" class="animate-spin text-amber-500" />
+            <Loader2 v-if="loading" :size="13" class="animate-spin text-warning-orange" />
           </div>
           <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="close">
             <X :size="18" />
@@ -97,7 +97,7 @@ function formatTime(ts: number): string {
         </div>
 
         <div class="px-5 py-4 flex-1 overflow-y-auto space-y-3">
-          <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-amber-600 dark:text-amber-400 space-y-3">
+          <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-warning-orange dark:text-warning-orange/80 space-y-3">
             <Loader2 :size="28" class="animate-spin" />
             <p class="text-sm">正在加载评估结果...</p>
           </div>
@@ -141,7 +141,7 @@ function formatTime(ts: number): string {
 
               <div v-if="suggestions.length > 0" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 p-3 space-y-1.5">
                 <div class="flex items-center gap-1.5 text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300">
-                  <Lightbulb :size="13" class="text-amber-500" />
+                  <Lightbulb :size="13" class="text-warning-orange" />
                   <span>优化建议</span>
                 </div>
                 <ul class="space-y-1">
@@ -152,7 +152,7 @@ function formatTime(ts: number): string {
                 </ul>
               </div>
 
-              <div v-if="needOptimize !== null" class="flex items-center gap-1.5 text-xs font-medium" :class="needOptimize ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">
+              <div v-if="needOptimize !== null" class="flex items-center gap-1.5 text-xs font-medium" :class="needOptimize ? 'text-warning-orange dark:text-warning-orange/80' : 'text-success-green dark:text-success-green/80'">
                 <component :is="needOptimize ? CircleAlert : CircleCheck" :size="14" />
                 <span>{{ needOptimize ? '建议优化' : '无需优化' }}</span>
               </div>

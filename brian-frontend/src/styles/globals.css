@@ -17,6 +17,7 @@
   --brian-ink-2: #6e6e73;               /* 次级文字 */
   --brian-tooltip-bg: rgba(0, 0, 0, 0.78);
   --brian-tooltip-ink: #ffffff;
+  --brian-accent-ring: rgba(0, 122, 255, 0.55);
 }
 .dark {
   --brian-accent: #4DA3FF;
@@ -28,6 +29,7 @@
   --brian-line: #3A3A3C;
   --brian-ink-2: #98989F;
   --brian-tooltip-bg: rgba(58, 58, 60, 0.95);
+  --brian-accent-ring: rgba(77, 163, 255, 0.6);
 }
 
 @layer base {

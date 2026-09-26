@@ -979,9 +979,9 @@ watch(
 }
 
 @keyframes thinking-jump-flash {
-  0% { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.55); }
-  60% { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22); }
-  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+  0% { box-shadow: 0 0 0 3px var(--brian-accent-ring, rgba(0, 122, 255, 0.55)); }
+  60% { box-shadow: 0 0 0 3px var(--brian-accent-ring, rgba(0, 122, 255, 0.22)); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 .thinking-card {
