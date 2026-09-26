@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 import { ref, onMounted, computed } from 'vue'
 import { RefreshCw, Play, CalendarClock, Loader2, CheckCircle2, XCircle, Clock, AlertCircle } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
@@ -11,6 +12,7 @@ import CronConfigModal from '@/components/CronConfigModal.vue'
 import { cronApi } from '@/api'
 import type { CronTask, CronTaskRun } from '@/api'
 
+const i18nStore = useI18nStore()
 const tasks = ref<CronTask[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -120,10 +122,10 @@ onMounted(loadTasks)
     <Header />
     <div class="pt-14 relative z-10">
       <div class="sticky top-14 z-30 h-10 flex items-center justify-between px-5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
-        <PageBreadcrumb :path="['定时任务']" />
+        <PageBreadcrumb :path="[i18nStore.t('nav.cron')]" />
         <div class="flex items-center gap-3">
-          <span class="text-xs text-apple-gray-400">{{ runningCount }}/{{ tasks.length }} 启用</span>
-          <button class="icon-btn" title="刷新" @click="loadTasks">
+          <span class="text-xs text-apple-gray-400">{{ i18nStore.t('cron.enabledStat', { n: runningCount, m: tasks.length }) }}</span>
+          <button class="icon-btn" :title="i18nStore.t('cron.refresh')" @click="loadTasks">
             <RefreshCw :size="16" :class="loading ? 'animate-spin' : ''" />
           </button>
         </div>
@@ -139,7 +141,7 @@ onMounted(loadTasks)
 
       <div v-else-if="tasks.length === 0" class="flex flex-col items-center justify-center py-20 text-apple-gray-400">
         <CalendarClock :size="40" class="mb-3" />
-        <p class="text-sm">暂无定时任务</p>
+        <p class="text-sm">{{ i18nStore.t('cron.empty') }}</p>
       </div>
 
       <div v-else class="mt-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
@@ -170,7 +172,7 @@ onMounted(loadTasks)
             <div class="flex items-center gap-1">
               <ToggleSwitch
                 :model-value="task.enabled === 1"
-                :label="`启用/停用 ${task.name}`"
+                :label="`${i18nStore.t('cron.toggle')} ${task.name}`"
                 @click.stop
                 @update:model-value="toggleEnabled(task)"
               />
@@ -181,17 +183,17 @@ onMounted(loadTasks)
               >
                 <Loader2 v-if="triggering[task.name]" :size="11" class="animate-spin" />
                 <Play v-else :size="11" />
-                触发
+                {{ i18nStore.t('cron.trigger') }}
               </button>
               <button
                 class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
                 @click.stop="openRuns(task)"
               >
-                执行情况
+                {{ i18nStore.t('cron.runs') }}
               </button>
               <button
                 class="p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors"
-                title="编辑定时时间"
+                :title="i18nStore.t('cron.edit')"
                 @click.stop="openEdit(task)"
               >
                 <Clock :size="12" />

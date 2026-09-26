@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 /**
  * StatusNote —— 列表/面板统一三态(loading / empty / error)
  * 替代散落的"加载中..."纯文本与各写各的空态;error 提供重试插槽。
@@ -11,6 +12,7 @@ withDefaults(defineProps<{
   message: '',
 })
 
+const i18nStore = useI18nStore()
 const emit = defineEmits<{ (e: 'retry'): void }>()
 </script>
 
@@ -21,7 +23,7 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
       <span class="w-1.5 h-1.5 rounded-full bg-brian-blue/70 animate-pulse-soft" />
       <span class="w-1.5 h-1.5 rounded-full bg-brian-blue/50 animate-pulse-soft [animation-delay:0.2s]" />
       <span class="w-1.5 h-1.5 rounded-full bg-brian-blue/30 animate-pulse-soft [animation-delay:0.4s]" />
-      <span class="sr-only">加载中…</span>
+      <span class="sr-only">{{ i18nStore.t('common.loading') }}</span>
     </div>
 
     <template v-else>
@@ -35,7 +37,7 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
         <path d="M12 8v4M12 16h.01" />
       </svg>
       <p class="text-2xs text-apple-gray-400 dark:text-apple-gray-500">
-        {{ message || (state === 'empty' ? '暂无内容' : '加载失败') }}
+        {{ message || (state === 'empty' ? i18nStore.t('common.emptyText') : i18nStore.t('common.loadFailed')) }}
       </p>
       <button
         v-if="state === 'error'"

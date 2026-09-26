@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 import { ref, nextTick } from 'vue'
 import { Send, Square, Quote, X } from '@lucide/vue'
 
+const i18nStore = useI18nStore()
 const props = defineProps<{
   disabled?: boolean
   citingMode?: boolean
@@ -64,7 +66,7 @@ function onKeydown(e: KeyboardEvent) {
         <button
           class="p-1.5 rounded-lg transition-colors flex-shrink-0"
           :class="citingMode ? 'bg-brian-blue/10 text-brian-blue' : 'text-apple-gray-400 hover:text-brian-blue'"
-          title="引用模式"
+          :title="i18nStore.t('chat.citingMode')"
           @click="emit('toggleCiting')"
         >
           <Quote :size="18" />
@@ -75,7 +77,7 @@ function onKeydown(e: KeyboardEvent) {
           v-model="text"
           class="flex-1 bg-transparent resize-none text-sm text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400 focus:outline-none py-2 min-h-[36px] max-h-[200px]"
           :disabled="disabled"
-          placeholder="输入消息..."
+          :placeholder="i18nStore.t('chat.input.placeholder')"
           rows="1"
           @input="autoResize"
           @keydown="onKeydown"
@@ -84,7 +86,7 @@ function onKeydown(e: KeyboardEvent) {
         <button
           v-if="disabled"
           class="p-1.5 rounded-lg text-warning-orange hover:bg-warning-orange/10 transition-colors flex-shrink-0"
-          title="停止生成"
+          :title="i18nStore.t('chat.stop')"
           @click="emit('stop')"
         >
           <Square :size="18" fill="currentColor" />

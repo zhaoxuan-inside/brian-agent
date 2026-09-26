@@ -1,4 +1,5 @@
 ﻿<script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -35,6 +36,7 @@ const navSections = NAV_SECTIONS
 // 导航状态
 // ============================================================
 
+const i18nStore = useI18nStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -82,7 +84,7 @@ const currentEntityType = computed(() => currentSub.value?.entityType)
 
 // ===== 修改后：增加"配置中心"根路径 =====
 const pagePath = computed(() => {
-  const items: string[] = ['配置中心']
+  const items: string[] = [i18nStore.t('page.configCenter')]
   if (currentSection.value) items.push(currentSection.value.label)
   if (currentSub.value) items.push(currentSub.value.label)
   return items

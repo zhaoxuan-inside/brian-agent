@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useI18nStore } from '@/stores/i18n'
 import type { RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
@@ -25,7 +26,9 @@ const router = createRouter({
 })
 
 router.afterEach((to) => {
-  const title = (to.meta.title as string) || 'Brian-Agent'
+  const i18nStore = useI18nStore()
+  const key = `nav.${to.name as string}`
+  const title = i18nStore.t(key) === key ? ((to.meta.title as string) || 'Brian-Agent') : i18nStore.t(key)
   document.title = `${title} - Brian-Agent`
 })
 

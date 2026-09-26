@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
+const i18nStore = useI18nStore()
 import { ref } from 'vue'
 import { Fingerprint, Braces, FileCode, Regex, Copy, CheckCircle2, XCircle, Loader2 } from '@lucide/vue'
 import { toolApi } from '@/api'
@@ -122,7 +124,7 @@ async function runRegex() {
     <div class="pt-14 relative z-10">
       <div class="sticky top-14 z-30 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
         <div class="h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700">
-          <PageBreadcrumb :path="['工具']" />
+          <PageBreadcrumb :path="[i18nStore.t('nav.tool')]" />
         </div>
         <div class="px-6">
           <div class="flex items-center gap-1 mt-3 mb-4 border-b border-apple-gray-200 dark:border-apple-gray-700 pb-2">

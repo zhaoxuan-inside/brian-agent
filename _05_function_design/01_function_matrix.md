@@ -92,6 +92,12 @@
 - 验收:`node scripts/gen-sop-07.mjs` 后 _07 分片与代码 grep 抽查一致
 - 预估:40 分钟
 
+### T-F13 i18n 补全(用户选 B:保留语言按钮;分期)
+- P1(已完成):i18n 基建升级(参数化 t(key, params)/html lang 同步/标题即时刷新/语言按钮自指文案修复);全局骨架接线(Header 按钮、8 页面包屑、router 标题、NavItems);主对话流(ChatView 侧栏/溢出提示/删除确认、ChatArea 空态、InputBox、MessageCard 芯片);公共组件(ConfirmDialog/ModalShell/StatusNote);词典 38→78 键。中文 UI 逐字不变,英文为新增
+- P2(后续):信息页 7 tab 内部面板、思考/评估/组件弹窗内部、Cron 执行记录弹窗
+- P3(后续):ConfigView 20+ 子区块、Learning/Monitor/UserProfile 面板内部、HomeView 营销文案
+- 验收(P1):浏览器双语往返实测(EN:lang 属性/标题/导航/侧栏/芯片/Info tabs;ZH 无损还原);vue-tsc 0 错;前端 vitest 无新增失败
+
 ## 4. 里程碑
 
 | 里程碑 | 包含任务 | 完成标志 |

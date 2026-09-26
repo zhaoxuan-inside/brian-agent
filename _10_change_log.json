@@ -185,6 +185,33 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-009",
+      "date": "2026-09-27",
+      "requirement": "用户选 B:保留语言按钮并补全 i18n(分期)。T-F13 P1:i18n 基建升级(t 支持参数替换;html lang 同步;语言切换即时刷新 document.title;修复语言按钮 EN 模式自指文案 toChinese);词典 38→78 键;接线 Header 按钮/8 页面包屑/router 标题/ChatView 侧栏与删除确认/ChatArea/InputBox/MessageCard 芯片/公共组件。中文 UI 逐字不变。浏览器双语往返实测通过;前端 vitest 5 个失败为预存后端 501(HEAD 归因验证,非本次引入)",
+      "changed_files": [
+        "brian-frontend/src/stores/i18n.ts",
+        "brian-frontend/src/router/index.ts",
+        "brian-frontend/src/components/layout/Header.vue",
+        "brian-frontend/src/views/ChatView.vue",
+        "brian-frontend/src/components/chat/ChatArea.vue",
+        "brian-frontend/src/components/chat/InputBox.vue",
+        "brian-frontend/src/components/chat/MessageCard.vue",
+        "brian-frontend/src/components/common/ConfirmDialog.vue",
+        "brian-frontend/src/components/common/ModalShell.vue",
+        "brian-frontend/src/components/common/StatusNote.vue",
+        "brian-frontend/src/views/ConfigView.vue",
+        "brian-frontend/src/views/CronView.vue",
+        "brian-frontend/src/views/LearningView.vue",
+        "brian-frontend/src/views/MonitorView.vue",
+        "brian-frontend/src/views/ToolView.vue",
+        "_05_function_design/01_function_matrix.md"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }

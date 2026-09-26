@@ -12,6 +12,9 @@ const themeStore = useThemeStore()
 const i18nStore = useI18nStore()
 const authStore = useAuthStore()
 
+const themeLabel = computed(() => (themeStore.isDark ? i18nStore.t('header.toLight') : i18nStore.t('header.toDark')))
+const langLabel = computed(() => (i18nStore.locale === 'zh-CN' ? i18nStore.t('header.toEnglish') : i18nStore.t('header.toChinese')))
+
 const navItems = computed(() => [
   { icon: Home, route: '/', name: i18nStore.t('nav.home') },
   { icon: MessageCircle, route: '/chat', name: i18nStore.t('nav.chat') },
@@ -55,15 +58,14 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <button class="icon-btn" :title="themeStore.isDark ? '浅色模式' : '深色模式'" :aria-label="themeStore.isDark ? '切换到浅色模式' : '切换到深色模式'" @click="themeStore.toggleTheme()">
+      <button class="icon-btn" :title="themeLabel" :aria-label="themeLabel" @click="themeStore.toggleTheme()">
         <Sun v-if="themeStore.isDark" :size="18" />
         <Moon v-else :size="18" />
       </button>
 
       <button
         class="icon-btn"
-        :title="i18nStore.locale === 'zh-CN' ? 'English' : '中文'"
-        :aria-label="i18nStore.locale === 'zh-CN' ? '切换到 English' : '切换到中文'"
+        :title="langLabel" :aria-label="langLabel"
         @click="i18nStore.setLocale(i18nStore.locale === 'zh-CN' ? 'en-US' : 'zh-CN')"
       >
         <Globe :size="18" />
@@ -71,10 +73,10 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <button class="icon-btn" title="锁定" aria-label="锁定应用" @click="authStore.lock()">
+      <button class="icon-btn" :title="i18nStore.t('header.lock')" :aria-label="i18nStore.t('header.lock')" @click="authStore.lock()">
         <Lock :size="16" />
       </button>
-      <button class="icon-btn" title="用户" aria-label="用户">
+      <button class="icon-btn" :title="i18nStore.t('header.user')" :aria-label="i18nStore.t('header.user')">
         <User :size="18" />
       </button>
     </div>

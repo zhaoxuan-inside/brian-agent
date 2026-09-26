@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 /**
  * ModalShell —— 统一弹层骨架(ADR-008 令牌契约)
  * 遮罩统一 bg-black/40 backdrop-blur-[2px]、z-modal 层级、Esc 关闭、焦点圈闭(focus trap)、aria-modal。
@@ -27,6 +28,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const shellRef = ref<HTMLElement | null>(null)
+const i18nStore = useI18nStore()
 
 function requestClose() {
   emit('close')
@@ -111,7 +113,7 @@ onBeforeUnmount(() => lockBody(false))
               <button
                 type="button"
                 class="icon-btn"
-                aria-label="关闭"
+                :aria-label="i18nStore.t('common.close')"
                 @click="requestClose"
               >
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18nStore } from '@/stores/i18n'
 import { ref, computed } from 'vue'
 import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, Star } from '@lucide/vue'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -7,6 +8,7 @@ import { useChatUiStore } from '@/stores/chatUi'
 import { formatTime as sharedFormatTime } from '../../utils/format'
 import { feedbackApi } from '@/api'
 
+const i18nStore = useI18nStore()
 const props = withDefaults(
   defineProps<{
     id: string
@@ -238,7 +240,7 @@ async function copyTraceId() {
       >
         <summary class="cursor-pointer text-4xs font-medium select-none">
           <span class="inline-block transition-transform duration-150" :class="summaryOpen ? 'rotate-90' : ''">▸</span>
-          摘要
+          {{ i18nStore.t('msg.summary') }}
         </summary>
         <div
           class="markdown-body break-words max-h-[120px] overflow-y-auto"
@@ -257,7 +259,7 @@ async function copyTraceId() {
       >
         <summary class="cursor-pointer text-4xs font-medium select-none">
           <span class="inline-block transition-transform duration-150" :class="contentOpen ? 'rotate-90' : ''">▸</span>
-          原文
+          {{ i18nStore.t('msg.original') }}
         </summary>
         <div
           class="markdown-body break-words overflow-y-auto"
@@ -275,7 +277,7 @@ async function copyTraceId() {
         class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
         @click.stop="expandedCited = !expandedCited; if (expandedCited) expandedCiting = false"
       >
-        引用 {{ effectiveCitedCount }}
+        {{ i18nStore.t('msg.citing', { n: effectiveCitedCount }) }}
         <ChevronDown :size="10" :class="expandedCited ? 'rotate-180' : ''" />
       </button>
 
@@ -283,7 +285,7 @@ async function copyTraceId() {
         class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 hover:bg-apple-gray-200"
         @click.stop="expandedCiting = !expandedCiting; if (expandedCiting) expandedCited = false"
       >
-        被引用 {{ effectiveCitingCount }}
+        {{ i18nStore.t('msg.cited', { n: effectiveCitingCount }) }}
         <ChevronDown :size="10" :class="expandedCiting ? 'rotate-180' : ''" />
       </button>
 
@@ -294,7 +296,7 @@ async function copyTraceId() {
         @click.stop="handleShowThinking"
       >
         <Brain :size="10" />
-        思考过程
+        {{ i18nStore.t('msg.thinking') }}
       </button>
 
       <button
@@ -303,7 +305,7 @@ async function copyTraceId() {
         @click.stop="handleShowEval"
       >
         <Gauge :size="10" />
-        评估结果
+        {{ i18nStore.t('msg.eval') }}
       </button>
 
       <template v-if="!isUser">
@@ -334,11 +336,11 @@ async function copyTraceId() {
 
       <button
         class="flex items-center gap-1 px-1.5 py-0.5 rounded text-4xs transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
-        :title="effectiveTraceId ? `复制 TraceId: ${effectiveTraceId}` : '复制 TraceId'"
+        :title="effectiveTraceId ? `${i18nStore.t('msg.copyTrace')}: ${effectiveTraceId}` : i18nStore.t('msg.copyTrace')"
         @click.stop="copyTraceId"
       >
         <component :is="copied ? Check : Copy" :size="10" />
-        {{ copied ? '已复制' : '复制 TraceId' }}
+        {{ copied ? (i18nStore.locale === 'zh-CN' ? '已复制' : 'Copied') : i18nStore.t('msg.copyTrace') }}
       </button>
 
       <span class="ml-auto text-4xs text-apple-gray-300">

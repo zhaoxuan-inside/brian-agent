@@ -10,9 +10,11 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useSessionStore } from '@/stores/session'
 import { chatApi } from '@/api'
 import { formatTime } from '@/utils/format'
+import { useI18nStore } from '@/stores/i18n'
 import type { ChatSession } from '@/api/types'
 
 const sessionStore = useSessionStore()
+const i18nStore = useI18nStore()
 const route = useRoute()
 const router = useRouter()
 const showSidebar = ref(false)
@@ -145,7 +147,7 @@ async function confirmDelete() {
     <Header />
     <div class="pt-14 relative z-10">
       <div class="sticky top-14 h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
-        <PageBreadcrumb :path="['对话']" />
+        <PageBreadcrumb :path="[i18nStore.t('nav.chat')]" />
       </div>
     </div>
 
@@ -159,7 +161,7 @@ async function confirmDelete() {
 
     <Transition name="fade">
       <div v-if="overflowWarning" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-warning-orange/10 border border-warning-orange/30 text-warning-orange text-sm font-medium shadow-lg">
-        会话已达到上限，请创建新会话
+        {{ i18nStore.t('chat.overflow') }}
       </div>
     </Transition>
 
@@ -169,7 +171,7 @@ async function confirmDelete() {
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
               <History :size="18" class="text-brian-blue" />
-              <h3 class="text-sm font-semibold">历史会话</h3>
+              <h3 class="text-sm font-semibold">{{ i18nStore.t('chat.history') }}</h3>
             </div>
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" @click="showSidebar = false">
               <X :size="16" />
@@ -180,27 +182,27 @@ async function confirmDelete() {
               <Search :size="16" />
             </button>
             <button class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-brian-blue text-white text-sm font-medium hover:bg-brian-blue/90 transition-colors" @click="handleNewChat">
-              <Plus :size="16" /> 新建对话
+              <Plus :size="16" /> {{ i18nStore.t('chat.new') }}
             </button>
           </div>
           <div v-if="showSearch" class="mt-2">
-            <input v-model="searchQuery" placeholder="搜索会话..." class="w-full px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-brian-blue" />
+            <input v-model="searchQuery" :placeholder="i18nStore.t('chat.search')" class="w-full px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-brian-blue" />
           </div>
         </div>
 
         <div v-if="filteredChatList.length > 0" class="flex items-center justify-between px-3 py-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
           <button class="flex items-center gap-1.5 text-xs text-apple-gray-500 hover:text-brian-blue" @click="toggleSelectAll">
             <component :is="allSelected ? CheckSquare : Square" :size="14" />
-            {{ allSelected ? '取消全选' : '全选' }}
+            {{ allSelected ? i18nStore.t('common.deselectAll') : i18nStore.t('common.selectAll') }}
           </button>
           <button v-if="selectedSessions.size > 0" class="flex items-center gap-1 text-xs text-error-red hover:bg-error-red/10 px-2 py-1 rounded" @click="requestBatchDelete">
-            <Trash2 :size="12" /> 删除({{ selectedSessions.size }})
+            <Trash2 :size="12" /> {{ i18nStore.t('chat.deleteSelected', { n: selectedSessions.size }) }}
           </button>
         </div>
 
         <div class="flex-1 overflow-y-auto px-3 pb-3">
           <div v-if="filteredChatList.length === 0" class="text-center py-8 text-apple-gray-400 text-sm">
-            {{ searchQuery ? '未找到匹配的会话' : '暂无历史会话' }}
+            {{ searchQuery ? i18nStore.t('chat.noMatch') : i18nStore.t('chat.noSessions') }}
           </div>
           <div v-else class="space-y-2 pt-2">
             <div
@@ -213,7 +215,7 @@ async function confirmDelete() {
               <div class="p-3">
                 <div class="flex items-start justify-between mb-1.5">
                   <span class="text-xs text-apple-gray-400">{{ formatTime(chat.lastTime) }}</span>
-                  <button class="text-apple-gray-400 hover:text-brian-blue" aria-label="选择会话" @click.stop="toggleSelect(chat.sessionId)">
+                  <button class="text-apple-gray-400 hover:text-brian-blue" :aria-label="i18nStore.t('chat.selectSession')" @click.stop="toggleSelect(chat.sessionId)">
                     <component :is="selectedSessions.has(chat.sessionId) ? CheckSquare : Square" :size="14" />
                   </button>
                 </div>
@@ -224,20 +226,20 @@ async function confirmDelete() {
                       class="px-2 py-0.5 text-xs rounded bg-white dark:bg-apple-gray-800 border border-brian-blue focus:outline-none w-full"
                       @keyup.enter="saveSessionTitle(chat.sessionId)"
                     />
-                    <button class="p-1 rounded text-brian-blue hover:bg-brian-blue/10 flex-shrink-0" title="保存" @click="saveSessionTitle(chat.sessionId)">
+                    <button class="p-1 rounded text-brian-blue hover:bg-brian-blue/10 flex-shrink-0" :title="i18nStore.t('chat.saveTitle')" @click="saveSessionTitle(chat.sessionId)">
                       <Check :size="12" />
                     </button>
-                    <button class="p-1 rounded text-apple-gray-400 hover:bg-apple-gray-100 flex-shrink-0" title="取消" @click="editingSessionId = null">
+                    <button class="p-1 rounded text-apple-gray-400 hover:bg-apple-gray-100 flex-shrink-0" :title="i18nStore.t('common.cancel')" @click="editingSessionId = null">
                       <X :size="12" />
                     </button>
                   </div>
                   <div v-else class="flex items-center justify-between flex-1 min-w-0 mr-2">
                     <p class="text-sm truncate flex-1">{{ chat.sessionTitle || chat.lastMessage || '新会话' }}</p>
-                    <button class="p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 flex-shrink-0 ml-1" title="修改名称" @click.stop="startEditTitle(chat)">
+                    <button class="p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 flex-shrink-0 ml-1" :title="i18nStore.t('chat.rename')" @click.stop="startEditTitle(chat)">
                       <Edit3 :size="12" />
                     </button>
                   </div>
-                  <button class="ml-1 p-1 rounded text-apple-gray-400 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" aria-label="删除会话" @click.stop="requestDeleteSession(chat.sessionId)">
+                  <button class="ml-1 p-1 rounded text-apple-gray-400 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" :aria-label="i18nStore.t('chat.deleteSession')" @click.stop="requestDeleteSession(chat.sessionId)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -252,16 +254,16 @@ async function confirmDelete() {
 
     <ConfirmDialog
       :open="deleteConfirm !== null"
-      title="确认删除"
+      :title="i18nStore.t('chat.confirmDeleteTitle')"
       :message="deleteConfirm?.type === 'batch'
-        ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？`
-        : '确定删除该会话及其全部消息吗？'"
-      confirm-text="确认删除"
+        ? i18nStore.t('chat.confirmDeleteBatch', { n: selectedSessions.size })
+        : i18nStore.t('chat.confirmDeleteSingle')"
+      :confirm-text="i18nStore.t('chat.confirmDeleteBtn')"
       intent="danger"
       @confirm="confirmDelete"
       @cancel="deleteConfirm = null"
     >
-      <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签、向量与用户画像数据，且不可恢复。</p>
+      <p class="text-xs text-apple-gray-400 mt-1">{{ i18nStore.t('chat.deleteWarning') }}</p>
     </ConfirmDialog>
   </div>
 </template>

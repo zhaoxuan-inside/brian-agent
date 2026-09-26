@@ -7,6 +7,7 @@ import {
   UserRound,
 } from '@lucide/vue'
 import { useSessionStore } from '@/stores/session'
+import { useI18nStore } from '@/stores/i18n'
 import { useChatUiStore } from '@/stores/chatUi'
 import { chatApi } from '@/api'
 import type { ChatMessage, Block } from '@/api/types'
@@ -21,6 +22,7 @@ import AskUserCard from './AskUserCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
 const sessionStore = useSessionStore()
+const i18nStore = useI18nStore()
 const chatUi = useChatUiStore()
 const {
   confirmingIntent,
@@ -194,7 +196,7 @@ function startResize(e: MouseEvent) {
         <div v-if="!sessionStore.currentSessionId && sessionStore.messages.length === 0" class="flex flex-col items-center justify-center h-full text-apple-gray-400">
           <MessageCircle :size="48" class="mb-4 text-apple-gray-300" />
           <p class="text-lg font-medium">Brian Agent</p>
-          <p class="text-sm mt-1">开始一段对话</p>
+          <p class="text-sm mt-1">{{ i18nStore.t('chat.emptyHint') }}</p>
         </div>
 
         <template v-for="entry in timeline" :key="entry.key">
@@ -262,7 +264,7 @@ function startResize(e: MouseEvent) {
 
         <div v-if="sessionStore.isStreaming" class="flex items-center gap-2 text-apple-gray-400 text-sm">
           <Loader2 :size="14" class="animate-spin" />
-          <span>思考中...</span>
+          <span>{{ i18nStore.t('chat.thinking') }}</span>
         </div>
 
         <IntentConfirmCard
