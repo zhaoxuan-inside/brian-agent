@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-26T11:20:00+08:00",
+  "terms": [
+    { "term": "记忆", "code_name": "Info", "definition": "对话中沉淀的记忆条目,含类型/标签/向量,是七路召回的原子单元", "aliases": ["Memory(禁用,指代不清)", "Note"], "domain": "记忆", "related_terms": ["InfoCore", "共现图", "引文图"], "source": "_01_business/01_requirements.md" },
+    { "term": "会话", "code_name": "Session", "definition": "一次对话交互的容器;应用层 chat_session 与运行时 runtime_session 双层", "aliases": ["Conversation", "Dialog"], "domain": "对话", "related_terms": ["RuntimeMessage", "MessagePart"], "source": "_04_framework_design/02_data_flow.md" },
+    { "term": "执行单元", "code_name": "Run", "definition": "从 submitRun 到 settleRun 的一次执行生命周期,由 RunGateway 管理", "aliases": ["Task(禁用,与任务卡混淆)", "Job"], "domain": "运行时", "related_terms": ["RunGateway", "Lane", "IterationBudget"], "source": "_01_business/01_requirements.md" },
+    { "term": "运行时智能体声明", "code_name": "AgentDef", "definition": "Runtime 层可被执行匹配的 Agent 运行时声明(向量+规则匹配)", "aliases": ["AgentDefinition"], "domain": "运行时", "related_terms": ["Agent", "matchAgentDef"], "source": "_04_framework_design/01_architecture.md" },
+    { "term": "智能体", "code_name": "Agent", "definition": "具备提示词/技能绑定/人格的可复用执行实体;库态存于 AgentLibrary,snapshot 实例化执行", "aliases": ["Assistant", "Bot"], "domain": "智能体", "related_terms": ["AgentDef", "AgentLibrary", "AgentBuilder"], "source": "_01_business/01_requirements.md" },
+    { "term": "技能", "code_name": "Skill", "definition": "一等工具:内置系统技能、用户沙箱技能、MCP 包装技能(mcp_exec)的统一执行面", "aliases": ["Tool(禁用:领域概念已于 bcd2479 移除,仅 Base/ToolProvider 保留为纯函数原语单一事实源)", "Plugin"], "domain": "工具面", "related_terms": ["SkillRuntime", "SkillCore", "MCP", "ToolProvider"], "source": "_03_tech_stack/ADR-006-skill-first-tool.md" },
+    { "term": "模型上下文协议服务", "code_name": "MCP", "definition": "Model Context Protocol 外部工具通道;包装为 mcp_exec 技能消费", "aliases": ["外部工具"], "domain": "工具面", "related_terms": ["Skill", "MCPProvider", "MCPCore"], "source": "_03_tech_stack/ADR-006-skill-first-tool.md" },
+    { "term": "人格", "code_name": "Soul", "definition": "人格提示词实体,注入 LLM 系统提示塑造行为风格", "aliases": ["Persona", "Character"], "domain": "人格", "related_terms": ["SoulProvider", "SoulCore"], "source": "_01_business/01_requirements.md" },
+    { "term": "执行踪迹", "code_name": "Trace", "definition": "trace_id 贯穿的执行踪迹:Metrics spans + Report 事件 + InfoCore TRACE 条目", "aliases": ["Tracing"], "domain": "可观测", "related_terms": ["Metrics", "Report"], "source": "_01_business/01_requirements.md" },
+    { "term": "观测指标", "code_name": "Metrics", "definition": "系统观测门面:进出入计时 spans/耗时/trace_id;AOP 自动采集", "aliases": ["Telemetry"], "domain": "可观测", "related_terms": ["Trace", "AopProxy"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
+    { "term": "流式报告", "code_name": "Report", "definition": "会话级流式事件通道(SSE 帧底座):pushText/pushEvent", "aliases": ["EventStream", "PushChannel"], "domain": "可观测", "related_terms": ["StreamProvider", "Trace"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
+    { "term": "方法签名", "code_name": "五参签名", "definition": "全后端统一 (input, output, context, metrics?, report?);evolution 职责由 Output.error/error_code 承担(ADR-007 映射 SOP 五段)", "aliases": ["五段签名(SOP 原始表述,映射见 ADR-007)"], "domain": "工程约定", "related_terms": ["Input", "Output", "Context", "Metrics", "Report"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
+    { "term": "访问层", "code_name": "Access", "definition": "模块四层结构的入口薄壳:AopProxy 织入 + 转发 Service;跨模块只经 Access 调用", "aliases": ["Controller"], "domain": "工程约定", "related_terms": ["AopProxy", "Service"], "source": "_04_framework_design/01_architecture.md" },
+    { "term": "通道", "code_name": "Lane", "definition": "Run 的并发通道与信号量,控制同时执行的 Run 数量", "aliases": ["Queue(禁用,与 MQ 队列混淆)"], "domain": "运行时", "related_terms": ["Run", "LaneSemaphore"], "source": "_04_framework_design/02_data_flow.md" },
+    { "term": "迭代预算", "code_name": "IterationBudget", "definition": "Agent Loop 的轮次/步数预算,防循环失控", "aliases": ["LoopBudget"], "domain": "运行时", "related_terms": ["Run", "AgentLoop"], "source": "_04_framework_design/02_data_flow.md" },
+    { "term": "用户画像", "code_name": "UserProfile", "definition": "从对话自动归纳的用户维度画像,供 Writer 个性化输出", "aliases": ["Persona Profile"], "domain": "画像", "related_terms": ["WriterAgent", "SelfLearning"], "source": "_01_business/01_requirements.md" },
+    { "term": "自学习", "code_name": "SelfLearning", "definition": "本地知识库扫描→任务队列→insights→知识激活的应用层闭环", "aliases": ["AutoLearn"], "domain": "进化", "related_terms": ["EvolutorAgent", "UserProfile"], "source": "_04_framework_design/01_architecture.md" },
+    { "term": "进化器", "code_name": "EvolutorAgent", "definition": "评估执行效果→淘汰劣质 Agent/技能→重建的进化闭环 Agent", "aliases": ["Evolver", "Evaluator(禁用,与单次评估混淆)"], "domain": "进化", "related_terms": ["SelfLearning", "Agent"], "source": "_01_business/01_requirements.md" },
+    { "term": "设计令牌", "code_name": "DesignToken", "definition": "前端样式单一事实源:颜色/字号/间距/圆角/阴影/动效的命名变量(tailwind.config + CSS 变量)", "aliases": ["StyleToken", "ThemeVariable"], "domain": "前端", "related_terms": ["TailwindTheme"], "source": "_03_tech_stack/ADR-008-frontend-design-tokens.md" }
+  ]
+}

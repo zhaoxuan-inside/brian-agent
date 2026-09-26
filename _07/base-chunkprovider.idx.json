@@ -1,0 +1,173 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-26T03:13:05.435Z",
+  "shard": "base-chunkprovider",
+  "layer": "Base",
+  "module": "ChunkProvider",
+  "methods": [
+    {
+      "id": "m-chunkprovider-0001",
+      "signature": "boolean chunkText(input: ChunkTextInput, output: ChunkTextOutput, context: ChunkContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "chunkText",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/access/ChunkAccess.ts",
+      "description": "转换归并：文本（返回成功与否，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0002",
+      "signature": "boolean chunkFile(input: ChunkFileInput, output: ChunkFileOutput, context: ChunkContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "chunkFile",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/access/ChunkAccess.ts",
+      "description": "转换归并：文件（返回成功与否，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0003",
+      "signature": "boolean chunkText(input: ChunkTextInput, output: ChunkTextOutput, _context: ChunkContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
+      "name": "chunkText",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/ChunkService.ts",
+      "description": "转换归并：文本（返回成功与否）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0004",
+      "signature": "boolean chunkFile(input: ChunkFileInput, output: ChunkFileOutput, _context: ChunkContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
+      "name": "chunkFile",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/ChunkService.ts",
+      "description": "转换归并：文件（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0005",
+      "signature": "boolean slidingWindow(text: string, config: ChunkConfig, baseIdx: unknown, keepLast: unknown): ChunkResult[]",
+      "name": "slidingWindow",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/ChunkService.ts",
+      "description": "处理 sliding / 窗口（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0006",
+      "signature": "boolean mergeConfig(partial?: ChunkConfig): ChunkConfig",
+      "name": "mergeConfig",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/ChunkService.ts",
+      "description": "转换归并：配置",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0007",
+      "signature": "boolean splitText(text: string, options: RecursiveSplitOptions): string[]",
+      "name": "splitText",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：文本",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0008",
+      "signature": "boolean splitText(text: string): string[]",
+      "name": "splitText",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：文本",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0009",
+      "signature": "boolean splitTextRecursive(text: string, separators: string[]): string[]",
+      "name": "splitTextRecursive",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：文本 / recursive（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0010",
+      "signature": "boolean splitWithSeparator(text: string, separator: string): string[]",
+      "name": "splitWithSeparator",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：separator（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0011",
+      "signature": "boolean mergeSplits(splits: string[], separator: string): string[]",
+      "name": "mergeSplits",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：splits（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-chunkprovider-0012",
+      "signature": "boolean joinDocs(docs: string[], separator: string): string | null",
+      "name": "joinDocs",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "ChunkProvider",
+      "location": "brian-backend/Base/ChunkProvider/application/RecursiveTextSplitter.ts",
+      "description": "转换归并：docs（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    }
+  ],
+  "stats": {
+    "total": 12,
+    "by_category": {
+      "algorithm": 6,
+      "orchestration": 6,
+      "data": 0
+    }
+  }
+}

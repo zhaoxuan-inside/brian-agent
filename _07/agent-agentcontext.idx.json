@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-26T03:13:05.414Z",
+  "shard": "agent-agentcontext",
+  "layer": "Agent",
+  "module": "AgentContext",
+  "methods": [
+    {
+      "id": "m-agentcontext-0001",
+      "signature": "boolean initialize(): Promise<void>",
+      "name": "initialize",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/access/AgentContextAccess.ts",
+      "description": "构建/初始化相关数据（异步编排，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0002",
+      "signature": "boolean soContextDetail(i: GetContextDetailInput, o: GetContextDetailOutput, c: AgentContextContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "soContextDetail",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/access/AgentContextAccess.ts",
+      "description": "查询：上下文 / detail（返回成功与否，异步编排，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0003",
+      "signature": "boolean configAgentContext(i: ConfigAgentContextInput, o: ConfigAgentContextOutput, c: AgentContextContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "configAgentContext",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/access/AgentContextAccess.ts",
+      "description": "处理 配置 / Agent / 上下文（返回成功与否，异步编排，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0004",
+      "signature": "boolean soContextDetail(input: GetContextDetailInput, output: GetContextDetailOutput, _ctx: AgentContextContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
+      "name": "soContextDetail",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/application/AgentContextService.ts",
+      "description": "查询：上下文 / detail（返回成功与否，异步编排）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0005",
+      "signature": "boolean configAgentContext(input: ConfigAgentContextInput, output: ConfigAgentContextOutput, _ctx: AgentContextContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
+      "name": "configAgentContext",
+      "category": "data",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/application/AgentContextService.ts",
+      "description": "处理 配置 / Agent / 上下文（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0006",
+      "signature": "boolean getConfigInternal(): Promise<AgentContextConfigRecord | null>",
+      "name": "getConfigInternal",
+      "category": "data",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/application/AgentContextService.ts",
+      "description": "获取：配置 / internal（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-agentcontext-0007",
+      "signature": "boolean init(): Promise<void>",
+      "name": "init",
+      "category": "data",
+      "layer": "Agent",
+      "module": "AgentContext",
+      "location": "brian-backend/Agent/AgentContext/infrastructure/AgentContextSchemaInitializer.ts",
+      "description": "构建/初始化相关数据（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    }
+  ],
+  "stats": {
+    "total": 7,
+    "by_category": {
+      "algorithm": 0,
+      "orchestration": 4,
+      "data": 3
+    }
+  }
+}

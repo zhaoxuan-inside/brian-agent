@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "changes": [
+    {
+      "id": "chg-001",
+      "date": "2026-09-26",
+      "requirement": "R1 SOP 接入:hs-project-skill 十一件套反向补建(_00~_06 文档、_07 分片方法索引、_09 词典、_10 变更日志初始化),登记规模分级与签名约定映射(ADR-007)",
+      "changed_files": [
+        "_01_business/00_p0_clarification.md",
+        "_01_business/01_requirements.md",
+        "_02_principle/01_candidates.md",
+        "_03_tech_stack/01_selection.md",
+        "_03_tech_stack/ADR-001-node22-runtime.md",
+        "_03_tech_stack/ADR-002-zero-web-framework.md",
+        "_03_tech_stack/ADR-003-local-three-stores.md",
+        "_03_tech_stack/ADR-004-isolated-vm-sandbox.md",
+        "_03_tech_stack/ADR-005-runtime-v2-code-as-orchestration.md",
+        "_03_tech_stack/ADR-006-skill-first-tool.md",
+        "_03_tech_stack/ADR-007-five-param-signature-aop.md",
+        "_03_tech_stack/ADR-008-frontend-design-tokens.md",
+        "_04_framework_design/01_architecture.md",
+        "_04_framework_design/02_data_flow.md",
+        "_05_function_design/01_function_matrix.md",
+        "_06_interface_design/01_external_api.md",
+        "_06_interface_design/02_internal_interfaces.md",
+        "_00_project_idx.json",
+        "_07/_index.json",
+        "_09_project_dict.json",
+        "_10_change_log.json",
+        "scripts/gen-sop-07.mjs"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": false
+    }
+  ]
+}

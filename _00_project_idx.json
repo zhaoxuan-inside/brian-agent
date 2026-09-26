@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "project": {
+    "name": "brian-agent",
+    "version": "1.0.0",
+    "description": "具备记忆、人格、反思与自我进化能力的本地个人 Agent(数据 100% 本机)",
+    "languages": ["TypeScript", "Vue"],
+    "status": "maintained",
+    "scale": "team-shards-personal-owner"
+  },
+  "reading_order": [
+    { "order": 1, "path": "_01_business/", "purpose": "产品底层需求原理(P0 澄清 + 需求与领域概念)" },
+    { "order": 2, "path": "_02_principle/", "purpose": "实现方案底层原理(存量架构原理依据 + 重构方案对比)" },
+    { "order": 3, "path": "_03_tech_stack/", "purpose": "实现方案技术选型与 ADR-001~008" },
+    { "order": 4, "path": "_04_framework_design/", "purpose": "分层架构/模块职责/数据流" },
+    { "order": 5, "path": "_05_function_design/", "purpose": "功能矩阵与任务卡(R2/R3)" },
+    { "order": 6, "path": "_06_interface_design/", "purpose": "对外 API 与内部接口契约" },
+    { "order": 7, "path": "_07/_index.json", "purpose": "方法索引(分片,防重复开发依据)" },
+    { "order": 8, "path": "_09_project_dict.json", "purpose": "项目词典(术语统一,禁用别名)" },
+    { "order": 9, "path": "_10_change_log.json", "purpose": "变更日志(需求/文件清单)" },
+    { "order": 10, "path": "brian-backend/ 与 brian-frontend/", "purpose": "实际代码(最后阅读)" }
+  ],
+  "documents": {
+    "_01_business": { "path": "_01_business/", "files": [
+      { "file": "00_p0_clarification.md", "summary": "P0 需求澄清结论与 EARS 验收", "status": "confirmed" },
+      { "file": "01_requirements.md", "summary": "需求背景/用户故事/领域概念/验收标准", "status": "confirmed" }
+    ] },
+    "_02_principle": { "path": "_02_principle/", "files": [
+      { "file": "01_candidates.md", "summary": "存量架构原理依据(A1~A5)+ 重构候选方案对比(B1/B2)", "status": "reviewed" }
+    ] },
+    "_03_tech_stack": { "path": "_03_tech_stack/", "files": [
+      { "file": "01_selection.md", "summary": "选型清单与依赖版本约束(15 项)", "status": "confirmed" },
+      { "file": "ADR-001-node22-runtime.md", "summary": "运行时锁定 Node 22/ABI127", "status": "accepted" },
+      { "file": "ADR-002-zero-web-framework.md", "summary": "零 Web 框架 node:http 手写路由", "status": "accepted" },
+      { "file": "ADR-003-local-three-stores.md", "summary": "SQLite+LanceDB+leangraph 本地三库", "status": "accepted" },
+      { "file": "ADR-004-isolated-vm-sandbox.md", "summary": "isolated-vm 技能沙箱", "status": "accepted" },
+      { "file": "ADR-005-runtime-v2-code-as-orchestration.md", "summary": "Runtime v2 代码即编排", "status": "accepted" },
+      { "file": "ADR-006-skill-first-tool.md", "summary": "Skill 一等工具,Tool 概念移除", "status": "accepted" },
+      { "file": "ADR-007-five-param-signature-aop.md", "summary": "五参签名 (input,output,context,metrics?,report?)+AOP,映射 SOP 五段", "status": "accepted" },
+      { "file": "ADR-008-frontend-design-tokens.md", "summary": "前端设计令牌体系(R2)", "status": "accepted" }
+    ] },
+    "_04_framework_design": { "path": "_04_framework_design/", "files": [
+      { "file": "01_architecture.md", "summary": "分层架构图/模块职责表/依赖规则/公共机制", "status": "reviewed" },
+      { "file": "02_data_flow.md", "summary": "对话 SSE 全链路时序/主调用链/数据模型概览", "status": "reviewed" }
+    ] },
+    "_05_function_design": { "path": "_05_function_design/", "files": [
+      { "file": "01_function_matrix.md", "summary": "R2/R3 任务卡(T-F01~F08,T-B01~B03)与里程碑", "status": "confirmed" }
+    ] },
+    "_06_interface_design": { "path": "_06_interface_design/", "files": [
+      { "file": "01_external_api.md", "summary": "/api/* 152 条路径域清单 + SSE 契约 + 错误码", "status": "reviewed" },
+      { "file": "02_internal_interfaces.md", "summary": "五参签名约定/关键接口/前端路由与令牌契约", "status": "reviewed" }
+    ] }
+  },
+  "tech_stack": {
+    "runtime": "Node 22 (ABI127)",
+    "languages": ["TypeScript 5.4 (ES2022)", "Vue 3.4"],
+    "key_dependencies": [
+      { "name": "better-sqlite3 11.10.0", "purpose": "SQLite 关系库(prebuilt)" },
+      { "name": "@lancedb/lancedb 0.15.0", "purpose": "向量库(prebuilt)" },
+      { "name": "leangraph", "purpose": "图库" },
+      { "name": "isolated-vm 5.0.4", "purpose": "技能沙箱(prebuilt)" },
+      { "name": "ws ^8.21.2", "purpose": "WebSocket(/ws 占位)" },
+      { "name": "vue/pinia/vue-router/tailwindcss/vite", "purpose": "前端栈" },
+      { "name": "zod ^3.23.8", "purpose": "schema 校验(shared 与 SkillRuntime)" }
+    ],
+    "decisions_dir": "_03_tech_stack/"
+  },
+  "code": {
+    "path": "brian-backend/ + brian-frontend/ + shared/",
+    "layout": "npm workspaces;后端每模块 DDD 四层 access/application/domain/infrastructure;前端 src/{views,components,composables,stores,api,utils,styles}",
+    "entry_points": ["brian-backend/dev-server.ts (main/createServer/buildContext)", "brian-frontend/src/main.ts"],
+    "modules": [
+      { "name": "Base", "path": "brian-backend/Base", "summary": "基础设施 Provider 层(18 Provider + components 原生库薄封装)", "owner": "" },
+      { "name": "Core", "path": "brian-backend/Core", "summary": "核心业务层(InfoCore 记忆/匹配/配额/老化)", "owner": "" },
+      { "name": "Runtime", "path": "brian-backend/Runtime", "summary": "编排内核 v2(Runs/Loop/Agents/Session/SkillRuntime)", "owner": "" },
+      { "name": "Agent", "path": "brian-backend/Agent", "summary": "Agent 层(9 子模块:Builder/Library/Strategy/Context/Execution/Intent/Summary/Writer/Evolutor)", "owner": "" },
+      { "name": "Application", "path": "brian-backend/Application", "summary": "应用门户层(Chat/Config/SelfLearning/UserProfile/Visualization)", "owner": "" },
+      { "name": "Server", "path": "brian-backend/dev-server.ts", "summary": "HTTP/WS 入口 + 组合根 + 路由(R3 治理对象)", "owner": "" },
+      { "name": "shared", "path": "shared/", "summary": "Zod schema + TS 类型契约薄层", "owner": "" },
+      { "name": "frontend", "path": "brian-frontend", "summary": "Vue3 SPA(8 页面/42 组件/15 composables/5 stores);UI 组件目录按 frontend-spec 不入 _07", "owner": "" }
+    ]
+  },
+  "method_index": {
+    "path": "_07/_index.json",
+    "stats": { "total": 2529, "by_category": { "algorithm": 381, "orchestration": 1135, "data": 1013 }, "shards": 59, "source": "docs/method.idx.json(2942)排除 frontend-components/views 413(UI 组件不入 _07)" }
+  },
+  "dictionary": {
+    "path": "_09_project_dict.json",
+    "terms": 19
+  },
+  "change_log": {
+    "path": "_10_change_log.json",
+    "latest": "chg-001"
+  },
+  "quality_gates": {
+    "lint": "npm run lint:backend(后端 flat config);npm run lint(前端)",
+    "typecheck": "npm run typecheck(6 workspaces tsc --noEmit)+ 前端 vue-tsc(build 内)",
+    "test": "npm test(scripts/test-all.mjs 聚合 5 层 vitest)",
+    "coverage_threshold": null,
+    "observation_overhead_max": null,
+    "method_length": "npm run analyze:methods(阈值 30 行)"
+  },
+  "conventions": {
+    "method_signature": "(input: XxxInput, output: XxxOutput, context: XxxContext, metrics?: Metrics, report?: Report) —— SOP 五段签名同构映射见 _03_tech_stack/ADR-007;登记 _07 时加 boolean 前缀表执行成败契约",
+    "method_line_limit": "<=30(analyze:methods 阈值 30)",
+    "commit_format": "<type>(<scope>): <subject>",
+    "method_categories": ["algorithm", "orchestration", "data"],
+    "signature_exemptions": ["dev-server.ts HTTP/WS 入口(main/createServer)", "各 SchemaInitializer 基建", "UI 组件与 Vue 组合式函数签名(frontend-spec)", "测试函数", "scripts/*.mjs 工具脚本"],
+    "frontend_token_contract": "语义色/z-index/字号/遮罩/圆角以 tailwind.config.js + globals.css 为单一事实源;组件禁用裸 tailwind 原生色表达语义;弹层经 ModalShell(_06/02 第 4 节)",
+    "embedding_model": null,
+    "standards": ["Google JavaScript Style Guide", "ESLint flat config(eslint.backend.config.mjs)"],
+    "reference": "references/coding-standards.md(hs-project-skill)",
+    "example": "references/example.md(hs-project-skill)"
+  }
+}
