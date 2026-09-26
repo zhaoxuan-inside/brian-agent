@@ -3488,7 +3488,7 @@ watch(activeSubSection, async (val) => {
   <div class="h-screen w-screen overflow-hidden relative">
     <NeuralBackground />
     <Header />
-    <div class="pt-12 h-full relative z-10 flex">
+    <div class="pt-14 h-full relative z-10 flex">
 
       <aside
         class="flex-shrink-0 flex flex-col border-r border-apple-gray-200 dark:border-apple-gray-700 bg-white/90 dark:bg-apple-gray-800/90 backdrop-blur-md transition-all duration-200"
@@ -3536,7 +3536,7 @@ watch(activeSubSection, async (val) => {
               />
             </button>
 
-            <div v-if="expandedSections[section.key] && !sidebarCollapsed" class="ml-2 border-l border-apple-gray-200 dark:border-apple-gray-700 ml-5">
+            <div v-if="expandedSections[section.key] && !sidebarCollapsed" class="ml-2 border-l border-apple-gray-200 dark:border-apple-gray-700">
               <button
                 v-for="sub in section.subsections"
                 :key="sub.key"
@@ -3612,7 +3612,7 @@ watch(activeSubSection, async (val) => {
                 <div class="px-4 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between">
                   <div class="flex items-center gap-2">
                     <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue"
+                      <input type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue accent-brian-blue"
                         :checked="filteredMqQueues.length > 0 && filteredMqQueues.every(q => mqSelectedQueues.has(q))"
                         @change="toggleAllMqQueues" />
                       <span class="text-xs text-apple-gray-500">全选</span>
@@ -3697,7 +3697,7 @@ watch(activeSubSection, async (val) => {
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
                 @click.self="mqModalVisible = false"
               >
-                <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-2xl mx-4 overflow-hidden flex flex-col" style="height: 85vh; max-height: 800px;">
+                <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-2xl mx-4 overflow-hidden flex flex-col h-[85vh] max-h-[800px]">
                   <div class="px-5 py-3.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between flex-shrink-0">
                     <div class="flex items-center gap-2">
                       <Radio :size="16" class="text-brian-blue" />
@@ -3707,12 +3707,12 @@ watch(activeSubSection, async (val) => {
                       <X :size="18" />
                     </button>
                   </div>
-                  <div class="px-5 py-4 space-y-4 flex-1 overflow-y-auto" style="min-height: 0;">
-                    <div class="flex flex-col" style="flex: 1 1 40%; min-height: 0;">
+                  <div class="px-5 py-4 space-y-4 flex-1 overflow-y-auto min-h-0">
+                    <div class="flex flex-col flex-[1_1_40%] min-h-0">
                       <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-2 flex-shrink-0">发送消息</h4>
                       <div class="flex gap-2 mb-2 flex-shrink-0">
                         <div class="flex-1">
-                          <input v-model.number="mqSendPriority" type="number" min="0" max="10" placeholder="优先级 (默认5)" :class="inputClass" style="padding-top: 4px; padding-bottom: 4px; font-size: 11px;" />
+                          <input v-model.number="mqSendPriority" type="number" min="0" max="10" placeholder="优先级 (默认5)" :class="inputClass + ' !py-1 !text-2xs'" />
                         </div>
                         <button
                           class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors flex-shrink-0"
@@ -3728,14 +3728,14 @@ watch(activeSubSection, async (val) => {
                         v-model="mqSendPayload"
                         placeholder="输入消息内容... Ctrl+Enter 发送"
                         :class="[inputClass, 'resize-none']"
-                        style="flex: 1; min-height: 80px; font-size: 12px; line-height: 1.5; font-family: ui-monospace, monospace;"
+                        class="flex-1 min-h-[80px] text-xs leading-normal font-mono"
                         @keyup.ctrl.enter="sendMqMessage()"
                       ></textarea>
                       <div v-if="mqSendError" class="flex items-center gap-2 text-2xs text-error-red mt-1 flex-shrink-0"><AlertCircle :size="13" /> {{ mqSendError }}</div>
                       <div v-if="mqSendResult" class="flex items-center gap-2 text-2xs text-success-green mt-1 flex-shrink-0"><Check :size="13" /> {{ mqSendResult }}</div>
                     </div>
 
-                    <div class="flex flex-col" style="flex: 1 1 50%; min-height: 0;">
+                    <div class="flex flex-col flex-[1_1_50%] min-h-0">
                       <div class="flex items-center justify-between mb-2 flex-shrink-0">
                         <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400">消费消息</h4>
                         <div class="flex items-center gap-1.5" v-if="mqConsumedMessage">
@@ -3753,7 +3753,7 @@ watch(activeSubSection, async (val) => {
                       <div class="flex gap-2 mb-2 flex-shrink-0">
                         <button
                           class="flex items-center justify-center gap-1.5 py-2 text-xs font-medium bg-success-green text-white rounded-lg hover:bg-success-green/90 disabled:opacity-50 transition-colors flex-shrink-0"
-                          style="flex: 1 1 auto;"
+                          class="flex-[1_1_auto]"
                           :disabled="mqConsuming"
                           @click="consumeMqMessage()"
                         >
@@ -3762,7 +3762,7 @@ watch(activeSubSection, async (val) => {
                           {{ mqConsuming ? '消费中...' : '消费消息' }}
                         </button>
                         <div class="flex-1">
-                          <input v-model="mqResetTime" type="datetime-local" :class="inputClass" style="padding-top: 4px; padding-bottom: 4px; font-size: 11px;" />
+                          <input v-model="mqResetTime" type="datetime-local" :class="inputClass + ' !py-1 !text-2xs'" />
                         </div>
                         <button
                           class="flex items-center gap-1 px-2.5 py-2 text-2xs font-medium text-apple-gray-600 dark:text-apple-gray-300 bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-600 rounded-lg hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 disabled:opacity-50 transition-colors flex-shrink-0"
@@ -3867,7 +3867,7 @@ watch(activeSubSection, async (val) => {
                 class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
                 @click.self="vectordbModalVisible = false"
               >
-                <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-3xl mx-4 overflow-hidden flex flex-col" style="height: 85vh; max-height: 800px;">
+                <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-3xl mx-4 overflow-hidden flex flex-col h-[85vh] max-h-[800px]">
                   <div class="px-5 py-3.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between flex-shrink-0">
                     <div class="flex items-center gap-2">
                       <Search :size="16" class="text-brian-blue" />
@@ -3889,7 +3889,7 @@ watch(activeSubSection, async (val) => {
                       />
                     </div>
                   </div>
-                  <div class="flex-1 overflow-y-auto px-5 py-3 space-y-2" style="min-height: 0;">
+                  <div class="flex-1 overflow-y-auto px-5 py-3 space-y-2 min-h-0">
                     <div v-if="filteredVectorDbResults.length === 0" class="flex flex-col items-center justify-center py-16 text-apple-gray-400">
                       <Search :size="24" class="mb-2" />
                       <p class="text-xs">{{ vectordbSearchResults.length === 0 ? '没有搜索到匹配的信息' : '没有匹配过滤条件的结果' }}</p>
@@ -3958,7 +3958,7 @@ watch(activeSubSection, async (val) => {
                     </select>
                   </div>
                   <label class="flex items-center gap-1.5 text-xs text-apple-gray-500">
-                    <input v-model="graphSearchOnlyActive" type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue" />
+                    <input v-model="graphSearchOnlyActive" type="checkbox" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue accent-brian-blue" />
                     仅激活边
                   </label>
                 </div>
@@ -5848,7 +5848,7 @@ watch(activeSubSection, async (val) => {
                 <div v-if="(skillForm as any)[dir.key].length === 0" class="text-2xs text-apple-gray-400 py-2">暂无文件</div>
                 <div v-for="(file, fi) in (skillForm as any)[dir.key]" :key="fi" class="mb-2 p-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
                   <div class="flex items-center gap-2 mb-1.5">
-                    <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1'" placeholder="文件名" style="flex:1" />
+                    <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1'" placeholder="文件名" class="flex-1" />
                     <button class="p-1 text-error-red hover:bg-error-red/10 rounded transition-colors" title="移除" @click="removeFileEntry((skillForm as any)[dir.key], fi)">
                       <Trash2 :size="12" />
                     </button>
@@ -6195,7 +6195,7 @@ watch(activeSubSection, async (val) => {
 
     <Transition name="fade">
       <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="diffConfirm = null">
-        <div class="bg-white dark:bg-apple-gray-900 rounded-2xl shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
+        <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
           <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800">
             <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">确认修改</h3>
             <p class="text-xs text-apple-gray-400 truncate mt-0.5">{{ diffConfirm.item.config_name }}（{{ diffConfirm.item.config_key }}）</p>
