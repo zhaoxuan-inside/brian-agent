@@ -4,6 +4,8 @@ import {
   UserRound, Trash2, RefreshCw, Loader2, Sparkles, Brain, History, X,
 } from '@lucide/vue'
 import { INFO_TABS_KEY } from '@/composables/useInfoTabs'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import StatusNote from '@/components/common/StatusNote.vue'
 import { formatTime as formatProfileTime } from '@/utils/format'
 
 const {
@@ -130,7 +132,7 @@ const {
             <h4 class="text-sm font-semibold">版本详情</h4>
             <button class="p-1 text-apple-gray-400 hover:text-apple-gray-600" @click="selectedVersion = null"><X :size="14" /></button>
           </div>
-          <div v-if="loadingVersion" class="text-center py-6 text-apple-gray-400 text-sm">加载中...</div>
+          <StatusNote v-if="loadingVersion" state="loading" />
           <div v-else-if="selectedVersion" class="space-y-3">
             <p class="text-xs text-apple-gray-400">版本 v{{ selectedVersion.version }} · {{ formatProfileTime(selectedVersion.generated_at) }}</p>
             <p class="text-sm">{{ selectedVersion.profile_summary || '暂无总结' }}</p>
@@ -145,21 +147,16 @@ const {
       </div>
     </div>
 
-    <div v-if="resetProfileConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="resetProfileConfirm = false">
-      <div class="block-card w-full max-w-sm mx-4 p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold">确认重置画像</h3>
-          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="resetProfileConfirm = false"><X :size="18" /></button>
-        </div>
-        <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300">
-          确定要重置画像吗？将清空画像内容（总结、维度数据与历史版本）。
-        </p>
-        <p class="text-xs text-apple-gray-400 mt-1">画像维度配置将保留，此操作不可恢复。</p>
-        <div class="flex justify-end gap-2 mt-6">
-          <button class="btn-secondary" @click="resetProfileConfirm = false">取消</button>
-          <button class="px-3 py-2 text-xs font-medium bg-error-red text-white rounded-lg hover:bg-error-red/90 transition-colors" @click="confirmResetProfile">确认重置</button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      :open="resetProfileConfirm"
+      title="确认重置画像"
+      message="确定要重置画像吗？将清空画像内容（总结、维度数据与历史版本）。"
+      confirm-text="确认重置"
+      intent="danger"
+      @confirm="confirmResetProfile"
+      @cancel="resetProfileConfirm = false"
+    >
+      <p class="text-xs text-apple-gray-400 mt-1">画像维度配置将保留，此操作不可恢复。</p>
+    </ConfirmDialog>
   </div>
 </template>

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle, MinusCircle } from '@lucide/vue'
 import { learningApi } from '@/api'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import type { LearningStats, LearningProgress } from '@/api/types'
 
 const progress = ref<LearningProgress>({ mode: 'from-conversation', running: false, randomFactor: 50, queueSize: 0, completedToday: 0 })
@@ -223,17 +224,12 @@ onUnmounted(() => {
           <div class="flex items-center gap-2 mb-2 shrink-0">
             <component :is="card.icon" :size="18" class="text-brian-blue flex-shrink-0" />
             <span class="text-sm font-medium">{{ card.label }}</span>
-            <button
-              class="ml-auto relative w-9 h-5 rounded-full transition-colors duration-200"
-              :class="modeAuto[card.key] ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
-              :title="modeAuto[card.key] ? '自动学习已开启' : '自动学习已关闭'"
-              @click="toggleAuto(card.key)"
-            >
-              <span
-                class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
-                :class="modeAuto[card.key] ? 'translate-x-4' : ''"
-              />
-            </button>
+            <ToggleSwitch
+              class="ml-auto"
+              :model-value="!!modeAuto[card.key]"
+              :label="modeAuto[card.key] ? '自动学习已开启' : '自动学习已关闭'"
+              @update:model-value="toggleAuto(card.key)"
+            />
           </div>
           <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 line-clamp-2 shrink-0">{{ card.desc }}</p>
 

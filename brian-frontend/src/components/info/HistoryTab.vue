@@ -5,6 +5,9 @@ import {
 } from '@lucide/vue'
 import { INFO_TABS_KEY } from '@/composables/useInfoTabs'
 import HeatmapCard from '@/components/info/HeatmapCard.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import StatusNote from '@/components/common/StatusNote.vue'
+import ModalShell from '@/components/common/ModalShell.vue'
 import { formatTime, formatTokens } from '@/utils/format'
 
 const {
@@ -25,7 +28,7 @@ const {
 
 <template>
   <div class="px-6 pb-8 space-y-4">
-    <div v-if="loadingHistory && historyTimeline.length === 0" class="text-center py-8 text-apple-gray-400">加载中...</div>
+    <StatusNote v-if="loadingHistory && historyTimeline.length === 0" state="loading" />
     <div v-else-if="!loadingHistory && historyDateNavTimeline.length === 0" class="text-center py-8 text-apple-gray-400">暂无历史会话</div>
     <div v-else class="flex gap-6">
       <div class="w-40 flex-shrink-0">
@@ -154,35 +157,26 @@ const {
       @next="nextHistoryHeatmapMonth"
     />
 
-    <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm = null">
-      <div class="block-card w-full max-w-sm mx-4 p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold">确认删除</h3>
-          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="deleteConfirm = null"><X :size="18" /></button>
-        </div>
-        <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300">
-          {{ deleteConfirm.type === 'batch' ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？` : '确定删除该会话及其全部消息吗？' }}
-        </p>
-        <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签与向量数据，且不可恢复。</p>
-        <div class="flex justify-end gap-2 mt-6">
-          <button class="btn-secondary" @click="deleteConfirm = null">取消</button>
-          <button class="px-3 py-2 text-xs font-medium bg-error-red text-white rounded-lg hover:bg-error-red/90 transition-colors" @click="confirmDelete">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      :open="deleteConfirm !== null"
+      title="确认删除"
+      :message="deleteConfirm?.type === 'batch'
+        ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？`
+        : '确定删除该会话及其全部消息吗？'"
+      confirm-text="确认删除"
+      intent="danger"
+      @confirm="confirmDelete"
+      @cancel="deleteConfirm = null"
+    >
+      <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签与向量数据，且不可恢复。</p>
+    </ConfirmDialog>
 
-    <div v-if="viewingTagsSession" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="viewingTagsSession = null">
-      <div class="block-card w-full max-w-md mx-4 p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold">会话标签</h3>
-          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="viewingTagsSession = null"><X :size="18" /></button>
-        </div>
-        <p class="text-sm text-apple-gray-500 mb-3 truncate">{{ viewingTagsSession.sessionTitle || '新会话' }}</p>
-        <div v-if="!viewingTagsSession.tags || viewingTagsSession.tags.length === 0" class="text-sm text-apple-gray-400 py-4 text-center">无标签</div>
-        <div v-else class="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
-          <span v-for="tag in viewingTagsSession.tags" :key="tag" class="px-2.5 py-1 rounded-full text-sm bg-brian-blue/10 text-brian-blue">#{{ tag }}</span>
-        </div>
+    <ModalShell :open="viewingTagsSession !== null" title="会话标签" panel-class="max-w-md" @close="viewingTagsSession = null">
+      <p class="text-sm text-apple-gray-500 mb-3 truncate">{{ viewingTagsSession?.sessionTitle || '新会话' }}</p>
+      <div v-if="!viewingTagsSession?.tags || viewingTagsSession.tags.length === 0" class="text-sm text-apple-gray-400 py-4 text-center">无标签</div>
+      <div v-else class="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
+        <span v-for="tag in viewingTagsSession.tags" :key="tag" class="px-2.5 py-1 rounded-full text-sm bg-brian-blue/10 text-brian-blue">#{{ tag }}</span>
       </div>
-    </div>
+    </ModalShell>
   </div>
 </template>

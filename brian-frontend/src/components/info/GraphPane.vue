@@ -49,7 +49,7 @@ function setSvgRef(el: unknown) {
         <Trash2 :size="14" /> {{ g.clearing ? '清理中...' : '一键清理' }}
       </button>
     </div>
-    <div v-if="g.loading" class="text-center py-16 text-apple-gray-400 flex-1">加载中...</div>
+    <StatusNote v-if="g.loading" state="loading" />
     <div v-else-if="g.nodes.length === 0" class="text-center py-16 text-apple-gray-400 text-sm flex-1">{{ emptyText }}</div>
     <div v-else class="flex gap-4 flex-1 min-h-0">
       <div class="flex-1 overflow-hidden relative" :class="g.panning || g.draggingId ? 'cursor-grabbing' : 'cursor-grab'">

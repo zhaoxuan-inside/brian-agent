@@ -4,6 +4,8 @@ import {
   Plus, Folder, Trash2, ArrowLeft, ChevronRight, Search,
   FileText, Sparkles, Loader2, X, Pencil, Check, BookOpen,
 } from '@lucide/vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import StatusNote from '@/components/common/StatusNote.vue'
 import AnnotationCard from '@/components/info/AnnotationCard.vue'
 import LibraryTreeItem from '@/components/LibraryTreeItem.vue'
 import { INFO_TABS_KEY } from '@/composables/useInfoTabs'
@@ -85,7 +87,7 @@ const statusLabel = computed(() => {
   <div class="px-6 pb-8 space-y-4">
     <div v-if="!libraryDetail">
       <h3 class="text-lg font-semibold mb-4">资料库</h3>
-      <div v-if="loadingLibs" class="text-center py-8 text-apple-gray-400">加载中...</div>
+      <StatusNote v-if="loadingLibs" state="loading" />
       <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <button class="flex flex-col items-center justify-center border-2 border-dashed border-apple-gray-300 dark:border-apple-gray-600 rounded-lg text-apple-gray-400 hover:border-brian-blue hover:text-brian-blue transition-colors aspect-[3/2]" @click="showAddLib = true">
           <Plus :size="24" class="mb-1.5" />
@@ -110,10 +112,8 @@ const statusLabel = computed(() => {
           <p class="text-xs text-apple-gray-500 line-clamp-2 mt-1.5 flex-1 min-h-0">{{ lib.description || '暂无描述' }}</p>
           <div class="flex items-center justify-between mt-auto pt-2 border-t border-apple-gray-100 dark:border-apple-gray-700">
             <span class="text-2xs text-apple-gray-400">{{ lib.learnedFiles || 0 }}/{{ lib.totalFiles || 0 }} 文件</span>
-            <button class="flex items-center gap-1.5" @click.stop="handleToggleLibrary(lib)">
-              <span class="relative w-8 h-4 rounded-full transition-colors" :class="lib.enableSelfLearning ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'">
-                <span class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform" :class="lib.enableSelfLearning ? 'translate-x-4' : ''" />
-              </span>
+            <button class="flex items-center gap-1.5" @click.stop="handleToggleLibrary(lib)" :aria-label="`启用/停用 ${lib.name}`">
+              <ToggleSwitch :model-value="!!lib.enableSelfLearning" :label="`启用/停用 ${lib.name}`" />
               <span class="text-2xs" :class="lib.enableSelfLearning ? 'text-brian-blue' : 'text-apple-gray-400'">{{ lib.enableSelfLearning ? '启用' : '禁用' }}</span>
             </button>
           </div>
@@ -225,7 +225,7 @@ const statusLabel = computed(() => {
                 {{ articleSections.length }} 个章节 · {{ charCount }} 字<template v-if="selectedEntry"> · {{ formatFileSize(selectedEntry.size) }}</template> · 选中正文右键即可向读伴提问
               </div>
             </header>
-            <div v-if="selectedFileLoading" class="text-center py-16 text-apple-gray-400">加载中...</div>
+            <StatusNote v-if="selectedFileLoading" state="loading" />
             <div v-else class="max-h-[calc(100vh-16rem)] overflow-y-auto px-6 sm:px-10 py-8">
               <div class="relative" :class="marginMode ? 'doc-margin-grid' : ''">
                 <div
@@ -292,10 +292,8 @@ const statusLabel = computed(() => {
           </button>
           <ChevronRight :size="14" class="text-apple-gray-400" />
           <span class="text-sm font-medium">{{ libraryDetail.name }}</span>
-          <button class="ml-auto flex items-center gap-1.5" @click="handleToggleLibrary(libraryDetail)">
-            <span class="relative w-8 h-4 rounded-full transition-colors" :class="libraryDetail.enableSelfLearning ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'">
-              <span class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform" :class="libraryDetail.enableSelfLearning ? 'translate-x-4' : ''" />
-            </span>
+          <button class="ml-auto flex items-center gap-1.5" @click="handleToggleLibrary(libraryDetail)" :aria-label="`启用/停用 ${libraryDetail.name}`">
+            <ToggleSwitch :model-value="!!libraryDetail.enableSelfLearning" :label="`启用/停用 ${libraryDetail.name}`" />
             <span class="text-xs" :class="libraryDetail.enableSelfLearning ? 'text-brian-blue' : 'text-apple-gray-400'">{{ libraryDetail.enableSelfLearning ? '启用' : '禁用' }}</span>
           </button>
         </div>

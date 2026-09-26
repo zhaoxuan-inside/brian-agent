@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { RefreshCw, Play, CalendarClock, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, X } from '@lucide/vue'
+import { RefreshCw, Play, CalendarClock, Loader2, CheckCircle2, XCircle, Clock, AlertCircle } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
+import ModalShell from '@/components/common/ModalShell.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import StatusNote from '@/components/common/StatusNote.vue'
 import CronConfigModal from '@/components/CronConfigModal.vue'
 import { cronApi } from '@/api'
 import type { CronTask, CronTaskRun } from '@/api'
@@ -132,9 +135,7 @@ onMounted(loadTasks)
         <AlertCircle :size="14" /> {{ error }}
       </div>
 
-      <div v-if="loading" class="flex items-center justify-center py-16 text-apple-gray-400">
-        <Loader2 :size="24" class="animate-spin mr-2" /> 加载中...
-      </div>
+      <StatusNote v-if="loading" state="loading" />
 
       <div v-else-if="tasks.length === 0" class="flex flex-col items-center justify-center py-20 text-apple-gray-400">
         <CalendarClock :size="40" class="mb-3" />
@@ -167,14 +168,12 @@ onMounted(loadTasks)
 
           <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
             <div class="flex items-center gap-1">
-              <button
-                class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0"
-                :class="task.enabled === 1 ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
-                title="启用/停用"
-                @click.stop="toggleEnabled(task)"
-              >
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="task.enabled === 1 ? 'translate-x-4' : ''" />
-              </button>
+              <ToggleSwitch
+                :model-value="task.enabled === 1"
+                :label="`启用/停用 ${task.name}`"
+                @click.stop
+                @update:model-value="toggleEnabled(task)"
+              />
               <button
                 class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors"
                 :disabled="triggering[task.name]"
@@ -202,13 +201,8 @@ onMounted(loadTasks)
         </div>
       </div>
 
-      <Teleport to="body">
-        <div v-if="runsVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" @click.self="closeRuns">
-          <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6 max-h-[80vh] flex flex-col">
-            <div class="flex items-center justify-between mb-4 flex-shrink-0">
-              <h3 class="text-lg font-semibold">执行情况 · {{ runsTask?.name }}</h3>
-              <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="closeRuns"><X :size="16" /></button>
-            </div>
+      <ModalShell :open="runsVisible" :title="`执行情况 · ${runsTask?.name ?? ''}`" panel-class="max-w-lg" label="执行情况" @close="closeRuns">
+            <div class="max-h-[60vh] flex flex-col">
             <div v-if="!runsTask || !runsMap[runsTask.name] || runsMap[runsTask.name].length === 0" class="text-xs text-apple-gray-400 py-8 text-center">暂无执行记录</div>
             <div v-else class="space-y-1.5 overflow-y-auto flex-1">
               <div v-for="run in runsMap[runsTask.name]" :key="run.id" class="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
@@ -225,9 +219,8 @@ onMounted(loadTasks)
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </Teleport>
+            </div>
+      </ModalShell>
     </div>
 
     <CronConfigModal

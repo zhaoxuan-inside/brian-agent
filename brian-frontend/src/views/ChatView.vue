@@ -6,8 +6,10 @@ import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
 import ChatArea from '@/components/chat/ChatArea.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useSessionStore } from '@/stores/session'
 import { chatApi } from '@/api'
+import { formatTime } from '@/utils/format'
 import type { ChatSession } from '@/api/types'
 
 const sessionStore = useSessionStore()
@@ -135,16 +137,6 @@ async function confirmDelete() {
     }
   } catch { /* 删除失败保留列表与选中项，便于重试 */ }
 }
-
-function formatTime(ts: number) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const h = String(d.getHours()).padStart(2, '0')
-  const min = String(d.getMinutes()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day} ${h}:${min}`
-}
 </script>
 
 <template>
@@ -152,7 +144,7 @@ function formatTime(ts: number) {
     <NeuralBackground />
     <Header />
     <div class="pt-14 relative z-10">
-      <div class="h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
+      <div class="sticky top-14 h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
         <PageBreadcrumb :path="['对话']" />
       </div>
     </div>
@@ -221,7 +213,7 @@ function formatTime(ts: number) {
               <div class="p-3">
                 <div class="flex items-start justify-between mb-1.5">
                   <span class="text-xs text-apple-gray-400">{{ formatTime(chat.lastTime) }}</span>
-                  <button class="text-apple-gray-300 hover:text-brian-blue" @click.stop="toggleSelect(chat.sessionId)">
+                  <button class="text-apple-gray-400 hover:text-brian-blue" aria-label="选择会话" @click.stop="toggleSelect(chat.sessionId)">
                     <component :is="selectedSessions.has(chat.sessionId) ? CheckSquare : Square" :size="14" />
                   </button>
                 </div>
@@ -245,7 +237,7 @@ function formatTime(ts: number) {
                       <Edit3 :size="12" />
                     </button>
                   </div>
-                  <button class="ml-1 p-1 rounded text-apple-gray-300 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" @click.stop="requestDeleteSession(chat.sessionId)">
+                  <button class="ml-1 p-1 rounded text-apple-gray-400 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" aria-label="删除会话" @click.stop="requestDeleteSession(chat.sessionId)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -258,22 +250,19 @@ function formatTime(ts: number) {
 
     <ChatArea />
 
-    <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm = null">
-      <div class="block-card w-full max-w-sm mx-4 p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold">确认删除</h3>
-          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="deleteConfirm = null"><X :size="18" /></button>
-        </div>
-        <p class="text-sm text-apple-gray-600 dark:text-apple-gray-300">
-          {{ deleteConfirm.type === 'batch' ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？` : '确定删除该会话及其全部消息吗？' }}
-        </p>
-        <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签、向量与用户画像数据，且不可恢复。</p>
-        <div class="flex justify-end gap-2 mt-6">
-          <button class="btn-secondary" @click="deleteConfirm = null">取消</button>
-          <button class="px-3 py-2 text-xs font-medium bg-error-red text-white rounded-lg hover:bg-error-red/90 transition-colors" @click="confirmDelete">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      :open="deleteConfirm !== null"
+      title="确认删除"
+      :message="deleteConfirm?.type === 'batch'
+        ? `确定删除选中的 ${selectedSessions.size} 个会话及其全部消息吗？`
+        : '确定删除该会话及其全部消息吗？'"
+      confirm-text="确认删除"
+      intent="danger"
+      @confirm="confirmDelete"
+      @cancel="deleteConfirm = null"
+    >
+      <p class="text-xs text-apple-gray-400 mt-1">此操作将同时清理关联的记忆、标签、向量与用户画像数据，且不可恢复。</p>
+    </ConfirmDialog>
   </div>
 </template>
 
