@@ -86,6 +86,12 @@
 - 验收:typecheck + 全量测试 + 前端 e2e(API 集成)通过
 - 预估:90 分钟;若回归不稳定则缩小范围并在 _10 记录(底线 T-B01/T-B02 已达成)
 
+### T-B04(后续)全量方法索引工具补全
+- 文件:`scripts/generate-method-index.mjs`、`scripts/gen-sop-07.mjs`
+- 产出:补全覆盖全部 2942+ 方法的全量扫描器(当前 docs:index 仅覆盖 Access 层 505 方法;docs/method.idx.json 为 2026-09-26 10:37 快照),并重跑 gen-sop-07 刷新 _07 分片(重构新增的私有方法入库)
+- 验收:`node scripts/gen-sop-07.mjs` 后 _07 分片与代码 grep 抽查一致
+- 预估:40 分钟
+
 ## 4. 里程碑
 
 | 里程碑 | 包含任务 | 完成标志 |

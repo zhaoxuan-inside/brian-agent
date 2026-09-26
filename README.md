@@ -166,7 +166,7 @@ npm workspaces 单仓库，后端按 DDD 严格分层，依赖单向：`base ←
 |----|------|------|
 | `@brian-agent/base` | 基础构件层 | RelationDB(SQLite) / GraphDB / VectorDB(LanceDB) / LLM / MCP / MQ / CDT / Prompts / Skill 沙箱 / Soul / Cron / Stream |
 | `@brian-agent/core` | 基础层 | InfoCore(记忆核心) / LLMCore / MCPCore / SkillCore / SoulCore / MQCore / CDTCore |
-| `@brian-agent/runtime` | 编排内核 | Runtime v2「代码即编排」：Session / Runs / 两级 Agent Loop（迭代预算 + 真取消）/ Tools / 事件总线 |
+| `@brian-agent/runtime` | 编排内核 | Runtime v2「代码即编排」：Session / Runs / 两级 Agent Loop（迭代预算 + 真取消）/ SkillRuntime（Skill 与 MCP 承接工具面）/ 事件总线 |
 | `@brian-agent/agent` | Agent 层 | AgentLibrary / AgentBuilder / AgentExecution + Planner / Writer / Evolutor / Intent / Summary |
 | `@brian-agent/application` | 应用层 | Chat / Config / SelfLearning / UserProfile / Visualization |
 | `@brian-agent/frontend` | 前端 | Vue 3 + Pinia + Vite + Tailwind CSS，Notion 式块渲染，明暗双主题 + 中英双语 |
@@ -190,12 +190,12 @@ npm run docs:index    # 重新生成方法自动索引
 
 | 文档 | 内容 |
 |------|------|
-| [AgentThink](docs/_0_DesignPrinciples/AgentThink.md) | 设计哲学与 Agent 思考模型 |
-| [文档总索引](docs/index.md) | 需求关键词 → 文档 → 代码 三跳可达 |
-| [使用手册](docs/使用手册.md) | 日常启动 / 关闭与管理 |
-| [打包部署](docs/打包部署.md) | 打包原理与部署细节 |
-| [开发规范](docs/_1_DevStandards/DevStandards.md) | 方法签名 / AOP / 分层强制规范 |
-| [TODO-List](docs/TODO-List.md) | 待开发功能清单 |
+| [SOP 需求与业务](_01_business/01_requirements.md) | 业务背景 / 领域概念 / EARS 验收标准 |
+| [SOP 架构设计](_04_framework_design/01_architecture.md) | 分层架构 / 模块职责 / 数据流 |
+| [SOP 接口契约](_06_interface_design/01_external_api.md) | /api/* 路由清单与 SSE 契约 |
+| [SOP 技术选型 ADR](_03_tech_stack/01_selection.md) | 选型清单与 ADR-001~008 决策记录 |
+| [项目总索引](_00_project_idx.json) | Agent/人 阅读起点(十一件套导航) |
+| [方法级文档索引](docs/README.md) | 全量静态分析自动生成(方法 → 文件 → 行) |
 
 ## 交流
 
