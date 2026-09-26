@@ -173,6 +173,18 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-008",
+      "date": "2026-09-27",
+      "requirement": "fix: 用户反馈思考过程弹窗基础上下文『蓝字蓝底』。根因:T-F04 色值映射的复合透明度语义错误——X-50/70(约 7% 淡色)被映射为 token/70(70% 实色),如 from-sky-50/70→from-brian-blue/70、bg-blue-50/50→bg-brian-blue/50,致上下文面板呈 70%→40% 实蓝渐变底+蓝字。修复:按『浅色档×透明度』换算还原(bgCls/borderCls/渐变卡/categoryIds chips/recentWorks/暗色文字 25%→80%),共 22 组;实测浅色面板淡蓝渐变+实色蓝标题清晰可读",
+      "changed_files": [
+        "brian-frontend/src/components/chat/ThinkingContext.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }
