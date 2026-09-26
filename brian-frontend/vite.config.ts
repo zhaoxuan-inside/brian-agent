@@ -11,11 +11,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5173,
+    port: Number(process.env.BRIAN_WEB_PORT) || 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/ws': { target: 'ws://localhost:8000', ws: true }
+      '/api': { target: `http://localhost:${process.env.BRIAN_API_PORT || 8000}`, changeOrigin: true },
+      '/ws': { target: `ws://localhost:${process.env.BRIAN_API_PORT || 8000}`, ws: true }
     }
   }
 })
