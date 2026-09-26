@@ -8,7 +8,7 @@ import {
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
 import { answerPermission } from '@/api'
-import type { ThinkingBlock, ThinkingTrace, ThinkingTimelineItem, ThinkingToolTrace, ThinkingPermissionTrace } from '@/api/types'
+import type { ThinkingBlock, ThinkingTrace, ThinkingTimelineItem, ThinkingToolTrace, ThinkingPermissionTrace, ThinkingNodeTrace } from '@/api/types'
 import ThinkingBlockView from '@/components/blocks/ThinkingBlock.vue'
 import ThinkingContext from './ThinkingContext.vue'
 import { renderMarkdown } from '@/utils/markdown'
@@ -63,15 +63,9 @@ const jumpTarget = ref('')
 async function scrollToAnchor(target?: string) {
   if (!target) return
   const shouldExpand = (target.startsWith('ctx-') && !secContext.value)
-    || (target.startsWith('tool-') && !secTools.value)
-    || (target.startsWith('perm-') && !secPermissions.value)
-    || (target.startsWith('node-') && !secNodes.value)
     || (target === 'agent-0' && !secAgent.value)
   if (shouldExpand) {
     if (target.startsWith('ctx-')) secContext.value = true
-    else if (target.startsWith('tool-')) secTools.value = true
-    else if (target.startsWith('perm-')) secPermissions.value = true
-    else if (target.startsWith('node-')) secNodes.value = true
     else if (target === 'agent-0') secAgent.value = true
     await nextTick()
   }
@@ -247,6 +241,75 @@ const overviewComponents = computed<Array<{ kind: string; id: string; name: stri
 const contextRounds = computed(() => historyTrace.value?.contextRounds ?? chatUi.liveContextRounds ?? [])
 const runNodes = computed(() => historyTrace.value?.nodes ?? [])
 
+/** OpenClaw 式统一执行流:调用+返回合并、授权问+答合并、节点字段内联——每事件仅出现一次 */
+interface StreamEntry {
+  key: string
+  target: string
+  seq: number
+  ts: number
+  kind: string
+  title: string
+  detail: string
+  elapsedMs: number
+  statusText: string
+  statusCls: string
+  tool: ThinkingToolTrace | null
+  perm: ThinkingPermissionTrace | null
+  node: ThinkingNodeTrace | null
+  inline: boolean
+}
+
+const executionStream = computed<StreamEntry[]>(() => {
+  const items = timelineWithElapsed.value
+  if (items.length === 0) return []
+  const toolByKey = new Map(toolTraces.value.map((t) => [t.targetKey || `tool-${t.partId}`, t] as const))
+  const permByKey = new Map(permissionTraces.value.map((pp) => [pp.targetKey || `perm-${pp.permissionId}`, pp] as const))
+  const nodeByKey = new Map(runNodes.value.map((n) => [n.targetKey, n] as const))
+  const out: StreamEntry[] = []
+  const merged = new Set<number>()
+  for (let i = 0; i < items.length; i += 1) {
+    const it = items[i]
+    if (merged.has(i)) continue
+    if (it.kind === 'tool-ok' || it.kind === 'tool-fail' || it.kind === 'permission-ok' || it.kind === 'permission-deny') continue
+    if (it.kind === 'tool') {
+      const retIdx = items.findIndex((x, j) => j > i && x.target && x.target === it.target && (x.kind === 'tool-ok' || x.kind === 'tool-fail'))
+      const ret = retIdx > -1 ? items[retIdx] : null
+      if (retIdx > -1) merged.add(retIdx)
+      const tool = toolByKey.get(it.target || '') ?? null
+      const ok = ret ? ret.kind === 'tool-ok' : String(tool?.status ?? '') === 'ok'
+      out.push({
+        key: `s-${it.seq}-${it.event}`, target: it.target ?? '', seq: it.seq, ts: it.ts, kind: 'tool',
+        title: it.title, detail: it.detail ?? '', elapsedMs: (ret?.elapsedMs ?? 0) || it.elapsedMs,
+        statusText: ret ? (ok ? '成功' : '失败') : (String(tool?.status ?? '') === 'pending' ? '执行中' : ''),
+        statusCls: ret ? (ok ? 'bg-success-green/10 text-success-green' : 'bg-error-red/10 text-error-red') : 'bg-brian-blue/10 text-brian-blue',
+        tool, perm: null, node: null, inline: !!tool,
+      })
+      continue
+    }
+    if (it.kind === 'permission') {
+      const ansIdx = items.findIndex((x, j) => j > i && x.target && x.target === it.target && (x.kind === 'permission-ok' || x.kind === 'permission-deny'))
+      const ans = ansIdx > -1 ? items[ansIdx] : null
+      if (ansIdx > -1) merged.add(ansIdx)
+      const perm = permByKey.get(it.target || '') ?? null
+      out.push({
+        key: `s-${it.seq}-${it.event}`, target: it.target ?? '', seq: it.seq, ts: it.ts, kind: 'permission',
+        title: it.title.replace(/^请求授权/, '授权'), detail: it.detail ?? '', elapsedMs: (ans?.elapsedMs ?? 0) || it.elapsedMs,
+        statusText: !ans ? '等待中' : ans.kind === 'permission-deny' ? '已拒绝' : '已通过',
+        statusCls: !ans ? 'bg-brian-blue/10 text-brian-blue' : ans.kind === 'permission-deny' ? 'bg-error-red/10 text-error-red' : 'bg-success-green/10 text-success-green',
+        tool: null, perm, node: null, inline: !!perm,
+      })
+      continue
+    }
+    const node = it.target && it.target.startsWith('node-') ? (nodeByKey.get(it.target) ?? null) : null
+    out.push({
+      key: `s-${it.seq}-${it.event}`, target: it.target ?? '', seq: it.seq, ts: it.ts, kind: it.kind,
+      title: it.title, detail: it.detail ?? '', elapsedMs: it.elapsedMs,
+      statusText: '', statusCls: '', tool: null, perm: null, node, inline: !!node,
+    })
+  }
+  return out
+})
+
 const overallStreaming = computed(() => {
   if (thinkingBlocks.value.some((b) => b.meta.status === 'streaming')) return true
   return Object.values(chatUi.agentExecutions).some((i) => i.status === 'RUNNING')
@@ -259,52 +322,28 @@ const isEmpty = computed(() => (
   && permissionTraces.value.length === 0
 ))
 
-const secTools = ref(true)
-const secPermissions = ref(true)
 const secAgent = ref(true)
 const secContext = ref(false)
-const secNodes = ref(true)
-const expandedTools = ref<Set<string>>(new Set())
-const expandedPerms = ref<Set<string>>(new Set())
-const expandedNodes = ref<Set<string>>(new Set())
+const expandedEntries = ref<Set<string>>(new Set())
 
-function toggleTool(key: string) {
-  const next = new Set(expandedTools.value)
+function toggleEntry(key: string) {
+  const next = new Set(expandedEntries.value)
   if (next.has(key)) next.delete(key)
   else next.add(key)
-  expandedTools.value = next
+  expandedEntries.value = next
 }
 
-function togglePerm(key: string) {
-  const next = new Set(expandedPerms.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  expandedPerms.value = next
+function entriesAllExpanded(): boolean {
+  const inlineEntries = executionStream.value.filter((e) => e.inline)
+  return inlineEntries.length > 0 && inlineEntries.every((e) => expandedEntries.value.has(e.key))
 }
 
-function executionAllExpanded(): boolean {
-  return runNodes.value.every((n) => expandedNodes.value.has(n.targetKey))
-    && toolTraces.value.every((t) => expandedTools.value.has(String(t.partId || t.index)))
-    && answeredPermissions.value.every((p) => expandedPerms.value.has(p.permissionId || `${p.toolId}-${p.askedAt}`));
-}
-
-function toggleAllExecution() {
-  if (executionAllExpanded()) {
-    expandedNodes.value = new Set();
-    expandedTools.value = new Set();
-    expandedPerms.value = new Set();
+function toggleAllEntries() {
+  if (entriesAllExpanded()) {
+    expandedEntries.value = new Set()
   } else {
-    expandedNodes.value = new Set(runNodes.value.map((n) => n.targetKey));
-    expandedTools.value = new Set(toolTraces.value.map((t) => String(t.partId || t.index)));
-    expandedPerms.value = new Set(answeredPermissions.value.map((p) => p.permissionId || `${p.toolId}-${p.askedAt}`));
+    expandedEntries.value = new Set(executionStream.value.filter((e) => e.inline).map((e) => e.key))
   }
-}
-
-function toggleNode(key: string) {
-  const next = new Set(expandedNodes.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  expandedNodes.value = next
 }
 
 const KIND_DOT: Record<string, string> = {
@@ -779,51 +818,88 @@ watch(
                 </div>
               </section>
 
-              <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
-                <div class="w-full flex items-center gap-2 px-4 py-3">
+                            <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
+                <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
                   <ListTree :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行时间线</h4>
-                  <span class="text-2xs text-apple-gray-400">{{ timeline.length }} 个环节</span>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行过程</h4>
+                  <span class="text-2xs text-apple-gray-400">{{ executionStream.length }} 个环节</span>
                   <Loader2 v-if="overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue" />
+                  <button
+                    v-if="executionStream.some((e) => e.inline)"
+                    class="ml-auto px-2 py-1 rounded-lg text-4xs font-medium text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0"
+                    @click="toggleAllEntries"
+                  >{{ entriesAllExpanded() ? '全部收起' : '全部展开' }}</button>
                 </div>
                 <div class="px-4 pb-4">
-                  <div
-                    v-if="timeline.length > 0"
-                    ref="timelineListRef"
-                    class="pr-1 py-0.5 pl-0.5"
-                  >
-                    <ol
-                      class="relative ml-2 border-l-2 border-apple-gray-100 dark:border-apple-gray-700/80 space-y-1"
+                  <ol v-if="executionStream.length" ref="timelineListRef" class="relative ml-2 border-l-2 border-apple-gray-100 dark:border-apple-gray-700/80 space-y-1 pt-2">
+                    <li
+                      v-for="e in executionStream"
+                      :key="e.key"
+                      :data-anchor="e.target || undefined"
+                      class="group relative pl-6 pb-3 last:pb-0"
                     >
-                      <li
-                        v-for="(item, idx) in timelineWithElapsed"
-                        :key="`${item.event}-${item.seq}-${idx}`"
-                        class="group relative pl-6 pb-3 last:pb-0"
-                        :class="item.target ? 'cursor-pointer' : ''"
-                        @click="scrollToAnchor(item.target)"
-                      >
-                        <span class="absolute -left-[7px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-apple-gray-900 shadow-sm" :class="kindDot(item.kind)" />
-                        <div class="flex items-start gap-2 min-w-0">
-                          <component :is="kindIcon(item.kind)" :size="13" class="mt-0.5 flex-shrink-0 text-apple-gray-400" />
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-baseline gap-2 flex-wrap">
-                              <p
-                                class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 leading-relaxed"
-                                :title="item.tooltip || undefined"
-                              >{{ item.title }}</p>
-                              <span v-if="item.ts" class="text-4xs tabular-nums text-apple-gray-300">{{ formatTs(item.ts) }}</span>
-                              <span v-if="item.elapsedMs" class="text-4xs tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(item.elapsedMs) }}</span>
-                              <span v-if="item.target" class="text-4xs text-brian-blue opacity-0 group-hover:opacity-100 transition-opacity">查看详情 →</span>
-                            </div>
-                            <p v-if="item.detail" class="mt-0.5 text-2xs leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words whitespace-pre-wrap">{{ item.detail }}</p>
+                      <span class="absolute -left-[7px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-apple-gray-900 shadow-sm" :class="kindDot(e.kind)" />
+                      <div class="flex items-start gap-2 min-w-0">
+                        <component :is="kindIcon(e.kind)" :size="13" class="mt-0.5 flex-shrink-0 text-apple-gray-400" />
+                        <div class="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            class="w-full flex items-baseline gap-2 flex-wrap text-left"
+                            @click="e.inline ? toggleEntry(e.key) : (e.target === 'agent-0' ? scrollToAnchor('agent-0') : undefined)"
+                          >
+                            <p class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 leading-relaxed">{{ e.title }}</p>
+                            <span v-if="e.statusText" class="px-1.5 py-0.5 rounded-full text-4xs font-medium flex-shrink-0" :class="e.statusCls">{{ e.statusText }}</span>
+                            <span v-if="e.ts" class="text-4xs tabular-nums text-apple-gray-300">{{ formatTs(e.ts) }}</span>
+                            <span v-if="e.elapsedMs" class="text-4xs tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(e.elapsedMs) }}</span>
+                            <ChevronRight v-if="e.inline" :size="12" class="text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedEntries.has(e.key) }" />
+                          </button>
+                          <p v-if="!e.inline && e.detail" class="mt-0.5 text-2xs leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words whitespace-pre-wrap">{{ e.detail }}</p>
+                          <div v-if="e.inline && expandedEntries.has(e.key)" class="mt-2 space-y-2 rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 bg-apple-gray-50/60 dark:bg-apple-gray-800/40 p-3">
+                            <template v-if="e.tool">
+                              <div v-if="e.tool.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-2xs">
+                                <span class="text-apple-gray-400">所属{{ e.tool.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
+                                <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words">{{ e.tool.componentName }}<span v-if="e.tool.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ e.tool.componentId }}</span></span>
+                              </div>
+                              <div>
+                                <p class="text-4xs font-medium text-apple-gray-400 mb-1">输入参数</p>
+                                <pre v-if="formatJson(e.tool.params)" class="text-2xs font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(e.tool.params) }}</pre>
+                                <p v-else class="text-2xs text-apple-gray-300">（无参数）</p>
+                              </div>
+                              <div>
+                                <p class="text-4xs font-medium text-apple-gray-400 mb-1">返回结果</p>
+                                <div v-if="renderedToolResults.get(String(e.tool.partId || e.tool.index))" class="markdown-body text-2xs leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 break-words" v-html="renderedToolResults.get(String(e.tool.partId || e.tool.index))" />
+                                <p v-else class="text-2xs text-apple-gray-300">（无返回）</p>
+                              </div>
+                            </template>
+                            <template v-else-if="e.perm">
+                              <div v-if="e.perm.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-2xs">
+                                <span class="text-apple-gray-400">所属{{ e.perm.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
+                                <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words">{{ e.perm.componentName }}<span v-if="e.perm.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ e.perm.componentId }}</span></span>
+                              </div>
+                              <div class="flex items-center gap-3 text-2xs text-apple-gray-400">
+                                <span>询问：{{ formatTs(e.perm.askedAt) || '—' }}</span>
+                                <span>应答：{{ formatTs(e.perm.answeredAt) || '—' }}</span>
+                              </div>
+                              <div>
+                                <p class="text-4xs font-medium text-apple-gray-400 mb-1">授权参数</p>
+                                <pre v-if="formatJson(e.perm.input)" class="font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(e.perm.input) }}</pre>
+                                <p v-else class="text-2xs text-apple-gray-300">（无参数）</p>
+                              </div>
+                            </template>
+                            <template v-else-if="e.node">
+                              <div v-for="f in e.node.fields" :key="f.label" class="grid grid-cols-[96px_1fr] gap-2 text-2xs">
+                                <span class="text-apple-gray-400">{{ f.label }}</span>
+                                <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words font-mono" :title="f.id || undefined">{{ f.value }}</span>
+                              </div>
+                            </template>
                           </div>
                         </div>
-                      </li>
-                    </ol>
-                  </div>
+                      </div>
+                    </li>
+                  </ol>
                   <div v-else class="flex items-center gap-2 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 px-3 py-3 text-2xs text-apple-gray-400">
                     <Loader2 v-if="thinkingLoading || overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue flex-shrink-0" />
-                    <span v-if="thinkingLoading">正在加载执行时间线…</span>
+                    <span v-if="thinkingLoading">正在加载执行过程…</span>
                     <span v-else-if="overallStreaming">执行环节将实时追加…</span>
                     <span v-else-if="!targetMsgId && chatUi.runActive">等待执行环节…</span>
                     <span v-else>暂无执行环节</span>
@@ -831,167 +907,9 @@ watch(
                 </div>
               </section>
 
-              <section v-if="toolTraces.length + answeredPermissions.length + agentDetailBlocks.length + runNodes.length > 0" class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
-                <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
-                  <Brain :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行内容</h4>
-                  <span class="text-2xs text-apple-gray-400">{{ toolTraces.length }} 次工具 · {{ answeredPermissions.length }} 次授权 · {{ agentDetailBlocks.length }} 个思考 · {{ runNodes.length }} 个节点</span>
-                  <button
-                    class="ml-auto px-2 py-1 rounded-lg text-4xs font-medium text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0"
-                    @click="toggleAllExecution"
-                  >{{ executionAllExpanded() ? '全部收起' : '全部展开' }}</button>
-                </div>
-                <div class="p-4 space-y-6">
-
-                  <div v-if="runNodes.length > 0">
-                    <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secNodes = !secNodes">
-                      <ListTree :size="13" class="text-brian-blue flex-shrink-0" />
-                      <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">运行节点</h5>
-                      <span class="text-2xs text-apple-gray-400">{{ runNodes.length }} 个</span>
-                      <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secNodes }" />
-                    </button>
-                    <div v-if="secNodes" class="mt-2.5 space-y-2">
-                      <div
-                        v-for="n in runNodes"
-                        :key="n.targetKey"
-                        :data-anchor="n.targetKey"
-                        class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 overflow-hidden"
-                      >
-                        <button class="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-apple-gray-50/70 dark:bg-apple-gray-800/50 hover:bg-brian-blue/[0.04] transition-colors" @click="toggleNode(n.targetKey)">
-                          <component :is="kindIcon(n.kind)" :size="13" class="flex-shrink-0 text-apple-gray-400" />
-                          <span class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ n.title }}</span>
-                          <ChevronRight :size="13" class="ml-auto text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedNodes.has(n.targetKey) }" />
-                        </button>
-                        <div v-if="expandedNodes.has(n.targetKey)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800">
-                          <p v-if="n.detail" class="text-2xs text-apple-gray-400 break-words">{{ n.detail }}</p>
-                          <div
-                            v-for="f in n.fields"
-                            :key="f.label"
-                            class="grid grid-cols-[96px_1fr] gap-2 text-2xs"
-                          >
-                            <span class="text-apple-gray-400">{{ f.label }}</span>
-                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words font-mono" :title="f.id || undefined">{{ f.value }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div v-if="toolTraces.length > 0">
-                    <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secTools = !secTools">
-                      <Wrench :size="13" class="text-brian-blue flex-shrink-0" />
-                      <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">技能调用</h5>
-                      <span class="text-2xs text-apple-gray-400">{{ toolTraces.length }} 次</span>
-                      <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secTools }" />
-                    </button>
-                    <div v-if="secTools" class="mt-2.5 space-y-2">
-                      <div
-                        v-for="t in toolTraces"
-                        :key="String(t.partId || t.index)"
-                        :data-anchor="t.targetKey || `tool-${t.partId || `idx-${t.index}`}`"
-                        class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 overflow-hidden"
-                      >
-                        <button class="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-apple-gray-50/70 dark:bg-apple-gray-800/50 hover:bg-brian-blue/[0.04] transition-colors" @click="toggleTool(String(t.partId || t.index))">
-                          <span class="w-5 h-5 rounded-md bg-brian-blue/10 text-brian-blue text-4xs font-bold flex items-center justify-center flex-shrink-0">{{ t.index }}</span>
-                          <span class="text-xs font-mono font-medium text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ t.toolId }}</span>
-                          <span
-                            v-if="t.componentName"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
-                            :title="`${t.componentKind === 'skill' ? 'Skill' : 'MCP'}：${t.componentName}（ID：${t.componentId}）${t.componentSubTool ? ` · 工具：${t.componentSubTool}` : ''}`"
-                          >{{ t.componentName }}<template v-if="t.componentSubTool"> · {{ t.componentSubTool }}</template></span>
-                          <span
-                            v-else-if="t.builtin"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
-                          >内置</span>
-                          <span
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
-                            :class="toolStatusMeta(t.status).cls"
-                          >
-                            {{ toolStatusMeta(t.status).text }}
-                          </span>
-                          <span v-if="t.elapsedMs" class="hidden sm:inline text-4xs text-apple-gray-400">{{ formatDuration(t.elapsedMs) }}</span>
-                          <ChevronRight :size="13" class="ml-auto text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedTools.has(String(t.partId || t.index)) }" />
-                        </button>
-                        <div v-if="expandedTools.has(String(t.partId || t.index))" class="px-3 py-2.5 space-y-2 border-t border-apple-gray-100 dark:border-apple-gray-800">
-                          <div v-if="t.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-2xs">
-                            <span class="text-apple-gray-400">所属{{ t.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
-                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${t.componentId}`">
-                              {{ t.componentName }}<span v-if="t.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ t.componentId }}</span>
-                            </span>
-                          </div>
-                          <div>
-                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">输入参数</p>
-                            <pre v-if="formatJson(t.params)" class="text-2xs font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(t.params) }}</pre>
-                            <p v-else class="text-2xs text-apple-gray-300">（无参数）</p>
-                          </div>
-                          <div>
-                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">返回结果</p>
-                            <div v-if="renderedToolResults.get(String(t.partId || t.index))" class="markdown-body text-2xs leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 break-words" v-html="renderedToolResults.get(String(t.partId || t.index))" />
-                            <p v-else class="text-2xs text-apple-gray-300">（无返回）</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div v-if="answeredPermissions.length > 0">
-                    <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secPermissions = !secPermissions">
-                      <ShieldCheck :size="13" class="text-brian-blue flex-shrink-0" />
-                      <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">授权记录</h5>
-                      <span class="text-2xs text-apple-gray-400">{{ answeredPermissions.length }} 次</span>
-                      <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secPermissions }" />
-                    </button>
-                    <div v-if="secPermissions" class="mt-2.5 space-y-2">
-                      <div
-                        v-for="p in answeredPermissions"
-                        :key="p.permissionId || `${p.toolId}-${p.askedAt}`"
-                        :data-anchor="p.targetKey || `perm-${p.permissionId || `idx-${p.toolId}-${p.askedAt}`}`"
-                        class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 overflow-hidden"
-                      >
-                        <button class="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-apple-gray-50/70 dark:bg-apple-gray-800/50 hover:bg-brian-blue/[0.04] transition-colors" @click="togglePerm(p.permissionId || `${p.toolId}-${p.askedAt}`)">
-                          <ShieldCheck :size="13" class="flex-shrink-0" :class="permStatusMeta(p.status).iconCls" />
-                          <span class="text-xs font-mono text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ p.toolId }}</span>
-                          <span
-                            v-if="p.componentName"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
-                            :title="`${p.componentKind === 'skill' ? 'Skill' : 'MCP'}：${p.componentName}（ID：${p.componentId}）${p.componentSubTool ? ` · 工具：${p.componentSubTool}` : ''}`"
-                          >{{ p.componentName }}<template v-if="p.componentSubTool"> · {{ p.componentSubTool }}</template></span>
-                          <span
-                            v-else-if="p.builtin"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
-                          >内置</span>
-                          <span
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
-                            :class="permStatusMeta(p.status).cls"
-                          >
-                            {{ permStatusMeta(p.status).text }}
-                          </span>
-                          <span v-if="p.autoApproved" class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs bg-brian-blue/10 text-brian-blue">自动放行</span>
-                          <span class="ml-auto hidden sm:inline text-4xs tabular-nums text-apple-gray-400 flex-shrink-0">{{ formatTs(p.answeredAt || p.askedAt) }}</span>
-                          <ChevronRight :size="13" class="text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`) }" />
-                        </button>
-                        <div v-if="expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800 text-2xs">
-                          <div v-if="p.componentName" class="grid grid-cols-[96px_1fr] gap-2">
-                            <span class="text-apple-gray-400">所属{{ p.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
-                            <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${p.componentId}`">
-                              {{ p.componentName }}<span v-if="p.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ p.componentId }}</span>
-                            </span>
-                          </div>
-                          <div class="flex items-center gap-3 text-apple-gray-400">
-                            <span>询问：{{ formatTs(p.askedAt) || '—' }}</span>
-                            <span>应答：{{ formatTs(p.answeredAt) || '—' }}</span>
-                          </div>
-                          <div>
-                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">授权参数</p>
-                            <pre v-if="formatJson(p.input)" class="font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(p.input) }}</pre>
-                            <p v-else class="text-apple-gray-300">（无参数）</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div v-if="agentDetailBlocks.length > 0" data-anchor="agent-0">
+              <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
+                <div class="p-4">
+<div v-if="agentDetailBlocks.length > 0" data-anchor="agent-0">
                     <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secAgent = !secAgent">
                       <Brain :size="13" class="text-brian-blue flex-shrink-0" />
                       <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">深度思考</h5>
@@ -1013,7 +931,6 @@ watch(
                       </div>
                     </div>
                   </div>
-
                 </div>
               </section>
 

@@ -212,6 +212,18 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-010",
+      "date": "2026-09-27",
+      "requirement": "用户要求:思考过程反映整个执行过程、无重复内容、借鉴 OpenClaw 式展示。重构 ThinkingModal:新增 executionStream 统一执行流(时间线为骨干,技能调用+返回合并为单条目含状态徽章/时长,授权问+答合并,节点字段内联);移除原 执行时间线/运行节点/技能调用/授权记录 四个重复区块(详情原位展开);保留 运行概览/请求与回复/深度思考/基础上下文。实测:36 原始事件 → 30 条目(-6,3 对技能+3 对授权恰好合并),内联展开显示完整输入参数与返回结果,时间线纯时序",
+      "changed_files": [
+        "brian-frontend/src/components/chat/ThinkingModal.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }
