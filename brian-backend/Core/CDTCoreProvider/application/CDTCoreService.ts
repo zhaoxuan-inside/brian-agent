@@ -1,9 +1,3 @@
-/**
- * @fileoverview CDTCoreProvider 应用服务层。
- *
- * 基于 CDTProvider 提供拟人化浏览器操作、登录支持与会话持久化。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess } from '@brian-agent/base';
 import { IdGenerator, ValidationError, Operator } from '@brian-agent/base';
@@ -38,24 +32,24 @@ export class CDTCoreService {
     private readonly cdtAccess: CDTAccess,
   ) {}
 
-  // ============================================================
-  // 拟人化工具方法
-  // ============================================================
+  
+  
+  
 
-  /** 随机延迟（毫秒） */
+  
   private async humanDelay(minMs: number, maxMs: number): Promise<void> {
     const delay = minMs + Math.random() * (maxMs - minMs);
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
-  /** 确保 CDT 已启动 */
+  
   private async ensureCDT(): Promise<boolean> {
     const startOutput = new StartCDTOutput();
     await this.cdtAccess.startCDT(new StartCDTInput(), startOutput, this.cdtContext);
     return !startOutput.error;
   }
 
-  /** 执行 CDP 命令 */
+  
   private async exec(method: string, params?: Record<string, unknown>): Promise<ExecCDPOutput> {
     const input = Object.assign(new ExecCDPInput(), { method, params });
     const output = new ExecCDPOutput();
@@ -63,9 +57,9 @@ export class CDTCoreService {
     return output;
   }
 
-  // ============================================================
-  // 页面导航
-  // ============================================================
+  
+  
+  
 
   async navigate(input: CDTCoreNavigateInput, output: CDTCoreNavigateOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -86,9 +80,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 拟人化输入
-  // ============================================================
+  
+  
+  
 
   async typeText(input: CDTCoreTypeTextInput, output: CDTCoreTypeTextOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -97,7 +91,7 @@ export class CDTCoreService {
 
     await this.ensureCDT();
 
-    // 先聚焦目标元素
+    
     const focusResult = await this.exec('Runtime.evaluate', {
       expression: `document.querySelector('${input.selector.replace(/'/g, "\\'")}')?.focus()`,
     });
@@ -106,7 +100,7 @@ export class CDTCoreService {
       return false;
     }
 
-    // 逐字输入，模拟人类打字速度
+    
     for (let i = 0; i < input.text.length; i++) {
       const char = input.text[i];
       await this.exec('Input.dispatchKeyEvent', {
@@ -116,7 +110,7 @@ export class CDTCoreService {
       });
       await this.humanDelay(CDT_HUMAN_DELAYS.typeMinMs, CDT_HUMAN_DELAYS.typeMaxMs);
 
-      // 随机额外的停顿（模拟思考）
+      
       if (Math.random() < 0.05) {
         await this.humanDelay(200, 600);
       }
@@ -125,9 +119,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 拟人化点击
-  // ============================================================
+  
+  
+  
 
   async click(input: CDTCoreClickInput, output: CDTCoreClickOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -135,14 +129,14 @@ export class CDTCoreService {
 
     await this.ensureCDT();
 
-    // 滚动到元素可见
+    
     await this.exec('Runtime.evaluate', {
       expression: `document.querySelector('${input.selector.replace(/'/g, "\\'")}')?.scrollIntoView({ behavior: 'smooth', block: 'center' })`,
     });
 
     await this.humanDelay(CDT_HUMAN_DELAYS.scrollMinMs, CDT_HUMAN_DELAYS.scrollMaxMs);
 
-    // 获取元素坐标
+    
     const boxResult = await this.exec('Runtime.evaluate', {
       expression: `(() => { const el = document.querySelector('${input.selector.replace(/'/g, "\\'")}'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
     });
@@ -154,7 +148,7 @@ export class CDTCoreService {
 
     const coords = (boxResult.result as { result: { value: { x: number; y: number } } }).result.value;
 
-    // 模拟人类点击（先移动再点击，带随机偏移）
+    
     const offsetX = (Math.random() - 0.5) * 4;
     const offsetY = (Math.random() - 0.5) * 4;
 
@@ -181,9 +175,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 滚动
-  // ============================================================
+  
+  
+  
 
   async scroll(input: CDTCoreScrollInput, _output: CDTCoreScrollOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -207,9 +201,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 执行 JavaScript
-  // ============================================================
+  
+  
+  
 
   async evaluate(input: CDTCoreEvaluateInput, output: CDTCoreEvaluateOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -231,19 +225,19 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 登录（含验证码支持）
-  // ============================================================
+  
+  
+  
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：157 行单方法拆为
-  // 「导航 → 验证码等待 → 凭据填写 → 登录校验 → 凭证落库」编排 + 子方法
-  //（原始单方法已删除，等价结构见 git 历史）。
+  
+  
+  
   async login(input: CDTCoreLoginInput, output: CDTCoreLoginOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.domain) throw new ValidationError('domain 不能为空');
     if (!input.loginUrl) throw new ValidationError('loginUrl 不能为空');
     await this.ensureCDT();
-    // 导航到登录页面
+    
     await this.navigate(
       Object.assign(new CDTCoreNavigateInput(), { url: input.loginUrl }),
       new CDTCoreNavigateOutput(), new CDTCoreContext(),
@@ -264,7 +258,7 @@ export class CDTCoreService {
     return true;
   }
 
-  /** 元素存在性检测（数据处理；selector 单引号转义） */
+  
   private async soElementExists(selector: string): Promise<boolean> {
     const checkResult = await this.exec('Runtime.evaluate', {
       expression: `!!document.querySelector('${selector.replace(/'/g, "\\'")}')`,
@@ -272,12 +266,12 @@ export class CDTCoreService {
     return !!(checkResult.result as { result?: { value?: boolean } })?.result?.value;
   }
 
-  /** 验证码等待（逻辑控制）：有验证码时弹窗提示并轮询至消失；无验证码直接通过 */
+  
   private async waitForCaptchaSolved(input: CDTCoreLoginInput): Promise<boolean> {
     if (!input.captchaSelector || !(await this.soElementExists(input.captchaSelector))) {
       return true;
     }
-    // 弹窗提示：聚焦到 Chrome 窗口，让用户手动填写验证码（弹窗只阻塞当前 tab；持续轮询检测是否完成）
+    
     await this.exec('Runtime.evaluate', {
       expression: `alert('请在本窗口中填写验证码，完成后程序将继续执行')`,
     });
@@ -292,7 +286,7 @@ export class CDTCoreService {
     return false;
   }
 
-  /** 填写用户名/密码并提交（逻辑控制；字段与提交按钮均缺省可跳过） */
+  
   private async fillLoginCredentials(input: CDTCoreLoginInput): Promise<void> {
     if (input.usernameField && input.username) {
       await this.typeText(
@@ -316,12 +310,12 @@ export class CDTCoreService {
     }
   }
 
-  /** 登录成功标识检测（逻辑控制） */
+  
   private async checkLoggedIn(input: CDTCoreLoginInput): Promise<boolean> {
     return this.soElementExists(input.loggedInIndicator as string);
   }
 
-  /** 登录凭证落库（逻辑控制；Cookies 快照 + 按域 upsert；返回新 sessionId） */
+  
   private async saveLoginCredential(input: CDTCoreLoginInput): Promise<string> {
     const cookiesOut = new CDTCoreGetCookiesOutput();
     await this.getCookies(new CDTCoreGetCookiesInput(), cookiesOut, new CDTCoreContext());
@@ -343,7 +337,7 @@ export class CDTCoreService {
     return sessionId;
   }
 
-  /** 凭证字段组装（数据处理；update patch 与 insert record 共用主体） */
+  
   private soCredentialFields(input: CDTCoreLoginInput, cookiesJson: string, sessionId: string, now: number): Array<{ field: string; value: unknown }> {
     return [
       { field: 'updated', value: now },
@@ -362,9 +356,9 @@ export class CDTCoreService {
     ];
   }
 
-  // ============================================================
-  // 登录状态查询
-  // ============================================================
+  
+  
+  
 
   async getLoginState(input: CDTCoreGetLoginStateInput, output: CDTCoreGetLoginStateOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -385,9 +379,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // Cookies 管理
-  // ============================================================
+  
+  
+  
 
   async getCookies(_input: CDTCoreGetCookiesInput, output: CDTCoreGetCookiesOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -405,9 +399,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 会话保存
-  // ============================================================
+  
+  
+  
 
   async saveSession(input: CDTCoreSaveSessionInput, output: CDTCoreSaveSessionOutput, _ctx: CDTCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -450,9 +444,9 @@ export class CDTCoreService {
     return true;
   }
 
-  // ============================================================
-  // 会话恢复
-  // ============================================================
+  
+  
+  
 
   async restoreSession(input: CDTCoreRestoreSessionInput, output: CDTCoreRestoreSessionOutput, _ctx: CDTCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -472,7 +466,7 @@ export class CDTCoreService {
 
     const record = rows[0];
 
-    // 如果有关联 URL，先导航
+    
     if (record.last_url) {
       await this.navigate(
         Object.assign(new CDTCoreNavigateInput(), { url: record.last_url, waitForLoad: true }),
@@ -480,7 +474,7 @@ export class CDTCoreService {
       );
     }
 
-    // 恢复 Cookies
+    
     try {
       const cookies: Array<{ name: string; value: string; domain?: string }> = JSON.parse(record.cookies_json);
       for (const cookie of cookies) {
@@ -491,14 +485,14 @@ export class CDTCoreService {
         }
       }
     } catch (err) {
-      /* cookies 格式无效，跳过 */
+      
       metrics?.warn('CDTCoreService.restoreSession cookies 恢复失败，跳过（存储格式无效或注入失败）', {
         error: err instanceof Error ? err.message : String(err),
         session_name: input.sessionName,
       });
     }
 
-    // 恢复 LocalStorage
+    
     try {
       const storage: Record<string, string> = JSON.parse(record.local_storage_json);
       for (const [key, value] of Object.entries(storage)) {
@@ -507,7 +501,7 @@ export class CDTCoreService {
         });
       }
     } catch (err) {
-      /* localStorage 格式无效，跳过 */
+      
       metrics?.warn('CDTCoreService.restoreSession localStorage 恢复失败，跳过（存储格式无效或写入失败）', {
         error: err instanceof Error ? err.message : String(err),
         session_name: input.sessionName,

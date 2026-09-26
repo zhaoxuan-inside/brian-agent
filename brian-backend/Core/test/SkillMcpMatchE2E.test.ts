@@ -42,13 +42,6 @@ import {
 } from '../MCPCoreProvider';
 import { MCPCoreService } from '../MCPCoreProvider/application/MCPCoreService';
 
-/**
- * Skill / MCP 匹配链路端到端验证（真实组件编排，仅 stub LLM 与 GitHub / MCPAccess 传输侧）：
- * PromptCatalog 种子化 → 模板标题回退（LIKE '%Skill 匹配%' / '%MCP%匹配%' / '%MCP 市场%'）→
- * execPrompt 变量渲染（task_content 真实进入 prompt）→ RankingParser 契约解析 → 瀑布分流。
- */
-
-/** 捕获 prompt 的 LLM stub（按调用序返回固定文本；prompts.length / execLlm 调用数即 LLM 调用数） */
 function makeLlm(responses: string[]): { llm: LLMAccess; prompts: string[]; execLlm: ReturnType<typeof vi.fn> } {
   const prompts: string[] = [];
   let call = 0;
@@ -64,7 +57,6 @@ function makeLlm(responses: string[]): { llm: LLMAccess; prompts: string[]; exec
   return { llm, prompts, execLlm };
 }
 
-/** GitHub 客户端 stub（searchSkills 命中清单 + fetchSkillMd 解析结果） */
 function stubGithub(hits: unknown[], parsed: ParsedSkillMd | null): GitHubSkillClient {
   return {
     searchSkills: vi.fn().mockResolvedValue(hits),
@@ -72,7 +64,6 @@ function stubGithub(hits: unknown[], parsed: ParsedSkillMd | null): GitHubSkillC
   } as unknown as GitHubSkillClient;
 }
 
-/** 断言渲染后的 prompt 无残留占位符（模板变量全部由服务传入） */
 function expectNoPlaceholder(prompt: string): void {
   expect(prompt).not.toContain('{{');
 }
@@ -97,7 +88,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-skill-e2e-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
-    // 预建 Core 表（列结构与 SkillCoreSchemaInitializer 一致，与 SkillCoreWaterfall 测试相同）
+
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_CORE_CONFIG_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
@@ -134,14 +125,14 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     await skillAccess.initialize();
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
-    // 真实种子化：PromptCatalog 全量 builtin 模板落库（含升级后的 Skill 匹配排序）
+
     await new PromptCatalogAccess(relationDb).seed();
     ctx = new SkillCoreContext();
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   it('闲聊任务：回退命中 builtin Skill 匹配排序 → task_content 渲染进 prompt → need=false 负缓存', async () => {
@@ -152,14 +143,12 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     const out1 = new MatchSkillOutput();
     await service.matchSkill(matchInput('你好，今天心情不错'), out1, ctx);
     expect(out1.skills).toEqual([]);
-    // config.prompt_template_id 为空 → LIKE 回退命中种子 builtin 模板（正文特征断言）
+
     expect(prompts[0]).toContain('Skill 匹配评估助手');
     expect(prompts[0]).toContain('今天心情不错');
     expectNoPlaceholder(prompts[0]);
     expect(github.searchSkills).not.toHaveBeenCalled();
 
-    // ===== 2026-09-24 语义升级（trace 3eea3bea 根治）：负缓存不再永久零 LLM ——
-    // 重复出现即强制重判（重复即沉淀的行为信号），重判仍 need=false 则写回负缓存（间歇重试）
     const out2 = new MatchSkillOutput();
     await service.matchSkill(matchInput('你好，今天心情不错'), out2, ctx);
     expect(out2.skills).toEqual([]);
@@ -184,7 +173,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
   });
 
   it('回退防劫持：用户同标题模板（is_system=0）存在时仍优先 builtin 契约模板', async () => {
-    // 用户自建旧契约模板（标题含"Skill 匹配"，模拟真实库取证场景）
+
     const userInput = new (await import('@brian-agent/base')).AddPromptInput();
     userInput.data = {
       prompt_template_title: '我的 Skill 匹配规则',
@@ -198,7 +187,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     const out = new MatchSkillOutput();
     await service.matchSkill(matchInput('随便聊聊'), out, ctx);
     expect(out.skills).toEqual([]);
-    // 回退选中 builtin（正文特征），而非同标题用户模板
+
     expect(prompts[0]).toContain('Skill 匹配评估助手');
     expect(prompts[0]).not.toContain('旧契约');
     expectNoPlaceholder(prompts[0]);
@@ -213,7 +202,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     await service.matchSkill(matchInput('生成一份周报页面'), out, ctx);
     expect(out.skills).toHaveLength(1);
     expect(out.skills[0].skill_brief).toBe('生成 HTML 报告');
-    // keywords 透传给 GitHub 客户端（token 为空串：未配置 github_token）
+
     expect(github.searchSkills).toHaveBeenCalledWith(['html', 'report'], '');
     expectNoPlaceholder(prompts[0]);
 
@@ -251,7 +240,6 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
   let promptsAccess: PromptsAccess;
   let ctx: McpCoreContext;
 
-  /** MCPAccess stub：本地无可用 MCP + 单提供商市场清单 + 安装/启动计数 */
   function stubMcpAccess(): { access: MCPAccess; calls: Record<string, number> } {
     const calls = { install: 0, start: 0 };
     const access = {
@@ -284,7 +272,7 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-mcp-e2e-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
-    // 预建 Core 表（列结构与 MCPCoreSchemaInitializer 一致，与 MCPCoreWaterfall 测试相同）
+
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${MCP_CORE_CONFIG_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
@@ -313,14 +301,14 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     `);
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
-    // 真实种子化：含 MCP 匹配推荐 与 MCP 市场匹配 两张 builtin 模板
+
     await new PromptCatalogAccess(relationDb).seed();
     ctx = new McpCoreContext();
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   it('闲聊任务：回退命中 builtin MCP 匹配推荐 → task_content 渲染 → need=false 负缓存零市场调用', async () => {
@@ -331,13 +319,12 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     const out1 = new MatchMcpOutput();
     await service.matchMCP(matchInput('讲个笑话'), out1, ctx);
     expect(out1.mcp_ids).toEqual([]);
-    // config.prompt_template_id 为空 → LIKE '%MCP%匹配%' 回退命中种子 builtin 模板
+
     expect(prompts[0]).toContain('MCP 工具匹配评估助手');
     expect(prompts[0]).toContain('讲个笑话');
     expectNoPlaceholder(prompts[0]);
     expect(calls.install).toBe(0);
 
-    // 第二次同任务：负缓存命中，零 LLM
     const out2 = new MatchMcpOutput();
     await service.matchMCP(matchInput('讲个笑话'), out2, ctx);
     expect(out2.mcp_ids).toEqual([]);
@@ -355,16 +342,15 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     const out = new MatchMcpOutput();
     await service.matchMCP(matchInput('搜索最新的 AI 新闻'), out, ctx);
 
-    // 第 2 层判定 prompt：builtin MCP 匹配推荐 + 任务内容
     expect(prompts[0]).toContain('MCP 工具匹配评估助手');
     expect(prompts[0]).toContain('搜索最新的 AI 新闻');
     expectNoPlaceholder(prompts[0]);
-    // 第 3 层市场选型 prompt：builtin MCP 市场匹配 + 市场候选 + 任务内容
+
     expect(prompts[1]).toContain('MCP 工具选型评估助手');
     expect(prompts[1]).toContain('search-mcp');
     expect(prompts[1]).toContain('搜索最新的 AI 新闻');
     expectNoPlaceholder(prompts[1]);
-    // 安装 + 启动闭环，返回新安装的 mcp id
+
     expect(calls.install).toBe(1);
     expect(calls.start).toBe(1);
     expect(out.mcp_ids).toEqual(['inst-9']);

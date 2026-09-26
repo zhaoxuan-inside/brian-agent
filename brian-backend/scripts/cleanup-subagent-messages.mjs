@@ -1,17 +1,3 @@
-/**
- * 一次性数据修复脚本：清除主会话中 subagent run 的历史消息（2026-09-23 委派收口改造配套）。
- *
- * 背景（事故 trace 22f3ce79）：旧实现 subagent run 与主 run 共享会话，委派任务文本被
- * 持久化为 role=user 消息 —— 一次问答在对话区"派生"出多次问答。修复后 subagent run
- * 落隔离子会话（`${sessionKey}::sub:${runId}`），不再污染主会话；本脚本清理存量脏数据：
- * - runtime_message：删除主会话中 lane=subagent 的 run 的消息（user + assistant + 空行）
- * - runtime_message_part：随消息级联删除（msg_id 关联）
- *
- * 用法：
- *   node scripts/cleanup-subagent-messages.mjs            # dry-run（默认，仅统计不删除）
- *   node scripts/cleanup-subagent-messages.mjs --commit   # 执行删除
- */
-
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -54,7 +40,7 @@ for (const run of subRuns) {
       db.prepare(`DELETE FROM "runtime_message" WHERE "id" = ?`).run(message.id);
     }
   }
-  // info_raw 同步侧残留（旧实现已把委派任务同步为 REQUEST / 子回复同步为 RESPONSE）
+  
   const infoRows = db.prepare(
     `SELECT COUNT(*) AS n FROM "info_raw" WHERE "work_id" = ?`,
   ).get(run.id);

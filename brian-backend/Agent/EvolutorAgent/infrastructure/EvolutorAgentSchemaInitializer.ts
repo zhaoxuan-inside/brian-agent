@@ -14,8 +14,8 @@ export class EvolutorAgentSchemaInitializer {
         scores TEXT NOT NULL, suggestions TEXT, need_optimize INTEGER NOT NULL DEFAULT 0
       )`,
     );
-        // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id =====
-    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_EVALUATION_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
+
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_EVALUATION_TABLE} RENAME COLUMN interact_id TO run_id`); } catch {  }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_agent ON ${AGENT_EVALUATION_TABLE}(agent_id)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_type ON ${AGENT_EVALUATION_TABLE}(eval_type)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_eval_created ON ${AGENT_EVALUATION_TABLE}(created)`);
@@ -36,12 +36,12 @@ export class EvolutorAgentSchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${EVOLUTOR_AGENT_CONFIG_TABLE} ADD COLUMN llm_id TEXT`);
     } catch {
-      // 字段已存在
+
     }
-    // ===== 2026-09-11 迁移：低分解散阈值（老库补列） =====
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${EVOLUTOR_AGENT_CONFIG_TABLE} ADD COLUMN critical_disband_score INTEGER NOT NULL DEFAULT 30`);
-    } catch { /* column already exists */ }
+    } catch {  }
 
     const count = await this.relationDb.count(EVOLUTOR_AGENT_CONFIG_TABLE);
     if (count > 0) return;

@@ -40,9 +40,9 @@ describe('MQCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await mqCore.stopWorker({ identifier: 'test-queue' }, new StopWorkerOutput(), new MQCoreContext()); } catch { /* ignore */ }
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await mqCore.stopWorker({ identifier: 'test-queue' }, new StopWorkerOutput(), new MQCoreContext()); } catch {  }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('startWorker', () => {
@@ -72,7 +72,7 @@ describe('MQCoreProvider', () => {
     });
 
     it('should reuse existing worker when starting same queue again', async () => {
-      // 幂等防重：同一队列只保留一个常驻 worker，重复 start 直接复用既有实例
+
       const handler = vi.fn().mockResolvedValue(true);
       const input1 = new StartWorkerInput();
       input1.queue = 'shared-queue';
@@ -142,7 +142,7 @@ describe('MQCoreProvider', () => {
     });
 
     it('should stop all workers by queue name (dedup keeps one per queue)', async () => {
-      // 幂等防重下重复 start 同一队列只存在一个 worker，按队列停止应恰停 1 个
+
       const handler = vi.fn().mockResolvedValue(true);
       for (let i = 0; i < 3; i++) {
         const input = new StartWorkerInput();

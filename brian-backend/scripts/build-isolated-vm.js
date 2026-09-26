@@ -1,27 +1,3 @@
-/**
- * @fileoverview isolated-vm 预编译二进制构建脚本。
- *
- * 用途：在当前平台（OS + CPU 架构 + Node ABI）上从 vendor 全量 C++ 源码编译
- * isolated-vm 原生模块，并把产物安装到两处：
- * 1. brian-backend/prebuilt/isolated-vm/{platform}-{arch}/node{abi}/isolated_vm.node
- *    （离线包目录，npm postinstall / SEA / 便携包从这里分发）
- * 2. sandbox/vendor/isolated-vm/prebuilt/{platform}-{arch}/node{abi}/isolated_vm.node
- *    （vendor 镜像目录，require('isolated-vm') 优先从这里加载）
- * 3. sandbox/vendor/isolated-vm/out/isolated_vm.node（传统兜底路径）
- *
- * 背景：上游 isolated-vm v5.0.4 Release 不再发布 darwin-x64 预编译包
- * （只有 darwin-arm64），Intel Mac 需在目标机上从源码编译。本脚本即该
- * 官方路径的仓库级封装——在 macOS x64 机器上执行后可将产物提交入库，
- * 使 darwin-x64 也获得离线预编译覆盖。
- *
- * 用法：
- *   node brian-backend/scripts/build-isolated-vm.js            # 构建并安装到全部三处
- *   node brian-backend/scripts/build-isolated-vm.js --check    # 仅检查当前平台二进制是否存在
- *
- * 要求：C/C++ 工具链（Win: VS Build Tools / Mac: Xcode CLT / Linux: gcc+make）
- * 与 Python 3；首次编译需联网下载 Node 头文件。
- */
-
 'use strict';
 
 const fs = require('fs');
@@ -34,9 +10,9 @@ const vendorDir = path.join(
 );
 const prebuiltDir = path.join(repoRoot, 'prebuilt', 'isolated-vm');
 
-const platform = process.platform;              // 'win32' | 'darwin' | 'linux'
-const arch = process.arch;                      // 'x64' | 'arm64'
-const abi = process.versions.modules;           // e.g. '127'
+const platform = process.platform;
+const arch = process.arch;
+const abi = process.versions.modules;
 const platformDir = `${platform}-${arch}`;
 const abiDir = `node${abi}`;
 const fileName = 'isolated_vm.node';
@@ -66,22 +42,10 @@ if (fs.existsSync(destPaths[0])) {
   process.exit(0);
 }
 
-// ---------------------------------------------------------------------------
-// 源码编译（node-gyp rebuild --release，与 vendored loader 的运行时兜底一致）
-// ---------------------------------------------------------------------------
-
-/**
- * 解析 node-gyp 入口（三级回退，与 vendored loader 的运行时兜底一致）：
- * 1. 仓库内 node_modules（require.resolve）
- * 2. 全局 PATH 上的 node-gyp
- * 3. npx --yes node-gyp（在线获取；Node 运行时自带 npm/npx）
- *
- * @returns {{ kind: 'path'|'npx', value: string } | null}
- */
 function resolveNodeGyp() {
   try {
     return { kind: 'path', value: require.resolve('node-gyp/bin/node-gyp.js', { paths: [repoRoot, process.cwd()] }) };
-  } catch { /* fallthrough */ }
+  } catch {  }
   const which = platform === 'win32' ? 'where' : 'which';
   const res = spawnSync(which, [platform === 'win32' ? 'node-gyp.cmd' : 'node-gyp'], { encoding: 'utf8' });
   if (res.status === 0 && String(res.stdout).trim()) {

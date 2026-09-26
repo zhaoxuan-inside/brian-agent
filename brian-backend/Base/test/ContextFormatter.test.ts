@@ -1,6 +1,3 @@
-/**
- * @fileoverview contextFormatter 单元测试：静态记忆上下文功能化注入 + 动态执行上下文区分。
- */
 import { describe, expect, it } from 'vitest';
 import { formatContextCategories, formatDynamicContext, type ContextOutputLike } from '../PromptCatalog/contextFormatter';
 
@@ -23,7 +20,7 @@ describe('formatContextCategories（静态记忆上下文）', () => {
     expect(out).toContain('<user-pinned-messages>');
     expect(out).toContain('<conversation-history>');
     expect(out).toContain('<keyword-memories>');
-    // 旧直译标题不应再出现
+    
     expect(out).not.toContain('<钉住的消息>');
     expect(out).not.toContain('<时间线消息>');
     expect(out).not.toContain('上下文信息>');

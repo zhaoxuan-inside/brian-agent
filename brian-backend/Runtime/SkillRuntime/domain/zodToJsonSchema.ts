@@ -1,39 +1,18 @@
-/**
- * @fileoverview zodToJSONSchema —— 紧凑 zod → JSON Schema 转换器（Runtime v2 · 阶段2）。
- *
- * 依据 `Tools/Tools-PRD.md` §2：工具参数以 zod schema 声明，转换为 JSON Schema
- * 传入 LLM function.parameters（OpenAI wire 格式）。
- *
- * 决策记录（2026-09-04）：仅新增 zod 依赖，不引入 zod-to-json-schema 派生依赖；
- * 本转换器覆盖项目工具所需的受限子集（object/string/number/boolean/enum/
- * array/record/optional/nullable/union/discriminatedUnion/literal/default），
- * 未覆盖类型 fail-loud（抛 ProcessingError）。
- *
- * zod v3 的类型判别与内部字段（_def/shape）无公开类型 API，全部内省收敛到
- * `zodDef`/`zodShape` 两个辅助函数（单一逃逸口，禁止调用点各自断言）。
- *
- * 每个方法 ≤40 行（Runtime-PRD §7）。
- */
-
 import type { z } from 'zod';
 import { ProcessingError } from '@brian-agent/base';
 
-/** zod v3 内省辅助：读取 _def（类型判别/约束的单一逃逸口） */
 function zodDef(schema: z.ZodType<unknown>): { typeName?: string; checks?: Array<{ kind?: string; value?: unknown }>; value?: unknown; values?: unknown[]; type?: z.ZodType<unknown>; valueType?: z.ZodType<unknown>; innerType?: z.ZodType<unknown>; options?: z.ZodType<unknown>[] } {
   return (schema as unknown as { _def?: Record<string, unknown> })._def ?? {};
 }
 
-/** zod v3 内省辅助：读取对象 shape */
 function zodShape(schema: z.ZodType<unknown>): Record<string, z.ZodType<unknown>> {
   return (schema as unknown as { shape?: Record<string, z.ZodType<unknown>> }).shape ?? {};
 }
 
-/** 取 zod v3 类型名（_def.typeName） */
 function typeName(schema: z.ZodType<unknown>): string {
   return zodDef(schema).typeName ?? '';
 }
 
-/** 递归转换入口（逻辑控制） */
 export function zodToJSONSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const name = typeName(schema);
   const converter = PICKERS[name];
@@ -43,7 +22,6 @@ export function zodToJSONSchema(schema: z.ZodType<unknown>): Record<string, unkn
   return converter(schema);
 }
 
-/** 各 zod 类型转换器注册表 */
 const PICKERS: Record<string, (schema: z.ZodType<unknown>) => Record<string, unknown>> = {
   ZodString: (s) => stringSchema(s),
   ZodNumber: (s) => numberSchema(s),
@@ -62,7 +40,6 @@ const PICKERS: Record<string, (schema: z.ZodType<unknown>) => Record<string, unk
   ZodAny: () => ({}),
 };
 
-/** ZodString（含 min/max 约束；阶段2 不展开 regex） */
 function stringSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { type: 'string' };
   for (const check of zodDef(schema).checks ?? []) {
@@ -76,7 +53,6 @@ function stringSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   return out;
 }
 
-/** ZodNumber（int → integer；min/max） */
 function numberSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { type: 'number' };
   for (const check of zodDef(schema).checks ?? []) {
@@ -90,12 +66,10 @@ function numberSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   return out;
 }
 
-/** ZodEnum（值域转 enum） */
 function enumSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   return { type: 'string', enum: zodDef(schema).values ?? [] };
 }
 
-/** ZodLiteral */
 function literalSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const value = zodDef(schema).value;
   return typeof value === 'number'
@@ -103,30 +77,25 @@ function literalSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
     : { type: 'string', enum: [String(value)] };
 }
 
-/** ZodArray */
 function arraySchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const element = zodDef(schema).type;
   return { type: 'array', items: element ? zodToJSONSchema(element) : {} };
 }
 
-/** ZodObject（properties + required） */
 function objectSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   return objectFromShape(zodShape(schema));
 }
 
-/** ZodRecord（additionalProperties） */
 function recordSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const valueType = zodDef(schema).valueType;
   return { type: 'object', additionalProperties: valueType ? zodToJSONSchema(valueType) : {} };
 }
 
-/** ZodOptional（不标记 required，由 objectFromShape 判定） */
 function optionalSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const inner = zodDef(schema).innerType;
   return inner ? zodToJSONSchema(inner) : {};
 }
 
-/** ZodNullable（anyOf [inner, null]） */
 function nullableSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const inner = zodDef(schema).innerType;
   return inner
@@ -134,13 +103,11 @@ function nullableSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
     : {};
 }
 
-/** ZodDefault（取内层 schema，default 值随 description 说明） */
 function defaultSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const inner = zodDef(schema).innerType;
   return inner ? zodToJSONSchema(inner) : {};
 }
 
-/** ZodUnion / ZodDiscriminatedUnion（options 展开 anyOf） */
 function unionSchema(
   schema: z.ZodType<unknown>,
   keyword: 'anyOf' | 'oneOf',
@@ -148,7 +115,6 @@ function unionSchema(
   return { [keyword]: (zodDef(schema).options ?? []).map((option) => zodToJSONSchema(option)) };
 }
 
-/** shape → object schema（数据处理；ZodOptional 不进 required） */
 function objectFromShape(shape: Record<string, z.ZodType<unknown>>): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];

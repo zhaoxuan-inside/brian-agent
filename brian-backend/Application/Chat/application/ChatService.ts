@@ -15,7 +15,7 @@ import {
   LastNInfoInput, LastNInfoOutput,
   GraphInfoInput, GraphInfoOutput,
   SoCitationEdgesInput, SoCitationEdgesOutput,
-  // ===== 新增（2026-09-15 记忆集中）：会话级记忆删除统一走 InfoCore =====
+
   DelInfoBySessionInput, DelInfoBySessionOutput,
   KeywordKInfoInput, KeywordKInfoOutput,
   PinInfoInput, PinInfoOutput,
@@ -63,7 +63,6 @@ import {
   RUNTIME_RUN_TABLE,
 } from '@brian-agent/runtime';
 
-/** Chat v2 运行时依赖（Runtime v2 接线；缺省走旧编排链路） */
 export interface ChatRuntimeV2Deps {
   gateway: RunGatewayAccess;
   session: SessionAccess;
@@ -101,18 +100,10 @@ export class ChatService {
     if (!this.runtime) {
       throw new ValidationError('Runtime v2 未装配（编排内核必需）');
     }
-    // V1 编排链路已移除（2026-09-05）：openChatStream 即 v2 链路
+
     return this.openChatStreamV2(input, output, context, metrics, report, onEvent);
   }
 
-  /** V1 旧链路已删除（v1 编排回退与 SSE 旧协议层已随 V1 移除） */
-  private async legacyOpenChatStreamRemoved(): Promise<void> {}
-
-  // -------------------------------------------------------------------------
-  // Runtime v2 链路（业务事件经 Report→StreamProvider 推送到端点；保存/审计/断线恢复在 StreamProvider）
-  // -------------------------------------------------------------------------
-
-  /** v2 链路入口（逻辑控制）：生命周期事件 + 投影 + submitRun + waitRun + done */
   async openChatStreamV2(
     input: OpenChatStreamInput,
     output: OpenChatStreamOutput,
@@ -121,7 +112,7 @@ export class ChatService {
     report?: Report,
     onEvent?: (event: SSEEvent) => void,
   ): Promise<boolean> {
-    // trace_id 属维护字段：唯一承载点 = Metrics（AOP 已生成/回填）；无则本地生成回填
+
     const traceId = metrics?.trace_id || IdGenerator.generate();
     if (metrics) {
       metrics.trace_id = traceId;
@@ -133,14 +124,7 @@ export class ChatService {
       onEvent?.(evt);
     };
     const sessionId = input.session_id;
-    // ===== 修改后（2026-09-11）：删除重复的 autoGenerateSessionTitleIfEmpty 调用 =====
-    // 原实现在 openChatStreamV2 内对同一次请求调用了两次（submitRun 前，仅隔一次 emit），
-    // 每次多做一次 chat_session 查询往返；title 只依赖首次写入，保留 Connected 前一次即可。
-    // 原代码：
-    //   await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);
-    //   emit Connected / Loading
-    //   const runtime = this.runtime!;
-    //   await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content);   ← 重复调用（已删）
+
     await this.autoGenerateSessionTitleIfEmpty(sessionId, input.msg_content, metrics);
     emit(SseTransportEvent.Connected, { session_id: sessionId, trace_id: traceId });
     emit(SseTransportEvent.Loading, { work_id: sessionId });
@@ -161,9 +145,6 @@ export class ChatService {
     await runtime.session.addSession(addIn, addOut, new SessionContext(), metrics);
     const runtimeSessionId = addOut.session_id;
 
-    // ===== Report 只负责接收业务的消息：携带 SSE 端点 ID，上报经 StreamProvider =====
-    // 保存（stream_event 持久化/审计）、断线恢复重放、按端点 ID 定位 SSE 连接投递，
-    // 全部由 StreamProvider 承载（v1 兼容事件名格式化亦在 StreamProvider 内）。
     const report2 = new Report({
       session_id: sessionId,
       session_key: sessionId,
@@ -177,13 +158,9 @@ export class ChatService {
     submitIn.user_message = input.msg_content;
     const submitOut = new SubmitRunOutput();
     await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report2);
-    // ===== 修改后（2026-09-14 业务/可观测 ID 分离）：run_id 属问答业务维度（= runtime_run.id，一次问答），
-    // 不再借用 traceId；trace_id 属可观测体系，仍由 traceId 单独承载 =====
+
     const runId = submitOut.run_id;
-    // ===== 新增（2026-09-15 分析 trace 1a688f04 修复①）：用户消息 REQUEST 立即落 info_raw。
-    //      原先 REQUEST 只在 run 结算后随 syncRuntimeMessagesToInfoRaw 补齐，Writer 构建上下文
-    //      （run 内最后一步）时时间线恒空 → 快照无 TIMELINE/CURRENT，本次输入缺失。
-    //      运行结束后的同步仍执行，靠 work_id|info_type|info 去重键幂等，不会落双行 =====
+
     try {
       const earlySaveInput = new SaveInfoInput();
       earlySaveInput.session_id = sessionId;
@@ -194,15 +171,13 @@ export class ChatService {
       earlySaveInput.info = input.msg_content;
       earlySaveInput.trace_id = traceId;
       await this.infoCore.saveInfo(earlySaveInput, new SaveInfoOutput(), new InfoCoreContext(), metrics);
-    } catch { /* best-effort：失败不影响问答，稍后由同步补齐 */ }
+    } catch {  }
     const waitIn = new WaitRunInput();
     waitIn.run_id = submitOut.run_id;
     waitIn.timeout_ms = 300_000;
     const waitOut = new WaitRunOutput();
     await runtime.gateway.waitRun(waitIn, waitOut, new RunGatewayContext(), metrics, report2);
-    // ===== 修改后（2026-09-09）：日志携带 trace_id，保证"复制 TraceId"的 id 能在监控页（log_record.trace_id）按交互关联 =====
-    // 原代码：meta 未含 trace_id（直连 logger 绕过 Metrics.merge 的自动盖章），log_record.trace_id 恒 NULL，
-    // 复制的 TraceId 在监控页查不到任何记录，id 失去关联语义。
+
     this.logger?.info?.('openChatStreamV2: run settled', {
       session_id: sessionId,
       run_id: runId,
@@ -212,7 +187,6 @@ export class ChatService {
       work_id: submitOut.run_id,
     });
 
-    // Runtime v2 消息持久化在 runtime_message 表，同步到 info_raw 供 chat history 读取
     await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId, metrics);
 
     const totalElapsed = typeof metrics?.getTotalDuration === 'function' ? metrics.getTotalDuration() : (metrics?.elapsed_ms ?? 0);
@@ -225,29 +199,6 @@ export class ChatService {
     return true;
   }
 
-  /**
-   * 将 Runtime v2 的 runtime_message 表消息同步到 info_raw 表，
-   * 供 chat history（soChatHistory）读取。
-   *
-   * ===== 修改后（2026-09-09）：修复对话区重复上一轮内容 =====
-   * 原问题（事故：会话 fb3efe8f，trace 5f24881f / 0c92601f）：
-   * 1. 原实现按 session 全量重读 runtime_message，每轮结束都把历史消息重抄一遍；
-   *    去重条件 (session_id, info, created=保存时刻) 与 runtime_message.created 恒不相等，
-   *    判重必然失败 → 历史问答被重复插入 info_raw，对话区反复出现上一轮内容，
-   *    且旧消息被盖上本轮 traceId（run_id 污染）。
-   * 2. 空内容占位行（run 未回复完成时 assistant 行 content=''）会令 saveInfo 抛
-   *    ValidationError，异常中断整个同步循环，后续消息漏同步。
-   * 修改后：
-   * 1. 仍按会话读取（便于超时后迟到的最终回复在下一轮补齐），但去重键改为
-   *    (work_id, info_type, info)——与 created 无关，历史旧数据（created=保存时刻）
-   *    也能正确判重，不再产生重复行；读取上限 200 条防成本膨胀。
-   * 2. 跳过空内容行（continue 而非中断）。
-   * 3. 已落库集合一次查询载入内存，避免逐条 COUNT 的 N+1 查询。
-    * 注：迟到补齐的历史行会带上当轮 traceId（run_id），work_id 仍为其原 run，
-    * 历史按 work_id 分组展示不受影响。
-    * ===== 修改后（2026-09-14 业务/可观测 ID 分离）：run_id 属问答业务维度（= runtime_run.id），
-    * 落库时取 workId（其原 run），不再借用 traceId；trace_id 仍按源头治理规则取 runtime_run.trace_id。
-    */
   private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics): Promise<void> {
     try {
       const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
@@ -257,7 +208,6 @@ export class ChatService {
       if (!rows || rows.length === 0) return;
       rows.reverse();
 
-      // 已落库消息集合一次载入（key: work_id|info_type|info），替代逐条 COUNT
       const existingRows = this.relationDb.queryRaw<{ work_id: string; info_type: string; info: string }>(
         `SELECT "work_id", "info_type", "info" FROM "info_raw" WHERE "session_id" = ?`,
         [chatSessionId],
@@ -266,17 +216,8 @@ export class ChatService {
         (existingRows ?? []).map((r) => `${r.work_id || ''}\u0001${r.info_type || ''}\u0001${r.info || ''}`),
       );
 
-      // ===== 新增（2026-09-12）：中间轮 assistant 消息不同步到对话框 =====
-      // Loop 每轮（连同含 tool_calls 的中间轮）都持久化 assistant 消息，原来
-      // "好的，我来帮你查一下…"等多条 RESPONSE 会在历史对话区各占一个气泡。
-      // 现只同步每 run 的最终回复：含 tool Part 的中间轮消息跳过；每 run 最后一条
-      // assistant 消息兜底保留（预算耗尽/异常导致无纯文本最终轮时仍有 RESPONSE）。
-      // wire 历史走 runtime_* 表，不受此显示侧过滤影响。
       const runIds = Array.from(new Set(rows.map((r) => r.run_id).filter(Boolean)));
-      // ===== 新增（2026-09-23 委派收口）：subagent run 的消息不同步到对话历史 =====
-      // 委派任务文本是系统内部委派（非用户发言），旧实现曾把它以 REQUEST 角色同步进
-      // 对话区（事故 trace 22f3ce79：一次问答"派生两次问答"）。新数据经子会话隔离已不落
-      // 主会话；此处按 run lane 过滤兜底历史脏数据，不变量：对话区 user 行只来自真实用户。
+
       const subagentRunIds = new Set<string>(
         runIds.length === 0 ? [] : (() => {
           const placeholders = runIds.map(() => '?').join(',');
@@ -287,12 +228,7 @@ export class ChatService {
           return (laneRows ?? []).map((r) => String(r.id));
         })(),
       );
-      // ===== 修改后（2026-09-14 trace 源头治理）：历史行不再盖当轮 traceId =====
-      // 原行为：迟到补齐的历史行（本轮之外的 run）也被盖上当轮 traceId，造成
-      // "两次提问 traceId 相同"的污染（事故 trace 989acae9：上一轮 run 因进程重启
-      // 未及自身同步，本轮补齐时被盖上本轮 trace）。
-      // 修改后：每行按其原 run 反查 runtime_run.trace_id（run 受理时已持久化源头
-      // trace），查不到则留空，绝不伪造当轮 trace。
+
       let toolMsgIds = new Set<string>();
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
@@ -320,11 +256,11 @@ export class ChatService {
 
       for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
         const msg = rows[rowIdx];
-        // subagent run 的消息（委派任务/子代理过程输出）不进对话历史（2026-09-23 委派收口）
+
         if (msg.run_id && subagentRunIds.has(msg.run_id)) continue;
-        // 空内容占位行（如 run 超时未回复的 assistant 行）跳过，不落库也不中断
+
         if (!msg.content || msg.content.trim() === '') continue;
-        // 中间轮叙述跳过（兜底保留每 run 最后一条）
+
         if (msg.role !== 'user' && toolMsgIds.has(msg.id) && rowIdx !== lastAssistantIdxByRun.get(msg.run_id || runId)) continue;
 
         const infoType = msg.role === 'user' ? 'REQUEST' : 'RESPONSE';
@@ -337,17 +273,14 @@ export class ChatService {
         const saveInput = new SaveInfoInput();
         saveInput.session_id = chatSessionId;
         saveInput.work_id = workId;
-        // 源头 trace 治理：行 trace 一律取其所属 run 受理时落库的 runtime_run.trace_id
-        //（含 steer 合流 run：全部消息归因到受理源头 trace）；runtime_run 无记录时，
-        // 当轮 run 行沿用本轮 trace 兜底，历史 run 补齐行显式置 ''，绝不盖当轮 trace。
+
         const rowTraceId = runTraceMap.get(workId) ?? (workId === runId ? traceId : '');
         saveInput.trace_id = rowTraceId;
         saveInput.run_id = workId;
         saveInput.info_type = infoType;
         saveInput.info_creator_role = infoCreatorRole;
         saveInput.info = msg.content;
-        // 携带 runtime_message 的真实创建时间：保证 user 先于 assistant 的时序，
-        // 历史查询 ORDER BY created 顺序稳定（否则对话区顺序错乱）。
+
         saveInput.created = Number(msg.created) > 0 ? Number(msg.created) : undefined;
         const saveOutput = new SaveInfoOutput();
         await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext(), metrics);
@@ -361,20 +294,6 @@ export class ChatService {
       });
     }
   }
-
-  /** 最终回复 → transcript text 分块（数据处理；2-5 字符打字机分块，与 StreamProvider 默认口径一致） */
-  private chunkResponseForTranscript(text: string): string[] {
-    const chunks: string[] = [];
-    let offset = 0;
-    while (offset < text.length) {
-      const size = Math.min(text.length - offset, 2 + Math.floor(Math.random() * 4));
-      chunks.push(text.slice(offset, offset + size));
-      offset += size;
-    }
-    return chunks;
-  }
-
-
 
   async createSession(input: CreateSessionInput, output: CreateSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -402,9 +321,6 @@ export class ChatService {
     return true;
   }
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：122 行单方法拆为
-  // 「会话循环编排 → 单会话删除 → 五类级联清理子方法」（原始单方法已删除，等价结构见 git 历史；
-  // 级联注释随各子方法保留）。
   async deleteSession(input: DeleteSessionInput, output: DeleteSessionOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.session_ids || input.session_ids.length === 0) {
@@ -418,12 +334,10 @@ export class ChatService {
     return true;
   }
 
-  /** 删除单个会话（逻辑控制；五类级联清理 + 删除行数；失败仅记日志不中断批量） */
   private async deleteSingleSession(sessionId: string, metrics?: Metrics): Promise<number> {
     try {
       await this.deleteFeedbackForSession(sessionId);
-      // ===== 修改后：记忆删除统一收敛 InfoCoreProvider.delInfoBySession（含派生表 / 上下文快照 / GraphDB 级联），
-      //      chat_session / runtime_ / stream_event 等非记忆表仍由本层负责 =====
+
       const delInput = new DelInfoBySessionInput();
       delInput.session_id = sessionId;
       const delOutput = new DelInfoBySessionOutput();
@@ -443,15 +357,6 @@ export class ChatService {
     }
   }
 
-  // ===== 新增（2026-09-21 反馈级联删除）：随会话删除关联的反馈数据 =====
-  // 反馈表（feedback_record / feedback_process_log）以 run_id（对话轮次，
-  // 关联 runtime_run.id）和 work_id（作品/任务，关联 info_raw.work_id）引用
-  // 会话内容。此前会话删除后这些引用全部失效，监控页残留「无法关联任何内容」
-  // 的孤儿反馈（只剩一串 ID）。故在删除会话数据**之前**先收集两类引用
-  // （info_raw / runtime_run 马上会被后续步骤删除），再按 run_id / work_id
-  // 级联删除反馈。表名按名引用（同 writer_agent_user_profile 惯例，
-  // 避免 Application → Base 的运行时耦合）；失败静默跳过不阻塞会话删除。
-  /** 反馈数据级联清理（逻辑控制；best-effort） */
   private async deleteFeedbackForSession(sessionId: string): Promise<void> {
     try {
       const fbRunRows = await this.relationDb.select(RUNTIME_RUN_TABLE, {
@@ -479,11 +384,6 @@ export class ChatService {
     }
   }
 
-  // ===== 新增（2026-09-21 会话删除关联数据同步）：WriterAgent 会话级写作偏好
-  // （writer_agent_user_profile.session_id 唯一）此前随会话删除后残留为孤儿数据，
-  // 导致会话重新创建/复用同 id 时读取到陈旧偏好；此处随会话同步清理。
-  // 表名按名引用，避免 Application → Agent 的运行时耦合；表不存在时静默跳过 =====
-  /** WriterAgent 写作偏好清理（逻辑控制；best-effort） */
   private async deleteWriterProfileForSession(sessionId: string): Promise<void> {
     try {
       await this.relationDb.delete('writer_agent_user_profile', [
@@ -497,11 +397,6 @@ export class ChatService {
     }
   }
 
-  // ===== 新增（2026-09-15）：思考过程/耗时统计生命周期跟随问答 —— 删除会话时
-  // 一并清理事件流（stream_event，思考过程时间线的持久事实源）与 Runtime 派生表
-  // （runtime_run / runtime_message_part / runtime_message / runtime_session，
-  //  Part 含 elapsed_ms 耗时与思考内容）；不存在时静默跳过 =====
-  /** Runtime/stream 思考过程数据清理（逻辑控制；best-effort） */
   private async deleteRuntimeDataForSession(sessionId: string): Promise<void> {
     try {
       await this.relationDb.delete('stream_event', [
@@ -510,7 +405,7 @@ export class ChatService {
       await this.relationDb.delete(RUNTIME_RUN_TABLE, [
         { field: 'session_key', operator: Operator.EQ, value: sessionId },
       ]);
-      // Runtime 派生数据以 runtime_session.session_key = 问答会话 id 关联
+
       const runtimeSessions = await this.relationDb.select(RUNTIME_SESSION_TABLE, {
         conditions: [{ field: 'session_key', operator: Operator.EQ, value: sessionId }],
         fields: ['id'],
@@ -530,7 +425,6 @@ export class ChatService {
     }
   }
 
-  /** Runtime 消息与 Part 级联清理（逻辑控制；先按消息收集 Part 再删消息） */
   private async deleteRuntimeMessages(runtimeSessionIds: string[]): Promise<void> {
     const runtimeMessages = await this.relationDb.select(RUNTIME_MESSAGE_TABLE, {
       conditions: [{ field: 'session_id', operator: Operator.IN, value: runtimeSessionIds }],
@@ -547,23 +441,9 @@ export class ChatService {
     ]);
   }
 
-  /**
-   * 清理「孤儿会话记忆」：`info_raw` 中 `session_id` 已不存在于 `chat_session` 的残留记录
-   * （及其派生表与 GraphDB 引用边），供服务启动时与每日定时任务调用。
-   *
-   * 根因（2026-09-21 记忆残留事故）：历史版本权限审计桥以 Runtime 内部 session id 落
-   * `info_raw.session_id`（而非对话会话键），以及早期在会话级联删除逻辑收敛前删除的会话，
-   * 都会在 `info_raw` 留下 `session_id` 无法匹配任何 `chat_session` 的孤儿行。
-   * 这些行不会被 `deleteSession(指定 session_id)` 命中，因而会话删除后仍在「信息 > 记忆」
-   * 页持续展示已删除会话的对话内容。
-   *
-   * 判定口径：以 `chat_session.session_id` 为唯一存活集合（会话在 `createSession` 时即落库，
-   * 所有 `info_raw` 写入均发生在会话存在期间），差集即孤儿。
-   * 清理复用 {@link deleteSession} 的级联逻辑，保证与单次会话删除行为一致。
-   */
   async purgeOrphanSessions(input: PurgeOrphanSessionsInput, output: PurgeOrphanSessionsOutput, _context: ChatContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // 1. 存活会话键集合
+
     const liveRows = this.relationDb.queryRaw<{ session_id: string }>(
       `SELECT "session_id" FROM "chat_session"`,
     );
@@ -571,7 +451,6 @@ export class ChatService {
       (liveRows ?? []).map((r) => String(r.session_id ?? '')).filter(Boolean),
     );
 
-    // 2. info_raw 中出现过的全部会话键，差集即孤儿
     const rawRows = this.relationDb.queryRaw<{ session_id: string }>(
       `SELECT DISTINCT "session_id" FROM "info_raw"`,
     );
@@ -583,19 +462,12 @@ export class ChatService {
     output.purged_count = orphanSessions.length;
     if (input.dry_run || orphanSessions.length === 0) return true;
 
-    // 3. 复用 deleteSession 的级联清理（info_* / GraphDB / runtime_* / stream_event / writer 偏好）
     const delInput = new DeleteSessionInput();
     delInput.session_ids = orphanSessions;
     await this.deleteSession(delInput, new DeleteSessionOutput(), _context, _metrics, _report);
     return true;
   }
 
-  /**
-   * 检索会话列表（应用编排）：关键词/时间过滤 → 分页取会话 → 批量聚合统计 → 摘要映射 → 总数回写。
-   *
-   * 命中过滤条件（关键词 / 时间范围）返回空集时短路返回；统计/标签/token/消息数
-   * 均为批量查询（消除逐会话 N+1），单项查询失败按口径降级不阻断。
-   */
   async soSession(input: SearchSessionInput, output: SearchSessionOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const conditions: Condition[] = [];
@@ -619,14 +491,12 @@ export class ChatService {
     return true;
   }
 
-  /** 空结果页回写（数据处理）：无命中时输出空列表与 0 总数 */
   private writeEmptySessionPage(output: SearchSessionOutput): boolean {
     output.sessions = [];
     output.total = 0;
     return true;
   }
 
-  /** 按关键词查会话 ID（逻辑控制；会话标题 LIKE 与 info 内容 LIKE 联合） */
   private soSessionIdsByKeyword(keyword: string): string[] {
     const kw = `%${keyword}%`;
     const matchedRows = this.relationDb.queryRaw<{ session_id: string }>(
@@ -636,7 +506,6 @@ export class ChatService {
     return matchedRows.map((r) => r.session_id).filter(Boolean);
   }
 
-  /** 按时间范围查会话 ID（逻辑控制；info_raw.created 半开区间过滤 [start, end)） */
   private soSessionIdsByTimeRange(startTime?: number, endTime?: number): string[] {
     const timeConds: string[] = [];
     const timeArgs: unknown[] = [];
@@ -655,7 +524,6 @@ export class ChatService {
     return timeRows.map((r) => r.session_id).filter(Boolean);
   }
 
-  /** 分页查会话行（逻辑控制；排序解析与分页默认值在此装配） */
   private async soSessionPage(input: SearchSessionInput, conditions: Condition[]): Promise<SelectDBOutput> {
     const pageCurrent = input.page_current ?? 1;
     const pageSize = input.page_size ?? 20;
@@ -674,7 +542,6 @@ export class ChatService {
     return selOutput;
   }
 
-  /** 批量装配会话页聚合映射（逻辑控制；五类统计依序执行，批量结果供领域层映射消费） */
   private soSessionAggregateMaps(sessionIds: string[], metrics?: Metrics): SessionAggregateMaps {
     const maps: SessionAggregateMaps = {
       statMap: new Map(), tagsMap: new Map(), tokenMap: new Map(), countMap: new Map(), lastMsgMap: new Map(),
@@ -688,7 +555,6 @@ export class ChatService {
     return maps;
   }
 
-  /** 聚合会话问答次数与问/答字符数（逻辑控制；info_type = REQUEST/RESPONSE 汇总，失败降级空映射） */
   private soSessionQaStats(sessionIds: string[], metrics?: Metrics): Map<string, { qa_count: number; question_chars: number; answer_chars: number }> {
     const statMap = new Map<string, { qa_count: number; question_chars: number; answer_chars: number }>();
     const placeholders = sessionIds.map(() => '?').join(',');
@@ -709,7 +575,7 @@ export class ChatService {
         });
       }
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
         session_ids: sessionIds,
@@ -718,7 +584,6 @@ export class ChatService {
     return statMap;
   }
 
-  /** 聚合会话标签集合（逻辑控制；info_tag 关联去重，失败降级空映射） */
   private soSessionTags(sessionIds: string[], metrics?: Metrics): Map<string, string[]> {
     const tagsMap = new Map<string, string[]>();
     const placeholders = sessionIds.map(() => '?').join(',');
@@ -740,7 +605,7 @@ export class ChatService {
         tagsMap.set(sid, list);
       }
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSession 会话标签聚合失败（该批会话标签降级为空）', {
         error: err instanceof Error ? err.message : String(err),
         session_ids: sessionIds,
@@ -749,7 +614,6 @@ export class ChatService {
     return tagsMap;
   }
 
-  /** 聚合会话 token 用量（逻辑控制；iterations 明细优先，查询失败降级空映射） */
   private soSessionTokenStats(sessionIds: string[], metrics?: Metrics): Map<string, { input_tokens: number; output_tokens: number }> {
     const tokenMap = new Map<string, { input_tokens: number; output_tokens: number }>();
     try {
@@ -765,7 +629,7 @@ export class ChatService {
       );
       this.aggregateTraceTokenRows(traceRows, tokenMap, metrics);
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSession 会话 token 聚合失败（token 统计降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
         session_ids: sessionIds,
@@ -774,7 +638,6 @@ export class ChatService {
     return tokenMap;
   }
 
-  /** 逐条累计 trace token 用量（数据处理；同会话同 trace 去重，解析失败告警并回退 total_token_usage） */
   private aggregateTraceTokenRows(
     traceRows: Array<{ session_id: string; trace_id: string; iterations_json: string; total_token_usage: number }>,
     tokenMap: Map<string, { input_tokens: number; output_tokens: number }>,
@@ -804,7 +667,6 @@ export class ChatService {
     }
   }
 
-  /** 批量查会话消息条数（逻辑控制；失败降级空映射） */
   private soSessionMessageCount(sessionIds: string[]): Map<string, number> {
     const countMap = new Map<string, number>();
     try {
@@ -814,11 +676,10 @@ export class ChatService {
         sessionIds,
       );
       for (const r of cntRows) countMap.set(String(r.session_id), Number(r.cnt));
-    } catch { /* degrade gracefully */ }
+    } catch {  }
     return countMap;
   }
 
-  /** 批量查会话最后一条消息（逻辑控制；子查询取每会话最新 created，失败降级空映射） */
   private soSessionLastMessage(sessionIds: string[], metrics?: Metrics): Map<string, { time: number; msg: string }> {
     const lastMsgMap = new Map<string, { time: number; msg: string }>();
     try {
@@ -836,7 +697,7 @@ export class ChatService {
         lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
       }
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
         error: err instanceof Error ? err.message : String(err),
         session_ids: sessionIds,
@@ -845,7 +706,6 @@ export class ChatService {
     return lastMsgMap;
   }
 
-  /** 统计会话总数（逻辑控制；同过滤条件 countDB，失败降级 0） */
   private async countSessionTotal(conditions: Condition[], metrics?: Metrics): Promise<number> {
     try {
       const totalInput = Object.assign(new CountDBInput(), {
@@ -856,7 +716,7 @@ export class ChatService {
       await this.relationDb.countDB(totalInput, totalOutput, new DBContext());
       return totalOutput.count;
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSession 会话总数统计失败（total 降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -893,7 +753,7 @@ export class ChatService {
       await this.relationDb.countDB(cntInput, cntOutput, new DBContext());
       messageCount = cntOutput.count;
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.soSessionDetail 消息计数失败（message_count 降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: input.session_id,
@@ -951,7 +811,7 @@ export class ChatService {
         maxMessages = (selOutput.row.max_messages_per_session as number) ?? 1000;
       }
     } catch (err) {
-      /* use default */
+
       metrics?.warn('ChatService.checkSessionOverflow 读取会话配置失败（使用默认上限 1000）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: input.session_id,
@@ -970,7 +830,7 @@ export class ChatService {
       await this.relationDb.countDB(cntInput, cntOutput, new DBContext());
       messageCount = cntOutput.count;
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.checkSessionOverflow 消息计数失败（按 0 条判断溢出）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: input.session_id,
@@ -998,7 +858,7 @@ export class ChatService {
           lastN = (selOutput.row.default_history_lastN as number) ?? 50;
         }
       } catch (err) {
-        /* use default */
+
         metrics?.warn('ChatService.soChatHistory 读取默认历史条数配置失败（使用默认 50）', {
           error: err instanceof Error ? err.message : String(err),
           session_id: input.session_id,
@@ -1039,7 +899,7 @@ export class ChatService {
       const citeOut = new SoCitationEdgesOutput();
       await this.infoCore.soCitationEdges(new SoCitationEdgesInput(), citeOut, new InfoCoreContext());
       graphRows = citeOut.edges;
-    } catch { /* degrade gracefully */ }
+    } catch {  }
 
     for (const row of pageRows) {
       const citingInfoIds: string[] = [];
@@ -1123,7 +983,7 @@ export class ChatService {
           summary = (selOutput.row.summary as string) ?? '';
         }
       } catch (err) {
-        /* degrade gracefully */
+
         metrics?.warn('ChatService.soMessage 消息摘要查询失败（摘要降级为空）', {
           error: err instanceof Error ? err.message : String(err),
           info_id: row.info_id,
@@ -1168,7 +1028,7 @@ export class ChatService {
         currentPin = (selOutput.row.pin as number) === 1;
       }
     } catch (err) {
-      /* degrade gracefully */
+
       metrics?.warn('ChatService.pinMessage 读取当前 pin 状态失败（按未置顶处理）', {
         error: err instanceof Error ? err.message : String(err),
         info_id: input.info_id,
@@ -1313,7 +1173,7 @@ export class ChatService {
         }
       }
     } catch (err) {
-      /* best effort */
+
       metrics?.warn('ChatService.autoGenerateSessionTitleIfEmpty 自动生成会话标题失败（跳过）', {
         error: err instanceof Error ? err.message : String(err),
         session_id: sessionId,

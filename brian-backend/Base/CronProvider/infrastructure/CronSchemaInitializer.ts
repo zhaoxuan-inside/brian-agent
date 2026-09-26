@@ -1,9 +1,3 @@
-/**
- * @fileoverview CronProvider 表结构初始化。
- *
- * 创建 cron_task（定时任务）与 cron_task_run（执行历史）两张表。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { CRON_TASK_TABLE, CRON_TASK_RUN_TABLE } from '../domain/types';
 

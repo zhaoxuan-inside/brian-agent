@@ -158,7 +158,7 @@ describe('ChatService', () => {
         new StreamContext(),
       );
       endpointId = regOut.endpoint_id;
-      // 组合根语义：Report 事件流网关 → StreamProvider
+      
       Report.setEventStreamGateway({
         pushToEndpoint: async (input) => {
           await streamAccess.publishEvent(
@@ -179,7 +179,7 @@ describe('ChatService', () => {
       const gateway = {
         submitRun: async (_i: unknown, o: { run_id: string }, _c: unknown, _m: unknown, report?: Report) => {
           o.run_id = 'run-v2';
-          // 模拟 Loop 的业务事件上报（Report 携带端点 ID → StreamProvider）
+          
           report?.pushBusinessEvent('part.created' as never, { part_id: 'p1', part_type: 'text' });
           report?.pushBusinessEvent('part.delta' as never, { field: 'text', delta: 'V2 你好' });
           report?.pushBusinessEvent('run.status' as never, { phase: 'end', stop_reason: 'stop' });
@@ -215,7 +215,7 @@ describe('ChatService', () => {
       const deltaFrame = frames.find((f) => f.includes('"part.delta"'));
       expect(deltaFrame).toBeTruthy();
       expect(deltaFrame).toContain('V2 你好');
-      // run.status end 帧也经端点投递
+      
       expect(frames.some((f) => f.includes('"run.status"'))).toBe(true);
     });
 
@@ -341,7 +341,7 @@ describe('ChatService', () => {
       await expect(service.deleteSession(input, output, new ChatContext())).rejects.toThrow(ValidationError);
     });
 
-    // ===== 新增（2026-09-21 会话删除关联数据同步）：删除会话时同步清理关联数据 =====
+    
     it('TC-CHAT-054b: Delete session cascades writer_agent_user_profile', async () => {
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
@@ -991,16 +991,16 @@ describe('ChatService', () => {
     });
   });
 
-  // ===== 新增（2026-09-21 记忆残留修复）：孤儿会话记忆清理 =====
+  
   describe('purgeOrphanSessions', () => {
     it('TC-CHAT-057: purges info_raw rows whose session no longer exists, keeps live session memory', async () => {
-      // 存活会话：createSession 落 chat_session
+      
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
       const liveSid = createOut.session_id;
       await insertInfoRawRow(ctx.db, liveSid, 'live-info-1');
 
-      // 孤儿会话：info_raw 有记录但 chat_session 不存在
+      
       const orphanSid = 'orphan-session-9f3a';
       await insertInfoRawRow(ctx.db, orphanSid, 'orphan-info-1');
       await insertInfoRawRow(ctx.db, orphanSid, 'orphan-info-2');
@@ -1332,13 +1332,12 @@ describe('ChatService', () => {
     });
   });
 
-
   describe('soChatHistory - Agent Trace and Thinking Blocks', () => {
     it('TC-CHAT-140: soChatHistory populates work_id and message metadata for response messages', async () => {
       const sessId = 'history-trace-sess';
       const workId = 'work-trace-101';
 
-      // 模拟插入包含 work_id 的用户 REQUEST 消息与系统 RESPONSE 消息
+      
       const userSave = Object.assign(new SaveInfoInput(), {
         session_id: sessId,
         work_id: workId,

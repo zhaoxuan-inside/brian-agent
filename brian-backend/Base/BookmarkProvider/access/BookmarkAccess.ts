@@ -1,10 +1,3 @@
-/**
- * @fileoverview BookmarkProvider 接入层。
- *
- * 封装 BookmarkService 并通过 AOP 代理注入切面；
- * 签名规范：`Boolean method(Input, Output, Context, Metrics, Report)`。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { BookmarkSchemaInitializer } from '../infrastructure/BookmarkSchemaInitializer';
 import { BookmarkService } from '../application/BookmarkService';

@@ -17,7 +17,6 @@ export class UnderstandRequirementInput extends Input {
   run_id?: string;
 }
 
-// ===== 修改后的 UnderstandRequirementOutput 定义：追加 PromptProvider 返回的完整 Prompt 与 Token 用量 =====
 export class UnderstandRequirementOutput extends Output {
   understood_requirement = '';
   match_score = 100;

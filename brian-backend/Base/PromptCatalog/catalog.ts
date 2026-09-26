@@ -1,41 +1,24 @@
-/**
- * @fileoverview 内置 Prompt 目录（PromptCatalog）。
- *
- * 全系统内置 Prompt 模板的唯一真相源。所有内置 Prompt 使用稳定 ID，
- * 由 {@link PromptCatalogAccess.seed} 幂等写入 prompt_template 表，
- * 业务层通过 {@link PROMPT_IDS} 引用，经 {@link renderTemplate} 在内存兜底渲染。
- *
- * 统一变量命名（跨 Agent / Core / Orchestration / Application）：
- *   task_content / context_data / history / tools_json / soul /
- *   agent_name / domain / iteration / max_iterations / max_subtask_count /
- *   agent_results / candidates / agent_output / final_response / trace /
- *   preferences / threshold / available_llms / available_mcps / available_souls /
- *   skills / agent_id / context_id / run_id /
- *   selection / context_before / context_after / question /
- *   direction_key / direction_name / conversation_sample
- */
-
-/** 内置 Prompt 定义 */
 export interface BuiltinPromptDef {
-  /** 稳定 ID（写入 prompt_template.id） */
+  
   id: string;
-  /** 标题 */
+  
   title: string;
-  /** 摘要 */
+  
   brief: string;
-  /** 模板内容（含 {{变量}} 占位符） */
+  
   template: string;
-  /** 模板使用的变量（文档用途） */
+  
   variables: string[];
+  
+
+  retiredHashes?: string[];
 }
 
-/** 内置 Prompt 稳定 ID 常量 */
 export const PROMPT_IDS = {
   think: 'builtin.think',
   reflect: 'builtin.reflect',
   answer: 'builtin.answer',
   writer: 'builtin.writer',
-  planner: 'builtin.planner',
   evalWork: 'builtin.eval_work',
   evalWrite: 'builtin.eval_write',
   agentMatch: 'builtin.agent_match',
@@ -57,7 +40,6 @@ export const PROMPT_IDS = {
 
 export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
 
-/** 全部内置 Prompt 定义 */
 export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
   {
     id: PROMPT_IDS.think,
@@ -119,15 +101,15 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     brief: 'WriterAgent 将各 WorkAgent 结果汇总为 Markdown 排版的最终回复',
     variables: ['task_content', 'preferences', 'context_data', 'agent_results', 'soul'],
     template: [
-      // ===== 修改后（2026-09-15）：context_data 明确为静态记忆上下文（formatContextCategories 渲染，
-      // 带 what-this-is 功能说明与不可变声明），agent_results 为动态执行上下文
-      // （formatDynamicContext 渲染），引导模型区分两类上下文的可信度与用法 =====
-      // ===== 修改后（2026-09-22）：输出协议由 JSON content blocks 改为 Markdown 直出。
-      // 原因：长 JSON 输出截断即整篇报废（2026-09-22 trace 418a19a1 实证）、转义膨胀加重截断、
-      // 下游 join(content) 压平丢弃标题层级与列表标记；Markdown 直出与前端渲染端原生匹配。
-      // ===== 修改后（2026-09-22b）：按「人类友好阐述」目标升级表达协议——新增读者视角重组、
-      // preferences 语义（style/depth 枚举行为定义）、反机器腔约束；人格统一由 system 消息
-      // （soul_content）承载，本模板不再引用 {{soul}}（消除双份注入）。
+      
+      
+      
+      
+      
+      
+      
+      
+      
       'User query: {{task_content}}',
       'Preferences: {{preferences}}',
       'Static memory context（静态记忆，不可修改，仅供参照）:',
@@ -140,39 +122,6 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
       '3. Sound like a knowledgeable human explaining, not a machine reporting: naturally connect to prior context on follow-up questions; no mechanical numbered headings (一、二、三), no formulaic transitions (首先/其次/最后); vary sentence rhythm; close only with a real wrap-up, never an empty summary or canned question.',
       '4. Use formatting for readability as needed: "##" headings, lists with indent hierarchy, **bold** key terms, tables for comparisons, fenced code with language, and a ```mermaid diagram for processes/flows/architecture.',
       '5. Maintain accuracy and completeness; do not invent ungrounded facts. 直接输出 Markdown 正文，禁止输出 JSON 数组或对象，禁止用代码围栏包裹全文，不输出多余外层说明。',
-    ].join('\n'),
-  },
-  {
-    id: PROMPT_IDS.planner,
-    title: 'Planner 任务拆解',
-    brief: 'PlannerAgent 将复杂任务拆解为 Task DAG',
-    variables: ['task_content', 'context_data', 'max_subtask_count', 'soul'],
-    template: [
-      'Task: {{task_content}}',
-      'Context:',
-      '{{context_data}}',
-      'Max subtasks: {{max_subtask_count}}',
-      '',
-      'You are a task decomposition expert. Decompose the given task into a hierarchical DAG.',
-      '',
-      'Decomposition rules:',
-      '1. Leaf subtasks must be concrete and directly executable by a single worker agent WITHOUT any missing user-specific parameters.',
-      '2. A parent task summarizes/aggregates the results of all its child subtasks into a cohesive result.',
-      '3. parent_task_id links each subtask to its parent; the root task has an empty parent_task_id.',
-      '4. dependencies lists the child task_ids that must complete before this task can execute (empty for leaf tasks).',
-      '5. edges express execution dependency: from child (runs first) to parent (runs after all children).',
-      '6. If the task is simple enough to run directly, return a single leaf node with empty dependencies and empty edges.',
-      '7. The total number of subtasks MUST NOT exceed Max subtasks; do NOT over-decompose.',
-      '8. Subtasks MUST be mutually exclusive and non-overlapping; do NOT create multiple subtasks that essentially do the same thing (e.g. repeated "define scope/objective/framework" steps). Merge overlapping subtasks into one.',
-      '9. Prefer a small number of concrete subtasks over a large number of fine-grained ones; only decompose when the task is genuinely complex.',
-      '10. IMPORTANT - user-parameter identification: distinguish "execution/booking" tasks from "planning/recommendation" tasks. A subtask that actually books/orders/reserves/purchases real-world resources (e.g. 预订机票/火车票/酒店, 购买门票/保险, 下单) REQUIRES user-specific parameters (departure city, dates, budget, passenger count, contacts). Since these parameters are missing, do NOT include such subtasks in "nodes". Instead, put ONE concise clarification question into the "clarifications" array for each missing parameter group (e.g. {"question":"请问您从哪个城市出发？出行日期是哪几天？","domain":"交通预订"}).',
-      '11. Even for planning/recommendation tasks, if the request is missing KEY parameters that materially change the result (出行日期/天数, 预算, 同行人数, 出发地, 目的地), do NOT silently assume them. Collect them via "clarifications" so the user can provide them upfront. Example: a "北京旅游规划" without dates/budget/party-size should ask for them instead of assuming "2 adults, mid budget".',
-      '12. Only NON-KEY preferences (景点风格偏好, 餐饮口味, 住宿档次偏好) may be assumed with reasonable defaults. All KEY parameters above must be clarified when missing.',
-      '13. Merge related questions; output at most 3 clarification questions, each covering one group of related parameters. If the user already provided the key parameters (in the task or context), do not ask again.',
-      '',
-      'Return ONLY valid JSON:',
-      '{"nodes":[{"task_id":"1","parent_task_id":"","task_content":"...","task_complexity":30,"task_domain":"","priority":1,"dependencies":["2","3"]},{"task_id":"2","parent_task_id":"1","task_content":"...","task_complexity":40,"task_domain":"","priority":2,"dependencies":[]}],"edges":[{"from_task_id":"2","to_task_id":"1"}],"clarifications":[{"question":"...","domain":"..."}]}',
-      '只输出必要内容，保持准确、完整、简洁，不输出多余说明。',
     ].join('\n'),
   },
   {
@@ -540,13 +489,16 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
     ].join('\n'),
   },
   {
-    // ===== 修改后（2026-09-19）：soul 并入「身份」块，删除独立「# 人格」区块 =====
-    // 原模板身份/人格两段均为"你是…"式角色定义（身份=智能助理，人格=任务专家），语义重复且相互冲突；
-    // 现在 soul 作为身份段内嵌的人格特质，身份定位唯一（Brian），soul 只影响做事风格。
+    
+    
+    
     id: PROMPT_IDS.identity,
     title: 'Brian 身份声明',
     brief: 'Runtime v2 主代理身份段：名称、角色、能力边界与沟通风格（始终位于 system 最前，身份问题由此回答）',
     variables: ['soul', 'task_directive'],
+    
+    
+    retiredHashes: ['39c6bcd10a6b05b078de8079a02ed240'],
     template: [
       '# 身份',
       '',
@@ -554,38 +506,32 @@ export const BUILTIN_PROMPTS: BuiltinPromptDef[] = [
       '{{#if soul}}',
       '{{soul}}',
       '',
-      '{{/if}}你具备记忆（信息与图谱）、反思与成长能力，并能调用已注入的工具完成任务。',
-      '',
+      '{{/if}}你具备记忆（信息与图谱）、反思与成长能力，并能调用已注入的技能（Skill）完成任务。',
+
       '自我介绍规则（适用于「你是谁 / 你能做什么 / 介绍一下自己」类问题）：',
       '- 以「Brian」自称；',
-      '- 自我介绍只依据本「身份」段，禁止罗列内部工具名称或系统实现细节；人格特质只影响做事风格，不改变你的人格定位；',
+      '- 自我介绍只依据本「身份」段，禁止罗列内部技能名称或系统实现细节；人格特质只影响做事风格，不改变你的人格定位；',
       '- 语气简洁自然，像正常人介绍自己，两到三句即可。',
-      '',
+
       '# 任务',
-      '',
+
       '{{task_directive}}',
-      '',
-      '通用规则：回答使用用户的语言，直接、简洁、可验证；需要工具时才调用工具，不需要时不调用。',
-      '',
-      '再次强调（最高优先级）：你的名字是 Brian。介绍自己时只说「我是 Brian，你的智能个人助理」并简述你能记忆、反思与帮你做事，两到三句话；绝不罗列工具清单或系统实现。',
+
+      '通用规则：回答使用用户的语言，直接、简洁、可验证；需要技能时才调用技能，不需要时不调用。',
+
+      '再次强调（最高优先级）：你的名字是 Brian。介绍自己时只说「我是 Brian，你的智能个人助理」并简述你能记忆、反思与帮你做事，两到三句话；绝不罗列技能清单或系统实现。',
     ].join('\n'),
   },
 ];
 
-/** 按 ID 查找内置 Prompt 定义 */
 export function getBuiltinPrompt(id: string): BuiltinPromptDef | undefined {
   return BUILTIN_PROMPTS.find((p) => p.id === id);
 }
 
-/** 按 ID 获取内置模板内容 */
 export function getBuiltinTemplate(id: string): string | undefined {
   return getBuiltinPrompt(id)?.template;
 }
 
-/**
- * 处理 {{#if var}}...{{/if}} 条件块：当 var 为空（undefined / null / 空白字符串）时整块移除。
- * 供 renderTemplate 与 PromptsService.execPrompt 共用，避免空消息类型渲染出多余的空标题与占位内容。
- */
 export function stripEmptyConditionalBlocks(
   template: string,
   variables: Record<string, unknown>,
@@ -600,11 +546,6 @@ export function stripEmptyConditionalBlocks(
   );
 }
 
-/**
- * 内存渲染模板（`{{变量}}` 替换），作为 DB 未就绪时的兜底。
- * 与 PromptsService.execPrompt 的替换语义一致（缺省变量替换为空字符串）。
- * 额外支持 {{#if var}}...{{/if}} 条件块。
- */
 export function renderTemplate(template: string, variables: Record<string, unknown>): string {
   const stripped = stripEmptyConditionalBlocks(template, variables);
   return stripped.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_full, key: string) => {

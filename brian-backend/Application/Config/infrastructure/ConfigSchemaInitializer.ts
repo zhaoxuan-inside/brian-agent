@@ -1,10 +1,3 @@
-/**
- * @fileoverview Config 表结构初始化。
- *
- * 创建 config_registry、config_layer_privilege、config_module_privilege、
- * config_config 四张表并写入默认数据。
- */
-
 import type { RelationDBAccess } from '@brian-agent/base';
 import { IdGenerator } from '@brian-agent/base';
 import {
@@ -41,7 +34,7 @@ export class ConfigSchemaInitializer {
       )
     `);
 
-    try { this.relationDb.executeRaw(`ALTER TABLE "${CONFIG_REGISTRY_TABLE}" ADD COLUMN "config_value" TEXT`); } catch { /* exists */ }
+    try { this.relationDb.executeRaw(`ALTER TABLE "${CONFIG_REGISTRY_TABLE}" ADD COLUMN "config_value" TEXT`); } catch {  }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${CONFIG_LAYER_PRIVILEGE_TABLE}" (
@@ -86,7 +79,6 @@ export class ConfigSchemaInitializer {
       )
     `);
 
-    // ===== 新增（2026-09-22）：配置变更历史（每次 updateConfig 记录 old/new 值）=====
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${CONFIG_HISTORY_TABLE}" (
         "id"          TEXT    NOT NULL PRIMARY KEY,

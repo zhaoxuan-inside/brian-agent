@@ -1,14 +1,3 @@
-/**
- * @fileoverview Session 模块应用服务层（Runtime v2 · 阶段1）。
- *
- * 依据 `Session/Session-PRD.md` §4/§5：
- * - 会话/消息/Part 三级模型是循环唯一状态载体；
- * - 每 5 参方法 ≤40 行，逻辑控制（I/O 编排）与数据处理（纯加工）拆分；
- * - 每会话并发控制由 Runs 模块 session lane 统一承担（去重优先，2026-09-05 起
- *   Session 不再提供忙锁，避免双机制）；
- * - 错误 fail-loud（ValidationError/NotFoundError，禁止静默吞错）。
- */
-
 import type { Condition } from '@brian-agent/base';
 import type { RelationDBAccess, Logger, Metrics, Report } from '@brian-agent/base';
 import {
@@ -44,18 +33,14 @@ import {
   RUNTIME_SESSION_CONFIG_TABLE,
 } from '../domain/types';
 
-/** 默认 soMessages 页大小 */
 const DEFAULT_MESSAGE_LIMIT = 50;
 
-/**
- * SessionService。
- */
 export class SessionService {
   private enabled = true;
   private defaultLimit = DEFAULT_MESSAGE_LIMIT;
   private readonly config: ConfigService;
 
-  /** 会话消息序号进程内缓存（实例字段：seq 分配加速；DB last_seq 为持久事实源） */
+  
   private readonly sessionSeqCache = new Map<string, number>();
 
   constructor(
@@ -65,7 +50,7 @@ export class SessionService {
     this.config = new ConfigService(relationDb, RUNTIME_SESSION_CONFIG_TABLE);
   }
 
-  /** 初始化组件：恢复 enabled 状态并注册配置 */
+  
   async initialize(): Promise<void> {
     const enabledRow = await this.config.getString('enabled', 'true');
     this.enabled = enabledRow !== 'false';
@@ -76,18 +61,18 @@ export class SessionService {
     this.logger?.debug?.('SessionService 初始化完成');
   }
 
-  /** 组件使能守卫 */
+  
   private ensureEnabled(): void {
     if (!this.enabled) {
       throw new ValidationError('Session 组件未启用，请先通过 configSession 启用');
     }
   }
 
-  // -------------------------------------------------------------------------
-  // addSession（幂等：session_key 已存在返回既有 id）
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 新增会话（逻辑控制；幂等） */
+  
   async addSession(input: AddSessionInput, output: AddSessionOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -113,18 +98,18 @@ export class SessionService {
     return true;
   }
 
-  /** 按 session_key 查询会话行（逻辑控制） */
+  
   private async soSessionRowByKey(sessionKey: string): Promise<Record<string, unknown> | null> {
     return this.relationDb.selectOne(RUNTIME_SESSION_TABLE, [
       { field: 'session_key', operator: Operator.EQ, value: sessionKey },
     ]);
   }
 
-  // -------------------------------------------------------------------------
-  // addMessage（seq = last_seq + 1，严格递增）
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 新增消息（逻辑控制） */
+  
   async addMessage(input: AddMessageInput, output: AddMessageOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -147,14 +132,14 @@ export class SessionService {
     return true;
   }
 
-  /** 按 id 查询会话行（逻辑控制） */
+  
   private async soSessionRowById(sessionId: string): Promise<Record<string, unknown> | null> {
     return this.relationDb.selectOne(RUNTIME_SESSION_TABLE, [
       { field: 'id', operator: Operator.EQ, value: sessionId },
     ]);
   }
 
-  /** 分配下一条消息 seq（逻辑控制；进程缓存 + DB last_seq 持久事实源） */
+  
   private async nextMessageSeq(sessionId: string): Promise<number> {
     const cached = this.sessionSeqCache.get(sessionId);
     const next = cached !== undefined ? cached + 1 : await this.soNextSeqFromDb(sessionId);
@@ -163,24 +148,24 @@ export class SessionService {
     return next;
   }
 
-  /** 从 DB last_seq 计算下一个 seq（逻辑控制） */
+  
   private async soNextSeqFromDb(sessionId: string): Promise<number> {
     const session = await this.soSessionRowById(sessionId);
     return Number(session?.last_seq ?? 0) + 1;
   }
 
-  /** 回写会话 last_seq（逻辑控制） */
+  
   private async bumpSessionLastSeq(sessionId: string, seq: number): Promise<void> {
     await this.relationDb.update(RUNTIME_SESSION_TABLE, newPatch({ last_seq: seq }), [
       { field: 'id', operator: Operator.EQ, value: sessionId },
     ]);
   }
 
-  // -------------------------------------------------------------------------
-  // addPart / updatePart
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 新增 Part（逻辑控制） */
+  
   async addPart(input: AddPartInput, output: AddPartOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -206,7 +191,7 @@ export class SessionService {
     return true;
   }
 
-  /** 查询消息内下一个 Part 序号（逻辑控制） */
+  
   private async soNextPartOrder(messageId: string): Promise<number> {
     const rows = await this.relationDb.select(RUNTIME_MESSAGE_PART_TABLE, {
       conditions: [{ field: 'msg_id', operator: Operator.EQ, value: messageId }],
@@ -216,7 +201,7 @@ export class SessionService {
     return rows.length ? Number(rows[0].part_order) + 1 : 1;
   }
 
-  /** 更新 Part（逻辑控制；状态机 pending→running→completed/error/aborted） */
+  
   async updatePart(input: UpdatePartInput, _output: UpdatePartOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -234,7 +219,7 @@ export class SessionService {
     return true;
   }
 
-  /** 组装 Part 更新补丁（数据处理：status/output/token/elapsed 按需patch） */
+  
   private preparePartPatch(input: UpdatePartInput): Record<string, unknown> {
     const patch: Record<string, unknown> = {};
     if (input.status !== undefined) {
@@ -252,18 +237,18 @@ export class SessionService {
     return patch;
   }
 
-  /** 查询 Part 行（逻辑控制） */
+  
   private async soPartRow(partId: string): Promise<Record<string, unknown> | null> {
     return this.relationDb.selectOne(RUNTIME_MESSAGE_PART_TABLE, [
       { field: 'id', operator: Operator.EQ, value: partId },
     ]);
   }
 
-  // -------------------------------------------------------------------------
-  // soMessages（含 Parts，seq 倒序取页后升序返回）
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 查询消息（含 Parts）（逻辑控制） */
+  
   async soMessages(input: SoMessagesInput, output: SoMessagesOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -274,7 +259,7 @@ export class SessionService {
     return true;
   }
 
-  /** 查询消息行（逻辑控制；seq 倒序 SQL 分页取页） */
+  
   private async soMessageRows(sessionId: string, limit: number, beforeSeq?: number,
   ): Promise<Array<Record<string, unknown>>> {
     const conditions: Condition[] = [{ field: 'session_id', operator: Operator.EQ, value: sessionId }];
@@ -288,7 +273,7 @@ export class SessionService {
     });
   }
 
-  /** 批量查询一页消息的全部 Parts（逻辑控制；按 msg_id IN 一次取回） */
+  
   private async soPartsByMessageIds(messageIds: string[]): Promise<Map<string, PartRecord[]>> {
     const partsByMessage = new Map<string, PartRecord[]>();
     if (!messageIds.length) {
@@ -310,7 +295,7 @@ export class SessionService {
     return partsByMessage;
   }
 
-  /** 组装消息含 Parts（数据处理，按 seq 升序返回） */
+  
   private assembleMessagesWithParts(
     rows: Array<Record<string, unknown>>,
     partsByMessage: Map<string, PartRecord[]>,
@@ -331,7 +316,7 @@ export class SessionService {
     return messages.reverse();
   }
 
-  /** Part 行转记录对象（数据处理） */
+  
   private toPartRecord(p: Record<string, unknown>): PartRecord {
     return {
       id: String(p.id),
@@ -353,11 +338,11 @@ export class SessionService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // configSession
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 模块配置（逻辑控制） */
+  
   async configSession(input: ConfigSessionInput, _output: ConfigSessionOutput, _context: SessionContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();

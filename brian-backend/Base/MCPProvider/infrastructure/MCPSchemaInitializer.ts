@@ -1,9 +1,3 @@
-/**
- * @fileoverview MCPProvider 表结构初始化。
- *
- * 创建 mcp_provider、mcp_cache、mcp_install、mcp_usage、mcp_config 五张表。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import {
   MCP_PROVIDER_TABLE,
@@ -13,21 +7,15 @@ import {
   MCP_CONFIG_TABLE,
 } from '../domain/types';
 
-/** 幂等容忍 DDL 条目：执行失败进入 catch 忽略，ignoreReason 说明预期冲突场景 */
 type TolerantDdl = { sql: string; ignoreReason: string };
 
-/** DDL 数据表条目：字符串 = 直接执行（失败即抛出）；TolerantDdl = try/catch 幂等容忍 */
 type DdlEntry = string | TolerantDdl;
 
-/**
- * MCPProvider 表结构初始化器。
- */
 export class MCPSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  // ===== DDL 数据表（纯声明，数组顺序即执行顺序；IF NOT EXISTS 保证幂等）=====
   private readonly ddlStatements: readonly DdlEntry[] = [
-    // mcp_provider 表（PRD 4.1）
+
     `
       CREATE TABLE IF NOT EXISTS "${MCP_PROVIDER_TABLE}" (
         "id"                   TEXT    NOT NULL PRIMARY KEY,
@@ -45,7 +33,6 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_PROVIDER_TABLE}_updated" ON "${MCP_PROVIDER_TABLE}" ("updated")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_PROVIDER_TABLE}_title" ON "${MCP_PROVIDER_TABLE}" ("mcp_provider_title")`,
 
-    // mcp_cache 表（PRD 4.2）
     `
       CREATE TABLE IF NOT EXISTS "${MCP_CACHE_TABLE}" (
         "id"                TEXT    NOT NULL PRIMARY KEY,
@@ -64,7 +51,6 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CACHE_TABLE}_brief" ON "${MCP_CACHE_TABLE}" ("mcp_brief")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CACHE_TABLE}_install_cmd" ON "${MCP_CACHE_TABLE}" ("mcp_install_cmd")`,
 
-    // mcp_install 表（PRD 4.3）
     `
       CREATE TABLE IF NOT EXISTS "${MCP_INSTALL_TABLE}" (
         "id"                  TEXT    NOT NULL PRIMARY KEY,
@@ -98,7 +84,6 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_stop_cmd" ON "${MCP_INSTALL_TABLE}" ("mcp_stop_cmd")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_uninstall_cmd" ON "${MCP_INSTALL_TABLE}" ("mcp_uninstall_cmd")`,
 
-    // mcp_usage 表（PRD 4.4）
     `
       CREATE TABLE IF NOT EXISTS "${MCP_USAGE_TABLE}" (
         "id"              TEXT    NOT NULL PRIMARY KEY,
@@ -114,7 +99,6 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_install" ON "${MCP_USAGE_TABLE}" ("mcp_install_id")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_date" ON "${MCP_USAGE_TABLE}" ("usage_date")`,
 
-    // mcp_config 配置表（PRD 4.5）
     `
       CREATE TABLE IF NOT EXISTS "${MCP_CONFIG_TABLE}" (
         "config_key"   TEXT    NOT NULL PRIMARY KEY,
@@ -127,9 +111,6 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CONFIG_TABLE}_updated" ON "${MCP_CONFIG_TABLE}" ("updated")`,
   ];
 
-  /**
-   * 创建所有 MCPProvider 表（IF NOT EXISTS）。
-   */
   init(): void {
     for (const ddl of this.ddlStatements) {
       if (typeof ddl === 'string') {
@@ -138,7 +119,7 @@ export class MCPSchemaInitializer {
       }
       try {
         this.relationDb.executeRaw(ddl.sql);
-      } catch { /* 幂等容忍：忽略原因见该条目 ignoreReason */ }
+      } catch {  }
     }
   }
 }

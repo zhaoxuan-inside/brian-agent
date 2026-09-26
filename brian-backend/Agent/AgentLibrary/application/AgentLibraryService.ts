@@ -62,7 +62,6 @@ function mapAgent(row: Record<string, unknown>): AgentRecord {
   };
 }
 
-/** JSON id 列表列解析（数据处理；坏值回退空数组） */
 function parseIdList(raw: unknown): string[] {
   if (typeof raw !== 'string' || !raw.trim()) return [];
   try {
@@ -111,11 +110,10 @@ export class AgentLibraryService {
       insertFields.push({ field: 'agent_purpose', value: input.agent_purpose });
     }
 
-    // ===== 2026-09-11：created_by 归属列随 insert 写入；老表缺列时容错降级重插 =====
     try {
       await this.relationDb.insert(AGENT_TABLE, insertFields);
     } catch {
-      // 容错降级：老表缺 created_by 列时去掉该列重新插入（agent_purpose 保留 —— 是匹配依据）
+
       const fallbackFields = insertFields.filter((f) => f.field !== 'created_by');
       await this.relationDb.insert(AGENT_TABLE, fallbackFields);
     }
@@ -126,7 +124,7 @@ export class AgentLibraryService {
   async matchAgent(input: MatchAgentInput, output: MatchAgentOutput, ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
-    // 统一百分制阈值（0-100）
+
     const rawThreshold = input.similarity_threshold ?? config?.similarity_threshold ?? 70;
     const threshold = rawThreshold > 0 && rawThreshold <= 1 ? Math.round(rawThreshold * 100) : Math.round(rawThreshold);
 
@@ -145,8 +143,6 @@ export class AgentLibraryService {
       return true;
     }
 
-    // ===== 修改后的方法（弃用 2-gram 关键词匹配，保留 领域匹配/语义裁判，统一百分制 0-100） =====
-    // 1. 第一层匹配：领域与特征精确/包含匹配 (百分制)
     const queryText = (input.task_content || input.task_signature || '').trim();
     const domainA = input.task_signature.match(/^\[(.*?)\]/)?.[1] || '';
     let bestScore = 0;
@@ -188,7 +184,6 @@ export class AgentLibraryService {
       return true;
     }
 
-    // 2. 第二层匹配：提交给大模型，由 LLM 基于 Agent 列表用途/名称与提问进行语义评估打分（百分制 0-100）
     const promptTemplateId = config?.prompt_template_id ?? '';
     const llmMatched = await this.llmMatchAgent(
       input.task_content || input.task_signature,
@@ -211,7 +206,6 @@ export class AgentLibraryService {
       }
     }
 
-    // 3. 两层匹配均未命中，触发 Agent 重构
     output.agent_id = '';
     output.similarity_score = Math.max(bestScore, normalizedLlmScore);
     output.matched_by = '';
@@ -219,7 +213,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  // ===== 修改后：新增 agent_purpose 持久化（对应前端"描述"字段）=====
   async updateAgent(input: UpdateAgentInput, _output: UpdateAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const existing = await this.relationDb.selectOne(AGENT_TABLE, [
@@ -251,11 +244,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  /**
-   * 绑定组件到 Agent（绑定唯一事实源：agent 表；幂等 upsert，同 kind 全量替换）。
-   *
-   * soul/prompt 单值（取 component_ids 首个），skill/mcp 全量列表；由 Agent 模块评估链路调用。
-   */
   async bindAgentComponent(input: BindAgentComponentInput, output: BindAgentComponentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const record = await this.soAgentRecordForBinding(input.agent_id);
@@ -268,9 +256,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  /**
-   * 解绑 Agent 组件（幂等；component_ids 缺省解绑该类全部）。
-   */
   async unbindAgentComponent(input: UnbindAgentComponentInput, output: UnbindAgentComponentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const record = await this.soAgentRecordForBinding(input.agent_id);
@@ -289,7 +274,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  /** 按 agent_id 查询 agent 行（逻辑控制；绑定 API 内部取数） */
   private async soAgentRecordForBinding(agentId: string): Promise<AgentRecord> {
     if (!agentId) {
       throw new ValidationError('agent_id 为必填');
@@ -303,7 +287,6 @@ export class AgentLibraryService {
     return mapAgent(row);
   }
 
-  /** 读取当前绑定列表（数据处理） */
   private soCurrentBinding(record: AgentRecord, kind: ComponentKind): string[] {
     if (kind === ComponentKind.Soul) return record.soul_id ? [record.soul_id] : [];
     if (kind === ComponentKind.Skill) return record.skill_ids;
@@ -311,7 +294,6 @@ export class AgentLibraryService {
     return record.prompt_template_id ? [record.prompt_template_id] : [];
   }
 
-  /** 绑定补丁组装（数据处理；soul/prompt 单值取首个，skill/mcp JSON 序列化） */
   private prepareBindingPatch(kind: ComponentKind, ids: string[], record: AgentRecord): Record<string, unknown> {
     const patch: Record<string, unknown> = {};
     if (kind === ComponentKind.Soul) {
@@ -338,7 +320,7 @@ export class AgentLibraryService {
     }
 
     let deleted = 0;
-    // ===== 2026-09-11：解散守卫 —— 用户创建（created_by=user）的 Agent 不允许系统删除 =====
+
     await this.assertNotUserOwned(input.ids);
     for (const id of input.ids) {
       if (!id) continue;
@@ -348,27 +330,22 @@ export class AgentLibraryService {
       if (rows.length === 0) continue;
       const agentId = String(rows[0].agent_id);
 
-      // 删除使用统计（agent_usage）
       await this.relationDb.delete(AGENT_USAGE_TABLE, [
         { field: 'agent_id', operator: Operator.EQ, value: agentId },
       ]);
 
-      // 删除关联数据：LLM 绑定（仍在 LLMProvider agent_llm）+ 组件 usage（评估依据，按 agent_id 键）
       try {
         this.relationDb.executeRaw(`DELETE FROM "agent_llm" WHERE "agent_id" = ?`, [agentId]);
-      } catch { /* 表可能不存在 */ }
+      } catch {  }
       for (const table of ['skill_usage', 'soul_core_usage', 'agent_mcp_usage']) {
         try {
           this.relationDb.executeRaw(`DELETE FROM "${table}" WHERE "agent_id" = ?`, [agentId]);
         } catch (err) {
-          /* 表可能不存在 */
-          // 预期内容忍：可选 usage 表在旧库可能尚未建表；删除失败仅遗留少量统计残留，
-          // 主记录（agent 表）随后无条件删除
+
           void err;
         }
       }
 
-      // 删除主记录
       const n = await this.relationDb.delete(AGENT_TABLE, [
         { field: 'id', operator: Operator.EQ, value: id },
       ]);
@@ -378,8 +355,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  // ===== 新增方法（2026-09-11）：删除守卫 —— 用户创建（created_by=user）的 Agent 不允许系统删除 =====
-  /** 删除守卫（逻辑控制）：任一目标行归属 user 时 fail-loud */
   private async assertNotUserOwned(internalIds: string[]): Promise<void> {
     const targets = internalIds.filter(Boolean);
     if (targets.length === 0) {
@@ -416,7 +391,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  // ===== 修改后：新增按日统计 agent_usage_daily（upsert 当天计数）=====
   async recordAgentUsage(input: RecordAgentUsageInput, _output: RecordAgentUsageOutput, ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.agent_id) throw new ValidationError('agent_id 为必填');
@@ -439,7 +413,6 @@ export class AgentLibraryService {
       { field: 'usage_context', value: input.usage_context ?? '' },
     ]);
 
-    // 按日统计 upsert：当天已有记录则 usage_count + 1，否则新增
     const usageDate = IdGenerator.today();
     const daily = await this.relationDb.selectOne(AGENT_USAGE_DAILY_TABLE, [
       { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
@@ -503,12 +476,6 @@ export class AgentLibraryService {
     return true;
   }
 
-  /**
-   * 老化：ALL rules must be satisfied。
-   * 对每个非系统 Agent，当且仅当「每一条规则」都满足
-   * (窗口内 usage < min_usage_count 且 eval_score < min_eval_score) 时才禁用。
-   */
-  // ===== 修改后：按日统计表 agent_usage_daily 按 usage_date 日期窗口统计 =====
   async ageAgent(_input: AgeAgentInput, output: AgeAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const ruleRows = await this.relationDb.select(AGENT_OPT_RULE_TABLE);
@@ -535,7 +502,7 @@ export class AgentLibraryService {
 
       let allRulesMet = true;
       for (const rule of rules) {
-        // 按日期窗口统计：usage_date >= 截止日期（YYYY-MM-DD）
+
         const cutoffDate = IdGenerator.dateOf(now - rule.days * 24 * 60 * 60 * 1000);
         const dailyRows = await this.relationDb.queryRaw<{ total: number }>(
           `SELECT COALESCE(SUM("usage_count"), 0) AS "total" FROM "${AGENT_USAGE_DAILY_TABLE}" WHERE "agent_id" = ? AND "usage_date" >= ?`,
@@ -660,7 +627,7 @@ export class AgentLibraryService {
           { field: 'match_score_threshold', value: 70 },
         ]);
       } catch {
-        // ===== 2026-09-11：老测试库缺 match_score_threshold 列时容错重插（去新列重试） =====
+
         await this.relationDb.insert(AGENT_LIBRARY_CONFIG_TABLE, [
           { field: 'id', value: IdGenerator.generate() },
           { field: 'created', value: now },
@@ -709,7 +676,7 @@ export class AgentLibraryService {
       }
       data.push({ field: 'max_agent_count', value: input.max_agent_count });
     }
-    // ===== 2026-09-11：Agent 匹配 LLM 采纳阈值（配置中心 Agent 库参数页可调） =====
+
     if (input.match_score_threshold !== undefined) {
       if (input.match_score_threshold < 0 || input.match_score_threshold > 100) {
         throw new ValidationError('match_score_threshold 必须在 0-100');
@@ -759,10 +726,6 @@ export class AgentLibraryService {
     };
   }
 
-  /**
-   * 解析用于 Agent 匹配排序的 LLM：优先默认启用的非 embedding 文本模型。
-   * 仅作为"排序执行者"，与 Agent 绑定无关（绑定只存在于 LLMProvider 的 agent_llm）。
-   */
   private async resolveRankerLlm(): Promise<string> {
     try {
       const so = new SoLLMOutput();
@@ -775,16 +738,13 @@ export class AgentLibraryService {
     }
   }
 
-  /**
-   * 第二层匹配：提交给大模型 (LLM)，依据 Agent 列表用途/名称与提问进行评估打分。
-   */
   private async llmMatchAgent(
     taskContent: string,
     candidates: AgentRecord[],
     promptTemplateId?: string,
     biz?: { session_id?: string; run_id?: string; work_id?: string },
   ): Promise<{ agent_id: string; score: number } | null> {
-    // 排序 LLM 从 llm_available 解析（默认文本模型优先），不再依赖 agent 表 llm_id
+
     const llmId = await this.resolveRankerLlm();
     if (!llmId) return null;
 
@@ -796,7 +756,7 @@ export class AgentLibraryService {
     }));
 
     const candidatesJson = JSON.stringify(candidateList, null, 2);
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染失败 fail-loud（模板统一由 prompt_template 表承载） =====
+
     let prompt = '';
     const id = promptTemplateId || await this.soMatchPromptTemplateId();
     const promptOut = new ExecPromptOutput();
@@ -851,7 +811,6 @@ export class AgentLibraryService {
     return {};
   }
 
-  /** 获取 Agent 匹配模板 ID（逻辑控制） */
   private async soMatchPromptTemplateId(): Promise<string> {
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
       { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' },

@@ -1,23 +1,12 @@
-/**
- * @fileoverview ask_user 编排原语工具（OpenCode question 范式；Tools-PRD §5）。
- *
- * 澄清/确认：Agent 用它向用户提问并挂起等待（Deferred），答复经 HTTP 恢复为
- * **下一条 user 消息**（非状态机分支；Runs-PRD §4 映射表）。挂起前经 emitEvent
- * 发 `permission.asked`（复用权限卡事件通道，payload 携带 question/kind），
- * 应答后发 `permission.answered`。超时归一为未应答（错误结果回流，模型可自行收尾）。
- */
-
 import { z } from 'zod';
 import { IdGenerator, ValidationError } from '@brian-agent/base';
 import { SkillResultStatus } from '../domain/types';
 import type { SkillDef, SkillExecutionContext } from '../domain/types';
 
-/** ask_user 依赖：挂起等待用户答复（组合根注入 RunGatewayAccess.waitUserAnswer 适配） */
 export interface AskUserDeps {
   waitAnswer(input: { ask_id: string; run_id: string; session_key: string }): Promise<{ answer: string; answered: boolean }>;
 }
 
-/** ask_user 工具（Deferred 挂起；答复经 answerUserAsk 恢复为下一条 user 消息） */
 export function askUserSkill(deps: AskUserDeps): SkillDef<{ question: string; kind?: string }> {
   return {
     id: 'skill_builtin-ask-user',
@@ -40,7 +29,6 @@ export function askUserSkill(deps: AskUserDeps): SkillDef<{ question: string; ki
   };
 }
 
-/** 执行提问挂起（逻辑控制）：permission.asked → Deferred 等待 → permission.answered */
 async function executeAskUser(
   deps: AskUserDeps,
   args: { question: string; kind?: string },

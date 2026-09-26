@@ -1,16 +1,3 @@
-/**
- * @fileoverview LogProvider 应用服务层。
- *
- * 日志只写入 SQLite（log_record 表），不写入本地文件。
- * 日志规则（log_rule）和配置项（log_config）存储于关系数据库。
- *
- * 日志老化策略（从 log_config 表读取，运行时实时生效）：
- * - retention_days：日志保留天数，默认 30 天，超过自动清理；
- * - max_log_count：日志最大保留条数，默认 70 万条，超过自动清理最旧记录。
- *
- * 实现所有用例：addLog / soLogById / soLog / delLog / countLog / visualizedLog / enableLog。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { newRecord } from '../../shared/query';
 import { Report } from '../../shared/base/Report';
@@ -49,31 +36,23 @@ import {
   DEFAULT_MIN_LEVEL,
 } from '../domain/types';
 
-/**
- * LogProvider 应用服务。
- *
- * 日志只写入 SQLite，不写文件。
- * 日志规则与配置项存储于关系数据库（log_rule / log_config 表）。
- */
 export class LogService {
   private enabled = true;
   private readonly config: ConfigService;
   private rules: LogRule[] = [];
-  /** 日志保留天数（从配置读取，缓存） */
+
   private retentionDays = DEFAULT_RETENTION_DAYS;
-  /** 日志最大保留条数（从配置读取，缓存） */
+
   private maxLogCount = DEFAULT_MAX_LOG_COUNT;
-  /** 默认日志级别（addLog 未指定 level 时使用，从配置读取，缓存） */
+
   private defaultLevel = 'INFO';
-  /** 最低日志级别（低于此级别的日志不记录，从配置读取，缓存） */
+
   private minLevel = DEFAULT_MIN_LEVEL;
 
-  /** 老化执行最小间隔（毫秒），避免高频写入时频繁全表扫描 */
   private static readonly AGING_INTERVAL_MS = 60_000;
-  /** 上次老化执行时间戳 */
+
   private lastAgingAt = 0;
 
-  /** 日志级别权重（用于 min_level 过滤比较，数值越大级别越高） */
   private static readonly LEVEL_WEIGHT: Record<string, number> = {
     DEBUG: 0,
     INFO: 1,
@@ -85,9 +64,8 @@ export class LogService {
     this.config = new ConfigService(relationDb, LOG_CONFIG_TABLE);
   }
 
-  /** 初始化：写入默认配置、恢复 enabled 状态、加载日志规则、读取老化参数 */
   async initialize(): Promise<void> {
-    // 写入默认配置项（仅在配置项不存在时写入，不覆盖已有值）
+
     await this.config.initDefaults([
       { config_key: 'enabled', config_value: 'true', value_type: 'BOOLEAN', description: 'LogProvider 是否启用' },
       { config_key: 'default_level', config_value: 'INFO', value_type: 'STRING', description: '默认日志级别' },
@@ -105,7 +83,6 @@ export class LogService {
     await this.applyAging();
   }
 
-  /** 从 log_rule 表加载规则到内存缓存 */
   private async loadRules(): Promise<void> {
     const rows = await this.relationDb.select(LOG_RULE_TABLE, {
       order_by: [{ field: 'source', direction: 'ASC' }],
@@ -117,12 +94,6 @@ export class LogService {
     }));
   }
 
-  /**
-   * 判断指定模块/方法的日志是否应该被记录。
-   *
-   * 匹配优先级：精确匹配 > 通配符匹配（`*`）。
-   * 无规则时默认全量记录。
-   */
   shouldLog(source: string, method: string): boolean {
     if (this.rules.length === 0) {
       return true;
@@ -150,34 +121,21 @@ export class LogService {
     return bestMatch ? bestMatch.enable : true;
   }
 
-  // -------------------------------------------------------------------------
-  // 老化策略
-  // -------------------------------------------------------------------------
-
-  /**
-   * 执行日志老化：
-   * 1. 删除超过 retention_days 天的日志；
-   * 2. 若仍超过 max_log_count，删除最旧记录直至条数达标。
-   *
-   * @returns 被清理的日志条数
-   */
   async applyAging(metrics?: Metrics): Promise<number> {
     let deleted = 0;
 
-    // 1. 删除超过保留天数的日志
     const cutoff = Date.now() - this.retentionDays * 24 * 60 * 60 * 1000;
     try {
       deleted += await this.relationDb.delete(LOG_RECORD_TABLE, [
         { field: 'created', operator: Operator.LT, value: cutoff },
       ]);
     } catch (err) {
-      // 忽略异常
+
       metrics?.warn('LogService.applyAging 按保留天数清理过期日志失败', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
 
-    // 2. 裁剪到最大条数（删除最旧记录）
     try {
       const total = await this.relationDb.count(LOG_RECORD_TABLE);
       const excess = total - this.maxLogCount;
@@ -189,7 +147,7 @@ export class LogService {
         deleted += excess;
       }
     } catch (err) {
-      // 忽略异常
+
       metrics?.warn('LogService.applyAging 按最大条数裁剪日志失败', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -198,7 +156,6 @@ export class LogService {
     return deleted;
   }
 
-  /** 节流触发老化，避免高频写入时频繁全表扫描 */
   private scheduleAging(metrics?: Metrics): void {
     const now = Date.now();
     if (now - this.lastAgingAt >= LogService.AGING_INTERVAL_MS) {
@@ -207,12 +164,6 @@ export class LogService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 日志管理
-  // -------------------------------------------------------------------------
-
-  /** 写入日志到 SQLite（addLog） */
-  // ===== 修改后的方法（增加 min_level 过滤）=====
   async addLog(input: AddLogInput, output: AddLogOutput, _context: LogContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -227,7 +178,6 @@ export class LogService {
       throw new ValidationError('message 不能为空');
     }
 
-    // 低于 min_level 的日志静默丢弃，不写入
     if (this.shouldDropByMinLevel(data.level)) {
       return true;
     }
@@ -251,9 +201,7 @@ export class LogService {
         }),
       );
     } catch {
-      // SQLite 写入失败不影响业务。
-      // 注意：LogService 自身是全系统日志落库通道，此处禁止再调用 metrics/logger
-      // （会经 logger.warn → addLog 递归回本方法，写失败时无限递归），故保持静默。
+
     }
 
     this.scheduleAging(metrics);
@@ -262,7 +210,6 @@ export class LogService {
     return true;
   }
 
-  /** 判断某级别日志是否应被 min_level 过滤丢弃 */
   private shouldDropByMinLevel(level: string): boolean {
     const weight = LogService.LEVEL_WEIGHT[level.toUpperCase()];
     if (weight === undefined) {
@@ -272,12 +219,10 @@ export class LogService {
     return weight < minWeight;
   }
 
-  /** 将数据库行转换为 LogRecord */
   private rowToLogRecord(row: Record<string, unknown>): LogRecord {
     return rowToLogRecord(row);
   }
 
-  /** 获取日志（soLogById）- 从 SQLite 中查找第一条匹配记录 */
   async soLogById(input: GetLogInput, output: GetLogOutput, _context: LogContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -310,7 +255,6 @@ export class LogService {
     return true;
   }
 
-  /** 搜索日志（soLog）- 从 SQLite 查询并过滤 */
   async soLog(input: SoLogInput, output: SoLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -331,7 +275,6 @@ export class LogService {
     return true;
   }
 
-  /** 删除日志（delLog）- 从 SQLite 删除 */
   async delLog(input: DelLogInput, output: DelLogOutput, _context: LogContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -359,7 +302,7 @@ export class LogService {
         deletedCount += await this.relationDb.delete(LOG_RECORD_TABLE, input.conditions);
       }
     } catch (err) {
-      // 忽略异常
+
       metrics?.warn('LogService.delLog 删除日志失败（已删除部分计数见 affected_rows）', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -369,7 +312,6 @@ export class LogService {
     return true;
   }
 
-  /** 统计日志数量（countLog）- 从 SQLite 统计 */
   async countLog(input: CountLogInput, output: CountLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -395,11 +337,6 @@ export class LogService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 可视化
-  // -------------------------------------------------------------------------
-
-  /** 可视化数据（visualizedLog） */
   async visualizedLog(input: VisualizedLogInput, output: VisualizedLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -450,18 +387,12 @@ export class LogService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 运维
-  // -------------------------------------------------------------------------
-
-  /** 校验组件是否启用 */
   private ensureEnabled(): void {
     if (!this.enabled) {
       throw new ComponentDisabledError('Log');
     }
   }
 
-  /** 配置日志记录规则（enableLog） */
   async enableLog(input: EnableLogInput, _output: EnableLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.rules || input.rules.length === 0) {
@@ -503,7 +434,6 @@ export class LogService {
     return true;
   }
 
-  /** 配置日志组件（configLog） */
   async configLog(input: ConfigLogInput, output: ConfigLogOutput, _context: LogContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     let agingChanged = false;
@@ -542,7 +472,6 @@ export class LogService {
       agingChanged = true;
     }
 
-    // 老化参数变更后立即执行一次清理，使新配置即时生效
     if (agingChanged) {
       await this.applyAging();
     }
@@ -557,7 +486,6 @@ export class LogService {
     return true;
   }
 
-  /** 从 SQLite 查询日志记录（queryLogs） */
   async queryLogs(options: {
     level?: string;
     source?: string;
@@ -601,8 +529,6 @@ export class LogService {
       conditions.push({ field: 'created', operator: Operator.LE, value: options.end_time });
     }
 
-    // 分页参数钳制：pageSize 上限 500，防止异常入参一次性物化大量行
-    // 阻塞事件循环（log_record 为高频写入大表，全量拉取代价高）
     const page = Math.max(1, Math.floor(options.page ?? 1) || 1);
     const pageSize = Math.min(500, Math.max(1, Math.floor(options.pageSize ?? 50) || 50));
 
@@ -622,7 +548,6 @@ export class LogService {
     return { logs, total };
   }
 
-  /** 从 SQLite 统计日志级别分布（soLogStats） */
   async soLogStats(options?: {
     start_time?: number;
     end_time?: number;
@@ -653,7 +578,6 @@ export class LogService {
     };
   }
 
-  /** 从 SQLite 查询所有出现过的日志来源模块（source 去重列表，用于筛选下拉菜单） */
   async listSources(): Promise<string[]> {
     this.ensureEnabled();
     const rows = this.relationDb.queryRaw<{ source: string }>(

@@ -56,7 +56,6 @@ import { buildAgentBuildSummary } from '../domain/services/AgentBuildSummaryDoma
 import type { AgentBuildAnalysis } from '../domain/services/AgentBuildSummaryDomainService';
 import type { AgentRecord } from '../../AgentLibrary/domain/types';
 
-/** 构建期组件装配结果（策略/LLM/技能/MCP/人格 + 命名与 Prompt 选择） */
 interface AgentBuildComponents {
   strategyId: string;
   llmId: string;
@@ -68,13 +67,6 @@ interface AgentBuildComponents {
   agentPurpose: string;
 }
 
-/**
- * AgentBuilder：组装 Agent 实例。
- * - LLM/Skill/MCP/Soul 匹配全部委托 Core，Agent 层不做 llm_model 自选。
- * - optimizeAgent 由 EvolutorAgent 在评估后决定是否调用；用于保存策略与工具绑定调整。
- * - Skill/MCP 绑定的写入与读取均经由 SkillCore/MCPCore 的接口完成，Agent 层不直接
- *   操作 Core 的 agent_skill / agent_mcp 绑定表。
- */
 export class AgentBuilderService {
   constructor(
     private readonly relationDb: RelationDBAccess,
@@ -91,10 +83,6 @@ export class AgentBuilderService {
     private readonly streamAccess?: StreamAccess,
   ) {}
 
-  // ===== 修改后的方法（2026-09-19）：构建阶段每个组件的选择/生成逐一上报 ——
-  // llm/skill/mcp/soul/prompt 在各自 Core 匹配完成后即时 emit（LLM/Skill/MCP/Soul/Prompt 组件
-  // 各自的「选定」事件带 stage='build' 与选择原因），使 thinking 过程可看到本次新建 Agent
-  // 的组件装配明细，而不是只在最终 agent.components 汇总一处 =====
   async buildAgent(input: BuildAgentInput, output: BuildAgentOutput, ctx: AgentBuilderContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
@@ -106,7 +94,6 @@ export class AgentBuilderService {
 
     await this.emitAgentBuildingEvent(sessionId, workId, runId, agentId, input.task_content);
 
-    // 先通过 Core 为该 agent 匹配 LLM，供任务分析使用（禁止 llm_model LIMIT 1）
     const analysisLlm = await this.matchLlmForAgent(agentId, input.run_id, metrics, report);
     const analysis = await this.analyzeTask(input, config, analysisLlm, metrics, report);
 
@@ -124,15 +111,10 @@ export class AgentBuilderService {
     await this.archiveAgentBuild(sessionId, workId, runId, agentId, analysis, components, metrics);
     await this.emitAgentBuiltEvent(sessionId, workId, runId, agentId, analysis, components);
 
-    // 自动优化由 Evolutor 评估后经 MQ 触发 optimizeAgent，auto_optimize 开关在 optimizeAgent 入口读取
     output.agent_id = agentId;
     return true;
   }
 
-  /**
-   * 由 EvolutorAgent 在 need_optimize 时调用。
-   * 重新匹配策略与 Core 组件，并将变更写回 agent 表与 Core 绑定表。
-   */
   async optimizeAgent(input: OptimizeAgentInput, output: OptimizeAgentOutput, ctx: AgentBuilderContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
@@ -158,9 +140,7 @@ export class AgentBuilderService {
     return true;
   }
 
-  // ===== 修改后的系统 Agent 配置映射（纯汉字功能名称，不含助手后缀，系统属性由 created_by/agent_type 独立保存） =====
   private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
-    PLANNER: { strategyLabel: 'Plan-and-Solve', signatureKey: 'planner', defaultName: '任务规划' },
     WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '写作汇总' },
     EVOLUTOR: { strategyLabel: 'ReAct', signatureKey: 'evolutor', defaultName: '进化评估' },
     SUMMARY: { strategyLabel: 'CoT', signatureKey: 'summary', defaultName: '内容摘要' },
@@ -189,8 +169,7 @@ export class AgentBuilderService {
     }
 
     const agentId = IdGenerator.generate();
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm，构建时经 matchLLM 写入（此处解析仅用于任务分析）
-    // matchLLM 有副作用：写入 agent_llm 绑定（返回值此处不使用）
+
     await this.matchLlmForAgent(agentId, ctx.run_id || '');
     let soulId = '';
     if (agentType !== 'SUMMARY' && agentType !== 'INTENT') {
@@ -278,11 +257,6 @@ export class AgentBuilderService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // buildAgent 私有步骤（构建编排的各语义阶段）
-  // ---------------------------------------------------------------------------
-
-  /** 推送 agent_building 流事件（构建起点 ANALYZING 状态；无流会话时静默跳过）。 */
   private async emitAgentBuildingEvent(sessionId: string, workId: string, runId: string, agentId: string, taskContent: string): Promise<void> {
     if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
       await this.streamAccess.pushEvent(sessionId, 'agent_building', 'AGENT_SPEC', {
@@ -292,7 +266,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** 非强制新建时按签名匹配既有 Agent：命中即记录使用并复用（返回 true），未命中返回 false。 */
   private async reuseMatchedAgent(
     input: BuildAgentInput, output: BuildAgentOutput, libCtx: AgentLibraryContext,
     agentId: string, sessionId: string, workId: string, runId: string, signature: string,
@@ -318,7 +291,6 @@ export class AgentBuilderService {
     return true;
   }
 
-  /** 记录命中 Agent 的使用次数（usage 统计，供老化与评估频率判定）。 */
   private async recordMatchedAgentUsage(
     agentId: string, libCtx: AgentLibraryContext, workId: string, runId: string,
     metrics?: Metrics, report?: Report,
@@ -336,7 +308,6 @@ export class AgentBuilderService {
     );
   }
 
-  /** 推送 agent_matched 流事件（meta.agent_id 为本次构建临时 ID，与 agent_building 事件对齐，前端据此定位占位卡片）。 */
   private async emitAgentMatchedEvent(sessionId: string, workId: string, runId: string, agentId: string, matchOut: MatchAgentOutput): Promise<void> {
     if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
       await this.streamAccess.pushEvent(sessionId, 'agent_matched', 'AGENT_SPEC', {
@@ -347,7 +318,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** 匹配执行策略（按任务内容/复杂度/领域）；未命中抛 ValidationError。 */
   private async matchStrategyForAgent(taskContent: string, complexity: number, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
     const strategyOut = new MatchStrategyOutput();
     await this.agentStrategy.matchStrategy(
@@ -367,7 +337,6 @@ export class AgentBuilderService {
     return strategyOut.strategy_id;
   }
 
-  /** 构建阶段经 Core.matchLLM 选定 LLM（绑定事实源 = agent_llm，由 matchLLM 写入），并即时上报 LlmSelected 事件。 */
   private async matchLlmForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, fallbackLlmId: string, metrics?: Metrics, report?: Report): Promise<string> {
     const llmOut = new MatchLLMOutput();
     await this.llmCore.matchLLM(
@@ -382,7 +351,7 @@ export class AgentBuilderService {
       report,
     );
     const llmId = llmOut.llm_id || fallbackLlmId || '';
-    // ===== 2026-09-19：LLM 组件选定体现（构建阶段；绑定事实源 = agent_llm，由 matchLLM 写入） =====
+
     report?.pushBusinessEvent(BusinessEvent.LlmSelected, {
       llm_id: llmId,
       stage: 'build',
@@ -391,7 +360,6 @@ export class AgentBuilderService {
     return llmId;
   }
 
-  /** 构建阶段经 Core.matchSkill 选定技能（纯选择，绑定落 agent 表 skill_ids），并即时上报 SkillSelected 事件。 */
   private async matchSkillForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<MatchSkillOutput> {
     const skillOut = new MatchSkillOutput();
     await this.skillCore.matchSkill(
@@ -405,17 +373,33 @@ export class AgentBuilderService {
       metrics,
       report,
     );
-    // ===== 2026-09-19：Skill 组件选定体现（构建阶段；绑定落 agent 表 skill_ids） =====
+
+    const selected = this.soSelectedSkillEntries(skillOut);
     report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
       source: 'build',
-      skills: (skillOut.skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
-      reason: `skillCore.matchSkill 判定终态=match_detail=${skillOut.detail ?? 'unknown'}（技能数 ${(skillOut.skills ?? []).length}）`,
-      skills_count: (skillOut.skills ?? []).length,
+      skills: selected,
+      system_skills: (skillOut.system_skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
+      reason: `skillCore.matchSkill 判定终态=match_detail=${skillOut.detail ?? 'unknown'}（选中技能数 ${selected.length}，其中系统级 ${(skillOut.system_skills ?? []).length} 个恒选中、沉淀命中 ${(skillOut.skills ?? []).length} 个）`,
+      skills_count: selected.length,
+      system_skills_count: (skillOut.system_skills ?? []).length,
     });
     return skillOut;
   }
 
-  /** 构建阶段经 Core.matchMCP 选定外部工具通道（纯选择，绑定落 agent 表 mcp_ids），并即时上报 McpSelected 事件。 */
+  private soSelectedSkillEntries(skillOut: MatchSkillOutput): Array<{ id: string; brief: string; system?: boolean }> {
+    const merged = new Map<string, { id: string; brief: string; system?: boolean }>();
+    for (const s of skillOut.system_skills ?? []) {
+      merged.set(s.skill_id, { id: s.skill_id, brief: s.skill_brief, system: true });
+    }
+    for (const s of skillOut.skills ?? []) {
+      const isSystem = s.skill_id.startsWith('skill_builtin-');
+      if (!merged.has(s.skill_id)) {
+        merged.set(s.skill_id, { id: s.skill_id, brief: s.skill_brief, system: isSystem || undefined });
+      }
+    }
+    return [...merged.values()];
+  }
+
   private async matchMcpForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<MatchMcpOutput> {
     const mcpOut = new MatchMcpOutput();
     await this.mcpCore.matchMCP(
@@ -429,7 +413,7 @@ export class AgentBuilderService {
       metrics,
       report,
     );
-    // ===== 2026-09-19：MCP 组件选定体现（构建阶段；绑定落 agent 表 mcp_ids） =====
+
     report?.pushBusinessEvent(BusinessEvent.McpSelected, {
       stage: 'build',
       mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, brief: '' })),
@@ -439,7 +423,6 @@ export class AgentBuilderService {
     return mcpOut;
   }
 
-  /** 构建阶段经 Core.matchSoul 按任务领域选择/生成人格（命中即复用、未命中由 Core 生成入库），并即时上报 SoulSelected 事件。 */
   private async matchSoulForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, taskContent: string, taskDomain: string, metrics?: Metrics, report?: Report): Promise<MatchSoulOutput> {
     const soulOut = new MatchSoulOutput();
     await this.soulCore.matchSoul(
@@ -455,7 +438,7 @@ export class AgentBuilderService {
       metrics,
       report,
     );
-    // ===== 2026-09-19：Soul 组件选定/生成体现（构建阶段；命中即复用、未命中由 Core 生成入库） =====
+
     report?.pushBusinessEvent(BusinessEvent.SoulSelected, {
       soul_id: soulOut.soul_id || '',
       brief: String(soulOut.soul?.soul_brief ?? '').slice(0, 200),
@@ -467,10 +450,9 @@ export class AgentBuilderService {
     return soulOut;
   }
 
-  /** 选择 Prompt 模板（LLM 语义评分 ≥75 采纳特定模板，否则回退空串走执行侧内置身份模板），并即时上报 PromptSelected 事件。 */
   private async selectPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
     const promptTemplateId = await this.matchPromptForAgent(taskText, domain, metrics, report);
-    // ===== 2026-09-19：Prompt 组件选定体现（构建阶段；LLM 语义评分 ≥75 才采纳特定模板，否则回退内置身份模板） =====
+
     report?.pushBusinessEvent(BusinessEvent.PromptSelected, {
       template_id: promptTemplateId,
       stage: 'build',
@@ -481,7 +463,6 @@ export class AgentBuilderService {
     return promptTemplateId;
   }
 
-  /** 装配新 Agent 全部组件：策略 → LLM → 技能 → MCP → 人格 → 命名 → Prompt → 用途说明（顺序即上报顺序）。 */
   private async assembleAgentComponents(
     input: BuildAgentInput, ctx: AgentBuilderContext, agentId: string,
     analysis: AgentBuildAnalysis, analysisLlm: string,
@@ -506,7 +487,6 @@ export class AgentBuilderService {
     return { strategyId, llmId, skillOut, mcpOut, soulOut, agentName, promptTemplateId, agentPurpose };
   }
 
-  /** 持久化新 Agent（addAgent 落 agent 表，构建期组件选择直接落账、归属 system）；失败抛 ValidationError。 */
   private async persistBuiltAgent(libCtx: AgentLibraryContext, agentId: string, analysis: AgentBuildAnalysis, components: AgentBuildComponents): Promise<void> {
     const addOut = new AddAgentOutput();
     const ok = await this.agentLibrary.addAgent(
@@ -518,11 +498,11 @@ export class AgentBuilderService {
         task_signature: analysis.signature,
         agent_name: components.agentName,
         agent_purpose: components.agentPurpose,
-        // 绑定唯一事实源 = agent 表：构建时的选择结果直接落账
-        skill_ids: (components.skillOut.skills ?? []).map((s) => s.skill_id),
+
+        skill_ids: this.soSelectedSkillEntries(components.skillOut).map((s) => s.id),
         mcp_ids: components.mcpOut.mcp_ids ?? [],
         prompt_template_id: components.promptTemplateId,
-        // ===== 2026-09-11：自动构建的 Agent 归属 system（解散动作仅作用于系统侧） =====
+
         created_by: 'system',
       }),
       addOut,
@@ -531,14 +511,12 @@ export class AgentBuilderService {
     if (!ok) throw new ValidationError('addAgent failed');
   }
 
-  /** 构建后组件绑定收尾：技能 / MCP / 人格逐项经 Core opt 写绑定与 usage。 */
   private async bindCoreComponents(ctx: AgentBuilderContext, agentId: string, runId: string, components: AgentBuildComponents): Promise<void> {
-    await this.optSkillBindings(agentId, ctx.session_id || '', runId, (components.skillOut.skills ?? []).map((s) => s.skill_id));
+    await this.optSkillBindings(agentId, ctx.session_id || '', runId, this.soSelectedSkillEntries(components.skillOut).map((s) => s.id));
     await this.optMcpBindings(agentId, ctx.session_id || '', runId, components.mcpOut.mcp_ids ?? []);
     await this.optSoulBinding(agentId, ctx.session_id || '', runId, components.soulOut.soul_id || '');
   }
 
-  /** 为 Agent 逐个绑定技能（Core optSkill 写绑定与 usage）。 */
   private async optSkillBindings(agentId: string, contextId: string, runId: string, skillIds: string[]): Promise<void> {
     for (const skillId of skillIds) {
       await this.skillCore.optSkill(
@@ -554,7 +532,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** 为 Agent 逐个绑定 MCP（Core optMCP 写绑定与 usage）。 */
   private async optMcpBindings(agentId: string, contextId: string, runId: string, mcpIds: string[]): Promise<void> {
     for (const mcpId of mcpIds) {
       await this.mcpCore.optMCP(
@@ -570,7 +547,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** 为 Agent 绑定人格（Core optSoul 写绑定与 usage；soulId 为空跳过）。 */
   private async optSoulBinding(agentId: string, contextId: string, runId: string, soulId: string): Promise<void> {
     if (!soulId) return;
     await this.soulCore.optSoul(
@@ -585,7 +561,6 @@ export class AgentBuilderService {
     );
   }
 
-  /** 组装构建产物摘要（领域服务纯函数；info_raw 存档与 agent_built 流事件共用）。 */
   private buildBuildSummary(agentId: string, analysis: AgentBuildAnalysis, components: AgentBuildComponents): Record<string, unknown> {
     return buildAgentBuildSummary({
       agentId,
@@ -599,7 +574,6 @@ export class AgentBuilderService {
     });
   }
 
-  /** 构建过程存档（依用户规范落 info_raw，best-effort）：Agent 主体已创建完成，存档失败仅影响记忆溯源。 */
   private async archiveAgentBuild(
     sessionId: string, workId: string, runId: string, agentId: string,
     analysis: AgentBuildAnalysis, components: AgentBuildComponents,
@@ -618,15 +592,13 @@ export class AgentBuilderService {
       });
       await this.infoCore.saveInfo(saveIn, new SaveInfoOutput(), new InfoCoreContext());
     } catch (err) {
-      /* best-effort */
-      // 容忍构建过程存档失败：Agent 主体已创建完成，存档缺失仅影响记忆溯源
+
       metrics?.warn('AgentBuilderService.buildAgent 构建过程存档落库失败已容忍', {
         error: err instanceof Error ? err.message : String(err), agent_id: agentId, session_id: sessionId,
       });
     }
   }
 
-  /** 流式推送 Agent 自主构建完成事件（agent_built；无流会话时静默跳过）。 */
   private async emitAgentBuiltEvent(
     sessionId: string, workId: string, runId: string, agentId: string,
     analysis: AgentBuildAnalysis, components: AgentBuildComponents,
@@ -637,11 +609,6 @@ export class AgentBuilderService {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // optimizeAgent 私有步骤（优化编排的各语义阶段）
-  // ---------------------------------------------------------------------------
-
-  /** 加载待优化 Agent（soAgent 查 agent 表）；不存在抛 NotFoundError。 */
   private async loadOptimizeTarget(input: OptimizeAgentInput, libCtx: AgentLibraryContext): Promise<AgentRecord> {
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(
@@ -653,7 +620,6 @@ export class AgentBuilderService {
     return getOut.agents[0];
   }
 
-  /** 策略重匹配（按 usage_feedback 或原任务签名）：命中不同策略时记录变更并回写 agent 表。 */
   private async rematchStrategy(input: OptimizeAgentInput, agent: AgentRecord, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<void> {
     const strategyOut = new MatchStrategyOutput();
     await this.agentStrategy.matchStrategy(
@@ -678,13 +644,14 @@ export class AgentBuilderService {
     }
   }
 
-  /** 评估驱动解绑低使用技能：Core ageSkill 输出候选（评估依据），Agent 模块执行解绑并记录变更。 */
   private async unbindStaleSkills(input: OptimizeAgentInput, agent: AgentRecord, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<void> {
     const skillAgeOut = new AgeSkillOutput();
     await this.skillCore.ageSkill(new AgeSkillInput(), skillAgeOut, new SkillCoreContext());
     const staleSkillIds = skillAgeOut.stale_skills
       .filter((s) => s.agent_id === input.agent_id && (agent.skill_ids ?? []).includes(s.skill_id))
-      .map((s) => s.skill_id);
+
+      .map((s) => s.skill_id)
+      .filter((id) => !id.startsWith('skill_builtin-'));
     if (staleSkillIds.length === 0) return;
     await this.agentLibrary.unbindAgentComponent(
       Object.assign(new UnbindAgentComponentInput(), {
@@ -698,7 +665,6 @@ export class AgentBuilderService {
     for (const id of staleSkillIds) output.changes.push({ component: 'skill', from: id, to: '' });
   }
 
-  /** 评估驱动解绑低使用人格：Core ageSoul 输出候选，命中当前 soul 时执行解绑并记录变更。 */
   private async unbindStaleSouls(input: OptimizeAgentInput, agent: AgentRecord, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<void> {
     const soulAgeOut = new AgeSoulOutput();
     await this.soulCore.ageSoul(new AgeSoulInput(), soulAgeOut, new SoulCoreContext());
@@ -718,7 +684,6 @@ export class AgentBuilderService {
     output.changes.push({ component: 'soul', from: agent.soul_id, to: '' });
   }
 
-  /** LLM 重新匹配：绑定只写入 LLMProvider 的 agent_llm，不回写 agent 表；命中即记录变更。 */
   private async rematchLlm(input: OptimizeAgentInput, ctx: AgentBuilderContext, output: OptimizeAgentOutput): Promise<void> {
     const llmOut = new MatchLLMOutput();
     await this.llmCore.matchLLM(
@@ -735,7 +700,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** Soul 重绑定：optSoul 输出裁决与生效 soul（不落绑定），生效变化时由 Agent 模块回写 agent 表并记录变更。 */
   private async rebindSoul(input: OptimizeAgentInput, agent: AgentRecord, ctx: AgentBuilderContext, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<void> {
     const soulOut = new OptSoulOutput();
     await this.soulCore.optSoul(
@@ -763,7 +727,6 @@ export class AgentBuilderService {
     }
   }
 
-  /** Skill 整组重绑：matchSkill 已改纯选择（绑定唯一事实源 = agent 表），差异后整组回写并记录变更；返回匹配到的技能 ID。 */
   private async rebindSkills(input: OptimizeAgentInput, agent: AgentRecord, ctx: AgentBuilderContext, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<string[]> {
     const skillMatchOut = new MatchSkillOutput();
     await this.skillCore.matchSkill(
@@ -793,7 +756,6 @@ export class AgentBuilderService {
     return matchedSkillIds;
   }
 
-  /** MCP 整组重绑：同 Skill，差异后整组回写（agent 表）并记录变更；返回匹配到的 MCP ID。 */
   private async rebindMcps(input: OptimizeAgentInput, agent: AgentRecord, ctx: AgentBuilderContext, libCtx: AgentLibraryContext, output: OptimizeAgentOutput): Promise<string[]> {
     const mcpMatchOut = new MatchMcpOutput();
     await this.mcpCore.matchMCP(
@@ -822,10 +784,6 @@ export class AgentBuilderService {
     }
     return matchedMcpIds;
   }
-
-  // ---------------------------------------------------------------------------
-  // 既有私有辅助
-  // ---------------------------------------------------------------------------
 
   private async matchLlmForAgent(agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<string> {
     const llmOut = new MatchLLMOutput();
@@ -872,7 +830,7 @@ export class AgentBuilderService {
           metrics,
           report,
         );
-        // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
+
         const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
         if (!prompt) {
           throw new ValidationError(`Prompt 模板不可用或渲染为空: ${config.task_analysis_prompt_template_id}`);
@@ -951,16 +909,15 @@ export class AgentBuilderService {
     });
   }
 
-  // ===== 修改后的方法（大模型语义评判，统一百分制 0-100，过滤内部系统模板，无强匹配回退空串） =====
   private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
     try {
       const out = new SoPromptOutput();
       await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext(), metrics, report);
-      // 过滤系统内部流转组件模板（Planner DAG、Evolutor 评估、Writer 响应、Think/Reflect 阶段等）
+
       const candidates = (out.list ?? []).filter((t) => {
         if (!t.enable) return false;
         const title = t.prompt_template_title ?? '';
-        if (t.is_system && (title.includes('任务拆解') || title.includes('评估') || title.includes('汇总') || title.includes('阶段') || title.includes('Think') || title.includes('Reflect') || title.includes('Answer') || title.includes('匹配'))) {
+        if (t.is_system && (title.includes('评估') || title.includes('汇总') || title.includes('阶段') || title.includes('Think') || title.includes('Reflect') || title.includes('Answer') || title.includes('匹配'))) {
           return false;
         }
         return true;
@@ -968,7 +925,6 @@ export class AgentBuilderService {
 
       if (candidates.length === 0) return '';
 
-      // 大模型语义评判（百分制 0-100，采纳阈值 75 分）
       const execInput = new ExecLLMInput();
       execInput.prompt = [
         '为以下用户任务评估最匹配的特定提示词模板（如无高度契合的专业模板，请给出低于 70 的分数）：',
@@ -1005,10 +961,6 @@ export class AgentBuilderService {
     }
   }
 
-  /**
-   * 为新 Agent 生成说明（LLM；说明是后续 matchAgent 的匹配依据，需概括领域/职责/组件能力；透传 metrics/report）。
-   * LLM 失败时回退为任务拼串兜底。
-   */
   private async generateAgentPurpose(
     taskText: string,
     domain: string,

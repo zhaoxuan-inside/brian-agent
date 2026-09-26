@@ -42,10 +42,8 @@ const STYLE_ENUM = ['clear', 'concise', 'detailed', 'creative'];
 const DEPTH_ENUM = ['shallow', 'medium', 'deep'];
 const LANGUAGE_ENUM = ['zh-CN', 'en-US'];
 
-/** Writer 写作偏好（入参 / 会话画像 / 模块默认配置归一后的形态）。 */
 type WriterPreferences = NonNullable<WriteInput['user_preferences']>;
 
-/** Writer 单次写作的准备产物：WRITER agent 档案、ID 与 AgentLibrary 上下文。 */
 interface PreparedWriterAgent {
   agentId: string;
   agent: AgentRecord | undefined;
@@ -79,7 +77,7 @@ export class WriterAgentService {
       await this.emitErrorFallback(input, output, prepared, preferences, config, resultsCtx, startedAt, metrics);
       return true;
     }
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm：配置未指定时经 Core.matchLLM 解析
+    
     let llmId = config?.llm_id || '';
     if (!llmId && prepared.agent?.agent_id && this.llmCore) {
       llmId = await this.resolveLlm(prepared.agent.agent_id, metrics);
@@ -88,7 +86,6 @@ export class WriterAgentService {
     const prompt = await this.renderWritePrompt(input, preferences, contextExtra, resultsCtx, system, config, metrics);
     const llm = await this.execWriterLlm(input, ctx, llmId, system, prompt, metrics, _report);
     const { response, tokens } = this.applyWriteResult(output, llm, resultsCtx.results, input.user_query);
-    await this.recordWriterUsage(prepared.libCtx, prepared.agentId, input, ctx);
     output.agent_id = prepared.agentId;
     output.response = response;
     output.response_format = preferences.format || 'MARKDOWN';
@@ -96,10 +93,12 @@ export class WriterAgentService {
     await this.recordTrace(output, this.buildWriterTraceParams(prepared, input.user_query, response,
       Number(llm.eventsOutput.input_tokens ?? 0), Number(llm.eventsOutput.output_tokens ?? 0),
       String(llm.eventsOutput.result ?? ''), startedAt, config), metrics);
+    
+    await this.recordWriterUsage(prepared.libCtx, prepared.agentId, input, ctx, input.user_query, response, output.trace_id);
     return true;
   }
 
-  /** 构建 WRITER 系统 Agent 并加载其档案（构建失败抛 ValidationError）。 */
+  
   private async prepareWriterAgent(input: WriteInput, ctx: WriterAgentContext): Promise<PreparedWriterAgent> {
     const builderCtx = Object.assign(new AgentBuilderContext(), {
       session_id: ctx.session_id,
@@ -123,7 +122,7 @@ export class WriterAgentService {
     return { agentId: buildOut.agent_id, agent: getOut.agents[0], libCtx };
   }
 
-  /** 解析写作偏好：入参优先 → 会话画像 → 模块默认配置；同时读取模块配置。 */
+  
   private async resolveWritePreferences(input: WriteInput, ctx: WriterAgentContext): Promise<{
     preferences: WriterPreferences;
     config: WriterAgentConfigRecord | null;
@@ -152,18 +151,17 @@ export class WriterAgentService {
     return { preferences, config };
   }
 
-  /**
-   * 构建会话记忆上下文（多源分类包裹 + 属性脱敏）；失败降级为空上下文不阻断写作。
-   */
+  
+
   private async buildSessionContext(input: WriteInput, ctx: WriterAgentContext, metrics?: Metrics): Promise<string> {
     if (!ctx.session_id) return '';
     try {
       const ctxOut = new ContextInfoOutput();
-      // ===== 修改后（2026-09-15 采纳分析建议）：恢复快照持久化（默认 true）。
-      //      原先关闭导致 info_context_source 无本 work 记录，可视化经 soContextByWork
-      //      查不到多源上下文，只能降级展示 loop 侧时间线，造成"只见单一时间线上下文"。
-      //      多源上下文（PINNED/TIMELINE/TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）
-      //      现将随 work 落库，供 trace/可视化完整还原上下文来源 =====
+      
+      
+      
+      
+      
       await this.infoCore.context(
         Object.assign(new ContextInfoInput(), {
           session_id: ctx.session_id, work_id: ctx.work_id || '',
@@ -174,7 +172,7 @@ export class WriterAgentService {
       );
       return formatContextCategories(ctxOut);
     } catch (err) {
-      // 降级容忍：上下文构建失败不阻断写作，回退空上下文
+      
       metrics?.warn('WriterAgentService.execWrite 构建会话上下文失败，降级为空上下文', {
         error: err instanceof Error ? err.message : String(err),
         session_id: ctx.session_id, work_id: ctx.work_id,
@@ -183,7 +181,7 @@ export class WriterAgentService {
     }
   }
 
-  /** 结果全为错误时跳过 LLM：错误信息直接透传为 error_fallback 块并记录轨迹。 */
+  
   private async emitErrorFallback(
     input: WriteInput, output: WriteOutput, prepared: PreparedWriterAgent,
     preferences: WriterPreferences, config: WriterAgentConfigRecord | null,
@@ -204,7 +202,7 @@ export class WriterAgentService {
     await this.recordTrace(output, this.buildWriterTraceParams(prepared, input.user_query, errorText, 0, 0, '', startedAt, config), metrics);
   }
 
-  /** 组装 Writer 轨迹参数（agent 元数据 + 结果与 token/耗时），正常与错误透传两条路径复用。 */
+  
   private buildWriterTraceParams(
     prepared: PreparedWriterAgent, taskContent: string, response: string,
     inputTokens: number, outputTokens: number, rawResponse: string,
@@ -224,7 +222,7 @@ export class WriterAgentService {
     };
   }
 
-  /** 读取 Agent 绑定的 Soul 作为 system 角色；失败降级为无 system 角色继续（可选项缺失回退）。 */
+  
   private async loadSoulContent(agent: AgentRecord | undefined, metrics?: Metrics): Promise<string> {
     if (!agent?.soul_id || !this.soulAccess) return '';
     try {
@@ -236,7 +234,7 @@ export class WriterAgentService {
       );
       return soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
     } catch (err) {
-      // 降级容忍：Soul 读取失败按无 system 角色继续
+      
       metrics?.warn('WriterAgentService.execWrite 读取 Soul 失败，降级为无 system 角色', {
         error: err instanceof Error ? err.message : String(err),
         soul_id: agent.soul_id,
@@ -246,7 +244,7 @@ export class WriterAgentService {
     }
   }
 
-  /** 渲染 Writer 汇总 Prompt：注入任务、偏好、静态记忆上下文与动态执行上下文。 */
+  
   private renderWritePrompt(
     input: WriteInput, preferences: WriterPreferences, contextExtra: string,
     resultsCtx: WriterResultsContext, system: string, config: WriterAgentConfigRecord | null,
@@ -263,7 +261,7 @@ export class WriterAgentService {
     }, metrics);
   }
 
-  /** 构建 execLLMEvents 输入：messages 组装 + text_delta → SSE pushText 透传回调。 */
+  
   private buildWriteEventsInput(input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string): ExecLLMEventsInput {
     const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
     return Object.assign(new ExecLLMEventsInput(), {
@@ -289,7 +287,7 @@ export class WriterAgentService {
     });
   }
 
-  /** 执行 Writer LLM 调用：优先 execLLMEvents 原生流式（SSE 透传），无流式能力时降级 execLLM。 */
+  
   private async execWriterLlm(
     input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string,
     metrics?: Metrics, report?: Report,
@@ -318,7 +316,7 @@ export class WriterAgentService {
     return { ok, eventsOutput };
   }
 
-  /** 将 LLM 结果回写 output：Markdown 直出经 parseBlocks 归一；失败/空结果走纯文本降级。 */
+  
   private applyWriteResult(
     output: WriteOutput,
     llm: { ok: boolean; eventsOutput: ExecLLMEventsOutput },
@@ -326,7 +324,7 @@ export class WriterAgentService {
     userQuery: string,
   ): { response: string; tokens: number } {
     if (!llm.ok || !llm.eventsOutput.result) {
-      // 降级兜底：清理内部调试标签与前缀，以自然段落输出
+      
       const response = cleanFallbackResults(fallbackResults) || userQuery;
       output.blocks = [{
         id: IdGenerator.generate(),
@@ -337,34 +335,38 @@ export class WriterAgentService {
       return { response, tokens: 0 };
     }
     const tokens = Number((llm.eventsOutput.input_tokens ?? 0) + (llm.eventsOutput.output_tokens ?? 0));
-    // ===== 修改后（2026-09-22）：Writer 输出协议改为 Markdown 直出（writer_protocol 模板
-    // output_contract 已同步改），LLM 产物即最终回复原文，不再经 JSON content blocks 中间协议。
-    // 原因：长 JSON 输出截断即整篇报废（trace 418a19a1 实证缺尾 `]` → parse 失败 → 残缺 JSON
-    // 原文被当作回复投递）、转义膨胀 ~30% 加重截断、join(content) 压平丢弃标题层级与列表标记。
+    
+    
+    
+    
     const response = llm.eventsOutput.result.trim();
-    // parseBlocks 保留为 BlockStream 预留：对 Markdown 原文自然回退为单一 text_paragraph 全文块，接口兼容
+    
     output.blocks = this.parseBlocks(response);
     return { response, tokens };
   }
 
-  /** 记录 Writer 的 Agent 使用统计（upsert 语义）。 */
-  private async recordWriterUsage(libCtx: AgentLibraryContext, agentId: string, input: WriteInput, ctx: WriterAgentContext): Promise<void> {
+  
+  private async recordWriterUsage(libCtx: AgentLibraryContext, agentId: string, input: WriteInput, ctx: WriterAgentContext,
+    taskContent: string, agentOutput: string, traceId?: string): Promise<void> {
     await this.agentLibrary.recordAgentUsage(
       Object.assign(new RecordAgentUsageInput(), {
         agent_id: agentId,
         work_id: input.work_id || ctx.work_id || '',
         run_id: input.run_id || ctx.run_id || '',
+        
+        usage_context: JSON.stringify({
+          trace_id: traceId || '',
+          task_content: taskContent,
+          agent_output: agentOutput,
+        }),
       }),
       new RecordAgentUsageOutput(),
       libCtx,
     );
   }
 
-  /**
-   * 记录 Writer 单次 LLM 调用的执行轨迹（与 Work Agent 的 trace 存储逻辑保持一致），
-   * 供「思考过程 / 执行过程」采集 Writer 的 token 消耗与输出。
-   * best-effort：轨迹落库失败不影响汇总结果。
-   */
+  
+
   private async recordTrace(
     output: WriteOutput,
     params: {
@@ -409,8 +411,8 @@ export class WriterAgentService {
       }, metrics);
       output.trace_id = traceId;
     } catch (err) {
-      /* best-effort：轨迹记录失败不影响汇总结果 */
-      // 容忍写作轨迹落库失败：trace 为辅助数据，缺失仅影响事后回放
+      
+      
       metrics?.warn('WriterAgentService.recordTrace 写作轨迹落盘失败已容忍', {
         error: err instanceof Error ? err.message : String(err),
         agent_id: params.agentId,
@@ -575,9 +577,8 @@ export class WriterAgentService {
     };
   }
 
-  /**
-   * 渲染 Prompt：配置模板 → 内置模板 → 内存兜底。
-   */
+  
+
   private async renderPrompt(
     templateId: string | undefined,
     builtinId: string,
@@ -587,9 +588,8 @@ export class WriterAgentService {
     return renderPromptWithFallback(this.promptsAccess, templateId, builtinId, variables, metrics);
   }
 
-  /**
-   * 通过 Core.matchLLM 解析 WriterAgent 绑定的 LLM（agent_llm）。
-   */
+  
+
   private async resolveLlm(agentId: string, metrics?: Metrics): Promise<string> {
     return resolveAgentLlm(this.llmCore, agentId, metrics);
   }

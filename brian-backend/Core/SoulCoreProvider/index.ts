@@ -1,14 +1,7 @@
-/**
- * @fileoverview SoulCoreProvider 模块统一导出。
- */
-
-// access 层
 export { SoulCoreAccess } from './access/SoulCoreAccess';
 
-// infrastructure 层
 export { SoulCoreSchemaInitializer } from './infrastructure/SoulCoreSchemaInitializer';
 
-// domain 层类型
 export {
   SoulCoreContext,
   MatchSoulInput,

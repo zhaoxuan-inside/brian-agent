@@ -1,14 +1,7 @@
-/**
- * @fileoverview Session 模块统一导出（Runtime v2 · 阶段1）。
- */
-
-// access 层
 export { SessionAccess } from './access/SessionAccess';
 
-// infrastructure 层
 export { SessionSchemaInitializer } from './infrastructure/SessionSchemaInitializer';
 
-// domain 层
 export {
   SessionContext,
   AddSessionInput,

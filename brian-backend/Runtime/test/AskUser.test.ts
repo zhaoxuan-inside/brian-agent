@@ -1,13 +1,3 @@
-/**
- * @fileoverview ask_user 编排原语工具 + Runs 挂起/应答 + curator LaneSemaphore 单元测试（阶段3 收尾）。
- *
- * 覆盖（Tools-PRD §8 验收）：
- * - ask_user 挂起-恢复：permission.asked/answered 事件、答复=下一条 user 消息（answerUserAsk 落库）；
- * - 超时归一为未应答（错误结果回流 / waitUserAnswer answered=false）；
- * - 重复应答幂等（第二次 answered=false）；
- * - LaneSemaphore 并发上限（background=2）。
- */
-
 import { describe, it, expect } from 'vitest';
 import { RelationDBAccess } from '@brian-agent/base';
 import { askUserSkill } from '../SkillRuntime/application/askUserSkill';
@@ -79,7 +69,7 @@ describe('RunGatewayService waitUserAnswer/answerUserAsk（答复=下一条 user
     waitIn.session_key = 'sess-1';
     const waitOut = new WaitUserAnswerOutput();
     const pending = gateway.waitUserAnswer(waitIn, waitOut, new RunGatewayContext());
-    // 让出微任务：waitUserAnswer 注册 waiter 前有一次异步超时配置读取（生产中应答远晚于此窗口）
+    
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     const ansIn = new AnswerUserAskInput();
@@ -93,7 +83,7 @@ describe('RunGatewayService waitUserAnswer/answerUserAsk（答复=下一条 user
     expect(waitOut.answer).toBe('用 SQLite');
     expect(waitOut.answered).toBe(true);
 
-    // 消息挂内部 runtime_session.id（addSession 幂等解析），非外部 session_key
+    
     const { AddSessionInput, AddSessionOutput } = await import('../Session/domain/types');
     const sessIn = new AddSessionInput();
     sessIn.session_key = 'sess-1';

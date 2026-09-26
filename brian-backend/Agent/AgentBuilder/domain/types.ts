@@ -11,10 +11,6 @@ export interface AgentBuilderConfigRecord {
   auto_optimize: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// buildAgent
-// ---------------------------------------------------------------------------
-
 export class BuildAgentInput extends Input {
   run_id!: string;
   task_content!: string;
@@ -27,10 +23,6 @@ export class BuildAgentOutput extends Output {
   agent_id = '';
 }
 
-// ---------------------------------------------------------------------------
-// optimizeAgent
-// ---------------------------------------------------------------------------
-
 export class OptimizeAgentInput extends Input {
   agent_id!: string;
   run_id!: string;
@@ -42,10 +34,6 @@ export class OptimizeAgentOutput extends Output {
   changes: Array<{ component: string; from: string; to: string }> = [];
 }
 
-// ---------------------------------------------------------------------------
-// System Agent 构建（统一接口，支持 PLANNER / WRITER / EVOLUTOR）
-// ---------------------------------------------------------------------------
-
 export class BuildSystemAgentInput extends Input {
   agent_type!: string;
   force_new?: boolean;
@@ -55,10 +43,6 @@ export class BuildSystemAgentOutput extends Output {
   agent_id = '';
 }
 
-// ---------------------------------------------------------------------------
-// configAgentBuilder
-// ---------------------------------------------------------------------------
-
 export class ConfigAgentBuilderInput extends Input {
   task_analysis_prompt_template_id?: string;
   auto_optimize?: boolean;
@@ -67,9 +51,5 @@ export class ConfigAgentBuilderInput extends Input {
 export class ConfigAgentBuilderOutput extends Output {
   config: AgentBuilderConfigRecord | null = null;
 }
-
-// ---------------------------------------------------------------------------
-// Tables
-// ---------------------------------------------------------------------------
 
 export const AGENT_BUILDER_CONFIG_TABLE = 'agent_builder_config';

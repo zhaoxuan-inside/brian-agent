@@ -105,10 +105,6 @@ export class GraphVisualizationConfigOutput extends Output {
 export const VISUALIZATION_CONFIG_TABLE = 'visualization_config';
 export const INFO_RAW_TABLE = 'info_raw';
 
-// 消息关系图（ChatMap）边类型：
-// - QUESTION_ANSWER：提问 → 回答（同 work 内，向下连线）
-// - CITATION：被引用消息 → 引用方（复选引用，横向连线）
-// - FOLLOW_UP：上一回答 → 本次提问（未复选上下文的追问，向下连线）
 export const QUESTION_ANSWER_EDGE_TYPE = 'QUESTION_ANSWER';
 export const CITATION_EDGE_TYPE = 'CITATION';
 export const FOLLOW_UP_EDGE_TYPE = 'FOLLOW_UP';

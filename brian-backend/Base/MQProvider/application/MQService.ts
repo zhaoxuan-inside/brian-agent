@@ -1,15 +1,3 @@
-/**
- * @fileoverview MQProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（通过 IConfigStorage / executeRaw）操作关系数据库，
- * 依赖 ConfigService 管理 mq_config 配置表。
- *
- * 实现所有用例：sendMQ / consumeMQ / ackMQ / nackMQ / soQueueStats / enableMQ。
- *
- * MQ 基于 RelationDBProvider 实现，无需引入外部消息队列中间件，
- * 通过 Repository 接口封装底层消息队列操作。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -46,36 +34,23 @@ import {
   MQ_CONFIG_TABLE,
 } from '../domain/types';
 
-/**
- * MQProvider 应用服务。
- *
- * MQProvider 是消息队列的唯一操作入口，上层不可直接操作消息队列。
- * 消息按优先级降序消费，同优先级按创建时间升序消费；
- * 消费失败的消息按最大重试次数自动重试。
- */
 export class MQService {
-  /** 运行时启用状态（内存维护，各操作快速校验） */
+  
   private enabled = true;
 
-  /** 是否已终态关闭（closeMQ 后不可恢复） */
+  
   private closed = false;
 
   private readonly config: ConfigService;
 
-  /**
-   * @param relationDb RelationDBProvider 接入层
-   */
+  
+
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, MQ_CONFIG_TABLE);
   }
 
-  /**
-   * 初始化：写入默认配置（幂等，不覆盖已有值）并恢复 enabled 状态。
-   *
-   * PRD 5.5 条：组件初始化时从 mq_config 读取 enabled 状态以恢复上次的可用状态；
-   * 默认配置项（message_ttl / default_max_retries / default_priority /
-   * retry_base_delay / processing_timeout）在首次初始化时写入，供运行时按需读取。
-   */
+  
+
   async initialize(): Promise<void> {
     await this.config.initDefaults([
       { config_key: 'enabled', config_value: 'true', value_type: 'BOOLEAN', description: 'MQ 组件是否启用（enableMQ 读写）' },
@@ -88,9 +63,8 @@ export class MQService {
     this.enabled = await this.config.getBoolean('enabled', true);
   }
 
-  /**
-   * 启用/禁用 MQ 组件。
-   */
+  
+
   async enableMQ(input: EnableMQInput, _output: EnableMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (this.closed) {
@@ -101,9 +75,8 @@ export class MQService {
     return true;
   }
 
-  /**
-   * 终态关闭 MQ 组件（不可恢复）。
-   */
+  
+
   async closeMQ(_input: CloseMQInput, _output: CloseMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.closed = true;
@@ -112,10 +85,8 @@ export class MQService {
     return true;
   }
 
-  /**
-   * 校验组件是否启用，未启用时抛出 ComponentDisabledError。
-   * 已终态关闭时抛出 ComponentDisabledError。
-   */
+  
+
   private ensureEnabled(): void {
     if (this.closed) {
       throw new ComponentDisabledError('MQ');
@@ -125,9 +96,8 @@ export class MQService {
     }
   }
 
-  /**
-   * 将数据库行转换为 MessageRecord，解析 payload JSON 字符串。
-   */
+  
+
   private toMessageRecord(row: Record<string, unknown>): MessageRecord {
     const payloadRaw = row.payload as string;
     let payload: unknown;
@@ -137,7 +107,7 @@ export class MQService {
           ? JSON.parse(payloadRaw)
           : null;
     } catch {
-      // payload 不是合法 JSON 时保留原始字符串
+      
       payload = payloadRaw;
     }
     return {
@@ -157,17 +127,12 @@ export class MQService {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // 消息操作
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 发送消息（sendMQ）。
-   *
-   * PRD 3.1.1 条：向消息队列发送一条消息。
-   * priority 未指定时从 mq_config 读取 default_priority（默认 5）；
-   * max_retries 从 mq_config 读取 default_max_retries（默认 3）。
-   */
+  
+
   async sendMQ(input: SendMQInput, output: SendMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -194,22 +159,16 @@ export class MQService {
     return true;
   }
 
-  /**
-   * 解析消息优先级：未指定时回退配置默认值，并做 0-10 范围校验。
-   */
+  
+
   private async resolvePriority(priority: number | null | undefined): Promise<number> {
     const resolved = priority ?? await this.config.getInt('default_priority', 5);
     validatePriority(resolved);
     return resolved;
   }
 
-  /**
-   * 消费消息（consumeMQ）。
-   *
-   * PRD 3.1.2 条：从消息队列消费一条消息。
-   * 按优先级降序、创建时间升序获取一条 PENDING 状态的消息，
-   * 将状态更新为 PROCESSING，返回消息内容。
-   */
+  
+
   async consumeMQ(input: ConsumeMQInput, output: ConsumeMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -220,10 +179,10 @@ export class MQService {
 
     const now = IdGenerator.now();
 
-    // 1. 先恢复卡在 PROCESSING 状态超时的消息
+    
     await this.recoverStuckMessages(input.queue);
 
-    // 2. 按优先级降序、创建时间升序获取一条 PENDING 消息（排除延迟重试中）
+    
     const rows = await this.relationDb.queryRaw<Record<string, unknown>>(
       `SELECT * FROM "${QUEUE_MESSAGE_TABLE}" WHERE "queue" = ? AND "status" = ? AND ("next_retry_at" IS NULL OR "next_retry_at" <= ?) ORDER BY "priority" DESC, "created" ASC LIMIT 1`,
       [input.queue, MESSAGE_STATUS_PENDING, now],
@@ -236,7 +195,7 @@ export class MQService {
 
     const row = rows[0];
 
-    // 将状态更新为 PROCESSING（附加 status=PENDING 条件，避免并发消费）
+    
     const affected = await this.relationDb.update(
       QUEUE_MESSAGE_TABLE,
       [
@@ -250,7 +209,7 @@ export class MQService {
     );
 
     if (affected === 0) {
-      // 消息已被其他消费者获取，返回 null
+      
       output.message = null;
       return true;
     }
@@ -262,11 +221,8 @@ export class MQService {
     return true;
   }
 
-  /**
-   * 确认消息（ackMQ）。
-   *
-   * PRD 3.1.3 条：确认消息已处理完成，将状态更新为 COMPLETED 并记录处理完成时间。
-   */
+  
+
   async ackMQ(input: AckMQInput, output: AckMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -294,13 +250,8 @@ export class MQService {
     return true;
   }
 
-  /**
-   * 否认消息（nackMQ）。
-   *
-   * PRD 3.1.4 条：否认消息处理完成，消息将重新入队或进入重试。
-   * 若 retry_count < max_retries，递增 retry_count 并将状态回退为 PENDING；
-   * 否则将状态更新为 FAILED。
-   */
+  
+
   async nackMQ(input: NackMQInput, output: NackMQOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -309,7 +260,7 @@ export class MQService {
       throw new ValidationError('message_id 不能为空');
     }
 
-    // 查询消息的 retry_count 和 max_retries
+    
     const row = await this.relationDb.selectOne(QUEUE_MESSAGE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.message_id },
     ]);
@@ -321,7 +272,7 @@ export class MQService {
     const retryCount = row.retry_count as number;
     let maxRetries = row.max_retries as number;
 
-    // 若 max_retries 未指定，从配置表读取；0 是有效值，表示不允许重试
+    
     if (maxRetries === undefined || maxRetries === null) {
       maxRetries = await this.config.getInt('default_max_retries', 3);
     }
@@ -334,9 +285,9 @@ export class MQService {
       newRetryCount = retryCount + 1;
       newStatus = MESSAGE_STATUS_PENDING;
 
-      // 指数退避延迟: delay = retry_base_delay × 2^(retryCount) 秒（当前即第 N+1 次重试前等待）
+      
       const baseDelay = await this.config.getInt('retry_base_delay', 1);
-      const delaySeconds = baseDelay * Math.pow(2, retryCount); // retryCount 0→1s, 1→2s, 2→4s, 3→8s
+      const delaySeconds = baseDelay * Math.pow(2, retryCount);
       const nextRetryAt = now + delaySeconds * 1000;
 
       await this.relationDb.update(
@@ -354,7 +305,7 @@ export class MQService {
       return true;
     }
 
-    // 重试次数已达上限，状态更新为 FAILED
+    
     newRetryCount = retryCount;
     newStatus = MESSAGE_STATUS_FAILED;
     await this.relationDb.update(
@@ -372,21 +323,17 @@ export class MQService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 队列统计
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 获取队列统计（soQueueStats）。
-   *
-   * PRD 3.2.1 条：统计 queue_message 表中各状态（PENDING/PROCESSING/COMPLETED/FAILED）
-   * 的消息数量。queue 不指定则返回所有队列统计。
-   */
+  
+
   async soQueueStats(input: GetQueueStatsInput, output: GetQueueStatsOutput, _context: MQContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
 
-    // 构建基础条件（可选的队列过滤）
+    
     const baseConditions: Condition[] = [];
     if (input.queue) {
       baseConditions.push({
@@ -396,7 +343,7 @@ export class MQService {
       });
     }
 
-    // 按状态统计
+    
     const pending = await this.relationDb.count(QUEUE_MESSAGE_TABLE, [
       ...baseConditions,
       { field: 'status', operator: Operator.EQ, value: MESSAGE_STATUS_PENDING },
@@ -433,16 +380,12 @@ export class MQService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 运维与清理
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 清理过期消息（cleanupExpiredMessages）。
-   *
-   * 根据 message_ttl（秒）删除 COMPLETED 和 FAILED 状态超期的消息。
-   * 返回删除的数量。
-   */
+  
+
   async cleanupExpiredMessages(): Promise<number> {
     if (this.closed) return 0;
     const ttl = await this.config.getInt('message_ttl', 86400);
@@ -465,12 +408,8 @@ export class MQService {
     }
   }
 
-  /**
-   * 恢复卡住的 PROCESSING 消息（recoverStuckMessages）。
-   *
-   * 将超过 processing_timeout 配置值（秒）仍处于 PROCESSING 状态的消息
-   * 恢复为 PENDING。在 consumeMQ 之前自动调用。
-   */
+  
+
   async recoverStuckMessages(queue?: string): Promise<number> {
     if (this.closed) return 0;
     const timeout = await this.config.getInt('processing_timeout', 300);
@@ -496,11 +435,8 @@ export class MQService {
     }
   }
 
-  /**
-   * 重新入队失败消息（replayMQ）。
-   *
-   * 将 FAILED 状态的消息重置为 PENDING，retry_count 归零，允许重新消费。
-   */
+  
+
   async replayMQ(messageId: string): Promise<boolean> {
     this.ensureEnabled();
     if (!messageId) throw new ValidationError('message_id 不能为空');

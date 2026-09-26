@@ -1,18 +1,7 @@
-/**
- * @fileoverview Log 领域服务：纯数据加工（查询条件组装、行→记录映射），零 I/O。
- */
-
 import type { Condition } from '../../../shared/query';
 import { Operator } from '../../../shared/query';
 import type { LogRecord } from '../types';
 
-/**
- * 组装日志查询条件：level / source / trace_id / work_id / run_id /
- * keyword（message LIKE）/ start_time / end_time（created 区间）。
- *
- * @param input 已过滤为非空字段的查询入参
- * @returns 条件数组；无有效条件时返回 undefined（表示全表查询）
- */
 export function buildLogConditions(
   input: Partial<Pick<LogRecord, 'level' | 'source' | 'trace_id' | 'work_id' | 'run_id'>> & {
     keyword?: string;
@@ -32,9 +21,6 @@ export function buildLogConditions(
   return conditions.length > 0 ? conditions : undefined;
 }
 
-/**
- * 将日志表原始行映射为 LogRecord（metadata 反序列化 JSON）。
- */
 export function rowToLogRecord(row: Record<string, unknown>): LogRecord {
   let metadata: Record<string, unknown> | undefined;
   const rawMeta = row.metadata as string | null;

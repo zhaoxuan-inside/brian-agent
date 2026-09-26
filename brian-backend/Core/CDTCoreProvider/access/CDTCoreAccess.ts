@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTCoreProvider 接入层。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, CDTAccess } from '@brian-agent/base';
 import { AopProxy, type Logger } from '@brian-agent/base';

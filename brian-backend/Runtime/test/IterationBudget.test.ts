@@ -1,7 +1,3 @@
-/**
- * @fileoverview IterationBudget 单元测试（Runtime v2 · 阶段 0）。
- */
-
 import { describe, it, expect } from 'vitest';
 import { IterationBudget } from '../shared/IterationBudget';
 
@@ -20,8 +16,8 @@ describe('IterationBudget', () => {
     const budget = new IterationBudget({ total: 2, grace: true });
     budget.consume();
     budget.consume();
-    expect(budget.consume()).toBe(true); // 宽限收尾
-    expect(budget.consume()).toBe(false); // 宽限已用
+    expect(budget.consume()).toBe(true);
+    expect(budget.consume()).toBe(false);
     expect(budget.graceAvailable).toBe(false);
   });
 
@@ -35,11 +31,11 @@ describe('IterationBudget', () => {
     const budget = new IterationBudget({ total: 2, grace: true });
     budget.consume();
     budget.consume();
-    budget.consume(); // 宽限
-    budget.refund(1); // 退还 1 次正常消费
+    budget.consume();
+    budget.refund(1);
     expect(budget.used).toBe(2);
     expect(budget.remaining).toBe(0);
-    expect(budget.graceAvailable).toBe(false); // 宽限仍已标记
+    expect(budget.graceAvailable).toBe(false);
   });
 
   it('单轮工具调用上限校验应该生效', () => {

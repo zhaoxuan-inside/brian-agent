@@ -1,12 +1,3 @@
-/**
- * @fileoverview Core 层匹配缓存辅助工具（LLMCore 专用）。
- *
- * 历史：LLMCore、MCPCore、SkillCore、SoulCore 五者共用（查询 agent_llm/agent_mcp/
- * agent_skill/agent_soul 绑定表 → regen_rate 判定）。
- * 2026-09-05 起组件绑定收敛至 Agent 模块 agent 表（唯一事实源），
- * Soul/Skill/MCP 的 match 已改纯选择（不再读写绑定表），本工具仅 LLMCore 继续使用。
- */
-
 import type { RelationDBAccess } from '@brian-agent/base';
 import { Operator, IdGenerator } from '@brian-agent/base';
 
@@ -23,17 +14,6 @@ export interface MatchCacheCheckResult {
   entries?: MatchCacheEntry[];
 }
 
-/**
- * 执行匹配缓存检查。
- *
- * @param relationDb 关系数据库接入实例
- * @param cacheTable 缓存表名（agent_llm / agent_skill 等）
- * @param agentId agent 标识
- * @param regenRate 重新评估阈值（random 模式为百分比 0-100，time 模式为毫秒）
- * @param mode 'random'（百分比概率）或 'time'（时间窗口 ms）
- * @param entityIdColumn entity ID 列名（如 llm_id / skill_id / soul_id / mcp_id / strategy_id）
- * @returns 若命中缓存则 { hit: true, entries: [...] }，否则 { hit: false }
- */
 export async function checkMatchCache(
   relationDb: RelationDBAccess,
   cacheTable: string,
@@ -68,9 +48,9 @@ export async function checkMatchCache(
     return { hit: true, entries };
   }
 
-  // time 模式
+  
   const now = IdGenerator.now();
-  const maxAge = regenRate; // regenRate is milliseconds in time mode
+  const maxAge = regenRate;
   const allFresh = entries.every((e) => now - e.updated < maxAge);
   if (allFresh) {
     return { hit: true, entries };
@@ -79,9 +59,6 @@ export async function checkMatchCache(
   return { hit: false };
 }
 
-/**
- * 删除 agent 的旧绑定缓存（重新匹配前先清理）。
- */
 export async function clearMatchCache(
   relationDb: RelationDBAccess,
   cacheTable: string,
@@ -92,9 +69,6 @@ export async function clearMatchCache(
   ]);
 }
 
-/**
- * 持久化新的匹配绑定。
- */
 export async function persistMatchBinding(
   relationDb: RelationDBAccess,
   cacheTable: string,

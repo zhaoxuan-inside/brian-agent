@@ -1,12 +1,3 @@
-/**
- * @fileoverview PromptsProvider 表结构初始化。
- *
- * 创建 prompt_template、prompt_template_usage、prompts_config 三张表。
- * DDL 通过 RelationDBAccess.executeRaw 执行，依赖 RelationDBProvider 的底层数据库。
- *
- * 表结构依据 `PromptsProvider-PRD.md` 第 4 节。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import {
@@ -15,27 +6,15 @@ import {
   PROMPTS_CONFIG_TABLE,
 } from '../domain/types';
 
-/**
- * PromptsProvider 表结构初始化器。
- *
- * 在 PromptsAccess 初始化时调用，确保所有表存在。
- */
 export class PromptsSchemaInitializer {
-  /**
-   * @param relationDb RelationDBProvider 接入层实例
-   */
+
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  // ===== 修改后的方法（全量 UUID 校验与表结构初始化） =====
-  /**
-   * 创建所有 PromptsProvider 表并迁移历史非 UUID 主键为标准 UUID。
-   */
   init(): void {
     this.createTables();
     this.migrateLegacyNonUuidTemplates();
   }
 
-  /** 创建表结构与索引（数据处理） */
   private createTables(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${PROMPT_TEMPLATE_TABLE}" (
@@ -90,7 +69,6 @@ export class PromptsSchemaInitializer {
     `);
   }
 
-  /** 迁移存量非 UUID 模板为标准 UUID（数据处理） */
   private migrateLegacyNonUuidTemplates(): void {
     try {
       const rows = this.relationDb.queryRaw<{ id: string; prompt_template_title: string }>(
@@ -114,23 +92,21 @@ export class PromptsSchemaInitializer {
         }
       }
     } catch {
-      /* best effort */
+
     }
   }
 
-  /** 级联更新关联表的 prompt_template_id 引用（数据处理） */
   private rebindPromptId(oldId: string, newId: string): void {
     const tables = ['agent', 'runtime_agent_def', 'prompt_template_usage', 'user_profile_direction'];
     for (const table of tables) {
       try {
         this.relationDb.executeRaw(`UPDATE "${table}" SET "prompt_template_id" = ? WHERE "prompt_template_id" = ?`, [newId, oldId]);
       } catch {
-        /* best effort */
+
       }
     }
   }
 
-  /** 补列迁移（数据处理；列已存在则跳过） */
   private addColumnIfMissing(column: string, ddl: string): void {
     const cols = this.relationDb.queryRaw<{ name: string }>(
       `PRAGMA table_info("${PROMPT_TEMPLATE_TABLE}")`,

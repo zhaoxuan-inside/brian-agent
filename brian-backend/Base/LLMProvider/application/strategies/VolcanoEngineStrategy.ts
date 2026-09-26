@@ -1,15 +1,3 @@
-/**
- * @fileoverview 火山方舟（Volcano Engine ARK）模型提供商策略。
- *
- * 针对火山方舟 OpenAI 兼容接口的特殊性：
- * 1. `/api/v3/models` 返回的每个模型条目同时携带两个字段：
- *    - `id`：完整可调用模型 ID（带版本号，如 `deepseek-v4-flash-260425`）
- *    - `name`：模型族名（裸名，如 `deepseek-v4-flash`）
- * 2. 方舟调用要求使用 `<族名>-<版本>` 完整 ID（或接入点 `ep-xxx`），
- *    直接传裸族名会触发 `InvalidEndpointOrModel.NotFound` 404。
- *    因此解析模型列表时必须优先取 `id` 而非 `name`。
- */
-
 import type { LLMProviderRecord } from '../../domain/types';
 import type { ParsedModelItem } from './ILLMProviderStrategy';
 import { BaseLLMStrategy } from './BaseLLMStrategy';
@@ -46,11 +34,11 @@ export class VolcanoEngineStrategy extends BaseLLMStrategy {
     const result: ParsedModelItem[] = [];
     for (const m of modelsArray) {
       if (!m || typeof m !== 'object') continue;
-      // 火山方舟特有：过滤已下线（Shutdown）/ 即将下线（Retiring）的模型，
-      // 避免列表中出现无法调用的模型（其余提供商不使用该 status 语义，故只在火山策略中过滤）
+      
+      
       const status = String(m.status ?? '').trim().toLowerCase();
       if (status === 'shutdown' || status === 'retiring') continue;
-      // 关键差异：火山方舟必须用带版本号的 `id`，不能用裸族名 `name`
+      
       const rawName = String(m.id || m.name || '');
       if (!rawName) continue;
       const modelId = rawName.replace(/^models\//, '');

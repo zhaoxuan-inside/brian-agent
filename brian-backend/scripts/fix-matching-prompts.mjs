@@ -1,18 +1,3 @@
-/**
- * 一次性修复脚本：组件匹配模板与代码契约同步（2026-09-24，事故 trace 95b8e237 根因闭环）。
- *
- * 背景：2026-09-22 组件匹配升级为 need/keywords/candidates 判定合并契约
- * （Core/shared/RankingParser.ts），但生产库 prompt_template 中的两份匹配模板
- * （Skill 匹配 / MCP 匹配）仍停留在旧契约 —— 旧契约输出经新版解析器必然落回
- * need=false（confirmed 未判定），负缓存短路 GitHub 导入与自动生成层，四层瀑布扩容失效。
- *
- * 脚本行为：
- * - 幂等：已为新契约（检测 marker need-and-candidates-contract）时跳过，重跑安全；
- * - 仅更新 prompt_template（两行）：模板文本 + updated 时间戳。
- *
- * 用法：node scripts/fix-matching-prompts.mjs
- */
-
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,7 +7,6 @@ const dbPath = path.resolve(__dirname, '..', 'data', 'brian.db');
 
 const CONTRACT_MARKER = 'need-and-candidates-contract';
 
-/** Skill 匹配模板（need/keywords/candidates 判定合并契约） */
 const SKILL_TEMPLATE = `<skill_selection_protocol version="sedimentation-value-contract">
   <identity>
     <role>Skill 匹配引擎</role>
@@ -50,14 +34,9 @@ const SKILL_TEMPLATE = `<skill_selection_protocol version="sedimentation-value-c
   </output_contract>
 </skill_selection_protocol>`;
 
-/** Agent 匹配模板（能力感知判定契约；替换旧"用途/签名字面相似"契约）
- *  两个落点：AGENT_MATCH_MAIN_ID = 生产 agent_library_config 引用的"Agent 匹配"（5ddc44a1）；
- *           AGENT_MATCH_FALLBACK_ID = soMatchPromptTemplateId 精确标题回退的"Agent 匹配评估"（2bb266b9）——
- *  同契约双行同步，杜绝 LIKE/EQ 命中点不同而拿到旧契约模板 */
 const AGENT_MATCH_MAIN_ID = '5ddc44a1-b168-4894-8553-e64b167fcb73';
 const AGENT_MATCH_FALLBACK_ID = '2bb266b9-0b2a-4739-b5ad-974bc9f16ed2';
 
-/** Agent 匹配模板（能力感知判定契约） */
 const AGENT_TEMPLATE = `<agent_match_protocol version="capability-aware-contract">
   <identity>
     <role>Agent 匹配评估专家</role>

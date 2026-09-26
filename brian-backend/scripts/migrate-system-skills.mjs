@@ -1,17 +1,3 @@
-/**
- * 一次性配置迁移脚本：将 trusted_tools 中的旧 Tool ID 迁移为新系统内置 Skill ID。
- * （2026-09-24 Tool 概念退役，完全由 Skill 承接）。
- *
- * 映射关系：
- *   exec        -> skill_builtin-exec
- *   cdt_browser -> skill_builtin-browser
- *   update_plan -> skill_builtin-plan
- *   delegate    -> skill_builtin-delegate
- *   ask_user    -> skill_builtin-ask-user
- *
- * 用法：node scripts/migrate-system-skills.mjs
- */
-
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';

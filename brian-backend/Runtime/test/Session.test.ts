@@ -1,9 +1,3 @@
-/**
- * @fileoverview Session 模块单元测试（Runtime v2 · 阶段1）。
- *
- * 真实 :memory: SQLite + mock logger（Runtime vitest 约定）。
- */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -43,7 +37,7 @@ describe('Session', () => {
 
   afterEach(async () => {
     await new Promise((r) => setTimeout(r, 50));
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* 清理失败忽略 */ }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   async function makeSession(): Promise<string> {

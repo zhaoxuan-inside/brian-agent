@@ -1,16 +1,3 @@
-/**
- * @fileoverview RelationDBProvider 应用服务层。
- *
- * DDD 中 application 层编排领域逻辑，依赖 domain 层的 Repository 接口，
- * 不直接依赖具体的 infrastructure 实现。
- *
- * 实现所有用例：insertDB / deleteDB / updateDB / selectDB / selectOneDB /
- * countDB / transactionDB / visualizedDB / enableDB / closeDB。
- *
- * 所有方法返回 Promise<boolean>，true 表示执行完成；
- * 实际数据通过 output 参数（引用传递）回传。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBRepository } from '../domain/RelationDBRepository';
@@ -43,35 +30,25 @@ import { Operator } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 
-/**
- * RelationDBProvider 应用服务。
- *
- * 通过 Repository 接口操作关系数据库，所有配置项（含启用/禁用状态）
- * 统一存储于 relationdb_config 配置表。
- */
 export class RelationDBService {
-  /** 运行时内存中的启用状态，供各操作快速校验 */
+  
   private enabled = true;
 
-  /** 是否已执行 closeDB（终态标记） */
+  
   private closed = false;
 
-  /**
-   * @param repository 关系数据库仓储实现
-   */
+  
+
   constructor(private readonly repository: RelationDBRepository) {}
 
-  // -------------------------------------------------------------------------
-  // 初始化
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 初始化组件：恢复 enabled 状态并写入默认配置。
-   *
-   * PRD 5.7 条：组件初始化时从 relationdb_config 读取 enabled 状态以恢复上次的可用状态。
-   */
+  
+
   async initialize(): Promise<void> {
-    // 首次初始化时写入默认 enabled 配置（幂等，不覆盖已有值）
+    
     const existing = this.repository.selectOne({
       table: RELATIONDB_CONFIG_TABLE,
       conditions: [
@@ -88,7 +65,7 @@ export class RelationDBService {
       ]);
     }
 
-    // 恢复 enabled 状态
+    
     const row = this.repository.selectOne({
       table: RELATIONDB_CONFIG_TABLE,
       conditions: [
@@ -98,9 +75,8 @@ export class RelationDBService {
     this.enabled = row ? String(row.config_value) === 'true' : true;
   }
 
-  /**
-   * 校验组件是否启用，未启用时抛出 ComponentDisabledError。
-   */
+  
+
   private ensureEnabled(): void {
     if (this.closed) {
       throw new DatabaseError('关系数据库已关闭（closeDB 为终态操作），需重新初始化组件');
@@ -110,15 +86,12 @@ export class RelationDBService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // CURD 操作
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 新增记录（insertDB）。
-   *
-   * PRD 3.1 条。
-   */
+  
+
   async insertDB(input: InsertDBInput, output: InsertDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -126,11 +99,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 删除记录（deleteDB）。
-   *
-   * PRD 3.2 条。
-   */
+  
+
   async deleteDB(input: DeleteDBInput, output: DeleteDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -138,11 +108,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 更新记录（updateDB）。
-   *
-   * PRD 3.3 条。
-   */
+  
+
   async updateDB(input: UpdateDBInput, output: UpdateDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -154,16 +121,13 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 查询记录列表（selectDB）。
-   *
-   * PRD 3.4 条。
-   */
+  
+
   async selectDB(input: SelectDBInput, output: SelectDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     output.rows = this.repository.select(input.query_param);
-    // 若有分页，同时查询不分页的总数
+    
     output.total = this.repository.count(
       input.query_param.table,
       input.query_param.conditions,
@@ -171,11 +135,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 查询单条记录（selectOneDB）。
-   *
-   * PRD 3.5 条。
-   */
+  
+
   async selectOneDB(input: SelectOneDBInput, output: SelectOneDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -183,11 +144,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 统计记录数（countDB）。
-   *
-   * PRD 3.6 条。
-   */
+  
+
   async countDB(input: CountDBInput, output: CountDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -195,11 +153,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 执行事务（transactionDB）。
-   *
-   * PRD 3.7 条：在事务中执行多个操作，保证原子性。
-   */
+  
+
   async transactionDB(input: TransactionDBInput, output: TransactionDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -211,22 +166,19 @@ export class RelationDBService {
     return ok;
   }
 
-  // -------------------------------------------------------------------------
-  // 可视化与运维
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 可视化数据（visualizedDB）。
-   *
-   * PRD 3.8 条。
-   */
+  
+
   async visualizedDB(input: VisualizedDBInput, output: VisualizedDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     const scope = String(input.scope);
 
     if (scope === 'health') {
-      // 健康状态：连接状态、响应时间
+      
       const start = Date.now();
       this.repository.queryRaw('SELECT 1');
       output.data = {
@@ -234,7 +186,7 @@ export class RelationDBService {
         response_time_ms: Date.now() - start,
       };
     } else if (scope === 'volume') {
-      // 数据量：各表记录数
+      
       const tables = this.repository.queryRaw<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
       );
@@ -253,12 +205,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 启用/禁用关系数据库（enableDB）。
-   *
-   * PRD 5.8 条：enableDB 为运行时启用/禁用（可恢复）。
-   * 状态同步持久化到 relationdb_config，组件初始化时恢复。
-   */
+  
+
   async enableDB(input: EnableDBInput, _output: EnableDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (this.closed) {
@@ -266,7 +214,7 @@ export class RelationDBService {
     }
 
     this.enabled = input.enable;
-    // 持久化 enabled 状态
+    
     const conditions: Condition[] = [
       { field: 'config_key', operator: Operator.EQ, value: 'enabled' },
     ];
@@ -278,11 +226,8 @@ export class RelationDBService {
     return true;
   }
 
-  /**
-   * 关闭数据库连接（closeDB）。
-   *
-   * PRD 5.8 条：closeDB 为系统关闭时的终态释放（不可恢复，需重新初始化组件）。
-   */
+  
+
   async closeDB(_input: CloseDBInput, _output: CloseDBOutput, _context: DBContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.enabled = false;

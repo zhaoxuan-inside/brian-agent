@@ -31,17 +31,8 @@ export class SummaryAgentService {
     private readonly logger?: Logger,
   ) {}
 
-  /**
-   * 初始化：确保摘要生成所需的内置资源就绪（幂等）。
-   *
-   * SummaryAgent 无独立表结构（摘要配置由 InfoCore 的 info_summary_config 承载、
-   * 摘要文本存于 info_raw.summary），初始化工作即确保：
-   * 1. 内置摘要 Soul（soul 表）存在；
-   * 2. 内置系统 Agent（agent 表，agent_type=SUMMARY）存在并绑定该 Soul。
-   *
-   * 初始化失败不阻断服务启动（dev-server 启动流程稍后仍会显式调用 ensureBuiltin 并告警），
-   * 仅记录警告，与 generateSummary 的降级行为一致。
-   */
+  
+
   async initialize(_ctx: SummaryAgentContext): Promise<void> {
     try {
       await this.ensureBuiltin(_ctx);
@@ -139,7 +130,7 @@ export class SummaryAgentService {
       new AgentLibraryContext(),
     );
     const agent = getOut.agents.find((a) => a.enable);
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm，经 Core.matchLLM 解析
+    
     let llmId = '';
     if (agent?.agent_id && this.llmCore) {
       llmId = await this.resolveLlm(agent.agent_id);
@@ -156,8 +147,8 @@ export class SummaryAgentService {
         );
         system = soulOut.soul?.soul_content ?? soulOut.soul?.soul_brief ?? '';
       } catch (err) {
-        /* ignore */
-        // 降级容忍：Soul 读取失败按无 system 角色继续（可选项缺失回退）
+        
+        
         metrics?.warn('SummaryAgentService.generateByLLM 读取 Soul 失败，降级为无 system 角色', {
           error: err instanceof Error ? err.message : String(err),
           soul_id: agent.soul_id,
@@ -175,7 +166,7 @@ export class SummaryAgentService {
       promptOut,
       new PromptContext(),
     );
-    // ===== 2026-09-11：删除硬编码内存回退；DB 渲染缺失 fail-loud =====
+    
     const prompt = okPrompt && promptOut.prompt ? promptOut.prompt : '';
     if (!prompt) {
       throw new ValidationError(`Prompt 模板不可用或渲染为空: ${templateId}`);
@@ -196,7 +187,7 @@ export class SummaryAgentService {
     return llmOut.result.trim();
   }
 
-  /** 获取系统响应摘要生成提示词模板 ID（逻辑控制） */
+  
   private async soSummaryPromptTemplateId(metrics?: Metrics): Promise<string> {
     try {
       const soOut = new SoPromptOutput();
@@ -210,8 +201,8 @@ export class SummaryAgentService {
       const anyHit = soOut.list?.find((p) => p.enable !== false);
       if (anyHit) return anyHit.id;
     } catch (err) {
-      /* ignore */
-      // 降级容忍：模板查询失败回退默认模板名（可选项缺失回退）
+      
+      
       metrics?.warn('SummaryAgentService.soSummaryPromptTemplateId 查询模板失败，回退默认模板名', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -219,9 +210,8 @@ export class SummaryAgentService {
     return '系统响应摘要生成';
   }
 
-  /**
-   * 通过 Core.matchLLM 解析 SummaryAgent 绑定的 LLM（agent_llm）。
-   */
+  
+
   private async resolveLlm(agentId: string): Promise<string> {
     return resolveAgentLlm(this.llmCore, agentId);
   }

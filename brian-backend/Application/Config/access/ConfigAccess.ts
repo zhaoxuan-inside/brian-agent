@@ -1,14 +1,3 @@
-/**
- * @fileoverview Config 接入层。
- *
- * DDD 中 access 层与具体业务代码分离，作为模块对外的统一入口。
- * 本层职责：
- * 1. 初始化表结构（通过 ConfigSchemaInitializer）；
- * 2. 封装 application 层 Service，提供 (Input, Context, Output) 签名的方法调用入口；
- * 3. 通过 AOP 代理注入日志记录与耗时统计切面；
- * 4. 代理 Base 层资源管理（LLM/Soul/Skill/MCP/Prompt）到下层模块。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, Logger } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
@@ -18,10 +7,8 @@ import type { LLMCoreAccess, InfoCoreAccess, MCPCoreAccess, SkillCoreAccess, Sou
 import type {
   WriterAgentAccess, EvolutorAgentAccess, AgentLibraryAccess,
   AgentBuilderAccess, AgentExecutionAccess, AgentStrategyAccess, AgentContextAccess,
-  PlannerAgentAccess,
 } from '@brian-agent/agent';
 
-// 同包跨模块依赖仅做类型引用（import type 编译期擦除，不产生运行时循环依赖）
 import type { ChatAccess } from '../../Chat/access/ChatAccess';
 import type { SelfLearningAccess } from '../../SelfLearning/access/SelfLearningAccess';
 import type { UserProfileAccess } from '../../UserProfile/access/UserProfileAccess';
@@ -65,8 +52,8 @@ import type {
   PromptContext,
 } from '@brian-agent/base';
 import type {
-  SoSoulRuleInput, SoSoulRuleOutput, UpdateSoulRuleInput, UpdateSoulRuleOutput,
-  SoSkillRuleInput, SoSkillRuleOutput, UpdateSkillRuleInput, UpdateSkillRuleOutput,
+  UpdateSoulRuleInput, UpdateSoulRuleOutput,
+  UpdateSkillRuleInput, UpdateSkillRuleOutput,
   SoulCoreContext, SkillCoreContext,
 } from '@brian-agent/core';
 
@@ -111,7 +98,6 @@ export class ConfigAccess {
     soulCore: SoulCoreAccess,
     writerAgent: WriterAgentAccess,
     evolutorAgent: EvolutorAgentAccess,
-    plannerAgent: PlannerAgentAccess,
     agentLibrary: AgentLibraryAccess,
     agentBuilder: AgentBuilderAccess,
     agentExecution: AgentExecutionAccess,
@@ -131,7 +117,7 @@ export class ConfigAccess {
       logAccess,
       mqAccess, graphDBAccess, vectorDBAccess,
       llmCore, infoCore, mcpCore, skillCore, soulCore,
-      writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder,
+      writerAgent, evolutorAgent, agentLibrary, agentBuilder,
       agentExecution, agentStrategy, agentContext,
       chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess,
       cronAccess,
@@ -139,9 +125,9 @@ export class ConfigAccess {
     this.service = AopProxy.wrap(rawService, { logger });
   }
 
-  // -------------------------------------------------------------------------
-  // Config management
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async updateLayerPrivilege(input: UpdateLayerPrivilegeInput, output: UpdateLayerPrivilegeOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
@@ -168,7 +154,7 @@ export class ConfigAccess {
     return this.service.updateConfig(input, output, context, metrics, report);
   }
 
-  /** 查询配置变更历史（config_key 缺省查全局；change_time 降序） */
+  
   async soConfigHistory(input: GetConfigHistoryInput, output: GetConfigHistoryOutput, context: ConfigContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soConfigHistory(input, output, context, metrics, report);
@@ -179,9 +165,9 @@ export class ConfigAccess {
     return this.service.configConfig(input, output, context, metrics, report);
   }
 
-  // -------------------------------------------------------------------------
-  // LLM management proxy
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async addLLMProvider(input: AddLLMProviderInput, output: AddLLMProviderOutput, context: LLMContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.addLLMProviderProxy(input, output, context, metrics, report);
@@ -227,9 +213,9 @@ export class ConfigAccess {
     return this.service.getLLMProxy(input, output, context, metrics, report);
   }
 
-  // -------------------------------------------------------------------------
-  // Soul management proxy
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async addSoul(input: AddSoulInput, output: AddSoulOutput, context: SoulContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.addSoulProxy(input, output, context, metrics, report);
@@ -251,17 +237,13 @@ export class ConfigAccess {
     return this.service.getSoulProxy(input, output, context, metrics, report);
   }
 
-  async getSoulRule(input: SoSoulRuleInput, output: SoSoulRuleOutput, context: SoulCoreContext, metrics?: Metrics, report?: Report): Promise<boolean> {
-    return this.service.getSoulRuleProxy(input, output, context, metrics, report);
-  }
-
   async updateSoulRule(input: UpdateSoulRuleInput, output: UpdateSoulRuleOutput, context: SoulCoreContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.updateSoulRuleProxy(input, output, context, metrics, report);
   }
 
-  // -------------------------------------------------------------------------
-  // Skill management proxy
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async addSkill(input: AddSkillInput, output: AddSkillOutput, context: SkillContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.addSkillProxy(input, output, context, metrics, report);
@@ -287,17 +269,13 @@ export class ConfigAccess {
     return this.service.getSkillProxy(input, output, context, metrics, report);
   }
 
-  async getSkillRule(input: SoSkillRuleInput, output: SoSkillRuleOutput, context: SkillCoreContext, metrics?: Metrics, report?: Report): Promise<boolean> {
-    return this.service.getSkillRuleProxy(input, output, context, metrics, report);
-  }
-
   async updateSkillRule(input: UpdateSkillRuleInput, output: UpdateSkillRuleOutput, context: SkillCoreContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.updateSkillRuleProxy(input, output, context, metrics, report);
   }
 
-  // -------------------------------------------------------------------------
-  // MCP management proxy
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async addMcpProvider(input: AddMcpProviderInput, output: AddMcpProviderOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.addMcpProviderProxy(input, output, context, metrics, report);
@@ -351,9 +329,9 @@ export class ConfigAccess {
     return this.service.soMcpProxy(input, output, context, metrics, report);
   }
 
-  // -------------------------------------------------------------------------
-  // Prompt management proxy
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async addPrompt(input: AddPromptInput, output: AddPromptOutput, context: PromptContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.addPromptProxy(input, output, context, metrics, report);

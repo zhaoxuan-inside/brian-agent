@@ -1,23 +1,3 @@
-/**
- * @fileoverview RelationDBProvider 模块测试。
- *
- * 测试范围：
- * - 初始化：initialize / 配置表创建 / 默认配置写入 / enabled 状态恢复
- * - CURD：insertDB / deleteDB / updateDB / selectDB / selectOneDB / countDB
- * - 事务：transactionDB（原子性、回滚）
- * - 可视化：visualizedDB（health / volume / diskUsage / invalid scope）
- * - 运维：enableDB（运行时启用/禁用）/ closeDB（终态关闭）
- * - IConfigStorage 便捷方法：selectOne / select / insert / update / delete / count
- * - 原生操作：executeRaw / queryRaw / transactionRaw
- * - AOP 集成：elapsed_ms 填充
- * - 条件操作符全覆盖：EQ / NE / GT / LT / GE / LE / LIKE / IN / NOT_IN / IS_NULL / IS_NOT_NULL / BETWEEN
- * - 查询特性：排序 / 分页 / 分组 / 字段过滤 / 组合查询
- * - 边界场景：空数据、空条件、空操作、非法标识符、不存在的表
- *
- * 所有测试使用真实 SQLite 数据库，不使用任何 MOCK。
- * 每个测试用例在 temp 目录中创建独立的数据库文件，测试后清理。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -57,10 +37,6 @@ import { Operator } from '../shared/query';
 import { ComponentDisabledError, DatabaseError } from '../shared/errors';
 import type { Condition, DataObject, OrderBy, Page, QueryParam, Operation } from '../shared/query';
 
-// ---------------------------------------------------------------------------
-// 测试表名与建表 SQL
-// ---------------------------------------------------------------------------
-
 const TEST_TABLE = 'test_items';
 
 const CREATE_TEST_TABLE = `
@@ -77,11 +53,6 @@ const CREATE_TEST_TABLE = `
   )
 `;
 
-// ---------------------------------------------------------------------------
-// 辅助函数
-// ---------------------------------------------------------------------------
-
-/** 构造测试数据（单条记录） */
 function makeRow(
   overrides: Record<string, unknown> = {},
 ): DataObject[] {
@@ -99,20 +70,15 @@ function makeRow(
   ];
 }
 
-/** 构造 EQ 条件 */
 function eq(field: string, value: unknown): Condition {
   return { field, operator: Operator.EQ, value };
 }
-
-// ---------------------------------------------------------------------------
-// 测试套件
-// ---------------------------------------------------------------------------
 
 describe('RelationDBProvider', () => {
   describe('SqlBuilder', () => {
     describe('quoteIdentifier', () => {
       it('should quote valid identifiers', () => {
-        // SqlBuilder.quoteIdentifier is private, test via buildWhere
+
         const where = SqlBuilder.buildWhere([{ field: 'name', operator: Operator.EQ, value: 'hello' }]);
         expect(where.sql).toContain('"name"');
       });
@@ -274,9 +240,6 @@ describe('RelationDBProvider', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 集成测试（使用真实 SQLite）
-  // -------------------------------------------------------------------------
   describe('integration', () => {
     let tempDir: string;
     let dbPath: string;
@@ -287,7 +250,7 @@ describe('RelationDBProvider', () => {
       dbPath = path.join(tempDir, 'test.db');
       access = new RelationDBAccess({ dbPath });
       await access.initialize();
-      // 创建测试表
+
       access.executeRaw(CREATE_TEST_TABLE);
     });
 
@@ -295,18 +258,15 @@ describe('RelationDBProvider', () => {
       try {
         await access.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
       } catch {
-        // 忽略已关闭的情况
+
       }
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 清理失败忽略
+
       }
     });
 
-    // -----------------------------------------------------------------------
-    // 初始化
-    // -----------------------------------------------------------------------
     describe('initialize', () => {
       it('should create relationdb_config table', () => {
         const output = new SelectDBOutput();
@@ -314,7 +274,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: RELATIONDB_CONFIG_TABLE } } as SelectDBInput,
           output, new DBContext(),
         );
-        // 表存在则查询不抛错
+
         expect(output.rows).toBeDefined();
       });
 
@@ -336,30 +296,26 @@ describe('RelationDBProvider', () => {
       });
 
       it('should not overwrite existing config on re-initialize', async () => {
-        // 先修改 enabled
+
         await access.enableDB({ enable: false } as EnableDBInput, new EnableDBOutput(), new DBContext());
-        // 重新初始化
+
         const access2 = new RelationDBAccess({ dbPath });
         await access2.initialize();
-        // 恢复的 enabled 状态应为 false
-        // 通过操作验证：enabled=false 时 insert 应抛错
+
         const data = makeRow();
         const output = new InsertDBOutput();
         try {
           await access2.insertDB({ table: TEST_TABLE, data } as InsertDBInput, output, new DBContext());
-          // 如果没抛错，说明 enabled 为 true（不符合预期）
+
           expect('should have thrown').toBe('ComponentDisabledError');
         } catch (e) {
           expect(e).toBeInstanceOf(ComponentDisabledError);
         }
-        // 清理 access2
+
         await access2.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
       });
     });
 
-    // -----------------------------------------------------------------------
-    // insertDB
-    // -----------------------------------------------------------------------
     describe('insertDB', () => {
       it('should insert a single record and return true', async () => {
         const input: InsertDBInput = Object.assign(new InsertDBInput(), { table: TEST_TABLE, data: makeRow() });
@@ -389,7 +345,6 @@ describe('RelationDBProvider', () => {
         await access.insertDB(input, output, new DBContext());
         expect(output.affected_rows).toBe(1);
 
-        // 验证数据
         const sel = new SelectOneDBOutput();
         await access.selectOneDB(
           { query_param: { table: TEST_TABLE, conditions: [eq('id', 'type-test-1')] } } as SelectOneDBInput,
@@ -417,12 +372,9 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // deleteDB
-    // -----------------------------------------------------------------------
     describe('deleteDB', () => {
       beforeEach(async () => {
-        // 插入测试数据
+
         const now = IdGenerator.now();
         await access.insertDB(
           Object.assign(new InsertDBInput(), {
@@ -537,9 +489,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // updateDB
-    // -----------------------------------------------------------------------
     describe('updateDB', () => {
       beforeEach(async () => {
         const now = IdGenerator.now();
@@ -645,9 +594,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // selectDB
-    // -----------------------------------------------------------------------
     describe('selectDB', () => {
       beforeEach(async () => {
         const now = IdGenerator.now();
@@ -714,7 +660,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'qty', operator: Operator.GT, value: 10 }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(2); // sel-2: qty=15, sel-4: qty=20
+        expect(output.rows.length).toBe(2);
       });
 
       it('should select with GE condition', async () => {
@@ -723,7 +669,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'price', operator: Operator.GE, value: 30 }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // 30, 40, 50
+        expect(output.rows.length).toBe(3);
       });
 
       it('should select with LT condition', async () => {
@@ -732,7 +678,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'price', operator: Operator.LT, value: 30 }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(2); // 10, 20
+        expect(output.rows.length).toBe(2);
       });
 
       it('should select with LE condition', async () => {
@@ -741,7 +687,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'price', operator: Operator.LE, value: 30 }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // 10, 20, 30
+        expect(output.rows.length).toBe(3);
       });
 
       it('should select with LIKE condition', async () => {
@@ -750,7 +696,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'name', operator: Operator.LIKE, value: '%l%' }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        // Alpha, Delta, Epsilon contain 'l'
+
         expect(output.rows.length).toBeGreaterThanOrEqual(2);
       });
 
@@ -779,7 +725,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // sel-3, sel-4, sel-5
+        expect(output.rows.length).toBe(3);
       });
 
       it('should select with IS_NULL condition', async () => {
@@ -788,7 +734,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'extra', operator: Operator.IS_NULL }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(2); // Beta, Delta have extra=null
+        expect(output.rows.length).toBe(2);
       });
 
       it('should select with IS_NOT_NULL condition', async () => {
@@ -797,7 +743,7 @@ describe('RelationDBProvider', () => {
           { query_param: { table: TEST_TABLE, conditions: [{ field: 'extra', operator: Operator.IS_NOT_NULL }] } } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // Alpha, Gamma, Epsilon
+        expect(output.rows.length).toBe(3);
       });
 
       it('should select with BETWEEN condition', async () => {
@@ -811,7 +757,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        // qty in [5,15]: Alpha(5), Gamma(8), Beta(15)
+
         expect(output.rows.length).toBe(3);
       });
 
@@ -857,7 +803,7 @@ describe('RelationDBProvider', () => {
           output, new DBContext(),
         );
         expect(output.rows.length).toBe(2);
-        expect(output.total).toBe(5); // total is always the unpaginated count
+        expect(output.total).toBe(5);
         expect(output.rows[0].price).toBe(10.0);
         expect(output.rows[1].price).toBe(20.0);
       });
@@ -874,7 +820,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(1); // only the 5th item on page 3
+        expect(output.rows.length).toBe(1);
         expect(output.rows[0].price).toBe(50.0);
       });
 
@@ -890,7 +836,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // active, inactive, pending
+        expect(output.rows.length).toBe(3);
       });
 
       it('should select with field filtering', async () => {
@@ -933,13 +879,13 @@ describe('RelationDBProvider', () => {
               table: TEST_TABLE,
               conditions: [
                 { field: 'status', operator: Operator.EQ, value: 'active' },
-                { field: 'qty', operator: Operator.GT, value: 4 }, // AND
+                { field: 'qty', operator: Operator.GT, value: 4 },
               ],
             },
           } as SelectDBInput,
           output, new DBContext(),
         );
-        // active + qty > 4: Alpha(5), Gamma(8)
+
         expect(output.rows.length).toBe(2);
       });
 
@@ -954,13 +900,10 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        expect(output.rows.length).toBe(3); // Alpha, Gamma, Epsilon
+        expect(output.rows.length).toBe(3);
       });
     });
 
-    // -----------------------------------------------------------------------
-    // selectOneDB
-    // -----------------------------------------------------------------------
     describe('selectOneDB', () => {
       beforeEach(async () => {
         const now = IdGenerator.now();
@@ -1029,9 +972,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // countDB
-    // -----------------------------------------------------------------------
     describe('countDB', () => {
       beforeEach(async () => {
         const now = IdGenerator.now();
@@ -1081,7 +1021,7 @@ describe('RelationDBProvider', () => {
       });
 
       it('should count empty table', async () => {
-        // delete all
+
         await access.deleteDB({ table: TEST_TABLE } as DeleteDBInput, new DeleteDBOutput(), new DBContext());
         const output = new CountDBOutput();
         await access.countDB({ table: TEST_TABLE } as CountDBInput, output, new DBContext());
@@ -1089,9 +1029,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // transactionDB
-    // -----------------------------------------------------------------------
     describe('transactionDB', () => {
       const now = IdGenerator.now();
 
@@ -1128,7 +1065,7 @@ describe('RelationDBProvider', () => {
       });
 
       it('should execute INSERT + UPDATE + DELETE in a transaction', async () => {
-        // 先插入一条
+
         await access.insertDB(
           Object.assign(new InsertDBInput(), { table: TEST_TABLE, data: makeRowData('txn-c', 'C') }),
           new InsertDBOutput(), new DBContext(),
@@ -1156,7 +1093,6 @@ describe('RelationDBProvider', () => {
         );
         expect(ok).toBe(true);
 
-        // 验证：txn-c 被更新，txn-d 先插入后删除
         const sel = new SelectOneDBOutput();
         await access.selectOneDB(
           { query_param: { table: TEST_TABLE, conditions: [eq('id', 'txn-c')] } } as SelectOneDBInput,
@@ -1173,7 +1109,7 @@ describe('RelationDBProvider', () => {
       });
 
       it('should rollback on error', async () => {
-        // 先插入一条
+
         await access.insertDB(
           Object.assign(new InsertDBInput(), { table: TEST_TABLE, data: makeRowData('txn-e', 'E') }),
           new InsertDBOutput(), new DBContext(),
@@ -1184,7 +1120,7 @@ describe('RelationDBProvider', () => {
           {
             operations: [
               { type: 'INSERT', table: TEST_TABLE, data: makeRowData('txn-f', 'F') },
-              // 这一步会失败：INSERT 到不存在的表
+
               { type: 'INSERT', table: 'nonexistent_table', data: [{ field: 'x', value: 1 }] },
             ],
           } as TransactionDBInput,
@@ -1194,14 +1130,13 @@ describe('RelationDBProvider', () => {
         expect(output.error).toBe('事务执行失败，已回滚');
         expect(output.error_code).toBe('TRANSACTION_FAILED');
 
-        // txn-f 不应被插入（回滚）
         const sel = new SelectOneDBOutput();
         await access.selectOneDB(
           { query_param: { table: TEST_TABLE, conditions: [eq('id', 'txn-f')] } } as SelectOneDBInput,
           sel, new DBContext(),
         );
         expect(sel.row).toBeNull();
-        // txn-e 仍在
+
         const cnt = new CountDBOutput();
         await access.countDB({ table: TEST_TABLE } as CountDBInput, cnt, new DBContext());
         expect(cnt.count).toBe(1);
@@ -1239,9 +1174,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // visualizedDB
-    // -----------------------------------------------------------------------
     describe('visualizedDB', () => {
       it('should return health info', async () => {
         const output = new VisualizedDBOutput();
@@ -1255,7 +1187,7 @@ describe('RelationDBProvider', () => {
       });
 
       it('should return volume info', async () => {
-        // 先插入一些数据
+
         const now = IdGenerator.now();
         await access.insertDB(
           Object.assign(new InsertDBInput(), {
@@ -1310,15 +1242,11 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // enableDB / closeDB
-    // -----------------------------------------------------------------------
     describe('enableDB / closeDB', () => {
       it('should disable and re-enable database', async () => {
-        // 禁用
+
         await access.enableDB({ enable: false } as EnableDBInput, new EnableDBOutput(), new DBContext());
 
-        // 操作应抛错
         const output = new InsertDBOutput();
         try {
           await access.insertDB(
@@ -1330,10 +1258,8 @@ describe('RelationDBProvider', () => {
           expect(e).toBeInstanceOf(ComponentDisabledError);
         }
 
-        // 重新启用
         await access.enableDB({ enable: true } as EnableDBInput, new EnableDBOutput(), new DBContext());
 
-        // 操作应恢复
         const output2 = new InsertDBOutput();
         await access.insertDB(
           { table: TEST_TABLE, data: makeRow() } as InsertDBInput,
@@ -1345,14 +1271,12 @@ describe('RelationDBProvider', () => {
       it('should persist enable state to config table', async () => {
         await access.enableDB({ enable: false } as EnableDBInput, new EnableDBOutput(), new DBContext());
 
-        // 禁用后不能通过 service 层查询，使用 queryRaw 绕过 enabled 检查
         const rows = access.queryRaw(
           'SELECT "config_value" FROM "relationdb_config" WHERE "config_key" = ?',
           ['enabled'],
         );
         expect(rows[0].config_value).toBe('false');
 
-        // 恢复启用状态以便后续 test 清理
         await access.enableDB({ enable: true } as EnableDBInput, new EnableDBOutput(), new DBContext());
       });
 
@@ -1409,9 +1333,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // IConfigStorage 便捷方法
-    // -----------------------------------------------------------------------
     describe('IConfigStorage convenience methods', () => {
       const now = IdGenerator.now();
 
@@ -1523,20 +1444,17 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // 原生操作
-    // -----------------------------------------------------------------------
     describe('raw operations', () => {
       it('executeRaw should execute DDL', () => {
         const n = access.executeRaw(
           'CREATE TABLE IF NOT EXISTS "raw_test" ("id" TEXT PRIMARY KEY, "val" INTEGER)',
         );
-        // DDL 不影响行数，changes 为 0
+
         expect(n).toBeGreaterThanOrEqual(0);
       });
 
       it('executeRaw should execute DML', () => {
-        // 先建表
+
         access.executeRaw('CREATE TABLE IF NOT EXISTS "raw_test2" ("id" TEXT PRIMARY KEY, "val" INTEGER)');
         const n = access.executeRaw(
           'INSERT INTO "raw_test2" ("id", "val") VALUES (?, ?)',
@@ -1592,9 +1510,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // AOP 集成
-    // -----------------------------------------------------------------------
     describe('AOP integration', () => {
       it('should fill elapsed_ms in output', async () => {
         const output = new InsertDBOutput();
@@ -1616,9 +1531,6 @@ describe('RelationDBProvider', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // 边界场景
-    // -----------------------------------------------------------------------
     describe('edge cases', () => {
       it('should handle empty IN array (returns no rows)', async () => {
         const output = new SelectDBOutput();
@@ -1635,7 +1547,7 @@ describe('RelationDBProvider', () => {
       });
 
       it('should handle empty NOT_IN array (returns all rows)', async () => {
-        // 先插入数据
+
         const now = IdGenerator.now();
         await access.insertDB(
           Object.assign(new InsertDBInput(), { table: TEST_TABLE, data: makeRow({ id: 'edge-1' }) }),
@@ -1656,7 +1568,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        // 空 NOT_IN 返回永真，应该返回所有行
+
         expect(output.rows.length).toBeGreaterThanOrEqual(2);
       });
 
@@ -1671,7 +1583,7 @@ describe('RelationDBProvider', () => {
           } as SelectDBInput,
           output, new DBContext(),
         );
-        // EQ null 在 SQLite 中不会匹配 NULL 值（NULL != NULL）
+
         expect(output.rows.length).toBe(0);
       });
 
@@ -1699,9 +1611,6 @@ describe('RelationDBProvider', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 直接 Repository 级别测试
-  // -------------------------------------------------------------------------
   describe('SQLiteRelationDBRepository', () => {
     let repo: SQLiteRelationDBRepository;
 
@@ -1710,7 +1619,7 @@ describe('RelationDBProvider', () => {
     });
 
     afterEach(() => {
-      try { repo.close(); } catch { /* ignore */ }
+      try { repo.close(); } catch {  }
     });
 
     it('should create config table on init', () => {
@@ -1763,7 +1672,7 @@ describe('RelationDBProvider', () => {
 
     it('should getDiskUsage return number', () => {
       const size = repo.getDiskUsage();
-      // :memory: databases have size 0 on disk
+
       expect(typeof size).toBe('number');
     });
 

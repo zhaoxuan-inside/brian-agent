@@ -1,9 +1,3 @@
-/**
- * @fileoverview CDTProvider 应用服务层（Chrome DevTools Protocol）。
- *
- * 管理 Chrome 进程的启动/停止，通过 CDP WebSocket 与浏览器通信。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import { spawn, execSync, type ChildProcess } from 'child_process';
@@ -35,17 +29,14 @@ import {
 } from '../domain/types';
 import { copySnapshotAuthFiles, readSeedMarker, resolveSnapshotSourceDir, writeSeedMarker } from './ProfileSnapshot';
 
-/** CDP WebSocket 响应类型 */
 interface CDPResponse {
   id: number;
   result?: unknown;
   error?: { code: number; message: string };
 }
 
-/** CDP 单条命令应答超时（毫秒）：防止目标无响应时 execCDP 永久挂起拖死整条 run 链路 */
 const CDP_COMMAND_TIMEOUT_MS = 30_000;
 
-/** 常用键名到 CDP code 的映射 */
 const keyMap: Record<string, string> = {
   Enter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape',
   ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
@@ -54,7 +45,6 @@ const keyMap: Record<string, string> = {
   ' ': 'Space',
 };
 
-/** 非字符键的 Windows Virtual-Key Code */
 const VK_MAP: Record<string, number> = {
   Backspace: 8, Tab: 9, Enter: 13, Escape: 27, Space: 32,
   PageUp: 33, PageDown: 34, End: 35, Home: 36,
@@ -65,12 +55,10 @@ const VK_MAP: Record<string, number> = {
   F7: 118, F8: 119, F9: 120, F10: 121, F11: 122, F12: 123,
 };
 
-/** CDP modifiers 位掩码: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift */
 function computeModifiers(ctrl: boolean, alt: boolean, shift: boolean, meta: boolean): number {
   return (alt ? 1 : 0) | (ctrl ? 2 : 0) | (meta ? 4 : 0) | (shift ? 8 : 0);
 }
 
-/** 补全非字符键的 code / key / windowsVirtualKeyCode / modifiers */
 function fillKeyParams(
   key: string, params: Record<string, unknown>,
   ctrl = false, alt = false, shift = false, meta = false,
@@ -93,7 +81,7 @@ export class CDTService {
   private pid = 0;
   private port = CDT_DEFAULT_PORT;
   private endpoint = '';
-  /** 最近一次拉起 Chrome 使用的 profile 绝对路径（供启动前清理残留实例匹配） */
+
   private lastProfileDir = '';
   private dataDir = '';
   private wsSequentialId = 0;
@@ -111,17 +99,13 @@ export class CDTService {
     this.config = new ConfigService(relationDb, CDT_CONFIG_TABLE);
     this.dataDir = dataDir;
 
-    // 进程退出兜底：未走 stopCDT 的异常退出（uncaughtException / process.exit）时，
-    // 同步终止本服务拉起的 Chrome，避免非 systemd 环境（便携包 / nohup / 终端直跑）
-    // 下遗留孤儿实例；systemd 部署下 cgroup 清理是第一道防线，此处为第二道。
-    // 正常关闭路径已由 stopCDT 将 this.process 置空，钩子不会误杀新实例。
     process.on('exit', () => {
       const child = this.process;
       if (child && child.pid && child.exitCode === null) {
         try {
           child.kill('SIGKILL');
         } catch {
-          /* kill 失败仅可能因进程已先行退出（ESRCH）；exit 钩子内无可靠上报通道，属预期容忍 */
+
         }
       }
     });
@@ -131,11 +115,6 @@ export class CDTService {
     this.enabled = await this.config.getBoolean('enabled', true);
   }
 
-  // ============================================================
-  // 操作系统检测
-  // ============================================================
-
-  /** 获取当前操作系统类型 */
   static platform(): string {
     const p = process.platform;
     if (p === 'darwin') return 'macos';
@@ -143,9 +122,8 @@ export class CDTService {
     return 'linux';
   }
 
-  /** 自动检测 Chrome 可执行文件路径 */
   static detectChromePath(): string | null {
-    // 优先内置 Chromium（SEA 单文件打包时，由 bootstrap 解压并设置 BRIAN_CHROME_PATH）
+
     const builtin = process.env.BRIAN_CHROME_PATH;
     if (builtin && existsSync(builtin)) return builtin;
 
@@ -173,45 +151,66 @@ export class CDTService {
     return null;
   }
 
-  // ============================================================
-  // 进程生命周期
-  // ============================================================
-
   async startCDT(_input: StartCDTInput, output: StartCDTOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!this.enabled) throw new ComponentDisabledError('CDTProvider');
 
     if (this.isProcessAlive()) {
-      output.endpoint = this.endpoint;
-      output.port = this.port;
-      output.pid = this.pid;
+      this.fillRunningEndpoint(output);
       return true;
     }
 
     this.port = await this.config.getInt('port', CDT_DEFAULT_PORT);
 
-    let chromePath = await this.config.getString('chrome_path', '');
-    if (!chromePath) {
-      const detected = CDTService.detectChromePath();
-      if (!detected) {
-        output.error = '未找到 Chrome 可执行文件，请在 cdt_config 中设置 chrome_path';
-        return false;
-      }
-      chromePath = detected;
-    }
+    const chromePath = await this.resolveChromePath(output);
+    if (!chromePath) return false;
 
+    const { headless, absProfileDir } = await this.prepareProfileLaunch(metrics);
+    const args = await this.buildChromeLaunchArgs(headless, absProfileDir);
+
+    const ep = await this.spawnAndWaitForEndpoint(chromePath, args, absProfileDir, output, metrics);
+    if (!ep) return false;
+
+    this.endpoint = ep;
+
+    await this.injectAntiDetection();
+
+    if (!await this.ensureKeepAlive(output, metrics)) return false;
+
+    this.fillRunningEndpoint(output);
+    return true;
+  }
+
+  private fillRunningEndpoint(output: StartCDTOutput): void {
+    output.endpoint = this.endpoint;
+    output.port = this.port;
+    output.pid = this.pid;
+  }
+
+  private async resolveChromePath(output: StartCDTOutput): Promise<string | null> {
+    const configured = await this.config.getString('chrome_path', '');
+    if (configured) return configured;
+    const detected = CDTService.detectChromePath();
+    if (!detected) {
+      output.error = '未找到 Chrome 可执行文件，请在 cdt_config 中设置 chrome_path';
+      return null;
+    }
+    return detected;
+  }
+
+  private async prepareProfileLaunch(metrics?: Metrics): Promise<{ headless: boolean; absProfileDir: string }> {
     const headless = await this.config.getBoolean('headless', false) || !process.env.DISPLAY;
     const profileDir = await this.config.getString('profile_dir', CDT_DEFAULT_PROFILE_DIR) || CDT_DEFAULT_PROFILE_DIR;
     const absProfileDir = join(this.dataDir, profileDir);
     if (!existsSync(absProfileDir)) mkdirSync(absProfileDir, { recursive: true });
-    // ===== 修改后（2026-09-22）：登录态种子——配置了 profile_snapshot_source 时，
-    // 首次启动（或源路径变更）把本机 Chrome 的 Cookies / Local Storage 复制进产品 profile，
-    // 产品浏览器直接继承用户已登录站点。播种失败仅告警，不阻塞 Chrome 启动。
-    await this.seedProfileFromSnapshot(absProfileDir, metrics);
 
+    await this.seedProfileFromSnapshot(absProfileDir, metrics);
+    return { headless, absProfileDir };
+  }
+
+  private async buildChromeLaunchArgs(headless: boolean, absProfileDir: string): Promise<string[]> {
     const windowWidth = await this.config.getInt('window_width', 1920);
     const windowHeight = await this.config.getInt('window_height', 1080);
-
     const args: string[] = [
       `--remote-debugging-port=${this.port}`,
       `--user-data-dir=${absProfileDir}`,
@@ -220,7 +219,6 @@ export class CDTService {
       '--no-sandbox',
       `--window-size=${windowWidth},${windowHeight}`,
     ];
-
     if (headless) {
       args.push('--headless=new');
       args.push('--disable-gpu');
@@ -230,17 +228,38 @@ export class CDTService {
       args.push('--lang=zh-CN');
       args.push('--accept-lang=zh-CN,zh;q=0.9,en;q=0.8');
     }
-
     args.push('about:blank');
+    return args;
+  }
 
+  private async spawnAndWaitForEndpoint(
+    chromePath: string,
+    args: string[],
+    absProfileDir: string,
+    output: StartCDTOutput,
+    metrics?: Metrics,
+  ): Promise<string | null> {
     this.freeDebugPort(metrics);
 
-    try {
-      this.process = spawn(chromePath, args, {
-        stdio: 'ignore',
-        detached: false,
-      });
+    if (!this.spawnChromeProcess(chromePath, args, absProfileDir, output)) return null;
 
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 2000);
+    });
+
+    const ep = await this.fetchWebSocketEndpoint();
+    if (!ep) {
+      output.error = `无法获取 CDT WebSocket 端点（端口 ${this.port}），请确认 Chrome 已启动`;
+      this.killProcess(metrics);
+      return null;
+    }
+
+    return ep;
+  }
+
+  private spawnChromeProcess(chromePath: string, args: string[], absProfileDir: string, output: StartCDTOutput): boolean {
+    try {
+      this.process = spawn(chromePath, args, { stdio: 'ignore', detached: false });
       this.lastProfileDir = absProfileDir;
       this.pid = this.process.pid || 0;
 
@@ -252,37 +271,19 @@ export class CDTService {
       this.process.on('error', (err) => {
         this.handleUnexpectedExit(null, null, err.message);
       });
+      return true;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       output.error = `启动 Chrome 失败: ${msg}`;
       return false;
     }
+  }
 
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 2000);
-    });
-
-    const ep = await this.fetchWebSocketEndpoint();
-    if (!ep) {
-      output.error = `无法获取 CDT WebSocket 端点（端口 ${this.port}），请确认 Chrome 已启动`;
-      this.killProcess(metrics);
-      return false;
-    }
-
-    this.endpoint = ep;
-
-    await this.injectAntiDetection();
-
-    if (!await this.startKeepAlive(metrics)) {
-      output.error = 'CDT WebSocket 保活连接失败，Chrome 进程可能不稳定';
-      this.killProcess(metrics);
-      return false;
-    }
-
-    output.endpoint = ep;
-    output.port = this.port;
-    output.pid = this.pid;
-    return true;
+  private async ensureKeepAlive(output: StartCDTOutput, metrics?: Metrics): Promise<boolean> {
+    if (await this.startKeepAlive(metrics)) return true;
+    output.error = 'CDT WebSocket 保活连接失败，Chrome 进程可能不稳定';
+    this.killProcess(metrics);
+    return false;
   }
 
   async stopCDT(_input: StopCDTInput, _output: StopCDTOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
@@ -303,8 +304,6 @@ export class CDTService {
     return true;
   }
 
-  // ===== 修改后（2026-09-22）：进程句柄丢失（Chrome re-exec）时回退 CDP 端点探活，
-  // status 不再误报未运行（pid 如实为 0，端口可见）。
   async isCDTRunning(_input: IsCDTRunningInput, output: IsCDTRunningOutput, _ctx: CDTContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const alive = this.isProcessAlive() || (await this.isCDPEndpointAlive());
@@ -313,10 +312,6 @@ export class CDTService {
     output.port = alive ? this.port : 0;
     return true;
   }
-
-  // ============================================================
-  // CDP 通信
-  // ============================================================
 
   async execCDP(input: ExecCDPInput, output: ExecCDPOutput, _ctx: CDTContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -334,12 +329,7 @@ export class CDTService {
 
     try {
       const ws = await this.connectWebSocket();
-      // ===== 修改后（2026-09-09）：增加 CDP 命令超时 =====
-      // 原代码：命令应答 await 无超时——CDP 目标（浏览器渲染进程）无响应时 Promise 永不
-      // 结算，工具→run→整条对话链路被挂死（事故：run 367d9572 于 11:56 cdt_browser
-      // navigate 后 25 分钟无应答，SSE 5 分钟超时，run 永久停留 running）。
-      // 现增加命令级超时（默认 30s）：超时按失败结算并关闭连接，错误上抛由工具层返回，
-      // run 可正常 settle。
+
       return new Promise((resolve) => {
         let resolved = false;
         const timer = setTimeout(() => {
@@ -404,10 +394,6 @@ export class CDTService {
     }
   }
 
-  // ============================================================
-  // CDP Screencast（实时帧流）
-  // ============================================================
-
   async startScreencast(maxWidth = 1920, maxHeight = 1080, quality = 80): Promise<boolean> {
     if (!this.endpoint) return false;
     this.stopScreencast();
@@ -458,7 +444,7 @@ export class CDTService {
 
   stopScreencast(): void {
     if (this.screencastWs) {
-      try { this.screencastWs.close(); } catch { /* ignore */ }
+      try { this.screencastWs.close(); } catch {  }
       this.screencastWs = null;
     }
     this.latestFrame = '';
@@ -472,12 +458,8 @@ export class CDTService {
     return { width: this.latestFrameWidth, height: this.latestFrameHeight };
   }
 
-  // ============================================================
-  // 持久命令 WebSocket（复用连接，避免每次 key/mouse 建连）
-  // ============================================================
-
   private async getCommandWs(): Promise<import('ws').WebSocket | null> {
-    if (this.commandWs?.readyState === 1 /* WebSocket.OPEN */) {
+    if (this.commandWs?.readyState === 1 ) {
       return this.commandWs;
     }
     this.stopCommandWs();
@@ -491,7 +473,7 @@ export class CDTService {
 
   private stopCommandWs(): void {
     if (this.commandWs) {
-      try { this.commandWs.close(); } catch { /* ignore */ }
+      try { this.commandWs.close(); } catch {  }
       this.commandWs = null;
     }
   }
@@ -499,10 +481,6 @@ export class CDTService {
   private sendCmd(ws: import('ws').WebSocket, method: string, params: Record<string, unknown>): void {
     ws.send(JSON.stringify({ id: ++this.commandSeqId, method, params }));
   }
-
-  // ============================================================
-  // CDP 输入转发（Remote Browser 交互）— 复用 commandWs
-  // ============================================================
 
   private lastMouseX = 0;
   private lastMouseY = 0;
@@ -552,7 +530,6 @@ export class CDTService {
     this.sendCmd(ws, 'Input.dispatchKeyEvent', params);
   }
 
-  /** 批量发送按键事件（有序，共享同一 WebSocket） */
   async sendKeyBatch(
     events: Array<{ type: string; text?: string; key?: string; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean }>,
   ): Promise<void> {
@@ -569,7 +546,6 @@ export class CDTService {
     }
   }
 
-  /** 在光标处插入文本（支持 password 字段，一次发送全部内容） */
   async insertText(text: string): Promise<void> {
     if (!text) return;
     const ws = await this.getCommandWs();
@@ -577,7 +553,6 @@ export class CDTService {
     this.sendCmd(ws, 'Input.insertText', { text });
   }
 
-  /** 注入反检测脚本 + HTTP 头 + UA/platform 伪装 */
   async injectAntiDetection(env?: CDTEnv): Promise<void> {
     if (env) this.spoofedEnv = { ...this.spoofedEnv, ...env };
     const e = this.spoofedEnv || {};
@@ -591,14 +566,12 @@ export class CDTService {
     const deviceMemory = e.deviceMemory || 8;
     const languages = e.languages || ['zh-CN', 'zh', 'en'];
 
-    // Emulation API：覆盖 UA + Accept-Language + platform
     this.sendCmd(ws, 'Emulation.setUserAgentOverride', {
       userAgent,
       acceptLanguage: acceptLang,
       platform,
     });
 
-    // Network 层 HTTP 头
     this.sendCmd(ws, 'Network.setExtraHTTPHeaders', {
       headers: {
         'Accept-Language': acceptLangFull,
@@ -608,7 +581,6 @@ export class CDTService {
       },
     });
 
-    // JS 层指纹覆盖
     const langArr = JSON.stringify(languages);
     const script = `
       try {
@@ -629,23 +601,12 @@ export class CDTService {
         );
       }
     `;
-    // ===== 修复（2026-09-22）：未 enable Page domain 时 addScriptToEvaluateOnNewDocument
-    // 应答成功但注入永不生效（静默丢脚本）。先武装 Page domain 再注册；并在当前文档
-    // 立即执行同一脚本，覆盖"注册后、下次导航前"的当前页面。
+
     this.sendCmd(ws, 'Page.enable', {});
     this.sendCmd(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: script });
     this.sendCmd(ws, 'Runtime.evaluate', { expression: script });
   }
 
-  // ============================================================
-  // 内部方法
-  // ============================================================
-
-  /**
-   * 登录态种子编排（逻辑控制）：读取 profile_snapshot_source 配置，
-   * 源有效且未播种（或源已变更）时复制本机 Chrome 登录态到产品 profile。
-   * 失败仅告警不抛错——播种是增强能力，不能拖垮 Chrome 启动主链路。
-   */
   private async seedProfileFromSnapshot(profileDir: string, metrics?: Metrics): Promise<void> {
     try {
       const raw = await this.config.getString(CDT_PROFILE_SNAPSHOT_SOURCE, '');
@@ -666,7 +627,6 @@ export class CDTService {
     }
   }
 
-  /** 启动前释放调试端口（清理上一次 session 未正确关闭的残留 Chrome 进程） */
   private freeDebugPort(metrics?: Metrics): void {
     try {
       execSync(`fuser -k ${this.port}/tcp 2>/dev/null || true`, { timeout: 3000 });
@@ -676,9 +636,7 @@ export class CDTService {
         port: this.port,
       });
     }
-    // 兜底：按 profile 目录清理残留 Chrome。覆盖端口已被其他进程占用或配置端口
-    // 已变更的场景（如非 systemd 环境下后端被 SIGKILL 后遗留的孤儿实例）。
-    // 模式为完整 profile 路径，不会误杀用户自己的浏览器。
+
     if (this.lastProfileDir) {
       try {
         execSync(`pkill -KILL -f "user-data-dir=${this.lastProfileDir}" 2>/dev/null || true`, { timeout: 3000 });
@@ -691,21 +649,6 @@ export class CDTService {
     }
   }
 
-  /**
-   * 处理 Chrome 进程非预期退出。
-   * 当子进程 exit 事件触发时（非通过 stopCDT 主动停止），重置状态。
-   */
-  // ===== 修改后（2026-09-22）：Chrome 152 启动器进程 re-exec 后原进程立即退出，
-  // 触发本回调把 pid/endpoint 清零 → status 误报未运行且 keep-alive 被停。
-  // now：先探测 CDP 端点，仍存活则视为 re-exec 保留会话状态；真死才清理。
-  //（原始实现无条件清理，已注释保留于方法尾部）。
-  // 原代码：
-  //   this.stopCommandWs();
-  //   this.stopKeepAlive();
-  //   this.stopScreencast();
-  //   this.process = null;
-  //   this.pid = 0;
-  //   this.endpoint = '';
   private async handleUnexpectedExit(
     code: number | null,
     signal: string | null,
@@ -728,7 +671,6 @@ export class CDTService {
     this.endpoint = '';
   }
 
-  /** CDP 端点存活探测（逻辑控制；/json/version 短超时探活） */
   private async isCDPEndpointAlive(): Promise<boolean> {
     if (!this.port) {
       return false;
@@ -741,14 +683,11 @@ export class CDTService {
     }
   }
 
-  /**
-   * 建立持久 CDP WebSocket 连接，防止 headless Chrome 因无客户端而自动退出。
-   * 同时启动心跳定时器，每 30 秒发送一次 Browser.getVersion 探活。
-   */
   private async startKeepAlive(metrics?: Metrics): Promise<boolean> {
     this.stopKeepAlive();
 
     try {
+
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const { WebSocket } = require('ws') as typeof import('ws');
       const ws = new WebSocket(this.endpoint);
@@ -786,7 +725,7 @@ export class CDTService {
           resolved = true;
           ws.off('open', onOpen);
           this.logger?.warn?.(`[CDTService] 保活 WebSocket 连接失败: ${err.message}`);
-          try { ws.close(); } catch { /* ignore */ }
+          try { ws.close(); } catch {  }
           resolve(false);
         };
 
@@ -809,14 +748,13 @@ export class CDTService {
     }
   }
 
-  /** 停止保活连接和心跳定时器 */
   private stopKeepAlive(): void {
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = null;
     }
     if (this.keepAliveWs) {
-      try { this.keepAliveWs.close(); } catch { /* ignore */ }
+      try { this.keepAliveWs.close(); } catch {  }
       this.keepAliveWs = null;
     }
   }
@@ -867,12 +805,13 @@ export class CDTService {
   private connectWebSocket(): Promise<import('ws').WebSocket> {
     return new Promise((resolve, reject) => {
       try {
+
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
         const { WebSocket } = require('ws') as typeof import('ws');
         const ws = new WebSocket(this.endpoint);
-        // 连接超时：防止浏览器进程半死时 WebSocket 停在 CONNECTING 永不结算
+
         const timer = setTimeout(() => {
-          try { ws.close(); } catch { /* ignore */ }
+          try { ws.close(); } catch {  }
           reject(new Error(`CDP WebSocket 连接超时（${CDP_COMMAND_TIMEOUT_MS}ms）`));
         }, CDP_COMMAND_TIMEOUT_MS);
         ws.once('open', () => { clearTimeout(timer); resolve(ws); });

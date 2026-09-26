@@ -1,13 +1,3 @@
-/**
- * @fileoverview Google Gemini 提供商策略。
- *
- * 针对 Google Gemini 提供商的特殊路径与鉴权机制：
- * 1. 默认 OpenAI 兼容对话路径为 `openai/chat/completions`，默认模型列表路径为 `models`；
- * 2. 鉴权头部同时提供 `Authorization: Bearer <api_key>` 与 `x-goog-api-key: <api_key>`，并在 URL 附带 `?key=<api_key>` 参数；
- * 3. 支持 Google 特有的 `json.models` 模型列表字段及 Token 限制字段解析；
- * 4. 兼容 Google 原生返回与 OpenAI 兼容返回格式。
- */
-
 import type {
   LLMProviderRecord,
   LLMAvailableRecord,
@@ -25,9 +15,8 @@ export class GoogleStrategy extends BaseLLMStrategy {
     return title.includes('google') || url.includes('googleapis.com') || title.includes('gemini');
   }
 
-  /**
-   * 构造 Google 专用请求头（同时设置 Bearer 与 x-goog-api-key）。
-   */
+  
+
   protected override buildHeaders(
     provider: LLMProviderRecord,
     contentType = 'application/json',
@@ -43,9 +32,8 @@ export class GoogleStrategy extends BaseLLMStrategy {
     return headers;
   }
 
-  /**
-   * 确保 URL 附带 Google API Key 查询参数。
-   */
+  
+
   private appendGoogleKey(url: string, apiKey?: string | null): string {
     if (!apiKey) return url;
     if (url.includes('key=')) return url;
@@ -98,8 +86,8 @@ export class GoogleStrategy extends BaseLLMStrategy {
     }
     let maxTokens = input.max_tokens !== undefined ? input.max_tokens : (model.max_tokens || undefined);
     if (maxTokens !== undefined && maxTokens > 0 && maxTokens < 1024) {
-      // Gemini 2.5 / 3.7 等思考模型在 OpenAI 兼容模式下思考过程会占用 Token 预算，
-      // 保障至少 1024 Token 避免因长度被截断导致正文为空
+      
+      
       maxTokens = 1024;
     }
     if (maxTokens !== undefined) {
@@ -123,13 +111,13 @@ export class GoogleStrategy extends BaseLLMStrategy {
   }
 
   override parseChatResponse(json: unknown, rawText: string): ParsedChatResult {
-    // 优先尝试标准 OpenAI 兼容格式
+    
     const standard = super.parseChatResponse(json, rawText);
     if (standard.content) {
       return standard;
     }
 
-    // 兼容 Google 原生 generateContent 返回格式
+    
     if (json && typeof json === 'object') {
       const obj = json as {
         candidates?: Array<{

@@ -1,7 +1,3 @@
-/**
- * @fileoverview 数据库组件统一导出。
- */
-
 export { SQLiteComponent } from './SQLite/SQLiteComponent';
 export type { SQLiteComponentOptions } from './SQLite/SQLiteComponent';
 

@@ -17,10 +17,6 @@ export interface BookmarkItemRecord {
   favicon: string; sort_order: number;
 }
 
-// ---------------------------------------------------------------------------
-// 标准签名类型：Boolean method(Input, Output, Context, Metrics, Report)
-// ---------------------------------------------------------------------------
-
 import { Input } from '../../shared/base/Input';
 import { Output } from '../../shared/base/Output';
 import { Context } from '../../shared/base/Context';

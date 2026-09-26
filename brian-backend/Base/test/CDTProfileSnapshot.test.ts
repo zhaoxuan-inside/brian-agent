@@ -1,10 +1,3 @@
-/**
- * @fileoverview ProfileSnapshot 登录态种子测试。
- *
- * 覆盖：源目录解析（~ 展开 / 无效路径）、登录态文件复制（新旧 Cookies 位置 +
- * Local Storage leveldb）、播种标记读写与源变更检测语义。
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';

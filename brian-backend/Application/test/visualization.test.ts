@@ -112,8 +112,6 @@ function insInfoContextConfig(db: RelationDBAccess, overrides: Record<string, un
   db.insert('info_context_config', fields);
 }
 
-
-
 function insTrace(db: RelationDBAccess, overrides: Record<string, unknown> = {}) {
   const defaults: Record<string, unknown> = {
     id: genId(), created: now(), updated: now(),
@@ -128,7 +126,6 @@ function insTrace(db: RelationDBAccess, overrides: Record<string, unknown> = {})
   db.insert('agent_execution_trace', fields);
 }
 
-/* ─── test suite ─── */
 describe('VisualizationService', () => {
   let ctxEnv: RealTestContext;
   let svc: VisualizationService;
@@ -138,7 +135,7 @@ describe('VisualizationService', () => {
     initVisualizationSchema(ctxEnv.db);
     svc = new VisualizationService(
       ctxEnv.db, ctxEnv.agentExecution,
-      ctxEnv.agentLibrary, ctxEnv.agentContext, ctxEnv.evolutorAgent, ctxEnv.plannerAgent,
+      ctxEnv.agentLibrary, ctxEnv.agentContext, ctxEnv.evolutorAgent,
       ctxEnv.infoCore, ctxEnv.llmAccess, ctxEnv.soulAccess, ctxEnv.skillAccess,
       ctxEnv.mcpAccess, ctxEnv.promptsAccess, ctxEnv.graphDBAccess, ctxEnv.logger,
     );
@@ -149,9 +146,9 @@ describe('VisualizationService', () => {
     vi.restoreAllMocks();
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 1. soVisualizedMessages  TC-VIS-001 ~ TC-VIS-015
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('soVisualizedMessages', () => {
     it('TC-VIS-001: by session_id returns messages with extended fields', async () => {
       insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1',
@@ -333,9 +330,9 @@ describe('VisualizationService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 2. soVisualizedMessageGraph  TC-VIS-020 ~ TC-VIS-030
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('soVisualizedMessageGraph', () => {
     it('TC-VIS-020: Get message graph -> session_id, graph(nodes+edges), metadata', async () => {
       insInfoRaw(ctxEnv.db, { session_id: 'sess-graph', info_id: 'info-1', info: 'First' });
@@ -491,9 +488,9 @@ describe('VisualizationService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 3. soVisualizedAgentDAG  TC-VIS-040 ~ TC-VIS-054
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('soVisualizedAgentDAG', () => {
     it('TC-VIS-042: strategy ref resolved', async () => {
 
@@ -904,9 +901,9 @@ describe('VisualizationService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 6. soVisualizedMessageDAG  TC-VIS-095 ~ TC-VIS-110
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('soVisualizedMessageDAG', () => {
     it('TC-VIS-095: Get DAG -> graph(nodes+edges) + metadata', async () => {
       insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1', info_id: 'info-user',
@@ -1178,7 +1175,7 @@ describe('VisualizationService', () => {
         info_type: 'REQUEST', info: 'Q2', created: 300 });
       insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-2', info_id: 'a2',
         info_type: 'RESPONSE', info: 'A2', created: 400 });
-      // q2 通过复选框引用 a1（显式引用边）
+      
       await insInfoGraph(ctxEnv.graphDBAccess, 'q2', 'a1');
 
       const input = new GetVisualizedMessageDAGInput();
@@ -1193,9 +1190,9 @@ describe('VisualizationService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 7. soResource  TC-VIS-120 ~ TC-VIS-133
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('soResource', () => {
     it('TC-VIS-120: Query agent -> returns agent metadata', async () => {
       const input = new GetResourceInput();
@@ -1328,9 +1325,9 @@ describe('VisualizationService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // 8. configVisualization
-  // ═══════════════════════════════════════════════════════════════
+  
+  
+  
   describe('configVisualization', () => {
     it('should return default config when none exists', async () => {
       const input = new ConfigVisualizationInput();

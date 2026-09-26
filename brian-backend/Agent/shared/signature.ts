@@ -1,7 +1,3 @@
-/**
- * task_signature 统一格式：`[domain] 任务前256字`
- * 对齐 docs/_01_TerminologyStandardization.md
- */
 import { JsonParser } from '@brian-agent/base';
 
 export function buildTaskSignature(taskContent: string, domain = ''): string {
@@ -40,7 +36,7 @@ export function parseTaskContentAndContext(rawTaskContent: string): {
           };
         }
       } catch (err) {
-        /* ignore：首段非 work_context JSON（协议头缺失/截断），按纯文本透传，属预期输入形态 */
+        
         void err;
       }
     }
@@ -61,7 +57,7 @@ export function parseTaskContentAndContext(rawTaskContent: string): {
         }
       }
     } catch (err) {
-      /* ignore：整段非 JSON（普通任务文本），按原文透传，属预期输入形态 */
+      
       void err;
     }
   }

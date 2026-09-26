@@ -1,35 +1,21 @@
-/**
- * @fileoverview MCP 传输层客户端。
- *
- * 支持 MCP（Model Context Protocol）的四种调用方式：
- * 1. `stdio`           —— 本地进程，JSON-RPC 2.0 over stdin/stdout（换行分隔 JSON）；
- * 2. `streamable-http` —— 单个 HTTP 端点，POST JSON-RPC 2.0，响应为 JSON 或 SSE 流；
- * 3. `http-sse`        —— 旧版 HTTP 传输，POST JSON-RPC 2.0 + SSE 响应；
- * 4. `rest`            —— 平台托管的原生 REST API（如阿里云百炼 / Smithery 托管连接）。
- *
- * 无第三方 MCP SDK 依赖，JSON-RPC 2.0 协议在本文件内实现。
- */
-
 import { spawn, type ChildProcess } from 'child_process';
 import { ExecRequestInput, ExecRequestOutput, HttpContext } from '../../ToolProvider/domain/HttpTypes';
 import { HttpAccess } from '../../ToolProvider/access/HttpAccess';
 
-/** MCP 通信方式 */
 export type McpTransportType = 'stdio' | 'streamable-http' | 'http-sse' | 'rest';
 
-/** 传输配置（对应 mcp_install.transport_config 的 JSON 结构） */
 export interface McpTransportConfig {
-  /** stdio：启动命令 */
+
   command?: string;
-  /** stdio：命令参数 */
+
   args?: string[];
-  /** http/rest：端点 URL */
+
   url?: string;
-  /** rest：HTTP 方法，默认 POST */
+
   method?: string;
-  /** http/rest：额外请求头 */
+
   headers?: Record<string, string>;
-  /** rest：认证 token（Bearer） */
+
   auth_token?: string;
 }
 
@@ -41,10 +27,6 @@ interface PendingRequest {
 
 const DEFAULT_TIMEOUT_MS = 60000;
 
-// ---------------------------------------------------------------------------
-// JSON-RPC / SSE 解析
-// ---------------------------------------------------------------------------
-
 function parseJsonObject(line: string): Record<string, unknown> | null {
   const t = line.trim();
   if (!t) return null;
@@ -55,7 +37,6 @@ function parseJsonObject(line: string): Record<string, unknown> | null {
   }
 }
 
-/** 从 SSE 文本中提取 JSON-RPC 响应对象（含 result/error） */
 function parseSseResponse(text: string): unknown {
   const events: unknown[] = [];
   for (const block of text.split(/\r?\n\r?\n/)) {
@@ -79,7 +60,6 @@ function parseSseResponse(text: string): unknown {
   return events.length > 0 ? events : text;
 }
 
-/** 从 JSON-RPC 响应中抽取 result，若含 error 则抛错 */
 function unwrapRpcResult(response: unknown): unknown {
   if (response && typeof response === 'object') {
     const obj = response as Record<string, unknown>;
@@ -92,20 +72,8 @@ function unwrapRpcResult(response: unknown): unknown {
   return response;
 }
 
-/** 统一 HTTP 请求入口（由 ToolProvider 集中处理代理/超时） */
 const http = new HttpAccess();
 
-// ---------------------------------------------------------------------------
-// stdio 客户端（长驻进程 + JSON-RPC 请求/响应关联）
-// ---------------------------------------------------------------------------
-
-/**
- * 基于 stdio 的 MCP 客户端。
- *
- * 以 `spawn(command, args, { stdio: ['pipe','pipe','pipe'] })`（无 shell）启动，
- * 通过换行分隔的 JSON-RPC 2.0 消息与进程双向通信。支持请求/响应按 id 关联，
- * 忽略通知（id 为 null）与服务端 stderr 日志。
- */
 export class StdioMcpClient {
   private child: ChildProcess | null = null;
   private nextId = 1;
@@ -116,11 +84,10 @@ export class StdioMcpClient {
     return this.child?.pid;
   }
 
-  /** 启动进程（无 shell，保证 stdout 为纯净 JSON-RPC 流） */
   spawn(command: string, args: string[] = []): void {
     this.child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdout?.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf-8')));
-    this.child.stderr?.on('data', () => { /* stderr 仅作日志，忽略 */ });
+    this.child.stderr?.on('data', () => {  });
     this.child.on('exit', (code, signal) => this.onExit(code, signal));
   }
 
@@ -133,7 +100,7 @@ export class StdioMcpClient {
       const msg = parseJsonObject(line);
       if (!msg) continue;
       const id = msg.id;
-      if (id == null) continue; // 通知消息
+      if (id == null) continue;
       const pending = this.pending.get(Number(id));
       if (pending) {
         this.pending.delete(Number(id));
@@ -157,7 +124,6 @@ export class StdioMcpClient {
     this.pending.clear();
   }
 
-  /** 进程是否真实存活 */
   isAlive(): boolean {
     const c = this.child;
     if (!c || !c.pid) return false;
@@ -170,7 +136,6 @@ export class StdioMcpClient {
     }
   }
 
-  /** 发送 JSON-RPC 请求并等待响应 */
   request(method: string, params: Record<string, unknown> = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     const c = this.child;
     if (!c || !c.stdin || !this.isAlive()) {
@@ -188,7 +153,6 @@ export class StdioMcpClient {
     });
   }
 
-  /** MCP 握手 */
   async initialize(): Promise<unknown> {
     return this.request(
       'initialize',
@@ -201,17 +165,10 @@ export class StdioMcpClient {
     );
   }
 
-  /** 列出工具 */
-  async listTools(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
-    return this.request('tools/list', {}, timeoutMs);
-  }
-
-  /** 调用工具 */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     return this.request('tools/call', { name, arguments: args }, timeoutMs);
   }
 
-  /** 终止进程（按进程组） */
   kill(): void {
     const c = this.child;
     if (c && c.pid) {
@@ -221,7 +178,7 @@ export class StdioMcpClient {
         try {
           c.kill('SIGTERM');
         } catch {
-          /* 二次 kill 失败可容忍：进程可能已自行退出（ESRCH），随进程退出自然回收 */
+
         }
       }
     }
@@ -230,16 +187,6 @@ export class StdioMcpClient {
   }
 }
 
-// ---------------------------------------------------------------------------
-// HTTP 传输（streamable-http / http-sse）
-// ---------------------------------------------------------------------------
-
-/**
- * Streamable HTTP / HTTP+SSE 调用工具。
- *
- * POST JSON-RPC 2.0 `tools/call` 到端点，Accept 同时声明 JSON 与 SSE；
- * 响应为 JSON 时直接解析，为 SSE 流时提取 JSON-RPC 响应。
- */
 export async function callToolOverHttp(
   config: McpTransportConfig,
   toolName: string,
@@ -274,18 +221,13 @@ export async function callToolOverHttp(
     try {
       parsed = JSON.parse(text);
     } catch {
-      /* 非 JSON 响应保持原文（协议格式容忍）：unwrapRpcResult 按原文返回给调用方 */
+
     }
     result = unwrapRpcResult(parsed);
   }
   return { raw: text, result };
 }
 
-// ---------------------------------------------------------------------------
-// REST 传输（平台原生 API）
-// ---------------------------------------------------------------------------
-
-/** 平台托管的原生 REST API 调用工具 */
 export async function callToolOverRest(
   config: McpTransportConfig,
   toolName: string,
@@ -310,7 +252,7 @@ export async function callToolOverRest(
   try {
     result = JSON.parse(text);
   } catch {
-    /* 非 JSON 响应保持原文（协议格式容忍）：2xx 非 JSON 体按原文返回给调用方 */
+
   }
   return { raw: text, result };
 }

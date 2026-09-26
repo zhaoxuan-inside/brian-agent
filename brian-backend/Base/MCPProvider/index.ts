@@ -1,7 +1,3 @@
-/**
- * @fileoverview MCPProvider 模块统一导出。
- */
-
 export { MCPAccess } from './access/MCPAccess';
 export {
   McpContext,

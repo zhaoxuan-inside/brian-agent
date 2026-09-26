@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTCoreProvider 表结构初始化。
- */
-
 import type { RelationDBAccess } from '@brian-agent/base';
 import { CDT_PAGE_SESSION_TABLE, CDT_LOGIN_CREDENTIAL_TABLE } from '../domain/types';
 

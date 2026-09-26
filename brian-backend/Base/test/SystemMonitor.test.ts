@@ -1,14 +1,3 @@
-/**
- * @fileoverview ToolProvider 系统资源监控测试（SystemMonitorAccess）。
- *
- * 测试范围：
- * - soResource：CPU / 内存 / 磁盘使用率均为 [0, 100] 内的数值
- * - 磁盘使用率：对不存在路径容错返回 0
- * - CPU 首采样与二次采样均返回合法值
- *
- * 纯采集测试，无数据库依赖。
- */
-
 import { describe, it, expect } from 'vitest';
 import { SystemMonitorAccess } from '../ToolProvider';
 import {

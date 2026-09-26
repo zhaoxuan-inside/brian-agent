@@ -1,14 +1,3 @@
-/**
- * @fileoverview AgentLoop 集成测试（Runtime v2 · 阶段2）。
- *
- * mock LLMAccess（脚本化事件流）+ 真 SQLite + 真 StreamProvider + 真 ToolService：
- * 验证「DIRECT 场景端到端」（替代 SIMPLE workflow 的等价路径）：
- * - 多轮 tool_calls → 配对回流 → stop；
- * - 消息中心：第 2 轮 wire 消息从持久化 Part 派生（assistant tool_calls + tool 结果）；
- * - 事件投影：part.delta/part.created/tool.launch/tool.result/run.status；
- * - 预算超支收敛 budget；外部取消收敛 aborted。
- */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -47,6 +36,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   let tempDir: string;
   let relationDb: RelationDBAccess;
   let sessionAccess: SessionAccess;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let streamAccess: any;
   let skillRuntimeAccess: SkillRuntimeAccess;
@@ -104,7 +94,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
 
   afterEach(async () => {
     await new Promise((r) => setTimeout(r, 50));
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* 清理失败忽略 */ }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   function makeLoopInput(overrides?: Partial<ExecAgentLoopInput>): ExecAgentLoopInput {
@@ -123,9 +113,6 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     return input;
   }
 
-  /** 事件流审计查询（stream_event 表；保存/审计/重放事实源已迁 StreamProvider） */
-
-  /** 注册 SSE 端点并构造携带端点 ID 的 Report（Report→StreamProvider 上报链路） */
   async function makeStreamReport(sessionKey: string): Promise<Report> {
     const regOut = new RegisterStreamOutput();
     await streamAccess.registerStream(
@@ -137,7 +124,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   }
 
   async function replayEvents(sessionKey: string): Promise<{ events: Array<{ type: string; payload: unknown }> }> {
-    await new Promise((r) => setTimeout(r, 120)); // fire-and-forget 事件链落库
+    await new Promise((r) => setTimeout(r, 120));
     const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
       'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
       [sessionKey],
@@ -171,7 +158,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     );
     mockLlm.execLLMEvents.mockImplementationOnce(
       async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
-        // 消息中心：第 2 轮 wire 消息由持久化 Part 派生
+
         expect(input.messages?.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
         const assistant = input.messages![1];
         expect(assistant.tool_calls?.[0]).toMatchObject({
@@ -179,7 +166,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
           function: { name: 'skill_weather' },
         });
         expect(input.messages![2]).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: '北京天气：晴，22°C' });
-        // 最终轮直播增量（轮中合帧保守进 think，轮末全文进 reply，见下断言）
+
         input.on_event?.({ type: 'text_delta', delta: '北京今天' });
         output.finish_reason = 'stop';
         output.result = '北京今天晴，22°C。';
@@ -200,7 +187,6 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     expect(output.token_usage).toEqual({ input_tokens: 18, output_tokens: 17 });
     expect(output.msg_id).toBeTruthy();
 
-    // 会话持久化：user + 2 assistant；tool Part 配对完成
     const so = new SoMessagesInput();
     so.session_id = sessionId;
     const soOut = new SoMessagesOutput();
@@ -216,13 +202,10 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
       arguments: '{"skill_id":"weather","params":{"city":"北京"}}',
     });
 
-    // 事件投影
     const events = await replayEvents(input.session_key);
     const types = events.events.map((e) => e.type);
     expect(types[0]).toBe('run.started');
-    // ===== 修改后（2026-09-12）：中间轮文本只进 think.delta，最终轮全文进 reply.delta =====
-    // 原断言仅要求含 reply.delta；现精确断言分流——中间轮叙述"我查一下天气"不出对话框，
-    // 对话框仅见最终全文；轮中直播增量"北京今天"保守进 thinking。
+
     const replyDeltas = events.events
       .filter((e) => e.type === 'reply.delta')
       .map((e) => (e.payload as { delta: string }).delta);
@@ -234,10 +217,10 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     expect(thinkText).toContain('北京今天');
     expect(replyDeltas).toEqual(['北京今天晴，22°C。']);
     expect(types).toContain('reply.created');
-    expect(types).toContain('tool.started');
-    expect(types).toContain('tool.result');
+    expect(types).toContain('skill.started');
+    expect(types).toContain('skill.result');
     expect(types[types.length - 1]).toBe('run.finished');
-    const toolResult = events.events.find((e) => e.type === 'tool.result');
+    const toolResult = events.events.find((e) => e.type === 'skill.result');
     expect((toolResult!.payload as { status: string }).status).toBe('ok');
     const endStatus = events.events[events.events.length - 1];
     expect((endStatus.payload as { stop_reason: string }).stop_reason).toBe('stop');
@@ -309,9 +292,9 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     expect(asked.length).toBe(1);
     expect(mockSkill.execSkill).not.toHaveBeenCalled();
     const events = await replayEvents(input.session_key);
-    const denied = events.events.find((e) => e.type === 'tool.result');
+    const denied = events.events.find((e) => e.type === 'skill.result');
     expect((denied!.payload as { output: string }).output).toContain('permission denied');
-    // ===== 新增（2026-09-12）：应答后必下发 permission.answered（卡片翻态依据）=====
+
     const answered = events.events.find((e) => e.type === 'permission.answered');
     expect((answered!.payload as { approved: boolean }).approved).toBe(false);
   });
@@ -345,13 +328,12 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     console.log('DEBUG events:', JSON.stringify((await replayEvents(input.session_key)).events.map((e) => ({ t: e.type, p: e.payload }))));
     expect(mockSkill.execSkill).toHaveBeenCalledTimes(1);
     const events = await replayEvents(input.session_key);
-    const toolResult = events.events.find((e) => e.type === 'tool.result');
+    const toolResult = events.events.find((e) => e.type === 'skill.result');
     expect((toolResult!.payload as { status: string }).status).toBe('ok');
-    // ===== 新增（2026-09-12）：批准同样下发 permission.answered（approved=true）=====
+
     const answered = events.events.find((e) => e.type === 'permission.answered');
     expect((answered!.payload as { approved: boolean }).approved).toBe(true);
   });
-  
 
   it('LLM 全候选失败应该收敛 error', async () => {
     mockLlm.execLLMEvents.mockImplementationOnce(

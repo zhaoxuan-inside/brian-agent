@@ -1,15 +1,3 @@
-/**
- * @fileoverview StreamProvider 单元测试。
- *
- * 覆盖：
- * - registerStream / closeStream 生命周期管理
- * - 结构化 BrianSSEMessage 协议各字段检验
- * - 单会话序列号 (seq) 单调递增
- * - 打字机 chunking 分片 (2-5 字符) 及累加长度
- * - 多 Agent 并发通道隔离
- * - 配置查询与更新
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -71,7 +59,7 @@ describe('StreamProvider', () => {
       new RegisterStreamOutput(), new StreamContext(),
     );
 
-    // 推送结构化事件
+    
     await streamAccess.pushEvent('s-100', 'context_build', 'CONTEXT', {
       recent_works_count: 3,
       user_profile_matched: true,
@@ -114,23 +102,23 @@ describe('StreamProvider', () => {
 
     expect(frames.length).toBeGreaterThan(1);
 
-    // 验证所有分片拼接还原完整文本
+    
     const reconstructed = frames.map(f => f.data.chunk).join('');
     expect(reconstructed).toBe(testText);
 
-    // 验证每个分片长度在 2-5 字符范围内（最后可能剩 1-5 字符）
+    
     for (let i = 0; i < frames.length - 1; i++) {
       expect(frames[i].data.chunk.length).toBeGreaterThanOrEqual(2);
       expect(frames[i].data.chunk.length).toBeLessThanOrEqual(5);
     }
 
-    // 验证 seq 严格连续自增
+    
     for (let i = 0; i < frames.length; i++) {
       expect(frames[i].seq).toBe(i);
       expect(frames[i].agent_id).toBe('writer-1');
     }
 
-    // 最后一帧 is_last_chunk 必须为 true
+    
     expect(frames[frames.length - 1].data.is_last_chunk).toBe(true);
   });
 
@@ -148,7 +136,7 @@ describe('StreamProvider', () => {
       new RegisterStreamOutput(), new StreamContext(),
     );
 
-    // 并发推送两个不同 Agent 的思考
+    
     await Promise.all([
       streamAccess.pushText('s-multi', 'agent_thinking', 'AgentA正在分析代码结构', {
         work_id: 'w-dag',

@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTCoreProvider 模块统一导出。
- */
-
 export { CDTCoreAccess } from './access/CDTCoreAccess';
 export {
   CDTCoreContext,

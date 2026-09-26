@@ -42,7 +42,7 @@ describe('MCPCoreProvider', () => {
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
     mcpAccess = new MCPAccess(relationDb);
-    try { await (mcpAccess as any).initialize?.(); } catch { /* no initialize */ }
+    try { await (mcpAccess as any).initialize?.(); } catch {  }
     llmAccess = new LLMAccess(relationDb);
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
@@ -50,8 +50,8 @@ describe('MCPCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('configMCPCore', () => {
@@ -88,7 +88,7 @@ describe('MCPCoreProvider', () => {
     });
 
     it('should accept valid prompt_template_id', async () => {
-      // 通过 Base 层 PromptsProvider 新增模板，获取真实 UUID
+
       const addInput = new AddPromptInput();
       addInput.data = { prompt_template_title: 'Test MCP Prompt', prompt_template: 'test template' };
       const addOutput = new AddPromptOutput();
@@ -168,7 +168,6 @@ describe('MCPCoreProvider', () => {
         { field: 'prompt_template_id', value: '' },
       ]);
 
-      // 绑定唯一事实源 = agent 表：既有绑定经 bound_mcp_ids 传入，确定性水合（不再读 agent_mcp 绑定表）
       const input = new MatchMcpInput();
       input.agent_id = 'agent-cached';
       input.bound_mcp_ids = ['mcp-1'];
@@ -186,7 +185,7 @@ describe('MCPCoreProvider', () => {
       const output = new OptMcpOutput();
       const result = await mcpCore.optMCP(input, output, new McpCoreContext());
       expect(result).toBe(true);
-      // 绑定已收敛至 Agent 表：optMCP 只记 usage，不再产出绑定 id
+
       expect(output.id).toBe('');
     });
 
@@ -201,7 +200,6 @@ describe('MCPCoreProvider', () => {
       const out2 = new OptMcpOutput();
       await mcpCore.optMCP(input, out2, new McpCoreContext());
 
-      // 幂等：同一 (agent_id, mcp_id) 均只记 usage，无绑定副作用
       expect(out1.id).toBe('');
       expect(out2.id).toBe('');
     });
@@ -220,7 +218,6 @@ describe('MCPCoreProvider', () => {
       const out2 = new OptMcpOutput();
       await mcpCore.optMCP(mcp2, out2, new McpCoreContext());
 
-      // 不同 mcp_id 各自记录 usage，互不影响
       expect(out1.id).toBe('');
       expect(out2.id).toBe('');
     });

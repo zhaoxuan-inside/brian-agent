@@ -24,10 +24,6 @@ export interface AgentStrategyConfigRecord {
   match_prompt_template_id: string;
 }
 
-// ---------------------------------------------------------------------------
-// matchStrategy
-// ---------------------------------------------------------------------------
-
 export class MatchStrategyInput extends Input {
   task_content!: string;
   task_complexity!: number;
@@ -37,10 +33,6 @@ export class MatchStrategyInput extends Input {
 export class MatchStrategyOutput extends Output {
   strategy_id = '';
 }
-
-// ---------------------------------------------------------------------------
-// soStrategyById
-// ---------------------------------------------------------------------------
 
 export class GetStrategyInput extends Input {
   strategy_id!: string;
@@ -52,10 +44,6 @@ export class GetStrategyOutput extends Output {
   execution_rule = '';
 }
 
-// ---------------------------------------------------------------------------
-// soStrategy
-// ---------------------------------------------------------------------------
-
 export class SoStrategyInput extends Input {
   conditions?: Condition[];
   order_by?: OrderBy[];
@@ -65,10 +53,6 @@ export class SoStrategyInput extends Input {
 export class SoStrategyOutput extends Output {
   strategies: AgentStrategyRecord[] = [];
 }
-
-// ---------------------------------------------------------------------------
-// addStrategy
-// ---------------------------------------------------------------------------
 
 export class AddStrategyInput extends Input {
   strategy_label!: string;
@@ -81,10 +65,6 @@ export class AddStrategyInput extends Input {
 export class AddStrategyOutput extends Output {
   strategy_id = '';
 }
-
-// ---------------------------------------------------------------------------
-// updateStrategy
-// ---------------------------------------------------------------------------
 
 export class UpdateStrategyInput extends Input {
   strategy_id!: string;
@@ -106,10 +86,6 @@ export class ToggleStrategyOutput extends Output {
   enable = false;
 }
 
-// ---------------------------------------------------------------------------
-// configAgentStrategy
-// ---------------------------------------------------------------------------
-
 export class ConfigAgentStrategyInput extends Input {
   default_strategy_id?: string;
   match_prompt_template_id?: string;
@@ -118,10 +94,6 @@ export class ConfigAgentStrategyInput extends Input {
 export class ConfigAgentStrategyOutput extends Output {
   config: AgentStrategyConfigRecord | null = null;
 }
-
-// ---------------------------------------------------------------------------
-// Tables
-// ---------------------------------------------------------------------------
 
 export const AGENT_STRATEGY_TABLE = 'agent_strategy';
 export const AGENT_STRATEGY_CONFIG_TABLE = 'agent_strategy_config';

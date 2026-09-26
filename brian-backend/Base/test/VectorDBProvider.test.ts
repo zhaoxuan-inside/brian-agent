@@ -1,12 +1,3 @@
-/**
- * @fileoverview VectorDBProvider / VectorDBComponent 阈值与搜索测试。
- *
- * 覆盖：
- * - normalizeMetricScore：不同度量下原始相似度到 0-100 的归一化映射
- * - normalizedThresholdToRaw：归一化阈值到原始阈值的逆映射（含 0/100 边界）
- * - search 原生 ANN 分支：原始阈值过滤是否生效（修复：raw vs raw 比较）
- */
-
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -35,11 +26,11 @@ describe('VectorDBComponent 阈值归一化', () => {
   });
 
   it('normalizedThresholdToRaw: 100 表示仅完全匹配（修复后不再是 -Infinity）', () => {
-    // cosine 完全匹配 raw=1.0
+
     expect(VectorDBComponent.normalizedThresholdToRaw(100, 'cosine', 1536)).toBe(1);
-    // euclidean 完全匹配 raw=1.0
+
     expect(VectorDBComponent.normalizedThresholdToRaw(100, 'euclidean', 1536)).toBe(1);
-    // dot 无界，完全匹配对应 +Infinity
+
     expect(VectorDBComponent.normalizedThresholdToRaw(100, 'dot', 1536)).toBe(Infinity);
   });
 
@@ -89,10 +80,10 @@ describe('VectorDBComponent.search 原生分支阈值过滤', () => {
   afterAll(() => {
     try {
       comp.close();
-    } catch { /* ignore */ }
+    } catch {  }
     try {
       rmSync(dir, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {  }
   });
 
   it('无阈值时返回全部（raw threshold = -Infinity）', async () => {
@@ -133,7 +124,7 @@ describe('VectorDBAccess.applyMetric 运行时切换度量', () => {
   afterAll(() => {
     try {
       rmSync(dir, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {  }
   });
 
   it('默认度量为 cosine', () => {
@@ -179,7 +170,7 @@ describe('VectorDBAccess.applyDimension 运行时切换维度', () => {
   afterAll(() => {
     try {
       rmSync(dir, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {  }
   });
 
   it('initialize(dimension) 以传入维度为准（覆盖构造器默认）', () => {
@@ -189,7 +180,7 @@ describe('VectorDBAccess.applyDimension 运行时切换维度', () => {
   it('applyDimension 修改维度并重建向量表，无数据时即时生效', async () => {
     await access.applyDimension(8);
     expect(access.getDimension()).toBe(8);
-    // 新维度可正常写入向量
+
     const out: { ids: string[] } = { ids: [] };
     await access.addVector(
       Object.assign({}, { vectors: [{ content: 'x', embedding: new Array(8).fill(0) }] }),
@@ -218,7 +209,7 @@ describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复'
   afterAll(() => {
     try {
       rmSync(dir, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {  }
   });
 
   it('initialize 写入全部默认配置项（幂等，不覆盖已有值）', async () => {
@@ -238,7 +229,6 @@ describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复'
     expect(map.get('default_similarity_threshold')).toBe('0');
     expect(map.get('default_distance_metric')).toBe('COSINE');
 
-    // 幂等：修改一个已有值后重复 initialize，已有值不被覆盖、不产生重复行
     relationDb.executeRaw(
       "UPDATE \"vectordb_config\" SET \"config_value\" = '25' WHERE \"config_key\" = 'default_top_k'",
     );
@@ -265,7 +255,7 @@ describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复'
       Object.assign({}, {}),
       Object.assign({}, {}),
     );
-    // 模拟重启：重新 initialize，禁用状态应从配置表恢复
+
     await access.initialize();
     await expect(access.addVector(
       Object.assign({}, { vectors: [{ content: 'x', embedding: [1, 0, 0, 0] }] }),

@@ -21,30 +21,25 @@ export class MCPCoreSchemaInitializer {
         "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8
       )
     `);
-    // ===== 2026-09-11 迁移：匹配缓存 TTL / 容量（老库补列） =====
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_ttl_ms" INTEGER NOT NULL DEFAULT 600000`);
-    } catch { /* column already exists */ }
+    } catch {  }
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "match_cache_capacity" INTEGER NOT NULL DEFAULT 500`);
-    } catch { /* column already exists */ }
-    // ===== 2026-09-11 迁移：排序采纳阈值与任务向量命中阈值（老库补列） =====
+    } catch {  }
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "score_threshold" INTEGER NOT NULL DEFAULT 90`);
-    } catch { /* column already exists */ }
+    } catch {  }
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
-    } catch { /* column already exists */ }
+    } catch {  }
 
-    // ===== 2026-09-22 迁移：提供商市场获取层开关（老库补列） =====
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "market_install_enabled" INTEGER NOT NULL DEFAULT 1`);
-    } catch { /* column already exists */ }
+    } catch {  }
 
-    // agent_mcp 绑定表停止创建（绑定唯一事实源为 Agent 模块 agent 表 mcp_ids_json；旧库残留表不再读写）
-
-    // agent_mcp_usage 表（评估依据；键为 (agent_id, mcp_id)，与绑定解耦。
-    // 旧键 agent_mcp_id 引用已废弃的绑定表，检测到旧结构时重建，usage 历史重置）
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${AGENT_MCP_USAGE_TABLE}" (
         "id"          TEXT    NOT NULL PRIMARY KEY,
@@ -62,7 +57,6 @@ export class MCPCoreSchemaInitializer {
     );
   }
 
-  /** 旧结构（agent_mcp_id 键）检测 → 重建为新结构 */
   private migrateLegacyUsageTable(): void {
     const cols = this.relationDb.queryRaw<{ name: string }>(
       `PRAGMA table_info("${AGENT_MCP_USAGE_TABLE}")`, [],

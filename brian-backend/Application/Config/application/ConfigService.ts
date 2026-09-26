@@ -1,13 +1,3 @@
-/**
- * @fileoverview Config 应用服务层。
- *
- * ConfigService 是系统级配置的统一入口，提供：
- * 1. 配置元数据注册管理
- * 2. 三层权限模型（Layer → Module → Category）
- * 3. 向下层模块代理所有配置操作
- * 4. Base 资源管理代理（LLM/Soul/Skill/MCP/Prompt）
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, CronAccess } from '@brian-agent/base';
 import { IdGenerator } from '@brian-agent/base';
@@ -64,8 +54,6 @@ import type {
 import type {
   WriterAgentAccess, EvolutorAgentAccess, AgentLibraryAccess,
   AgentBuilderAccess, AgentExecutionAccess, AgentStrategyAccess, AgentContextAccess,
-  PlannerAgentAccess,
-  ConfigPlannerAgentInput, ConfigPlannerAgentOutput, PlannerAgentContext,
   ConfigWriterAgentInput, ConfigWriterAgentOutput, WriterAgentContext,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput, EvolutorAgentContext,
   ConfigAgentContextInput, ConfigAgentContextOutput, AgentContextContext,
@@ -152,7 +140,6 @@ import {
 } from '../domain/types';
 import { ALL_CONFIG_REGISTRATIONS, LAYER_LABELS, MODULE_LABELS, CATEGORY_LABELS, MODULE_ENTITY_TYPES } from '../domain/configRegistrations';
 
-// 同包跨模块依赖仅做类型引用（import type 编译期擦除，不产生运行时循环依赖）
 import type { ChatAccess } from '../../Chat/access/ChatAccess';
 import type { ConfigChatInput, ConfigChatOutput, ChatContext } from '../../Chat/domain/types';
 import type { SelfLearningAccess } from '../../SelfLearning/access/SelfLearningAccess';
@@ -162,13 +149,11 @@ import type { ConfigUserProfileInput, ConfigUserProfileOutput, UserProfileContex
 import type { VisualizationAccess } from '../../Visualization/access/VisualizationAccess';
 import type { ConfigVisualizationInput, ConfigVisualizationOutput, VisualizationContext } from '../../Visualization/domain/types';
 
-/** 分层配置值读取匹配结果（内部类型）：matched=false 表示本组不处理该配置键 */
 interface ConfigValueMatch {
   matched: boolean;
   value: unknown;
 }
 
-/** 配置树构建工作上下文（内部类型）：权限映射 + 层/模块节点工作表 */
 interface ConfigTreeContext {
   layerPrivMap: Map<string, Record<string, unknown>>;
   modulePrivMap: Map<string, Record<string, unknown>>;
@@ -194,7 +179,6 @@ export class ConfigService {
   private readonly soulCore: SoulCoreAccess;
   private readonly writerAgent: WriterAgentAccess;
   private readonly evolutorAgent: EvolutorAgentAccess;
-  private readonly plannerAgent: PlannerAgentAccess;
   private readonly agentLibrary: AgentLibraryAccess;
   private readonly agentBuilder: AgentBuilderAccess;
   private readonly agentExecution: AgentExecutionAccess;
@@ -206,12 +190,12 @@ export class ConfigService {
   private readonly visualizationAccess: VisualizationAccess;
   private readonly cronAccess: CronAccess;
 
-  /** 内存静态注册表：配置项元数据直接来自 configRegistrations 静态定义（不再写 config_registry 表） */
+  
   private readonly registryMap: Map<string, ConfigRegistration> = new Map(
     ALL_CONFIG_REGISTRATIONS.map((r) => [r.config_key, r]),
   );
 
-  /** Base 层 Provider 模块名 → 对应配置表名映射（config_key 前缀 `模块.key`） */
+  
   private static readonly BASE_PROVIDER_CONFIG_TABLES: Record<string, string> = {
     llm_provider: LLM_CONFIG_TABLE,
     soul_provider: SOUL_CONFIG_TABLE,
@@ -244,7 +228,6 @@ export class ConfigService {
     soulCore: SoulCoreAccess,
     writerAgent: WriterAgentAccess,
     evolutorAgent: EvolutorAgentAccess,
-    plannerAgent: PlannerAgentAccess,
     agentLibrary: AgentLibraryAccess,
     agentBuilder: AgentBuilderAccess,
     agentExecution: AgentExecutionAccess,
@@ -273,7 +256,6 @@ export class ConfigService {
     this.soulCore = soulCore;
     this.writerAgent = writerAgent;
     this.evolutorAgent = evolutorAgent;
-    this.plannerAgent = plannerAgent;
     this.agentLibrary = agentLibrary;
     this.agentBuilder = agentBuilder;
     this.agentExecution = agentExecution;
@@ -286,9 +268,9 @@ export class ConfigService {
     this.cronAccess = cronAccess;
   }
 
-  // =========================================================================
-  // updateLayerPrivilege
-  // =========================================================================
+  
+  
+  
 
   async updateLayerPrivilege(input: UpdateLayerPrivilegeInput, output: UpdateLayerPrivilegeOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -328,9 +310,9 @@ export class ConfigService {
     return true;
   }
 
-  // =========================================================================
-  // updateModulePrivilege
-  // =========================================================================
+  
+  
+  
 
   async updateModulePrivilege(input: UpdateModulePrivilegeInput, output: UpdateModulePrivilegeOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -395,14 +377,14 @@ export class ConfigService {
     return true;
   }
 
-  // =========================================================================
-  // soConfigDetail
-  // =========================================================================
+  
+  
+  
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：124 行单方法拆为
-  // 「准备上下文 → 构建层/模块结构 → 填充配置项」三段编排 + 纯数据加工子方法
-  //（原始单方法已删除，等价结构见 git 历史）。
-  /** 配置树查询（逻辑控制；5 参公开边界；三段编排 + 纯数据加工子方法） */
+  
+  
+  
+  
   async soConfigDetail(input: GetConfigDetailInput, output: GetConfigDetailOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const treeCtx = await this.prepareTreeContext();
@@ -412,7 +394,7 @@ export class ConfigService {
     return true;
   }
 
-  /** 准备配置树构建上下文（数据处理）：读取层/模块权限并建立工作表 */
+  
   private async prepareTreeContext(): Promise<ConfigTreeContext> {
     const layerRows = await this.relationDb.select(CONFIG_LAYER_PRIVILEGE_TABLE);
     const moduleRows = await this.relationDb.select(CONFIG_MODULE_PRIVILEGE_TABLE);
@@ -424,7 +406,7 @@ export class ConfigService {
     };
   }
 
-  /** 构建层/模块节点结构（逻辑控制；按 layer/module 过滤遍历静态注册表） */
+  
   private async buildTreeStructure(input: GetConfigDetailInput, treeCtx: ConfigTreeContext): Promise<void> {
     for (const reg of ALL_CONFIG_REGISTRATIONS) {
       const layerName = reg.layer;
@@ -435,7 +417,7 @@ export class ConfigService {
     }
   }
 
-  /** 确保层节点存在（数据处理；缺省可读可写） */
+  
   private ensureLayerNode(layerName: string, treeCtx: ConfigTreeContext): void {
     if (treeCtx.layerMap.has(layerName)) {
       return;
@@ -452,7 +434,7 @@ export class ConfigService {
     });
   }
 
-  /** 确保模块节点存在（数据处理；以「层.模块」为键，避免不同层同名模块被合并） */
+  
   private ensureModuleNode(reg: ConfigRegistration, treeCtx: ConfigTreeContext): void {
     const moduleKey = `${reg.layer}.${reg.module}`;
     if (treeCtx.moduleMap.has(moduleKey)) {
@@ -481,7 +463,7 @@ export class ConfigService {
     }
   }
 
-  /** 填充配置项（逻辑控制；按 layer/module/category/readable 过滤后逐项追加） */
+  
   private async fillTreeItems(input: GetConfigDetailInput, treeCtx: ConfigTreeContext): Promise<void> {
     for (const reg of ALL_CONFIG_REGISTRATIONS) {
       if (input.layer && input.layer !== reg.layer) continue;
@@ -493,7 +475,7 @@ export class ConfigService {
     }
   }
 
-  /** 追加单个配置项（逻辑控制；生效权限计算 + 类目节点归属 + 当前值读取） */
+  
   private async appendConfigItem(
     reg: ConfigRegistration,
     input: GetConfigDetailInput,
@@ -514,7 +496,7 @@ export class ConfigService {
     (catNode.items as Array<Record<string, unknown>>).push(this.toConfigItemRecord(reg, currentValue, effectiveReadable, effectiveWritable));
   }
 
-  /** 确保类目节点存在（数据处理） */
+  
   private ensureCategoryNode(modNode: Record<string, unknown>, category: string): Record<string, unknown> {
     const catList = modNode.categories as Array<Record<string, unknown>>;
     let catNode = catList.find((c) => c.category === category);
@@ -531,7 +513,7 @@ export class ConfigService {
     return catNode;
   }
 
-  /** 读取配置当前值（数据处理；读取失败回退 null，不中断树构建） */
+  
   private async soCurrentConfigValue(configKey: string): Promise<unknown> {
     try {
       return await this.getCurrentValue(configKey);
@@ -540,7 +522,7 @@ export class ConfigService {
     }
   }
 
-  /** 配置项记录组装（数据处理） */
+  
   private toConfigItemRecord(
     reg: ConfigRegistration,
     currentValue: unknown,
@@ -562,9 +544,9 @@ export class ConfigService {
     };
   }
 
-  // =========================================================================
-  // soConfigItem
-  // =========================================================================
+  
+  
+  
 
   async soConfigItem(input: GetConfigItemInput, output: GetConfigItemOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -620,18 +602,18 @@ export class ConfigService {
     return true;
   }
 
-  // =========================================================================
-  // updateConfig
-  // =========================================================================
+  
+  
+  
 
-  // ===== 修改后的方法（2026-09-22 配置变更历史）：路由写入成功后记录 old→new 变更历史
-  // （原实现无历史记录，原始代码已注释保留于方法上方说明）。
-  // 原代码：
-  //   this.validateValueType(input.value, reg.config_type);
-  //   await this.routeUpdateConfig(input.config_key, input.value);
-  //   return true;
-  // now：路由前先取当前值（getCurrentValue 读取各模块配置真值），写入成功后落 config_history；
-  // 历史落库失败不阻断配置写入（best-effort + metrics 可见，权限审计同款容忍语义）。
+  
+  
+  
+  
+  
+  
+  
+  
   async updateConfig(input: UpdateConfigInput, _output: UpdateConfigOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.config_key) {
@@ -674,11 +656,11 @@ export class ConfigService {
     return true;
   }
 
-  // =========================================================================
-  // soConfigHistory（配置变更历史查询）
-  // =========================================================================
+  
+  
+  
 
-  /** 查询配置变更历史（逻辑控制；config_key 缺省查全局；change_time 降序；5 参公开边界） */
+  
   async soConfigHistory(input: GetConfigHistoryInput, output: GetConfigHistoryOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const conditions: Condition[] = [];
@@ -700,7 +682,7 @@ export class ConfigService {
     return true;
   }
 
-  /** 历史行 → 记录（数据处理；old/new 值经 JSON 反序列化还原） */
+  
   private toHistoryRecord(row: Record<string, unknown>): ConfigHistoryRecord {
     return {
       id: String(row.id ?? ''),
@@ -712,7 +694,7 @@ export class ConfigService {
     };
   }
 
-  /** 历史值反序列化（数据处理；非 JSON 原文返回） */
+  
   private parseHistoryValue(raw: unknown): unknown {
     if (raw === null || raw === undefined) {
       return null;
@@ -724,7 +706,7 @@ export class ConfigService {
     }
   }
 
-  /** 记录配置变更历史（逻辑控制；best-effort：失败不阻断配置写入，经 metrics 可见） */
+  
   private async recordConfigHistory(configKey: string, oldValue: unknown, newValue: unknown, metrics?: Metrics): Promise<void> {
     try {
       const now = Date.now();
@@ -746,9 +728,9 @@ export class ConfigService {
     }
   }
 
-  // =========================================================================
-  // configConfig (self-config)
-  // =========================================================================
+  
+  
+  
 
   async configConfig(input: ConfigConfigInput, output: ConfigConfigOutput, _context: ConfigContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -783,9 +765,9 @@ export class ConfigService {
     return true;
   }
 
-  // =========================================================================
-  // Helper methods
-  // =========================================================================
+  
+  
+  
 
   private generateId(): string {
     return IdGenerator.generate();
@@ -840,24 +822,6 @@ export class ConfigService {
     };
   }
 
-  private async ensureModulePrivilege(module: string, layer: string): Promise<void> {
-    const existing = await this.relationDb.selectOne(CONFIG_MODULE_PRIVILEGE_TABLE, [
-      { field: 'module', operator: Operator.EQ, value: module },
-    ]);
-    if (!existing) {
-      const now = Date.now();
-      await this.relationDb.insert(CONFIG_MODULE_PRIVILEGE_TABLE, [
-        { field: 'id', value: this.generateId() },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'module', value: module },
-        { field: 'layer', value: layer },
-        { field: 'readable', value: 1 },
-        { field: 'writable', value: 1 },
-      ]);
-    }
-  }
-
   private validateValueType(value: unknown, configType: string): void {
     switch (configType.toUpperCase()) {
       case 'STRING':
@@ -888,14 +852,12 @@ export class ConfigService {
     }
   }
 
-  // =========================================================================
-  // getCurrentValue - fetches current config value from lower layer
-  // =========================================================================
+  
+  
+  
 
-  /**
-   * 匹配 Base 层 Provider 模块名（config_key 前缀 `模块.key`）。
-   * 命中返回模块名，否则返回 null。
-   */
+  
+
   private matchBaseProviderModule(configKey: string): string | null {
     const dot = configKey.indexOf('.');
     if (dot <= 0) return null;
@@ -903,12 +865,8 @@ export class ConfigService {
     return module in ConfigService.BASE_PROVIDER_CONFIG_TABLES ? module : null;
   }
 
-  /**
-   * 读取 Base 层 Provider 的配置项真实值。
-   *
-   * 直接读各 Provider 的 xxx_config 表（key 不带模块前缀），
-   * 未写入时回退到静态定义中的 config_default。
-   */
+  
+
   private async readBaseProviderConfig(configKey: string, module: string): Promise<unknown> {
     const table = ConfigService.BASE_PROVIDER_CONFIG_TABLES[module];
     const key = configKey.slice(module.length + 1);
@@ -934,20 +892,20 @@ export class ConfigService {
     }
   }
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：163 行前缀 if/else 链按层拆分为
-  // 「路由 → 分组读取」结构（原始单方法已删除，等价结构见 git 历史）：
-  //   顺序保持不变：base provider → log → info_core → core(llm/mcp/skill/soul)
-  //   → agent 层(planner/writer/evolutor/agent_*) → application 层(chat/self_learning/
-  //   user_profile/visualization) → registry 默认值兜底。
-  //   每组方法返回 ConfigValueMatch（matched=false 表示未命中，继续下一组）。
-  /** 配置值读取结果（内部）：matched=false 表示本组不处理该配置键 */
+  
+  
+  
+  
+  
+  
+  
   private static readonly NOT_MATCHED: ConfigValueMatch = { matched: false, value: null };
 
   private static matched(value: unknown): ConfigValueMatch {
     return { matched: true, value };
   }
 
-  /** 读取配置当前值（逻辑控制；层间路由；写入历史时的 old 值来源） */
+  
   private async getCurrentValue(configKey: string): Promise<unknown> {
     const baseModule = this.matchBaseProviderModule(configKey);
     if (baseModule) {
@@ -964,7 +922,7 @@ export class ConfigService {
     return null;
   }
 
-  /** 分层路由（逻辑控制）：log → info_core → core → agent → application，命中即返回 */
+  
   private async readLayeredConfigValue(configKey: string): Promise<ConfigValueMatch> {
     const logValue = await this.readLogProviderValue(configKey);
     if (logValue.matched) return logValue;
@@ -977,7 +935,7 @@ export class ConfigService {
     return this.readApplicationLayerValue(configKey);
   }
 
-  /** log_provider 配置读取（数据处理；configLog 出参按字段名提取） */
+  
   private async readLogProviderValue(configKey: string): Promise<ConfigValueMatch> {
     if (!configKey.startsWith('log_provider.')) {
       return ConfigService.NOT_MATCHED;
@@ -989,7 +947,7 @@ export class ConfigService {
     return ConfigService.matched(field ? (cfg[field] ?? null) : null);
   }
 
-  /** info_core 配置读取（数据处理；tag/summary/vector/context/config 五段） */
+  
   private async readInfoCoreValue(configKey: string): Promise<ConfigValueMatch> {
     if (!configKey.startsWith('info_core.')) {
       return ConfigService.NOT_MATCHED;
@@ -1019,7 +977,7 @@ export class ConfigService {
     return ConfigService.matched(this.extractConfigValue(out, 'config', configKey));
   }
 
-  /** core 层路由（逻辑控制）：llm/mcp → skill → soul */
+  
   private async readCoreProviderValue(configKey: string): Promise<ConfigValueMatch> {
     const llmMcp = await this.readLlmMcpCoreValue(configKey);
     if (llmMcp.matched) return llmMcp;
@@ -1028,7 +986,7 @@ export class ConfigService {
     return this.readSoulCoreValue(configKey);
   }
 
-  /** llm_core / mcp_core 配置读取（数据处理） */
+  
   private async readLlmMcpCoreValue(configKey: string): Promise<ConfigValueMatch> {
     if (configKey.startsWith('llm_core.')) {
       const out = new ConfigLLMCoreOutput();
@@ -1043,10 +1001,9 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** skill_core 配置读取（数据处理；opt_rule 走规则清单首条字段提取） */
+  
   private async readSkillCoreValue(configKey: string): Promise<ConfigValueMatch> {
     const simple = configKey.startsWith('skill_core.regen_rate')
-      || configKey.startsWith('skill_core.similarity_threshold')
       || configKey.startsWith('skill_core.github_token')
       || configKey.startsWith('skill_core.github_search_enabled')
       || configKey.startsWith('skill_core.auto_generate_enabled')
@@ -1064,10 +1021,9 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** soul_core 配置读取（数据处理；opt_rule 走规则清单首条字段提取） */
+  
   private async readSoulCoreValue(configKey: string): Promise<ConfigValueMatch> {
     const simple = configKey.startsWith('soul_core.regen_rate')
-      || configKey.startsWith('soul_core.similarity_threshold')
       || configKey.startsWith(PROMPT_SLOTS.SOUL_MATCH)
       || configKey.startsWith('soul_core.llm_id');
     if (simple) {
@@ -1083,7 +1039,7 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** opt_rule 首条规则字段提取（数据处理；skill/soul 共用） */
+  
   private extractOptRuleField(configKey: string, prefix: string, out: { list?: unknown[] }): unknown {
     const first = (out.list ?? [])[0];
     if (!first) return null;
@@ -1091,21 +1047,15 @@ export class ConfigService {
     return (first as unknown as Record<string, unknown>)[key] ?? null;
   }
 
-  /** agent 层路由（逻辑控制）：工作 Agent → 框架组件 */
+  
   private async readAgentLayerValue(configKey: string): Promise<ConfigValueMatch> {
     const workAgent = await this.readWorkAgentValue(configKey);
     if (workAgent.matched) return workAgent;
     return this.readAgentFrameworkValue(configKey);
   }
 
-  /** planner/writer/evolutor Agent 配置读取（数据处理；统一走 getConfigFromAccess） */
+  
   private async readWorkAgentValue(configKey: string): Promise<ConfigValueMatch> {
-    if (configKey.startsWith('planner_agent.')) {
-      return ConfigService.matched(await this.getConfigFromAccess(
-        configKey, 'planner_agent',
-        (i: ConfigPlannerAgentInput, c: PlannerAgentContext, o: ConfigPlannerAgentOutput) => this.plannerAgent.configPlannerAgent(i, o, c),
-      ));
-    }
     if (configKey.startsWith('writer_agent.')) {
       return ConfigService.matched(await this.getConfigFromAccess(
         configKey, 'writer_agent',
@@ -1121,7 +1071,7 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** agent_context/library/builder/execution/strategy 配置读取（数据处理） */
+  
   private async readAgentFrameworkValue(configKey: string): Promise<ConfigValueMatch> {
     if (configKey.startsWith('agent_context.')) {
       const out = {} as AgentContextContext;
@@ -1156,7 +1106,7 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** application 层路由（逻辑控制）：chat/self_learning/user_profile/visualization */
+  
   private async readApplicationLayerValue(configKey: string): Promise<ConfigValueMatch> {
     if (configKey.startsWith('chat.')) {
       return ConfigService.matched(await this.getConfigFromAccess(
@@ -1179,7 +1129,7 @@ export class ConfigService {
     return ConfigService.NOT_MATCHED;
   }
 
-  /** self_learning 配置读取（数据处理；定时任务 cron 由 CronProvider 统一管理，与定时任务展示页面同一时间源） */
+  
   private async readSelfLearningValue(configKey: string): Promise<unknown> {
     if (configKey === 'self_learning.tag_aging_cron' || configKey === 'self_learning.orphan_tag_check_cron') {
       const taskName = configKey === 'self_learning.tag_aging_cron' ? 'tag_aging' : 'orphan_tag_check';
@@ -1193,7 +1143,7 @@ export class ConfigService {
     );
   }
 
-  /** visualization 配置读取（数据处理） */
+  
   private async readVisualizationValue(configKey: string): Promise<unknown> {
     const out = {} as VisualizationContext;
     await this.visualizationAccess.configVisualization({} as ConfigVisualizationInput, {} as ConfigVisualizationOutput, out);
@@ -1223,16 +1173,12 @@ export class ConfigService {
     return this.extractConfigValue(out, _prefix, _configKey);
   }
 
-  // =========================================================================
-  // routeUpdateConfig - routes update to correct lower-layer method
-  // =========================================================================
+  
+  
+  
 
-  /**
-   * 写入 Base 层 Provider 的配置项。
-   *
-   * - `enabled` 走 Provider 的 enableXxx 方法，保证运行时内存状态同步；
-   * - 其余参数直接写各 Provider 的 xxx_config 表（这些参数均为运行时实时读取，写表即时生效）。
-   */
+  
+
   private async writeBaseProviderConfig(configKey: string, module: string, value: unknown): Promise<void> {
     const key = configKey.slice(module.length + 1);
     if (key === 'enabled') {
@@ -1240,7 +1186,7 @@ export class ConfigService {
       return;
     }
 
-    // 向量数据库距离度量变更需同步运行时组件（有向量数据时 applyMetric 抛错，阻止写入）
+    
     if (module === 'vectordb_provider' && key === 'default_distance_metric') {
       await this.vectorDBAccess.applyMetric(value as string);
     }
@@ -1257,9 +1203,8 @@ export class ConfigService {
     await svc.set(key, value, valueType);
   }
 
-  /**
-   * 调用对应 Provider 的 enable 方法切换组件启用状态。
-   */
+  
+
   private async setProviderEnabled(module: string, enable: boolean): Promise<void> {
     switch (module) {
       case 'llm_provider':
@@ -1294,25 +1239,24 @@ export class ConfigService {
     }
   }
 
-  /** 配置写入路由表：按匹配顺序分发到对应分组的写入处理器 */
+  
   private readonly updateConfigRoutes: Array<[
     (prefix: string) => boolean,
     (prefix: string, value: unknown) => Promise<void>,
   ]> = [
     [(prefix) => prefix.startsWith('log_provider.'), (prefix, value) => this.writeLogProviderConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('llm_core.regen_rate') || prefix.startsWith('llm_core.similarity_threshold') || prefix.startsWith(PROMPT_SLOTS.LLM_MATCH), (prefix, value) => this.writeLLMCoreConfig(prefix, value)],
+    [(prefix) => prefix.startsWith('llm_core.regen_rate') || prefix.startsWith(PROMPT_SLOTS.LLM_MATCH), (prefix, value) => this.writeLLMCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('llm_core.quota_'), (prefix, value) => this.writeLLMCoreQuotaConfig(prefix, value)],
     [(prefix) => prefix.startsWith('mcp_core.'), (prefix, value) => this.writeMCPCoreConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('skill_core.regen_rate') || prefix.startsWith('skill_core.similarity_threshold') || prefix.startsWith('skill_core.github_') || prefix.startsWith('skill_core.auto_generate_enabled') || prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH), (prefix, value) => this.writeSkillCoreConfig(prefix, value)],
+    [(prefix) => prefix.startsWith('skill_core.regen_rate') || prefix.startsWith('skill_core.github_') || prefix.startsWith('skill_core.auto_generate_enabled') || prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH), (prefix, value) => this.writeSkillCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('skill_core.opt_rule'), (prefix, value) => this.writeSkillOptRuleConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('soul_core.regen_rate') || prefix.startsWith('soul_core.similarity_threshold') || prefix.startsWith(PROMPT_SLOTS.SOUL_MATCH) || prefix.startsWith('soul_core.llm_id'), (prefix, value) => this.writeSoulCoreConfig(prefix, value)],
+    [(prefix) => prefix.startsWith('soul_core.regen_rate') || prefix.startsWith(PROMPT_SLOTS.SOUL_MATCH) || prefix.startsWith('soul_core.llm_id'), (prefix, value) => this.writeSoulCoreConfig(prefix, value)],
     [(prefix) => prefix.startsWith('soul_core.opt_rule'), (prefix, value) => this.writeSoulOptRuleConfig(prefix, value)],
     [(prefix) => prefix.startsWith('info_core.tag_config.'), (prefix, value) => this.writeInfoTagConfigConfig(prefix, value)],
     [(prefix) => prefix.startsWith('info_core.summary_config.'), (prefix, value) => this.writeInfoSummaryConfigConfig(prefix, value)],
     [(prefix) => prefix.startsWith('info_core.vector_config.'), (prefix, value) => this.writeInfoVectorConfigConfig(prefix, value)],
     [(prefix) => prefix.startsWith('info_core.context_config.'), (prefix, value) => this.writeInfoContextConfigConfig(prefix, value)],
     [(prefix) => prefix.startsWith('info_core.config.'), (prefix, value) => this.writeInfoCoreConfigConfig(prefix, value)],
-    [(prefix) => prefix.startsWith('planner_agent.'), (prefix, value) => this.writePlannerAgentConfig(prefix, value)],
     [(prefix) => prefix.startsWith('writer_agent.'), (prefix, value) => this.writeWriterAgentConfig(prefix, value)],
     [(prefix) => prefix.startsWith('evolutor_agent.'), (prefix, value) => this.writeEvolutorAgentConfig(prefix, value)],
     [(prefix) => prefix.startsWith('agent_context.'), (prefix, value) => this.writeAgentContextConfig(prefix, value)],
@@ -1326,13 +1270,8 @@ export class ConfigService {
     [(prefix) => prefix.startsWith('visualization.'), (prefix, value) => this.writeVisualizationConfig(prefix, value)],
   ];
 
-  /**
-   * 配置写入路由：仅做前缀匹配与分发，字段映射在各 writeXxxConfig 处理器内。
-   *
-   * @param configKey 配置键
-   * @param value 配置值
-   * @throws ValidationError 当配置键未命中任何路由
-   */
+  
+
   private async routeUpdateConfig(configKey: string, value: unknown): Promise<void> {
     const baseModule = this.matchBaseProviderModule(configKey);
     if (baseModule) {
@@ -1348,12 +1287,8 @@ export class ConfigService {
     throw new ValidationError(`配置项 ${configKey} 未实现修改路由`);
   }
 
-  /**
-   * 写入 `log_provider.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeLogProviderConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigLogInput;
       if (prefix.startsWith('log_provider.enabled')) input.enabled = value as boolean;
@@ -1366,47 +1301,33 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `llm_core.regen_rate*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeLLMCoreConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigLLMCoreInput;
       if (prefix.startsWith('llm_core.regen_rate')) input.regen_rate = value as number;
-      if (prefix.startsWith('llm_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.LLM_MATCH)) input.prompt_template_id = value as string;
-      // 注意：此处第 3 参为 Context 位置（历史入参顺序如此，保持运行时行为不变）
+      
       const output = {} as LLMCoreContext;
       await this.llmCore.configLLMCore(input, {} as ConfigLLMCoreOutput, output);
       return;
   }
 
-  /**
-   * 写入 `llm_core.quota_*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeLLMCoreQuotaConfig(prefix: string, value: unknown): Promise<void> {
-      // 坑位警告：limitLLM 要求 llm_provider_id，此处历史传入 config_key/value 与真实入参不符（运行时行为保持原样，修复需改运行时代码，另行处理）
+      
       const input = { config_key: prefix, value } as unknown as LimitLLMInput;
       const output = {} as LLMCoreContext;
       await this.llmCore.limitLLM(input, {} as LimitLLMOutput, output);
       return;
   }
 
-  /**
-   * 写入 `mcp_core.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeMCPCoreConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigMcpCoreInput;
       if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value as number;
-      if (prefix.startsWith('mcp_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.MCP_MATCH)) input.prompt_template_id = value as string;
       if (prefix.startsWith('mcp_core.market_install_enabled')) input.market_install_enabled = value as boolean;
       const output = {} as McpCoreContext;
@@ -1414,16 +1335,11 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `skill_core.regen_rate*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeSkillCoreConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigSkillCoreInput;
       if (prefix.startsWith('skill_core.regen_rate')) input.regen_rate = value as number;
-      if (prefix.startsWith('skill_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.SKILL_MATCH)) input.prompt_template_id = value as string;
       if (prefix.startsWith('skill_core.github_token')) input.github_token = value as string;
       if (prefix.startsWith('skill_core.github_search_enabled')) input.github_search_enabled = value as boolean;
@@ -1433,12 +1349,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `skill_core.opt_rule*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeSkillOptRuleConfig(prefix: string, value: unknown): Promise<void> {
       const key = prefix.split('skill_core.opt_rule.')[1];
       if (key) {
@@ -1463,16 +1375,11 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `soul_core.regen_rate*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeSoulCoreConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigSoulCoreInput;
       if (prefix.startsWith('soul_core.regen_rate')) input.regen_rate = value as number;
-      if (prefix.startsWith('soul_core.similarity_threshold')) input.similarity_threshold = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.SOUL_MATCH)) input.prompt_template_id = value as string;
       if (prefix.startsWith('soul_core.llm_id')) input.llm_id = value as string;
       const output = {} as SoulCoreContext;
@@ -1480,12 +1387,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `soul_core.opt_rule*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeSoulOptRuleConfig(prefix: string, value: unknown): Promise<void> {
       const key = prefix.split('soul_core.opt_rule.')[1];
       if (key) {
@@ -1510,12 +1413,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `info_core.tag_config.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeInfoTagConfigConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as UpdateInfoTagConfigInput;
       if (prefix.startsWith('info_core.tag_config.llm_id')) input.llm_id = value as string;
@@ -1527,12 +1426,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `info_core.summary_config.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeInfoSummaryConfigConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as UpdateInfoSummaryConfigInput;
       if (prefix.startsWith('info_core.summary_config.llm_id')) input.llm_id = value as string;
@@ -1545,12 +1440,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `info_core.vector_config.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeInfoVectorConfigConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as UpdateInfoVectorConfigInput;
       if (prefix.startsWith('info_core.vector_config.llm_id')) input.llm_id = value as string;
@@ -1561,12 +1452,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `info_core.context_config.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeInfoContextConfigConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as UpdateInfoContextConfigInput;
       if (prefix.startsWith('info_core.context_config.base_timeline_count')) input.base_timeline_count = Number(value);
@@ -1583,12 +1470,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `info_core.config.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeInfoCoreConfigConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as UpdateInfoConfigInput;
       if (prefix.startsWith('info_core.config.alive_max_days')) input.alive_max_days = Number(value);
@@ -1597,29 +1480,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `planner_agent.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  private async writePlannerAgentConfig(prefix: string, value: unknown): Promise<void> {
-      const input = {} as ConfigPlannerAgentInput;
-      if (prefix.startsWith('planner_agent.complexity_decompose_threshold')) input.complexity_decompose_threshold = value as number;
-      else if (prefix.startsWith(PROMPT_SLOTS.PLAN)) input.plan_prompt_template_id = value as string;
-      else if (prefix.startsWith('planner_agent.max_subtask_count')) input.max_subtask_count = value as number;
-      else if (prefix.startsWith('planner_agent.llm_id')) input.llm_id = value as string;
-      const output = {} as PlannerAgentContext;
-      await this.plannerAgent.configPlannerAgent(input, {} as ConfigPlannerAgentOutput, output);
-      return;
-  }
+  
 
-  /**
-   * 写入 `writer_agent.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
   private async writeWriterAgentConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigWriterAgentInput;
       if (prefix.startsWith(PROMPT_SLOTS.WRITE)) input.write_prompt_template_id = value as string;
@@ -1633,12 +1495,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `evolutor_agent.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeEvolutorAgentConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigEvolutorAgentInput;
       if (prefix.startsWith(PROMPT_SLOTS.EVAL_WORK)) input.eval_work_prompt_template_id = value as string;
@@ -1653,12 +1511,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `agent_context.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeAgentContextConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigAgentContextInput;
       if (prefix.startsWith('agent_context.max_context_items')) input.max_context_items = value as number;
@@ -1668,12 +1522,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `agent_library.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeAgentLibraryConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigAgentLibraryInput;
       if (prefix.startsWith('agent_library.regen_rate')) input.regen_rate = value as number;
@@ -1685,12 +1535,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `agent_builder.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeAgentBuilderConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigAgentBuilderInput;
       if (prefix.startsWith(PROMPT_SLOTS.TASK_ANALYSIS)) input.task_analysis_prompt_template_id = value as string;
@@ -1700,12 +1546,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `agent_execution.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeAgentExecutionConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigAgentExecutionInput;
       if (prefix.startsWith(PROMPT_SLOTS.THINK)) input.think_prompt_template_id = value as string;
@@ -1718,74 +1560,41 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `agent_strategy.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeAgentStrategyConfig(prefix: string, value: unknown): Promise<void> {
-      // 坑位警告：configAgentStrategy 入参为 default_strategy_id/match_prompt_template_id，此处历史传入 config_key/value 为结构兼容但语义不匹配（运行时行为保持原样，修复需改运行时代码，另行处理）
+      
       const input = { config_key: prefix, value } as ConfigAgentStrategyInput;
       const output = {} as AgentStrategyContext;
       await this.agentStrategy.configAgentStrategy(input, {} as ConfigAgentStrategyOutput, output);
       return;
   }
 
-  /**
-   * 写入 `orchestration.entry*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  /**
-   * 写入 `orchestration.strategy*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  /**
-   * 写入 `orchestration.execution*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  /**
-   * 写入 `orchestration.visualization*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  /**
-   * 写入 `orchestration.jsonnode*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
-  /**
-   * 写入 `chat.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+
   private async writeChatConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigChatInput;
       if (prefix.startsWith('chat.max_messages_per_session')) input.max_messages_per_session = Number(value);
-      else if (prefix.startsWith('chat.sse_heartbeat_interval_ms')) input.sse_heartbeat_interval_ms = Number(value);
       else if (prefix.startsWith('chat.default_history_lastN')) input.default_history_lastN = Number(value);
       const output = {} as ChatContext;
       await this.chatAccess.configChat(input, {} as ConfigChatOutput, output);
       return;
   }
 
-  /**
-   * 写入 `self_learning.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeSelfLearningConfig(prefix: string, value: unknown): Promise<void> {
-      // 定时任务 cron 写入 CronProvider（与定时任务展示页面同一时间源）
+      
       if (prefix === 'self_learning.tag_aging_cron' || prefix === 'self_learning.orphan_tag_check_cron') {
         const taskName = prefix === 'self_learning.tag_aging_cron' ? 'tag_aging' : 'orphan_tag_check';
         await this.cronAccess.setCronTask(Object.assign(new SetCronTaskInput(), { name: taskName, cron: value as string }), new SetCronTaskOutput(), new CronContext());
@@ -1810,12 +1619,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `user_profile.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeUserProfileConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigUserProfileInput;
       if (prefix.startsWith('user_profile.auto_generate_interval_ms')) input.auto_generate_interval_ms = Number(value);
@@ -1828,12 +1633,8 @@ export class ConfigService {
       return;
   }
 
-  /**
-   * 写入 `visualization.*` 配置分组（由 routeUpdateConfig 路由表调用）。
-   *
-   * @param prefix 配置键
-   * @param value 配置值
-   */
+  
+
   private async writeVisualizationConfig(prefix: string, value: unknown): Promise<void> {
       const input = {} as ConfigVisualizationInput;
       if (prefix.startsWith('visualization.max_nodes_per_graph')) input.max_nodes_per_graph = value as number;
@@ -1844,10 +1645,9 @@ export class ConfigService {
       return;
   }
 
-
-  // =========================================================================
-  // LLM Proxy methods
-  // =========================================================================
+  
+  
+  
 
   async addLLMProviderProxy(input: AddLLMProviderInput, output: AddLLMProviderOutput, context: LLMContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.llmAccess.addLLMProvider(input, output, context, metrics, report);
@@ -1893,9 +1693,9 @@ export class ConfigService {
     return this.llmAccess.soLLMById(input, output, context, metrics, report);
   }
 
-  // =========================================================================
-  // Soul Proxy methods
-  // =========================================================================
+  
+  
+  
 
   async addSoulProxy(input: AddSoulInput, output: AddSoulOutput, context: SoulContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.soulAccess.addSoul(input, output, context, metrics, report);
@@ -1925,9 +1725,9 @@ export class ConfigService {
     return this.soulCore.updateSoulRule(input, output, context, metrics, report);
   }
 
-  // =========================================================================
-  // Skill Proxy methods
-  // =========================================================================
+  
+  
+  
 
   async addSkillProxy(input: AddSkillInput, output: AddSkillOutput, context: SkillContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.skillAccess.addSkill(input, output, context, metrics, report);
@@ -1961,9 +1761,9 @@ export class ConfigService {
     return this.skillCore.updateSkillRule(input, output, context, metrics, report);
   }
 
-  // =========================================================================
-  // MCP Proxy methods
-  // =========================================================================
+  
+  
+  
 
   async addMcpProviderProxy(input: AddMcpProviderInput, output: AddMcpProviderOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.mcpAccess.addMcpProvider(input, output, context, metrics, report);
@@ -2017,9 +1817,9 @@ export class ConfigService {
     return this.mcpAccess.soMcp(input, output, context, metrics, report);
   }
 
-  // =========================================================================
-  // Prompt Proxy methods
-  // =========================================================================
+  
+  
+  
 
   async addPromptProxy(input: AddPromptInput, output: AddPromptOutput, context: PromptContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.promptsAccess.addPrompt(input, output, context, metrics, report);

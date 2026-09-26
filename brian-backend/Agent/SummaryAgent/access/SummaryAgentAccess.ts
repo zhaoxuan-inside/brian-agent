@@ -29,13 +29,12 @@ export class SummaryAgentAccess {
       relationDb, llmAccess, promptsAccess, soulAccess, agentBuilder, agentLibrary, infoCore, llmCore, logger,
     );
     this.service = AopProxy.wrap(raw, { logger });
-    // 初始化：确保内置摘要 Soul / 系统 Agent 就绪（幂等，失败仅告警不阻断启动）
+    
     this.initPromise = raw.initialize(new SummaryAgentContext());
   }
 
-  /**
-   * 初始化：确保内置摘要 Soul / 系统 Agent 就绪（幂等，失败仅告警不阻断启动）。
-   */
+  
+
   async initialize(): Promise<void> {
     await this.initPromise;
   }

@@ -1,7 +1,3 @@
-/**
- * @fileoverview Config 模块统一导出。
- */
-
 export { ConfigAccess } from './access/ConfigAccess';
 
 export {

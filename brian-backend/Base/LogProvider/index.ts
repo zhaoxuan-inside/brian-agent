@@ -1,14 +1,7 @@
-/**
- * @fileoverview LogProvider 模块统一导出。
- */
-
-// access 层
 export { LogAccess } from './access/LogAccess';
 
-// interceptor
 export { LogInterceptor } from './interceptor/LogInterceptor';
 
-// domain 层类型
 export {
   LogContext,
   LogLevel,

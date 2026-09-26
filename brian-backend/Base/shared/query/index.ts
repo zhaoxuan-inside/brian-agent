@@ -1,6 +1,3 @@
-/**
- * @fileoverview 查询对象统一导出。
- */
 export {
   Operator,
   Logic,

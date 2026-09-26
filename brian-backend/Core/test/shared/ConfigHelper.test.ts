@@ -30,8 +30,8 @@ describe('ConfigHelper', () => {
   });
 
   afterEach(async () => {
-    try { await dbAccess.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await dbAccess.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('ensureDefaultConfig', () => {

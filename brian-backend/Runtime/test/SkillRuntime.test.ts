@@ -1,7 +1,3 @@
-/**
- * @fileoverview Tools 模块单元测试（Runtime v2 · 阶段2）。
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { z } from 'zod';
 import { RelationDBAccess, SkillContext, ExecSkillInput, ExecSkillOutput } from '@brian-agent/base';
@@ -156,7 +152,7 @@ describe('SkillRuntimeService', () => {
     await skillRuntimeAccess.execSkill(exec, out, new SkillRuntimeContext());
     expect(out.result.status).toBe('error');
     expect(out.result.output).toContain('invalid arguments');
-    // 非 JSON 也回流
+    
     exec.raw_args = '{bad json';
     const out2 = new ExecSkillOutput();
     await skillRuntimeAccess.execSkill(exec, out2, new SkillRuntimeContext());
@@ -204,9 +200,9 @@ describe('SkillRuntimeService', () => {
       .rejects.toMatchObject({ error_code: 'NOT_FOUND' });
   });
 
-  // ===== 2026-09-24 概念退役（Tool → Skill）：skill_exec 间接 gate 用例随概念删除 =====
-  // 原三个用例（skill_exec 注册执行/无绑定拒绝/越界拒绝）验证的选/执分离语义已由
-  // 绑定技能一等化（绑定即授权）与 mcp gate（独立保留）分别承接。
+  
+  
+  
   it('registerBuiltinSkills 默认仅注册 mcp gate（系统技能走 run 级注册，不占全局表）', async () => {
     const regOut = new RegisterBuiltinSkillsOutput();
     await skillRuntimeAccess.registerBuiltinSkills(new RegisterBuiltinSkillsInput(), regOut, new SkillRuntimeContext());
@@ -240,7 +236,6 @@ describe('SkillRuntimeService', () => {
   });
 });
 
-// ===== 2026-09-24 新增（Tool ⊕ Skill 合并回归）：Skill 一等工具 run 级注册 =====
 describe('Skill 一等能力（run 级注册；Tools-PRD §14 → SkillRuntime）', () => {
   let relationDb: RelationDBAccess;
   let skillRuntimeAccess: SkillRuntimeAccess;
@@ -274,12 +269,12 @@ describe('Skill 一等能力（run 级注册；Tools-PRD §14 → SkillRuntime�
     reg.skill_ids = ['11111111-2222-3333-4444-555555555555'];
     const regOut = new RegisterSkillsOutput();
     await skillRuntimeAccess.registerRunSkills(reg, regOut, new SkillRuntimeContext());
-    // 2026-09-24 概念退役语义：run 级注册 = 系统内置技能（无依赖可装配的 exec/plan）∪ 绑定技能
+    
     expect(regOut.registered).toContain('skill_11111111-2222-3333-4444-555555555555');
     expect(regOut.registered).toContain('skill_builtin-exec');
     expect(regOut.registered).toContain('skill_builtin-plan');
 
-    // wire 规格合并：run 级工具与内置原语同表出现
+    
     const soIn = new SoSkillsInput();
     soIn.run_id = runId;
     soIn.skill_ids = ['skill_builtin-exec', 'skill_11111111-2222-3333-4444-555555555555'];
@@ -326,7 +321,7 @@ describe('Skill 一等能力（run 级注册；Tools-PRD §14 → SkillRuntime�
     await skillRuntimeAccess.soSkills(soIn, soOut, new SkillRuntimeContext());
     expect(soOut.specs.length).toBe(0);
 
-    // execSkill 对未注册工具的既有语义：抛 NotFoundError（run 级清理后即回到未注册态）
+    
     const exec = new ExecSkillInput();
     exec.tool_id = 'skill_s-2';
     exec.raw_args = '{}';

@@ -1,16 +1,3 @@
-/**
- * @fileoverview CronProvider 应用服务层。
- *
- * 定时任务调度中心：通过发布订阅模型接收「定时时间（cron）」与「需要定时执行的接口
- * （handler 函数）」，在时间到达时触发执行并记录执行历史。
- *
- * - registerTask：订阅任务（发布订阅中的「订阅」），持久化任务元数据并注册 handler；
- * - start/stop：启停调度循环（每秒 tick）；
- * - tick：检查到期的任务并触发执行；
- * - trigger：单次手动触发（测试用）；
- * - setCron / setEnabled：运行时调整定时时间与启停状态。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { checkCron, nextRunTime } from '../../ToolProvider/CronUtils';
@@ -26,10 +13,8 @@ import type {
   CronTaskRunRecord,
 } from '../domain/types';
 
-/** 定时任务处理器（发布订阅中的「订阅者」） */
 export type CronHandler = () => Promise<void>;
 
-/** 任务注册信息 */
 export interface CronTaskRegistration {
   name: string;
   description?: string;
@@ -38,16 +23,16 @@ export interface CronTaskRegistration {
 }
 
 export class CronService {
-  /** 名称 → handler（内存注册表，进程生命周期内有效） */
+  
   private readonly handlers = new Map<string, CronHandler>();
 
-  /** 调度循环定时器 */
+  
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  /** 是否正在执行（避免并发 tick 重入） */
+  
   private ticking = false;
 
-  /** 正在执行的任务名集合（避免同一任务并发重复执行） */
+  
   private readonly running = new Set<string>();
 
   constructor(
@@ -55,15 +40,12 @@ export class CronService {
     private readonly logger?: Logger,
   ) {}
 
-  // -------------------------------------------------------------------------
-  // 发布订阅：注册任务
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 订阅一个定时任务。
-   *
-   * 若任务已存在（按 name）则仅更新内存 handler；否则持久化任务元数据（默认 cron、启用）。
-   */
+  
+
   async registerTask(reg: CronTaskRegistration): Promise<void> {
     if (!reg.name) throw new ValidationError('registerTask 需要提供 name');
     if (!reg.handler) throw new ValidationError(`任务 ${reg.name} 缺少 handler`);
@@ -85,7 +67,7 @@ export class CronService {
         [IdGenerator.generate(), reg.name, reg.description ?? '', cron, 1, 0, next, now, now],
       );
     } else if (existing.cron !== check.normalized) {
-      // 代码默认值变更时，同步已持久化的 cron
+      
       const now = IdGenerator.now();
       const next = nextRunTime(check.normalized, now) ?? 0;
       this.relationDb.executeRaw(
@@ -95,11 +77,11 @@ export class CronService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 调度循环
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 启动调度循环（每秒 tick） */
+  
   start(): void {
     if (this.timer) return;
     this.recomputeStaleNextRuns();
@@ -110,7 +92,7 @@ export class CronService {
     }, 1000);
   }
 
-  /** 停止调度循环 */
+  
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
@@ -118,7 +100,7 @@ export class CronService {
     }
   }
 
-  /** 重启后，将已过期任务的 next_run 重新计算到未来 */
+  
   private recomputeStaleNextRuns(): void {
     try {
       const now = IdGenerator.now();
@@ -135,14 +117,14 @@ export class CronService {
         }
       }
     } catch (err) {
-      /* best-effort */
+      
       this.logger?.warn?.('CronService.recomputeStaleNextRuns 重算过期 next_run 失败（best-effort，等待 tick 兜底）', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  /** 检查到期的任务并触发执行 */
+  
   private async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
@@ -157,7 +139,7 @@ export class CronService {
         if (!this.handlers.has(row.name)) continue;
         if (this.running.has(row.name)) continue;
 
-        // 先推进 next_run，避免执行期间重复触发
+        
         const next = nextRunTime(row.cron, now) ?? 0;
         this.relationDb.executeRaw(
           `UPDATE "${CRON_TASK_TABLE}" SET "next_run" = ? WHERE "name" = ?`,
@@ -171,15 +153,12 @@ export class CronService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 执行
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 执行任务并记录历史。
-   *
-   * @param manual 是否手动触发（手动触发不推进 next_run）
-   */
+  
+
   private async executeTask(name: string, handler: CronHandler, _manual: boolean): Promise<CronTaskRunRecord> {
     const task = this.getTaskRow(name);
     if (!task) throw new NotFoundError('定时任务', name);
@@ -235,9 +214,9 @@ export class CronService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 查询 / 更新
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   listTasks(): CronTaskRecord[] {
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
@@ -282,7 +261,7 @@ export class CronService {
     return this.getTask(name);
   }
 
-  /** 单次手动触发（测试用） */
+  
   async trigger(name: string): Promise<CronTaskRunRecord> {
     const handler = this.handlers.get(name);
     if (!handler) throw new NotFoundError('定时任务 handler', name);
@@ -303,9 +282,9 @@ export class CronService {
     return (rows || []).map((r) => this.toRunRecord(r));
   }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   private getTaskRow(name: string): CronTaskRecord | null {
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(

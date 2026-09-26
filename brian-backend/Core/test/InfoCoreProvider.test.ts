@@ -104,8 +104,8 @@ describe('InfoCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   function makeSaveInput(overrides?: Partial<SaveInfoInput>): SaveInfoInput {
@@ -122,10 +122,6 @@ describe('InfoCoreProvider', () => {
     input.handle_result_type = overrides?.handle_result_type;
     return input;
   }
-
-  // =========================================================================
-  // Write Operations
-  // =========================================================================
 
   describe('saveInfo', () => {
     it('should save raw info and return info_id', async () => {
@@ -225,7 +221,6 @@ describe('InfoCoreProvider', () => {
       input.info_id = saveOut.info_id;
       await infoCore.pinInfo(input, new PinInfoOutput(), new InfoCoreContext());
 
-      // Verify by checking lastNInfo result
       const lastNOut = new LastNInfoOutput();
       const lastNInput = new LastNInfoInput();
       lastNInput.info_id = saveOut.info_id;
@@ -272,10 +267,6 @@ describe('InfoCoreProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
   });
-
-  // =========================================================================
-  // Process Operations
-  // =========================================================================
 
   describe('vectorInfo', () => {
     it('should throw ValidationError when info_id is empty', async () => {
@@ -369,7 +360,7 @@ describe('InfoCoreProvider', () => {
   });
 
   describe('backfillMissingSummaries', () => {
-    /** 构造 stub LLM 接入层：记录 execLLM 调用并返回固定摘要（仅注入 backfill 用例） */
+
     function makeStubLLMAccess(result: string | null, calls: Array<{ id: string }>): LLMAccess {
       return {
         execLLM: async (input: { id: string }, output: { result?: string }) => {
@@ -382,7 +373,7 @@ describe('InfoCoreProvider', () => {
     }
 
     it('仅对超阈值、无摘要的正常信息补生成摘要（短文本/错误/已老化清空的不补）', async () => {
-      // 先关闭摘要生成，避免 saveInfo 异步自学习链路与本用例竞争写 info_summary
+
       await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
 
       const longOut = new SaveInfoOutput();
@@ -392,10 +383,8 @@ describe('InfoCoreProvider', () => {
       const errOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ info: '执行失败：参数非法', handle_result_type: HandleResultType.CALL_ERROR }), errOut, new InfoCoreContext());
 
-      // 模拟老化清空：长文本 info 置空（无摘要行的历史残留形态之一）
       await relationDb.executeRaw('UPDATE "info_raw" SET "info" = \'\' WHERE "info_id" = ?', [longOut.info_id]);
 
-      // 开启摘要生成并注入 stub 模型
       await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\'', []);
       const calls: Array<{ id: string }> = [];
       const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess('这是补生成的摘要', calls), promptsAccess, vectorDb, graphDb);
@@ -429,7 +418,6 @@ describe('InfoCoreProvider', () => {
       expect(rows.length).toBe(1);
       expect(rows[0].summary).toBe('这是补生成的摘要');
 
-      // 幂等：再次执行不产生新摘要、不再调用 LLM
       const second = new BackfillMissingSummariesOutput();
       await stubCore.backfillMissingSummaries(new BackfillMissingSummariesInput(), second, new InfoCoreContext());
       expect(second.backfilled_count).toBe(0);
@@ -482,7 +470,6 @@ describe('InfoCoreProvider', () => {
       expect(rows.length).toBe(1);
       expect(rows[0].handle_result_type).toBe(HandleResultType.CALL_ERROR);
 
-      // 错误信息摘要直接用原文，忽略传入的人工摘要
       const summaryRows = await relationDb.select('info_summary', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
       });
@@ -556,7 +543,7 @@ describe('InfoCoreProvider', () => {
     });
 
     it('rebuildCooccurGraph 清理错误信息派生的标签，且不建入「涌现」图', async () => {
-      // 正常信息（handle_result_type=correct）与系统报错信息各落一条 info_raw
+
       const okOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ session_id: 's-rebuild', info: '正常信息' }), okOut, new InfoCoreContext());
       const errOut = new SaveInfoOutput();
@@ -565,7 +552,6 @@ describe('InfoCoreProvider', () => {
         errOut, new InfoCoreContext(),
       );
 
-      // 模拟历史存量：绕过 tagInfo 的错误过滤，直接写入两条 info_tag（正确信息 / 报错信息各一条）
       const now = IdGenerator.now();
       await relationDb.insert('info_tag', [
         { field: 'id', value: IdGenerator.generate() },
@@ -586,7 +572,6 @@ describe('InfoCoreProvider', () => {
       await infoCore.rebuildCooccurGraph(new RebuildCooccurGraphInput(), rebuildOut, new InfoCoreContext());
       expect(rebuildOut.purged_rows).toBeGreaterThanOrEqual(1);
 
-      // 报错信息派生的标签行已被清理，正常标签保留
       const errTagRows = await relationDb.select('info_tag', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: errOut.info_id }],
       });
@@ -596,7 +581,6 @@ describe('InfoCoreProvider', () => {
       expect(errTagRows.length).toBe(0);
       expect(okTagRows.length).toBe(1);
 
-      // GraphDB「涌现」图只包含正常信息的标签节点
       const graphOut = new SelectGraphOutput();
       await graphDb.selectGraph(
         { target: GraphTarget.NODE, node_type: 'Tag' } as SelectGraphInput,
@@ -640,10 +624,6 @@ describe('InfoCoreProvider', () => {
       expect(result).toBe(true);
     });
   });
-
-  // =========================================================================
-  // Search Operations
-  // =========================================================================
 
   describe('lastNInfo', () => {
     it('should throw ValidationError when lastN is 0', async () => {
@@ -934,18 +914,16 @@ describe('InfoCoreProvider', () => {
         createdIds.push(out.info_id);
       }
 
-      // Pin message 0
       const pinIn = new PinInfoInput();
       pinIn.info_id = createdIds[0];
       await infoCore.pinInfo(pinIn, new PinInfoOutput(), new InfoCoreContext());
 
-      // 仅保留 PINNED 与 CITING，关闭其它弱相关维度，隔离随机/时间线/向量等干扰
       const cfgIn = new UpdateInfoContextConfigInput();
       cfgIn.priority_order = 'PINNED,CITING';
       await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
 
       try {
-        // Select message 2 and 3（复选消息应替换时间线，而非与之并存）
+
         const input = new ContextInfoInput();
         input.session_id = sessionId;
         input.work_id = `work-${sessionId}`;
@@ -957,7 +935,6 @@ describe('InfoCoreProvider', () => {
         const pinnedIds = output.categories?.pinned.map((m) => m.info_id) ?? [];
         const timelineIds = output.categories?.timeline.map((m) => m.info_id) ?? [];
 
-        // 复选消息替换时间线：复选消息进入 CITING，时间线不再采集
         expect(citingIds).toContain(createdIds[2]);
         expect(citingIds).toContain(createdIds[3]);
         expect(timelineIds.length).toBe(0);
@@ -965,7 +942,7 @@ describe('InfoCoreProvider', () => {
         expect(output.sources_summary?.citing).toBe(2);
         expect(output.sources_summary?.pinned).toBe(1);
       } finally {
-        // 恢复默认优先级顺序，避免影响后续用例
+
         const resetIn = new UpdateInfoContextConfigInput();
         resetIn.priority_order = 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
         await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
@@ -974,14 +951,14 @@ describe('InfoCoreProvider', () => {
 
     it('RANDOM：会话内随机抽样不受 enable_cross_session 影响（false 时仅跳过全局兜底）', async () => {
       const sessionId = 'random-in-session';
-      // 2026-09-15 口径：基础上下文×5%，randLimit= floor(基础×5%)，需 ≥20 条基础上下文才有随机配额（8/tiny 不够）
+
       for (let i = 0; i < 30; i++) {
         await infoCore.saveInfo(
           makeSaveInput({ session_id: sessionId, info: `Session message ${i} with enough length to be meaningful.` }),
           new SaveInfoOutput(), new InfoCoreContext(),
         );
       }
-      // 其它会话的消息（仅 enable_cross_session=true 时才可能被随机兜底捞到）
+
       const otherIds: string[] = [];
       for (let i = 0; i < 4; i++) {
         const out = new SaveInfoOutput();
@@ -994,7 +971,6 @@ describe('InfoCoreProvider', () => {
 
       await new Promise((r) => setTimeout(r, 200));
 
-      // 仅保留 RANDOM 维度，彻底隔离时间线/钉住
       const cfgIn = new UpdateInfoContextConfigInput();
       cfgIn.priority_order = 'RANDOM';
       await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
@@ -1009,14 +985,14 @@ describe('InfoCoreProvider', () => {
         await infoCore.context(input, output, new InfoCoreContext());
 
         const randomIds = (output.categories?.random ?? []).map((m) => m.info_id);
-        // 会话内随机照常生效（PRD 步骤 524 主句：会话内随机抽样不受 cross_session 开关约束）
+
         expect(randomIds.length).toBeGreaterThanOrEqual(1);
         const allCollectedIds = output.list.map((m) => m.info_id);
-        // 不应出现其它会话的消息（全局兜底已随 enable_cross_session=false 跳过）
+
         for (const otherId of otherIds) {
           expect(allCollectedIds).not.toContain(otherId);
         }
-        // 当前消息不进入 RANDOM（2026-09-15：先剔除再核算名额，限额不被当前消息占用）
+
         const currentRows = await relationDb.queryRaw<{ info_id: string }>(
           `SELECT info_id FROM info_raw WHERE session_id = ? ORDER BY created DESC LIMIT 1`,
           [sessionId],
@@ -1054,7 +1030,7 @@ describe('InfoCoreProvider', () => {
       expect(item.info_length).toBe(11);
       expect(item.content_length).toBe(11);
       expect(item.info_type).toBeTruthy();
-      // 单条消息即时间线中最新的消息，按新语义从时间线拆出为当前消息 (CURRENT)
+
       expect(item.collection_source).toBe(CollectionSource.CURRENT);
       expect(item.source).toBe(CollectionSource.CURRENT);
     });
@@ -1065,7 +1041,6 @@ describe('InfoCoreProvider', () => {
       await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, info: 'Pinned and Timeline Message' }), out, new InfoCoreContext());
       const msgId = out.info_id;
 
-      // Pin the message
       const pinIn = new PinInfoInput();
       pinIn.info_id = msgId;
       await infoCore.pinInfo(pinIn, new PinInfoOutput(), new InfoCoreContext());
@@ -1076,7 +1051,6 @@ describe('InfoCoreProvider', () => {
       const output = new ContextInfoOutput();
       await infoCore.context(input, output, new InfoCoreContext());
 
-      // Even though the message is in timeline and pinned, priority PINNED > TIMELINE should preserve it as PINNED
       const found = output.list.find((m) => m.info_id === msgId);
       expect(found).toBeDefined();
       expect(found?.collection_source).toBe(CollectionSource.PINNED);
@@ -1090,7 +1064,6 @@ describe('InfoCoreProvider', () => {
         await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, info: `Subset ${i}` }), out, new InfoCoreContext());
       }
 
-      // 仅保留 PINNED，排除 TIMELINE 等其它维度
       const cfgIn = new UpdateInfoContextConfigInput();
       cfgIn.priority_order = 'PINNED';
       await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
@@ -1102,23 +1075,17 @@ describe('InfoCoreProvider', () => {
         const output = new ContextInfoOutput();
         await infoCore.context(input, output, new InfoCoreContext());
 
-        // 未钉住任何消息，且 TIMELINE 维度被关闭，故不采集任何时间线/维度消息；
-        // 但最新一条消息会作为当前消息 (CURRENT) 被单独拆出，不参与维度采集。
         expect(output.list.length).toBe(1);
         expect(output.categories?.timeline.length).toBe(0);
         expect(output.categories?.current.length).toBe(1);
       } finally {
-        // 恢复默认优先级顺序，避免影响后续用例
+
         const resetIn = new UpdateInfoContextConfigInput();
         resetIn.priority_order = 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
         await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
       }
     });
   });
-
-  // =========================================================================
-  // Config Operations
-  // =========================================================================
 
   describe('soInfoTagConfig / updateInfoTagConfig', () => {
     it('should return default tag config', async () => {
@@ -1251,10 +1218,6 @@ describe('InfoCoreProvider', () => {
     });
   });
 
-  // =========================================================================
-  // Lifecycle
-  // =========================================================================
-
   describe('delInfo', () => {
     it('should return 0 when no expired info', async () => {
       const saveOut = new SaveInfoOutput();
@@ -1278,10 +1241,6 @@ describe('InfoCoreProvider', () => {
       expect(output.deleted_count).toBe(0);
     });
   });
-
-  // =========================================================================
-  // Assist — Exist Checks
-  // =========================================================================
 
   describe('existVectorInfo', () => {
     it('should throw ValidationError when info_id is empty', async () => {
@@ -1339,10 +1298,6 @@ describe('InfoCoreProvider', () => {
       expect(output.exists).toBe(false);
     });
   });
-
-  // =========================================================================
-  // AOP Integration
-  // =========================================================================
 
   describe('AOP integration', () => {
     it('should set elapsed_ms on saveInfo output', async () => {

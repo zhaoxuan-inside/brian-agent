@@ -1,12 +1,3 @@
-/**
- * @fileoverview SkillProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（通过 IConfigStorage / executeRaw）操作关系数据库，
- * 依赖 ConfigService 管理 skill_config 配置表。
- *
- * 实现所有用例：addSkill / soSkillById / updateSkill / delSkill / soSkill / execSkill / enableSkill。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -21,7 +12,7 @@ import {
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
-import { SkillContext, SkillRecord, FileEntry, AddSkillInput, AddSkillOutput, GetSkillInput, GetSkillOutput, UpdateSkillInput, UpdateSkillOutput, DelSkillInput, DelSkillOutput, SoSkillInput, SoSkillOutput, ExecSkillInput, ExecSkillOutput, EnableSkillInput, EnableSkillOutput, SKILL_TABLE, SKILL_USAGE_TABLE, SKILL_CONFIG_TABLE } from '../domain/types';
+import { SkillContext, SkillRecord, FileEntry, AddSkillInput, AddSkillOutput, GetSkillInput, GetSkillOutput, UpdateSkillInput, UpdateSkillOutput, DelSkillInput, DelSkillOutput, SoSkillInput, SoSkillOutput, ExecSkillInput, ExecSkillOutput, EnableSkillInput, EnableSkillOutput, SeedSystemSkillsInput, SeedSystemSkillsOutput, SKILL_TABLE, SKILL_USAGE_TABLE, SKILL_CONFIG_TABLE } from '../domain/types';
 import { resolveSandboxRuntime } from '../infrastructure/sandbox/SandboxRuntime';
 
 const JS_SANDBOX_TIMEOUT_MS = 5000;
@@ -37,9 +28,7 @@ export class SkillService {
     private readonly jsSandbox: ISandbox,
   ) {
     this.config = new ConfigService(relationDb, SKILL_CONFIG_TABLE);
-    // ===== 新增（2026-09-22 沙箱运行时契约）：构造期解析平台解释器并版本校验，
-    // 失败 fail-fast（SandboxRuntimeError）→ 组合根启动失败。沙箱为硬性部署契约，
-    // 缺解释器即拒绝启动，绝不做运行时降级执行。
+
     this.localSandbox = new LocalSandbox(resolveSandboxRuntime(), LOCAL_SANDBOX_TIMEOUT_MS);
   }
 
@@ -71,7 +60,7 @@ export class SkillService {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) return parsed as FileEntry[];
       } catch {
-        /* scripts/references 列非 JSON（历史/手工数据）视为无文件清单，返回 undefined */
+
       }
     }
     return undefined;
@@ -94,12 +83,9 @@ export class SkillService {
       references: this.parseFileEntries(row.references),
       assets: this.parseFileEntries(row.assets),
       enable: this.toBoolean(row.enable),
+      system: this.toBoolean(row.system),
     };
   }
-
-  // -------------------------------------------------------------------------
-  // Skill 管理
-  // -------------------------------------------------------------------------
 
   async addSkill(input: AddSkillInput, output: AddSkillOutput, _context: SkillContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -136,6 +122,54 @@ export class SkillService {
     return true;
   }
 
+  async seedSystemSkills(input: SeedSystemSkillsInput, output: SeedSystemSkillsOutput, _context: SkillContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const specs = input.specs ?? [];
+    for (const spec of specs) {
+      if (!spec.id || !spec.name || !spec.skill_brief || !spec.skill_md) {
+        throw new ValidationError('系统级 Skill 种子缺少 id/name/skill_brief/skill_md');
+      }
+      const existing = await this.relationDb.selectOne(SKILL_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: spec.id },
+      ]);
+      const now = IdGenerator.now();
+      if (!existing) {
+        await this.relationDb.insert(SKILL_TABLE, [
+          { field: 'id', value: spec.id },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'name', value: spec.name },
+          { field: 'skill_brief', value: spec.skill_brief },
+          { field: 'skill_md', value: spec.skill_md },
+          { field: 'enable', value: 1 },
+          { field: 'system', value: 1 },
+        ]);
+        output.inserted.push(spec.id);
+      } else if (!this.toBoolean(existing.system)) {
+
+        await this.relationDb.update(SKILL_TABLE, [
+          { field: 'name', value: spec.name },
+          { field: 'skill_brief', value: spec.skill_brief },
+          { field: 'skill_md', value: spec.skill_md },
+          { field: 'enable', value: 1 },
+          { field: 'system', value: 1 },
+          { field: 'updated', value: now },
+        ], [{ field: 'id', operator: Operator.EQ, value: spec.id }]);
+        output.refreshed.push(spec.id);
+      } else {
+        await this.relationDb.update(SKILL_TABLE, [
+          { field: 'name', value: spec.name },
+          { field: 'skill_brief', value: spec.skill_brief },
+          { field: 'skill_md', value: spec.skill_md },
+          { field: 'updated', value: now },
+        ], [{ field: 'id', operator: Operator.EQ, value: spec.id }]);
+        output.refreshed.push(spec.id);
+      }
+    }
+    output.seeded = specs.length;
+    return true;
+  }
+
   async soSkillById(input: GetSkillInput, output: GetSkillOutput, _context: SkillContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -150,6 +184,19 @@ export class SkillService {
     return true;
   }
 
+  private async assertNotSystemOwned(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const rows = await this.relationDb.select(SKILL_TABLE, {
+      conditions: [{ field: 'id', operator: Operator.IN, value: ids }],
+      fields: ['id', 'name', 'system'],
+    });
+    const systemRows = rows.filter((r) => this.toBoolean(r.system));
+    if (systemRows.length > 0) {
+      const names = systemRows.map((r) => String(r.name || r.id)).join('、');
+      throw new ValidationError(`系统级 Skill 不允许删改: ${names}`);
+    }
+  }
+
   async updateSkill(input: UpdateSkillInput, output: UpdateSkillOutput, _context: SkillContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -159,6 +206,13 @@ export class SkillService {
     const conditions: Condition[] = input.id
       ? [{ field: 'id', operator: Operator.EQ, value: input.id }]
       : input.conditions!;
+
+    if (input.id) {
+      await this.assertNotSystemOwned([input.id]);
+    } else {
+      const rows = await this.relationDb.select(SKILL_TABLE, { conditions, fields: ['id'] });
+      await this.assertNotSystemOwned(rows.map((r) => String(r.id)));
+    }
 
     const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
     const patch = input.data;
@@ -191,6 +245,8 @@ export class SkillService {
       });
       skillIds = rows.map((r) => String(r.id));
     }
+
+    await this.assertNotSystemOwned(skillIds ?? []);
 
     const conditions: Condition[] = input.ids
       ? [{ field: 'id', operator: Operator.IN, value: input.ids }]
@@ -233,11 +289,6 @@ export class SkillService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // Skill 执行
-  // -------------------------------------------------------------------------
-
-  /** 判断脚本类型 */
   private scriptType(name: string): 'js' | 'py' | 'sh' | 'unknown' {
     if (name.endsWith('.js') || name.endsWith('.mjs')) return 'js';
     if (name.endsWith('.py') || name.endsWith('.py3')) return 'py';
@@ -245,15 +296,6 @@ export class SkillService {
     return 'unknown';
   }
 
-  /**
-   * 按顺序执行 scripts/ 中的所有脚本。
-   *
-   * - .js → IsolatedVMSandbox（独立 V8 Isolate，128MB 内存限制，无 IO）
-   * - .py → LocalSandbox（独立临时目录 subprocess，超时 15s）
-   * - .sh → LocalSandbox（独立临时目录 subprocess，超时 15s）
-   *
-   * 所有脚本均在沙箱中执行。返回最后一个脚本的结果。
-   */
   private async executeScripts(
     scripts: FileEntry[],
     params: Record<string, unknown>,
@@ -335,10 +377,6 @@ export class SkillService {
       ]);
     }
   }
-
-  // -------------------------------------------------------------------------
-  // 可视化与运维
-  // -------------------------------------------------------------------------
 
   async enableSkill(input: EnableSkillInput, _output: EnableSkillOutput, _context: SkillContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {

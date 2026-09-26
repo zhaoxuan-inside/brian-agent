@@ -42,7 +42,7 @@ describe('AgentLibrary', () => {
     });
 
     it('TC-AL-002~004: 四种 Agent 类型均可新增', async () => {
-      for (const t of ['PLANNER', 'WRITER', 'EVOLUTOR']) {
+      for (const t of ['WRITER', 'EVOLUTOR']) {
         const id = aid();
         await service.addAgent(Object.assign(new AddAgentInput(), {
           agent_id: id, agent_type: t, strategy_id: 's-1',
@@ -252,7 +252,7 @@ describe('AgentLibrary', () => {
     it('TC-AL-043: 系统 Agent 不参与老化', async () => {
       const id = aid();
       await service.addAgent(Object.assign(new AddAgentInput(), {
-        agent_id: id, agent_type: 'PLANNER', strategy_id: 's-1',
+        agent_id: id, agent_type: 'WRITER', strategy_id: 's-1',
       }), new AddAgentOutput(), new AgentLibraryContext());
       const o = new AgeAgentOutput();
       await service.ageAgent(new AgeAgentInput(), o, new AgentLibraryContext());
@@ -297,7 +297,6 @@ describe('AgentLibrary', () => {
   });
 });
 
-
 describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概率重构）', () => {
   let service: AgentLibraryService;
 
@@ -306,7 +305,7 @@ describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概�
     const db = await createTestDb();
     try {
       db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
-    } catch { /* 已存在 */ }
+    } catch {  }
     service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
   });
 
@@ -318,9 +317,9 @@ describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概�
   }
 
   it('说明（agent_purpose）应参与匹配：签名不匹配但说明语义相近可命中', async () => {
-    // regen_rate=0 → 恒复用（排除失效概率干扰，验证匹配面）
+
     await service.configAgentLibrary(Object.assign(new ConfigAgentLibraryInput(), { regen_rate: 0 }), new ConfigAgentLibraryOutput(), new AgentLibraryContext());
-    // 说明与任务文本高重叠，而 task_signature 刻意不同：命中只能来自说明参与匹配
+
     await seed('flow-purpose', '负责天气查询与城市天气预报', '[general] other');
     const out = new MatchAgentOutput();
     await service.matchAgent(Object.assign(new MatchAgentInput(), {
@@ -335,7 +334,7 @@ describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概�
   });
 
   it('失效概率命中时应输出 regenerate=true 且不返回 agent_id（触发 Agent 重构）', async () => {
-    // regen_rate=100 → shouldReuseByRegenRate 恒 false：命中也必须重构（确定性）
+
     await service.configAgentLibrary(Object.assign(new ConfigAgentLibraryInput(), { regen_rate: 100 }), new ConfigAgentLibraryOutput(), new AgentLibraryContext());
     await seed('flow-regen', '负责电商订单领域任务处理', '[general] other-2');
     const out = new MatchAgentOutput();

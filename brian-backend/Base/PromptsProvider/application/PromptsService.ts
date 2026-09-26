@@ -1,13 +1,3 @@
-/**
- * @fileoverview PromptsProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（通过 IConfigStorage / executeRaw）操作关系数据库，
- * 依赖 ConfigService 管理 prompts_config 配置表。
- *
- * 实现所有用例：addPrompt / delPrompt / updatePrompt / soPromptById / soPrompt /
- * execPrompt / enablePrompts / closePrompts。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -24,37 +14,29 @@ import type { Condition, DataObject, OrderBy, Page } from '../../shared/query';
 import { PromptContext, PromptTemplateRecord, PromptTemplateData, AddPromptInput, AddPromptOutput, DelPromptInput, DelPromptOutput, UpdatePromptInput, UpdatePromptOutput, GetPromptInput, GetPromptOutput, SoPromptInput, SoPromptOutput, ExecPromptInput, ExecPromptOutput, EnablePromptsInput, EnablePromptsOutput, ClosePromptInput, ClosePromptOutput, PROMPT_TEMPLATE_TABLE, PROMPT_TEMPLATE_USAGE_TABLE, PROMPTS_CONFIG_TABLE } from '../domain/types';
 import { renderPromptTemplate } from '../domain/services/PromptDomainService';
 
-/**
- * PromptsProvider 应用服务。
- *
- * PromptsProvider 是 Prompt 模板的唯一操作入口，上层不可直接操作数据库。
- */
 export class PromptsService {
-  /** 运行时启用状态 */
+  
   private enabled = true;
 
-  /** 是否已执行 closePrompts（终态标记） */
+  
   private closed = false;
 
   private readonly config: ConfigService;
 
-  /**
-   * @param relationDb RelationDBProvider 接入层
-   */
+  
+
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, PROMPTS_CONFIG_TABLE);
   }
 
-  /**
-   * 初始化：写入默认配置并恢复 enabled 状态。
-   */
+  
+
   async initialize(): Promise<void> {
     this.enabled = await this.config.getBoolean('enabled', true);
   }
 
-  /**
-   * 校验组件是否启用。
-   */
+  
+
   private ensureEnabled(): void {
     if (this.closed) {
       throw new DatabaseError(
@@ -66,22 +48,18 @@ export class PromptsService {
     }
   }
 
-  /**
-   * 转义正则特殊字符，用于变量名安全匹配。
-   */
+  
+
   private escapeRegExp(s: string): string {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  // -------------------------------------------------------------------------
-  // Prompt 管理
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 新增 Prompt（addPrompt）。
-   *
-   * PRD 3.1.1 条。
-   */
+  
+
   async addPrompt(input: AddPromptInput, output: AddPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -103,7 +81,7 @@ export class PromptsService {
       { field: 'prompt_template_title', value: data.prompt_template_title },
       { field: 'prompt_template_brief', value: data.prompt_template_brief ?? null },
       { field: 'prompt_template', value: data.prompt_template },
-      // ===== 2026-09-11：用户自建模板恒为非系统（is_system 只能由种子化写入） =====
+      
       { field: 'is_system', value: 0 },
       { field: 'enable', value: data.enable !== false ? 1 : 0 },
     ];
@@ -112,12 +90,8 @@ export class PromptsService {
     return true;
   }
 
-  /**
-   * 删除 Prompt（delPrompt）。
-   *
-   * PRD 3.1.2 条：支持按 ID 批量删除或按条件删除。
-   * ===== 修改后（2026-09-11）：is_system=1 的系统模板禁止删除（配置中心 Prompt 模板语义） =====
-   */
+  
+
   async delPrompt(input: DelPromptInput, output: DelPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -133,7 +107,7 @@ export class PromptsService {
     const affected = await this.relationDb.delete(PROMPT_TEMPLATE_TABLE, conditions);
     output.affected_rows = affected;
 
-    // 清理 prompt_template_usage 表中引用该 Prompt 的记录
+    
     if (input.ids) {
       await this.relationDb.delete(PROMPT_TEMPLATE_USAGE_TABLE, [
         { field: 'prompt_template_id', operator: Operator.IN, value: input.ids },
@@ -143,8 +117,8 @@ export class PromptsService {
     return true;
   }
 
-  // ===== 新增方法（2026-09-11）：删除守卫 —— is_system=1 行不允许删除 =====
-  /** 删除守卫（逻辑控制）：目标行含系统模板时 fail-loud */
+  
+  
   private async assertNotDeleteSystem(conditions: Condition[]): Promise<void> {
     const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, { conditions });
     const systemHit = (rows ?? []).some((row) => Number(row.is_system ?? 0) === 1);
@@ -153,8 +127,8 @@ export class PromptsService {
     }
   }
 
-  // ===== 新增方法（2026-09-11）：更新守卫 —— 系统模板不可解除 is_system 标记 =====
-  /** 更新守卫（逻辑控制）：尝试把系统模板改为非系统（is_system=false）时 fail-loud */
+  
+  
   private async assertNotUnmarkSystem(conditions: Condition[], patch: Partial<PromptTemplateData>): Promise<void> {
     if (patch.is_system !== false) {
       return;
@@ -166,12 +140,8 @@ export class PromptsService {
     }
   }
 
-  /**
-   * 更新 Prompt（updatePrompt）。
-   *
-   * PRD 3.1.3 条：支持按 ID 或按条件更新。
-   * 资源级启用/禁用通过本方法修改 enable 字段实现。
-   */
+  
+
   async updatePrompt(input: UpdatePromptInput, output: UpdatePromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -207,11 +177,8 @@ export class PromptsService {
     return true;
   }
 
-  /**
-   * 获取 Prompt（soPromptById）。
-   *
-   * PRD 3.1.4 条：按 ID 或按条件获取第一条。
-   */
+  
+
   async soPromptById(input: GetPromptInput, output: GetPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -228,18 +195,13 @@ export class PromptsService {
     return true;
   }
 
-  /**
-   * 搜索 Prompt（soPrompt）。
-   *
-   * PRD 3.1.5 条：支持关键词、条件过滤、排序、分页。
-   * 关键词匹配 prompt_template_title 与 prompt_template_brief。
-   * 若按使用频率排序，联表查询 prompt_template_usage 统计表。
-   */
+  
+
   async soPrompt(input: SoPromptInput, output: SoPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
 
-    // 构建条件
+    
     const conditions: Condition[] = [];
     if (input.conditions) {
       conditions.push(...input.conditions);
@@ -258,7 +220,7 @@ export class PromptsService {
       });
     }
 
-    // 检查是否需要按使用频率排序
+    
     const hasUsageSorting = input.order_by?.some(
       (ob) => typeof ob.field === 'string' && ob.field.startsWith('usage_'),
     );
@@ -287,9 +249,8 @@ export class PromptsService {
     return true;
   }
 
-  /**
-   * 获取 N 天前的日期字符串（YYYY-MM-DD）。
-   */
+  
+
   private daysAgo(days: number): string {
     const d = new Date();
     d.setDate(d.getDate() - days);
@@ -299,12 +260,8 @@ export class PromptsService {
     return `${year}-${month}-${day}`;
   }
 
-  /**
-   * 按使用频率排序的搜索实现。
-   *
-   * 联表查询 prompt_template_usage，计算今日/最近7天/最近30天/总使用次数，
-   * 在内存中完成排序与分页。
-   */
+  
+
   private async soPromptWithUsageSorting(
     conditions: Condition[] | undefined,
     orderBy: OrderBy[],
@@ -315,11 +272,7 @@ export class PromptsService {
     const sevenDaysAgo = this.daysAgo(7);
     const thirtyDaysAgo = this.daysAgo(30);
 
-    // 获取基础模板列表（不含分页，后续在内存中处理）
-    const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, {
-      conditions,
-    });
-    const templates = rows as unknown as PromptTemplateRecord[];
+    const templates = await this.fetchPromptTemplates(conditions);
     const total = templates.length;
 
     if (templates.length === 0) {
@@ -328,7 +281,26 @@ export class PromptsService {
       return true;
     }
 
-    // 批量查询所有模板的使用统计
+    const usageMap = await this.buildUsageMap(today, sevenDaysAgo, thirtyDaysAgo);
+    this.sortTemplatesByOrder(templates, orderBy, usageMap);
+
+    output.list = this.applyPageSlice(templates, page);
+    output.total = total;
+    return true;
+  }
+
+  private async fetchPromptTemplates(conditions: Condition[] | undefined): Promise<PromptTemplateRecord[]> {
+    const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, {
+      conditions,
+    });
+    return rows as unknown as PromptTemplateRecord[];
+  }
+
+  private async buildUsageMap(
+    today: string,
+    sevenDaysAgo: string,
+    thirtyDaysAgo: string,
+  ): Promise<Map<string, { today: number; week: number; month: number; total: number }>> {
     const usageRows = await this.relationDb.select(PROMPT_TEMPLATE_USAGE_TABLE, {});
     const usageMap = new Map<
       string,
@@ -348,83 +320,75 @@ export class PromptsService {
       if (date >= sevenDaysAgo) stats.week += cnt;
       if (date >= thirtyDaysAgo) stats.month += cnt;
     }
+    return usageMap;
+  }
 
-    const getUsageValue = (
-      tpl: PromptTemplateRecord,
-      field: string,
-    ): number => {
-      const stats = usageMap.get(tpl.id);
-      if (!stats) return 0;
-      switch (field) {
-        case 'usage_today_count':
-          return stats.today;
-        case 'usage_7d_count':
-          return stats.week;
-        case 'usage_30d_count':
-          return stats.month;
-        case 'usage_total_count':
-          return stats.total;
-        default:
-          return 0;
-      }
-    };
+  private getUsageValue(
+    usageMap: Map<string, { today: number; week: number; month: number; total: number }>,
+    tpl: PromptTemplateRecord,
+    field: string,
+  ): number {
+    const stats = usageMap.get(tpl.id);
+    if (!stats) return 0;
+    switch (field) {
+      case 'usage_today_count':
+        return stats.today;
+      case 'usage_7d_count':
+        return stats.week;
+      case 'usage_30d_count':
+        return stats.month;
+      case 'usage_total_count':
+        return stats.total;
+      default:
+        return 0;
+    }
+  }
 
-    // 排序
+  private sortTemplatesByOrder(
+    templates: PromptTemplateRecord[],
+    orderBy: OrderBy[],
+    usageMap: Map<string, { today: number; week: number; month: number; total: number }>,
+  ): void {
     templates.sort((a, b) => {
       for (const ob of orderBy) {
         const isDesc = ob.direction === 'DESC';
         let valA: unknown;
         let valB: unknown;
-
         if (typeof ob.field === 'string' && ob.field.startsWith('usage_')) {
-          valA = getUsageValue(a, ob.field);
-          valB = getUsageValue(b, ob.field);
+          valA = this.getUsageValue(usageMap, a, ob.field);
+          valB = this.getUsageValue(usageMap, b, ob.field);
         } else {
           valA = (a as unknown as Record<string, unknown>)[ob.field];
           valB = (b as unknown as Record<string, unknown>)[ob.field];
         }
-
-        // 处理 null/undefined：null 排最后（升序）或最前（降序）
         if (valA === null || valA === undefined) {
           return valB === null || valB === undefined ? 0 : (isDesc ? 1 : -1);
         }
         if (valB === null || valB === undefined) {
           return isDesc ? -1 : 1;
         }
-
         if (valA < valB) return isDesc ? 1 : -1;
         if (valA > valB) return isDesc ? -1 : 1;
       }
       return 0;
     });
+  }
 
-    // 分页
+  private applyPageSlice(templates: PromptTemplateRecord[], page: Page | undefined): PromptTemplateRecord[] {
     let sliced = templates;
     if (page) {
       const start = (page.current - 1) * page.size;
       sliced = templates.slice(start, start + page.size);
     }
-
-    output.list = sliced;
-    output.total = total;
-    return true;
+    return sliced;
   }
 
-  // -------------------------------------------------------------------------
-  // Prompt 执行
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 执行/渲染 Prompt（execPrompt）。
-   *
-   * PRD 3.2.1 条：接收 Prompt 模板 ID 及变量参数，生成最终的完整 Prompt。
-   *
-   * 处理流程：
-   * 1. 根据 ID 获取 Prompt 模板内容；
-   * 2. 完成变量替换（{{variable}} 格式）；
-   * 3. 生成最终的完整 Prompt 字符串；
-   * 4. 调用成功后更新 prompt_template_usage 表当天的 usage_count + 1。
-   */
+  
+
   async execPrompt(input: ExecPromptInput, output: ExecPromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -435,7 +399,7 @@ export class PromptsService {
       throw new ValidationError('variables 不能为空且必须为对象');
     }
 
-    // 1. 根据 ID 获取 Prompt 模板内容
+    
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.id },
     ]);
@@ -447,23 +411,20 @@ export class PromptsService {
       throw new ValidationError(`Prompt ${input.id} 已禁用`);
     }
 
-    // 2. 模板渲染（条件块清理 + 变量替换）：纯数据加工，委托领域服务
+    
     output.prompt = renderPromptTemplate(
       record.prompt_template,
       input.variables as Record<string, unknown>,
     );
 
-    // 3. 更新 prompt_template_usage 表当天的 usage_count + 1
+    
     await this.upsertUsage(input.id);
 
     return true;
   }
 
-  /**
-   * 更新 Prompt 模板当日使用次数（upsert 语义）。
-   *
-   * 若当天记录已存在则 usage_count + 1，否则新增一条记录。
-   */
+  
+
   private async upsertUsage(promptTemplateId: string): Promise<void> {
     const today = IdGenerator.today();
     const now = IdGenerator.now();
@@ -499,18 +460,12 @@ export class PromptsService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 可视化与运维
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 启用/禁用 Prompts 组件（enablePrompts）。
-   *
-   * PRD 3.3.1 条：运行时控制 Prompts 组件的可用状态。
-   * 状态持久化到 prompts_config，组件初始化时恢复。
-   *
-   * 注：closePrompts 为终态操作，执行后不可通过本方法恢复，需重新初始化组件。
-   */
+  
+
   async enablePrompts(input: EnablePromptsInput, _output: EnablePromptsOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (this.closed) {
@@ -528,15 +483,8 @@ export class PromptsService {
     return true;
   }
 
-  /**
-   * 关闭 Prompts 组件（closePrompts）。
-   *
-   * PRD 5.9 条：系统关闭时的终态释放，执行后不可通过 enablePrompts 恢复，
-   * 需重新初始化组件。
-   *
-   * PromptsProvider 不持有独立数据库连接（使用 RelationDBProvider 的共享连接），
-   * 本方法仅标记终态，后续所有操作将抛出错误。
-   */
+  
+
   async closePrompts(_input: ClosePromptInput, _output: ClosePromptOutput, _context: PromptContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.enabled = false;

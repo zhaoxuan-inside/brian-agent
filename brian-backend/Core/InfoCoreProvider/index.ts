@@ -1,14 +1,7 @@
-/**
- * @fileoverview InfoCoreProvider 模块统一导出。
- */
-
-// access 层
 export { InfoCoreAccess } from './access/InfoCoreAccess';
 
-// infrastructure 层
 export { InfoCoreSchemaInitializer } from './infrastructure/InfoCoreSchemaInitializer';
 
-// domain 层类型
 export {
   InfoCoreContext,
   SaveInfoInput,
@@ -74,7 +67,7 @@ export {
   UpdateInfoOutput,
   DelInfoByWorkInput,
   DelInfoByWorkOutput,
-  // ===== 新增（2026-09-15 记忆集中）：会话级记忆删除（info_context_source / GraphDB 级联）=====
+  
   DelInfoBySessionInput,
   DelInfoBySessionOutput,
   ExistInfoInput,

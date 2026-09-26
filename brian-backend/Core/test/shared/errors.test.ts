@@ -6,10 +6,6 @@ import {
   ProcessingError,
 } from '../../shared/errors';
 
-/**
- * 统一错误体系测试：Core 层错误类复用 Base/shared/errors 的 ProviderError 体系。
- */
-
 describe('ValidationError', () => {
   it('should have VALIDATION_ERROR code and be a ProviderError', () => {
     const err = new ValidationError('invalid input');

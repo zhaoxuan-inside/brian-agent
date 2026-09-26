@@ -1,10 +1,3 @@
-/**
- * @fileoverview ChunkProvider 接入层。
- *
- * DDD 中 access 层作为模块对外的统一入口，提供 (Input, Context, Output) 签名的方法调用。
- * 通过 AOP 代理注入日志记录与耗时统计切面。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import { ChunkService } from '../application/ChunkService';

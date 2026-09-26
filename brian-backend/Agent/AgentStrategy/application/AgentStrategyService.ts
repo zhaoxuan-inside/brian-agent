@@ -53,11 +53,8 @@ export class AgentStrategyService {
     private readonly promptsAccess: PromptsAccess,
   ) {}
 
-  /**
-   * 按复杂度 + 领域筛选策略。
-   * 多候选时优先用 prompt 模板做决策；无可用 LLM 绑定时回退第一候选。
-   * Agent 层不自选 llm_model。
-   */
+  
+
   async matchStrategy(input: MatchStrategyInput, output: MatchStrategyOutput, _ctx: AgentStrategyContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const rows = await this.relationDb.select(AGENT_STRATEGY_TABLE, {
@@ -111,8 +108,8 @@ export class AgentStrategyService {
           promptOut,
           new PromptContext(),
         );
-        // 无 agent llm 时不做模型调用，仅用模板渲染结果尝试解析（通常需 LLM）
-        // 回退：选复杂度区间中位最接近的
+        
+        
         const parsed = parseJsonObject(promptOut.prompt);
         if (parsed?.strategy_id) {
           const id = String(parsed.strategy_id);
@@ -122,8 +119,8 @@ export class AgentStrategyService {
           }
         }
       } catch (err) {
-        /* fall through */
-        // 降级容忍：模板渲染/LLM 解析失败时回退复杂度中位候选（确定性兜底）
+        
+        
         metrics?.warn('AgentStrategyService.matchStrategy 策略模板匹配失败，回退复杂度中位候选', {
           error: err instanceof Error ? err.message : String(err),
           task_complexity: input.task_complexity,
@@ -132,7 +129,7 @@ export class AgentStrategyService {
       }
     }
 
-    // 回退：区间中心最接近
+    
     candidates.sort((a, b) => {
       const midA = (a.suitable_complexity_min + a.suitable_complexity_max) / 2;
       const midB = (b.suitable_complexity_min + b.suitable_complexity_max) / 2;

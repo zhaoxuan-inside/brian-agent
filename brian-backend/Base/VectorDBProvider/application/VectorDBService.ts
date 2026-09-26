@@ -1,20 +1,3 @@
-/**
- * @fileoverview VectorDBProvider 应用服务层。
- *
- * 依赖 VectorDBComponent（LanceDB 向量检索）操作向量数据，
- * 依赖 RelationDBAccess（通过 IConfigStorage）操作关系数据库的 vectordb_config 配置表，
- * 依赖 ConfigService 管理配置项。
- *
- * 向量数据（vector_record 表）存储于 VectorDB 组件（LanceDB），相似度搜索使用 LanceDB 原生 ANN 搜索；
- * 配置项（启用 / 禁用状态、搜索默认参数）存储于关系数据库配置表 vectordb_config。
- *
- * 实现所有用例：addVector / delVector / delVectorByFilter / soVector / soVectorById /
- * countVector / visualizedVector / enableVectorDB / closeVectorDB。
- *
- * 所有方法返回 Promise<boolean>，true 表示执行完成；
- * 实际数据通过 output 参数（引用传递）回传。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -56,25 +39,14 @@ import type {
   CloseVectorDBOutput,
 } from '../domain/types';
 
-/**
- * VectorDBProvider 应用服务。
- *
- * VectorDBProvider 是向量数据的唯一操作入口，上层不可直接操作数据库。
- * 向量数据存储于 VectorDB 组件（LanceDB），配置项存储于关系数据库。
- */
 export class VectorDBService {
-  /** 运行时内存中的启用状态，供各操作快速校验 */
+
   private enabled = true;
 
-  /** 是否已执行 closeVectorDB（终态标记） */
   private closed = false;
 
   private readonly config: ConfigService;
 
-  /**
-   * @param vectorDb VectorDB 组件实例（向量数据操作）
-   * @param relationDb RelationDBProvider 接入层（配置表操作）
-   */
   constructor(
     private readonly vectorDb: VectorDBComponent,
     private readonly relationDb: RelationDBAccess,
@@ -82,21 +54,6 @@ export class VectorDBService {
     this.config = new ConfigService(relationDb, VECTORDB_CONFIG_TABLE);
   }
 
-  // -------------------------------------------------------------------------
-  // 初始化
-  // -------------------------------------------------------------------------
-
-  /**
-   * 初始化配置表：写入默认配置项（idempotent）并恢复 enabled 状态。
-   *
-   * 与 initialize() 分离，允许在 LanceDB 组件初始化之前完成配置初始化。
-   *
-   * 默认配置项（仅在配置不存在时写入，不覆盖已有值）：
-   * - enabled：启用状态（enableVectorDB 读写，重启后由此恢复）；
-   * - default_top_k / default_similarity_threshold：soVector 未显式传参时的默认搜索参数；
-   * - default_distance_metric：默认距离度量方式（配置中心 vectordb_provider 模块读写，
-   *   getStoredMetric 在 LanceDB 初始化前读取该值决定向量表度量）。
-   */
   async initializeConfig(): Promise<void> {
     await this.config.initDefaults([
       {
@@ -124,22 +81,14 @@ export class VectorDBService {
         description: '默认距离度量方式（COSINE / L2 / IP）',
       },
     ]);
-    // 恢复持久化的启用状态：上次运行中若通过 enableVectorDB 禁用，重启后保持禁用
+
     this.enabled = await this.config.getBoolean('enabled', true);
   }
 
-  /**
-   * 初始化：恢复 enabled 状态（在初始化配置表之后调用）。
-   */
   async initialize(): Promise<void> {
     this.enabled = await this.config.getBoolean('enabled', true);
   }
 
-  /**
-   * 从配置表读取存储的距离度量方式。
-   *
-   * 将枚举值（COSINE / L2 / IP）转换为内部使用的值（cosine / euclidean / dot）。
-   */
   getStoredMetric(): string | null {
     try {
       const val = this.relationDb.queryRaw<{ config_value: string }>(
@@ -151,13 +100,10 @@ export class VectorDBService {
         const map: Record<string, string> = { COSINE: 'cosine', L2: 'euclidean', IP: 'dot' };
         return map[raw] || raw.toLowerCase();
       }
-    } catch { /* table may not exist yet */ }
+    } catch {  }
     return null;
   }
 
-  /**
-   * 校验组件是否启用，未启用时抛出 ComponentDisabledError。
-   */
   private ensureEnabled(): void {
     if (this.closed) {
       throw new DatabaseError(
@@ -169,13 +115,6 @@ export class VectorDBService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 工具方法
-  // -------------------------------------------------------------------------
-
-  /**
-   * 校验向量数据对象合法性。
-   */
   private validateVector(vec: VectorObject): void {
     if (!vec.content) {
       throw new ValidationError('content 不能为空');
@@ -189,20 +128,6 @@ export class VectorDBService {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 用例实现
-  // -------------------------------------------------------------------------
-
-  /**
-   * 新增/更新向量（addVector）。
-   *
-   * PRD 3.1 条：upsert 语义，id 已存在则更新，否则新增。
-   * 返回向量 id 列表（顺序与入参一致）。
-   *
-   * @param input 入参（vectors 列表）
-   * @param context 执行上下文
-   * @param output 出参（ids 列表）
-   */
   async addVector(input: AddVectorInput, output: AddVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -219,7 +144,6 @@ export class VectorDBService {
       const id = vec.id || IdGenerator.generate();
       ids.push(id);
 
-      // 通过 VectorDB 组件执行 upsert（MERGE 语义）
       await this.vectorDb.upsert({
         id,
         content: vec.content,
@@ -235,15 +159,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 删除向量（delVector）。
-   *
-   * PRD 3.2 条：按 ID 批量删除。
-   *
-   * @param input 入参（ids 列表）
-   * @param context 执行上下文
-   * @param output 出参（影响行数）
-   */
   async delVector(input: DelVectorInput, output: DelVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -256,16 +171,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 按条件删除向量（delVectorByFilter）。
-   *
-   * PRD 3.3 条：按元数据条件批量删除。
-   * 由 VectorDB 组件加载全部匹配记录后按 ID 批量删除。
-   *
-   * @param input 入参（filters 列表）
-   * @param context 执行上下文
-   * @param output 出参（删除的向量数量）
-   */
   async delVectorByFilter(input: DelVectorByFilterInput, output: DelVectorByFilterOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -278,21 +183,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 搜索向量（soVector）。
-   *
-   * PRD 3.4 条：基于余弦相似度搜索最相似的向量，支持元数据条件过滤。
-   *
-* 处理流程：
- * 1. 若 top_k / similarity_threshold 未指定，从 vectordb_config 读取默认值；
- * 2. 构建过滤条件（user_id + filters）；
- * 3. 由 VectorDB 组件执行 LanceDB 相似度搜索（含后过滤 + 阈值过滤）；
- * 4. 按相似度降序返回前 top_k 条结果。
-   *
-   * @param input 入参（query_param 查询参数）
-   * @param context 执行上下文
-   * @param output 出参（list 搜索结果）
-   */
   async soVector(input: SoVectorInput, output: SoVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -305,21 +195,18 @@ export class VectorDBService {
       throw new ValidationError('query_param.embedding 不能为空');
     }
 
-    // 读取默认参数（未指定时从配置表读取）
     const topK =
       param.top_k ?? (await this.config.getInt('default_top_k', 10));
     const normalizedThreshold =
       param.similarity_threshold ??
       (await this.config.getDouble('default_similarity_threshold', 0));
 
-    // 将 0-100 归一化阈值转换为当前度量方式的原始阈值
     const rawThreshold = VectorDBComponent.normalizedThresholdToRaw(
       normalizedThreshold,
       this.vectorDb.getMetric(),
       this.vectorDb.getDimension(),
     );
 
-    // 构建过滤条件列表
     const filters: VectorFilter[] = [];
     if (param.filters) {
       filters.push(...param.filters);
@@ -332,7 +219,6 @@ export class VectorDBService {
       });
     }
 
-    // 由 VectorDB 组件执行 LanceDB 相似度搜索（阈值阈值 rawThreshold 已由归一化值转换，分数已归一化到 0-100）
     const hits = await this.vectorDb.search(
       param.embedding,
       topK,
@@ -340,7 +226,6 @@ export class VectorDBService {
       filters.length > 0 ? filters : undefined,
     );
 
-    // 映射为领域搜索结果（分数已在组件层归一化到 0-100）
     const results: VectorSearchResult[] = hits.map((h) => ({
       id: h.id,
       content: h.content,
@@ -353,15 +238,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 获取向量（soVectorById）。
-   *
-   * PRD 3.5 条：按 ID 获取向量完整信息，不存在返回 null。
-   *
-   * @param input 入参（id）
-   * @param context 执行上下文
-   * @param output 出参（vector 向量信息）
-   */
   async soVectorById(input: GetVectorInput, output: GetVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -374,15 +250,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 统计向量数量（countVector）。
-   *
-   * PRD 3.6 条：按元数据条件统计，不指定 filters 则统计全部。
-   *
-   * @param input 入参（filters 可选）
-   * @param context 执行上下文
-   * @param output 出参（count 数量）
-   */
   async countVector(input: CountVectorInput, output: CountVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -394,22 +261,6 @@ export class VectorDBService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 可视化与运维
-  // -------------------------------------------------------------------------
-
-  /**
-   * 可视化数据（visualizedVector）。
-   *
-   * PRD 3.7.1 条：根据 scope 获取向量数据库的可视化信息。
-   * - health：向量数据库连接状态、响应时间、启用状态（通过 VectorDB 组件探测）；
-   * - volume：向量总数、集合名、维度（通过 VectorDB 组件获取）；
-   * - diskUsage：占用磁盘空间（通过 RelationDBProvider 的 SQLite PRAGMA + VectorDB 组件目录大小获取）。
-   *
-   * @param input 入参（scope）
-   * @param context 执行上下文
-   * @param output 出参（data 可视化数据）
-   */
   async visualizedVector(input: VisualizedVectorInput, output: VisualizedVectorOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -417,7 +268,7 @@ export class VectorDBService {
 
     if (scope === 'health') {
       const start = Date.now();
-      // 通过一次 count 探测向量数据库连接可用性与响应时间
+
       await this.vectorDb.count();
       output.data = {
         connected: true,
@@ -432,7 +283,7 @@ export class VectorDBService {
         dimension: this.vectorDb.getDimension(),
       };
     } else if (scope === 'diskUsage') {
-      // 磁盘占用基于关系数据库 SQLite 文件统计（配置表所在数据库）
+
       const pageSizes = this.relationDb.queryRaw<{ page_size: number }>(
         'PRAGMA page_size',
       );
@@ -457,19 +308,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 启用/禁用向量数据库（enableVectorDB）。
-   *
-   * PRD 3.7.2 条：运行时控制向量数据库的可用状态。
-   * 状态同步持久化到 vectordb_config，组件初始化时恢复。
-   * 禁用期间所有向量数据操作将返回失败。
-   *
-   * 注：closeVectorDB 为终态操作，执行后不可通过本方法恢复，需重新初始化组件。
-   *
-   * @param input 入参（enable）
-   * @param context 执行上下文
-   * @param output 出参
-   */
   async enableVectorDB(input: EnableVectorDBInput, _output: EnableVectorDBOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (this.closed) {
@@ -487,18 +325,6 @@ export class VectorDBService {
     return true;
   }
 
-  /**
-   * 关闭向量数据库连接（closeVectorDB）。
-   *
-   * PRD 3.7.3 条：系统关闭时的终态释放，执行后不可通过 enableVectorDB 恢复，
-   * 需重新初始化组件。
-   *
-   * 关闭 VectorDB 组件，释放底层数据库连接资源。
-   *
-   * @param input 入参
-   * @param context 执行上下文
-   * @param output 出参
-   */
   async closeVectorDB(_input: CloseVectorDBInput, _output: CloseVectorDBOutput, _context: VectorContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.enabled = false;

@@ -285,7 +285,7 @@ export class StreamService {
     const minChunk = input.chunk_min ?? cfg.chunk_min_chars ?? 2;
     const maxChunk = input.chunk_max ?? cfg.chunk_max_chars ?? 5;
     const channelKey = `${input.work_id || ''}_${input.agent_id || 'main'}_${input.node_id || ''}`;
-    let accumulated = session.channelLengths.get(channelKey) ?? 0;
+    const accumulated = session.channelLengths.get(channelKey) ?? 0;
 
     const isTextChunkable =
       Boolean(input.enable_chunking) &&

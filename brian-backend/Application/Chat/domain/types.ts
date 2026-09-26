@@ -35,14 +35,14 @@ export class DeleteSessionOutput extends Output {
 }
 
 export class PurgeOrphanSessionsInput extends Input {
-  /** 仅扫描统计不执行删除（用于观测 / 联调） */
+  
   dry_run?: boolean;
 }
 
 export class PurgeOrphanSessionsOutput extends Output {
-  /** 被清理（或 dry_run 下被识别）的孤儿会话数量 */
+  
   purged_count = 0;
-  /** 被清理（或 dry_run 下被识别）的孤儿会话 ID 列表 */
+  
   purged_session_ids: string[] = [];
 }
 
@@ -216,7 +216,7 @@ export interface SSEEvent {
 }
 
 export class OpenChatStreamInput extends Input {
-  /** SSE 端点 ID（前端创建 SSE 端点时生成；本请求的业务事件经 Report→StreamProvider 推到该端点） */
+  
   stream_endpoint_id?: string;
   session_id!: string;
   msg_content!: string;

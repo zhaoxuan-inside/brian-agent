@@ -50,8 +50,8 @@ describe('AgentShared - parseJsonObject', () => {
   });
 
   it('TC-SH-011: 多个 JSON 块时, 贪婪匹配整个 {} 块, 首个不合法 JSON 返回 null', () => {
-    // The implementation uses greedy regex /\{[\s\S]*\}/ which matches from first { to last }
-    // producing '{"a":1} middle {"b":2}' which is NOT valid JSON, so returns null
+    
+    
     expect(parseJsonObject('start {"a":1} middle {"b":2} end')).toBeNull();
   });
 
@@ -76,5 +76,3 @@ describe('AgentShared - parseJsonObject', () => {
   });
 });
 
-// formatContextCategories 的行为测试归属 Base 层：Base/test/ContextFormatter.test.ts
-// （曾在此维护的 TC-SH-020/021/022 为旧中文标签格式的过期副本，已删除）

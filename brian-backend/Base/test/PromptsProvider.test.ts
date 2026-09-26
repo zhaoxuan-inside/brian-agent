@@ -1,13 +1,3 @@
-/**
- * @fileoverview PromptsProvider 模块测试。
- *
- * 测试 PromptsProvider 的全部接口：addPrompt / delPrompt / updatePrompt /
- * soPromptById / soPrompt / execPrompt / enablePrompts / closePrompts。
- *
- * 不使用任何 MOCK 数据，使用真实 SQLite 数据库。
- * 所有数据访问通过 RelationDBProvider，遵循 LLMProvider.test.ts 的测试模式。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -45,11 +35,6 @@ import {
   DatabaseError,
 } from '../shared/errors';
 
-// ---------------------------------------------------------------------------
-// 测试辅助函数
-// ---------------------------------------------------------------------------
-
-/** 生成唯一的 Prompt 模板测试数据 */
 function makePromptData(overrides?: Record<string, unknown>) {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -59,10 +44,6 @@ function makePromptData(overrides?: Record<string, unknown>) {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// 测试套件
-// ---------------------------------------------------------------------------
 
 describe('PromptsProvider', () => {
   let tempDir: string;
@@ -88,7 +69,7 @@ describe('PromptsProvider', () => {
         new ClosePromptOutput(), new PromptContext(),
       );
     } catch {
-      // 忽略关闭时的错误
+
     }
     try {
       await relationDb.closeDB(
@@ -96,7 +77,7 @@ describe('PromptsProvider', () => {
         new CloseDBOutput(), new DBContext(),
       );
     } catch {
-      // 忽略关闭时的错误
+
     }
     await new Promise((r) => setTimeout(r, 100));
 
@@ -104,14 +85,10 @@ describe('PromptsProvider', () => {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // =========================================================================
-  // addPrompt - 新增 Prompt
-  // =========================================================================
 
   describe('addPrompt', () => {
     it('应该成功新增一个 Prompt 模板', async () => {
@@ -232,10 +209,6 @@ describe('PromptsProvider', () => {
     });
   });
 
-  // =========================================================================
-  // delPrompt - 删除 Prompt
-  // =========================================================================
-
   describe('delPrompt', () => {
     it('应该支持按单个 ID 删除', async () => {
       const addInput = new AddPromptInput();
@@ -254,7 +227,6 @@ describe('PromptsProvider', () => {
       expect(result).toBe(true);
       expect(delOut.affected_rows).toBe(1);
 
-      // 确认已删除
       const getInput = new GetPromptInput();
       getInput.id = addOut.id;
       const getOut = new GetPromptOutput();
@@ -310,7 +282,6 @@ describe('PromptsProvider', () => {
       const addOut = new AddPromptOutput();
       await promptsAccess.addPrompt(addInput, addOut, new PromptContext());
 
-      // 先执行几次 execPrompt 产生 usage 记录
       const execInput = new ExecPromptInput();
       execInput.id = addOut.id;
       execInput.variables = { var1: 'test' };
@@ -319,7 +290,6 @@ describe('PromptsProvider', () => {
         new ExecPromptOutput(), new PromptContext(),
       );
 
-      // 确认 usage 表有记录
       const usageBefore = await relationDb.select(
         'prompt_template_usage',
         {
@@ -334,7 +304,6 @@ describe('PromptsProvider', () => {
       );
       expect(usageBefore.length).toBe(1);
 
-      // 删除 Prompt
       const delInput = new DelPromptInput();
       delInput.ids = [addOut.id];
       await promptsAccess.delPrompt(
@@ -342,7 +311,6 @@ describe('PromptsProvider', () => {
         new DelPromptOutput(), new PromptContext(),
       );
 
-      // 确认 usage 表记录也被清理
       const usageAfter = await relationDb.select(
         'prompt_template_usage',
         {
@@ -375,10 +343,6 @@ describe('PromptsProvider', () => {
       expect(delOut.affected_rows).toBe(0);
     });
   });
-
-  // =========================================================================
-  // updatePrompt - 更新 Prompt
-  // =========================================================================
 
   describe('updatePrompt', () => {
     let promptId: string;
@@ -427,7 +391,7 @@ describe('PromptsProvider', () => {
     });
 
     it('应该支持通过 updatePrompt 启用/禁用 Prompt', async () => {
-      // 先禁用
+
       const updateInput1 = new UpdatePromptInput();
       updateInput1.id = promptId;
       updateInput1.data = { enable: false };
@@ -442,7 +406,6 @@ describe('PromptsProvider', () => {
       await promptsAccess.soPromptById(getInput, getOut1, new PromptContext());
       expect(getOut1.prompt!.enable).toBe(0);
 
-      // 再启用
       const updateInput2 = new UpdatePromptInput();
       updateInput2.id = promptId;
       updateInput2.data = { enable: true };
@@ -504,14 +467,9 @@ describe('PromptsProvider', () => {
       const getOut = new GetPromptOutput();
       await promptsAccess.soPromptById(getInput, getOut, new PromptContext());
 
-      // id 不应该被修改（updatePrompt 不会处理 id 字段）
       expect(getOut.prompt!.id).toBe(promptId);
     });
   });
-
-  // =========================================================================
-  // soPromptById - 获取 Prompt
-  // =========================================================================
 
   describe('soPromptById', () => {
     let promptId: string;
@@ -595,10 +553,6 @@ describe('PromptsProvider', () => {
       expect(typeof p.enable).toBe('number');
     });
   });
-
-  // =========================================================================
-  // soPrompt - 搜索 Prompt
-  // =========================================================================
 
   describe('soPrompt', () => {
     beforeEach(async () => {
@@ -733,10 +687,6 @@ describe('PromptsProvider', () => {
     });
   });
 
-  // =========================================================================
-  // soPrompt - 使用频率排序
-  // =========================================================================
-
   describe('soPrompt（使用频率排序）', () => {
     let promptIds: string[] = [];
 
@@ -753,10 +703,6 @@ describe('PromptsProvider', () => {
         promptIds.push(out.id);
       }
 
-      // 给各模板添加不同的使用次数
-      // promptIds[0] - 执行 0 次
-      // promptIds[1] - 执行 3 次
-      // promptIds[2] - 执行 1 次
       for (let j = 0; j < 3; j++) {
         const execInput = new ExecPromptInput();
         execInput.id = promptIds[1];
@@ -782,11 +728,11 @@ describe('PromptsProvider', () => {
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
 
       expect(soOut.list.length).toBeGreaterThanOrEqual(3);
-      // 使用次数多的排前面
+
       const titles = soOut.list.map((p) => p.prompt_template_title);
-      const idx1 = titles.indexOf('UsageSort1'); // 3次
-      const idx2 = titles.indexOf('UsageSort2'); // 1次
-      const idx0 = titles.indexOf('UsageSort0'); // 0次
+      const idx1 = titles.indexOf('UsageSort1');
+      const idx2 = titles.indexOf('UsageSort2');
+      const idx0 = titles.indexOf('UsageSort0');
       expect(idx1).toBeLessThan(idx2);
       expect(idx2).toBeLessThan(idx0);
     });
@@ -829,15 +775,10 @@ describe('PromptsProvider', () => {
       const soOut = new SoPromptOutput();
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
 
-      // UsageSort0 执行 0 次，应该排在前面（ASC）
       const firstTitle = soOut.list[0]?.prompt_template_title;
       expect(firstTitle).toBe('UsageSort0');
     });
   });
-
-  // =========================================================================
-  // execPrompt - 执行/渲染 Prompt
-  // =========================================================================
 
   describe('execPrompt', () => {
     let promptId: string;
@@ -893,7 +834,6 @@ describe('PromptsProvider', () => {
         execOut, new PromptContext(),
       );
 
-      // split by 'Brian' should give 3 parts (2 occurrences)
       expect(execOut.prompt.split('Brian').length).toBe(3);
     });
 
@@ -1010,7 +950,7 @@ describe('PromptsProvider', () => {
     });
 
     it('禁用的 Prompt 抛出 ValidationError', async () => {
-      // 先禁用
+
       await promptsAccess.updatePrompt(
         Object.assign(new UpdatePromptInput(), {
           id: promptId,
@@ -1048,15 +988,10 @@ describe('PromptsProvider', () => {
         execOut, new PromptContext(),
       );
 
-      // extra_var 不在模板中，不会出现在结果中
       expect(execOut.prompt).not.toContain('extra_var');
       expect(execOut.prompt).toContain('英文');
     });
   });
-
-  // =========================================================================
-  // enablePrompts - 启用/禁用组件
-  // =========================================================================
 
   describe('enablePrompts', () => {
     it('禁用组件后所有操作应抛出 ComponentDisabledError', async () => {
@@ -1075,13 +1010,12 @@ describe('PromptsProvider', () => {
     });
 
     it('重新启用后操作恢复正常', async () => {
-      // 先禁用
+
       await promptsAccess.enablePrompts(
         Object.assign(new EnablePromptsInput(), { enable: false }),
         new EnablePromptsOutput(), new PromptContext(),
       );
 
-      // 再启用
       await promptsAccess.enablePrompts(
         Object.assign(new EnablePromptsInput(), { enable: true }),
         new EnablePromptsOutput(), new PromptContext(),
@@ -1099,13 +1033,12 @@ describe('PromptsProvider', () => {
     });
 
     it('enable 状态应持久化到 prompts_config 表', async () => {
-      // 设为 false
+
       await promptsAccess.enablePrompts(
         Object.assign(new EnablePromptsInput(), { enable: false }),
         new EnablePromptsOutput(), new PromptContext(),
       );
 
-      // 检查 config 表
       const configRow = await relationDb.selectOne('prompts_config', [
         {
           field: 'config_key',
@@ -1134,13 +1067,12 @@ describe('PromptsProvider', () => {
     });
 
     it('初始化时应从 config 恢复 enable 状态', async () => {
-      // 先禁用
+
       await promptsAccess.enablePrompts(
         Object.assign(new EnablePromptsInput(), { enable: false }),
         new EnablePromptsOutput(), new PromptContext(),
       );
 
-      // 重新初始化
       const newAccess = new PromptsAccess(relationDb);
       await newAccess.initialize();
 
@@ -1153,10 +1085,6 @@ describe('PromptsProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // =========================================================================
-  // closePrompts - 关闭组件（终态操作）
-  // =========================================================================
 
   describe('closePrompts', () => {
     it('closePrompts 后所有操作应抛出 DatabaseError', async () => {
@@ -1218,7 +1146,6 @@ describe('PromptsProvider', () => {
         new ClosePromptOutput(), new PromptContext(),
       );
 
-      // 状态仍然为关闭
       const input = new AddPromptInput();
       input.data = makePromptData();
       const out = new AddPromptOutput();
@@ -1234,7 +1161,6 @@ describe('PromptsProvider', () => {
         new ClosePromptOutput(), new PromptContext(),
       );
 
-      // 创建新的 access 实例重新初始化
       const newAccess = new PromptsAccess(relationDb);
       await newAccess.initialize();
 

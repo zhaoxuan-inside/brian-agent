@@ -1,20 +1,3 @@
-/**
- * @fileoverview VectorDBProvider 接入层。
- *
- * DDD 中 access 层与具体业务代码分离，作为模块对外的统一入口。
- * 本层职责：
- * 1. 创建 VectorDB 组件并初始化表结构（通过 VectorDBSchemaInitializer）；
- * 2. 封装 application 层 Service，提供 (Input, Context, Output) 签名的方法调用入口；
- * 3. 通过 AOP 代理注入日志记录与耗时统计切面；
- * 4. 通过简单改造即可将方法调用转换为 RPC 调用（方法签名保持 input/output 序列化友好）。
- *
- * 上层（其他 Provider、application 层）通过本类访问向量数据，不直接接触 Service。
- *
- * 依赖关系：
- * - 向量数据（vector_record 表）存储于 VectorDB 组件（LanceDB 向量数据库）；
- * - 配置项（vectordb_config）存储于关系数据库（由 RelationDBProvider 管理）。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -45,50 +28,21 @@ import {
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
-/** 默认向量维度（OpenAI text-embedding 系列常用 1536） */
 const DEFAULT_DIMENSION = 1536;
 
-/** 默认距离度量方式 */
 const DEFAULT_METRIC = 'cosine';
 
-/**
- * VectorDBProvider 接入层选项。
- */
 export interface VectorDBAccessOptions {
-  /** LanceDB 数据目录路径 */
+  
   lancePath: string;
-  /** 向量维度（由上层 Embedding 模型决定，默认 1536） */
+  
   dimension?: number;
-  /** 距离度量方式：cosine（默认）/ euclidean / dot */
+  
   metric?: string;
-  /** 可选日志记录器 */
+  
   logger?: Logger;
 }
 
-/**
- * VectorDBProvider 接入层。
- *
- * 作为向量数据的唯一操作入口，上层通过本类访问向量数据。
- *
- * 用法示例：
- * ```typescript
- * const relationDb = new RelationDBAccess({ dbPath: './data/brian.db' });
- * await relationDb.initialize();
- *
- * const vectorDb = new VectorDBAccess(relationDb, {
- *   lancePath: './data/vectordb',
- *   dimension: 1536,
- * });
- * await vectorDb.initialize();
- *
- * const output = new AddVectorOutput();
- * await vectorDb.addVector(
- *   { vectors: [{ content: '示例', embedding: [0.1, 0.2, 0.3] }] },
- *   output, new VectorContext(),
- * );
- * console.log(output.ids);
- * ```
- */
 export class VectorDBAccess {
   private readonly service: VectorDBService;
 
@@ -102,10 +56,8 @@ export class VectorDBAccess {
 
   private metric: string;
 
-  /**
-   * @param relationDb RelationDBProvider 接入层实例（用于配置表）
-   * @param options VectorDB 选项（LanceDB 数据目录、维度、度量方式、日志记录器）
-   */
+  
+
   constructor(
     relationDb: RelationDBAccess,
     options: VectorDBAccessOptions,
@@ -122,16 +74,10 @@ export class VectorDBAccess {
     this.service = AopProxy.wrap(rawService, { logger: options.logger });
   }
 
-  /**
-   * 初始化组件：先创建配置表、写默认值、恢复存储的 metric，再初始化 LanceDB。
-   *
-   * 必须在首次使用前调用。
-   *
-   * @param dimension 向量维度。若传入则覆盖构造器传入的维度（上层从 SQLite 配置
-   *                  表 info_vector_config.dimension 读取后传入，作为向量表维度来源）。
-   */
+  
+
   async initialize(dimension?: number): Promise<void> {
-    // 1. 创建关系数据库配置表（仅创建表结构，不初始化 LanceDB）
+    
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${VECTORDB_CONFIG_TABLE}" (
         "config_key"   TEXT    NOT NULL PRIMARY KEY,
@@ -142,44 +88,41 @@ export class VectorDBAccess {
       )
     `);
 
-    // 2. 初始化配置服务（写入默认配置项，包括 default_distance_metric = COSINE）
+    
     await this.service.initializeConfig();
 
-    // 3. 从配置表读取存储的距离度量方式，优先于构造器参数
+    
     const storedMetric = this.service.getStoredMetric();
     if (storedMetric) {
       this.metric = storedMetric;
     }
 
-    // 4. 维度以 SQLite 配置为准（若上层传入则覆盖构造器默认值）
+    
     if (dimension !== undefined && dimension > 0) {
       this.dimension = dimension;
     }
 
-    // 5. 用最终确定的 metric / dimension 初始化 LanceDB 表
+    
     await this.vectorDb.init(this.dimension, this.metric);
   }
 
-  /** 获取当前向量总数（用于判断是否存在数据） */
+  
   async soVectorCount(): Promise<number> {
     return this.vectorDb.count();
   }
 
-  /** 获取当前度量方式 */
+  
   getMetric(): string {
     return this.vectorDb.getMetric();
   }
 
-  /** 获取当前向量维度 */
+  
   getDimension(): number {
     return this.vectorDb.getDimension();
   }
 
-  /**
-   * 运行时应用新的向量维度（供配置中心修改 info_core.vector_config.dimension 时调用）。
-   *
-   * 存在向量数据时禁止修改，避免已写入向量与新维度不一致；修改时重建向量表。
-   */
+  
+
   async applyDimension(dimension: number): Promise<void> {
     if (!Number.isInteger(dimension) || dimension <= 0) {
       throw new Error('向量维度必须是正整数');
@@ -192,12 +135,8 @@ export class VectorDBAccess {
     await this.vectorDb.recreate(dimension, this.metric);
   }
 
-  /**
-   * 运行时应用新的距离度量方式（供配置中心修改 default_distance_metric 时调用）。
-   *
-   * 将配置枚举值（COSINE / L2 / IP）映射为内部值（cosine / euclidean / dot），
-   * 并同步到 VectorDB 组件；存在向量数据时禁止修改，保证已有向量与新度量语义一致。
-   */
+  
+
   async applyMetric(metric: string): Promise<void> {
     const map: Record<string, string> = { COSINE: 'cosine', L2: 'euclidean', IP: 'dot' };
     const normalized = map[String(metric).toUpperCase()] || String(metric).toLowerCase();
@@ -209,55 +148,55 @@ export class VectorDBAccess {
     this.vectorDb.setMetric(normalized);
   }
 
-  /** 新增/更新向量（upsert） */
+  
   async addVector(input: AddVectorInput, output: AddVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.addVector(input, output, context, metrics, report);
   }
 
-  /** 删除向量（按 ID 批量） */
+  
   async delVector(input: DelVectorInput, output: DelVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.delVector(input, output, context, metrics, report);
   }
 
-  /** 按条件删除向量 */
+  
   async delVectorByFilter(input: DelVectorByFilterInput, output: DelVectorByFilterOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.delVectorByFilter(input, output, context, metrics, report);
   }
 
-  /** 搜索向量（相似度搜索） */
+  
   async soVector(input: SoVectorInput, output: SoVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soVector(input, output, context, metrics, report);
   }
 
-  /** 获取向量（按 ID） */
+  
   async soVectorById(input: GetVectorInput, output: GetVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soVectorById(input, output, context, metrics, report);
   }
 
-  /** 统计向量数量 */
+  
   async countVector(input: CountVectorInput, output: CountVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.countVector(input, output, context, metrics, report);
   }
 
-  /** 可视化数据 */
+  
   async visualizedVector(input: VisualizedVectorInput, output: VisualizedVectorOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.visualizedVector(input, output, context, metrics, report);
   }
 
-  /** 启用/禁用向量数据库 */
+  
   async enableVectorDB(input: EnableVectorDBInput, output: EnableVectorDBOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.enableVectorDB(input, output, context, metrics, report);
   }
 
-  /** 关闭向量数据库连接（终态操作） */
+  
   async closeVectorDB(input: CloseVectorDBInput, output: CloseVectorDBOutput, context: VectorContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.closeVectorDB(input, output, context, metrics, report);

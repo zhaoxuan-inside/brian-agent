@@ -1,10 +1,3 @@
-/**
- * @fileoverview LLM 提供商策略模式单元测试。
- *
- * 验证 LLMStrategyFactory、BaseLLMStrategy、OpenAIStrategy、GoogleStrategy、
- * AnthropicStrategy、OllamaStrategy、VolcanoEngineStrategy 的请求构造与响应解析多态行为。
- */
-
 import { describe, it, expect } from 'vitest';
 import {
   LLMStrategyFactory,

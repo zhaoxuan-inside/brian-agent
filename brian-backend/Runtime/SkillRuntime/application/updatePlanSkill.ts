@@ -1,40 +1,23 @@
-/**
- * @fileoverview update_plan 编排原语工具（OpenClaw 2.0 范式；Tools-PRD §6.4）。
- *
- * 过程性计划卡：Agent 用它向用户展示多步计划并维护进度。状态存内存（per run），
- * 每次调用经 emitEvent 发 `plan.updated` 业务事件（Report→StreamProvider）。
- * 不变量：至多一个 step 处于 in_progress（由 preparePlanSteps 校验，违反即拒绝）。
- */
-
 import { z } from 'zod';
 import { ValidationError } from '@brian-agent/base';
 import { SkillResultStatus } from '../domain/types';
 import type { SkillDef, SkillExecutionContext } from '../domain/types';
 
-/** plan 步骤状态（有限值域） */
 export enum PlanStepStatus {
   Pending = 'pending',
   InProgress = 'in_progress',
   Completed = 'completed',
 }
 
-/** 单步计划 */
 export interface PlanStep {
-  /** 步骤描述 */
+  
   step: string;
-  /** 状态 */
+  
   status: PlanStepStatus;
 }
 
-/** run 级计划状态（进程内存；随 run 生命周期存续） */
 const plans = new Map<string, PlanStep[]>();
 
-/** 清空指定 run 的计划状态（run 结算后由 Loop 调用；测试隔离用） */
-export function clearPlan(runId: string): void {
-  plans.delete(runId);
-}
-
-/** 计划步骤校验与归一（数据处理；不变量：至多一个 in_progress） */
 export function preparePlanSteps(steps: Array<{ step: string; status?: string }>): PlanStep[] {
   const normalized = steps.map((s) => {
     const status = (s.status ?? PlanStepStatus.Pending) as PlanStepStatus;
@@ -53,14 +36,12 @@ export function preparePlanSteps(steps: Array<{ step: string; status?: string }>
   return normalized;
 }
 
-/** 渲染计划卡文本（数据处理；模型可读） */
 export function renderPlanText(steps: PlanStep[]): string {
   const mark = (s: PlanStepStatus) =>
     s === PlanStepStatus.Completed ? '[x]' : s === PlanStepStatus.InProgress ? '[~]' : '[ ]';
   return steps.map((s) => `${mark(s.status)} ${s.step}`).join('\n');
 }
 
-/** update_plan 编排原语工具 */
 export function updatePlanSkill(): SkillDef<{ plan: Array<{ step: string; status?: string }> }> {
   return {
     id: 'skill_builtin-plan',

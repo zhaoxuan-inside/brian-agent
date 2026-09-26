@@ -79,18 +79,6 @@ export function initAgentSchema(db: RelationDBAccess): void {
       "iterations_json" TEXT NOT NULL DEFAULT '[]', "total_token_usage" INTEGER NOT NULL DEFAULT 0,
       "answer" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_plan" (
-      "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "plan_id" TEXT NOT NULL, "work_id" TEXT NOT NULL DEFAULT '',
-      "run_id" TEXT NOT NULL DEFAULT '', "task_dag" TEXT NOT NULL DEFAULT '{}',
-      "parent_plan_id" TEXT NOT NULL DEFAULT ''
-    )`,
-    `CREATE TABLE IF NOT EXISTS "planner_agent_config" (
-      "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "complexity_decompose_threshold" INTEGER NOT NULL DEFAULT 50,
-      "plan_prompt_template_id" TEXT NOT NULL DEFAULT '', "max_subtask_count" INTEGER NOT NULL DEFAULT 10,
-      "llm_id" TEXT
-    )`,
     `CREATE TABLE IF NOT EXISTS "writer_agent_config" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "write_prompt_template_id" TEXT NOT NULL DEFAULT '', "default_language" TEXT NOT NULL DEFAULT 'zh-CN',
@@ -137,7 +125,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
     )`,
   ];
   for (const sql of tables) db.executeRaw(sql);
-  // Seed default strategies
+  
   const now = Date.now();
   const ruleJson = JSON.stringify({ version: '1.0', steps: [{ step: 'Think', next: 'Answer' }, { step: 'Answer', next: null }] }).replace(/'/g, "''");
   for (const label of ['Plan-and-Solve', 'CoT', 'ReAct']) {
@@ -152,10 +140,10 @@ export function makeAccess(obj: any) {
 
 export const NOOP_LLM_ACCESS = { execLLM: vi.fn().mockResolvedValue(true), execLLMStream: vi.fn(), model: vi.fn(), insertModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(), enableLLM: vi.fn(), closeLLM: vi.fn(), initialize: vi.fn().mockResolvedValue(undefined) } as any;
 export const NOOP_PROMPTS_ACCESS = {
-  // ===== 2026-09-11：renderPrompt 统一 fail-loud（模板由 prompt_template 表承载），
-  // 测试桩内做最简 `{{var}}` 渲染，保证模板"可用"语义 =====
+  
+  
   execPrompt: vi.fn().mockImplementation(async (_i: any, o: any) => {
-    // 测试桩：模板内容不可达也无妨，返回占位文本保证"渲染成功"语义
+    
     o.prompt = o.prompt || `noop prompt: ${String(_i?.id ?? '')}`;
     return true;
   }),

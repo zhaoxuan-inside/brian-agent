@@ -1,37 +1,25 @@
-/**
- * @fileoverview Agents 模块表结构初始化（Runtime v2 · 阶段3 前置）。
- *
- * 创建 runtime_agent_def（声明式定义）与 runtime_agents_config。
- */
-
 import type { RelationDBAccess } from '@brian-agent/base';
 import { RUNTIME_AGENT_DEF_TABLE, RUNTIME_AGENTS_CONFIG_TABLE } from '../domain/types';
 
-/**
- * AgentsSchemaInitializer。
- */
 export class AgentsSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  /** 创建所有 Agents 表（IF NOT EXISTS 语义，可安全重复调用；executeRaw 同步） */
   init(): void {
     this.initDefTable();
     this.initConfigTable();
     this.ensurePurposeColumn();
   }
 
-  /** 兼容迁移：agent_purpose 列（已存在时 SQLite 报错，静默视为成功） */
   private ensurePurposeColumn(): void {
     try {
       this.relationDb.executeRaw(
         `ALTER TABLE "${RUNTIME_AGENT_DEF_TABLE}" ADD COLUMN "agent_purpose" TEXT NOT NULL DEFAULT ''`,
       );
     } catch {
-      /* 列已存在 */
+
     }
   }
 
-  /** runtime_agent_def 表 */
   private initDefTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_AGENT_DEF_TABLE}" (
@@ -59,7 +47,6 @@ export class AgentsSchemaInitializer {
     );
   }
 
-  /** runtime_agents_config 配置表 */
   private initConfigTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_AGENTS_CONFIG_TABLE}" (

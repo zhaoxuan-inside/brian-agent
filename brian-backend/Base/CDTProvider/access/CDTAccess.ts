@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTProvider 接入层。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -55,7 +51,7 @@ export class CDTAccess {
     return this.service.isCDTRunning(i, o, c, metrics, report);
   }
 
-  // ---- CDT Screencast + 输入转发 ----
+  
   async startScreencast(maxWidth = 1920, maxHeight = 1080, quality = 80): Promise<boolean> {
     return this.service.startScreencast(maxWidth, maxHeight, quality);
   }

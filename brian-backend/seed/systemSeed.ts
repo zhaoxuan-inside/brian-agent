@@ -1,13 +1,3 @@
-/**
- * @fileoverview 系统数据种子（通用数据）导入。
- *
- * 发行包在 server/seed/system-seed.json 携带目录类通用数据
- * （模型提供商目录、MCP 提供商目录等，见 packaging/export-system-data.mjs
- * 的分类规则）；后端启动时若设置了 BRIAN_SEED_FILE 则导入。
- *
- * 幂等保证：仅对**空表**导入（表中已有数据说明用户已在用，一概不覆盖）。
- */
-
 import fs from 'node:fs';
 import type { RelationDBAccess } from '../Base/RelationDBProvider/access/RelationDBAccess';
 
@@ -23,15 +13,11 @@ interface SystemSeed {
 }
 
 export interface SeedApplyResult {
-  /** (表名, 导入行数)；跳过的表不在其中 */
+  
   imported: Array<{ table: string; rows: number }>;
   skipped: string[];
 }
 
-/**
- * 应用系统数据种子。
- * @param seedPath JSON 种子文件路径（BRIAN_SEED_FILE）
- */
 export async function applySystemSeed(
   relationDb: RelationDBAccess,
   seedPath: string,
@@ -53,7 +39,7 @@ export async function applySystemSeed(
   for (const { table, rows } of seed.tables) {
     if (!table || !Array.isArray(rows) || rows.length === 0) continue;
 
-    // 幂等：空表才导入，绝不覆盖运行中产生的数据
+    
     const countRows = relationDb.queryRaw<{ c: number }>(
       `SELECT COUNT(*) AS c FROM "${table}"`, [],
     );

@@ -51,8 +51,8 @@ describe('LLMCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('matchLLM', () => {
@@ -107,9 +107,7 @@ describe('LLMCoreProvider', () => {
 
     it('绑定失效（LLM 已从 DB 删除）时清除缓存重新匹配，不返回合成记录', async () => {
       const now = IdGenerator.now();
-      // 绑定指向 llm-gone，但 llm_available 中不存在该行（已被删除）：
-      // 旧实现会返回合成记录 { id: 'llm-gone', llm_title: 'llm-gone', enable: true }，
-      // 新实现先经 DB 校验，校验失败清除绑定并走第 2/3 层重新匹配。
+
       await relationDb.insert(AGENT_LLM_TABLE, [
         { field: 'id', value: 'cache-stale' },
         { field: 'created', value: now },
@@ -131,11 +129,11 @@ describe('LLMCoreProvider', () => {
       input.agent_id = 'agent-stale';
       input.context_id = 'c1';
       input.run_id = 'i1';
-      // 无可用 LLM 时重新匹配抛 NotFoundError（证明未走合成记录缓存返回）
+
       await expect(
         llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
       ).rejects.toThrow(NotFoundError);
-      // 失效绑定缓存已被清理
+
       const rows = await relationDb.select(AGENT_LLM_TABLE, {
         conditions: [{ field: 'agent_id', operator: Operator.EQ, value: 'agent-stale' }],
       });
@@ -354,7 +352,7 @@ describe('LLMCoreProvider', () => {
         { llm_provider_id: providerId } as CheckLLMQuotaInput,
         checkOutput, new LLMCoreContext(),
       );
-      // call_count contributions reflected in usage
+
       expect(checkOutput.quota.daily.used).toBeGreaterThan(0);
     });
   });

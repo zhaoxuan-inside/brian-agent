@@ -43,8 +43,8 @@ describe('UserProfileService', () => {
       db, writerAgent, evolutorAgent, infoCore, llmCore, llmAccess, promptsAccess,
     );
 
-    // 默认最小置信度阈值为 0.5，会过滤掉实时聚合的低置信度维度；
-    // 测试环境无真实对话数据，将阈值设为 0 以确保所有维度均返回。
+    
+    
     await service.configUserProfile(
       Object.assign(new ConfigUserProfileInput(), { min_confidence_threshold: 0 }),
       ctx(),
@@ -57,9 +57,9 @@ describe('UserProfileService', () => {
     vi.restoreAllMocks();
   });
 
-  // =====================================================================
-  // configProfileDirection
-  // =====================================================================
+  
+  
+  
 
   describe('configProfileDirection', () => {
     it('TC-UP-001: Config single direction → returns true, DB has record', async () => {
@@ -246,9 +246,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // soProfileDirection
-  // =====================================================================
+  
+  
+  
 
   describe('soProfileDirection', () => {
     it('TC-UP-015: Get all directions → returns dimensions list', async () => {
@@ -304,9 +304,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // soUserProfile
-  // =====================================================================
+  
+  
+  
 
   describe('soUserProfile', () => {
     it('TC-UP-025: Get global profile → returns complete profile data', async () => {
@@ -468,9 +468,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // generateProfile
-  // =====================================================================
+  
+  
+  
 
   describe('generateProfile', () => {
     function setupProfileLLM(value = 'test-profile-value', confidence = 0.85) {
@@ -713,9 +713,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // saveUserPreference
-  // =====================================================================
+  
+  
+  
 
   describe('saveUserPreference', () => {
     it('TC-UP-060: Save complete preferences → calls writerAgent.saveUserProfile', async () => {
@@ -843,9 +843,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // soProfileHistory
-  // =====================================================================
+  
+  
+  
 
   describe('soProfileHistory', () => {
     function setupProfileLLMForGen() {
@@ -961,9 +961,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // soProfileByVersion
-  // =====================================================================
+  
+  
+  
 
   describe('soProfileByVersion', () => {
     function setupProfileLLMForVersion() {
@@ -1032,9 +1032,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // resetUserProfile
-  // =====================================================================
+  
+  
+  
 
   describe('resetUserProfile', () => {
     function setupProfileLLMForReset() {
@@ -1102,9 +1102,9 @@ describe('UserProfileService', () => {
     });
   });
 
-  // =====================================================================
-  // configUserProfile
-  // =====================================================================
+  
+  
+  
 
   describe('configUserProfile', () => {
     it('configUserProfile: update config → returns updated config', async () => {

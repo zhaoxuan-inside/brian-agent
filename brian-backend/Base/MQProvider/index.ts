@@ -1,11 +1,5 @@
-/**
- * @fileoverview MQProvider 模块统一导出。
- */
-
-// access 层
 export { MQAccess } from './access/MQAccess';
 
-// domain 层类型
 export {
   MQContext,
   SendMQInput,

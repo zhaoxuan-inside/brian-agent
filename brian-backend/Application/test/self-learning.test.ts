@@ -26,6 +26,7 @@ import {
   GetLearningResultsInput, GetLearningResultsOutput,
   GetLearningStatsInput, GetLearningStatsOutput,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,
+  LearningTaskRecord, LearningTaskStatus, ListLearningTasksInput, ListLearningTasksOutput,
 } from '../SelfLearning/domain/types';
 import {
   setupRealTestEnvironment, cleanupTempDirs, type RealTestContext,
@@ -67,11 +68,6 @@ describe('SelfLearningService', () => {
     initSelfLearningSchema(db);
     await new Promise((r) => setTimeout(r, 10));
 
-    // ===== 修改后（2026-09-09）：对话学习已迁移到 Evolutor runEvalOnce 单轮闭环 =====
-    // 原契约：startLearning CONVERSATION 分支调 startEvalSchedule 启动常驻评估调度（已随单轮任务化重构移除）；
-    // 新契约：CONVERSATION 分支调 runEvalOnce 立即执行一轮完整评估闭环，防重入由 conversationPassRunning 承担。
-    // 以下均为透传 spy（不替换实现、不伪造数据）：仅用于调用计数断言，runEvalOnce / stopEvalSchedule
-    // 的真实逻辑对真实测试库完整执行；startEvalSchedule 自单轮任务化重构后已无调用方，不再打桩。
     vi.spyOn(evolutorAgent, 'runEvalOnce');
     vi.spyOn(evolutorAgent, 'stopEvalSchedule');
     vi.spyOn(graphDb, 'selectGraph').mockImplementation(async (_i: any, o: any, _c: any, ) => {
@@ -99,7 +95,7 @@ describe('SelfLearningService', () => {
     cleanupTempDirs();
     vi.restoreAllMocks();
     for (const dir of tempDirs) {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {  }
     }
     tempDirs.length = 0;
   });
@@ -146,10 +142,6 @@ describe('SelfLearningService', () => {
       )
     `);
   }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // addLibrary
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('addLibrary', () => {
     it('TC-SL-001: Add library with valid path pointing to .md files', async () => {
@@ -349,10 +341,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // deleteLibrary
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('deleteLibrary', () => {
     const libId = 'lib-to-delete';
 
@@ -410,10 +398,6 @@ describe('SelfLearningService', () => {
       expect(result).toBe(true);
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soLibrary
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('soLibrary', () => {
     beforeEach(async () => {
@@ -538,10 +522,6 @@ describe('SelfLearningService', () => {
       expect(output.libraries).toHaveLength(0);
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soLibraryFiles
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('soLibraryFiles', () => {
     const libId = 'lib-files-test';
@@ -714,10 +694,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soFileContent
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('soFileContent', () => {
     it('TC-SL-045: Get file content → returns file_name and content', async () => {
       const dir = makeTempDir();
@@ -842,10 +818,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // updateFileContent / deleteFile（文档编辑与删除）
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('updateFileContent / deleteFile', () => {
     async function seedFile(dir: string, fileId: string, name: string, content: string): Promise<string> {
       const filePath = path.join(dir, name);
@@ -961,10 +933,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // startLearning
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('startLearning', () => {
     beforeEach(async () => {
       vi.useFakeTimers();
@@ -1030,6 +998,67 @@ describe('SelfLearningService', () => {
       expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
+    it('TC-SL-053a: CONVERSATION mode → writes learning result when evaluations happen', async () => {
+      (evolutorAgent.runEvalOnce as any).mockImplementation(async (_i: any, o: any) => {
+        o.scanned_agents = 1;
+        o.evaluated_count = 2;
+        o.skipped_count = 1;
+        return true;
+      });
+
+      await service.startLearning(
+        Object.assign(new StartLearningInput(), { learning_mode: 'CONVERSATION' }),
+        makeCtx(),
+        new StartLearningOutput(),
+      );
+
+      let row: { source: string; type: string; content: string } | undefined;
+      let convTask: LearningTaskRecord | undefined;
+      for (let i = 0; i < 50; i++) {
+        row = db.queryRaw<{ source: string; type: string; content: string }>(
+          'SELECT "source", "type", "content" FROM "self_learning_result" WHERE "source" = \'CONVERSATION\'',
+        )[0];
+        const listOut = new ListLearningTasksOutput();
+        await service.soLearningTasks(new ListLearningTasksInput(), listOut, makeCtx());
+        convTask = listOut.tasks.find((t) => t.mode === 'CONVERSATION');
+        if (row && convTask && convTask.status !== LearningTaskStatus.Running) break;
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(row).toBeDefined();
+      expect(row!.type).toBe('CONVERSATION');
+      expect(row!.content).toContain('评估 2 条对话');
+
+      expect(convTask?.status).toBe(LearningTaskStatus.Completed);
+      expect(convTask?.detail).toContain('评估 2 条对话');
+    });
+
+    it('TC-SL-053b: CONVERSATION mode → no learning result when nothing evaluated', async () => {
+      (evolutorAgent.runEvalOnce as any).mockImplementation(async (_i: any, o: any) => {
+        o.scanned_agents = 0;
+        o.evaluated_count = 0;
+        o.skipped_count = 0;
+        return true;
+      });
+
+      await service.startLearning(
+        Object.assign(new StartLearningInput(), { learning_mode: 'CONVERSATION' }),
+        makeCtx(),
+        new StartLearningOutput(),
+      );
+
+      await vi.advanceTimersByTimeAsync(150);
+      const n = db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM "self_learning_result" WHERE "source" = \'CONVERSATION\'',
+      )[0].c;
+      expect(n).toBe(0);
+
+      const listOut = new ListLearningTasksOutput();
+      await service.soLearningTasks(new ListLearningTasksInput(), listOut, makeCtx());
+      const convTask = listOut.tasks.find((t) => t.mode === 'CONVERSATION');
+      expect(convTask?.status).toBe(LearningTaskStatus.Completed);
+      expect(convTask?.detail).toContain('没有待评估');
+    });
+
     it('TC-SL-054: TAG_MAINTENANCE mode → does not start conversation learning', async () => {
       const input = Object.assign(new StartLearningInput(), { learning_mode: 'TAG_MAINTENANCE' });
 
@@ -1084,15 +1113,8 @@ describe('SelfLearningService', () => {
       expect(evolutorAgent.runEvalOnce).toHaveBeenCalled();
     });
 
-    // ===== 修改后（2026-09-09）：幂等语义随单轮任务化重构迁移 =====
-    // 原契约：startEvalSchedule 已运行时第二次 start 不再重复启动（evalSchedule* 标记）；
-    // 新契约：对话单轮任务防重入由 conversationPassRunning 承担——第一轮 runEvalOnce
-    // 尚未完成时第二次 start 不再触发第二轮，runEvalOnce 仅被调用 1 次。
-    // 本用例检验的是 SelfLearningService 自身的防重入守卫（真实代码）；真实 runEvalOnce
-    // 在空库上为微任务级瞬时完成，无法确定性构造"第一轮仍在执行"的并发窗口，故仅对
-    // 依赖边界做挂起门控（不伪造任何数据与返回值），使真实守卫逻辑可被确定性验证。
     it('TC-SL-060: Start twice → second call is idempotent (conversation pass re-entrancy guard)', async () => {
-      vi.mocked(evolutorAgent.runEvalOnce).mockImplementation(() => new Promise(() => { /* 挂起门控：模拟第一轮执行中 */ }));
+      vi.mocked(evolutorAgent.runEvalOnce).mockImplementation(() => new Promise(() => {  }));
       const input = Object.assign(new StartLearningInput(), { learning_mode: 'ALL' });
 
       await service.startLearning(input, makeCtx(), new StartLearningOutput());
@@ -1110,10 +1132,6 @@ describe('SelfLearningService', () => {
       expect(evolutorAgent.runEvalOnce).not.toHaveBeenCalled();
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // stopLearning
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('stopLearning', () => {
     beforeEach(async () => {
@@ -1193,10 +1211,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // handleDocumentLearning (internal)
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('handleDocumentLearning', () => {
     function makeFileRecord(overrides?: Record<string, unknown>): Record<string, unknown> {
       return {
@@ -1221,14 +1235,10 @@ describe('SelfLearningService', () => {
       });
       const selOutput = Object.assign(new SelectOneDBOutput(), {});
       await db.selectOneDB(selInput, selOutput, new DBContext());
-      // V1 编排移除后：文档学习不再派发 workflow，仅验证调用收敛（状态由服务内部保证）
+
       expect(true).toBe(true);
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soTagGraph
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('soTagGraph', () => {
     beforeEach(() => {
@@ -1405,10 +1415,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soTagRelatedInfo
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('soTagRelatedInfo', () => {
     const tagId = 'tag-related-1';
 
@@ -1484,10 +1490,6 @@ describe('SelfLearningService', () => {
       expect(output.infos.length).toBeLessThanOrEqual(1);
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soLearningProgress
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('soLearningProgress', () => {
     it('TC-SL-140: With running task → current_task populated', async () => {
@@ -1588,10 +1590,6 @@ describe('SelfLearningService', () => {
       }
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soLearningResults
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('soLearningResults', () => {
     beforeEach(async () => {
@@ -1758,10 +1756,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // soLearningStats
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('soLearningStats', () => {
     it('TC-SL-165: Complete stats → all fields present', async () => {
       const input = new GetLearningStatsInput();
@@ -1871,10 +1865,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // configSelfLearning
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('configSelfLearning', () => {
     it('TC-SL-170: Config update returns updated config', async () => {
       const input = Object.assign(new ConfigSelfLearningInput(), {
@@ -1913,10 +1903,6 @@ describe('SelfLearningService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Config proxy endpoint (TC-SL-180)
-  // ═══════════════════════════════════════════════════════════════════════════
-
   describe('Config proxy endpoint', () => {
     it('TC-SL-180: configSelfLearning is internal — accessible as service method, no independent HTTP endpoint', async () => {
       const input = new ConfigSelfLearningInput();
@@ -1928,10 +1914,6 @@ describe('SelfLearningService', () => {
       expect(output.config).toBeDefined();
     });
   });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Tag maintenance internal methods  TC-SL-100 ~ TC-SL-117
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('Tag maintenance', () => {
     beforeEach(() => {
@@ -2214,9 +2196,158 @@ describe('SelfLearningService', () => {
       }
     });
   });
-});
 
-// ── Helper ────────────────────────────────────────────────────────────────
+  describe('学习任务状态（手动触发如实回显）', () => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    function startLearningMode(mode: string): Promise<boolean> {
+      const input = Object.assign(new StartLearningInput(), { learning_mode: mode });
+      return service.startLearning(input, makeCtx(), new StartLearningOutput());
+    }
+
+    async function fetchTaskRecords(): Promise<LearningTaskRecord[]> {
+      const output = new ListLearningTasksOutput();
+      await service.soLearningTasks(new ListLearningTasksInput(), output, makeCtx());
+      return output.tasks;
+    }
+
+    function insertRecentTag(id: string, tag: string): Promise<void> {
+      const now = Date.now();
+      return db.insert('info_tag', [
+        { field: 'id', value: id },
+        { field: 'created', value: now - 1000 },
+        { field: 'updated', value: now - 1000 },
+        { field: 'tag', value: tag },
+        { field: 'info_id', value: `info-${id}` },
+      ]);
+    }
+
+    function mockGraphTagNode(tag: string): void {
+      graphDb.selectGraph.mockImplementation(async (_i: any, o: any, _c: any, ) => {
+        o.list = [{ id: `node-${tag}`, node_type: 'Tag', content: { tag } }];
+        return true;
+      });
+      graphDb.soGraphNeighbors.mockImplementation(async (_i: any, o: any, _c: any, ) => {
+        o.list = [{ id: `edge-${tag}`, from: `node-${tag}`, to: 'node-other', edge_type: 'similarTo' }];
+        return true;
+      });
+    }
+
+    beforeEach(() => {
+      ensureInfoTables();
+      vi.spyOn(infoCore, 'graphTag').mockResolvedValue(true);
+    });
+
+    it('TC-SL-130: TAG_MAINTENANCE 手动触发 → 两阶段真实执行，任务 completed 且落学习记录', async () => {
+      await insertRecentTag('tg-task-1', 'TaskTag');
+      mockGraphTagNode('TaskTag');
+
+      await startLearningMode('TAG_MAINTENANCE');
+      await sleep(50);
+
+      expect(infoCore.graphTag).toHaveBeenCalled();
+      expect(graphDb.activateGraphEdge).toHaveBeenCalled();
+
+      const tasks = await fetchTaskRecords();
+      const tagTask = tasks.find((t) => t.mode === 'TAG_MAINTENANCE');
+      expect(tagTask).toBeDefined();
+      expect(tagTask!.status).toBe(LearningTaskStatus.Completed);
+      expect(tagTask!.finished_at).toBeDefined();
+
+      const rows = db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM "self_learning_result" WHERE "source" = ?',
+        ['TAG_MAINTENANCE'],
+      );
+      expect(rows[0]?.c ?? 0).toBeGreaterThan(0);
+    });
+
+    it('TC-SL-131: 同模式轮次执行中再次触发 → 第二个任务如实标记 skipped', async () => {
+      await insertRecentTag('tg-skip-1', 'SkipTag');
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      infoCore.graphTag.mockImplementation(async () => { await gate; return true; });
+
+      await startLearningMode('TAG_MAINTENANCE');
+      await sleep(20);
+      await startLearningMode('TAG_MAINTENANCE');
+      await sleep(20);
+
+      let tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'TAG_MAINTENANCE').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Running, LearningTaskStatus.Skipped]);
+
+      release();
+      await sleep(30);
+
+      tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'TAG_MAINTENANCE').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Completed, LearningTaskStatus.Skipped]);
+    });
+
+    it('TC-SL-132: stopLearning 残留的取消意图不毒化下一次 Tag 维护轮次', async () => {
+      const stopInput = Object.assign(new StopLearningInput(), { learning_mode: 'TAG_MAINTENANCE' });
+      await service.stopLearning(stopInput, makeCtx(), new StopLearningOutput());
+
+      await insertRecentTag('tg-task-2', 'PoisonTag');
+      mockGraphTagNode('PoisonTag');
+
+      await startLearningMode('TAG_MAINTENANCE');
+      await sleep(50);
+
+      expect(graphDb.activateGraphEdge).toHaveBeenCalled();
+      const tasks = await fetchTaskRecords();
+      expect(tasks.find((t) => t.mode === 'TAG_MAINTENANCE')?.status).toBe(LearningTaskStatus.Completed);
+    });
+
+    it('TC-SL-133: 对话学习轮次执行中再次触发 → 第二个任务 skipped', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      evolutorAgent.runEvalOnce.mockImplementation(async () => { await gate; return true; });
+
+      await startLearningMode('CONVERSATION');
+      await sleep(20);
+      await startLearningMode('CONVERSATION');
+      await sleep(20);
+
+      let tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'CONVERSATION').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Running, LearningTaskStatus.Skipped]);
+
+      release();
+      await sleep(30);
+
+      tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'CONVERSATION').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Completed, LearningTaskStatus.Skipped]);
+    });
+
+    it('TC-SL-134: 文档学习轮次执行中再次触发 → 第二个任务 skipped', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      vi.spyOn(db, 'selectDB').mockImplementation(async (_i: any, o: any, _c: any, ) => {
+        await gate;
+        o.rows = [];
+        return true;
+      });
+
+      await startLearningMode('DOCUMENT');
+      await sleep(20);
+      await startLearningMode('DOCUMENT');
+      await sleep(20);
+
+      let tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'DOCUMENT').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Running, LearningTaskStatus.Skipped]);
+
+      release();
+      await sleep(30);
+
+      tasks = await fetchTaskRecords();
+      expect(tasks.filter((t) => t.mode === 'DOCUMENT').map((t) => t.status).sort())
+        .toEqual([LearningTaskStatus.Completed, LearningTaskStatus.Skipped]);
+    });
+  });
+});
 
 async function getLibraryById(
   db: RelationDBAccess,

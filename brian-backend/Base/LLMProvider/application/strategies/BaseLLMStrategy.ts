@@ -1,11 +1,3 @@
-/**
- * @fileoverview LLM 提供商策略基类（通用 OpenAI 兼容实现）。
- *
- * 实现了标准的 OpenAI 兼容协议（/v1/models、/v1/chat/completions、/v1/embeddings），
- * 并提供通用的 URL 端点拼接、Headers 填充和 JSON 响应解析逻辑。
- * 各异模型提供商可通过继承此类重写特定方法。
- */
-
 import type {
   LLMProviderRecord,
   LLMAvailableRecord,
@@ -22,12 +14,10 @@ import type {
   ParsedEmbedResult,
 } from './ILLMProviderStrategy';
 
-/** 默认路径常量 */
 export const DEFAULT_MODELS_PATH = 'v1/models';
 export const DEFAULT_CHAT_PATH = 'v1/chat/completions';
 export const DEFAULT_EMBED_PATH = 'v1/embeddings';
 
-/** execLLMEvents 请求体透传字段黑名单（与 buildChatRequest 约定一致并扩展工具字段） */
 const EVENTS_EXTRA_BLOCKLIST = [
   'messages', 'prompt', 'system', 'temperature', 'max_tokens',
   'model', 'tools', 'tool_choice', 'api_key',
@@ -36,23 +26,20 @@ const EVENTS_EXTRA_BLOCKLIST = [
 export class BaseLLMStrategy implements ILLMProviderStrategy {
   readonly name: string = 'openai-compatible';
 
-  /**
-   * 默认作为兜底策略匹配所有提供商。
-   */
+  
+
   supports(_provider: LLMProviderRecord): boolean {
     return true;
   }
 
-  /**
-   * 安全拼接基础 URL 与 API 路径。
-   */
+  
+
   protected buildEndpoint(baseUrl: string, apiPath: string): string {
     return `${baseUrl.replace(/\/+$/, '')}/${apiPath.replace(/^\/+/, '')}`;
   }
 
-  /**
-   * 构造通用的认证与请求头。
-   */
+  
+
   protected buildHeaders(
     provider: LLMProviderRecord,
     contentType = 'application/json',
@@ -67,9 +54,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return headers;
   }
 
-  /**
-   * 构造连通性测试请求（默认 GET baseUrl）。
-   */
+  
+
   buildTestRequest(provider: LLMProviderRecord): HttpRequestOptions {
     const headers: Record<string, string> = {};
     if (provider.api_key) {
@@ -83,9 +69,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 构造获取模型列表请求。
-   */
+  
+
   buildListModelsRequest(provider: LLMProviderRecord): HttpRequestOptions {
     const modelsPath = provider.models_path || DEFAULT_MODELS_PATH;
     const url = this.buildEndpoint(provider.llm_provider_url, modelsPath);
@@ -101,9 +86,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 解析模型列表 API 响应。
-   */
+  
+
   parseListModelsResponse(json: unknown, _rawText: string): ParsedModelItem[] {
     let modelsArray: Array<Record<string, unknown>> = [];
     if (json && typeof json === 'object') {
@@ -151,9 +135,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return result;
   }
 
-  /**
-   * 构造标准 OpenAI 兼容对话请求。
-   */
+  
+
   buildChatRequest(
     provider: LLMProviderRecord,
     model: LLMAvailableRecord,
@@ -198,9 +181,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 解析标准 OpenAI 格式对话响应。
-   */
+  
+
   parseChatResponse(json: unknown, _rawText: string): ParsedChatResult {
     let content = '';
     let inputTokens = 0;
@@ -223,9 +205,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return { content, inputTokens, outputTokens };
   }
 
-  /**
-   * 构造 execLLMEvents（原生消息 + 原生 tool_calls）请求（OpenAI 兼容）。
-   */
+  
+
   buildChatEventsRequest(
     provider: LLMProviderRecord,
     model: LLMAvailableRecord,
@@ -242,12 +223,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 准备 execLLMEvents 请求体（数据处理）。
-   *
-   * 注意：events API 面向 SSE 流，body 必须显式 `stream: true`
-   * （旧 execLLM 流式路径是事后向 strategy body 注入 stream，本方法在构造期即固化）。
-   */
+  
+
   protected prepareEventsBody(
     model: LLMAvailableRecord,
     input: ExecLLMEventsInput,
@@ -275,13 +252,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return body;
   }
 
-  /**
-   * 准备 execLLMEvents 消息数组（数据处理）。
-   *
-   * system 语义（修复：messages 路径此前丢失 system，导致编排层系统提示从未到达模型）：
-   * - messages 非空 → 以 input.system **前置/替换首条 system 消息**；
-   * - messages 为空 → 兼容 prompt/system 单轮拼装。
-   */
+  
+
   protected prepareEventsMessages(input: ExecLLMEventsInput): LLMMessage[] {
     const messages: LLMMessage[] = input.messages?.length ? [...input.messages] : [];
     if (input.system) {
@@ -297,9 +269,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return messages;
   }
 
-  /**
-   * 准备 execLLMEvents max_tokens（数据处理）：入参优先，模型默认截断 4096。
-   */
+  
+
   protected prepareEventsMaxTokens(
     model: LLMAvailableRecord,
     maxTokens?: number,
@@ -313,9 +284,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     return undefined;
   }
 
-  /**
-   * 准备工具规格（数据处理）：内部 tool_id 映射为 wire function.name（边界唯一映射点）。
-   */
+  
+
   protected prepareToolSpec(spec: LLMToolSpec): Record<string, unknown> {
     return {
       type: 'function',
@@ -327,9 +297,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 构造标准 OpenAI 格式向量化请求。
-   */
+  
+
   buildEmbedRequest(
     provider: LLMProviderRecord,
     model: LLMAvailableRecord,
@@ -348,9 +317,8 @@ export class BaseLLMStrategy implements ILLMProviderStrategy {
     };
   }
 
-  /**
-   * 解析标准 OpenAI 格式向量化响应。
-   */
+  
+
   parseEmbedResponse(json: unknown, _rawText: string): ParsedEmbedResult {
     let embedding: number[] = [];
     let inputTokens = 0;

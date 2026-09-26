@@ -1,19 +1,3 @@
-/**
- * @fileoverview LogProvider 模块测试。
- *
- * 测试范围：
- * - 日志管理：addLog / soLogById / soLog / delLog / countLog
- * - 可视化：visualizedLog（health / volume / levelDistribution / sourceDistribution）
- * - 运维：enableLog（日志规则配置）/ configLog（组件配置）
- * - 老化策略：applyAging（按保留天数 / 最大条数清理）
- * - AOP 切面：LogInterceptor（仅失败时记录 ERROR，invoke/done 埋点已移除）
- * - 组件生命周期：initialize / enabled 状态
- *
- * 日志仅持久化于 SQLite（log_record 表），不写入本地文件。
- * 所有测试使用真实的 SQLite 数据库，不使用任何 MOCK。
- * 每个测试用例在 temp 目录中创建独立的数据库文件，测试后清理。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -55,7 +39,6 @@ import type { InterceptContext } from '../shared/aop/Interceptor';
 import { Operator } from '../shared/query';
 import { ComponentDisabledError, ValidationError } from '../shared/errors';
 
-/** 创建测试用 LogData */
 function makeLogData(overrides?: Partial<LogData>): LogData {
   return {
     level: LogLevel.INFO,
@@ -65,12 +48,10 @@ function makeLogData(overrides?: Partial<LogData>): LogData {
   };
 }
 
-/** 等待指定毫秒 */
 function wait(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** 直接向 log_record 表插入一条日志（用于构造带自定义时间戳的数据） */
 async function insertRawLog(
   relationDb: RelationDBAccess,
   opts: { id: string; created: number; source: string; message: string; level?: string },
@@ -85,7 +66,6 @@ async function insertRawLog(
   ]);
 }
 
-/** 确保 LogProvider 重新读取配置 */
 async function reinitializeLogAccess(logAccess: LogAccess): Promise<void> {
   await logAccess.initialize();
 }
@@ -103,7 +83,6 @@ describe('LogProvider', () => {
     relationDb = new RelationDBAccess({ dbPath: sqlitePath });
     await relationDb.initialize();
 
-    // 构造 LogAccess（创建表结构）
     logAccess = new LogAccess(relationDb);
     await logAccess.initialize();
   });
@@ -112,21 +91,17 @@ describe('LogProvider', () => {
     try {
       await relationDb.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
     } catch {
-      // 可能已关闭
+
     }
     await wait(50);
     if (tempDir && fs.existsSync(tempDir)) {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // ==========================================================================
-  // addLog - 日志写入
-  // ==========================================================================
 
   describe('addLog', () => {
     it('应写入日志到 SQLite 并返回 id', async () => {
@@ -307,7 +282,7 @@ describe('LogProvider', () => {
     });
 
     it('应支持 DEBUG 级别日志（需调低 min_level）', async () => {
-      // 默认 min_level=INFO 会丢弃 DEBUG；显式调低后 DEBUG 应可写入并查回
+
       await logAccess.configLog({ min_level: LogLevel.DEBUG } as any, {} as any, new LogContext());
       await logAccess.addLog(
         { data: makeLogData({ level: LogLevel.DEBUG }) } as AddLogInput,
@@ -347,10 +322,6 @@ describe('LogProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // 日志仅存储于 SQLite（不写文件）
-  // ==========================================================================
-
   describe('SQLite 存储（不写文件）', () => {
     it('addLog 后不产生日志文件', async () => {
       await logAccess.addLog(
@@ -358,7 +329,6 @@ describe('LogProvider', () => {
         new AddLogOutput(), new LogContext(),
       );
 
-      // 确认 temp 目录下没有 .log 文件
       const found = findLogFiles(tempDir);
       expect(found.length).toBe(0);
     });
@@ -377,10 +347,6 @@ describe('LogProvider', () => {
       expect(ql.logs.length).toBe(1);
     });
   });
-
-  // ==========================================================================
-  // soLogById - 获取单条日志
-  // ==========================================================================
 
   describe('soLogById', () => {
     it('应返回 null 当没有日志', async () => {
@@ -417,10 +383,6 @@ describe('LogProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // ==========================================================================
-  // soLog - 搜索日志
-  // ==========================================================================
 
   describe('soLog', () => {
     beforeEach(async () => {
@@ -570,10 +532,6 @@ describe('LogProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // 老化策略（applyAging）
-  // ==========================================================================
-
   describe('老化策略 applyAging', () => {
     it('applyAging 应删除超过默认保留天数（30 天）的日志', async () => {
       const raw = logAccess.getRawService();
@@ -599,7 +557,6 @@ describe('LogProvider', () => {
       await insertRawLog(relationDb, { id: 'old-1', created: now - 2 * oneDay, source: 'AgingModule', message: 'old message' });
       await insertRawLog(relationDb, { id: 'new-1', created: now, source: 'AgingModule', message: 'new message' });
 
-      // 将保留天数设为 1，2 天前的日志应被立即清理
       await logAccess.configLog({ retention_days: 1 } as any, {} as any, new LogContext());
 
       const ql = await logAccess.queryLogs({ source: 'AgingModule' });
@@ -630,10 +587,6 @@ describe('LogProvider', () => {
       expect(output.config.min_level).toBe(DEFAULT_MIN_LEVEL);
     });
   });
-
-  // ==========================================================================
-  // min_level 过滤
-  // ==========================================================================
 
   describe('min_level 过滤', () => {
     it('默认 min_level 为 INFO，DEBUG 日志应被丢弃', async () => {
@@ -695,10 +648,6 @@ describe('LogProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
   });
-
-  // ==========================================================================
-  // delLog - 删除日志
-  // ==========================================================================
 
   describe('delLog', () => {
     beforeEach(async () => {
@@ -780,10 +729,6 @@ describe('LogProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // countLog - 统计日志数量
-  // ==========================================================================
-
   describe('countLog', () => {
     beforeEach(async () => {
       await logAccess.addLog(
@@ -857,10 +802,6 @@ describe('LogProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // ==========================================================================
-  // visualizedLog - 可视化数据
-  // ==========================================================================
 
   describe('visualizedLog', () => {
     beforeEach(async () => {
@@ -961,10 +902,6 @@ describe('LogProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // ==========================================================================
-  // enableLog - 配置日志规则
-  // ==========================================================================
 
   describe('enableLog', () => {
     it('应保存单条规则', async () => {
@@ -1138,10 +1075,6 @@ describe('LogProvider', () => {
       expect(ok).toBe(true);
     });
   });
-
-  // ==========================================================================
-  // LogInterceptor - AOP 日志拦截器
-  // ==========================================================================
 
   describe('LogInterceptor', () => {
     let rawService: ReturnType<typeof logAccess.getRawService>;
@@ -1368,10 +1301,6 @@ describe('LogProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // 组件生命周期
-  // ==========================================================================
-
   describe('Component lifecycle', () => {
     it('initialize 应创建 log_rule 和 log_config 表', async () => {
       const configRows = await relationDb.select(LOG_CONFIG_TABLE);
@@ -1441,10 +1370,6 @@ describe('LogProvider', () => {
       expect(indexNames).toContain(`idx_${LOG_RULE_TABLE}_source_method`);
     });
   });
-
-  // ==========================================================================
-  // 边界情况
-  // ==========================================================================
 
   describe('Edge cases', () => {
     it('日志消息包含特殊字符应正确写入和读取', async () => {
@@ -1579,7 +1504,6 @@ describe('LogProvider', () => {
   });
 });
 
-/** 递归查找目录下的 .log 文件 */
 function findLogFiles(dir: string): string[] {
   const results: string[] = [];
   if (!fs.existsSync(dir)) return results;

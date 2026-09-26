@@ -27,10 +27,6 @@ import {
   INTENT_SOUL_BRIEF, INTENT_SOUL_CONTENT, INTENT_SOUL_USAGE,
 } from '../domain/types';
 
-/**
- * lastNInfo 上游实际返回 InfoRawRecord（内容字段为 info，无 info_content）。
- * 历史代码读取 info_content，运行时恒为 undefined——修复需上游结构对齐，此处仅对既有读取点做类型兜底。
- */
 type LastNInfoRecord = InfoRawRecord & { info_content?: string };
 
 export class IntentAgentService {
@@ -87,20 +83,20 @@ export class IntentAgentService {
     const threshold = await this.getMatchThresholdConfig(metrics);
     output.threshold_score = threshold;
 
-    // 1. 获取基于时间的历史上下文
+    
     const historyText = await this.fetchRecentHistory(input.session_id);
 
-    // 2. 获取钉住的固定信息
+    
     const pinnedText = await this.fetchPinnedInfo(input.session_id, input.work_id);
 
-    // 3. 获取显式引用的消息
+    
     const citingText = await this.fetchCitingMessages(
       input.session_id,
       input.citing_msg_ids ?? [],
       input.selected_msg_ids ?? [],
     );
 
-    // 4. 执行 Prompt 与 LLM 推理
+    
     const templateId = await this.soIntentPromptTemplateId(metrics);
     const promptIn = Object.assign(new ExecPromptInput(), {
       id: templateId,
@@ -117,7 +113,7 @@ export class IntentAgentService {
 
     const llmIn = Object.assign(new ExecLLMInput(), {
       prompt: promptOut.prompt,
-      // Token 归因维度：意图识别 Agent 的 LLM 调用入账（work_id 为意图识别执行标识）
+      
       session_id: input.session_id || '',
       run_id: input.run_id || input.work_id || '',
       work_id: input.work_id || '',
@@ -126,7 +122,7 @@ export class IntentAgentService {
     const llmOut = new ExecLLMOutput();
     await this.llmAccess.execLLM(llmIn, llmOut, new LLMContext(), metrics, _report);
 
-    // 回填输入 / 输出 Token 用量，供前端"思考过程"弹窗展示
+    
     output.input_tokens = llmOut.input_tokens ?? 0;
     output.output_tokens = llmOut.output_tokens ?? 0;
 
@@ -180,8 +176,8 @@ export class IntentAgentService {
         if (!Number.isNaN(val)) return val;
       }
     } catch (err) {
-      /* best-effort */
-      // 降级容忍：配置读取失败回退默认阈值 80（可选项缺失回退）
+      
+      
       metrics?.warn('IntentAgentService.getMatchThresholdConfig 读取阈值配置失败，回退默认 80', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -251,7 +247,7 @@ export class IntentAgentService {
     }
   }
 
-  /** 获取需求理解提示词模板 ID（逻辑控制） */
+  
   private async soIntentPromptTemplateId(metrics?: Metrics): Promise<string> {
     try {
       const soOut = new SoPromptOutput();
@@ -265,8 +261,8 @@ export class IntentAgentService {
       const anyHit = soOut.list?.find((p) => p.enable !== false);
       if (anyHit) return anyHit.id;
     } catch (err) {
-      /* ignore */
-      // 降级容忍：模板查询失败回退默认模板名（可选项缺失回退）
+      
+      
       metrics?.warn('IntentAgentService.soIntentPromptTemplateId 查询模板失败，回退默认模板名', {
         error: err instanceof Error ? err.message : String(err),
       });

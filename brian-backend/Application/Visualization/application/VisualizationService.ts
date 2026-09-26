@@ -36,7 +36,6 @@ import type {
   AgentLibraryAccess,
   AgentContextAccess,
   EvolutorAgentAccess,
-  PlannerAgentAccess,
 } from '@brian-agent/agent';
 import {
   AgentExecutionContext,
@@ -51,9 +50,6 @@ import {
   EvolutorAgentContext,
   GetEvaluationInput,
   GetEvaluationOutput,
-  PlannerAgentContext,
-  GetPlanInput,
-  GetPlanOutput,
 } from '@brian-agent/agent';
 import {
   VisualizationContext,
@@ -114,7 +110,6 @@ export class VisualizationService {
     private readonly agentLibrary: AgentLibraryAccess,
     private readonly agentContext: AgentContextAccess,
     private readonly evolutorAgent: EvolutorAgentAccess,
-    private readonly plannerAgent: PlannerAgentAccess,
     private readonly infoCore: InfoCoreAccess,
     private readonly llmAccess: LLMAccess,
     private readonly soulAccess: SoulAccess,
@@ -234,7 +229,6 @@ export class VisualizationService {
     const rawNodes = (rawGraph.nodes ?? []) as Array<{ id: string; label: string; info_id: string; info_type?: string; info_creator_role?: string; handle_result_type?: string }>;
     const rawEdges = (rawGraph.edges ?? []) as Array<{ id: string; from: string; to: string; citing_info_id: string; cited_info_id: string; edge_type?: string }>;
 
-    // 截断节点（graphInfo 已统一以 info_id 作为节点 id，与边 from/to 同命名空间）
     const limitedNodes = rawNodes.slice(0, maxNodes);
     const limitedNodeIds = new Set(limitedNodes.map((n) => n.id));
 
@@ -260,7 +254,6 @@ export class VisualizationService {
       };
     });
 
-    // 过滤边：只保留两端节点均未被截断的边
     const enhancedEdges = rawEdges
       .filter((edge) => limitedNodeIds.has(edge.from) && limitedNodeIds.has(edge.to))
       .map((edge) => ({
@@ -293,14 +286,14 @@ export class VisualizationService {
 
   async soVisualizedAgentDAG(input: GetVisualizedAgentDAGInput, output: GetVisualizedAgentDAGOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // V1 编排可视化已移除（Orchestration 模块删除）；agent DAG 数据由前端事件流归约
+
     output.dag = { nodes: [], edges: [] };
     return true;
   }
 
   async soVisualizedWorkFlow(input: GetVisualizedWorkFlowInput, output: GetVisualizedWorkFlowOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // V1 编排可视化已移除；timeline 由前端事件流归约
+
     output.timeline = { events: [] } as Record<string, unknown>;
     return true;
   }
@@ -642,8 +635,6 @@ export class VisualizationService {
     };
   }
 
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：127 行单方法拆为
-  // 「异常收敛编排 → 类型分派 → 11 个微型资源读取器」（原始单方法已删除，等价结构见 git 历史）。
   async soResource(input: GetResourceInput, output: GetResourceOutput, _ctx: VisualizationContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const { resource_type, resource_id } = input;
@@ -656,7 +647,6 @@ export class VisualizationService {
     return true;
   }
 
-  /** 资源类型分派（逻辑控制；大小写不敏感） */
   private async soResourceValue(resourceType: string, resourceId: string): Promise<unknown> {
     switch (resourceType.toLowerCase()) {
       case 'agent': return this.soAgentResource(resourceId);
@@ -668,69 +658,59 @@ export class VisualizationService {
       case 'trace': return this.soTraceResource(resourceId);
       case 'info': return this.soInfoResource(resourceId);
       case 'eval': return this.soEvalResource(resourceId);
-      case 'plan': return this.soPlanResource(resourceId);
       case 'context': return this.soContextResource(resourceId);
       default: return { error: `unknown resource_type: ${resourceType}` };
     }
   }
 
-  /** agent 资源读取（数据处理；库内单条） */
   private async soAgentResource(resourceId: string): Promise<unknown> {
     const out = new GetAgentOutput();
     await this.agentLibrary.soAgent(Object.assign(new GetAgentInput(), { agent_id: resourceId }), out, new AgentLibraryContext());
     return out.agents.length > 0 ? (out.agents[0] as unknown as Record<string, unknown>) : {};
   }
 
-  /** llm 资源读取（数据处理） */
   private async soLlmResource(resourceId: string): Promise<unknown> {
     const out = new GetLLMOutput();
     await this.llmAccess.soLLMById(Object.assign(new GetLLMInput(), { id: resourceId }), out, new LLMContext());
     return (out.llm ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** soul 资源读取（数据处理） */
   private async soSoulResource(resourceId: string): Promise<unknown> {
     const out = new GetSoulOutput();
     await this.soulAccess.soSoulById(Object.assign(new GetSoulInput(), { id: resourceId }), out, new SoulContext());
     return (out.soul ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** skill 资源读取（数据处理） */
   private async soSkillResource(resourceId: string): Promise<unknown> {
     const out = new GetSkillOutput();
     await this.skillAccess.soSkillById(Object.assign(new GetSkillInput(), { id: resourceId }), out, new SkillContext());
     return (out.skill ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** mcp 资源读取（数据处理） */
   private async soMcpResource(resourceId: string): Promise<unknown> {
     const out = new GetMcpOutput();
     await this.mcpAccess.soMcpById(Object.assign(new GetMcpInput(), { id: resourceId }), out, new McpContext());
     return (out.mcp ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** prompt 资源读取（数据处理） */
   private async soPromptResource(resourceId: string): Promise<unknown> {
     const out = new GetPromptOutput();
     await this.promptsAccess.soPromptById(Object.assign(new GetPromptInput(), { id: resourceId }), out, new PromptContext());
     return (out.prompt ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** trace 资源读取（数据处理） */
   private async soTraceResource(resourceId: string): Promise<unknown> {
     const out = new GetTraceOutput();
     await this.agentExecution.soTrace(Object.assign(new GetTraceInput(), { trace_id: resourceId }), out, new AgentExecutionContext());
     return (out.trace ?? {}) as unknown as Record<string, unknown>;
   }
 
-  /** info 资源读取（数据处理） */
   private async soInfoResource(resourceId: string): Promise<unknown> {
     const out = new LastNInfoOutput();
     await this.infoCore.lastNInfo(Object.assign(new LastNInfoInput(), { info_id: resourceId, lastN: 1 }), out, new InfoCoreContext());
     return out.list.length > 0 ? (out.list[0] as unknown as Record<string, unknown>) : {};
   }
 
-  /** eval 资源读取（数据处理） */
   private async soEvalResource(resourceId: string): Promise<unknown> {
     const out = new GetEvaluationOutput();
     await this.evolutorAgent.soEvaluation(
@@ -741,14 +721,6 @@ export class VisualizationService {
     return out.evaluations.length > 0 ? (out.evaluations[0] as unknown as Record<string, unknown>) : {};
   }
 
-  /** plan 资源读取（数据处理） */
-  private async soPlanResource(resourceId: string): Promise<unknown> {
-    const out = new GetPlanOutput();
-    await this.plannerAgent.soPlan(Object.assign(new GetPlanInput(), { plan_id: resourceId }), out, new PlannerAgentContext());
-    return out.plans.length > 0 ? (out.plans[0] as unknown as Record<string, unknown>) : {};
-  }
-
-  /** context 资源读取（数据处理） */
   private async soContextResource(resourceId: string): Promise<unknown> {
     const out = new GetContextDetailOutput();
     await this.agentContext.soContextDetail(Object.assign(new GetContextDetailInput(), { work_id: resourceId }), out, new AgentContextContext());
@@ -950,316 +922,6 @@ export class VisualizationService {
     }
   }
 
-  private async enrichAgentDAG(dag: Record<string, unknown>, config: VisualizationConfigRow): Promise<void> {
-    const graph = (dag.graph ?? {}) as Record<string, unknown>;
-    const nodes = (graph.nodes ?? dag.nodes ?? dag.agents ?? []) as Array<Record<string, unknown>>;
-    if (!Array.isArray(nodes)) return;
-
-    for (const node of nodes) {
-      await this.enrichAgentDAGNode(node, config);
-    }
-  }
-
-  private async enrichAgentDAGNode(node: Record<string, unknown>, _config: VisualizationConfigRow): Promise<void> {
-    const componentRefs = (node.component_refs ?? {}) as Record<string, unknown>;
-    const resultRefs = (node.result_refs ?? {}) as Record<string, unknown>;
-    const agentId = String(node.agent_id ?? '');
-
-    if (agentId) {
-      if (!node.agent_name) node.agent_name = String(componentRefs.agent_name ?? '');
-      if (!node.agent_type) node.agent_type = String(componentRefs.agent_type ?? '');
-    }
-
-    const llmId = String(componentRefs.llm_id ?? '');
-    if (llmId) {
-      try {
-        const out = new GetLLMOutput();
-        await this.llmAccess.soLLMById(
-          Object.assign(new GetLLMInput(), { id: llmId }),
-          out,
-          new LLMContext(),
-        );
-        if (out.llm) {
-          node.llm_detail = out.llm as unknown as Record<string, unknown>;
-        }
-      } catch {
-      }
-    }
-
-    const soulId = String(componentRefs.soul_id ?? '');
-    if (soulId) {
-      try {
-        const out = new GetSoulOutput();
-        await this.soulAccess.soSoulById(
-          Object.assign(new GetSoulInput(), { id: soulId }),
-          out,
-          new SoulContext(),
-        );
-        if (out.soul) {
-          node.soul_detail = out.soul as unknown as Record<string, unknown>;
-        }
-      } catch {
-      }
-    }
-
-    const skillIds = (componentRefs.skill_ids ?? []) as string[];
-    if (skillIds.length > 0) {
-      node.skill_details = [];
-      for (const id of skillIds) {
-        try { (node.skill_details as Record<string, unknown>[]).push(await this.resolveSkill(id)); } catch { /* ignore */ }
-      }
-    }
-
-    const mcpIds = (componentRefs.mcp_ids ?? []) as string[];
-    if (mcpIds.length > 0) {
-      node.mcp_details = [];
-      for (const id of mcpIds) {
-        try { (node.mcp_details as Record<string, unknown>[]).push(await this.resolveMcp(id)); } catch { /* ignore */ }
-      }
-    }
-
-    const promptTemplateIds = (componentRefs.prompt_template_ids ?? {}) as Record<string, unknown>;
-    if (promptTemplateIds && typeof promptTemplateIds === 'object') {
-      const promptDetails: Record<string, unknown> = {};
-      for (const [k, id] of Object.entries(promptTemplateIds)) {
-        if (typeof id === 'string' && id) {
-          try { promptDetails[k] = await this.resolvePrompt(id); } catch { promptDetails[k] = { id }; }
-        }
-      }
-      if (Object.keys(promptDetails).length > 0) node.prompt_details = promptDetails;
-    }
-
-    const evalId = String(resultRefs.eval_id ?? '');
-    if (evalId) {
-      try {
-        const out = new GetEvaluationOutput();
-        await this.evolutorAgent.soEvaluation(
-          Object.assign(new GetEvaluationInput(), {
-            conditions: [{ field: 'eval_id', operator: Operator.EQ, value: evalId }],
-          }),
-          out,
-          new EvolutorAgentContext(),
-        );
-        if (out.evaluations.length > 0) {
-          node.eval_detail = out.evaluations[0] as unknown as Record<string, unknown>;
-        }
-      } catch {
-      }
-    }
-  }
-
-  private async enrichComponentRefs(refs: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const enriched: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(refs)) {
-      if (typeof value === 'string') {
-        enriched[key] = await this.resolveSingleRef(key, value);
-      } else if (Array.isArray(value)) {
-        const resolved: unknown[] = [];
-        for (const item of value) {
-          if (typeof item === 'string') {
-            resolved.push(await this.resolveSingleRef(key, item));
-          } else {
-            resolved.push(item);
-          }
-        }
-        enriched[key] = resolved;
-      } else {
-        enriched[key] = value;
-      }
-    }
-
-    return enriched;
-  }
-
-  private async resolveSingleRef(key: string, id: string): Promise<unknown> {
-    const k = key.toLowerCase();
-    try {
-      if (k.includes('agent')) {
-        const out = new GetAgentOutput();
-        await this.agentLibrary.soAgent(Object.assign(new GetAgentInput(), { agent_id: id }), out, new AgentLibraryContext());
-        return out.agents[0] ?? { agent_id: id };
-      }
-      if (k.includes('llm')) return await this.resolveLLM(id);
-      if (k.includes('soul')) return await this.resolveSoul(id);
-      if (k.includes('skill')) return await this.resolveSkill(id);
-      if (k.includes('mcp')) return await this.resolveMcp(id);
-      if (k.includes('prompt')) return await this.resolvePrompt(id);
-      if (k.includes('info') || k.includes('context')) {
-        const out = new LastNInfoOutput();
-        await this.infoCore.lastNInfo(Object.assign(new LastNInfoInput(), { info_id: id, lastN: 1 }), out, new InfoCoreContext());
-        return out.list[0] ?? { info_id: id };
-      }
-    } catch {
-    }
-    return { id };
-  }
-
-  private async resolveLLM(id: string): Promise<Record<string, unknown>> {
-    const out = new GetLLMOutput();
-    await this.llmAccess.soLLMById(Object.assign(new GetLLMInput(), { id }), out, new LLMContext());
-    return (out.llm ?? { id }) as unknown as Record<string, unknown>;
-  }
-
-  private async resolveSoul(id: string): Promise<Record<string, unknown>> {
-    const out = new GetSoulOutput();
-    await this.soulAccess.soSoulById(Object.assign(new GetSoulInput(), { id }), out, new SoulContext());
-    return (out.soul ?? { id }) as unknown as Record<string, unknown>;
-  }
-
-  private async resolveSkill(id: string): Promise<Record<string, unknown>> {
-    try {
-      const out = new GetSkillOutput();
-      await this.skillAccess.soSkillById(Object.assign(new GetSkillInput(), { id }), out, new SkillContext());
-      return (out.skill ?? { id }) as unknown as Record<string, unknown>;
-    } catch {
-      return { id };
-    }
-  }
-
-  private async resolveMcp(id: string): Promise<Record<string, unknown>> {
-    try {
-      const out = new GetMcpOutput();
-      await this.mcpAccess.soMcpById(Object.assign(new GetMcpInput(), { id }), out, new McpContext());
-      return (out.mcp ?? { id }) as unknown as Record<string, unknown>;
-    } catch {
-      return { id };
-    }
-  }
-
-  private async resolvePrompt(id: string): Promise<Record<string, unknown>> {
-    try {
-      const out = new GetPromptOutput();
-      await this.promptsAccess.soPromptById(Object.assign(new GetPromptInput(), { id }), out, new PromptContext());
-      return (out.prompt ?? { id }) as unknown as Record<string, unknown>;
-    } catch {
-      return { id };
-    }
-  }
-
-  private async enrichIdArrayField(
-    node: Record<string, unknown>,
-    fieldName: string,
-    resolver: (id: string) => Promise<Record<string, unknown>>,
-  ): Promise<void> {
-    const ids = node[fieldName];
-    if (!Array.isArray(ids) || ids.length === 0) return;
-
-    const resolved: Record<string, unknown>[] = [];
-    for (const id of ids) {
-      if (typeof id === 'string') {
-        resolved.push(await resolver(id));
-      }
-    }
-    node[`${fieldName}_resolved`] = resolved;
-  }
-
-  private async enrichPlanningPhase(phase: Record<string, unknown>): Promise<void> {
-    const planId = String(phase.plan_id ?? '');
-    if (!planId) return;
-
-    try {
-      const out = new GetPlanOutput();
-      await this.plannerAgent.soPlan(
-        Object.assign(new GetPlanInput(), { plan_id: planId }),
-        out,
-        new PlannerAgentContext(),
-      );
-      if (out.plans.length > 0) {
-        phase.plan_detail = out.plans[0] as unknown as Record<string, unknown>;
-      }
-    } catch {
-    }
-  }
-
-  private async enrichBuildPhase(phase: Record<string, unknown>): Promise<void> {
-    const agentIds = Array.isArray(phase.agent_ids) ? phase.agent_ids as string[] : [];
-    if (agentIds.length === 0) return;
-
-    const resolved: Record<string, unknown>[] = [];
-    for (const id of agentIds) {
-      try {
-        const out = new GetAgentOutput();
-        await this.agentLibrary.soAgent(
-          Object.assign(new GetAgentInput(), { agent_id: id }),
-          out,
-          new AgentLibraryContext(),
-        );
-        resolved.push(out.agents[0] ? (out.agents[0] as unknown as Record<string, unknown>) : { agent_id: id });
-      } catch {
-        resolved.push({ agent_id: id });
-      }
-    }
-    phase.agent_details = resolved;
-  }
-
-  private async enrichExecutingPhase(phase: Record<string, unknown>): Promise<void> {
-    const execIds = Array.isArray(phase.agent_execution_ids) ? phase.agent_execution_ids as string[] : [];
-    if (execIds.length === 0) return;
-
-    const summaries: Record<string, unknown>[] = [];
-    for (const id of execIds) {
-      try {
-        const out = new GetTraceOutput();
-        await this.agentExecution.soTrace(
-          Object.assign(new GetTraceInput(), { trace_id: id }),
-          out,
-          new AgentExecutionContext(),
-        );
-        if (out.trace) {
-          summaries.push({
-            trace_id: out.trace.trace_id,
-            agent_id: out.trace.agent_id,
-            iterations: out.trace.iterations?.length ?? 0,
-            total_elapsed_ms: out.trace.total_elapsed_ms,
-          });
-        } else {
-          summaries.push({ trace_id: id });
-        }
-      } catch {
-        summaries.push({ trace_id: id });
-      }
-    }
-    phase.execution_summaries = summaries;
-  }
-
-  private async enrichWritingPhase(phase: Record<string, unknown>): Promise<void> {
-    const writerAgentId = String(phase.writer_agent_id ?? '');
-    if (!writerAgentId) return;
-
-    try {
-      const out = new GetAgentOutput();
-      await this.agentLibrary.soAgent(
-        Object.assign(new GetAgentInput(), { agent_id: writerAgentId }),
-        out,
-        new AgentLibraryContext(),
-      );
-      if (out.agents.length > 0) {
-        phase.writer_detail = out.agents[0] as unknown as Record<string, unknown>;
-      }
-    } catch {
-    }
-  }
-
-  private async enrichEvaluatingPhase(phase: Record<string, unknown>): Promise<void> {
-    const evalIds = Array.isArray(phase.eval_ids) ? phase.eval_ids as string[] : [];
-    if (evalIds.length === 0) return;
-
-    try {
-      const out = new GetEvaluationOutput();
-      await this.evolutorAgent.soEvaluation(
-        Object.assign(new GetEvaluationInput(), {
-          conditions: [],
-        }),
-        out,
-        new EvolutorAgentContext(),
-      );
-      const matched = out.evaluations.filter((e) => evalIds.includes(e.eval_id));
-      phase.eval_details = matched as unknown as Record<string, unknown>[];
-    } catch {
-    }
-  }
-
   private async resolveToolCalls(toolCalls: Array<Record<string, unknown>>, metrics?: Metrics): Promise<Array<Record<string, unknown>>> {
     const resolved: Array<Record<string, unknown>> = [];
 
@@ -1338,10 +1000,6 @@ export class VisualizationService {
     if (!text) return '';
     if (text.length <= maxLen) return text;
     return text.slice(0, maxLen) + '...';
-  }
-
-  private deepClone<T>(obj: T): T {
-    return JSON.parse(JSON.stringify(obj)) as T;
   }
 
   private logWarn(msg: string, err: unknown): void {

@@ -1,7 +1,3 @@
-/**
- * @fileoverview Agents 模块接入层（Runtime v2 · 阶段3 前置）。
- */
-
 import type { RelationDBAccess, Metrics, Report, Logger, LLMAccess } from '@brian-agent/base';
 import { AopProxy } from '@brian-agent/base';
 import { AgentsSchemaInitializer } from '../infrastructure/AgentsSchemaInitializer';
@@ -22,9 +18,6 @@ import {
   KillErroredAgentOutput,
 } from '../domain/types';
 
-/**
- * AgentDefAccess。
- */
 export class AgentDefAccess {
   private readonly service: AgentDefService;
 
@@ -34,47 +27,47 @@ export class AgentDefAccess {
     this.service = AopProxy.wrap(rawService, { logger }) as AgentDefService;
   }
 
-  /** 初始化组件 */
+  
   async initialize(): Promise<void> {
     await this.service.initialize();
   }
 
-  /** 确定性匹配（exact → signature → llm → 构建） */
+  
   async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.matchAgentDef(input, output, context, metrics, report);
   }
 
-  /** 组装会话级快照（组件按任务重解析） */
+  
   async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soAgentSnapshot(input, output, context, metrics, report);
   }
 
-  /** 声明式定义 upsert（幂等 by name） */
+  
   async declareAgent(input: DeclareAgentInput, output: DeclareAgentOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.declareAgent(input, output, context, metrics, report);
   }
 
-  /** 查询定义列表 */
+  
   async soAgentDefs(input: SoAgentDefsInput, output: SoAgentDefsOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soAgentDefs(input, output, context, metrics, report);
   }
 
-  /** 模块配置 */
+  
   async configAgentDef(input: ConfigAgentDefInput, output: ConfigAgentDefOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.configAgentDef(input, output, context, metrics, report);
   }
 
-  /** 错误 Agent 立即杀死（错误 run 结算即触发；disable def + system 归属硬删除） */
+  
   async killErroredAgent(input: KillErroredAgentInput, output: KillErroredAgentOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.killErroredAgent(input, output, context, metrics, report);
   }
-  /** 绑定缓存失效（逻辑控制；AgentLibrary 绑定落库后调用 —— 候选能力档案以库中最新事实为准） */
+  
   invalidateAgentBindingCache(): void {
     this.service.invalidateAgentBindingCache();
   }

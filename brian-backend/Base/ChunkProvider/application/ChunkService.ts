@@ -1,11 +1,3 @@
-/**
- * @fileoverview ChunkProvider 应用服务层。
- *
- * 实现滑动窗口 + 重叠机制的文本分块：
- * - chunkText：对文本字符串进行分块
- * - chunkFile：对流式读取的文件进行分块（避免大文件内存占用）
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import { createReadStream } from 'node:fs';
@@ -25,15 +17,14 @@ import {
 
 export class ChunkService {
 
-  /** 默认配置 */
+  
   static readonly defaults: ChunkConfig = {
     windowSize: DEFAULT_WINDOW_SIZE,
     overlapRatio: DEFAULT_OVERLAP_RATIO,
   };
 
-  /**
-   * 对文本字符串进行滑动窗口 + 重叠分块。
-   */
+  
+
   async chunkText(input: ChunkTextInput, output: ChunkTextOutput, _context: ChunkContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.content) {
@@ -44,13 +35,8 @@ export class ChunkService {
     return true;
   }
 
-  /**
-   * 对流式读取的文件进行滑动窗口 + 重叠分块。
-   *
-   * 使用 Node.js readline 逐行读取，避免大文件一次性加载到内存。
-   * 先将全部行读入内存后合并为完整文本，再用滑动窗口分块。
-   * 对于超大文件（>1000行），使用缓冲区滚动机制限制内存占用。
-   */
+  
+
   async chunkFile(input: ChunkFileInput, output: ChunkFileOutput, _context: ChunkContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.filePath) {
@@ -58,7 +44,7 @@ export class ChunkService {
     }
     const config = this.mergeConfig(input.config);
 
-    const bufferMaxLines = Math.ceil(config.windowSize / 30) + 100; // 估算行数容量
+    const bufferMaxLines = Math.ceil(config.windowSize / 30) + 100;
     let buffer = '';
     let lineCount = 0;
     const chunks: ChunkResult[] = [];
@@ -70,10 +56,10 @@ export class ChunkService {
       buffer += line + '\n';
       lineCount++;
 
-      // 缓冲区滚动：超过容量时，对缓冲区做分块，保留末尾重叠部分
+      
       if (lineCount >= bufferMaxLines) {
         const partial = this.slidingWindow(buffer, config, 0, true);
-        // 最后一 chunk 可能不完整，保留到下次合并
+        
         if (partial.length > 1) {
           for (let i = 0; i < partial.length - 1; i++) {
             partial[i].index = chunks.length;
@@ -89,7 +75,7 @@ export class ChunkService {
     }
     rl.close();
 
-    // 处理剩余缓冲区
+    
     if (buffer.trim()) {
       const remaining = this.slidingWindow(buffer, config, 0);
       for (const c of remaining) {
@@ -102,18 +88,12 @@ export class ChunkService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // 核心算法：滑动窗口 + 重叠
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 滑动窗口分块核心算法。
-   *
-   * @param text     待分块文本
-   * @param config   窗口配置
-   * @param baseIdx  起始序号偏移
-   * @param keepLast 是否保留末尾不完整 chunk（用于滚动缓冲区）
-   */
+  
+
   private slidingWindow(
     text: string,
     config: ChunkConfig,
@@ -149,9 +129,9 @@ export class ChunkService {
     return results;
   }
 
-  // ---------------------------------------------------------------------------
-  // 工具
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
   private mergeConfig(partial?: ChunkConfig): ChunkConfig {
     const c: ChunkConfig = partial ?? ChunkService.defaults;

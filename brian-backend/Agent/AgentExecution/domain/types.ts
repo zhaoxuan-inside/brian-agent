@@ -17,10 +17,6 @@ export interface AgentExecutionConfigRecord {
   async_worker_interval: number;
 }
 
-// ---------------------------------------------------------------------------
-// execAgent
-// ---------------------------------------------------------------------------
-
 export class ExecAgentInput extends Input {
   agent_id!: string;
   work_id!: string;
@@ -36,10 +32,6 @@ export class ExecAgentOutput extends Output {
   trace_id = '';
 }
 
-// ---------------------------------------------------------------------------
-// execAgentAsync
-// ---------------------------------------------------------------------------
-
 export class ExecAgentAsyncInput extends Input {
   agent_id!: string;
   work_id!: string;
@@ -52,10 +44,6 @@ export class ExecAgentAsyncInput extends Input {
 export class ExecAgentAsyncOutput extends Output {
   job_id = '';
 }
-
-// ---------------------------------------------------------------------------
-// think
-// ---------------------------------------------------------------------------
 
 export class ThinkInput extends Input {
   agent_id!: string;
@@ -80,10 +68,6 @@ export class ThinkOutput extends Output {
   token_usage = 0;
 }
 
-// ---------------------------------------------------------------------------
-// act
-// ---------------------------------------------------------------------------
-
 export class ActInput extends Input {
   agent_id!: string;
   skill_ids!: string[];
@@ -99,10 +83,6 @@ export class ActOutput extends Output {
   params: Record<string, unknown> = {};
   next_action = '';
 }
-
-// ---------------------------------------------------------------------------
-// reflect
-// ---------------------------------------------------------------------------
 
 export class ReflectInput extends Input {
   agent_id!: string;
@@ -128,10 +108,6 @@ export class ReflectOutput extends Output {
   token_usage = 0;
 }
 
-// ---------------------------------------------------------------------------
-// answer
-// ---------------------------------------------------------------------------
-
 export class AnswerInput extends Input {
   agent_id!: string;
   agent_name!: string;
@@ -153,10 +129,6 @@ export class AnswerOutput extends Output {
   token_usage = 0;
 }
 
-// ---------------------------------------------------------------------------
-// soTrace
-// ---------------------------------------------------------------------------
-
 export class GetTraceInput extends Input {
   declare trace_id: string;
 }
@@ -175,20 +147,12 @@ export class GetTraceOutput extends Output {
   } | null = null;
 }
 
-// ---------------------------------------------------------------------------
-// soExecQueueStatus
-// ---------------------------------------------------------------------------
-
 export class GetExecQueueStatusInput extends Input {}
 
 export class GetExecQueueStatusOutput extends Output {
   queue_stats = { pending: 0, processing: 0, completed: 0, failed: 0 };
   workers: unknown[] = [];
 }
-
-// ---------------------------------------------------------------------------
-// configAgentExecution
-// ---------------------------------------------------------------------------
 
 export class ConfigAgentExecutionInput extends Input {
   think_prompt_template_id?: string;
@@ -201,10 +165,6 @@ export class ConfigAgentExecutionInput extends Input {
 export class ConfigAgentExecutionOutput extends Output {
   config: AgentExecutionConfigRecord | null = null;
 }
-
-// ---------------------------------------------------------------------------
-// Tables
-// ---------------------------------------------------------------------------
 
 export const AGENT_EXECUTION_CONFIG_TABLE = 'agent_execution_config';
 export const AGENT_EXECUTION_TRACE_TABLE = 'agent_execution_trace';

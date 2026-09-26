@@ -1,12 +1,3 @@
-/**
- * @fileoverview SoulCoreProvider 应用服务层。
- *
- * 依赖 SoulAccess / LLMAccess / PromptsAccess / RelationDBAccess，
- * 实现 LLM-based Soul（persona）匹配、缓存、自动生成、比较优化与老化。
- *
- * 实现所有用例：matchSoul / optSoul / ageSoul / soSoulRule / updateSoulRule / configSoulCore。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import { callLLMJson } from '@brian-agent/base';
 import type { RelationDBAccess } from '@brian-agent/base';
@@ -45,25 +36,15 @@ import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
 import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
 import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
 
-/**
- * SoulCoreProvider 应用服务。
- *
- * 作为 Soul 匹配、自动生成、比较优化与老化的业务入口，
- * 上层不可直接操作 agent_soul / soul_core_usage / soul_opt_rule 表。
- */
 export class SoulCoreService {
-  /** 单行配置仓 */
+  
   private readonly configStore: SingleRowConfigStore<SoulCoreConfigRecord>;
 
-  // ===== 修改后（2026-09-11）：MD5+向量两级匹配缓存（按任务内容；重复任务零 LLM） =====
+  
   private readonly matchCache = new VectorMatchCache();
 
-  /**
-   * @param relationDb RelationDBProvider 接入层
-   * @param soulAccess SoulProvider 接入层
-   * @param llmAccess LLMProvider 接入层
-   * @param promptsAccess PromptsProvider 接入层
-   */
+  
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly soulAccess: SoulAccess,
@@ -77,9 +58,8 @@ export class SoulCoreService {
     });
   }
 
-  /**
-   * 初始化：确保默认配置存在。
-   */
+  
+
   async initialize(): Promise<void> {
     await ensureDefaultConfig(this.relationDb, SOUL_CORE_CONFIG_TABLE, [
       { field: 'regen_rate', value: 75 },
@@ -91,13 +71,12 @@ export class SoulCoreService {
     ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // matchSoul
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 为 Agent 匹配 Soul（persona，三层统一匹配/选择逻辑）。
-   */
+  
+
   async matchSoul(input: MatchSoulInput, output: MatchSoulOutput, context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const { agent_id, context_id, run_id, task_content, task_domain } = input;
@@ -105,7 +84,7 @@ export class SoulCoreService {
       throw new ValidationError('matchSoul 需要提供 agent_id');
     }
 
-    // ===== 第 1 层：调用方传入的既有绑定（agent 表为唯一绑定事实源）→ 确定性水合 =====
+    
     if (input.bound_soul_id) {
       const soulRecord = await this.getSoulById(input.bound_soul_id);
       output.soul_id = input.bound_soul_id;
@@ -114,7 +93,7 @@ export class SoulCoreService {
       return true;
     }
 
-    // ===== 缓存命中水合（MD5 精确 → 余弦 >= vector_similarity_threshold；重复任务零 LLM；bypass_cache 强制全量） =====
+    
     const cached = input.bypass_cache
       ? { record: null, query: await this.matchCache.embedOf(task_content ?? '', (t) => this.embedTask(t, context)) }
       : await this.matchCache.lookup(task_content ?? '', (t) => this.embedTask(t, context));
@@ -131,7 +110,7 @@ export class SoulCoreService {
     }
 
     const config = await this.getCoreConfig();
-    // 获取可用 Soul 列表
+    
     const soOutput = new SoSoulOutput();
     await this.soulAccess.soSoul(
       { conditions: [{ field: 'enable', operator: Operator.EQ, value: 1 }] },
@@ -139,8 +118,8 @@ export class SoulCoreService {
     );
     const availableSouls = soOutput.list;
 
-    // ===== 第 2 层：LLM 打分推荐 =====
-    // 当现有 Soul 均不符合当前任务特质（低于采纳阈值）或 Soul 库为空时，自动生成专属 Soul
+    
+    
     let selectedSoulId = '';
     if (availableSouls.length > 0) {
       selectedSoulId = await this.rankSoulsByLLM(
@@ -152,7 +131,7 @@ export class SoulCoreService {
     }
 
     const soulRecord = await this.getSoulById(selectedSoulId);
-    // ===== 匹配结果入缓存（MD5 + 任务向量；commit 复用 lookup 期向量；空结果不入缓存） =====
+    
     if (selectedSoulId) {
       await this.commitMatchCache(task_content ?? '', cached.query, selectedSoulId, context);
     }
@@ -162,17 +141,12 @@ export class SoulCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // optSoul
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * Soul 比较裁决 + 使用记录（评估依据；重绑由 Agent 模块按裁决执行）。
-   *
-   * 1. current_soul_id 缺省时仅记录 usage；
-   * 2. 传入时获取当前/候选 Soul，调用 LLM 做 A vs B 比较裁决；
-   * 3. 输出 verdict 与裁决后生效的 soul_id（不落任何绑定——绑定事实源为 Agent 表）。
-   */
+  
+
   async optSoul(input: OptSoulInput, output: OptSoulOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const { agent_id, soul_id } = input;
@@ -198,7 +172,7 @@ export class SoulCoreService {
       output.verdict = verdict;
     }
 
-    // 记录使用到 Soul Provider（Base 层）与 soul_core_usage（评估依据，与绑定解耦）
+    
     await this.soulAccess.recordSoulUsage(
       { soul_id } as RecordSoulUsageInput,
       new RecordSoulUsageOutput(), new SoulContext(),
@@ -209,13 +183,12 @@ export class SoulCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // ageSoul
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 按 soul_opt_rule 规则评估解绑候选（不删除；解绑由 Agent 模块评估后执行）。
-   */
+  
+
   async ageSoul(_input: AgeSoulInput, output: AgeSoulOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.stale_souls = await this.soStaleSoulUsages();
@@ -223,7 +196,7 @@ export class SoulCoreService {
     return true;
   }
 
-  /** 统计解绑候选（数据处理；按规则窗口内 (agent_id, soul_id) 使用计数） */
+  
   private async soStaleSoulUsages(): Promise<Array<{ agent_id: string; soul_id: string; usage_count: number }>> {
     const rules = await this.relationDb.select(SOUL_OPT_RULE_TABLE, {});
     if (rules.length === 0) {
@@ -245,13 +218,12 @@ export class SoulCoreService {
     return stale;
   }
 
-  // ---------------------------------------------------------------------------
-  // soSoulRule
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 查询 Soul 优化规则。
-   */
+  
+
   async soSoulRule(input: SoSoulRuleInput, output: SoSoulRuleOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const rows = await this.relationDb.select(SOUL_OPT_RULE_TABLE, {
@@ -268,13 +240,12 @@ export class SoulCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // updateSoulRule
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 批量更新 Soul 优化规则（事务）。
-   */
+  
+
   async updateSoulRule(input: UpdateSoulRuleInput, _output: UpdateSoulRuleOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.operations || input.operations.length === 0) {
@@ -318,13 +289,12 @@ export class SoulCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // soSoulContent
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 按 id 读取 Soul 内容（数据处理；不存在返回空串，不抛错）。
-   */
+  
+
   async soSoulContent(input: SoSoulContentInput, output: SoSoulContentOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.soul_id) {
@@ -335,13 +305,12 @@ export class SoulCoreService {
     return true;
   }
 
-  // configSoulCore
-  // ---------------------------------------------------------------------------
+  
+  
 
-  /**
-   * 获取或更新 soul_core_config 配置（SET 语义）。
-   */
-  // ===== 修改后的方法 =====
+  
+
+  
   async configSoulCore(input: ConfigSoulCoreInput, output: ConfigSoulCoreOutput, _context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.llm_id !== undefined || input.score_threshold !== undefined || input.vector_similarity_threshold !== undefined) {
@@ -374,7 +343,7 @@ export class SoulCoreService {
       if (input.llm_id !== undefined) {
         updateData.push({ field: 'llm_id', value: input.llm_id || null });
       }
-      // ===== 2026-09-11：排序采纳阈值与任务向量命中阈值（均可在配置中心调整） =====
+      
       if (input.score_threshold !== undefined) {
         if (input.score_threshold < 0 || input.score_threshold > 100) {
           throw new ValidationError('score_threshold 必须在 0-100 之间');
@@ -402,22 +371,22 @@ export class SoulCoreService {
       await this.configStore.upsert(updateData);
     }
 
-    // ===== 新增（2026-09-11）：配置变更即清缓存 + 应用缓存参数 =====
+    
     await this.applyMatchCacheConfig();
     output.config = await this.getCoreConfig();
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — 配置
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 获取配置（单行配置仓：进程内缓存 + 空表回退默认值） */
+  
   private async getCoreConfig(): Promise<SoulCoreConfigRecord | null> {
     return this.configStore.load();
   }
 
-  // ===== 新增（2026-09-11）：匹配缓存参数应用（容量/相似度阈值/TTL 读配置表） =====
+  
   private async applyMatchCacheConfig(): Promise<void> {
     const serviceConfig = await this.getCoreConfig();
     this.matchCache.configure({
@@ -428,15 +397,15 @@ export class SoulCoreService {
     this.matchCache.clear();
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — agent_soul 绑定
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — Soul 查询
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 通过 SoulAccess.soSoulById 获取 Soul 详情 */
+  
   private async getSoulById(soulId: string): Promise<Record<string, unknown> | null> {
     const getOutput = new GetSoulOutput();
     await this.soulAccess.soSoulById(
@@ -453,15 +422,12 @@ export class SoulCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — Soul 自生成
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 通过 LLM 自动生成 Soul 并通过 SoulAccess.addSoul 持久化。
-   *
-   * 当 Base 层无任何 Soul 时触发。
-   */
+  
+
   private async generateAndAddSoul(
     agentId: string,
     contextId: string,
@@ -491,8 +457,8 @@ export class SoulCoreService {
       '仅输出 JSON，不要包含其他内容。',
     ].join('\n');
 
-    // 最多重试 3 次，容忍 LLM 偶发失败 / 返回格式异常（callLLMJson 公共封装）
-    // Token 归因维度：Soul 自生成 LLM 调用入账（业务维度随 Context 传播，caller 供分来源统计）
+    
+    
     const parsed = await callLLMJson<Record<string, unknown>>(this.llmAccess, {
       llmId,
       prompt: generationPrompt,
@@ -503,7 +469,7 @@ export class SoulCoreService {
         run_id: matchCtx?.run_id || runId || '',
         caller: 'SoulCoreService.generateAndAddSoul',
       },
-      /// ===== 2026-09-11：生成加 max_tokens 上限；执行 disabled thinking（CallLLMJson 内部统一） =====
+      
       parse: (text) => JsonParser.parseObject(text),
     }).then((res) => {
       if (res === null) {
@@ -531,21 +497,17 @@ export class SoulCoreService {
     return addOutput.id;
   }
 
-  /** 将任意 LLM 字段安全转为去空白字符串，非字符串返回空串 */
+  
   private asTrimmedString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — LLM 排名
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 调用 LLM 对可用 Soul 进行相关性排序，返回最匹配的 Soul ID。
-   *
-   * 2026-09-11：统一 `[{"id","score"}]` 百分制输出（RankingParser）+ score_threshold 截断；
-   * prompt 仅从 prompt_template 表渲染（无硬编码回退，缺模板 fail-loud）。
-   */
+  
+
   private async rankSoulsByLLM(
     agentId: string,
     contextId: string,
@@ -586,7 +548,7 @@ export class SoulCoreService {
     return filtered[0]?.id ?? '';
   }
 
-  /** 获取 Soul 匹配模板 ID（逻辑控制） */
+  
   private async soMatchPromptTemplateId(): Promise<string> {
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
       { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Soul 匹配%' },
@@ -599,10 +561,8 @@ export class SoulCoreService {
     throw new ProcessingError('未找到 Soul 匹配提示词模板');
   }
 
-  /**
-   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板；删除硬编码内存回退，
-   * 模板缺失/渲染失败 fail-loud（配置中心可见可修）。渲染空结果时回保 builtin ID 重试一次。
-   */
+  
+
   private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
     const execPromptOutput = new ExecPromptOutput();
     await this.promptsAccess.execPrompt(
@@ -615,16 +575,15 @@ export class SoulCoreService {
     throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
   }
 
-  /**
-   * 排序 LLM 调用（逻辑控制；失败返回空串 → 调用方走 threshold 兜底语义）。
-   */
+  
+
     private async soRankLLM(input: ExecLLMInput, matchCtx?: Context): Promise<string> {
-    // Token 归因维度：Soul 选择 LLM 打分入账（业务维度随 Context 传播，caller 供分来源统计）
+    
     input.session_id = input.session_id || matchCtx?.session_id || '';
     input.run_id = input.run_id || matchCtx?.run_id || '';
     input.work_id = input.work_id || matchCtx?.work_id || '';
     input.caller = 'SoulCoreService.rankSouls';
-    // ===== 2026-09-11：排序调用统一禁用深度思考（provider 对 max_tokens 不约束思考输出是延迟尾部主因） =====
+    
     input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
     const execLLMOutput = new ExecLLMOutput();
     try {
@@ -635,7 +594,7 @@ export class SoulCoreService {
     }
   }
 
-  /** 匹配缓存提交（数据处理；向量缺失时以空向量入库 —— 仅参与 MD5 一级命中） */
+  
   private async commitMatchCache(taskContent: string, embedding: number[] | null, soulId: string, matchCtx?: Context): Promise<void> {
     if (!soulId) {
       return;
@@ -648,7 +607,7 @@ export class SoulCoreService {
     );
   }
 
-  /** 任务向量化（数据处理；走系统默认 embedding 模型） */
+  
   private async embedTask(task: string, context?: Context): Promise<number[]> {
     const output = new EmbedLLMOutput();
     const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
@@ -659,18 +618,17 @@ export class SoulCoreService {
     return output.embedding;
   }
 
-  /** 缓存命中的 Soul 水合（数据处理；目标已失效返回 null，由调用方清缓存） */
+  
   private async hydrateSoulOrClear(soulId: string): Promise<Record<string, unknown> | null> {
     return this.getSoulById(soulId);
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — 比较优化
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 调用 LLM 对当前 Soul 与候选 Soul 进行 A vs B 比较。
-   */
+  
+
   private async compareSoulsByLLM(
     currentSoul: Record<string, unknown>,
     candidateSoul: Record<string, unknown>,
@@ -719,11 +677,11 @@ export class SoulCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // 内部辅助 — soul_core_usage
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 记录一次 Soul 核心层使用（评估依据；键为 (agent_id, soul_id)，与绑定解耦） */
+  
   private async recordSoulCoreUsage(agentId: string, soulId: string): Promise<void> {
     const now = IdGenerator.now();
     await this.relationDb.insert(SOUL_CORE_USAGE_TABLE, [
@@ -737,9 +695,9 @@ export class SoulCoreService {
     ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // 记录转换
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
   private toSoulCoreConfigRecord(raw: Record<string, unknown>): SoulCoreConfigRecord {
     return {
@@ -756,7 +714,6 @@ export class SoulCoreService {
       match_cache_capacity: Number(raw['match_cache_capacity'] ?? MatchCache.Capacity),
     };
   }
-
 
   private toSoulOptRuleRecord(raw: Record<string, unknown>): SoulOptRuleRecord {
     return {

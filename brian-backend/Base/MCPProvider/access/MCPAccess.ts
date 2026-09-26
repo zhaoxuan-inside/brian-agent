@@ -1,10 +1,3 @@
-/**
- * @fileoverview MCPProvider 接入层。
- *
- * 作为 MCP 的唯一操作入口，封装 application 层 Service，
- * 通过 AOP 代理注入日志记录与耗时统计切面。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -53,14 +46,6 @@ import {
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
-/**
- * MCPProvider 接入层。
- *
- * 用法示例：
- * ```typescript
- * const mcpAccess = new MCPAccess(relationDb);
- * ```
- */
 export class MCPAccess {
   private readonly service: MCPService;
 
@@ -70,17 +55,17 @@ export class MCPAccess {
     this.service = AopProxy.wrap(rawService, { logger });
   }
 
-  /** 通过 npm list -g 同步 mcp_install 表的安装状态（返回移除的记录数） */
+  
   async syncInstallStatus(): Promise<number> {
     return this.service.syncInstallStatus();
   }
 
-  /** 停止所有运行中的 MCP（后端关闭时调用） */
+  
   async stopAllMcp(): Promise<number> {
     return this.service.stopAllMcp();
   }
 
-  // --- 提供商管理 ---
+  
   async addMcpProvider(i: AddMcpProviderInput, o: AddMcpProviderOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.addMcpProvider(i, o, c, metrics, report);
   }
@@ -100,7 +85,7 @@ export class MCPAccess {
     return this.service.listMcp(i, o, c, metrics, report);
   }
 
-  // --- MCP 管理 ---
+  
   async installMcp(i: InstallMcpInput, o: InstallMcpOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.installMcp(i, o, c, metrics, report);
   }
@@ -132,12 +117,12 @@ export class MCPAccess {
     return this.service.soMcp(i, o, c, metrics, report);
   }
 
-  // --- MCP 调用 ---
+  
   async execMcp(i: ExecMcpInput, o: ExecMcpOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.execMcp(i, o, c, metrics, report);
   }
 
-  // --- 可视化与运维 ---
+  
   async enableMCP(i: EnableMCPInput, o: EnableMCPOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.enableMCP(i, o, c, metrics, report);
   }

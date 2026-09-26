@@ -20,16 +20,6 @@ import {
   MatchSkillOutput,
 } from '../SkillCoreProvider';
 
-/**
- * SkillCore 全真链路联测（opt-in：BRIAN_LIVE_SKILLCORE=1）：
- * 拷贝真实业务库（不动用户数据）→ 真实 SkillCoreAccess + 真实 LLM（Volcano Ark / deepseek-v4-pro）→
- * matchSkill("分析本机的磁盘使用情况") 四层瀑布（本地 → GitHub → 完整自建）→
- * execSkill 真机执行自建脚本 → 本机磁盘使用分析 JSON。
- *
- * 前置事实：真实库 9 个 Skill 均与磁盘无关（本地层不命中）；匿名 GitHub Repository Search
- * 对磁盘类关键词大概率 0 命中（只探测根目录 SKILL.md）→ 预期由第 4 层自建产出 main.py。
- */
-
 const LIVE = process.env.BRIAN_LIVE_SKILLCORE === '1';
 const REAL_DB = path.resolve(__dirname, '../../data/brian.db');
 
@@ -57,7 +47,7 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
     await skillAccess.initialize();
     const llmAccess = new LLMAccess(relationDb, undefined, promptsAccess);
     await llmAccess.initialize();
-    // LLM 调用追踪代理（联测诊断：打印每次 execLLM 的 caller 与原始输出）
+
     let llmSeq = 0;
     const tracedLlm = new Proxy(llmAccess, {
       get(target, prop, receiver) {
@@ -78,7 +68,7 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
       },
     });
     skillCore = new SkillCoreAccess(relationDb, skillAccess, tracedLlm as unknown as LLMAccess, promptsAccess);
-    // 诊断：副本库中标题含"Skill 匹配"的模板行（确认 seed 刷新与 is_system 值）
+
     const tplRows = await relationDb.select('prompt_template', [
       { field: 'prompt_template_title', operator: 'LIKE', value: '%Skill 匹配%' },
     ]);
@@ -89,9 +79,7 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
       len: String(r['prompt_template'] ?? '').length,
       seed: String(r['seed_hash'] ?? '').slice(0, 8),
     }))));
-    // 副本内清空显式模板配置：真实库 config.prompt_template_id 指向用户自建旧契约模板
-    // （<skill_selection_protocol>，relevance 格式，与 2026-09-22 need/keywords 契约不兼容，
-  // 真机取证 [2026-09-22r]）；副本清空后走 builtin 回退验证瀑布全链路。真实库不改动。
+
     await relationDb.update('skill_core_config', [
       { field: 'prompt_template_id', value: '' },
       { field: 'updated', value: Date.now() },
@@ -99,8 +87,8 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
   }, 60000);
 
   afterAll(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   it('matchSkill 四层瀑布（真实 LLM）→ execSkill 真机执行 → 磁盘分析 JSON', async () => {
@@ -108,7 +96,6 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
     await skillAccess.soSkill({ conditions: [] } as never, localOut, new SkillContext());
     console.log(`[本地库] 现有 Skill ${localOut.list.length} 个:`, localOut.list.map((s) => s.name).join(', '));
 
-    // ===== 调用 SkillCore：四层瀑布匹配 =====
     const input = new MatchSkillInput();
     input.agent_id = 'demo-agent';
     input.context_id = taskId;
@@ -124,7 +111,6 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
     const matched = output.skills[0];
     console.log(`[匹配结果] skill_id=${matched.skill_id} relevance=${matched.relevance} brief=${matched.skill_brief.slice(0, 100)}`);
 
-    // 落库行检查：scripts 文件名揭示产出层（main.py/main.sh=自建系统路径；main.js=纯计算）
     const soInput = new SoSkillInput();
     soInput.conditions = [{ field: 'id', operator: '=', value: matched.skill_id }];
     const soOut = new SoSkillOutput();
@@ -136,7 +122,6 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
       console.log(`[脚本 ${f.name}] 前 5 行:\n${f.content.split('\n').slice(0, 5).join('\n')}`);
     }
 
-    // ===== execSkill：真机执行（main.py → LocalSandbox python3） =====
     const execInput = new ExecSkillInput();
     execInput.id = matched.skill_id;
     execInput.params = {};
@@ -148,8 +133,7 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
 
     console.log('[本机磁盘使用分析]', String(execOutput.result));
     const analysis = JSON.parse(String(execOutput.result)) as unknown;
-    // 自建脚本输出结构由 LLM 决定（实测出现扁平/嵌套/filesystems+summary 等形态），
-    // 递归查找任意层级的目标数值字段，只断言形态与量纲
+
     const findNumber = (node: unknown, keys: string[]): number | null => {
       if (Array.isArray(node)) {
         for (const v of node) { const r = findNumber(v, keys); if (r !== null) return r; }

@@ -1,10 +1,3 @@
-/**
- * @fileoverview BookmarkService 业务实现。
- *
- * 签名规范：`Boolean method(Input, Output, Context, Metrics, Report)`。
- * Bookmark 为无状态读 + SQLite 持久化写，读方法用 queryRaw 直查。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator } from '../../shared/query';

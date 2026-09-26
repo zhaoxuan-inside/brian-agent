@@ -58,7 +58,7 @@ describe('SoulCoreProvider', () => {
     await promptsAccess.initialize();
     soulCore = new SoulCoreAccess(relationDb, soulAccess, llmAccess, promptsAccess);
     await soulCore.initialize();
-    // Seed the builtin 'Soul Match Selection' prompt template so that the matchSoul LLM scoring path is executable (the production prompt comes from the PromptCatalog built-in table, so the test database is seeded in sync)
+
     const seedIn = new AddPromptInput();
     seedIn.data = { prompt_template_title: 'Soul Match Selection', prompt_template: 'Task: {{task_content}}\nSouls: {{available_souls}}' };
     const seedOut = new AddPromptOutput();
@@ -66,8 +66,8 @@ describe('SoulCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('configSoulCore', () => {
@@ -170,7 +170,6 @@ describe('SoulCoreProvider', () => {
         { field: 'prompt_template_id', value: null },
       ]);
 
-      // 绑定唯一事实源 = agent 表：既有绑定经 bound_soul_id 传入，确定性水合（不再读 agent_soul 绑定表）
       const input = new MatchSoulInput();
       input.agent_id = 'agent-sc';
       input.context_id = 'c1';
@@ -327,12 +326,10 @@ describe('SoulCoreProvider', () => {
         },
       );
 
-      // Case 1: Configured model in soul_core_config -> passes model-configured to LLMProvider
       await soulCore.configSoulCore({ llm_id: 'model-configured' } as ConfigSoulCoreInput, new ConfigSoulCoreOutput(), new SoulCoreContext());
       await soulCore.matchSoul(buildMatchInput('agent-tier-1'), new MatchSoulOutput(), new SoulCoreContext());
       expect(calledModelId).toBe('model-configured');
 
-      // Case 2: No configured model (null/empty) -> passes empty id to LLMProvider for unified fallback
       await soulCore.configSoulCore({ llm_id: null } as ConfigSoulCoreInput, new ConfigSoulCoreOutput(), new SoulCoreContext());
       await soulCore.matchSoul(buildMatchInput('agent-tier-2'), new MatchSoulOutput(), new SoulCoreContext());
       expect(calledModelId).toBe('');
@@ -366,7 +363,7 @@ describe('SoulCoreProvider', () => {
       const input = new OptSoulInput();
       input.agent_id = 'agent-no-binding';
       input.soul_id = 'soul-1';
-      // 绑定已收敛至 Agent 表：current_soul_id 由调用方传入；缺资源时 fail-loud
+
       input.current_soul_id = 'soul-missing-current';
 
       await expect(
@@ -384,7 +381,7 @@ describe('SoulCoreProvider', () => {
       const input = new OptSoulInput();
       input.agent_id = agentId;
       input.soul_id = soulId;
-      // 无 current_soul_id → 仅记 usage，不抛错
+
       const output = new OptSoulOutput();
       const result = await soulCore.optSoul(input, output, new SoulCoreContext());
       expect(result).toBe(true);

@@ -1,15 +1,3 @@
-/**
- * @fileoverview LLMProvider 模块测试。
- *
- * 测试 LLMProvider 的全部接口：addLLMProvider / updateLLMProvider /
- * delLLMProvider / soLLMProvider / testLLMProvider / listLLM /
- * addLLM / delLLM / updateLLM / soLLMById / soLLM / execLLM /
- * visualizedLLM / enableLLM / closeLLM。
- *
- * 不使用任何 MOCK 数据，使用真实 SQLite 数据库和本地 HTTP 服务器。
- * 遵循 GraphDBProvider.test.ts 的测试模式。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -62,11 +50,6 @@ import {
   DatabaseError,
 } from '../shared/errors';
 
-// ---------------------------------------------------------------------------
-// 测试辅助函数
-// ---------------------------------------------------------------------------
-
-/** 生成唯一的 LLM 提供商测试数据 */
 function makeProviderData(overrides?: Record<string, unknown>) {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -77,7 +60,6 @@ function makeProviderData(overrides?: Record<string, unknown>) {
   };
 }
 
-/** 生成唯一的 LLM 测试数据 */
 function makeLLMData(providerId: string, overrides?: Record<string, unknown>) {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -89,18 +71,10 @@ function makeLLMData(providerId: string, overrides?: Record<string, unknown>) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// 本地 HTTP 测试服务器
-// ---------------------------------------------------------------------------
-
-/**
- * 创建一个本地 HTTP 服务器，模拟 OpenAI 兼容 API。
- * 返回 server 实例和 base URL。
- */
 function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      // CORS
+
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Headers', '*');
 
@@ -112,21 +86,18 @@ function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
 
       const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
-      // 模拟错误端点
       if (url.pathname === '/error-500') {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal Server Error' }));
         return;
       }
 
-      // GET / - 连通性测试 (testLLMProvider)
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));
         return;
       }
 
-      // GET /v1/models - 模型列表 (listLLM)
       if (req.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
@@ -142,7 +113,6 @@ function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
         return;
       }
 
-      // GET /v1beta/models - Google 原生模型列表
       if (req.method === 'GET' && url.pathname === '/v1beta/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
@@ -168,7 +138,6 @@ function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
         return;
       }
 
-      // POST /v1/chat/completions - 对话补全 (execLLM)
       if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
         let body = '';
         req.on('data', (chunk: Buffer) => {
@@ -214,14 +183,12 @@ function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
         return;
       }
 
-      // POST /v1/chat/completions with X-Simulate-Error header (execLLM error)
       if (req.method === 'POST' && url.pathname === '/v1/error') {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'Simulated server error' } }));
         return;
       }
 
-      // 404 for everything else
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not Found' }));
     });
@@ -241,10 +208,6 @@ function startTestServer(): Promise<{ server: http.Server; baseUrl: string }> {
     });
   });
 }
-
-// ---------------------------------------------------------------------------
-// 测试套件
-// ---------------------------------------------------------------------------
 
 describe('LLMProvider', () => {
   let tempDir: string;
@@ -273,12 +236,12 @@ describe('LLMProvider', () => {
     try {
       await llmAccess.closeLLM(new CloseLLMInput(), new CloseLLMOutput(), new LLMContext());
     } catch {
-      // 忽略关闭时的错误
+
     }
     try {
       await relationDb.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
     } catch {
-      // 忽略关闭时的错误
+
     }
     await new Promise((r) => setTimeout(r, 100));
 
@@ -286,7 +249,7 @@ describe('LLMProvider', () => {
       try {
         httpServer.close();
       } catch {
-        // 忽略
+
       }
     }
 
@@ -294,14 +257,10 @@ describe('LLMProvider', () => {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // =========================================================================
-  // addLLMProvider
-  // =========================================================================
 
   describe('addLLMProvider', () => {
     it('应该成功新增一个 LLM 提供商', async () => {
@@ -331,7 +290,6 @@ describe('LLMProvider', () => {
       expect(soOut.list.length).toBe(1);
       expect(soOut.list[0].llm_provider_title).toBe('UniqueSearchProvider');
     });
-
 
     it('新增时指定 enable: false 应该保存为 false', async () => {
       const input = new AddLLMProviderInput();
@@ -404,10 +362,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // updateLLMProvider
-  // =========================================================================
-
   describe('updateLLMProvider', () => {
     let providerId: string;
 
@@ -446,7 +400,7 @@ describe('LLMProvider', () => {
     });
 
     it('应该支持通过 updateLLMProvider 启用/禁用提供商', async () => {
-      // 先禁用
+
       await llmAccess.updateLLMProvider(
         Object.assign(new UpdateLLMProviderInput(), {
           id: providerId,
@@ -461,7 +415,6 @@ describe('LLMProvider', () => {
       await llmAccess.soLLMProvider(soInput, soOut, new LLMContext());
       expect(soOut.list[0].enable).toBe(0);
 
-      // 再启用
       await llmAccess.updateLLMProvider(
         Object.assign(new UpdateLLMProviderInput(), {
           id: providerId,
@@ -512,10 +465,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // delLLMProvider
-  // =========================================================================
-
   describe('delLLMProvider', () => {
     it('应该支持按单个 ID 删除', async () => {
       const addInput = new AddLLMProviderInput();
@@ -531,7 +480,6 @@ describe('LLMProvider', () => {
       expect(result).toBe(true);
       expect(delOut.affected_rows).toBe(1);
 
-      // 确认已删除
       const soInput = new SoLLMProviderInput();
       soInput.conditions = [{ field: 'id', operator: Operator.EQ, value: addOut.id }];
       const soOut = new SoLLMProviderOutput();
@@ -570,7 +518,7 @@ describe('LLMProvider', () => {
     });
 
     it('删除提供商时应该级联清理关联的 llm_model 记录', async () => {
-      // 创建提供商并获取模型列表
+
       const addInput = new AddLLMProviderInput();
       addInput.data = makeProviderData({ llm_provider_url: httpBaseUrl });
       const addOut = new AddLLMProviderOutput();
@@ -582,13 +530,11 @@ describe('LLMProvider', () => {
       await llmAccess.listLLM(listInput, listOut, new LLMContext());
       expect(listOut.list.length).toBeGreaterThan(0);
 
-      // 删除提供商
       const delInput = new DelLLMProviderInput();
       delInput.ids = [addOut.id];
       const delOut = new DelLLMProviderOutput();
       await llmAccess.delLLMProvider(delInput, delOut, new LLMContext());
 
-      // 验证 llm_cache 表中的关联记录也被删除
       const modelRows = relationDb.select('llm_cache', {
         conditions: [{ field: 'llm_provider_id', operator: Operator.EQ, value: addOut.id }],
       });
@@ -612,10 +558,6 @@ describe('LLMProvider', () => {
       expect(delOut.affected_rows).toBe(0);
     });
   });
-
-  // =========================================================================
-  // soLLMProvider
-  // =========================================================================
 
   describe('soLLMProvider', () => {
     beforeEach(async () => {
@@ -706,10 +648,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // testLLMProvider
-  // =========================================================================
-
   describe('testLLMProvider', () => {
     let providerId: string;
 
@@ -771,10 +709,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // listLLM
-  // =========================================================================
-
   describe('listLLM', () => {
     let providerId: string;
 
@@ -822,13 +756,11 @@ describe('LLMProvider', () => {
       const listInput = new ListLLMInput();
       listInput.llm_provider_id = providerId;
 
-      // 第一次调用
       await llmAccess.listLLM(listInput, new ListLLMOutput(), new LLMContext());
-      // 第二次调用相同提供商
+
       const listOut2 = new ListLLMOutput();
       await llmAccess.listLLM(listInput, listOut2, new LLMContext());
 
-      // 模型数应该保持一致（upsert 语义）
       expect(listOut2.list.length).toBe(3);
     });
 
@@ -895,10 +827,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // addLLM
-  // =========================================================================
-
   describe('addLLM', () => {
     let providerId: string;
 
@@ -935,7 +863,6 @@ describe('LLMProvider', () => {
       expect(soOut.list[0].llm_title).toBe('GetLLMTest');
     });
 
-
     it('缺少 llm_provider_id 应该抛出 ValidationError', async () => {
       const input = new AddLLMInput();
       input.data = makeLLMData('');
@@ -970,10 +897,6 @@ describe('LLMProvider', () => {
       expect(soOut.list[0].updated).toBeGreaterThan(0);
     });
   });
-
-  // =========================================================================
-  // delLLM
-  // =========================================================================
 
   describe('delLLM', () => {
     let providerId: string;
@@ -1044,10 +967,6 @@ describe('LLMProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
   });
-
-  // =========================================================================
-  // updateLLM
-  // =========================================================================
 
   describe('updateLLM', () => {
     let providerId: string;
@@ -1138,12 +1057,6 @@ describe('LLMProvider', () => {
       expect(out.affected_rows).toBe(0);
     });
   });
-
-  // =========================================================================
-
-  // =========================================================================
-  // soLLM
-  // =========================================================================
 
   describe('soLLM', () => {
     let providerId: string;
@@ -1236,10 +1149,6 @@ describe('LLMProvider', () => {
       expect(soOut.list.length).toBe(5);
     });
   });
-
-  // =========================================================================
-  // execLLM
-  // =========================================================================
 
   describe('execLLM', () => {
     let providerId: string;
@@ -1337,7 +1246,7 @@ describe('LLMProvider', () => {
     });
 
     it('指定模型调用失败时自动降级到默认模型并成功', async () => {
-      // 1. 创建一个不可达/报错的提供商和模型
+
       const pFailInput = new AddLLMProviderInput();
       pFailInput.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19999', enable: true });
       const pFailOut = new AddLLMProviderOutput();
@@ -1348,7 +1257,6 @@ describe('LLMProvider', () => {
       const lFailOut = new AddLLMOutput();
       await llmAccess.addLLM(lFailInput, lFailOut, new LLMContext());
 
-      // 2. 将正常工作的模型设为默认模型
       await llmAccess.updateLLM(
         Object.assign(new UpdateLLMInput(), {
           id: llmId,
@@ -1357,7 +1265,6 @@ describe('LLMProvider', () => {
         new UpdateLLMOutput(), new LLMContext(),
       );
 
-      // 3. 调用指定的故障模型
       const execInput = new ExecLLMInput();
       execInput.id = lFailOut.id;
       execInput.prompt = 'test failover to default';
@@ -1369,7 +1276,7 @@ describe('LLMProvider', () => {
     });
 
     it('默认模型也失败时自动降级到后续启用的可用模型', async () => {
-      // 1. 创建故障模型 A（作为指定模型）
+
       const pFailInput1 = new AddLLMProviderInput();
       pFailInput1.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19998', enable: true });
       const pFailOut1 = new AddLLMProviderOutput();
@@ -1380,7 +1287,6 @@ describe('LLMProvider', () => {
       const lFailOut1 = new AddLLMOutput();
       await llmAccess.addLLM(lFailInput1, lFailOut1, new LLMContext());
 
-      // 2. 创建故障模型 B（作为默认模型）
       const pFailInput2 = new AddLLMProviderInput();
       pFailInput2.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19997', enable: true });
       const pFailOut2 = new AddLLMProviderOutput();
@@ -1391,7 +1297,6 @@ describe('LLMProvider', () => {
       const lFailOut2 = new AddLLMOutput();
       await llmAccess.addLLM(lFailInput2, lFailOut2, new LLMContext());
 
-      // 3. 将原有的正常模型设为非默认但启用
       await llmAccess.updateLLM(
         Object.assign(new UpdateLLMInput(), {
           id: llmId,
@@ -1400,7 +1305,6 @@ describe('LLMProvider', () => {
         new UpdateLLMOutput(), new LLMContext(),
       );
 
-      // 4. 调用指定的故障模型 A -> 尝试默认模型 B (失败) -> 尝试正常模型 llmId (成功)
       const execInput = new ExecLLMInput();
       execInput.id = lFailOut1.id;
       execInput.prompt = 'test multi-step failover';
@@ -1412,7 +1316,7 @@ describe('LLMProvider', () => {
     });
 
     it('所有可用模型均失败时返回 false 并记录错误', async () => {
-      // 禁用所有可用模型
+
       const allRows = await relationDb.select('llm_available', {});
       for (const row of allRows) {
         await llmAccess.updateLLM(
@@ -1424,7 +1328,6 @@ describe('LLMProvider', () => {
         );
       }
 
-      // 添加一个不可达模型作为唯一启用模型
       const pFailInput = new AddLLMProviderInput();
       pFailInput.data = makeProviderData({ llm_provider_url: 'http://127.0.0.1:19999', enable: true });
       const pFailOut = new AddLLMProviderOutput();
@@ -1445,10 +1348,8 @@ describe('LLMProvider', () => {
       expect(execOut.error).toContain('所有可用模型均调用失败');
     });
 
-
-
     it('不可达的提供商应该返回 error（非异常）', async () => {
-      // 禁用 beforeEach 中的正常模型，使得不可达模型为唯一候选
+
       await llmAccess.updateLLM(
         Object.assign(new UpdateLLMInput(), {
           id: llmId,
@@ -1478,10 +1379,6 @@ describe('LLMProvider', () => {
       expect(execOut.error_code).toBe('CONNECT_ERROR');
     });
   });
-
-  // =========================================================================
-  // visualizedLLM
-  // =========================================================================
 
   describe('visualizedLLM', () => {
     it('scope = health 应返回健康状态数据', async () => {
@@ -1549,10 +1446,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // enableLLM
-  // =========================================================================
-
   describe('enableLLM', () => {
     it('应该支持禁用 LLM 组件', async () => {
       const input = new EnableLLMInput();
@@ -1561,7 +1454,6 @@ describe('LLMProvider', () => {
       const result = await llmAccess.enableLLM(input, out, new LLMContext());
       expect(result).toBe(true);
 
-      // 禁用后操作应该失败
       const soInput = new SoLLMProviderInput();
       const soOut = new SoLLMProviderOutput();
       await expect(
@@ -1575,13 +1467,11 @@ describe('LLMProvider', () => {
         new EnableLLMOutput(), new LLMContext(),
       );
 
-      // 重新启用
       await llmAccess.enableLLM(
         Object.assign(new EnableLLMInput(), { enable: true }),
         new EnableLLMOutput(), new LLMContext(),
       );
 
-      // 启用后操作应该成功
       const soInput = new SoLLMProviderInput();
       const soOut = new SoLLMProviderOutput();
       const result = await llmAccess.soLLMProvider(soInput, soOut, new LLMContext());
@@ -1621,15 +1511,6 @@ describe('LLMProvider', () => {
     });
   });
 
-  // =========================================================================
-  // closeLLM
-  // =========================================================================
-
-
-  // =========================================================================
-  // 边界和集成场景
-  // =========================================================================
-
   describe('边界与集成场景', () => {
     it('特殊字符在 title 中应能正常存入和读出', async () => {
       const input = new AddLLMProviderInput();
@@ -1654,7 +1535,6 @@ describe('LLMProvider', () => {
       });
       await llmAccess.addLLMProvider(pInput, new AddLLMProviderOutput(), new LLMContext());
 
-      // 再添加一个启用但名称不同的
       const pInput2 = new AddLLMProviderInput();
       pInput2.data = makeProviderData({
         llm_provider_title: 'OtherProvider',

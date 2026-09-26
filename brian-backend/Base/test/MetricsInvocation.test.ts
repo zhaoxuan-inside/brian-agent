@@ -1,12 +1,3 @@
-/**
- * @fileoverview Metrics 日志网关单测。
- *
- * 验证 DevStandards §3/§7 语义：
- * - Metrics 封装 LogProvider 调用接口，方法内与 AOP 切面的日志都经 Metrics 保存；
- * - 日志以 JSON 格式保存（saveInvocation 序列化全部参数内容，函数/循环引用安全）；
- * - AopProxy 内置日志切面在方法**返回或抛异常**时采集方法调用的全部参数及参数内容。
- */
-
 import { describe, it, expect, vi } from 'vitest';
 import { Metrics, Report } from '../shared/base';
 import { AopProxy } from '../shared/aop/AopProxy';
@@ -55,7 +46,7 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
       },
     });
 
-    // 无 log(level,…) 实现的 logger 回退到 debug 级别方法（AOP 调用记录 = DEBUG）
+    
     const info = calls.find((c) => c.level === 'debug');
     expect(info).toBeTruthy();
     const json = info!.meta?.invocation_json as string;
@@ -71,7 +62,7 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     expect(parsed.args.output.result).toBe('world');
     expect(parsed.args.context.name).toBe('ctx');
     expect(parsed.args.context.self).toBe('[circular]');
-    // Report.channel（函数）应被安全替换，不破坏 JSON
+    
     expect(JSON.stringify(parsed)).toContain('report');
   });
 
@@ -108,10 +99,10 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
 
     const input = new Input();
     const output = new Output();
-    // 5 参调用（metrics/report 缺省由 AopProxy 自动创建）——命中新式签名分支
+    
     await proxy.ok(input, output, new Context(), undefined, undefined);
 
-    // AOP 切面的调用记录为 DEBUG 级别
+    
     const okLog = calls.find((c) => c.level === 'debug' && (c.meta?.invocation_json as string)?.includes('"status":"ok"'));
     expect(okLog).toBeTruthy();
     const okParsed = JSON.parse(okLog!.meta!.invocation_json as string) as { args: { input: { seen?: string } } };
@@ -125,8 +116,8 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     expect(errParsed.error).toBe('boom-message');
   });
 
-  // ===== 修改后的方法（2026-09-14 trace 源头治理）：AOP 兜底 —— Metrics 可检测但缺 trace_id 时立即生成回填 =====
-  // ===== 原始代码（保留作为参考）：无该用例 =====
+  
+  
   it('AopProxy 兜底：Metrics 已传但无 trace_id 时立即生成回填（UUID v4），已有 trace 不覆盖', async () => {
     const { logger } = makeLogger();
     class DemoService {
@@ -136,13 +127,13 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     }
     const proxy = AopProxy.wrap(new DemoService(), { logger }) as DemoService;
 
-    // 场景 1：已传 Metrics 但缺 trace_id → AOP 立即生成回填
+    
     const fresh = new Metrics(logger, 'Demo');
     await proxy.run(new Input(), new Output(), new Context(), fresh, undefined);
     expect(fresh.trace_id).toBeTruthy();
     expect(fresh.trace_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 
-    // 场景 2：已有链路 trace_id 显式传播，AOP 不覆盖
+    
     const seeded = new Metrics(logger, 'Demo', '0a0a0a0a-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     await proxy.run(new Input(), new Output(), new Context(), seeded, undefined);
     expect(seeded.trace_id).toBe('0a0a0a0a-bbbb-4ccc-8ddd-eeeeeeeeeeee');
@@ -206,10 +197,10 @@ describe('Metrics 日志网关（DevStandards §3/§7）', () => {
     const parentDur = metrics.spanDuration(parent!);
     const childDur = metrics.spanDuration(child!);
     expect(parentDur).toBeGreaterThanOrEqual(childDur + 20);
-    // 父 self 时间 = 包络 − 子 span（框架自动扣除）→ 不构成包含关系
+    
     const parentSelf = metrics.spanSelfMs(parent!);
     expect(parentSelf).toBeGreaterThanOrEqual(15);
-    // 单子 span 场景：self = 包络 − 子段（严格相等；父节点不再包含子步骤耗时）
+    
     expect(parentSelf).toBe(parentDur - childDur);
   });
 });

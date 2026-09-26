@@ -1,15 +1,3 @@
-/**
- * @fileoverview InfoCoreProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（数据库操作）、LLMAccess（LLM 推理）、
- * PromptsAccess（Prompt 模板）、VectorDBAccess（向量操作）、
- * GraphDBAccess（图操作）。
- *
- * 实现所有用例：saveInfo / pinInfo / vectorInfo / tagInfo / summaryInfo /
- * keywordInfo / graphTag / lastNInfo / graphNInfo / similarKInfo / keywordKInfo /
- * relationKInfo / graphInfo / context / delInfo / exist* / 配置 CRUD（共 28 个方法）。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type {
   RelationDBAccess,
@@ -47,26 +35,16 @@ import {
 
 const jieba = Jieba.withDict(dict);
 
-// 共现边类型：两个标签出现在同一条 info 记录上即建立一条边，权重为共现次数
 const COOCCUR_EDGE_TYPE = 'cooccur';
 
-// 关键词共现边类型：两个关键词出现在同一条 info 记录上即建立一条边
 const KEYWORD_COOCCUR_EDGE_TYPE = 'keywordCooccur';
 
-// 引用边类型：info 引用（citing）另一条 info（cited），用于图遍历与可视化
 const CITATION_EDGE_TYPE = 'CITATION';
 
-// 摘要 LLM 生成重试参数：本地模型服务间歇性 CONNECT_ERROR（llm_call_log 实测），
-// 单次失败即丢摘要；最多尝试 2 次、间隔 2s（短间隔，避免 setImmediate 异步链路被长挂起拖垮）
 const SUMMARY_LLM_MAX_ATTEMPTS = 2;
 const SUMMARY_LLM_RETRY_DELAY_MS = 2000;
 
-// 旧版 info 引用关系表名（迁移后 DROP）
 const LEGACY_INFO_GRAPH_TABLE = 'info_graph';
-
-// ---------------------------------------------------------------------------
-// 停用词集合（中英文）
-// ---------------------------------------------------------------------------
 
 const STOPWORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -101,11 +79,6 @@ const STOPWORDS = new Set([
   '比较', '起来', '过来', '出来', '起来', '开始', '没有', '时候', '东西',
 ]);
 
-// ---------------------------------------------------------------------------
-// Context 构建私有结构（application 内部步骤方法的 input/output 形状，不进 domain 契约）
-// ---------------------------------------------------------------------------
-
-/** 上下文构建计划：total 总预算、时间线限额、跨会话开关、复选消息 ID 列表 */
 interface ContextBuildPlan {
   maxTotal: number;
   timelineLimit: number;
@@ -113,7 +86,6 @@ interface ContextBuildPlan {
   selectedIds: string[];
 }
 
-/** 弱相关维度（TAG_RELATIVE/SIMILARITY/KEYWORD/RANDOM）限额与关键词分数阈值 */
 interface ContextWeakDimensionLimits {
   tagLimit: number;
   simLimit: number;
@@ -122,14 +94,12 @@ interface ContextWeakDimensionLimits {
   kwScoreThreshold: number;
 }
 
-/** 弱相关维度并行采集结果（TAG_RELATIVE / SIMILARITY / KEYWORD 三维候选） */
 interface ContextWeakDimensionCandidates {
   tag: InfoRawRecord[];
   sim: InfoRawRecord[];
   kw: InfoRawRecord[];
 }
 
-/** 上下文候选采集分桶：按来源维度归集的原始候选（尚未去重/转 ContextInfoItem） */
 interface ContextCandidateBuckets {
   pinned: InfoRawRecord[];
   citing: InfoRawRecord[];
@@ -140,7 +110,6 @@ interface ContextCandidateBuckets {
   rand: InfoRawRecord[];
 }
 
-// 上下文采集来源全集：既作 priority_order 缺省时的默认优先级，也作合法性校验集合
 const CONTEXT_COLLECTION_SOURCES: ContextCollectionSource[] = [
   CollectionSource.PINNED,
   CollectionSource.CITING,
@@ -151,19 +120,8 @@ const CONTEXT_COLLECTION_SOURCES: ContextCollectionSource[] = [
   CollectionSource.RANDOM,
 ];
 
-/**
- * InfoCoreProvider 应用服务。
- *
- * 提供信息全生命周期管理：保存、处理、搜索、配置、清理。
- */
 export class InfoCoreService {
-  /**
-   * @param relationDb RelationDBProvider 接入层实例
-   * @param llmAccess LLMProvider 接入层实例
-   * @param promptsAccess PromptsProvider 接入层实例
-   * @param vectorDb VectorDBProvider 接入层实例
-   * @param graphDb GraphDBProvider 接入层实例
-   */
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly llmAccess: LLMAccess,
@@ -172,29 +130,12 @@ export class InfoCoreService {
     private readonly graphDb: GraphDBAccess,
   ) {}
 
-  /** 摘要回填防重入标志（backfillMissingSummaries 专用） */
   private backfillRunning = false;
 
-  /**
-   * 初始化：确保所有配置表有默认配置。
-   */
   async initialize(): Promise<void> {
     await this.ensureDefaultConfigs();
   }
 
-  // =========================================================================
-  // Write Operations
-  // =========================================================================
-
-  /**
-   * 保存原始信息。
-   *
-   * 流程：
-   * 1. 插入 info_raw 表。
-   * 2. 若 parent_info_ids 存在，创建 GraphDB info 节点与 CITATION 边。
-   * 3. 摘要落库：错误信息（非 correct）直接用原文作为摘要；正常信息经 input.summary 传入后落库。
-   * 4. 异步触发处理（仅正常信息）：vectorInfo / tagInfo / keywordInfo（摘要生成不在本方法内触发）。
-   */
   async saveInfo(input: SaveInfoInput, output: SaveInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     if (!input.info || !input.session_id) {
@@ -208,9 +149,7 @@ export class InfoCoreService {
     const isCorrect = handleResultType === HandleResultType.CORRECT;
 
     const now = IdGenerator.now();
-    // ===== 修改后（2026-09-09）：优先使用调用方传入的真实创建时间（input.created，
-    //      如 runtime_message.created），避免 run 结束后统一同步导致 user/assistant
-    //      落库同一时间戳、对话区消息顺序颠倒（并使按 created 去重的条件真正成立）=====
+
     const createdAt = input.created && input.created > 0 ? input.created : now;
     const id = IdGenerator.generate();
     const infoId = IdGenerator.generate();
@@ -229,23 +168,17 @@ export class InfoCoreService {
       { field: 'info', value: input.info },
       { field: 'info_length', value: input.info.length },
       { field: 'pin', value: 0 },
-      // ===== 修改后（2026-09-14 trace 源头治理）：trace_id 显式传入（含 ''，表示该行
-      // 无已知源头 trace）优先落库；未传入才回落调用方链路（Metrics）trace —— 防止
-      // 历史补齐行无 trace 时被错误盖上调用方当轮 trace =====
+
       { field: 'trace_id', value: input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '') },
       { field: 'handle_result_type', value: handleResultType },
     ]);
 
-    // 创建图引用边（GraphDB：info 节点 + CITATION 边）
     if (input.parent_info_ids && input.parent_info_ids.length > 0) {
       await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids, metrics);
     }
 
     output.info_id = infoId;
 
-    // 摘要生成规则由上层编排控制：saveInfo 仅负责保存。
-    // 错误信息（非 correct）无意义调用 LLM 生成摘要，直接用原文作为摘要；
-    // 正常信息经 input.summary 传入后落库。
     const summaryText = isCorrect ? (input.summary ?? '') : input.info;
     if (summaryText) {
       const summaryId = IdGenerator.generate();
@@ -258,7 +191,6 @@ export class InfoCoreService {
       ]);
     }
 
-    // 异步触发处理（不阻塞保存）：仅正常信息参与自学习（关键词/标签/向量）
     if (isCorrect) {
       const processInput = new ProcessInfoInput();
       processInput.info_id = infoId;
@@ -267,15 +199,12 @@ export class InfoCoreService {
           await Promise.all([
             this.vectorInfo(processInput, new VectorInfoOutput(), _context, metrics, report),
             this.tagInfo(processInput, new TagInfoOutput(), _context, metrics, report),
-            // ===== 修改后（2026-09-15 记忆集中）：摘要生成恢复为 InfoCore 内建路径 ——
-            // 原实现（长文本 return true）与上层 SummaryAgent 均不触发摘要，info_summary 长期空置；
-            // 现 saveInfo 后统一入本方法：短文本原文即摘要，长文本经 config.llm_id 调 LLM 生成 =====
+
             this.summaryInfo(processInput, new SummaryInfoOutput(), _context, metrics, report),
             this.keywordInfo(processInput, new KeywordInfoOutput(), _context, metrics, report),
           ]);
         } catch (err) {
-          // ===== 修改后（2026-09-15）："仅记录"原来是无输出静默吞掉，
-          //      异步自学习（关键词/标签/向量）失败完全不可见，输出可见诊断 =====
+
           metrics?.warn(`[InfoCoreProvider] saveInfo 异步自学习处理失败（info_id=${processInput.info_id}）`, {
             error: err instanceof Error ? err.message : String(err),
           });
@@ -286,9 +215,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 切换 pin 状态。
-   */
   async pinInfo(input: PinInfoInput, _output: PinInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -313,14 +239,6 @@ export class InfoCoreService {
     return true;
   }
 
-  // =========================================================================
-  // Process Operations
-  // =========================================================================
-
-  /**
-   * 向量化信息：按 chunk_size 分块（考虑分隔符与重叠覆盖率）后逐块生成 embedding，
-   * 写入 LanceDB（向量唯一存储，不再落 SQLite）。
-   */
   async vectorInfo(input: ProcessInfoInput, output: VectorInfoOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -337,10 +255,8 @@ export class InfoCoreService {
     const vectorConfig = await this.getInfoVectorConfig();
     if (!vectorConfig || vectorConfig.enable !== 1) return true;
 
-    // 分块：短文本保持单向量，长文本按分隔符 + 重叠拆分
     const chunks = this.splitInfoChunks(infoRow.info, vectorConfig);
 
-    // 逐块生成 embedding；任一块失败则整体放弃（保持幂等，后续可重试）
     const embeddings: number[][] = [];
     for (const chunk of chunks) {
       const embedding = await this.generateEmbedding(chunk, vectorConfig, context, metrics);
@@ -353,13 +269,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 使用 LLM 提取标签。
-   *
-   * 1. 检查 info_tag_config 的 enable 状态。
-   * 2. 调用 LLM 提取 topK 标签。
-   * 3. 为每个标签插入 info_tag 表并维护 info_tag_vector。
-   */
   async tagInfo(input: ProcessInfoInput, output: TagInfoOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -375,7 +284,7 @@ export class InfoCoreService {
     if (!infoRow) {
       throw new NotFoundError('信息', input.info_id);
     }
-    // 错误信息不参与自学习标签提取
+
     if (infoRow.handle_result_type !== HandleResultType.CORRECT) {
       return true;
     }
@@ -395,19 +304,16 @@ export class InfoCoreService {
         await this.maintainTagVector(tag, tagConfig, metrics);
         await this.graphTag(Object.assign(new GraphTagInput(), { tag_id: tagId }), new GraphTagOutput(), new InfoCoreContext(), metrics);
       } catch (err) {
-        // 标签重复跳过：insertTag 唯一键冲突（同一 info 已存在同名标签）属预期幂等场景；
-        // 连带容忍 ensureTextNode / maintainTagVector / graphTag 图向量维护失败（best-effort，不影响保存主流程）
+
       }
     }
 
-    // 共现边：同一 info 上的标签两两建立 cooccur 边（不依赖向量化）
     await this.buildCooccurEdges(tags);
 
     output.tags = tags;
     return true;
   }
 
-  /** 插入一条 info_tag 记录。 */
   private async insertTag(tagId: string, infoId: string, tag: string, now: number): Promise<void> {
     await this.relationDb.insert(INFO_TAG_TABLE, [
       { field: 'id', value: tagId },
@@ -418,15 +324,6 @@ export class InfoCoreService {
     ]);
   }
 
-  /**
-   * 使用 LLM 生成摘要。
-   * ===== 修改后（2026-09-15 采纳"记忆集中"要求）：摘要生成能力收敛至 InfoProvider ——
-   * 短文本（≤ threshold）仍直接以原文为摘要；长文本改为本方法内经 config.llm_id +
-   * config.prompt_template_id 调用 LLM 生成（原实现返回空、依赖上层 SummaryAgent 补齐，
-   * 而 SummaryAgent 实际无调用方，导致 info_summary 长期空置）。原始逻辑注释保留 =====
-   */
-  // ===== 修改后（2026-09-15 记忆集中）：签名保留 metrics/report（与 InfoCore 其余用例一致），
-  //      2026-09-22 起 metrics 透传至摘要 LLM 链路（日志唯一网关约定） =====
   async summaryInfo(input: ProcessInfoInput, output: SummaryInfoOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -449,17 +346,14 @@ export class InfoCoreService {
       throw new NotFoundError('信息', input.info_id);
     }
 
-    // 类型过滤：仅作用于 LLM 生成阶段（info_types，默认 RESPONSE；短文本原文即摘要不受限，保持既有行为）
     const now = IdGenerator.now();
     let summary: string;
 
-    // ===== 修改后：长文本由 InfoCore 自身承担 LLM 摘要生成（集中路径：config.llm_id =
-    // 摘要模型、prompt_template_id=摘要模板，均可经配置更新接口调整）=====
     if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
       summary = infoRow.info;
     } else if (this.isSummaryEligibleType(String(infoRow.info_type ?? ''), summaryConfig)) {
       summary = await this.generateSummaryText(infoRow.info, summaryConfig, metrics);
-      if (!summary) return true; // LLM 不可用/未配置时无摘要落库，不阻塞保存链路
+      if (!summary) return true;
     } else {
       return true;
     }
@@ -481,7 +375,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 摘要生成类型过滤（数据处理）：info_types 为空视为全部类型 */
   private isSummaryEligibleType(infoType: string, summaryConfig: InfoSummaryConfigRecord): boolean {
     const types = String(summaryConfig.info_types ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean);
@@ -489,7 +382,6 @@ export class InfoCoreService {
     return types.includes(infoType);
   }
 
-  /** 经 LLM 生成摘要（数据处理；config.llm_id / prompt_template_id 可选，缺失或失败返回空串） */
   private async generateSummaryText(
     info: string,
     summaryConfig: InfoSummaryConfigRecord,
@@ -499,8 +391,7 @@ export class InfoCoreService {
       metrics?.warn('[InfoCoreProvider] summaryInfo 未配置 llm_id，长文本摘要跳过（请在配置中设置摘要模型）');
       return '';
     }
-    // 重试来源：llm_call_log 实测本地模型服务间歇性 CONNECT_ERROR（如 2026-09-22 上午 45 次），
-    // 单次失败即丢摘要且无补偿；此处对同一内容最多尝试 SUMMARY_LLM_MAX_ATTEMPTS 次
+
     for (let attempt = 1; attempt <= SUMMARY_LLM_MAX_ATTEMPTS; attempt++) {
       const summary = await this.execSummaryLLM(info, summaryConfig.llm_id, metrics);
       if (summary) return summary;
@@ -511,7 +402,6 @@ export class InfoCoreService {
     return '';
   }
 
-  /** 单次经 LLM 生成摘要（数据处理；失败返回空串并输出可见诊断） */
   private async execSummaryLLM(info: string, llmId: string, metrics?: Metrics): Promise<string> {
     try {
       const execInput = new ExecLLMInput();
@@ -528,9 +418,6 @@ export class InfoCoreService {
     }
   }
 
-  /**
-   * 提取关键词（nodejieba 中文分词 + FTS5 存储）。
-   */
   async keywordInfo(input: ProcessInfoInput, output: KeywordInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -541,7 +428,7 @@ export class InfoCoreService {
     if (!infoRow) {
       throw new NotFoundError('信息', input.info_id);
     }
-    // 错误信息不参与自学习关键词提取
+
     if (infoRow.handle_result_type !== HandleResultType.CORRECT) {
       return true;
     }
@@ -559,22 +446,12 @@ export class InfoCoreService {
       await this.ensureTextNode('keyword', 'keyword', word, true);
     }
 
-    // 共现边：同一 info 上的关键词两两建立 keywordCooccur 边（不依赖向量化）
     await this.buildKeywordCooccurEdges(keywords);
 
     output.keywords = keywords;
     return true;
   }
 
-  /**
-   * 为标签建立相似性连通图。
-   *
-   * 1. 检查 info_tag_config.enable
-   * 2. 根据 tag_id 查询 info_tag 表获取标签文本
-   * 3. 计算标签嵌入向量
-   * 4. 通过 VectorDBProvider.soVector 搜索语义最相似的 top_k 个 tag_id
-   * 5. 对每个相似 tag 创建/更新 `similarTo` 边至 GraphDB
-   */
   async graphTag(input: GraphTagInput, output: GraphTagOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.tag_id) {
@@ -607,40 +484,19 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 从 info_tag 表全量重建共现边（cooccur）。
-   *
-   * 用于存量数据回填：删除所有 cooccur 边后，按 info_id 分组重新统计标签共现对并落库。
-   * 该过程幂等，可与增量 buildCooccurEdges 配合使用（tagInfo 在保存时实时建边，
-   * 本方法负责历史标签的一次性回填）。
-   */
-  // ===== 修改后的方法（2026-09-21 涌现图错误信息隔离）=====
-  // 「涌现」图节点来自 info_tag，原实现全量重建时未回溯 info_raw.handle_result_type，
-  // 使系统报错信息（call_error / internal_error）派生的标签、以及已删除信息遗留的
-  // 孤儿标签被重新建入 GraphDB。现重建前先清理非 correct 信息派生的标签行，重建时
-  // 再按 handle_result_type=correct 过滤（见 rebuildCooccurForSource）。
   async rebuildCooccurGraph(_input: RebuildCooccurGraphInput, output: RebuildCooccurGraphOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // 0. 清理非正确信息 / 已删除信息派生的标签行（存量治理，防止错误标签再次入图）
+
     output.purged_rows = this.purgeNonCorrectTagRows(metrics);
-    // 标签共现边
+
     const tagResult = await this.rebuildCooccurForSource(INFO_TAG_TABLE, 'tag', 'Tag', 'tag', COOCCUR_EDGE_TYPE, metrics);
-    // 关键词共现边
+
     const kwResult = await this.rebuildCooccurForSource(INFO_KEYWORD_TABLE, 'word', 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE, metrics);
     output.deleted_edges = tagResult.deleted + kwResult.deleted;
     output.rebuilt_edges = tagResult.rebuilt + kwResult.rebuilt;
     return true;
   }
 
-  /**
-   * 清理「非正确信息」派生的标签行（数据处理）。
-   *
-   * 判定口径：info_tag.info_id 无法回溯到 info_raw 记录（信息已被删除的孤儿标签），
-   * 或对应信息 handle_result_type 非 correct（系统报错信息）时，该标签行不属于用户信息，
-   * 从 info_tag 中删除，避免被 rebuildCooccurGraph 重新建入「涌现」图。
-   *
-   * 幂等：仅删除匹配行，重复执行不影响正常标签；表不存在时静默跳过。
-   */
   private purgeNonCorrectTagRows(metrics?: Metrics): number {
     try {
       return this.relationDb.executeRaw(
@@ -657,7 +513,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 从指定表全量重建某类文本的节点（含频次属性）与共现边（幂等：先删后建）。 */
   private async rebuildCooccurForSource(
     table: string,
     field: string,
@@ -666,7 +521,7 @@ export class InfoCoreService {
     edgeType: string,
     metrics?: Metrics,
   ): Promise<{ deleted: number; rebuilt: number }> {
-    // 1. 删除该 node_type 的所有节点（级联删除关联边与激活数据），保证幂等重建
+
     const nodeSel = new SelectGraphOutput();
     await this.graphDb.selectGraph(
       { target: GraphTarget.NODE, node_type: nodeType } as SelectGraphInput,
@@ -680,10 +535,6 @@ export class InfoCoreService {
       );
     }
 
-    // 2. 读表：统计频次 + 按 info_id 分组
-    // ===== 修改后（2026-09-21 涌现图错误信息隔离）：INNER JOIN info_raw 且仅保留
-    // handle_result_type=correct 的信息派生的标签/关键词，系统报错信息（call_error /
-    // internal_error）与已删除信息（无 info_raw）产生的文本不再被建入图谱 =====
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
       `SELECT t."info_id" AS "info_id", t."${field}" AS "${field}"
          FROM "${table}" t
@@ -703,7 +554,6 @@ export class InfoCoreService {
       else byInfo.set(infoId, [text]);
     }
 
-    // 3. 建节点（content 含频次属性 freq，节点属性完全存于 GraphDB）
     const textToId = new Map<string, string>();
     for (const [text, freq] of freqMap) {
       const out = new AddGraphNodeOutput();
@@ -716,7 +566,6 @@ export class InfoCoreService {
       textToId.set(text, out.id);
     }
 
-    // 4. 统计共现对（去重、累加共现次数），一次性建共现边
     const edgeMap = new Map<string, { fromId: string; toId: string; weight: number }>();
     for (const items of byInfo.values()) {
       const unique = Array.from(new Set(items));
@@ -743,14 +592,6 @@ export class InfoCoreService {
     return { deleted: nodeIds.length, rebuilt };
   }
 
-  // =========================================================================
-  // Search Operations
-  // =========================================================================
-
-  /**
-   * 时间线搜索：返回最近 N 条信息记录。
-   * 若 info 已被老化清空，回退查询 info_summary 表获取摘要替代。
-   */
   async lastNInfo(input: LastNInfoInput, output: LastNInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.lastN || input.lastN <= 0) {
@@ -807,9 +648,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 图邻居搜索：通过 GraphDB 查找相关节点。
-   */
   async graphNInfo(input: GraphNInfoInput, output: GraphNInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id || !input.lastN) {
@@ -858,12 +696,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 语义相似度搜索：生成 embedding 后，由 LanceDB 执行向量相似度检索。
-   *
-   * 返回语义最相似的 topK 条信息记录（含归一化相似度分数 score）。
-   * 阈值 similarity_threshold 为归一化值 0-100。
-   */
   async similarKInfo(input: SimilarKInfoInput, output: SimilarKInfoOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info || !input.topK) {
@@ -882,8 +714,6 @@ export class InfoCoreService {
       return true;
     }
 
-    // 检索时放大 topK（一个 info 可能拆成多个 chunk），
-    // 聚合去重后再截取回 topK 个 info，保证返回足够多不同信息。
     const topK = Math.max(1, Math.floor(input.topK));
     const hits = await this.searchInfoVectors(embedding, topK * 3, input.similarity_threshold ?? 0);
     const scored = await this.toScoredInfoList(hits);
@@ -891,12 +721,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 关键词搜索：从 FTS5 表检索匹配的关键词。
-   *
-   * PRD 2.5.4：nodejieba 分词得到关键词列表后，使用 SQLite FTS5 MATCH 语法在
-   * info_keyword 虚拟表中执行全文搜索，按 bm25 相关性评分降序返回匹配信息。
-   */
   async keywordKInfo(input: KeywordKInfoInput, output: KeywordKInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info) {
@@ -909,8 +733,6 @@ export class InfoCoreService {
       return true;
     }
 
-    // FTS5 MATCH：关键词列表以 OR 组合做全文搜索（每个关键词按词条整体匹配，
-    // 避免拆分为子 token），仅检索 word 列，避免命中 info_id 列产生误召回。
     const matchExpr = keywords
       .map((k) => `word:"${k.replace(/"/g, '""')}"`)
       .join(' OR ');
@@ -922,7 +744,7 @@ export class InfoCoreService {
         [matchExpr],
       );
     } catch {
-      // FTS5 MATCH 语法异常（极端关键词含特殊字符）时降级为空结果，不影响上层上下文构建
+
       keywordRows = [];
     }
 
@@ -931,8 +753,6 @@ export class InfoCoreService {
       return true;
     }
 
-    // bm25 越小相关性越高；每条 info 的每个关键词占一行，故按 info_id 聚合：
-    // 取最小（最优）bm25 作为该 info 的相关度，命中关键词次数作为次要信息。
     const bestRankMap = new Map<string, number>();
     const matchCountMap = new Map<string, number>();
     for (const row of keywordRows) {
@@ -943,15 +763,12 @@ export class InfoCoreService {
       matchCountMap.set(iid, (matchCountMap.get(iid) || 0) + 1);
     }
 
-    // bm25 归一化到 0-100（min-max 全量归一化）：将本次命中集合的 bm25 值域
-    // [minRank, maxRank] 线性映射到 [100, 0]（最优命中 = 100，最差命中 = 0）。
-    // 供上层（如 context）按 keyword_score 阈值截断低相关命中。
     const ranks = [...bestRankMap.values()];
     const minRank = Math.min(...ranks);
     const maxRank = Math.max(...ranks);
     const span = maxRank - minRank;
     const normalizeScore = (rank: number): number => {
-      if (span <= 0) return 100; // 仅单一命中或 bm25 完全一致时等权视为满分
+      if (span <= 0) return 100;
       const s = (100 * (maxRank - rank)) / span;
       return Math.max(0, Math.min(100, Math.round(s)));
     };
@@ -977,12 +794,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 标签关联搜索：通过标签间的相似性图（similarTo 边）查找最相关的信息。
-   *
-   * 权重口径：以 similarTo 边的 weight（向量相似度）作为标签相关度，沿标签图扩散到目标信息，
-   * 按累计相关度降序返回 topN 条，使标签图召回真正按相关性排序（而非时间倒序）。
-   */
   async relationKInfo(input: RelationKInfoInput, output: RelationKInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id || !input.topN) {
@@ -998,7 +809,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 获取目标信息的标签名；无标签时即时抽取兜底。 */
   private async ensureSelfTagNames(infoId: string): Promise<string[]> {
     const rows = await this.relationDb.select(INFO_TAG_TABLE, {
       conditions: [{ field: 'info_id', operator: Operator.EQ, value: infoId }],
@@ -1012,7 +822,6 @@ export class InfoCoreService {
     return this.extractTags(infoRow.info, tagConfig);
   }
 
-  /** 汇总各标签经 similarTo 边关联的其它标签及其相关度权重（多标签命中同一目标取最大相似度）。 */
   private async collectRelatedTags(
     selfTagNames: string[],
   ): Promise<Array<{ tag: string; weight: number }>> {
@@ -1028,7 +837,6 @@ export class InfoCoreService {
       .sort((a, b) => b.weight - a.weight);
   }
 
-  /** 查找与标签节点相连的 similarTo 边对应的其它标签文本与相关度权重（边 weight / properties.similarity）。 */
   private async findSimilarTagEdges(tagName: string): Promise<Array<{ tag: string; weight: number }>> {
     const nodeId = await this.findGraphNodeId('Tag', 'tag', tagName);
     if (!nodeId) return [];
@@ -1060,8 +868,6 @@ export class InfoCoreService {
     return result;
   }
 
-
-  /** 按关联标签反向查询 info_id 及其累计相关度权重（多标签命中同一 info 取最大权重）。 */
   private async findInfoWeightsByTags(
     relatedTags: Array<{ tag: string; weight: number }>,
   ): Promise<Map<string, number>> {
@@ -1080,7 +886,6 @@ export class InfoCoreService {
     return weightMap;
   }
 
-  /** 按累计相关度权重降序加载关联信息记录（含 relevance_score）。 */
   private async loadRelatedInfo(
     weightedIds: Map<string, number>,
     topN: number,
@@ -1100,9 +905,6 @@ export class InfoCoreService {
     return results;
   }
 
-  /**
-   * 会话图可视化：构建 session 内信息引用图。
-   */
   async graphInfo(input: GraphInfoInput, output: GraphInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.session_id) {
@@ -1122,7 +924,6 @@ export class InfoCoreService {
     const citeEdgesOut = new SoCitationEdgesOutput();
     await this.soCitationEdges(Object.assign(new SoCitationEdgesInput(), { session_id: input.session_id }), citeEdgesOut, _context);
 
-    // 节点统一以 info_id 作为 id（与边的 from/to 同命名空间）
     const nodes = infoRows.map((r) => ({
       id: r['info_id'] as string,
       label: (r['info'] as string).slice(0, 80),
@@ -1132,7 +933,6 @@ export class InfoCoreService {
       handle_result_type: (r['handle_result_type'] as string) || DEFAULT_HANDLE_RESULT_TYPE,
     }));
 
-    // 引用边（GraphDB CITATION 边：用户引用其他消息）
     const citationEdges = citeEdgesOut.edges
       .filter((e) => infoIds.has(e.citing_info_id) && infoIds.has(e.cited_info_id))
       .map((e) => ({
@@ -1144,7 +944,6 @@ export class InfoCoreService {
         edge_type: 'CITATION',
       }));
 
-    // 问答边（同 run_id 的 REQUEST → RESPONSE）
     const byInteract = new Map<string, { request?: string; response?: string }>();
     for (const r of infoRows) {
       const runId = r['run_id'] as string;
@@ -1174,12 +973,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 查询 GraphDB 引用边（CITATION），替代旧 info_graph 表的读取。
-   *
-   * 返回 info_id 维度的引用关系（citing → cited）。可选按 session_id / citing_info_id /
-   * cited_info_id 过滤；session_id 取自边 properties 中记录的引用方（citing）所属会话。
-   */
   async soCitationEdges(input: SoCitationEdgesInput, output: SoCitationEdgesOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selOut = new SelectGraphOutput();
@@ -1201,11 +994,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 级联删除 GraphDB 中的 info 节点及关联的引用边（CITATION）。
-   *
-   * 供删除记忆 / 删除会话时调用，替代旧 info_graph 表的级联清理。
-   */
   async delInfoGraph(input: DelInfoGraphInput, output: DelInfoGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const infoIds = (input.info_ids ?? []).map((x) => String(x)).filter(Boolean);
@@ -1228,10 +1016,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 一键清理某类文本图（如标签图 / 关键词图）：删除该 node_type 的所有节点，
-   * 级联删除关联的边与激活数据。
-   */
   async clearGraph(input: ClearGraphInput, output: ClearGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const nodeType = String(input.node_type ?? '').trim();
@@ -1254,16 +1038,9 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 迁移旧 info_graph 表数据到 GraphDB（一次性），迁移完成后删除旧表。
-   *
-   * 旧实现把 info 引用边存在 RelationDB 的 info_graph 表；本方法将存量引用边迁移为
-   * GraphDB 的 CITATION 边（info 节点 + 边），随后 DROP 旧表，实现图结构收敛到 GraphDB。
-   */
   async rebuildCitationGraph(_input: RebuildCitationGraphInput, output: RebuildCitationGraphOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // 旧表在迁移收敛后已 DROP：先查 sqlite_master 判断存在性，
-    // 避免对已迁移库每次查询都触发 RelationDB 的 ERROR 级 "no such table" 日志
+
     const legacyExists = (this.relationDb.queryRaw<{ c: number }>(
       `SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table' AND name = ?`,
       [LEGACY_INFO_GRAPH_TABLE],
@@ -1301,24 +1078,12 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 构建 Agent 上下文：多源融合（复选消息、钉住消息、时间线消息、标签关联、向量相似度、关键词、随机抽样）。
-   *
-   * 来源及优先级：
-   * a. Selected — 复选消息（若提供 selected_msg_ids，本次问答仅根据复选消息与钉住消息构建）
-   * b. Pinned   — 钉住消息（强制位于最前）
-   * c. Timeline — lastNInfo（时间顺序lastN消息）
-   * d. Tag      — relationKInfo（标签相关消息，需提供 info_id）
-   * e. Similarity — similarKInfo（相似度相关消息）
-   * f. Keyword  — keywordKInfo（关键词相关消息）
-   * g. Random   — 随机抽样
-   */
   async context(input: ContextInfoInput, output: ContextInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.validateContextInput(input);
     const contextConfig = await this.getInfoContextConfig();
     const plan = this.prepareContextBuildPlan(input, contextConfig);
-    // 基础上下文候选：钉住消息（PINNED）+ 复选消息（CITING）替换时间线（无复选退化为纯时间线）+ 当前消息
+
     const pinnedCandidates = await this.collectPinnedCandidates(input.session_id);
     const base = await this.collectSelectedOrTimelineCandidates(input, plan.selectedIds, plan.timelineLimit);
     const currentCandidate = await this.extractCurrentCandidate(input.session_id, plan.selectedIds, base.timelineCandidates);
@@ -1328,7 +1093,7 @@ export class InfoCoreService {
     const weak = await this.collectWeakDimensionCandidates(input.session_id, refText, refInfoRow, limits, plan.enableCrossSession, _context, metrics, report);
     const randCandidates = await this.collectRandomCandidates(input.session_id, limits.randLimit, plan.enableCrossSession, pinnedCandidates, base.citingCandidates, currentCandidate, metrics);
     this.excludeCurrentFromWeakDimensions(currentCandidate, [weak.tag, weak.sim, weak.kw, randCandidates]);
-    // 装配回写：剔除执行轨迹 → 批量预取摘要 → 按优先级去重收集 → 分类统计 → 三对象落盘
+
     const candidatesMap = this.buildContextCandidatesMap({
       pinned: pinnedCandidates, citing: base.citingCandidates, timeline: base.timelineCandidates,
       tag: weak.tag, sim: weak.sim, kw: weak.kw, rand: randCandidates,
@@ -1344,17 +1109,6 @@ export class InfoCoreService {
     return true;
   }
 
-  // =========================================================================
-  // Search Operations (context 查询)
-  // =========================================================================
-
-  /**
-   * 按 work_id 查询该次问答使用到的上下文（三对象结构）。
-   *
-   * 流程：
-   * 1. 从 info_context_source 表读取 work_id 下各来源的 info_id 列表。
-   * 2. 回查 info_raw 补内容与属性（info 已老化清空时回退摘要）。
-   */
   async soContextByWork(input: SoContextByWorkInput, output: SoContextByWorkOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.work_id) {
@@ -1412,18 +1166,12 @@ export class InfoCoreService {
     return true;
   }
 
-  // =========================================================================
-  // Config Operations
-  // =========================================================================
-
-  /** 获取标签配置 */
   async soInfoTagConfig(_input: SoInfoTagConfigInput, output: SoInfoTagConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.config = await this.getInfoTagConfig();
     return true;
   }
 
-  /** 更新标签配置（upsert） */
   async updateInfoTagConfig(input: UpdateInfoTagConfigInput, _output: UpdateInfoTagConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.llm_id) {
@@ -1459,14 +1207,12 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 获取摘要配置 */
   async soInfoSummaryConfig(_input: SoInfoSummaryConfigInput, output: SoInfoSummaryConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.config = await this.getInfoSummaryConfig();
     return true;
   }
 
-  /** 更新摘要配置 */
   async updateInfoSummaryConfig(input: UpdateInfoSummaryConfigInput, _output: UpdateInfoSummaryConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.llm_id) {
@@ -1498,14 +1244,12 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 获取全局配置 */
   async soInfoConfig(_input: SoInfoConfigInput, output: SoInfoConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.config = await this.getInfoConfig();
     return true;
   }
 
-  /** 更新全局配置 */
   async updateInfoConfig(input: UpdateInfoConfigInput, _output: UpdateInfoConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.alive_max_days !== undefined) {
@@ -1521,14 +1265,12 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 获取向量配置 */
   async soInfoVectorConfig(_input: SoInfoVectorConfigInput, output: SoInfoVectorConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.config = await this.getInfoVectorConfig();
     return true;
   }
 
-  /** 更新向量配置 */
   async updateInfoVectorConfig(input: UpdateInfoVectorConfigInput, _output: UpdateInfoVectorConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.dimension !== undefined) {
@@ -1553,7 +1295,7 @@ export class InfoCoreService {
     if (input.chunk_overlap !== undefined && (!Number.isInteger(input.chunk_overlap) || input.chunk_overlap < 0)) {
       throw new ValidationError('chunk_overlap 必须为 >= 0 的整数');
     }
-    // 维度变更需同步重建向量表（applyDimension 内部校验 LanceDB 无数据时重建）
+
     if (input.dimension !== undefined) {
       await this.vectorDb.applyDimension(input.dimension);
     }
@@ -1569,14 +1311,12 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 获取上下文构建配置 */
   async soInfoContextConfig(_input: SoInfoContextConfigInput, output: SoInfoContextConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     output.config = await this.getInfoContextConfig();
     return true;
   }
 
-  /** 更新上下文构建配置 */
   async updateInfoContextConfig(input: UpdateInfoContextConfigInput, _output: UpdateInfoContextConfigOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const assertNonNegativeInt = (val: number | undefined, label: string) => {
@@ -1624,16 +1364,6 @@ export class InfoCoreService {
     return true;
   }
 
-  // =========================================================================
-  // Lifecycle
-  // =========================================================================
-
-  /**
-   * 清理超过 alive_max_days 的过期信息内容（保留记录，用于摘要回退）。
-   *
-   * 被钉住（pin=true）的消息跳过不清理。
-   * 清空前确保至少有一种索引（向量/标签/摘要）存在。
-   */
   async delInfo(_input: DelInfoInput, output: DelInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const config = await this.getInfoConfig();
@@ -1650,7 +1380,6 @@ export class InfoCoreService {
       fields: ['id', 'info_id', 'info'],
     });
 
-    // 过滤出 info 非空的记录（已被清空的跳过）
     const toClear = expiredRows.filter((r) => (r['info'] as string) !== '');
 
     if (toClear.length === 0) {
@@ -1701,14 +1430,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 补生成缺失摘要（幂等）：长文本（超过 threshold）且无 info_summary 行的正常信息，
-   * 逐条复用 summaryInfo 补生成。用于 LLM 间歇性 CONNECT_ERROR 导致的摘要丢失补偿，
-   * 供服务启动时调用（与 delInfo 老化清理同模式）。
-   *
-   * 幂等：summaryInfo 内部已有 existingRow 检查，重复执行不产生副作用。
-   * 防重入：backfillRunning 标志避免启动/定时并发触发时的重复扫描与 LLM 调用。
-   */
   async backfillMissingSummaries(_input: BackfillMissingSummariesInput, output: BackfillMissingSummariesOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     if (this.backfillRunning) {
@@ -1746,9 +1467,6 @@ export class InfoCoreService {
     }
   }
 
-  /**
-   * 改写指定 work 下某 info_type 的 info 内容（如需求确认 APPROVE 时用理解后的需求替换原始 REQUEST）。
-   */
   async updateInfo(input: UpdateInfoInput, output: UpdateInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.work_id || !input.info) {
@@ -1770,12 +1488,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /**
-   * 删除指定 work 落库的全部信息及派生数据（如需求确认 CANCEL 时丢弃本次提问）。
-   *
-   * 级联清理 info_raw 主表与 info_tag / info_summary / info_keyword / info_vector
-   * 派生表，并删除 GraphDB 中该信息的引用节点与边（共享的标签/关键词文本节点不在此清理）。
-   */
   async delInfoByWork(input: DelInfoByWorkInput, output: DelInfoByWorkOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.work_id) {
@@ -1803,10 +1515,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 删除指定 session 落库的全部信息及派生数据（数据/摘要/标签/关键词/向量/上下文快照），并级联 GraphDB 引用。
-   * ===== 新增（2026-09-15 记忆集中）：ChatService.deleteSession 原先内联直写 info_* 派生表，
-   * 属会话级记忆管理的第二条写入路径，收敛至 InfoProvider；chat_session / runtime_ / stream_event
-   * 等非记忆表仍由上层负责 ===== */
   async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.session_id) {
@@ -1840,11 +1548,6 @@ export class InfoCoreService {
     return true;
   }
 
-  // =========================================================================
-  // Assist
-  // =========================================================================
-
-  /** 检查 info_vector 是否存在 */
   async existVectorInfo(input: ExistInfoInput, output: ExistInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -1855,7 +1558,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 检查 info_tag 是否存在 */
   async existTagInfo(input: ExistInfoInput, output: ExistInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -1866,7 +1568,6 @@ export class InfoCoreService {
     return true;
   }
 
-  /** 检查 info_summary 是否存在 */
   async existSummaryInfo(input: ExistInfoInput, output: ExistInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.info_id) {
@@ -1876,10 +1577,6 @@ export class InfoCoreService {
     output.exists = await this.hasSummaryForInfo(input.info_id);
     return true;
   }
-
-  // =========================================================================
-  // Private: DB helpers
-  // =========================================================================
 
   private async hasVectorForInfo(infoId: string): Promise<boolean> {
     try {
@@ -1911,7 +1608,6 @@ export class InfoCoreService {
     return rows.length > 0 ? this.toInfoRawRecord(rows[0]) : null;
   }
 
-  /** 批量查询 info_raw 记录，使用 IN 操作符避免 N+1 查询 */
   private async getInfoBatchByInfoIds(infoIds: string[]): Promise<Map<string, InfoRawRecord>> {
     const result = new Map<string, InfoRawRecord>();
     if (infoIds.length === 0) return result;
@@ -1925,14 +1621,6 @@ export class InfoCoreService {
     return result;
   }
 
-  private async getInfoById(id: string): Promise<InfoRawRecord | null> {
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: [{ field: 'id', operator: Operator.EQ, value: id }],
-      page: { current: 1, size: 1 },
-    });
-    return rows.length > 0 ? this.toInfoRawRecord(rows[0]) : null;
-  }
-
   private async getInfoSummaryRow(infoId: string): Promise<InfoSummaryRecord | null> {
     const rows = await this.relationDb.select(INFO_SUMMARY_TABLE, {
       conditions: [{ field: 'info_id', operator: Operator.EQ, value: infoId }],
@@ -1942,7 +1630,6 @@ export class InfoCoreService {
     return this.toInfoSummaryRecord(rows[0]);
   }
 
-  /** 批量查询 info_summary 记录，使用 IN 操作符避免 N+1 查询 */
   private async getInfoSummaryBatchByInfoIds(infoIds: string[]): Promise<Map<string, InfoSummaryRecord>> {
     const result = new Map<string, InfoSummaryRecord>();
     if (infoIds.length === 0) return result;
@@ -1991,11 +1678,6 @@ export class InfoCoreService {
     return rows.length > 0 ? this.toInfoContextConfigRecord(rows[0]) : null;
   }
 
-  // =========================================================================
-  // Private: LLM helpers
-  // =========================================================================
-
-  /** 业务维度（session/interact/work）随 Context 透传至 LLMProvider 明细账（2026-09-14） */
   private async generateEmbedding(
     text: string,
     vectorConfig: InfoVectorConfigRecord,
@@ -2009,9 +1691,7 @@ export class InfoCoreService {
         embedOutput, bizCtx ?? new LLMContext(),
       );
       if (!embedOutput.embedding || embedOutput.embedding.length === 0) {
-        // ===== 修改后（2026-09-15）：空 embedding 不再静默返回，输出可见诊断。
-        //      实测 embedding 服务（如本地 LLamaCPP）不可用时 SIMILARITY 维度整条失效，
-        //      且零日志，只能靠翻 llm_available/手动 curl 排查 =====
+
         metrics?.warn('[InfoCoreProvider] generateEmbedding 返回空向量，SIMILARITY 召回将退化为空；请检查 embedding 服务可用性', {
           llm_id: vectorConfig.llm_id,
         });
@@ -2019,7 +1699,7 @@ export class InfoCoreService {
       }
       return embedOutput.embedding;
     } catch (err) {
-      // ===== 修改后（2026-09-15）：向量化失败可见化，避免静默丢数据 =====
+
       metrics?.warn('[InfoCoreProvider] generateEmbedding 调用失败', {
         llm_id: vectorConfig.llm_id,
         error: err instanceof Error ? err.message : String(err),
@@ -2028,11 +1708,6 @@ export class InfoCoreService {
     }
   }
 
-  // =========================================================================
-  // Private: Vector helpers（LanceDB 为向量唯一存储与相似度计算）
-  // =========================================================================
-
-  /** 标签向量 ID（按标签文本确定性生成，幂等）。 */
   private tagVectorId(tag: string): string {
     return `tag:${tag}`;
   }
@@ -2043,12 +1718,6 @@ export class InfoCoreService {
     return out.vector;
   }
 
-  /**
-   * 将 info 文本按向量配置分块（LangChain 风格递归分隔符 + 重叠）。
-   *
-   * 长度不超过 chunk_size 时不拆分，返回单元素数组（内容为原文），
-   * 保证短文本仍走单向量路径（向量 id = info_id，与历史数据兼容）。
-   */
   private splitInfoChunks(info: string, vectorConfig: InfoVectorConfigRecord): string[] {
     const chunkSize = this.normalizeChunkSize(vectorConfig.chunk_size);
     if (chunkSize <= 0) return [info];
@@ -2062,7 +1731,6 @@ export class InfoCoreService {
     });
   }
 
-  /** 写入信息向量：单 chunk 时向量 id = info_id；多 chunk 时依次为 info_id、info_id#1… */
   private async upsertInfoChunks(
     infoId: string,
     chunks: string[],
@@ -2113,7 +1781,6 @@ export class InfoCoreService {
     );
   }
 
-  /** 获取标签向量：优先复用 LanceDB 中已有向量，否则即时生成。 */
   private async getTagEmbedding(tag: string, _tagConfig: InfoTagConfigRecord, metrics?: Metrics): Promise<number[]> {
     const existing = await this.getVectorRecord(this.tagVectorId(tag));
     if (existing && existing.embedding.length > 0) return existing.embedding;
@@ -2147,8 +1814,7 @@ export class InfoCoreService {
   private async toScoredInfoList(
     hits: VectorSearchResult[],
   ): Promise<Array<InfoRawRecord & { score?: number; matched_chunks?: string[] }>> {
-    // 多个 chunk 命中同一 info 时，按 info_id 去重聚合，取最高分，
-    // 并把命中的 chunk 片段收集到 matched_chunks（便于展示命中原文）。
+
     const byInfo = new Map<string, { score: number; chunks: string[] }>();
     for (const hit of hits) {
       const infoId = String(hit.metadata?.['info_id'] ?? hit.id);
@@ -2173,7 +1839,6 @@ export class InfoCoreService {
     return results;
   }
 
-  /** 搜索语义相似的标签（排除自身），返回标签文本与相似度分数。 */
   private async searchSimilarTags(
     embedding: number[],
     excludeTag: string,
@@ -2202,11 +1867,6 @@ export class InfoCoreService {
     };
   }
 
-  // =========================================================================
-  // Private: Graph helpers
-  // =========================================================================
-
-  /** 解析 tag 文本：tag_id 可能是 info_tag.id，也可能是 GraphDB 节点 ID。 */
   private async resolveTagText(tagId: string): Promise<string> {
     const tagRows = await this.relationDb.select(INFO_TAG_TABLE, {
       conditions: [{ field: 'id', operator: Operator.EQ, value: tagId }],
@@ -2218,12 +1878,6 @@ export class InfoCoreService {
     return String(nodeOut.node?.content['tag'] ?? '');
   }
 
-  /**
-   * 确保文本节点存在（按 node_type + content[textField] 去重），返回节点 ID。
-   *
-   * 节点属性（含频次 freq）完全存于 GraphDB 节点 content；incrementFreq 为 true 时
-   * 将 freq +1（用于标签/关键词每次出现时累加频次）。
-   */
   private async ensureTextNode(
     nodeType: string,
     textField: string,
@@ -2254,17 +1908,10 @@ export class InfoCoreService {
     return out.id;
   }
 
-  /** 确保标签节点存在（按文本去重），返回节点 ID。 */
   private async ensureTagNode(tag: string): Promise<string> {
     return this.ensureTextNode('Tag', 'tag', tag);
   }
 
-  /** 确保关键词节点存在（按文本去重），返回节点 ID。 */
-  private async ensureKeywordNode(keyword: string): Promise<string> {
-    return this.ensureTextNode('keyword', 'keyword', keyword);
-  }
-
-  /** 建立/更新 similarTo 边（异常静默忽略，避免重复边阻断）。 */
   private async connectSimilarTags(fromId: string, toId: string, score: number, metrics?: Metrics): Promise<void> {
     try {
       await this.graphDb.addGraphEdge(
@@ -2280,7 +1927,7 @@ export class InfoCoreService {
         new AddGraphEdgeOutput(), new GraphContext(),
       );
     } catch (err) {
-      // 忽略边已存在等异常
+
       metrics?.warn('InfoCoreService.connectSimilarTags similarTo 建边失败已容忍（含边已存在）', {
         error: err instanceof Error ? err.message : String(err),
         from_id: fromId,
@@ -2289,23 +1936,14 @@ export class InfoCoreService {
     }
   }
 
-  /**
-   * 为同一 info 上共现的标签建立 cooccur 边（共现策略，不依赖向量化）。
-   *
-   * 与「涌现」标签图 / 「关键词图」的共现口径一致：两个标签出现在同一条 info
-   * 记录上即建立一条边，边权重为共现次数。将共现关系持久化到 GraphDB，使图数据库
-   * 的边数与标签图展示一致（此前仅依赖 similarTo 语义边，embedding 链路不可用时会退化为零边）。
-   */
   private async buildCooccurEdges(tags: string[]): Promise<void> {
     await this.buildCooccurEdgesForType(tags, 'Tag', 'tag', COOCCUR_EDGE_TYPE);
   }
 
-  /** 为同一 info 上共现的关键词建立 cooccur 边（共现策略，不依赖向量化）。 */
   private async buildKeywordCooccurEdges(keywords: string[]): Promise<void> {
     await this.buildCooccurEdgesForType(keywords, 'keyword', 'keyword', KEYWORD_COOCCUR_EDGE_TYPE);
   }
 
-  /** 泛化：为同一 info 上共现的文本项两两建立 cooccur 边。 */
   private async buildCooccurEdgesForType(
     items: string[],
     nodeType: string,
@@ -2314,7 +1952,7 @@ export class InfoCoreService {
   ): Promise<void> {
     const unique = Array.from(new Set(items.map((t) => t.trim()).filter(Boolean)));
     if (unique.length === 0) return;
-    // 确保所有文本节点存在（含孤立项，保证图节点完整）
+
     for (const t of unique) {
       await this.ensureTextNode(nodeType, textField, t);
     }
@@ -2328,7 +1966,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 建立/累加一对文本项的 cooccur 边（按文本规范化方向，幂等）。 */
   private async upsertCooccurEdgeForType(
     textA: string,
     textB: string,
@@ -2364,13 +2001,11 @@ export class InfoCoreService {
         await this.addCooccurEdge(fromId, toId, edgeType);
       }
     } catch (err) {
-      // 共现边建立失败不影响文本保存（best-effort）：图库写失败仅损失共现统计展示，
-      // 主流程文本保存与标签/关键词落库均已成功，容忍跳过
+
       void err;
     }
   }
 
-  /** 直接建立一条 cooccur 边（节点已存在、边未建立时调用）。 */
   private async addCooccurEdge(fromId: string, toId: string, edgeType: string, weight = 1, metrics?: Metrics): Promise<void> {
     try {
       await this.graphDb.addGraphEdge(
@@ -2386,7 +2021,7 @@ export class InfoCoreService {
         new AddGraphEdgeOutput(), new GraphContext(),
       );
     } catch (err) {
-      // 忽略边已存在等异常
+
       metrics?.warn('InfoCoreService.addCooccurEdge 共现边建立失败已容忍（含边已存在）', {
         error: err instanceof Error ? err.message : String(err),
         from_id: fromId,
@@ -2432,14 +2067,6 @@ export class InfoCoreService {
     }
   }
 
-  // =========================================================================
-  // Private: Keyword extraction
-  // =========================================================================
-
-  /**
-   * 从文本提取关键词（nodejieba 中文分词）。
-   * 分词 → 过滤停用词 → 词频统计 → 取前 10。
-   */
   private extractKeywords(text: string): string[] {
     const words: string[] = jieba.cut(text);
     const filtered = words
@@ -2457,13 +2084,6 @@ export class InfoCoreService {
       .map((e) => e[0]);
   }
 
-  // =========================================================================
-  // Private: Graph helpers
-  // =========================================================================
-
-  /**
-   * 建立 GraphDB 引用边：确保当前 info 与各 parent 的 info 节点存在，并创建 CITATION 边。
-   */
   private async connectCitationEdges(
     infoId: string,
     sessionId: string,
@@ -2481,7 +2101,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 建立单条 CITATION 边（异常静默忽略，避免重复边阻断）。 */
   private async connectCitationEdge(
     fromNodeId: string,
     toNodeId: string,
@@ -2504,7 +2123,7 @@ export class InfoCoreService {
         new AddGraphEdgeOutput(), new GraphContext(),
       );
     } catch (err) {
-      // 忽略边已存在等异常
+
       metrics?.warn('InfoCoreService.connectCitationEdge CITATION 引用边建立失败已容忍（含边已存在）', {
         error: err instanceof Error ? err.message : String(err),
         citing_info_id: citingInfoId,
@@ -2543,7 +2162,6 @@ export class InfoCoreService {
     return this.findGraphNodeId('info', 'info_id', infoId);
   }
 
-  /** 在 GraphDB 中按 node_type + content 字段值查找节点完整记录。 */
   private async findGraphNode(
     nodeType: string,
     field: string,
@@ -2561,7 +2179,6 @@ export class InfoCoreService {
     return null;
   }
 
-  /** 在 GraphDB 中按 node_type + content 字段值查找节点 ID。 */
   private async findGraphNodeId(
     nodeType: string,
     field: string,
@@ -2571,11 +2188,6 @@ export class InfoCoreService {
     return node ? node.id : null;
   }
 
-  // =========================================================================
-  // Private: Context helpers
-  // =========================================================================
-
-  /** 校验 context 输入必填项：session_id 与 work_id。 */
   private validateContextInput(input: ContextInfoInput): void {
     if (!input.session_id) {
       throw new ValidationError('context 需要提供 session_id');
@@ -2585,7 +2197,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 准备上下文构建计划：总预算/时间线限额/跨会话开关（Work Agent 执行子任务时应关闭避免无关历史污染）/复选消息列表。 */
   private prepareContextBuildPlan(input: ContextInfoInput, contextConfig: InfoContextConfigRecord | null): ContextBuildPlan {
     return {
       maxTotal: contextConfig?.total || 1000,
@@ -2595,7 +2206,6 @@ export class InfoCoreService {
     };
   }
 
-  /** 采集钉住消息候选（PINNED，会话内，按 created DESC）。 */
   private async collectPinnedCandidates(sessionId: string): Promise<InfoRawRecord[]> {
     const pinnedRows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [
@@ -2607,7 +2217,6 @@ export class InfoCoreService {
     return pinnedRows.map((r) => this.toInfoRawRecord(r));
   }
 
-  /** 采集基础上下文候选：复选消息（CITING）替换时间线（不再并行采集时间线），无复选退化为纯时间线。 */
   private async collectSelectedOrTimelineCandidates(
     input: ContextInfoInput,
     selectedIds: string[],
@@ -2631,10 +2240,6 @@ export class InfoCoreService {
     return { citingCandidates, timelineCandidates };
   }
 
-  /**
-   * 拆出当前消息（CURRENT）：时间线按 created DESC 排序，最新一条即本次输入，从时间线中单独拆出，
-   * 避免与 task_content 重复出现在上下文中；复选模式下当前输入不在复选列表内，单独取最新一条。
-   */
   private async extractCurrentCandidate(
     sessionId: string,
     selectedIds: string[],
@@ -2650,11 +2255,6 @@ export class InfoCoreService {
     return null;
   }
 
-  /**
-   * 解析弱相关维度限额（2026-09-15 第三版口径，按用户裁定）：
-   * 实际上限 = min(该维度基础上限 base_xxx_count, 「基础上下文消息数量」× xxx_max_percent%)——
-   * 占比基准是基础上下文数量（= pinned + citing + timeline），不占 total、无 shrinkFactor 二次收缩。
-   */
   private resolveWeakDimensionLimits(
     contextConfig: InfoContextConfigRecord | null,
     baseContextCount: number,
@@ -2672,7 +2272,6 @@ export class InfoCoreService {
     };
   }
 
-  /** 解析参考文本：优先 input.info（当前提问），其次 input.info_id 记录，最后从 CITING/TIMELINE 候选中取 REQUEST。 */
   private async resolveReferenceText(
     input: ContextInfoInput,
     citingCandidates: InfoRawRecord[],
@@ -2696,7 +2295,6 @@ export class InfoCoreService {
     return { refText, refInfoRow };
   }
 
-  /** 并行采集 TAG_RELATIVE / SIMILARITY / KEYWORD 三维弱相关候选（三维无依赖）。 */
   private async collectWeakDimensionCandidates(
     sessionId: string,
     refText: string,
@@ -2715,7 +2313,6 @@ export class InfoCoreService {
     return { tag, sim, kw };
   }
 
-  /** 采集 TAG_RELATIVE 候选（全系统标签相关性消息）；失败降级为空列表，不阻断上下文构建。 */
   private async collectTagRelativeCandidates(
     sessionId: string,
     refInfoRow: InfoRawRecord | null,
@@ -2743,7 +2340,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 采集 SIMILARITY 候选（全系统向量语义相似消息）；失败降级为空列表，不阻断上下文构建。 */
   private async collectSimilarityCandidates(
     sessionId: string,
     refText: string,
@@ -2770,7 +2366,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 采集 KEYWORD 候选（全系统关键词匹配消息）；失败降级为空列表，不阻断上下文构建。 */
   private async collectKeywordCandidates(
     sessionId: string,
     refText: string,
@@ -2797,7 +2392,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 关键词候选过滤：剔除错误信息与低于 keyword_score_threshold 的项，满额即停。 */
   private pickKeywordCandidates(
     list: Array<InfoRawRecord & { keyword_score?: number }>,
     kwScoreThreshold: number,
@@ -2813,7 +2407,6 @@ export class InfoCoreService {
     return result;
   }
 
-  /** 采集 RANDOM 随机候选：失败保留已采部分，不阻断上下文构建（限额已按基础上下文动态收缩）。 */
   private async collectRandomCandidates(
     sessionId: string,
     randLimit: number,
@@ -2837,13 +2430,6 @@ export class InfoCoreService {
     return randCandidates;
   }
 
-  /**
-   * 随机采样（PRD 步骤 524，2026-09-15 第二版对齐）：会话内随机抽样是本维度基础动作，不受
-   * enable_cross_session 约束（该开关只控制跨会话全局兜底，原实现整体包进判断导致 Work Agent
-   * 子任务场景会话内随机被跳过）；「未选中」= 未被复选/钉住等显式维度采集，时间线候选不计入
-   * 排除集（重复剔除由按优先级全局去重统一裁决）；CURRENT 在采样阶段即排除（PRD 步骤 4），
-   * 避免当前消息先占名额再被剔除导致实收少 1（trace 162c58fc 实测 49/50）。
-   */
   private async sampleRandomCandidates(
     sessionId: string,
     randLimit: number,
@@ -2871,7 +2457,6 @@ export class InfoCoreService {
     return randCandidates;
   }
 
-  /** 会话内随机抽样：ORDER BY RANDOM() LIMIT 避免全表扫描，采样上限放宽为 min((randLimit+1)*3, count) 防腾挪误差。 */
   private async sampleSessionRandomCandidates(
     sessionId: string,
     randLimit: number,
@@ -2893,7 +2478,6 @@ export class InfoCoreService {
       .slice(0, randLimit);
   }
 
-  /** 跨会话全局随机补充剩余名额（仅 enable_cross_session=true 时调用），采样上限 min(remaining*3, 100)。 */
   private sampleGlobalRandomCandidates(remaining: number, filledIds: Set<string>): InfoRawRecord[] {
     const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
       `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
@@ -2905,7 +2489,6 @@ export class InfoCoreService {
       .filter((c) => this.isCorrectInfo(c));
   }
 
-  /** 当前消息仅应以 CURRENT（或经显式钉住/引用）出现：从弱相关维度候选中剔除，避免当前输入被重复采集。 */
   private excludeCurrentFromWeakDimensions(currentCandidate: InfoRawRecord | null, weakLists: InfoRawRecord[][]): void {
     if (currentCandidate) {
       const curId = currentCandidate.info_id;
@@ -2916,7 +2499,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 组装候选映射表（来源 → 候选）；内部执行轨迹（ACT trace JSON 动辄数十万字符）统一剔除，避免 LLM 输入超限。 */
   private buildContextCandidatesMap(buckets: ContextCandidateBuckets): Map<ContextCollectionSource, InfoRawRecord[]> {
     const withoutTraces = (list: InfoRawRecord[]): InfoRawRecord[] =>
       list.filter((c) => !this.isTraceInfo(c));
@@ -2931,7 +2513,6 @@ export class InfoCoreService {
     ]);
   }
 
-  /** 解析 priority_order 配置为去重后的合法采集优先级列表（未配置时用默认优先级，非法/重复来源剔除）。 */
   private parseContextPriorityList(priorityOrderStr?: string): ContextCollectionSource[] {
     const rawPriority = priorityOrderStr
       ? priorityOrderStr.split(',').map((s) => s.trim().toUpperCase() as ContextCollectionSource)
@@ -2945,7 +2526,6 @@ export class InfoCoreService {
     return priorityList;
   }
 
-  /** 批量预取全部候选（含当前消息）的摘要（避免逐条查询 N+1），返回 info_id → 摘要记录映射。 */
   private async prefetchContextSummaries(
     priorityList: ContextCollectionSource[],
     candidatesMap: Map<ContextCollectionSource, InfoRawRecord[]>,
@@ -2962,7 +2542,6 @@ export class InfoCoreService {
     return this.getInfoSummaryBatchByInfoIds([...allCandidateIds]);
   }
 
-  /** 按优先级去重收集并转为 ContextInfoItem；当前消息未被其它维度采集时以 CURRENT 类型置于最前（不参与时间线拼接）。 */
   private collectDedupedContextItems(
     priorityList: ContextCollectionSource[],
     candidatesMap: Map<ContextCollectionSource, InfoRawRecord[]>,
@@ -2989,7 +2568,6 @@ export class InfoCoreService {
     return collectedItems;
   }
 
-  /** 将 raw record 转为标准 ContextInfoItem（info 为空时回退摘要占位文本；接受预取的摘要避免 N+1）。 */
   private toContextItem(raw: InfoRawRecord, collectionSource: ContextCollectionSource, summaryText?: string): ContextInfoItem {
     let contentText = raw.info || '';
     if (!contentText && summaryText) {
@@ -3019,7 +2597,6 @@ export class InfoCoreService {
     };
   }
 
-  /** 按来源分类装配 categories（selected/pinned/timeline/citing/tag_relative/similarity/keyword/random/current）。 */
   private buildContextCategories(resultList: ContextInfoItem[]): NonNullable<ContextInfoOutput['categories']> {
     return {
       selected: resultList.filter((i) => i.collection_source === CollectionSource.CUSTOM),
@@ -3034,7 +2611,6 @@ export class InfoCoreService {
     };
   }
 
-  /** 从 categories 提取各来源的 info_id 列表（category_ids）。 */
   private buildContextCategoryIds(
     categories: NonNullable<ContextInfoOutput['categories']>,
   ): NonNullable<ContextInfoOutput['category_ids']> {
@@ -3051,7 +2627,6 @@ export class InfoCoreService {
     };
   }
 
-  /** 从 categories 统计各来源条数（sources_summary）。 */
   private buildContextSourcesSummary(categories: NonNullable<ContextInfoOutput['categories']>): Record<string, number> {
     return {
       selected: categories.selected.length,
@@ -3066,11 +2641,6 @@ export class InfoCoreService {
     };
   }
 
-  /**
-   * 组装三对象（source_ids_map / content_map / attribute_map）到 output，并按 work_id 落盘来源关系。
-   * @param persist 是否将来源关系落盘到 info_context_source 表；内部 Agent 复用 context() 时应传 false，
-   *                仅问答请求处理时的权威上下文构建（BUILD_WORK_CONTEXT / buildWorkContext）才落盘。
-   */
   private async fillContextTriplesAndPersist(
     output: ContextInfoOutput,
     resultList: ContextInfoItem[],
@@ -3120,7 +2690,6 @@ export class InfoCoreService {
     }
   }
 
-  /** 将 work_id → 来源 → info_id 关系落盘到 info_context_source 表（幂等：先删后插）。 */
   private async persistContextSourceMap(
     workId: string,
     sourceIdsMap: ContextSourceIdMap,
@@ -3131,7 +2700,7 @@ export class InfoCoreService {
       await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [
         { field: 'work_id', operator: Operator.EQ, value: workId },
       ]);
-    } catch { /* ignore */ }
+    } catch {  }
 
     const now = IdGenerator.now();
     for (const [source, infoIds] of Object.entries(sourceIdsMap)) {
@@ -3148,7 +2717,7 @@ export class InfoCoreService {
             { field: 'info_id', value: infoId },
           ]);
         } catch (err) {
-          // 容忍单条来源关系落盘失败：上下文快照持久化为辅助数据，缺失仅影响可视化溯源
+
           metrics?.warn('InfoCoreService.persistContextSourceMap 来源关系落盘失败已容忍', {
             error: err instanceof Error ? err.message : String(err),
             work_id: workId,
@@ -3172,34 +2741,6 @@ export class InfoCoreService {
     return rows.map((r) => this.toInfoRawRecord(r));
   }
 
-  private async randomSampleInfos(
-    count: number,
-    sessionId?: string,
-  ): Promise<InfoRawRecord[]> {
-    if (count <= 0) return [];
-
-    const conditions = sessionId
-      ? [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]
-      : [];
-
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions,
-      order_by: [{ field: 'created', direction: 'DESC' }],
-      page: { current: 1, size: 500 },
-    });
-
-    if (rows.length <= count) {
-      return rows.map((r) => this.toInfoRawRecord(r));
-    }
-
-    const shuffled = [...rows].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count).map((r) => this.toInfoRawRecord(r));
-  }
-
-  // =========================================================================
-  // Private: Tag vector maintenance
-  // =========================================================================
-
   private async maintainTagVector(
     tag: string,
     tagConfig: InfoTagConfigRecord,
@@ -3211,18 +2752,13 @@ export class InfoCoreService {
       if (!embedding || embedding.length === 0) return;
       await this.upsertTagVector(tag, embedding);
     } catch (err) {
-      // ignore
-      // 容忍标签向量维护失败：向量缺失仅影响相似检索召回，不影响标签落库主流程
+
       metrics?.warn('InfoCoreService.maintainTagVector 标签向量维护失败已容忍', {
         error: err instanceof Error ? err.message : String(err),
         tag,
       });
     }
   }
-
-  // =========================================================================
-  // Private: Config helpers
-  // =========================================================================
 
   private async ensureDefaultConfigs(): Promise<void> {
     await this.ensureDefaultConfigRow(
@@ -3276,9 +2812,6 @@ export class InfoCoreService {
     await this.relationDb.insert(table, data);
   }
 
-  /**
-   * Upsert 配置表行（第一行的更新或新增）。
-   */
   private async upsertConfigRow(
     table: string,
     input: object,
@@ -3319,10 +2852,6 @@ export class InfoCoreService {
     }
   }
 
-  // =========================================================================
-  // Private: Parsing helpers
-  // =========================================================================
-
   private parseStringArray(raw: string): string[] {
     try {
       let json = raw.trim();
@@ -3337,16 +2866,10 @@ export class InfoCoreService {
     }
   }
 
-  // =========================================================================
-  // Private: Record conversion helpers
-  // =========================================================================
-
-  /** 判断信息是否为正常结果（非错误信息）。 */
   private isCorrectInfo(record: { handle_result_type?: string }): boolean {
     return (record.handle_result_type ?? DEFAULT_HANDLE_RESULT_TYPE) === HandleResultType.CORRECT;
   }
 
-  /** 判断是否为内部执行轨迹记录（ACT 类型的 trace JSON，超大中间产物，不应作为上下文）。 */
   private isTraceInfo(record: { info_type?: string; info?: string }): boolean {
     if (record.info_type !== InfoType.ACT) return false;
     const info = String(record.info ?? '').trim();

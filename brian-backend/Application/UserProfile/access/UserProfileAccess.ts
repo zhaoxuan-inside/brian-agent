@@ -42,13 +42,13 @@ export class UserProfileAccess {
 
   async initialize(): Promise<void> { await this.initPromise; }
 
-  /** 启动自动生成画像调度 */
+  
   async startAutoGeneration(): Promise<void> {
     await this.initPromise;
     await (this.service as unknown as { startAutoGeneration(): void }).startAutoGeneration();
   }
 
-  /** 停止自动生成画像调度 */
+  
   async stopAutoGeneration(): Promise<void> {
     await this.initPromise;
     (this.service as unknown as { stopAutoGeneration(): void }).stopAutoGeneration();

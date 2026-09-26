@@ -1,15 +1,3 @@
-/**
- * @fileoverview ToolProvider 模块测试（ToolAccess 业务用例）。
- *
- * 测试范围：
- * - ID 生成：generateId / generateIds / now / today
- * - JSON：检查 / 格式化 / 压缩
- * - XML：检查 / 格式化 / 压缩
- * - 正则表达式匹配：全局匹配、捕获组、非法正则容错
- *
- * 纯工具测试，无数据库依赖。
- */
-
 import { describe, it, expect } from 'vitest';
 import { ToolAccess, HttpAccess, ToolSchemaInitializer, TOOL_CONFIG_TABLE } from '../ToolProvider';
 import {
@@ -37,7 +25,7 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 describe('ToolProvider', () => {
   const tool = new ToolAccess();
 
-  /** 标准签名调用辅助：构造 Input/Output/Context 并执行，返回 Output */
+  
   async function call<I extends Input, O extends Output>(
     method: string,
     IC: new () => I,
@@ -181,7 +169,7 @@ describe('ToolProvider', () => {
   describe('HttpAccess & 超时配置', () => {
     it('should use default 60000ms timeout when no config provided', async () => {
       const http = new HttpAccess();
-      // Verify instance creation and request interface
+      
       expect(http).toBeDefined();
       expect(typeof http.execRequest).toBe('function');
     });
@@ -202,7 +190,7 @@ describe('ToolProvider', () => {
       const val = await configService.getInt('http_timeout_ms', 60000);
       expect(val).toBe(45000);
 
-      // Update config
+      
       await configService.set('http_timeout_ms', '120000', 'INT');
       const updatedVal = await configService.getInt('http_timeout_ms', 60000);
       expect(updatedVal).toBe(120000);

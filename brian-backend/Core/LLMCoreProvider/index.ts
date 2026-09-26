@@ -1,14 +1,7 @@
-/**
- * @fileoverview LLMCoreProvider 模块统一导出。
- */
-
-// access 层
 export { LLMCoreAccess } from './access/LLMCoreAccess';
 
-// infrastructure 层
 export { LLMCoreSchemaInitializer } from './infrastructure/LLMCoreSchemaInitializer';
 
-// domain 层类型
 export {
   LLMCoreContext,
   MatchLLMInput,

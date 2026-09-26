@@ -1,13 +1,3 @@
-/**
- * @fileoverview LogProvider 接入层。
- *
- * 作为日志的唯一操作入口，封装 application 层 Service，
- * 通过 AOP 代理注入切面能力。
- *
- * 同时暴露 getRawService() 供 LogInterceptor 使用，
- * 避免 AOP 代理与日志切面之间产生递归调用。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -36,15 +26,15 @@ import {
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
 export class LogAccess {
-  /** 原始 Service（未经 AOP 包装），供 LogInterceptor 使用 */
+  
   private readonly rawService: LogService;
-  /** AOP 包装后的 Service */
+  
   private readonly service: LogService;
 
-  /** 专用于日志的 RelationDB 实例 */
+  
   private readonly relationDb: RelationDBAccess;
 
-  // ===== 修改后的构造函数 =====
+  
   constructor(
     relationDbOrOptions?: RelationDBAccess | SQLiteRelationDBOptions | string,
     logger?: Logger,
@@ -64,21 +54,18 @@ export class LogAccess {
     this.service = AopProxy.wrap(this.rawService, { logger });
   }
 
-  /** 获取日志模块底层的 RelationDBAccess 实例 */
+  
   getRelationDb(): RelationDBAccess {
     return this.relationDb;
   }
 
-  /** 初始化组件 */
+  
   async initialize(): Promise<void> {
     await this.rawService.initialize();
   }
 
-  /**
-   * 获取原始 Service（未经 AOP 包装）。
-   *
-   * 供 LogInterceptor 使用，避免 AOP 代理与日志切面之间产生递归调用。
-   */
+  
+
   getRawService(): LogService {
     return this.rawService;
   }

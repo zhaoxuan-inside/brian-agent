@@ -1,13 +1,3 @@
-/**
- * @fileoverview LLMEventsRunner 单元测试（Runtime v2 · 阶段 0）。
- *
- * mock 全局 fetch 返回 SSE ReadableStream，验证：
- * - 事件归一化与聚合（text/reasoning/tool_calls/finish）；
- * - 空闲看门狗（流停滞超时 → AbortedError('timeout')）；
- * - 外部 signal 真取消（→ AbortedError('user')）；
- * - HTTP 非 2xx → ProcessingError(REMOTE_ERROR)。
- */
-
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS } from '../LLMProvider/application/llmevents/LLMEventsRunner';
 import { AbortedError, ProviderError } from '../shared/errors';
@@ -20,7 +10,6 @@ const REQUEST = {
   body: '{}',
 };
 
-/** 构造 SSE 字节流 */
 function sseStream(frames: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream<Uint8Array>({
@@ -33,7 +22,6 @@ function sseStream(frames: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-/** 组装 OpenAI 兼容 data 帧 */
 function dataFrame(json: string): string {
   return `data: ${json}\n\n`;
 }
@@ -101,7 +89,7 @@ describe('LLMEventsRunner', () => {
   });
 
   it('外部 signal 取消应该真取消读循环（AbortedError user）', async () => {
-    const never = new ReadableStream<Uint8Array>({ start() { /* 永不产出 */ } });
+    const never = new ReadableStream<Uint8Array>({ start() {  } });
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, body: never });
     const controller = new AbortController();
     const runner = new LLMEventsRunner({ request: REQUEST, signal: controller.signal, idle_watchdog_ms: 5000 });
@@ -119,7 +107,7 @@ describe('LLMEventsRunner', () => {
     const broken = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode(dataFrame('{\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}')));
-        controller.close(); // 无 finish_reason 帧、无 [DONE]，模拟断流
+        controller.close();
       },
     });
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, body: broken });

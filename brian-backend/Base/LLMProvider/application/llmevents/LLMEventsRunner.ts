@@ -1,20 +1,3 @@
-/**
- * @fileoverview LLMEventsRunner —— execLLMEvents 流执行器（Runtime v2 · 阶段 0）。
- *
- * 职责（Loop-PRD §4/§7）：
- * 1. 按 strategy 构造的请求发起 SSE fetch；
- * 2. 读循环逐帧解析（LLMEventsParser）并经 on_event 回调产出归一化事件；
- * 3. **真取消**：外部 AbortSignal + 空闲看门狗合并为同一 controller；任意一者
- *    触发即终止读循环并抛 AbortedError(类型化原因)。
- *    —— 修复旧 execLLM 流式路径缺陷：计时器在 fetch 响应头返回后即被
- *    clearTimeout，读循环阶段流停滞可永久悬挂（LLMService.ts 旧实现）。
- * 4. 流结束产出 finish 事件（聚合 tool_calls + usage）。
- *
- * 错误语义（fail-loud）：HTTP 非 2xx 抛 ProcessingError('REMOTE_ERROR')；
- * 网络/解析异常抛 ProviderError('CONNECT_ERROR')；取消抛 AbortedError。
- * 每个方法 ≤40 行（Runtime-PRD §7）。
- */
-
 import type { HttpRequestOptions } from '../strategies/ILLMProviderStrategy';
 import type {
   LLMEvent,
@@ -28,47 +11,40 @@ import {
 } from '../../../shared/errors';
 import { LLMEventsParser } from './LLMEventsParser';
 
-/** 单次流执行结果 */
 export interface LLMEventsRunResult {
-  /** 聚合回复文本 */
+
   text: string;
-  /** 聚合思考文本 */
+
   reasoning: string;
-  /** 结束原因 */
+
   finish_reason: 'tool-calls' | 'stop' | 'aborted' | 'error';
-  /** 聚合完成的完整工具调用 */
+
   tool_calls: ParsedToolCall[];
-  /** 输入 Token 数 */
+
   input_tokens: number;
-  /** 输出 Token 数 */
+
   output_tokens: number;
-  /** [DONE] 前最后一帧（可携带 usage，供 finish 事件构建） */
+
   last_frame: unknown;
-  /** 是否已向 on_event 产出过事件（服务层据此禁止降级，避免跨候选混合流） */
+
   emitted_events: boolean;
 }
 
-/** 流执行器配置 */
 export interface LLMEventsRunnerOptions {
-  /** 策略构造的请求（含 url/method/headers/body） */
+
   request: HttpRequestOptions;
-  /** 外部取消信号（贯穿请求与流读取全程） */
+
   signal?: AbortSignal;
-  /** 空闲看门狗毫秒数（连续无 chunk 超时中止） */
+
   idle_watchdog_ms: number;
-  /** 归一化事件回调 */
+
   on_event?: (event: LLMEvent) => void;
-  /** 可选日志 */
+
   logger?: Logger;
 }
 
-// ===== 修改后（2026-09-13）：看门狗默认提升至 120s（OpenClaw 2.0 / V2 PRD 标准），并在 readLoop 接收 chunk 时真实重置 =====
-/** 空闲看门狗默认值（120s，OpenClaw / V2 PRD 标准） */
 export const DEFAULT_IDLE_WATCHDOG_MS = 120000;
 
-/**
- * LLMEventsRunner。
- */
 export class LLMEventsRunner {
   private readonly parser = new LLMEventsParser();
   private readonly opts: LLMEventsRunnerOptions;
@@ -87,9 +63,6 @@ export class LLMEventsRunner {
     });
   }
 
-  /**
-   * 解析本地取消原因（数据处理）：外部 signal 已取消 → 外部原因；否则超时。
-   */
   private resolveLocalAbortReason(): AbortReasonKind {
     if (this.opts.signal?.aborted) {
       return this.resolveExternalReason(this.opts.signal);
@@ -97,9 +70,6 @@ export class LLMEventsRunner {
     return 'timeout';
   }
 
-  /**
-   * 执行流（逻辑控制）：fetch → 读循环 → finish 事件 → 结果。
-   */
   async run(): Promise<LLMEventsRunResult> {
     const cleanup = this.setupAbortWiring();
     try {
@@ -114,10 +84,6 @@ export class LLMEventsRunner {
     }
   }
 
-  // ===== 修改后的方法（2026-09-13）：保留 resetIdle 句柄并在收到数据帧时重置 =====
-  /**
-   * 中止接线（逻辑控制）：外部 signal → controller；空闲看门狗逐帧重置。
-   */
   private setupAbortWiring(): () => void {
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     this.resetIdle = (): void => {
@@ -141,18 +107,12 @@ export class LLMEventsRunner {
     return () => clearTimeout(idleTimer);
   }
 
-  /**
-   * 本地取消（逻辑控制）。
-   */
   private abortLocal(reason: AbortReasonKind): void {
     if (!this.controller.signal.aborted) {
       this.controller.abort(reason);
     }
   }
 
-  /**
-   * 解析外部取消原因（数据处理）：signal.reason 为字符串时直接映射。
-   */
   private resolveExternalReason(signal?: AbortSignal): AbortReasonKind {
     const reason = signal?.reason;
     if (typeof reason === 'string' && reason) {
@@ -161,9 +121,6 @@ export class LLMEventsRunner {
     return 'user';
   }
 
-  /**
-   * 发起 SSE 请求（逻辑控制）。
-   */
   private async launchRequest(): Promise<Response> {
     let res: Response;
     try {
@@ -186,13 +143,6 @@ export class LLMEventsRunner {
     return res;
   }
 
-  // ===== 修改后的方法（2026-09-13）：每读取到有效 chunk 帧重置看门狗 =====
-  /**
-   * SSE 读循环（逻辑控制）：逐行派发，[DONE] 或连接关闭结束。
-   *
-   * 每次 read 与 aborted promise 竞速 —— 保证外部 signal / 看门狗取消
-   * 对任何流实现（含未接线 signal 的流）都能真取消。每帧数据到达均刷新空闲计时器。
-   */
   private async readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<LLMEventsRunResult> {
     const decoder = new TextDecoder();
     let buffer = '';
@@ -219,9 +169,6 @@ export class LLMEventsRunner {
     }
   }
 
-  /**
-   * 派发 SSE 行（逻辑控制）：data 行 → 解析帧 → 事件回调；返回最后有效帧。
-   */
   private dispatchLines(lines: string[], lastFrame: unknown): unknown {
     let frame = lastFrame;
     for (const line of lines) {
@@ -247,18 +194,11 @@ export class LLMEventsRunner {
     return frame;
   }
 
-  /** 事件投递计数（逻辑控制） */
   private emitToSubscriber(event: LLMEvent): void {
     this.emittedCount += 1;
     this.opts.on_event?.(event);
   }
 
-  /**
-   * 构建最终结果并产出 finish 事件（数据处理）。
-   *
-   * 修复①：流内未出现显式 finish_reason 帧即结束（中途断流）→ finish_reason='error'，
-   * 与正常完成（stop）可区分，消费方可按规范化失败处理。
-   */
   private buildResult(
     lastFrame: unknown,
     finishReason: 'tool-calls' | 'stop' | 'aborted' | 'error' | undefined,
@@ -281,9 +221,6 @@ export class LLMEventsRunner {
     };
   }
 
-  /**
-   * 取消/网络异常归类（数据处理）：controller 已取消 → AbortedError，否则连接错误。
-   */
   private toAbortOrConnectError(err: unknown): ProviderError {
     if (this.controller.signal.aborted) {
       const reason = this.resolveExternalReason(this.opts.signal);

@@ -1,15 +1,3 @@
-/**
- * @fileoverview CronProvider 接入层。
- *
- * 作为定时任务调度中心的统一入口。提供两类接口：
- * 1. 内部布线接口（registerTask / start / stop）：供 DI 层注册任务与启停调度循环；
- * 2. 查询/更新接口（listCronTasks / soCronTask / setCronTask / setCronTaskEnabled /
- *    triggerCronTask / listCronTaskRuns）：采用 (Input, Context, Output) 签名，供 HTTP 层调用。
- *
- * 说明：CronService 是状态化调度器（持有 handler 注册表与定时器），因此不做 AopProxy 包装，
- * 其内部通过注入的 logger 记录执行日志。
- */
-
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
@@ -41,11 +29,11 @@ export class CronAccess {
     this.service = new CronService(relationDb, logger);
   }
 
-  // -------------------------------------------------------------------------
-  // 内部布线（发布订阅）
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /** 订阅定时任务：注册 name / 默认 cron / handler */
+  
   async registerTask(
     name: string,
     description: string | undefined,
@@ -55,19 +43,19 @@ export class CronAccess {
     await this.service.registerTask({ name, description, defaultCron, handler });
   }
 
-  /** 启动调度循环 */
+  
   start(): void {
     this.service.start();
   }
 
-  /** 停止调度循环 */
+  
   stop(): void {
     this.service.stop();
   }
 
-  // -------------------------------------------------------------------------
-  // 查询 / 更新
-  // -------------------------------------------------------------------------
+  
+  
+  
 
   async listCronTasks(_input: ListCronTasksInput, output: ListCronTasksOutput, _context: CronContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
     output.tasks = this.service.listTasks();

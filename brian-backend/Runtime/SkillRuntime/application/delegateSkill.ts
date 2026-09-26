@@ -1,19 +1,8 @@
-/**
- * @fileoverview delegate 编排原语工具（OpenClaw 2.0 范式；Tools-PRD §6.3）。
- *
- * 子代理委派：Agent 用它把子任务 spawn 为 subagent lane 上的独立 run。
- * 2026-09-23 委派收口改造（原 fire-and-forget 回执见 git 历史）：
- * - 回执携带 run_id（主 run 收口前 join 子 run，并把结果并入写作 Agent 的 agent_results）；
- * - 提交透传 parent_run_id / agent_ref（父子关系登记 + 指定 Agent 直选路由）；
- * - 回执明确告知"结果将统一汇总"，杜绝模型因收不到结果语义而重复委派。
- */
-
 import { z } from 'zod';
 import { ValidationError } from '@brian-agent/base';
 import { SkillResultStatus } from '../domain/types';
 import type { SkillDef } from '../domain/types';
 
-/** delegate 依赖：提交子 run 的入口（组合根注入 RunGatewayAccess.submitRun 适配） */
 export interface DelegateDeps {
   submitRun(input: {
     session_key: string;
@@ -25,7 +14,6 @@ export interface DelegateDeps {
   }): Promise<{ run_id: string }>;
 }
 
-/** delegate 工具（子任务在 subagent lane 执行；结果由父 run 的写作 Agent 统一收口） */
 export function delegateSkill(deps: DelegateDeps): SkillDef<{ task_content: string; agent_ref?: string }> {
   return {
     id: 'skill_builtin-delegate',

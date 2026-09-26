@@ -53,7 +53,6 @@ describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供�
     };
   }
 
-  /** MCPAccess stub：本地无可用 MCP + 单提供商市场清单 + 安装/启动记录 */
   function stubMcpAccess(opts: { installId?: string; marketEmpty?: boolean } = {}): { access: MCPAccess; calls: Record<string, number> } {
     const calls = { install: 0, start: 0 };
     const access = {
@@ -120,11 +119,10 @@ describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供�
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
-  /** 种子化一条 Prompt 模板（市场模板 LIKE '%MCP 市场%' 回退 anyRow 兜底用） */
   async function seedTemplate(): Promise<void> {
     const addInput = new AddPromptInput();
     addInput.data = {

@@ -1,9 +1,3 @@
-/**
- * @fileoverview ToolProvider 表结构初始化。
- *
- * 仅创建 tool_config 配置表（key-value 结构），用于存储 HTTP 超时等全局配置。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { TOOL_CONFIG_TABLE } from '../domain/types';
 

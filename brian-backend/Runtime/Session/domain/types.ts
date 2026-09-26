@@ -1,47 +1,16 @@
-/**
- * @fileoverview Session 模块领域层类型定义（Runtime v2 · 阶段1）。
- *
- * 依据 `docs/_3_BackendDesign/_07_Runtime/Session/Session-PRD.md`：
- * 会话（session）→ 消息（message）→ Part（message_part）三级模型，
- * 循环控制状态全部从持久化 Part 派生（OpenCode 消息中心范式）。
- *
- * 有限值域一律以 Enum 注册（DevStandards §1）；会话并发控制由 Runs 模块
- * session lane 统一承担（去重优先），Session 不再提供忙锁方法。
- *
- * 所有 Input 继承 {@link Input}，所有 Context 继承 {@link Context}，
- * 所有 Output 继承 {@link Output}（`@brian-agent/base`）。
- */
-
 import { Input, Context, Output } from '@brian-agent/base';
 
-/**
- * Session 上下文（SessionContext）。
- */
 export class SessionContext extends Context {}
 
-// ---------------------------------------------------------------------------
-// 枚举（有限值域唯一注册点）
-// ---------------------------------------------------------------------------
-
-/** 消息角色 */
 export enum MessageRole {
   User = 'user',
   Assistant = 'assistant',
 }
 
-/** 会话状态 */
 export enum SessionStatus {
   Active = 'active',
 }
 
-/**
- * Part 类型（Session-PRD §1.2）：
- * - reasoning：思考/推理内容（思考面板）
- * - text：回复内容（回复面板）
- * - tool：工具调用（每个 toolCall 必有配对 result —— append-only 结构不变量）
- * - steering：边界抽干注入的排队消息
- * - subtask：delegate 子任务引用
- */
 export enum PartType {
   Reasoning = 'reasoning',
   Text = 'text',
@@ -50,7 +19,6 @@ export enum PartType {
   Subtask = 'subtask',
 }
 
-/** Part 状态机（tool Part）：pending → running → completed/error/aborted；aborted 必带类型化取消原因 */
 export enum PartStatus {
   Pending = 'pending',
   Running = 'running',
@@ -59,13 +27,6 @@ export enum PartStatus {
   Aborted = 'aborted',
 }
 
-// ---------------------------------------------------------------------------
-// 数据对象
-// ---------------------------------------------------------------------------
-
-/**
- * 消息含 Parts 的复合对象（soMessages 返回）。
- */
 export interface MessageWithParts {
   id: string;
   role: MessageRole;
@@ -76,9 +37,6 @@ export interface MessageWithParts {
   parts: PartRecord[];
 }
 
-/**
- * Part 表记录（含系统字段）。
- */
 export interface PartRecord {
   id: string;
   msg_id: string;
@@ -98,152 +56,112 @@ export interface PartRecord {
   updated: number;
 }
 
-// ---------------------------------------------------------------------------
-// addSession
-// ---------------------------------------------------------------------------
-
-/** addSession 入参（幂等：session_key 已存在返回既有 id） */
 export class AddSessionInput extends Input {
-  /** 外部会话标识（唯一） */
+  
   session_key!: string;
-  /** 会话标题 */
+  
   title?: string;
-  /** 引用 runtime_agent_def.id（阶段3 声明代理；空串=运行时解析） */
+  
   agent_def_id?: string;
 }
 
-/** addSession 出参 */
 export class AddSessionOutput extends Output {
-  /** 会话 ID（既有会话返回既有 id） */
+  
   session_id!: string;
-  /** 是否新建 */
+  
   created!: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// addMessage
-// ---------------------------------------------------------------------------
-
-/** addMessage 入参（seq = last_seq + 1，严格递增） */
 export class AddMessageInput extends Input {
-  /** 引用 runtime_session.id */
+  
   session_id!: string;
-  /** 引用 runtime_run.id（user 消息为空） */
+  
   run_id?: string;
-  /** 消息角色 */
+  
   role!: MessageRole;
-  /** 消息正文 */
+  
   content!: string;
-  /** Token 数（可选） */
+  
   token_count?: number;
 }
 
-/** addMessage 出参 */
 export class AddMessageOutput extends Output {
-  /** 消息 ID */
+  
   msg_id!: string;
-  /** 会话内消息序号 */
+  
   seq!: number;
 }
 
-// ---------------------------------------------------------------------------
-// addPart / updatePart
-// ---------------------------------------------------------------------------
-
-/** addPart 入参 */
 export class AddPartInput extends Input {
-  /** 引用 runtime_message.id */
+  
   msg_id!: string;
-  /** 引用 runtime_run.id（可选） */
+  
   run_id?: string;
-  /** Part 类型 */
+  
   part_type!: PartType;
-  /** 初始内容（delta 逐次追加时可为空串） */
+  
   content?: string;
-  /** 工具标识（part_type=tool 时） */
+  
   tool_id?: string;
-  /** 工具调用参数 JSON（食材直存，成品经事件流） */
+  
   input_json?: string;
-  /** 块类型（块流式输出：heading/code_block/…） */
+  
   block_type?: string;
-  /** 块元信息 JSON */
+  
   block_meta?: string;
 }
 
-/** addPart 出参 */
 export class AddPartOutput extends Output {
-  /** Part ID */
+  
   part_id!: string;
-  /** 消息内 Part 序号 */
+  
   part_order!: number;
 }
 
-/** updatePart 入参（状态机 pending→running→completed/error/aborted） */
 export class UpdatePartInput extends Input {
-  /** Part ID */
+  
   part_id!: string;
-  /** 目标状态 */
+  
   status?: PartStatus;
-  /** 内容追加（delta 语义：追加到 content） */
+  
   content_patch?: string;
-  /** 工具结果 JSON（配对完成时；aborted 时写类型化取消原因） */
+  
   output_json?: string;
-  /** Token 数 */
+  
   token_count?: number;
-  /** 耗时毫秒 */
+  
   elapsed_ms?: number;
 }
 
-/** updatePart 出参 */
 export class UpdatePartOutput extends Output {}
 
-// ---------------------------------------------------------------------------
-// soMessages
-// ---------------------------------------------------------------------------
-
-/** soMessages 入参（seq 倒序取页，升序返回） */
 export class SoMessagesInput extends Input {
-  /** 引用 runtime_session.id */
+  
   session_id!: string;
-  /** 页大小（默认 50） */
+  
   limit?: number;
-  /** 早于该 seq（分页游标） */
+  
   before_seq?: number;
 }
 
-/** soMessages 出参 */
 export class SoMessagesOutput extends Output {
-  /** 消息列表（seq 升序返回） */
+  
   messages: MessageWithParts[] = [];
 }
 
-// ---------------------------------------------------------------------------
-// configSession
-// ---------------------------------------------------------------------------
-
-/** configSession 入参 */
 export class ConfigSessionInput extends Input {
-  /** 启用/禁用 Session 组件（缺省 true） */
+  
   enabled?: boolean;
-  /** soMessages 默认页大小（默认 50） */
+  
   default_message_limit?: number;
 }
 
-/** configSession 出参 */
 export class ConfigSessionOutput extends Output {}
 
-// ---------------------------------------------------------------------------
-// 表名
-// ---------------------------------------------------------------------------
-
-/** runtime_session 表名 */
 export const RUNTIME_SESSION_TABLE = 'runtime_session';
 
-/** runtime_message 表名 */
 export const RUNTIME_MESSAGE_TABLE = 'runtime_message';
 
-/** runtime_message_part 表名 */
 export const RUNTIME_MESSAGE_PART_TABLE = 'runtime_message_part';
 
-/** runtime_session_config 配置表名 */
 export const RUNTIME_SESSION_CONFIG_TABLE = 'runtime_session_config';

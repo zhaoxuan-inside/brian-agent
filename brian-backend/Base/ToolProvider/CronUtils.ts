@@ -1,22 +1,3 @@
-/**
- * @fileoverview Cron 表达式工具（无状态纯函数）。
- *
- * 采用 6 字段 Quartz 风格 cron：`秒 分 时 日 月 周`。
- * 各字段取值范围：
- *   - 秒   second：0-59
- *   - 分   minute：0-59
- *   - 时   hour：0-23
- *   - 日   day：1-31（月中的第几天）
- *   - 月   month：1-12
- *   - 周   week：0-6（0=周日，6=周六），兼容 7 表示周日
- *
- * 字段语法支持：`*`（任意）、单值（如 `5`）、列表（如 `1,15,30`）、
- * 区间（如 `10-20`）、步长（如 `*`/5、`10-20`/2）。
- *
- * 兼容 5 字段标准 cron（分 时 日 月 周）：自动在最前面补 `0` 作为秒字段。
- */
-
-/** Cron 字段定义（生成/解析用） */
 export interface CronFields {
   second: string;
   minute: string;
@@ -26,15 +7,13 @@ export interface CronFields {
   week: string;
 }
 
-/** Cron 校验结果 */
 export interface CronCheckResult {
   valid: boolean;
   error: string;
-  /** 归一化后的 6 字段表达式（合法时有效） */
+  
   normalized: string;
 }
 
-/** 字段范围定义 */
 const FIELD_RANGES: Record<keyof CronFields, { min: number; max: number }> = {
   second: { min: 0, max: 59 },
   minute: { min: 0, max: 59 },
@@ -55,20 +34,17 @@ const WEEK_NAMES: Record<string, number> = {
   sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
 };
 
-/** 月份名称 → 数字（不区分大小写），无匹配返回 null */
 function resolveMonthName(token: string): number | null {
   const lower = token.toLowerCase();
   return MONTH_NAMES[lower] ?? null;
 }
 
-/** 周名称 → 数字（0=周日），无匹配返回 null */
 function resolveWeekName(token: string): number | null {
   const lower = token.toLowerCase();
   if (lower === '7' || lower === 'sunday') return 0;
   return WEEK_NAMES[lower] ?? null;
 }
 
-/** 校验单个字段表达式（支持 *、单值、列表、区间、步长） */
 function validateField(field: keyof CronFields, expr: string): string | null {
   const range = FIELD_RANGES[field];
   if (!expr || expr.trim() === '') return `${field} 字段不能为空`;
@@ -78,7 +54,7 @@ function validateField(field: keyof CronFields, expr: string): string | null {
     const part = rawPart.trim();
     if (part === '') return `${field} 字段包含空项`;
 
-    // 步长
+    
     let step = 1;
     let base = part;
     const slashIdx = part.indexOf('/');
@@ -91,7 +67,7 @@ function validateField(field: keyof CronFields, expr: string): string | null {
     }
 
     if (base === '*') {
-      // */step 合法
+      
       continue;
     }
 
@@ -113,7 +89,6 @@ function validateField(field: keyof CronFields, expr: string): string | null {
   return null;
 }
 
-/** 解析单个值（数字 / 月份名 / 周名），返回数字或 null */
 function resolveValue(field: keyof CronFields, token: string): number | null {
   const t = token.trim();
   if (/^\d+$/.test(t)) {
@@ -128,7 +103,6 @@ function resolveValue(field: keyof CronFields, token: string): number | null {
   return null;
 }
 
-/** 将表达式归一化为 6 字段（兼容 5 字段与 7 字段） */
 export function normalizeCron(expr: string): string {
   const parts = expr.trim().split(/\s+/);
   if (parts.length === 5) {
@@ -143,7 +117,6 @@ export function normalizeCron(expr: string): string {
   return expr.trim();
 }
 
-/** 校验 cron 表达式，返回归一化后的结果 */
 export function checkCron(expr: string): CronCheckResult {
   if (!expr || expr.trim() === '') {
     return { valid: false, error: 'cron 表达式不能为空', normalized: '' };
@@ -163,7 +136,6 @@ export function checkCron(expr: string): CronCheckResult {
   return { valid: true, error: '', normalized };
 }
 
-/** 解析 cron 表达式为字段对象（非法时抛错） */
 export function parseCron(expr: string): CronFields {
   const result = checkCron(expr);
   if (!result.valid) {
@@ -180,7 +152,6 @@ export function parseCron(expr: string): CronFields {
   };
 }
 
-/** 由字段生成 cron 表达式（非法字段抛错） */
 export function generateCron(fields: CronFields): string {
   const values: string[] = [];
   for (const field of FIELD_ORDER) {
@@ -192,7 +163,6 @@ export function generateCron(fields: CronFields): string {
   return values.join(' ');
 }
 
-/** 判断某个字段表达式是否匹配给定值 */
 function matchesField(field: keyof CronFields, expr: string, value: number): boolean {
   if (expr === '*') return true;
   const parts = expr.split(',');
@@ -217,7 +187,7 @@ function matchesField(field: keyof CronFields, expr: string, value: number): boo
     }
     const val = resolveValue(field, base);
     if (field === 'week' && val === 7) {
-      if (value === 0) return true; // 7 视作周日（0）
+      if (value === 0) return true;
     } else if (val !== null && value === val) {
       return true;
     }
@@ -225,13 +195,12 @@ function matchesField(field: keyof CronFields, expr: string, value: number): boo
   return false;
 }
 
-/** 判断某个时间戳是否匹配 cron 表达式 */
 export function matchesCron(expr: string, date: Date): boolean {
   const result = checkCron(expr);
   if (!result.valid) return false;
   const parts = result.normalized.split(/\s+/);
   const d = new Date(date.getTime());
-  const week = d.getDay(); // 0=周日
+  const week = d.getDay();
   return (
     matchesField('second', parts[0], d.getSeconds()) &&
     matchesField('minute', parts[1], d.getMinutes()) &&
@@ -242,7 +211,6 @@ export function matchesCron(expr: string, date: Date): boolean {
   );
 }
 
-/** 计算下次匹配时间（毫秒时间戳），找不到返回 null（上限 400 天） */
 export function nextRunTime(expr: string, fromMs?: number): number | null {
   const result = checkCron(expr);
   if (!result.valid) return null;
@@ -250,13 +218,13 @@ export function nextRunTime(expr: string, fromMs?: number): number | null {
   const from = fromMs !== undefined ? fromMs : Date.now();
   const limit = from + 400 * 24 * 60 * 60 * 1000;
 
-  // 秒字段为 0 或 * 时按分钟粒度迭代，提升效率
+  
   const parts = result.normalized.split(/\s+/);
   const secondField = parts[0];
   const minuteGranular = secondField === '0' || secondField === '*';
 
   if (minuteGranular) {
-    let t = Math.floor(from / 60000) * 60000 + 60000; // 下一分钟
+    let t = Math.floor(from / 60000) * 60000 + 60000;
     while (t <= limit) {
       const d = new Date(t);
       if (
@@ -273,7 +241,7 @@ export function nextRunTime(expr: string, fromMs?: number): number | null {
     return null;
   }
 
-  // 秒级粒度逐秒迭代
+  
   let t = from + 1000;
   while (t <= limit) {
     if (matchesCron(result.normalized, new Date(t))) return t;

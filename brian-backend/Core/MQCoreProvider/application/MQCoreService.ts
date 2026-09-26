@@ -1,16 +1,3 @@
-/**
- * @fileoverview MQCoreProvider 应用服务层。
- *
- * 提供工作器（Worker）管理业务逻辑：startWorker / stopWorker / soWorker。
- * 每个工作器通过 setInterval 定时轮询 MQProvider 消费消息并通过 handler 处理。
- *
- * 并发控制：单个工作器最多同时处理 5 条消息（semaphore），
- * 超限时跳过当前轮询周期（backpressure）。
- *
- * 重试控制：每条消息最多重试 3 次，通过内存 Map 独立追踪；
- * 达到上限后 MQProvider 的 nackMQ 自动将消息标记为 FAILED。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import {
   MQAccess,
@@ -35,15 +22,10 @@ import {
   WorkerInfo,
 } from '../domain/types';
 
-/** 最大并发处理消息数 */
 const MAX_CONCURRENCY = 5;
 
-/** 最大重试次数 */
 const MAX_RETRIES = 3;
 
-/**
- * 内存中的工作器状态。
- */
 interface WorkerState {
   worker_id: string;
   queue: string;
@@ -53,45 +35,33 @@ interface WorkerState {
   started_at: number;
   processed_count: number;
   error_count: number;
-  /** 当前正在处理的消息数（semaphore） */
+  
   active_count: number;
 }
 
-/**
- * MQCoreProvider 应用服务。
- *
- * 管理多个轮询消费工作器，每个工作器独立维护生命周期与统计信息。
- * 本服务无状态持久化需求——所有工作器状态仅在运行时存于内存。
- */
 export class MQCoreService {
-  /** worker_id → WorkerState */
+  
   private readonly workers = new Map<string, WorkerState>();
 
-  /** message_id → 当前已重试次数 */
+  
   private readonly retryMap = new Map<string, number>();
 
-  /**
-   * @param mqAccess MQProvider 接入层实例（已初始化）
-   */
+  
+
   constructor(private readonly mqAccess: MQAccess) {}
 
-  /**
-   * 启动一个轮询消费工作器。
-   *
-   * PRD 3.1 条：为指定队列创建轮询工作器，按 interval 定时消费并处理消息。
-   *
-   * @returns worker_id 写入 output.worker_id
-   */
+  
+
   async startWorker(input: StartWorkerInput, output: StartWorkerOutput, _context: MQCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const { queue, handler } = input;
     const interval = input.interval ?? 1000;
 
-    // 幂等防重：同一队列只保留一个常驻 worker，重复 start 直接复用既有实例。
-    // 调用方（startEvalSchedule / receiveWorkAsync / execAgentAsync 等）存在
-    // "重复调用以防重启"的路径，此前每次调用都会新建 setInterval 且永不停止，
-    // 造成定时器随业务量无界累积（每完成一次对话净增 3 个 1s 轮询）。
-    // 需要更换 handler 时应先 stopWorker（支持按队列批量停止）再 start。
+    
+    
+    
+    
+    
     for (const state of this.workers.values()) {
       if (state.queue === queue) {
         output.worker_id = state.worker_id;
@@ -104,7 +74,7 @@ export class MQCoreService {
       worker_id: workerId,
       queue,
       handler,
-      // setInterval 返回 Timeout 对象，Node.js 下调用 clearInterval 即可清除
+      
       interval_id: undefined as unknown as ReturnType<typeof setInterval>,
       interval,
       started_at: Date.now(),
@@ -124,27 +94,21 @@ export class MQCoreService {
     return true;
   }
 
-  /**
-   * 停止工作器。
-   *
-   * PRD 3.2 条：按 worker_id 精确停止单个工作器；按 queue 批量停止该队列所有工作器。
-   *
-   * @param input.identifier 工作器 ID 或队列名
-   * @returns 停止数量写入 output.stopped_count
-   */
+  
+
   async stopWorker(input: StopWorkerInput, output: StopWorkerOutput, _context: MQCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const identifier = input.identifier;
     let stoppedCount = 0;
 
-    // 精确按 worker_id 匹配
+    
     const byId = this.workers.get(identifier);
     if (byId) {
       clearInterval(byId.interval_id);
       this.workers.delete(identifier);
       stoppedCount = 1;
     } else {
-      // 按队列名称匹配，停止所有同队列工作器
+      
       const toStop: string[] = [];
       for (const [id, state] of this.workers) {
         if (state.queue === identifier) {
@@ -162,14 +126,8 @@ export class MQCoreService {
     return true;
   }
 
-  /**
-   * 查询运行中的工作器。
-   *
-   * PRD 3.3 条：列出所有工作器或按队列过滤。
-   *
-   * @param input.queue 可选队列名，不指定则返回全部
-   * @returns 工作器列表写入 output.workers
-   */
+  
+
   async soWorker(input: SoWorkerInput, output: SoWorkerOutput, _context: MQCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const queueFilter = input.queue;
@@ -192,18 +150,14 @@ export class MQCoreService {
     return true;
   }
 
-  // -------------------------------------------------------------------------
-  // 内部实现
-  // -------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 单次轮询处理：从队列消费一条消息并调用 handler 处理。
-   *
-   * 并发控制（backpressure）：若当前 active_count ≥ 5 则跳过本轮。
-   * 成功 → ack；失败 → nack 并跟踪重试。
-   */
+  
+
   private async pollTick(state: WorkerState): Promise<void> {
-    // 背压：并发数已满
+    
     if (state.active_count >= MAX_CONCURRENCY) {
       return;
     }
@@ -228,7 +182,7 @@ export class MQCoreService {
           ackInput.message_id = msg.id;
           await this.mqAccess.ackMQ(ackInput, new AckMQOutput(), new MQContext());
 
-          // 成功后清理重试计数
+          
           this.retryMap.delete(msg.id);
           state.processed_count++;
         } else {
@@ -238,30 +192,29 @@ export class MQCoreService {
         await this.handleFailure(state, msg);
       }
     } catch (err) {
-      // consumeMQ 自身抛出的错误（例如网络、组件禁用）不增加 error_count，
-      // 等待下一轮重试。
-      // 判定条件：轮询容错路径。本方法处于 setInterval 定时器边界，无 Metrics 穿透通道
-      // （startWorker 的 metrics 仅存在于启动瞬间）；且组件禁用等持续性错误每个 interval
-      // 都会触发一次，此处 warn 会造成周期性日志噪音，故维持静默容忍、靠 error_count
-      // 与消息重试计数（handleFailure / nackMQ）暴露异常。
+      
+      
+      
+      
+      
+      
       void err;
     } finally {
       state.active_count--;
     }
   }
 
-  /**
-   * 处理 handler 失败：nack 消息并跟踪重试。
-   */
+  
+
   private async handleFailure(
     state: WorkerState,
     msg: MessageRecord,
   ): Promise<void> {
-    // 更新内存重试计数
+    
     const attempts = this.retryMap.get(msg.id) ?? 0;
     const nextAttempt = attempts + 1;
 
-    // 达到上限后 MQProvider 的 nackMQ 会将消息标记为 FAILED
+    
     if (nextAttempt >= MAX_RETRIES) {
       this.retryMap.delete(msg.id);
     } else {

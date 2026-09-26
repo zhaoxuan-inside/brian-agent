@@ -1,13 +1,3 @@
-/**
- * @fileoverview 沙箱运行时契约单元测试（Sandbox Runtime Contract）。
- *
- * 覆盖（SkillProvider-PRD §5）：
- * - 平台候选定位序列（win32/darwin/linux）与环境变量覆盖；
- * - WSL bash shim 拒绝（纯函数）；
- * - 启动期解析成功（版本字段）与 fail-fast（坏覆盖 → SandboxRuntimeError，零降级）；
- * - LocalSandbox 注入运行时后的真实 .py/.sh 执行与超时终止。
- */
-
 import { describe, it, expect } from 'vitest';
 import {
   pythonCandidates,
@@ -71,7 +61,7 @@ describe('resolveSandboxRuntime（启动期契约）', () => {
   });
 
   it('win32 平台的 Bash 缺失指引应指向 Git Bash 部署前置', () => {
-    // Python 用覆盖指向宿主可用解释器，隔离出 Bash 解析失败路径
+    
     try {
       resolveSandboxRuntime('win32', { BRIAN_SANDBOX_PYTHON: 'python3', BRIAN_SANDBOX_BASH: 'C:\\nonexistent\\bash.exe' });
       throw new Error('should not reach');

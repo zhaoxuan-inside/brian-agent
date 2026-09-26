@@ -1,20 +1,3 @@
-/**
- * @fileoverview SkillProvider 模块测试。
- *
- * 测试范围：
- * - 初始化：initialize / 配置表创建 / 默认配置写入 / enabled 状态恢复
- * - Skill 管理：addSkill / soSkillById / updateSkill / delSkill / soSkill
- * - Skill 执行：execSkill（沙箱执行、usage_count 更新）
- * - 可视化与运维：enableSkill（运行时启用/禁用）
- * - AOP 集成：elapsed_ms 填充
- * - 验证与错误场景全覆盖
- * - 数据清理：delSkill 同步清理 skill_usage
- *
- * 所有测试使用真实 SQLite 数据库，通过 RelationDBProvider 访问，
- * 不使用任何 MOCK 数据。
- * 每个测试用例在 temp 目录中创建独立的数据库文件，测试后清理。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -53,10 +36,6 @@ import {
 } from '../shared/errors';
 import { Operator } from '../shared/query';
 
-// ---------------------------------------------------------------------------
-// 测试辅助函数
-// ---------------------------------------------------------------------------
-
 function makeSkillData(overrides?: Partial<SkillData>): SkillData {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -67,10 +46,6 @@ function makeSkillData(overrides?: Partial<SkillData>): SkillData {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// 测试套件
-// ---------------------------------------------------------------------------
 
 describe('SkillProvider', () => {
   let tempDir: string;
@@ -96,7 +71,7 @@ describe('SkillProvider', () => {
         new CloseDBOutput(), new DBContext(),
       );
     } catch {
-      // 忽略关闭时的错误
+
     }
     await new Promise((r) => setTimeout(r, 100));
 
@@ -104,14 +79,10 @@ describe('SkillProvider', () => {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // =========================================================================
-  // 初始化与配置
-  // =========================================================================
 
   describe('initialize', () => {
     it('初始化后应创建 skill、skill_usage、skill_config 三张表', async () => {
@@ -128,7 +99,6 @@ describe('SkillProvider', () => {
     it('重复初始化应无副作用', async () => {
       await skillAccess.initialize();
 
-      // 验证可正常操作
       const data = makeSkillData();
       const input = new AddSkillInput();
       input.data = data;
@@ -141,13 +111,12 @@ describe('SkillProvider', () => {
     });
 
     it('初始化时应从 config 恢复 enabled 状态（禁用后保持）', async () => {
-      // 先禁用
+
       await skillAccess.enableSkill(
         Object.assign(new EnableSkillInput(), { enable: false }),
         new EnableSkillOutput(), new SkillContext(),
       );
 
-      // 重新初始化
       const newAccess = new SkillAccess(relationDb);
       await newAccess.initialize();
 
@@ -161,7 +130,7 @@ describe('SkillProvider', () => {
     });
 
     it('初始化时应从 config 恢复 enabled 状态（启用后保持）', async () => {
-      // 先禁用秒启用
+
       await skillAccess.enableSkill(
         Object.assign(new EnableSkillInput(), { enable: false }),
         new EnableSkillOutput(), new SkillContext(),
@@ -171,7 +140,6 @@ describe('SkillProvider', () => {
         new EnableSkillOutput(), new SkillContext(),
       );
 
-      // 重新初始化
       const newAccess = new SkillAccess(relationDb);
       await newAccess.initialize();
 
@@ -187,10 +155,6 @@ describe('SkillProvider', () => {
       expect(out.id).toBeTruthy();
     });
   });
-
-  // =========================================================================
-  // addSkill - 新增 Skill
-  // =========================================================================
 
   describe('addSkill', () => {
     it('应该成功新增一个 Skill', async () => {
@@ -340,10 +304,6 @@ describe('SkillProvider', () => {
     });
   });
 
-  // =========================================================================
-  // soSkillById - 获取 Skill
-  // =========================================================================
-
   describe('soSkillById', () => {
     let skillId: string;
     let skillData: SkillData;
@@ -441,10 +401,6 @@ describe('SkillProvider', () => {
     });
   });
 
-  // =========================================================================
-  // soSkill - 搜索 Skill
-  // =========================================================================
-
   describe('soSkill', () => {
     beforeEach(async () => {
       const skills = [
@@ -515,7 +471,7 @@ describe('SkillProvider', () => {
       await skillAccess.soSkill(input, out, new SkillContext());
 
       expect(out.list.length).toBe(5);
-      // 验证升序：created 依次递增
+
       for (let i = 1; i < out.list.length; i++) {
         expect(out.list[i].created).toBeGreaterThanOrEqual(
           out.list[i - 1].created,
@@ -549,23 +505,22 @@ describe('SkillProvider', () => {
     });
 
     it('分页第二页应返回正确数据', async () => {
-      // 先按 created 排序获取全部
+
       const allInput = new SoSkillInput();
       allInput.order_by = [{ field: 'created', direction: 'ASC' }];
       const allOut = new SoSkillOutput();
       await skillAccess.soSkill(allInput, allOut, new SkillContext());
       const allIds = allOut.list.map((s) => s.id);
 
-      // 分页获取
       const input = new SoSkillInput();
       input.page = { current: 3, size: 2 };
       input.order_by = [{ field: 'created', direction: 'ASC' }];
       const out = new SoSkillOutput();
       await skillAccess.soSkill(input, out, new SkillContext());
 
-      expect(out.list.length).toBe(1); // 第3页只有1条(总数5, 每页2)
+      expect(out.list.length).toBe(1);
       expect(out.total).toBe(5);
-      expect(out.list[0].id).toBe(allIds[4]); // 第5条
+      expect(out.list[0].id).toBe(allIds[4]);
     });
 
     it('keyword + conditions + order_by + page 应同时生效', async () => {
@@ -582,7 +537,7 @@ describe('SkillProvider', () => {
     });
 
     it('空表搜索应返回空列表', async () => {
-      // 清空所有 skill
+
       const allInput = new SoSkillInput();
       const allOut = new SoSkillOutput();
       await skillAccess.soSkill(allInput, allOut, new SkillContext());
@@ -617,10 +572,6 @@ describe('SkillProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // =========================================================================
-  // updateSkill - 更新 Skill
-  // =========================================================================
 
   describe('updateSkill', () => {
     let skillId: string;
@@ -660,7 +611,6 @@ describe('SkillProvider', () => {
       await skillAccess.soSkillById(getBefore, getBeforeOut, new SkillContext());
       const beforeUpdated = getBeforeOut.skill!.updated;
 
-      // 等待 10ms 确保时间戳不同
       await new Promise((r) => setTimeout(r, 10));
 
       const updateInput = new UpdateSkillInput();
@@ -712,7 +662,7 @@ describe('SkillProvider', () => {
     });
 
     it('应能重新启用已禁用的 Skill', async () => {
-      // 先禁用
+
       const updateInput1 = new UpdateSkillInput();
       updateInput1.id = skillId;
       updateInput1.data = { enable: false };
@@ -721,7 +671,6 @@ describe('SkillProvider', () => {
         new UpdateSkillOutput(), new SkillContext(),
       );
 
-      // 再启用
       const updateInput2 = new UpdateSkillInput();
       updateInput2.id = skillId;
       updateInput2.data = { enable: true };
@@ -799,10 +748,6 @@ describe('SkillProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // =========================================================================
-  // execSkill - 执行 Skill
-  // =========================================================================
 
   describe('execSkill', () => {
     let skillId: string;
@@ -927,7 +872,6 @@ describe('SkillProvider', () => {
         new ExecSkillOutput(), new SkillContext(),
       );
 
-      // 查询 usage 表
       const usageRows = relationDb.queryRaw<{
         skill_id: string;
         usage_count: number;
@@ -965,7 +909,6 @@ describe('SkillProvider', () => {
       const addOut2 = new AddSkillOutput();
       await skillAccess.addSkill(addInput2, addOut2, new SkillContext());
 
-      // 执行两个 Skill 各 2 次
       for (let i = 0; i < 2; i++) {
         const execInput1 = new ExecSkillInput();
         execInput1.id = skillId;
@@ -1003,7 +946,7 @@ describe('SkillProvider', () => {
     });
 
     it('资源级已禁用的 Skill 执行应抛出 ValidationError', async () => {
-      // 先禁用该 Skill
+
       const updateInput = new UpdateSkillInput();
       updateInput.id = skillId;
       updateInput.data = { enable: false };
@@ -1036,7 +979,7 @@ describe('SkillProvider', () => {
     it('params 为 null/undefined 应抛出 ValidationError', async () => {
       const execInput1 = new ExecSkillInput();
       execInput1.id = skillId;
-      // params 未赋值
+
       const execOut1 = new ExecSkillOutput();
 
       await expect(
@@ -1091,10 +1034,6 @@ describe('SkillProvider', () => {
     });
   });
 
-  // =========================================================================
-  // delSkill - 删除 Skill
-  // =========================================================================
-
   describe('delSkill', () => {
     let skillId: string;
     let skillIds: string[];
@@ -1123,7 +1062,6 @@ describe('SkillProvider', () => {
       expect(result).toBe(true);
       expect(delOut.affected_rows).toBe(1);
 
-      // 验证已删除
       const getInput = new GetSkillInput();
       getInput.id = skillId;
       const getOut = new GetSkillOutput();
@@ -1143,7 +1081,6 @@ describe('SkillProvider', () => {
       expect(result).toBe(true);
       expect(delOut.affected_rows).toBe(3);
 
-      // 验证全部删除
       const soInput = new SoSkillInput();
       const soOut = new SoSkillOutput();
       await skillAccess.soSkill(soInput, soOut, new SkillContext());
@@ -1166,7 +1103,7 @@ describe('SkillProvider', () => {
     });
 
     it('删除 Skill 后应同步清理 skill_usage 记录（按 ID 删除）', async () => {
-      // 先执行 Skill 产生 usage 记录
+
       const execInput = new ExecSkillInput();
       execInput.id = skillId;
       execInput.params = { a: 1, b: 2 };
@@ -1175,20 +1112,17 @@ describe('SkillProvider', () => {
         new ExecSkillOutput(), new SkillContext(),
       );
 
-      // 确认有 usage 记录
       const beforeUsage = relationDb.queryRaw<{ id: string }>(
         `SELECT * FROM "${SKILL_USAGE_TABLE}" WHERE skill_id = ?`,
         [skillId],
       );
       expect(beforeUsage.length).toBe(1);
 
-      // 删除 Skill
       await skillAccess.delSkill(
         Object.assign(new DelSkillInput(), { ids: [skillId] }),
         new DelSkillOutput(), new SkillContext(),
       );
 
-      // 验证 usage 也被清理
       const afterUsage = relationDb.queryRaw<{ id: string }>(
         `SELECT * FROM "${SKILL_USAGE_TABLE}" WHERE skill_id = ?`,
         [skillId],
@@ -1197,7 +1131,7 @@ describe('SkillProvider', () => {
     });
 
     it('删除 Skill 后应同步清理 skill_usage 记录（按 conditions 删除）', async () => {
-      // 先执行 Skill 产生 usage 记录
+
       const execInput = new ExecSkillInput();
       execInput.id = skillId;
       execInput.params = { a: 1, b: 2 };
@@ -1206,7 +1140,6 @@ describe('SkillProvider', () => {
         new ExecSkillOutput(), new SkillContext(),
       );
 
-      // 通过 conditions 删除
       await skillAccess.delSkill(
         Object.assign(new DelSkillInput(), {
           conditions: [{ field: 'id', operator: Operator.EQ, value: skillId }],
@@ -1214,7 +1147,6 @@ describe('SkillProvider', () => {
         new DelSkillOutput(), new SkillContext(),
       );
 
-      // 验证 usage 也被清理
       const afterUsage = relationDb.queryRaw<{ id: string }>(
         `SELECT * FROM "${SKILL_USAGE_TABLE}" WHERE skill_id = ?`,
         [skillId],
@@ -1259,10 +1191,6 @@ describe('SkillProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // =========================================================================
-  // enableSkill - 启用/禁用组件
-  // =========================================================================
 
   describe('enableSkill', () => {
     it('禁用后所有操作应抛出 ComponentDisabledError', async () => {
@@ -1360,10 +1288,6 @@ describe('SkillProvider', () => {
     });
   });
 
-  // =========================================================================
-  // AOP 集成
-  // =========================================================================
-
   describe('AOP 集成', () => {
     it('elapsed_ms 应在执行后被填充', async () => {
       const input = new AddSkillInput();
@@ -1376,7 +1300,7 @@ describe('SkillProvider', () => {
     });
 
     it('soSkillById 应填充 elapsed_ms', async () => {
-      // 先新增
+
       const addInput = new AddSkillInput();
       addInput.data = makeSkillData();
       const addOut = new AddSkillOutput();
@@ -1401,7 +1325,7 @@ describe('SkillProvider', () => {
     });
 
     it('updateSkill 应填充 elapsed_ms', async () => {
-      // 先新增
+
       const addInput = new AddSkillInput();
       addInput.data = makeSkillData();
       const addOut = new AddSkillOutput();
@@ -1451,10 +1375,6 @@ describe('SkillProvider', () => {
       expect(execOut.elapsed_ms!).toBeGreaterThanOrEqual(0);
     });
   });
-
-  // =========================================================================
-  // 数据完整性
-  // =========================================================================
 
   describe('数据完整性', () => {
     it('SkillRecord 应包含完整的系统字段', async () => {

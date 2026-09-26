@@ -1,7 +1,3 @@
-/**
- * @fileoverview PromptCatalog 模块统一导出。
- */
-
 export { PromptCatalogAccess } from './access/PromptCatalogAccess';
 export {
   PROMPT_IDS,

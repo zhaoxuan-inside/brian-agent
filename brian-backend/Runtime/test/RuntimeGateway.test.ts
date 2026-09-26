@@ -1,16 +1,3 @@
-/**
- * @fileoverview RunGateway + AgentDef 集成测试（Runtime v2 · 阶段3/4 前置）。
- *
- * 覆盖本次线上问题修复的关键语义：
- * - 确定性匹配：同任务两次 submitRun → 同一 def（exact/signature 命中），**不再重复构建**（无随机）；
- * - 组件绑定收敛（2026-09-11）：def 无显式绑定则 system 无 Soul 段，不走 Core 组件匹配（命中即复用绑定）；
- * - 身份段：system 以 builtin.identity 开头（"你是谁"由身份声明回答，而非 WorkAgent 人设）；
- * - session lane：活动 run 未结算时第二次 submitRun → steer 注入（steered=true，同 run_id）；
- * - steering 消息经边界抽干成为会话第二条 user 消息；
- * - 排水语义：followup/interrupt 排队 run 结算后复用同一 run_id（queued→running 同一记录，
- *   不产生双记录孤儿行，Runs-PRD §4.1）。
- */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -58,7 +45,6 @@ import {
   SessionContext,
 } from '../Session/domain/types';
 
-
 describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   let tempDir: string;
   let relationDb: RelationDBAccess;
@@ -87,7 +73,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     sessionAccess = new SessionAccess(relationDb);
     await sessionAccess.initialize();
     streamAccess = new StreamAccess(relationDb);
-    // Report 事件流网关（组合根语义）：业务事件经 Report→StreamProvider 保存/投递
+
     Report.setEventStreamGateway({
       pushToEndpoint: async (input) => {
         await streamAccess.publishEvent(
@@ -98,7 +84,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       },
     });
     const skillRuntimeAccess = new SkillRuntimeAccess(relationDb, {
-      // 2026-09-24 Tool ⊕ Skill 合并：run 级 Skill 一等工具注册依赖 skillAccess
+
       skillAccess: {
         soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
           output.skill = input.id === '11111111-2222-3333-4444-555555555555'
@@ -115,7 +101,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await skillRuntimeAccess.initialize();
     await skillRuntimeAccess.registerBuiltinSkills(new RegisterBuiltinSkillsInput(), new RegisterBuiltinSkillsOutput(), new SkillRuntimeContext());
 
-    // Prompt 模板统一由 prompt_template 表承载
     const promptsAccessForSeed = new PromptsAccess(relationDb);
     await promptsAccessForSeed.initialize();
     const identityPromptId = '11111111-2222-3333-4444-555555555555';
@@ -128,7 +113,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       '评估候选 Agent 与任务的匹配度，输出 JSON: {"score": 80, "reason": "匹配"}', 1, 1
     )`);
 
-    // mock LLM：收到 system 后直接给出 stop（捕获入参供断言）
     execLLMEventsMock = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
       void input;
       output.finish_reason = 'stop';
@@ -140,12 +124,11 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     });
     const mockLlm = { execLLMEvents: execLLMEventsMock, execLLM: vi.fn(async (_i: ExecLLMInput, o: ExecLLMOutput) => { o.result = '{}'; return true; }) } as unknown as LLMAccess;
 
-    // mock AgentBuilder：构建返回固定 agent 资产
     buildAgentMock = vi.fn(async (_i: unknown, output: { agent_id: string }) => {
       output.agent_id = 'agent-1';
       return true;
     });
-    // mock SoulCore：按任务动态返回通用 soul（含内容，快照直接取 matchOutput.soul）
+
     matchSoulMock = vi.fn(async (_i: unknown, output: { soul_id: string; soul: Record<string, unknown> | null }) => {
       output.soul_id = 'soul-general';
       output.soul = { soul_content: '你是 Brian 的通用人格：友好、简洁、以用户为中心。' };
@@ -166,7 +149,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     });
     await agentDefAccess.initialize();
 
-    // queue bridge 后绑定（与 dev-server 组合根一致：Loop ←鸭子接口← Gateway）
     let gatewayRef: RunGatewayAccess;
     const queueBridge = {
       drainSteering: (sessionKey: string) => gatewayRef.drainSteeringFor(sessionKey),
@@ -181,11 +163,11 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
   afterEach(async () => {
     await new Promise((r) => setTimeout(r, 50));
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* 清理失败忽略 */ }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   async function submit(message: string, sessionKey = 'sess-a', queueMode?: 'steer' | 'followup' | 'interrupt'): Promise<{ runId: string; steered: boolean; queued: boolean }> {
-    // 注册 SSE 端点（生成端点 ID）→ Report 携带端点 ID → 业务事件经 Report→StreamProvider
+
     const regOut = new RegisterStreamOutput();
     await streamAccess.registerStream(
       Object.assign(new RegisterStreamInput(), { session_id: sessionKey, writer: () => true }),
@@ -214,13 +196,13 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(out1.status).toBe('finished');
     expect(buildAgentMock).toHaveBeenCalledTimes(1);
 
-    await new Promise((r) => setTimeout(r, 30)); // 等 lane 完全释放
+    await new Promise((r) => setTimeout(r, 30));
     const second = await submit('你是谁？');
     const wait2 = new WaitRunInput();
     wait2.run_id = second.runId;
     const out2 = new WaitRunOutput();
     await gateway.waitRun(wait2, out2, new RunGatewayContext());
-    expect(buildAgentMock).toHaveBeenCalledTimes(1); // 第二次命中签名，未再构建
+    expect(buildAgentMock).toHaveBeenCalledTimes(1);
     expect(second.runId).not.toBe(first.runId);
   });
 
@@ -232,8 +214,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const llmInput = execLLMEventsMock.mock.calls[0][0] as ExecLLMEventsInput;
     expect(llmInput.system).toContain('# 身份');
     expect(llmInput.system).toContain('你是 Brian');
-    // ===== 2026-09-11 收敛语义：def 命中即复用绑定 —— def.soul_id 为空则不注入任何 Soul，
-    // 也不再调用 matchSoul 动态匹配（原断言"通用人格动态解析/ matchSoul 被调用"已随收敛删除） =====
+
     expect(llmInput.system).not.toContain('通用人格');
     expect(matchSoulMock).not.toHaveBeenCalled();
   });
@@ -252,12 +233,12 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
     const llmInput = execLLMEventsMock.mock.calls[execLLMEventsMock.mock.calls.length - 1][0] as ExecLLMEventsInput;
     expect(llmInput.system).toContain('# 身份');
-    // 2026-09-24 注：identity 渲染格式已升级（身份/人格内联段标题随模板演进），断言以 Soul 内容注入为准
+
     expect(llmInput.system).toContain('通用人格');
   });
 
   it('session lane：活动 run 未结算时第二次提交应该 steer 注入（同 run_id）', async () => {
-    // 挂起 LLM，制造活动 run
+
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -276,7 +257,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const out = new WaitRunOutput();
     await gateway.waitRun(wait, out, new RunGatewayContext());
     expect(out.status).toBe('finished');
-    // steering 消息经边界抽干成为第二条 user 消息（gateway 已把 session_key 映射为 runtime 会话）
+
     const runtimeSessionId = String(relationDb.queryRaw("SELECT id FROM runtime_session WHERE session_key='sess-a'")[0].id);
     const so = new SoMessagesInput();
     so.session_id = runtimeSessionId;
@@ -297,8 +278,8 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const wait = new WaitRunInput();
     wait.run_id = first.runId;
     await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
-    await new Promise((r) => setTimeout(r, 120)); // fire-and-forget 事件链落库
-    // 事件流已由 StreamProvider 持久化（stream_event 表；保存/审计/重放事实源）
+    await new Promise((r) => setTimeout(r, 120));
+
     const rows = relationDb.queryRaw<{ event_type: string }>(
       'SELECT "event_type" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
       ['sess-a'],
@@ -310,7 +291,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   });
 
   it('followup 排队：结算后应复用同一 run_id 且 queued 行转 running 再 finished（无双记录）', async () => {
-    // 挂起 LLM，制造活动 run
+
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -331,7 +312,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(wait, out, new RunGatewayContext());
     expect(out.status).toBe('finished');
 
-    // 同一 run_id 的记录状态机完整：queued → running → finished，无孤儿 queued 行
     const rows = relationDb.queryRaw<{ id: string; status: string }>(
       'SELECT "id", "status" FROM "runtime_run" ORDER BY "created" ASC',
     );
@@ -342,7 +322,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   });
 
   it('interrupt 入队与结算竞态：入队后应立即排水，不留卡死队列', async () => {
-    // 活动 run 正常快速结束；interrupt 提交在结算窗口边缘入队，maybeDrainLane 兜底排水
+
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
       output.finish_reason = 'stop';
       output.result = 'done';
@@ -368,7 +348,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   });
 
   it('错误 Agent 立即杀死：LLM 异常 run 结算后 def 应 disable（后续同任务不再命中）', async () => {
-    // 让 LLM 抛错 → run 结算为 error → 杀死链路（disable def）
+
     execLLMEventsMock.mockImplementationOnce(async () => {
       throw new Error('LLM 流断开');
     });
@@ -378,16 +358,14 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const out = new WaitRunOutput();
     await gateway.waitRun(wait, out, new RunGatewayContext());
     expect(out.status).toBe('error');
-    await new Promise((r) => setTimeout(r, 60)); // fire-and-forget 杀死链路落库
+    await new Promise((r) => setTimeout(r, 60));
 
-    // def 已 disable（错误 Agent 立即停匹配）
     const defRows = relationDb.queryRaw<{ status: string }>(
       `SELECT "status" FROM "runtime_agent_def" WHERE "task_signature" LIKE '%天气怎么样%'`,
     );
     expect(defRows.length).toBeGreaterThan(0);
     expect(defRows.every((r) => r.status === 'disabled')).toBe(true);
 
-    // agent.disbanded 事件已投影
     await new Promise((r) => setTimeout(r, 120));
     const events = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
       'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = ?',
@@ -399,7 +377,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   });
 
   it('信任工具表：remember 应答后同工具自动放行并持久化（永久批准）', async () => {
-    // 未知 permission 应答 → answered=false，不写信任表
+
     const missIn = new AnswerPermissionInput();
     missIn.permission_id = 'perm-missing';
     missIn.approved = true;
@@ -408,8 +386,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.answerPermission(missIn, missOut, new RunGatewayContext());
     expect(missOut.answered).toBe(false);
 
-    // 注册 waiter（后台挂起）→ remember 应答批准 → waiter 被唤醒
-    // 注：waitPermission 内有异步 config 读取，waiter 注册晚于调用返回，需让步等待注册完成
     const waitIn = new WaitPermissionInput();
     waitIn.permission_id = 'perm-trust-1';
     waitIn.tool_id = 'cdt_browser';
@@ -426,7 +402,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await pending;
     expect(waitOut.approved).toBe(true);
 
-    // 同工具再次等待 → 信任命中直接放行（auto_approved，无需应答）
     const autoIn = new WaitPermissionInput();
     autoIn.permission_id = 'perm-trust-2';
     autoIn.tool_id = 'cdt_browser';
@@ -436,8 +411,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(autoOut.answered).toBe(true);
     expect(autoOut.auto_approved).toBe(true);
 
-    // 非信任工具仍挂起（给一个会超时的短等待？此处仅验证未命中不自动放行：
-    // 用 answerPermission(拒绝) 唤醒，approved=false）
     const otherIn = new WaitPermissionInput();
     otherIn.permission_id = 'perm-other-1';
     otherIn.tool_id = 'mcp_exec';
@@ -452,13 +425,11 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(otherOut.approved).toBe(false);
     expect(otherOut.auto_approved).toBe(false);
 
-    // configRuns 可见信任表（含 cdt_browser，不含 mcp_exec）
     const cfgOut = new ConfigRunsOutput();
     await gateway.configRuns(new ConfigRunsInput(), cfgOut, new RunGatewayContext());
     expect(cfgOut.trusted_tools).toContain('cdt_browser');
     expect(cfgOut.trusted_tools).not.toContain('mcp_exec');
 
-    // 信任表持久化：同库新建网关实例读回一致（服务重启仍生效）
     const gateway2 = new RunGatewayAccess(relationDb, sessionAccess, agentDefAccess, loopAccess);
     await gateway2.initialize();
     const cfgOut2 = new ConfigRunsOutput();
@@ -473,7 +444,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.configRuns(cfgIn, cfgOut, new RunGatewayContext());
     expect(cfgOut.trusted_tools).toEqual(['mcp_exec']);
 
-    // skill_exec 自动放行；旧信任 cdt_browser 已被覆盖掉，需重新询问（挂起可被应答唤醒）
     const autoIn = new WaitPermissionInput();
     autoIn.permission_id = 'perm-revoke-1';
     autoIn.tool_id = 'mcp_exec';
@@ -524,7 +494,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       mockWriter,
     );
     await refinedGateway.initialize();
-    // ===== 2026-09-14：评估执行策略新增低风险跳过（默认开），本用例验证评估链路，显式关闭跳过 =====
+
     await refinedGateway.configRuns(
       Object.assign(new ConfigRunsInput(), { eval_skip_low_risk: false, eval_async: false }),
       new ConfigRunsOutput(),
@@ -561,7 +531,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(mockWriter.execWrite).toHaveBeenCalled();
     expect(mockEvaluator.evalWorkAgent).toHaveBeenCalled();
 
-    // stream_event 中包含 writer.completed 与美化后的 reply.delta
     const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
       'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
       ['sess-refine'],
@@ -595,27 +564,17 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(waitIn, new WaitRunOutput(), new RunGatewayContext(), qaMetrics, report);
     await new Promise((r) => setTimeout(r, 100));
 
-    // Span 树（切面自动记录）：受编排的关键调用全部有闭合 span，且同 run 共享同一 Metrics 实例
     const spans = qaMetrics.spans;
     const keyOf = (k: string) => spans.filter((sp) => sp.key === k && sp.end !== undefined);
     expect(keyOf('Runtime.Runs.RunGatewayService.submitRun').length).toBeGreaterThan(0);
     expect(keyOf('Runtime.Agents.AgentDefService.matchAgentDef').length).toBeGreaterThan(0);
     expect(keyOf('Runtime.Loop.AgentLoopService.execAgentLoop').length).toBeGreaterThan(0);
 
-    // 总耗时（根 span 包络）可用
     expect(qaMetrics.getTotalDuration()).toBeGreaterThan(0);
   });
 
-  // ===== 2026-09-23 委派收口（事故 trace 22f3ce79 复盘）：一次问答只派生一个收口 =====
-  // 不变量 A：主会话时间线 role=user 只来自真实用户（subagent run 落隔离子会话）
-  // 不变量 B：delegate 回执带 run_id，父子关系登记
-  // 不变量 C：主 run join 全部子 run 后由写作 Agent 统一收口（agent_results 含子结果）；
-  //          subagent run 不执行评估/写作、不注入 delegate（委派链一级封顶）
-  // ===== 2026-09-24 新增（事故 trace 008ca7ae 回归）：思维模型与实际执行一致 =====
-  // 空绑定但工具面含 exec 的 run → 旧判据固定输出"纯知识类任务/CoT"，实际却多轮 exec 行动-观察，
-  // 思考过程与执行表述不相符；修复后含 exec/cdt_browser 的工具面判 ReAct
   it('decideThoughtMode：空绑定但工具面含 exec（宿主原语）判 ReAct（ thought 与执行一致）', async () => {
-    // 通过 stream_event thought.selected 验证：先触发一个含 exec 的 run
+
     const sessionKey2 = 'sess-thought-mode';
     const regOut2 = new RegisterStreamOutput();
     await streamAccess.registerStream(
@@ -640,7 +599,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     );
     const thought = row?.[0]?.payload_json ?? '';
     expect(thought).toContain('"thought_mode":"ReAct"');
-    expect(thought).toContain('可执行/可观察原语');
+    expect(thought).toContain('可执行/可观察技能');
   });
 
   it('委派收口：delegate 子 run 落隔离子会话，主 run join 后写作 Agent 汇总子结果', async () => {
@@ -648,7 +607,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const mainLlm = vi.fn(async (input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
       callSeq += 1;
       if (callSeq === 1) {
-        // 主 run 轮1：发起 delegate 委派
+
         output.finish_reason = 'tool-calls';
         output.result = '我来委派子任务查询磁盘。';
         output.tool_calls = [{
@@ -656,12 +615,12 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
           arguments: JSON.stringify({ task_content: '子任务：查询磁盘可用空间' }),
         }];
       } else if (input.tools?.some((t) => t.tool_id === 'skill_builtin-delegate')) {
-        // 主 run 轮2：观察受理回执后收敛
+
         output.finish_reason = 'stop';
         output.result = '子任务已委派，等待汇总。';
         output.tool_calls = [];
       } else {
-        // 子 run（subagent lane，无 delegate 工具）：直答子任务
+
         expect(input.tools?.some((t) => t.tool_id === 'skill_builtin-delegate')).toBe(false);
         output.finish_reason = 'stop';
         output.result = '磁盘可用 128GB。';
@@ -684,7 +643,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
         return true;
       }),
     };
-    // 局部组合：SkillRuntimeAccess 带 runGateway 桥接（delegate 可用），与 dev-server 接线一致
+
     let delegatingGatewayRef: RunGatewayAccess;
     const skillRuntimeAccessDelegating = new SkillRuntimeAccess(relationDb, {
       runGateway: {
@@ -709,7 +668,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await loopAccessDelegating.initialize();
     const delegatingGateway = new RunGatewayAccess(
       relationDb, sessionAccess, agentDefAccess, loopAccessDelegating,
-      // 测试装置：gateway 内部异常观测点（settleRunFailure 仅经 logger 输出，注入后失败可直接定位）
+
       { error: (...args: unknown[]) => console.error('[gateway-error]', ...args), warn: (...args: unknown[]) => console.warn('[gateway-warn]', ...args) } as never,
       undefined, mockWriter,
     );
@@ -738,7 +697,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(waitOut.status).toBe('finished');
     await new Promise((r) => setTimeout(r, 100));
 
-    // 不变量 B：子 run 存在且 lane=subagent，delegate 回执 Part 含 run_id
     const subRows = relationDb.queryRaw<{ id: string }>(
       `SELECT "id" FROM "runtime_run" WHERE "session_key" = ? AND "lane" = 'subagent'`,
       [sessionKey],
@@ -751,10 +709,9 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     );
     expect(receiptParts?.length).toBe(1);
     expect(receiptParts![0].output_json).toContain(`run_id=${subRunId}`);
-    // join 后回写：delegate 工具结果从"已受理"更新为子任务实际结果
+
     expect(receiptParts![0].output_json).toContain('磁盘可用 128GB');
 
-    // 不变量 A：主会话只有 1 条真实 user 消息（委派任务不落主会话）
     const mainSessionRow = relationDb.queryRaw<{ id: string }>(
       `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
       [sessionKey],
@@ -766,7 +723,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     );
     expect(mainUserRows?.length).toBe(1);
 
-    // 子会话隔离：子 run 的消息落在 `${sessionKey}::sub:${subRunId}`（user=委派任务，assistant=子结果）
     const subSessionRow = relationDb.queryRaw<{ id: string }>(
       `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
       [`${sessionKey}::sub:${subRunId}`],
@@ -780,16 +736,14 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(subMessages?.[0].content).toContain('子任务：查询磁盘可用空间');
     expect(subMessages?.some((m) => m.role === 'assistant' && m.content.includes('磁盘可用 128GB'))).toBe(true);
 
-    // 不变量 C：写作 Agent 唯一收口，agent_results = 主 Agent + 子 run 结果
     expect(mockWriter.execWrite).toHaveBeenCalledTimes(1);
     expect(writerAgentResults.length).toBe(2);
     const childEntry = writerAgentResults.find((r) => r.task_content?.includes('子任务：查询磁盘可用空间'));
     expect(childEntry?.result).toContain('磁盘可用 128GB');
   });
 
-  // ===== 2026-09-24 新增（Tool ⊕ Skill 合并回归）：绑定 Skill 以一等工具注入 wire =====
   it('合并注入：绑定 Skill 的 run 工具清单含 skill_<id>（一等工具）且不再注入 skill_exec', async () => {
-    // 预置一个绑定 skill 的 def（复用 exact 匹配路径：签名即任务文本）
+
     relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, name TEXT, skill_brief TEXT, skill_md TEXT, scripts TEXT, enable INTEGER)`);
     relationDb.executeRaw(`INSERT OR REPLACE INTO skill (id, created, updated, name, skill_brief, skill_md, scripts, enable) VALUES
       ('11111111-2222-3333-4444-555555555555', 1, 1, '磁盘巡检', '查询磁盘可用空间并汇总', '# 磁盘巡检\n\n当用户询问磁盘空间时使用', '', 1)`);
@@ -799,7 +753,6 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     relationDb.executeRaw(`INSERT OR REPLACE INTO runtime_agent_def (id, created, updated, name, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
       ('def-disk', 1, 1, '磁盘巡检员', 'primary', 'agent-disk', '[general] 帮我巡检磁盘空间', '', '', '', '', NULL, 60, 'active', '磁盘巡检')`);
 
-    // 首轮发起 skill 工具调用（finalTurn 不带 tools —— 断言必须看首轮），次轮 stop 收敛
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
       output.finish_reason = 'tool-calls';
       output.result = '我先巡检磁盘。';
@@ -813,7 +766,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const wait = new WaitRunInput();
     wait.run_id = merged.runId;
     await gateway.waitRun(wait, new WaitRunOutput(), new RunGatewayContext());
-    // exact 签名命中 def-disk（[general] 帮我巡检磁盘空间）
+
     const firstCall = execLLMEventsMock.mock.calls.find((c: unknown[]) =>
       (c[0] as ExecLLMEventsInput).tools?.some((t) => t.tool_id.startsWith('skill_')));
     expect(firstCall).toBeTruthy();
@@ -824,7 +777,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(toolIds).not.toContain('mcp_exec');
     const skillSpec = (llmInput.tools ?? []).find((t) => t.tool_id === 'skill_11111111-2222-3333-4444-555555555555');
     expect(skillSpec?.description).toContain('磁盘巡检');
-    // 端到端：模型调用 skill 一等工具 → run 级注册表解析 → execSkill 沙箱链路执行（Part 落库为证）
+
     const partRows = relationDb.queryRaw<{ tool_id: string; output_json: string; status: string }>(
       `SELECT "tool_id", "output_json", "status" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" LIKE 'skill_%'`,
       [merged.runId],
@@ -861,7 +814,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(writeCalls).toBe(0);
-    // 子 run 消息落隔离子会话，主会话无该 run 消息
+
     const mainRows = relationDb.queryRaw<{ n: number }>(
       `SELECT COUNT(*) AS n FROM "runtime_message" WHERE "run_id" = ? AND "session_id" IN (SELECT "id" FROM "runtime_session" WHERE "session_key" = 'sess-subagent-no-writer')`,
       [subOut.run_id],

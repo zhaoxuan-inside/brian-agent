@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTProvider 模块统一导出。
- */
-
 export { CDTAccess } from './access/CDTAccess';
 export {
   CDTContext,

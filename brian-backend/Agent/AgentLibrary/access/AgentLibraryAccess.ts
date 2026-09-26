@@ -76,13 +76,13 @@ export class AgentLibraryAccess {
     return this.service.soAgent(i, o, c, metrics, report);
   }
 
-  /** 绑定组件到 Agent（绑定唯一事实源：agent 表；评估链路调用） */
+  
   async bindAgentComponent(i: BindAgentComponentInput, o: BindAgentComponentOutput, c: AgentLibraryContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     await this.initPromise;
     return this.service.bindAgentComponent(i, o, c, metrics, report);
   }
 
-  /** 解绑 Agent 组件（幂等；评估链路调用） */
+  
   async unbindAgentComponent(i: UnbindAgentComponentInput, o: UnbindAgentComponentOutput, c: AgentLibraryContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     await this.initPromise;
     return this.service.unbindAgentComponent(i, o, c, metrics, report);

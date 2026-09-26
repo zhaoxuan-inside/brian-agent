@@ -1,7 +1,3 @@
-/**
- * @fileoverview CDTProvider 表结构初始化。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { CDT_CONFIG_TABLE } from '../domain/types';
 

@@ -20,20 +20,8 @@ import {
 import { SkillCoreService } from '../SkillCoreProvider/application/SkillCoreService';
 import { GitHubSkillClient } from '../SkillCoreProvider/infrastructure/GitHubSkillClient';
 
-/**
- * GitHub 第 3 层真机联测（opt-in：BRIAN_LIVE_GITHUB=1 时才运行）。
- * 真实 GitHubSkillClient（真实网络）+ 真实 PromptCatalog 种子/模板回退，
- * 仅 stub LLM 的 need/keywords 输出（need=true 无本地候选 → 触发 GitHub 检索导入）。
- *
- * 已知环境事实（2026-09-23 实测）：
- * - 直连 api.github.com 通（匿名 search/repositories 200）；
- * - 代理环境变量（https_proxy=192.168.1.100:7890）对 GitHub TLS 掐断，
- *   且 HttpService 代理失败不降级直连 → 带代理运行时本用例检索为空。
- */
-
 const LIVE = process.env.BRIAN_LIVE_GITHUB === '1';
 
-/** LLM stub：固定输出 need=true + 检索关键词（触发第 3 层） */
 function stubLlmNeedTrue(keywords: string[]): LLMAccess {
   const response = JSON.stringify({ need: true, keywords, candidates: [] });
   let call = 0;
@@ -91,14 +79,13 @@ describe.skipIf(!LIVE)('GitHub Skill 检索真机联测（BRIAN_LIVE_GITHUB=1）
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   it('matchSkill 瀑布第 3 层：真实 GitHub 检索 → SKILL.md 导入本地库', async () => {
     const github = new GitHubSkillClient();
 
-    // 阶段 A：直测检索客户端（与瀑布解耦，定位网络挂点）
     const t0 = Date.now();
     const hits = await github.searchSkills(['document', 'skills'], '');
     console.log(`[阶段A searchSkills] ${Date.now() - t0}ms, 命中 ${hits.length}:`, hits.map((h) => h.repo).join(', ') || '(空)');
@@ -111,7 +98,6 @@ describe.skipIf(!LIVE)('GitHub Skill 检索真机联测（BRIAN_LIVE_GITHUB=1）
     }
     expect(hits.length).toBeGreaterThanOrEqual(1);
 
-    // 阶段 C：完整瀑布（stub LLM need=true + 同关键词 → GitHub 层导入）
     const service = new SkillCoreService(relationDb, skillAccess, stubLlmNeedTrue(['document', 'skills']), promptsAccess, github);
     const input = new MatchSkillInput();
     input.agent_id = 'a1';
@@ -134,7 +120,7 @@ describe.skipIf(!LIVE)('GitHub Skill 检索真机联测（BRIAN_LIVE_GITHUB=1）
     expect(out.skills.length).toBeGreaterThanOrEqual(1);
     const imported = out.skills[0];
     expect(imported.skill_brief.trim().length).toBeGreaterThan(0);
-    // 落库行含真实 GitHub SKILL.md 全文（frontmatter 已剥离进 skill_md）
+
     const dbRow = soOut.list.find((s) => s.id === imported.skill_id) ?? soOut.list[0];
     expect(String(dbRow.skill_md ?? '').trim().length).toBeGreaterThan(0);
   }, 90000);

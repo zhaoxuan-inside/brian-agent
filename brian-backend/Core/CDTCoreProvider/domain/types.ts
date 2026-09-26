@@ -1,21 +1,9 @@
-/**
- * @fileoverview CDTCoreProvider 领域层类型定义。
- */
-
 import { Input, Context, Output } from '@brian-agent/base';
 
 export class CDTCoreContext extends Context {}
 
-// ============================================================
-// 表名
-// ============================================================
-
 export const CDT_PAGE_SESSION_TABLE = 'cdt_page_session';
 export const CDT_LOGIN_CREDENTIAL_TABLE = 'cdt_login_credential';
-
-// ============================================================
-// 页面会话记录
-// ============================================================
 
 export interface CDTPageSessionRecord {
   id: string;
@@ -27,10 +15,6 @@ export interface CDTPageSessionRecord {
   last_url: string;
   last_access_time: number;
 }
-
-// ============================================================
-// 登录凭证记录
-// ============================================================
 
 export interface CDTLoginCredentialRecord {
   id: string;
@@ -48,12 +32,8 @@ export interface CDTLoginCredentialRecord {
   cookies_json: string;
   session_id: string;
   last_login_time: number;
-  login_success: number; // 0 or 1
+  login_success: number;
 }
-
-// ============================================================
-// 拟人操作延迟配置
-// ============================================================
 
 export const CDT_HUMAN_DELAYS = {
   typeMinMs: 50,
@@ -67,20 +47,12 @@ export const CDT_HUMAN_DELAYS = {
   betweenActionMaxMs: 1500,
 };
 
-// ============================================================
-// navigate
-// ============================================================
-
 export class CDTCoreNavigateInput extends Input {
   url!: string;
   waitForLoad?: boolean;
 }
 
 export class CDTCoreNavigateOutput extends Output {}
-
-// ============================================================
-// typeText
-// ============================================================
 
 export class CDTCoreTypeTextInput extends Input {
   selector!: string;
@@ -89,19 +61,11 @@ export class CDTCoreTypeTextInput extends Input {
 
 export class CDTCoreTypeTextOutput extends Output {}
 
-// ============================================================
-// click
-// ============================================================
-
 export class CDTCoreClickInput extends Input {
   selector!: string;
 }
 
 export class CDTCoreClickOutput extends Output {}
-
-// ============================================================
-// scroll
-// ============================================================
 
 export class CDTCoreScrollInput extends Input {
   pixels?: number;
@@ -110,10 +74,6 @@ export class CDTCoreScrollInput extends Input {
 
 export class CDTCoreScrollOutput extends Output {}
 
-// ============================================================
-// evaluate
-// ============================================================
-
 export class CDTCoreEvaluateInput extends Input {
   expression!: string;
 }
@@ -121,10 +81,6 @@ export class CDTCoreEvaluateInput extends Input {
 export class CDTCoreEvaluateOutput extends Output {
   result: unknown = null;
 }
-
-// ============================================================
-// login
-// ============================================================
 
 export class CDTCoreLoginInput extends Input {
   domain!: string;
@@ -143,10 +99,6 @@ export class CDTCoreLoginOutput extends Output {
   sessionId = '';
 }
 
-// ============================================================
-// getLoginState
-// ============================================================
-
 export class CDTCoreGetLoginStateInput extends Input {
   domain!: string;
 }
@@ -157,19 +109,11 @@ export class CDTCoreGetLoginStateOutput extends Output {
   lastLoginTime = 0;
 }
 
-// ============================================================
-// getCookies
-// ============================================================
-
 export class CDTCoreGetCookiesInput extends Input {}
 
 export class CDTCoreGetCookiesOutput extends Output {
   cookiesJson = '';
 }
-
-// ============================================================
-// saveSession
-// ============================================================
 
 export class CDTCoreSaveSessionInput extends Input {
   sessionName!: string;
@@ -181,10 +125,6 @@ export class CDTCoreSaveSessionInput extends Input {
 export class CDTCoreSaveSessionOutput extends Output {
   sessionId = '';
 }
-
-// ============================================================
-// restoreSession
-// ============================================================
 
 export class CDTCoreRestoreSessionInput extends Input {
   sessionName!: string;

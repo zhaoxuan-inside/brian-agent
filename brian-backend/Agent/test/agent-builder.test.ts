@@ -31,22 +31,6 @@ describe('AgentBuilder', () => {
       NOOP_LLM_CORE, NOOP_MCP_CORE, NOOP_SKILL_CORE, NOOP_SOUL_CORE);
   });
 
-  describe('buildPlannerAgent', () => {
-    it('TC-AB-021: 首次构建 (force_new)', async () => {
-      const out = new BuildSystemAgentOutput();
-      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER', force_new: true }), out, new AgentBuilderContext());
-      expect(out.agent_id).toBeTruthy();
-    });
-
-    it('TC-AB-022: 复用已有 Planner', async () => {
-      const o1 = new BuildSystemAgentOutput();
-      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), o1, new AgentBuilderContext());
-      const o2 = new BuildSystemAgentOutput();
-      await builder.buildSystemAgent(Object.assign(new BuildSystemAgentInput(), { agent_type: 'PLANNER' }), o2, new AgentBuilderContext());
-      expect(o2.agent_id).toBe(o1.agent_id);
-    });
-  });
-
   describe('buildWriterAgent', () => {
     it('TC-AB-025: 首次构建 Writer', async () => {
       const out = new BuildSystemAgentOutput();

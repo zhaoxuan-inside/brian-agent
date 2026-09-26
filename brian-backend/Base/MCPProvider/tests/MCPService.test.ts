@@ -72,7 +72,7 @@ describe('MCPProvider MCPService', () => {
     if (dbAccess) {
       try {
         await dbAccess.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
-      } catch { /* close regardless */ }
+      } catch {  }
     }
     if (tmpDir && fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -82,10 +82,6 @@ describe('MCPProvider MCPService', () => {
   function ctx() {
     return new McpContext();
   }
-
-  // ===========================================================================
-  // 3.1 MCP 提供商管理
-  // ===========================================================================
 
   describe('addMcpProvider (PRD 3.1.1)', () => {
     it('should add a provider and return id via output', async () => {
@@ -209,7 +205,6 @@ describe('MCPProvider MCPService', () => {
       const addOutput = new AddMcpProviderOutput();
       await mcpAccess.addMcpProvider(addInput, ctx(), addOutput);
 
-      // seed a cache entry and an install entry linked to this provider
       await dbAccess.insert(MCP_CACHE_TABLE, [
         { field: 'id', value: 'cache-1' },
         { field: 'created', value: Date.now() },
@@ -424,7 +419,6 @@ describe('MCPProvider MCPService', () => {
       const ok = await mcpAccess.listMcp(input, ctx(), output);
       expect(ok).toBe(true);
 
-      // second call - should use cache
       const output2 = new ListMcpOutput();
       await mcpAccess.listMcp(input, ctx(), output2);
       expect(output2.total).toBe(output.total);
@@ -449,10 +443,6 @@ describe('MCPProvider MCPService', () => {
     });
   });
 
-  // ===========================================================================
-  // 3.2 MCP 管理
-  // ===========================================================================
-
   describe('installMcp (PRD 3.2.1)', () => {
     let providerId: string;
     let cacheId: string;
@@ -465,7 +455,6 @@ describe('MCPProvider MCPService', () => {
       await mcpAccess.addMcpProvider(addInput, ctx(), addOutput);
       providerId = addOutput.id;
 
-      // seed cache entry with real npm install command
       await dbAccess.insert(MCP_CACHE_TABLE, [
         { field: 'id', value: 'cache-install-test' },
         { field: 'created', value: Date.now() },
@@ -538,7 +527,7 @@ describe('MCPProvider MCPService', () => {
     let installId: string;
 
     beforeAll(async () => {
-      // seed an install record so we can test start/stop/uninstall without network
+
       await dbAccess.insert(MCP_INSTALL_TABLE, [
         { field: 'id', value: 'install-lifecycle-test' },
         { field: 'created', value: Date.now() },
@@ -672,7 +661,7 @@ describe('MCPProvider MCPService', () => {
     });
 
     it('should prevent disabling a running MCP (PRD 3.2.5 constraint)', async () => {
-      // seed a new install record
+
       const newInstallId = 'install-running-test';
       await dbAccess.insert(MCP_INSTALL_TABLE, [
         { field: 'id', value: newInstallId },
@@ -688,14 +677,12 @@ describe('MCPProvider MCPService', () => {
         { field: 'enable', value: 1 },
       ]);
 
-      // start it to mark as running
       await mcpAccess.startMcp(
         Object.assign(new StartMcpInput(), { id: newInstallId }),
         ctx(),
         new StartMcpOutput(),
       );
 
-      // try to disable — should throw
       const updateInput = new UpdateMcpInput();
       updateInput.id = newInstallId;
       updateInput.data = { enable: false };
@@ -703,7 +690,6 @@ describe('MCPProvider MCPService', () => {
         mcpAccess.updateMcp(updateInput, ctx(), new UpdateMcpOutput()),
       ).rejects.toThrow(ValidationError);
 
-      // stop it first, then disable should work
       await mcpAccess.stopMcp(
         Object.assign(new StopMcpInput(), { id: newInstallId }),
         ctx(),
@@ -854,10 +840,6 @@ describe('MCPProvider MCPService', () => {
     });
   });
 
-  // ===========================================================================
-  // 3.3 MCP 调用
-  // ===========================================================================
-
   describe('execMcp (PRD 3.3.1)', () => {
     let installId: string;
 
@@ -878,7 +860,7 @@ describe('MCPProvider MCPService', () => {
         { field: 'enable', value: 1 },
       ]);
       installId = 'install-exec-test';
-      // rest 传输走 fetch，返回 JSON-RPC 响应
+
       vi.stubGlobal('fetch', vi.fn(async () => new Response(
         JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: 'ok' }] } }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -940,10 +922,6 @@ describe('MCPProvider MCPService', () => {
       ).rejects.toThrow(NotFoundError);
     });
   });
-
-  // ===========================================================================
-  // 3.4 可视化与运维
-  // ===========================================================================
 
   describe('enableMCP (PRD 3.4.2)', () => {
     let installId: string;
@@ -1009,10 +987,6 @@ describe('MCPProvider MCPService', () => {
       expect(output.id).toBeTruthy();
     });
   });
-
-  // ===========================================================================
-  // Additional edge cases & integration tests
-  // ===========================================================================
 
   describe('table schema (PRD 4)', () => {
     it('should have mcp_provider table with all required columns', async () => {

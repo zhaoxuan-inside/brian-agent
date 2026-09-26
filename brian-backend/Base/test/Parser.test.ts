@@ -1,13 +1,3 @@
-/**
- * @fileoverview shared 公共解析能力测试（JsonParser / XmlParser）。
- *
- * 测试范围：
- * - JsonParser：代码围栏剥离、对象 / 数组提取、前后附加文本容错
- * - XmlParser：嵌套元素、属性、自闭合、CDATA、实体解码、标签提取
- *
- * 纯函数测试，无数据库依赖。
- */
-
 import { describe, it, expect } from 'vitest';
 import { JsonParser, XmlParser } from '../ToolProvider';
 

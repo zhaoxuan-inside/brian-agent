@@ -1,11 +1,3 @@
-/**
- * @fileoverview execLLMEvents 降级语义测试（Runtime v2 修复②）。
- *
- * stub RelationDBAccess + mock fetch，验证：
- * - 候选已产出流事件后失败 → 禁止降级（fetch 仅一次，返回该候选错误）；
- * - 候选未产出任何事件失败 → 正常降级到下一候选（fetch 两次，第二次成功）。
- */
-
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { LLMService } from '../LLMProvider/application/LLMService';
 import { ExecLLMEventsInput, ExecLLMEventsOutput, LLMContext, Operator } from '@brian-agent/base';
@@ -19,7 +11,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** stub RelationDBAccess：两条候选模型 + 一个 provider + usage 空 */
 function makeRelationDbStub(): RelationDBAccess {
   return {
     selectOne: vi.fn(async (table: string, _conditions: unknown) => {
@@ -48,7 +39,7 @@ function sseResponse(frames: string[], mode: 'ok' | 'error'): Response {
       for (const frame of frames) {
         controller.enqueue(encoder.encode(frame));
       }
-      // 注意：同步 error() 会按 streams 规范丢弃已入队 chunk；异步触发保证先读后错
+      
       if (mode === 'error') {
         setTimeout(() => controller.error(new Error('stream reset')), 0);
       } else {
@@ -85,14 +76,14 @@ describe('execLLMEvents 降级语义（修复②）', () => {
     const output = new ExecLLMEventsOutput();
     const ok = await service.execLLMEvents(input, output, new LLMContext());
     expect(ok).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1); // 未降级
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(output.error).toContain('流式调用异常');
-    expect(deltas).toEqual(['部分']); // 事件已透传
+    expect(deltas).toEqual(['部分']);
   });
 
   it('候选未产出任何事件失败应该正常降级到下一候选成功', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' }) // 首候选无事件失败
+      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' })
       .mockResolvedValueOnce(sseResponse([
         'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n',
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
@@ -104,7 +95,7 @@ describe('execLLMEvents 降级语义（修复②）', () => {
     const output = new ExecLLMEventsOutput();
     const ok = await service.execLLMEvents(input, output, new LLMContext());
     expect(ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2); // 降级到第二候选
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(output.result).toBe('OK');
     expect(output.finish_reason).toBe('stop');
   });
@@ -118,7 +109,7 @@ describe('execLLMEvents 降级语义（修复②）', () => {
       ], 'ok'));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const service = new LLMService(makeRelationDbStub());
-    const input = makeInput(); // 无 on_event
+    const input = makeInput();
     const output = new ExecLLMEventsOutput();
     const ok = await service.execLLMEvents(input, output, new LLMContext());
     expect(ok).toBe(true);

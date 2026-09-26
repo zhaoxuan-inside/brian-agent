@@ -1,12 +1,3 @@
-/**
- * @fileoverview LLMCoreProvider 应用服务层。
- *
- * 依赖 RelationDBAccess（数据库操作）、LLMAccess（LLM 搜索/调用）、
- * PromptsAccess（Prompt 模板获取/渲染）。
- *
- * 实现所有用例：matchLLM / limitLLM / checkLLMQuota / configLLMCore / recordLLMUsage。
- */
-
 import { Metrics, Report } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import { IdGenerator, Operator } from '@brian-agent/base';
@@ -47,20 +38,12 @@ import {
   PromptContext,
 } from '@brian-agent/base';
 
-/**
- * LLMCoreProvider 应用服务。
- *
- * 提供 LLM 提供商选择（匹配 + 缓存）和配额/限额管理能力。
- */
 export class LLMCoreService {
-  /** 单行配置仓（读取缓存 + upsert 收敛） */
+  
   private readonly configStore: SingleRowConfigStore<LLMCoreConfigRecord>;
 
-  /**
-   * @param relationDb RelationDBProvider 接入层实例
-   * @param llmAccess LLMProvider 接入层实例
-   * @param promptsAccess PromptsProvider 接入层实例
-   */
+  
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly llmAccess: LLMAccess,
@@ -73,9 +56,8 @@ export class LLMCoreService {
     });
   }
 
-  /**
-   * 初始化：确保默认配置存在。
-   */
+  
+
   async initialize(): Promise<void> {
     await ensureDefaultConfig(this.relationDb, LLM_CORE_CONFIG_TABLE, [
       { field: 'regen_rate', value: 75 },
@@ -84,13 +66,12 @@ export class LLMCoreService {
     ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // matchLLM — Agent LLM 匹配（含缓存与重新评估）
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 为指定 Agent 匹配合适的 LLM 提供商（三层统一匹配/选择逻辑）。
-   */
+  
+
   async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.agent_id) {
@@ -100,19 +81,19 @@ export class LLMCoreService {
     const config = await this.getCoreConfig();
     const regenRate = config?.regen_rate ?? 75;
 
-    // 搜索可用 LLM
+    
     const soOutput = new SoLLMOutput();
     await this.llmAccess.soLLM({} as SoLLMInput, soOutput, new LLMContext());
     const availableLLMs = soOutput.list;
 
-    // ===== 第 1 层：simpleSimilarity 匹配历史/已有绑定与关联特征 =====
+    
     const cacheResult = await checkMatchCache(
       this.relationDb, AGENT_LLM_TABLE, input.agent_id,
       regenRate, 'random', 'llm_id',
     );
     if (cacheResult.hit && cacheResult.entries?.[0]) {
       const boundId = cacheResult.entries[0].entity_id;
-      // ===== 修改后的代码：绑定 LLM 先经 DB 校验（存在且启用），不再构造合成记录 =====
+      
       const llmRecord = await this.getLLMById(boundId);
       if (llmRecord && llmRecord.enable) {
         output.llm_id = boundId;
@@ -120,7 +101,7 @@ export class LLMCoreService {
         output.from_cache = true;
         return true;
       }
-      // 绑定失效（LLM 已被删除/禁用）：清除绑定缓存，继续走第 2/3 层重新匹配
+      
       await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
     }
 
@@ -136,7 +117,7 @@ export class LLMCoreService {
       return true;
     }
 
-    // ===== 第 2 层：LLM 智能打分评估 =====
+    
     const selectionVariables = {
       agent_id: input.agent_id,
       context_id: input.context_id,
@@ -172,7 +153,7 @@ export class LLMCoreService {
       .map((c) => c.id)
       .find((id) => llmIds.has(id)) ?? '';
 
-    // ===== 第 3 层：模型自适应生成/系统默认兜底（LLM 不可凭空生成代词代码） =====
+    
     if (!selectedLLMId) {
       selectedLLMId = rankerLLM.id;
     }
@@ -187,15 +168,12 @@ export class LLMCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // limitLLM — 设置 LLM 提供商配额
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 为指定 LLM 提供商设置配额限制。
-   *
-   * 采用 upsert 语义：若提供商已存在配额记录则更新，否则新建。
-   */
+  
+
   async limitLLM(input: LimitLLMInput, output: LimitLLMOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.llm_provider_id) {
@@ -206,7 +184,7 @@ export class LLMCoreService {
     const existing = await this.getProviderQuota(input.llm_provider_id);
 
     if (existing) {
-      // 更新
+      
       const updateData: Array<{ field: string; value: unknown }> = [];
       const quotaFields: Array<keyof LimitLLMInput> = [
         'quota_tokens_per_day', 'quota_tokens_per_week', 'quota_tokens_per_month',
@@ -227,7 +205,7 @@ export class LLMCoreService {
       }
       output.id = existing.id;
     } else {
-      // 新建
+      
       const id = IdGenerator.generate();
       const insertData = [
         { field: 'id', value: id },
@@ -247,15 +225,12 @@ export class LLMCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // checkLLMQuota — 检查 LLM 提供商配额
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 检查指定提供商的配额使用情况。
-   *
-   * 读取配额限制与实际用量，返回每个周期（日/周/月）的配额状态。
-   */
+  
+
   async checkLLMQuota(input: CheckLLMQuotaInput, output: CheckLLMQuotaOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.llm_provider_id) {
@@ -269,7 +244,7 @@ export class LLMCoreService {
     const weekStart = this.getWeekStart(now);
     const monthStart = this.getMonthStart(now);
 
-    // 查询各周期用量
+    
     const dailyUsage = await this.getUsageInRange(
       input.llm_provider_id, dayStart, now,
     );
@@ -294,15 +269,12 @@ export class LLMCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // configLLMCore — 获取当前配置
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 获取或更新 LLMCore 配置（SET 语义）。
-   *
-   * 支持配置 regen_rate 和 prompt_template_id。
-   */
+  
+
   async configLLMCore(input: ConfigLLMCoreInput, output: ConfigLLMCoreOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (input.regen_rate !== undefined || input.similarity_threshold !== undefined || input.prompt_template_id !== undefined || input.score_threshold !== undefined) {
@@ -345,13 +317,12 @@ export class LLMCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // recordLLMUsage — 记录 LLM 用量（供外部上报）
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 记录一次 LLM 调用的用量，用于配额统计。
-   */
+  
+
   async recordLLMUsage(input: RecordLLMUsageInput, output: RecordLLMUsageOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.llm_provider_id) {
@@ -375,16 +346,16 @@ export class LLMCoreService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — 配置
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 获取配置（单行配置仓：进程内缓存 + 空表回退默认值） */
+  
   private async getCoreConfig(): Promise<LLMCoreConfigRecord | null> {
     return this.configStore.load();
   }
 
-  /** 将原始 DB 行转为 LLMCoreConfigRecord */
+  
   private toCoreConfigRecord(raw: Record<string, unknown>): LLMCoreConfigRecord {
     return {
       id: raw['id'] as string,
@@ -397,11 +368,11 @@ export class LLMCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — LLM 查询
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 通过 soLLM 获取 LLM 详情 */
+  
   private async getLLMById(llmId: string): Promise<Record<string, unknown> | null> {
     const soOutput = new SoLLMOutput();
     await this.llmAccess.soLLM(
@@ -420,11 +391,11 @@ export class LLMCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — 配额
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 获取提供商配额记录 */
+  
   private async getProviderQuota(
     llmProviderId: string,
   ): Promise<LLMProviderQuotaRecord | null> {
@@ -452,15 +423,12 @@ export class LLMCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — 用量统计
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 查询指定提供商在时间范围内的用量总和。
-   *
-   * @returns { tokens_used, call_count } 合计值
-   */
+  
+
   private async getUsageInRange(
     llmProviderId: string,
     rangeStart: number,
@@ -483,7 +451,7 @@ export class LLMCoreService {
     return { tokens_used: tokensUsed, call_count: callCount };
   }
 
-  /** 构建单周期配额状态 */
+  
   private buildQuotaStatus(
     quota: LLMProviderQuotaRecord | null,
     tokenField: keyof LLMProviderQuotaRecord,
@@ -493,7 +461,7 @@ export class LLMCoreService {
     const tokenLimit = (quota?.[tokenField] as number) || 0;
     const callLimit = (quota?.[callField] as number) || 0;
 
-    // 取 Token 维度与调用次数维度的限制中更严格的
+    
     const maxLimit =
       tokenLimit > 0 && callLimit > 0
         ? Math.min(tokenLimit, callLimit)
@@ -504,7 +472,7 @@ export class LLMCoreService {
             : 0;
 
     const maxUsed = Math.max(usage.tokens_used, usage.call_count);
-    const available = maxLimit > 0 ? Math.max(0, maxLimit - maxUsed) : -1; // -1 表示无限制
+    const available = maxLimit > 0 ? Math.max(0, maxLimit - maxUsed) : -1;
 
     return {
       limit: maxLimit,
@@ -513,28 +481,28 @@ export class LLMCoreService {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — 时间计算
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 获取当天 0 点的时间戳（毫秒） */
+  
   private getDayStart(timestamp: number): number {
     const d = new Date(timestamp);
     d.setHours(0, 0, 0, 0);
     return d.getTime();
   }
 
-  /** 获取本周一 0 点的时间戳（毫秒） */
+  
   private getWeekStart(timestamp: number): number {
     const d = new Date(timestamp);
     const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // 周一为第一天
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
     d.setDate(diff);
     d.setHours(0, 0, 0, 0);
     return d.getTime();
   }
 
-  /** 获取当月 1 日 0 点的时间戳（毫秒） */
+  
   private getMonthStart(timestamp: number): number {
     const d = new Date(timestamp);
     d.setDate(1);
@@ -542,11 +510,11 @@ export class LLMCoreService {
     return d.getTime();
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers — Prompt 构建与结果解析
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /** 构建默认的 LLM 选择排名 Prompt */
+  
   private buildLlmList(
     availableLLMs: Array<{ id: string; llm_title?: string; llm_brief?: string | null; model_usage?: string }>,
   ): string {
@@ -558,9 +526,8 @@ export class LLMCoreService {
     }).join('\n');
   }
 
-  /**
-   * 渲染匹配 Prompt（逻辑控制）：DB 渲染 builtin/自定义模板；无硬编码内存回退，缺失 fail-loud。
-   */
+  
+
   private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
     const execPromptOutput = new ExecPromptOutput();
     await this.promptsAccess.execPrompt(
@@ -573,7 +540,7 @@ export class LLMCoreService {
     throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
   }
 
-  /** 获取 LLM 匹配模板 ID（逻辑控制） */
+  
   private async soMatchPromptTemplateId(): Promise<string> {
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
       { field: 'prompt_template_title', operator: Operator.LIKE, value: '%LLM%匹配%' },

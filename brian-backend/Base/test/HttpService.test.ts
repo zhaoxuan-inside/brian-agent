@@ -1,10 +1,3 @@
-/**
- * @fileoverview HttpService 超时/取消回归测试。
- *
- * 重点覆盖：代理路径下请求超时/被取消时必须 reject，绝不能既不 resolve 也不 reject
- * （历史 bug：proxyFetch 超时只 destroy 不 reject，导致调用方永久挂起）。
- */
-
 import { describe, it, expect, afterEach } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -30,9 +23,8 @@ function restoreProxyEnv(saved: Record<string, string | undefined>): void {
   }
 }
 
-/** 启动一个接受连接但永不响应的「挂起」服务器，用于模拟超时场景。 */
 async function startHangingServer(): Promise<{ port: number; close: () => Promise<void> }> {
-  const server = http.createServer(() => { /* 故意不响应 */ });
+  const server = http.createServer(() => {  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
   return {

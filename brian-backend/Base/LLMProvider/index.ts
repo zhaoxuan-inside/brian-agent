@@ -1,11 +1,5 @@
-/**
- * @fileoverview LLMProvider 模块统一导出。
- */
-
-// access 层
 export { LLMAccess } from './access/LLMAccess';
 
-// application 层（Runtime v2 · 阶段 0：归一化事件流解析器/执行器）
 export { LLMEventsParser } from './application/llmevents/LLMEventsParser';
 export {
   LLMEventsRunner,
@@ -13,10 +7,8 @@ export {
 } from './application/llmevents/LLMEventsRunner';
 export type { LLMEventsRunResult, LLMEventsRunnerOptions } from './application/llmevents/LLMEventsRunner';
 
-// infrastructure 层
 export { LLMSchemaInitializer } from './infrastructure/LLMSchemaInitializer';
 
-// domain 层类型
 export {
   LLMContext,
   AddLLMProviderInput,

@@ -21,29 +21,28 @@ export class AgentLibrarySchemaInitializer {
     );
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN agent_purpose TEXT DEFAULT ''`);
-    } catch { /* column already exists */ }
-    // 绑定唯一事实源列（2026-09-05：Agent↔Soul/Skill/MCP/Prompt 绑定从 Core agent_* 表收敛至 agent 表）
+    } catch {  }
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN skill_ids_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch { /* column already exists */ }
+    } catch {  }
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN mcp_ids_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch { /* column already exists */ }
+    } catch {  }
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN prompt_template_id TEXT NOT NULL DEFAULT ''`);
-    } catch { /* column already exists */ }
-    // 归属列（2026-09-11：user=用户手动创建；system=AgentBuilder 自动构建/系统内置；
-    // 解散动作只允许作用于 system 侧，delAgent 对 user 资产 fail-loud）
+    } catch {  }
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN created_by TEXT NOT NULL DEFAULT 'user'`);
-    } catch { /* column already exists */ }
+    } catch {  }
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_score_threshold INTEGER NOT NULL DEFAULT 70`);
-    } catch { /* column already exists */ }
-    // LLM 绑定只保留在 LLMProvider 的 agent_llm，agent 表不再存储 llm_id（旧库删除遗留列）
+    } catch {  }
+
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} DROP COLUMN llm_id`);
-    } catch { /* column 不存在或 SQLite 版本不支持 DROP COLUMN */ }
+    } catch {  }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_created ON ${AGENT_TABLE}(created)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_updated ON ${AGENT_TABLE}(updated)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_type ON ${AGENT_TABLE}(agent_type)`);
@@ -55,12 +54,11 @@ export class AgentLibrarySchemaInitializer {
         usage_context TEXT
       )`,
     );
-        // ===== 2026-09-14 三级维度最终定名：原 interact_id 列废弃，存量库 RENAME 为 run_id =====
-    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_USAGE_TABLE} RENAME COLUMN interact_id TO run_id`); } catch { /* 已重命名或原列不存在 */ }
+
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_USAGE_TABLE} RENAME COLUMN interact_id TO run_id`); } catch {  }
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_usage_created ON ${AGENT_USAGE_TABLE}(created)`);
     this.relationDb.executeRaw(`CREATE INDEX IF NOT EXISTS idx_agent_usage_agent ON ${AGENT_USAGE_TABLE}(agent_id)`);
 
-    // 按日统计表：agent_id + usage_date(YYYY-MM-DD) 粒度，供老化按日期窗口统计
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_USAGE_DAILY_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
@@ -93,7 +91,7 @@ export class AgentLibrarySchemaInitializer {
     );
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75`);
-    } catch { /* column already exists */ }
+    } catch {  }
 
     await this.insertDefaultConfig();
   }
@@ -113,10 +111,6 @@ export class AgentLibrarySchemaInitializer {
     ]);
   }
 
-  /**
-   * 从 agent_usage 明细表按 (agent_id, 本地日期) 聚合回填 agent_usage_daily。
-   * 幂等：仅当按日统计表为空时执行一次（recordAgentUsage 会持续维护该表）。
-   */
   private async backfillDailyUsage(): Promise<void> {
     const dailyCount = await this.relationDb.count(AGENT_USAGE_DAILY_TABLE);
     if (dailyCount > 0) return;

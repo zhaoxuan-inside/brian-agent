@@ -1,7 +1,3 @@
-/**
- * @fileoverview LLMEventsParser 单元测试（Runtime v2 · 阶段 0）。
- */
-
 import { describe, it, expect } from 'vitest';
 import { LLMEventsParser } from '../LLMProvider/application/llmevents/LLMEventsParser';
 

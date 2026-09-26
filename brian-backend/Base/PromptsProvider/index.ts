@@ -1,11 +1,5 @@
-/**
- * @fileoverview PromptsProvider 模块统一导出。
- */
-
-// access 层
 export { PromptsAccess } from './access/PromptsAccess';
 
-// domain 层类型
 export {
   PromptContext,
   AddPromptInput,

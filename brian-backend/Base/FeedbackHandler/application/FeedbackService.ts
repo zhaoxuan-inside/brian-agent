@@ -150,10 +150,6 @@ export class FeedbackService {
     return true;
   }
 
-  // ===== 修改后的方法：在原始查询之上批量补充人性化展示字段 =====
-  // 列表原本只含一串 ID（process_id / agent_id / run_id），对人不友好。
-  // 通过 feedback_id IN / run_id IN 各一次批量查询（非逐行 N+1）关联
-  // 反馈来源、分类、评论与该轮对话的首条用户提问，供前端直接展示。
   async getProcessLogs(
     input: QueryProcessLogsInput, output: QueryProcessLogsOutput, _ctx: FeedbackContext,
     metrics?: Metrics, _report?: Report,
@@ -171,10 +167,9 @@ export class FeedbackService {
     return true;
   }
 
-  /** 批量补充列表项的人性化展示字段（失败静默降级为仅原始字段） */
   private async enrichProcessLogs(logs: FeedbackProcessLogListItem[], metrics?: Metrics): Promise<void> {
     try {
-      // 1) feedback_id IN 批量取反馈记录 → source / category / comment
+
       const feedbackIds = [...new Set(logs.map(l => l.feedback_id).filter(Boolean))];
       const feedbackMap = new Map<string, FeedbackRecord>();
       if (feedbackIds.length > 0) {
@@ -187,7 +182,6 @@ export class FeedbackService {
         }
       }
 
-      // 2) run_id IN 批量取用户提问（每个 run 取首条），与详情接口口径一致
       const runIds = [...new Set(logs.map(l => l.run_id).filter(Boolean))];
       const questionMap = new Map<string, string>();
       if (runIds.length > 0) {
@@ -215,7 +209,7 @@ export class FeedbackService {
         if (question) log.user_question = question;
       }
     } catch (err) {
-      /* 补充字段失败时降级为仅返回原始字段 */
+
       metrics?.warn('FeedbackService.enrichProcessLogs 展示字段补充失败，降级为仅原始字段', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -273,14 +267,6 @@ export class FeedbackService {
     return true;
   }
 
-  /**
-   * 按关联引用删除反馈（会话删除时级联调用）。
-   *
-   * 会话（对话原文 info_raw / 运行记录 runtime_run）被删除后，引用它的
-   * feedback_record 与 feedback_process_log 会变成「无法关联任何内容」的
-   * 孤儿数据（监控页只剩一串 ID）。会话删除时按 run_id / work_id 级联删除。
-   * run_id 与 work_id 之间为 OR 关系，两类引用各自独立成立。
-   */
   async deleteFeedbackByRefs(
     input: DeleteFeedbackByRefsInput, output: DeleteFeedbackByRefsOutput, _ctx: FeedbackContext,
     _metrics?: Metrics, _report?: Report,
@@ -301,15 +287,6 @@ export class FeedbackService {
     return true;
   }
 
-  /**
-   * 孤儿反馈清理（启动时一次性执行）。
-   *
-   * 历史版本删除会话时未级联清理反馈，残留关联内容已被删除的孤儿记录。
-   * 行级存在性判据：run_id 有效 ⇔ 存在于 runtime_run；work_id 有效 ⇔ 存在于
-   * info_raw（对话原文删除时按 work_id 级联消失）。run_id 与 work_id 均无效
-   * （或两者本为空）的记录即孤儿——监控页只会显示「暂无提问内容」和一串无法
-   * 关联的 ID——按 id 走标准删除路径移除。失败静默降级为 0。
-   */
   async purgeOrphanFeedback(
     input: PurgeOrphanFeedbackInput, output: PurgeOrphanFeedbackOutput, _ctx: FeedbackContext,
     _metrics?: Metrics, _report?: Report,
@@ -400,7 +377,7 @@ export class FeedbackService {
           }
         }
       } catch {
-        /* skip bad JSON：suggestions 列非 JSON（历史/手工数据）时跳过该条，不影响其余统计 */
+
       }
     }
 

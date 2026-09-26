@@ -10,7 +10,7 @@ import {
 } from '@brian-agent/core';
 import {
   AgentLibraryAccess, AgentStrategyAccess, AgentBuilderAccess, AgentExecutionAccess,
-  AgentContextAccess, PlannerAgentAccess, WriterAgentAccess, EvolutorAgentAccess,
+  AgentContextAccess, WriterAgentAccess, EvolutorAgentAccess,
 } from '@brian-agent/agent';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -29,7 +29,7 @@ function makeTempDir(): string {
 
 export function cleanupTempDirs() {
   for (const dir of tempDirs) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {  }
   }
   tempDirs.length = 0;
 }
@@ -45,11 +45,10 @@ function addColumnIfNotExists(relationDb: RelationDBAccess, table: string, colum
   try {
     relationDb.executeRaw(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${type}`);
   } catch {
-    // Column already exists - ignore
+
   }
 }
 
-/** 为 agent_strategy 表写入默认策略种子，避免 buildAgent.matchStrategy 因表为空而失败 */
 function seedAgentStrategies(relationDb: RelationDBAccess): void {
   const now = Date.now();
   const ruleJson = JSON.stringify({ version: '1.0', steps: [{ step: 'Think', next: 'Answer' }, { step: 'Answer', next: null }] }).replace(/'/g, "''");
@@ -174,7 +173,6 @@ export interface RealTestContext {
   agentContext: AgentContextAccess;
   agentBuilder: AgentBuilderAccess;
   agentExecution: AgentExecutionAccess;
-  plannerAgent: PlannerAgentAccess;
   writerAgent: WriterAgentAccess;
   evolutorAgent: EvolutorAgentAccess;
 }
@@ -195,7 +193,7 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   mockExternalLLMMethods(llmAccess);
 
   const mcpAccess = new MCPAccess(relationDb, logger);
-  try { await (mcpAccess as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (mcpAccess as any).initialize?.(); } catch {  }
   mockExternalMCPMethods(mcpAccess);
 
   const soulAccess = new SoulAccess(relationDb, logger);
@@ -246,11 +244,8 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const logAccess = new LogAccess(logRelationDb, logger);
   await logAccess.initialize();
 
-  // 2026-09-05：Core SkillCore usage 表更名 skill_core_usage（键 agent_id+skill_id），
-  // 与 Base SkillProvider 的 skill_usage（全局按天）不再共表，冲突 hack 移除
   addColumnIfNotExists(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
 
-  // Use in-memory VectorDB for test isolation
   const vectorDbAccess = createInMemoryVectorDBAccess();
 
   const infoCore = new InfoCoreAccess(relationDb, llmAccess, promptsAccess, vectorDbAccess as any, graphDBAccess, logger);
@@ -260,10 +255,10 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   await llmCore.initialize();
 
   const mcpCore = new MCPCoreAccess(relationDb, mcpAccess, llmAccess, promptsAccess, logger);
-  try { await (mcpCore as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (mcpCore as any).initialize?.(); } catch {  }
 
   const skillCore = new SkillCoreAccess(relationDb, skillAccess, llmAccess, promptsAccess, logger);
-  try { await (skillCore as any).initialize?.(); } catch { /* no initialize */ }
+  try { await (skillCore as any).initialize?.(); } catch {  }
 
   const soulCore = new SoulCoreAccess(relationDb, soulAccess, llmAccess, promptsAccess, logger);
   await soulCore.initialize();
@@ -289,16 +284,8 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const writerAgent = new WriterAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, agentBuilder, agentLibrary, soulAccess, llmCore, logger);
   await writerAgent.initialize();
 
-  const plannerAgent = new PlannerAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, agentBuilder, agentLibrary, logger);
-  await plannerAgent.initialize();
-
   const evolutorAgent = new EvolutorAgentAccess(relationDb, llmAccess, promptsAccess, infoCore, mqAccess, mqCore, agentBuilder, agentLibrary, agentExecution, logger);
   await evolutorAgent.initialize();
-
-
-
-
-
 
   return {
     db: relationDb,
@@ -325,7 +312,6 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
     agentContext,
     agentBuilder,
     agentExecution,
-    plannerAgent,
     writerAgent,
     evolutorAgent,
   };

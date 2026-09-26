@@ -1,12 +1,3 @@
-/**
- * @fileoverview CronProvider / CronUtils 测试。
- *
- * 覆盖：
- * - checkCron：校验 5/6/7 字段表达式、归一化、非法表达式
- * - generateCron / parseCron：字段与表达式互转
- * - matchesCron / nextRunTime：时间匹配与下次执行时间计算
- */
-
 import { describe, it, expect } from 'vitest';
 import {
   checkCron,
@@ -31,9 +22,9 @@ describe('CronUtils.checkCron', () => {
   it('非法表达式返回错误', () => {
     expect(checkCron('').valid).toBe(false);
     expect(checkCron('a b c d e f').valid).toBe(false);
-    expect(checkCron('60 0 2 * * *').valid).toBe(false); // 秒超范围
-    expect(checkCron('0 0 25 * * *').valid).toBe(false); // 时超范围
-    expect(checkCron('0 0 2 * 13 *').valid).toBe(false); // 月超范围
+    expect(checkCron('60 0 2 * * *').valid).toBe(false);
+    expect(checkCron('0 0 25 * * *').valid).toBe(false);
+    expect(checkCron('0 0 2 * 13 *').valid).toBe(false);
   });
 
   it('支持列表/区间/步长', () => {
@@ -61,19 +52,19 @@ describe('CronUtils.generateCron / parseCron', () => {
 
 describe('CronUtils.matchesCron / nextRunTime', () => {
   it('matchesCron 匹配正确', () => {
-    const d = new Date(2026, 0, 1, 2, 0, 0, 0); // 2026-01-01 02:00:00
+    const d = new Date(2026, 0, 1, 2, 0, 0, 0);
     expect(matchesCron('0 0 2 * * *', d)).toBe(true);
     expect(matchesCron('0 0 3 * * *', d)).toBe(false);
   });
 
   it('nextRunTime 计算每日 2 点的下次时间', () => {
-    const from = new Date(2026, 0, 1, 0, 0, 0, 0).getTime(); // 2026-01-01 00:00:00
+    const from = new Date(2026, 0, 1, 0, 0, 0, 0).getTime();
     const next = nextRunTime('0 0 2 * * *', from);
     expect(next).toBe(new Date(2026, 0, 1, 2, 0, 0, 0).getTime());
   });
 
   it('nextRunTime 跨天计算', () => {
-    const from = new Date(2026, 0, 1, 3, 0, 0, 0).getTime(); // 2026-01-01 03:00:00（已过 2 点）
+    const from = new Date(2026, 0, 1, 3, 0, 0, 0).getTime();
     const next = nextRunTime('0 0 2 * * *', from);
     expect(next).toBe(new Date(2026, 0, 2, 2, 0, 0, 0).getTime());
   });

@@ -66,7 +66,7 @@ describe('SkillCoreProvider', () => {
         "min_usage_count" INTEGER NOT NULL
       )
     `);
-    // skill_core_usage（评估依据；键 (agent_id, skill_id)，2026-09-05 起与 Base 的 skill_usage 解耦）
+
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
@@ -86,9 +86,6 @@ describe('SkillCoreProvider', () => {
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
 
-    // Pre-create Core tables with proper schema so Base's schema initializer
-    // (which uses same table names but different columns) skips via IF NOT EXISTS
-    // and adds both Base and Core columns to shared tables
     await ensureCoreTables();
 
     skillAccess = new SkillAccess(relationDb);
@@ -100,8 +97,8 @@ describe('SkillCoreProvider', () => {
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   describe('configSkillCore', () => {
@@ -204,7 +201,6 @@ describe('SkillCoreProvider', () => {
         { field: 'prompt_template_id', value: '' },
       ]);
 
-      // 绑定唯一事实源 = agent 表：既有绑定经 bound_skill_ids 传入，确定性水合
       const input = new MatchSkillInput();
       input.agent_id = agentId;
       input.context_id = 'c1';
@@ -225,7 +221,7 @@ describe('SkillCoreProvider', () => {
       const output = new OptSkillOutput();
 
       await skillCore.optSkill(input, output, new SkillCoreContext());
-      // 绑定已收敛至 Agent 表：binding 兼容保留（id 空串），仅记 usage
+
       expect(output.binding).not.toBeNull();
       expect(output.binding!.id).toBe('');
       expect(output.binding!.agent_id).toBe('agent-opt-skill');
@@ -271,7 +267,6 @@ describe('SkillCoreProvider', () => {
         out2, new SkillCoreContext(),
       );
 
-      // 绑定 id 恒为空串（绑定在 Agent 表）；usage 每次调用各记一条
       expect(out1.binding!.id).toBe('');
       expect(out2.binding!.id).toBe('');
 

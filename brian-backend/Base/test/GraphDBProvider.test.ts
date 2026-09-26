@@ -1,17 +1,3 @@
-/**
- * @fileoverview GraphDBProvider 模块测试。
- *
- * 测试范围：
- * - 节点管理：addGraphNode / soGraphNode / updateGraphNode / delGraphNode
- * - 边管理：addGraphEdge / soGraphEdge / updateGraphEdge / delGraphEdge
- * - 图查询：selectGraph / soGraphNeighbors
- * - 边生命周期：activateGraphEdge / ageGraphEdge
- * - 可视化与运维：visualizedGraph / enableGraphDB / closeGraphDB
- *
- * 所有测试使用真实的 better-sqlite3 + SQLite 数据库，不使用任何 MOCK。
- * 每个测试用例在 temp 目录中创建独立的数据库文件，测试后清理。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -66,12 +52,10 @@ import type {
 import { Operator } from '../shared/query';
 import { ComponentDisabledError, ValidationError, NotFoundError, DatabaseError } from '../shared/errors';
 
-/** 创建节点时的辅助函数 */
 function makeNode(node_type: string, content: Record<string, unknown>): GraphNodeData {
   return { node_type, content };
 }
 
-/** 创建边时的辅助函数 */
 function makeEdge(
   from_node_id: string,
   to_node_id: string,
@@ -104,26 +88,22 @@ describe('GraphDBProvider', () => {
     try {
       await graphDb.closeGraphDB(new CloseGraphDBInput(), new CloseGraphDBOutput(), new GraphContext());
     } catch {
-      // 可能已关闭
+
     }
     try {
       await relationDb.closeDB(new CloseDBInput(), new CloseDBOutput(), new DBContext());
     } catch {
-      // 可能已关闭
+
     }
     await new Promise((r) => setTimeout(r, 50));
     if (tempDir && fs.existsSync(tempDir)) {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // ==========================================================================
-  // 节点管理
-  // ==========================================================================
 
   describe('addGraphNode', () => {
     it('应成功新增节点并返回 ID', async () => {
@@ -282,12 +262,11 @@ describe('GraphDBProvider', () => {
     });
 
     it('应更新节点的 updated 时间戳', async () => {
-      // 先获取原始时间
+
       const beforeOut = new GetGraphNodeOutput();
       await graphDb.soGraphNode({ id: nodeId } as GetGraphNodeInput, beforeOut, new GraphContext());
       const originalUpdated = beforeOut.node!.updated;
 
-      // 等待 1ms 确保时间戳改变
       await new Promise((r) => setTimeout(r, 2));
 
       await graphDb.updateGraphNode(
@@ -352,7 +331,6 @@ describe('GraphDBProvider', () => {
         edgeOut, new GraphContext(),
       );
 
-      // 删除 from 节点，级联删除边
       await graphDb.delGraphNode({ ids: [out1.id] } as DelGraphNodeInput, new DelGraphNodeOutput(), new GraphContext());
 
       const getEdgeOut = new GetGraphEdgeOutput();
@@ -372,19 +350,16 @@ describe('GraphDBProvider', () => {
         edgeOut, new GraphContext(),
       );
 
-      // 激活边，生成激活事件
       await graphDb.activateGraphEdge(
         { edge_id: edgeOut.id } as ActivateGraphEdgeInput,
         new ActivateGraphEdgeOutput(), new GraphContext(),
       );
 
-      // 验证激活事件存在
       const beforeVol = new VisualizedGraphOutput();
       await graphDb.visualizedGraph({ scope: 'volume' } as VisualizedGraphInput, beforeVol, new GraphContext());
       const beforeEvents = beforeVol.data.total_activation_events as number;
       expect(beforeEvents).toBeGreaterThan(0);
 
-      // 删除 from 节点
       await graphDb.delGraphNode({ ids: [out1.id] } as DelGraphNodeInput, new DelGraphNodeOutput(), new GraphContext());
 
       const afterVol = new VisualizedGraphOutput();
@@ -398,10 +373,6 @@ describe('GraphDBProvider', () => {
       ).rejects.toThrow(ValidationError);
     });
   });
-
-  // ==========================================================================
-  // 边管理
-  // ==========================================================================
 
   describe('addGraphEdge', () => {
     let fromId: string;
@@ -628,7 +599,7 @@ describe('GraphDBProvider', () => {
     });
 
     it('应支持端点变更（删除旧关系并重建）', async () => {
-      // 创建新目标节点
+
       const out3 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('new-target', {}) } as AddGraphNodeInput, out3, new GraphContext());
       const newToId = out3.id;
@@ -643,7 +614,7 @@ describe('GraphDBProvider', () => {
       const getOut = new GetGraphEdgeOutput();
       await graphDb.soGraphEdge({ id: edgeId } as GetGraphEdgeInput, getOut, new GraphContext());
       expect(getOut.edge!.to_node_id).toBe(newToId);
-      expect(getOut.edge!.from_node_id).toBe(fromId); // 未变
+      expect(getOut.edge!.from_node_id).toBe(fromId);
     });
 
     it('端点变更时校验新端点节点存在', async () => {
@@ -656,17 +627,15 @@ describe('GraphDBProvider', () => {
     });
 
     it('端点变更时应保留 is_active 和 last_activation_time', async () => {
-      // 先激活边
+
       await graphDb.activateGraphEdge(
         { edge_id: edgeId } as ActivateGraphEdgeInput,
         new ActivateGraphEdgeOutput(), new GraphContext(),
       );
 
-      // 获取激活后的状态
       const beforeOut = new GetGraphEdgeOutput();
       await graphDb.soGraphEdge({ id: edgeId } as GetGraphEdgeInput, beforeOut, new GraphContext());
 
-      // 变更端点
       const out3 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('third', {}) } as AddGraphNodeInput, out3, new GraphContext());
 
@@ -753,7 +722,6 @@ describe('GraphDBProvider', () => {
         edgeOut, new GraphContext(),
       );
 
-      // 激活边
       await graphDb.activateGraphEdge(
         { edge_id: edgeOut.id } as ActivateGraphEdgeInput,
         new ActivateGraphEdgeOutput(), new GraphContext(),
@@ -763,7 +731,6 @@ describe('GraphDBProvider', () => {
       await graphDb.visualizedGraph({ scope: 'volume' } as VisualizedGraphInput, beforeVol, new GraphContext());
       expect((beforeVol.data.total_activation_events as number)).toBeGreaterThan(0);
 
-      // 删除边
       await graphDb.delGraphEdge({ ids: [edgeOut.id] } as DelGraphEdgeInput, new DelGraphEdgeOutput(), new GraphContext());
 
       const afterVol = new VisualizedGraphOutput();
@@ -778,13 +745,9 @@ describe('GraphDBProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // 图查询
-  // ==========================================================================
-
   describe('selectGraph', () => {
     beforeEach(async () => {
-      // 创建测试数据
+
       for (let i = 0; i < 5; i++) {
         const out = new AddGraphNodeOutput();
         await graphDb.addGraphNode(
@@ -805,7 +768,7 @@ describe('GraphDBProvider', () => {
     });
 
     it('应查询所有边', async () => {
-      // 先创建一条边
+
       const nodeOut1 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('extra-a', {}) } as AddGraphNodeInput, nodeOut1, new GraphContext());
       const nodeOut2 = new AddGraphNodeOutput();
@@ -829,7 +792,7 @@ describe('GraphDBProvider', () => {
         { target: 'node', node_type: 'type-0' } as SelectGraphInput,
         output, new GraphContext(),
       );
-      expect(output.total).toBe(3); // i=0,2,4
+      expect(output.total).toBe(3);
       for (const node of output.list) {
         expect((node as GraphNodeRecord).node_type).toBe('type-0');
       }
@@ -868,7 +831,7 @@ describe('GraphDBProvider', () => {
         } as SelectGraphInput,
         output, new GraphContext(),
       );
-      expect(output.total).toBe(2); // i=1,3
+      expect(output.total).toBe(2);
     });
 
     it('应支持排序（order_by）', async () => {
@@ -896,7 +859,7 @@ describe('GraphDBProvider', () => {
         output, new GraphContext(),
       );
       expect(output.list.length).toBe(2);
-      expect(output.total).toBe(5); // total 不计分页
+      expect(output.total).toBe(5);
     });
 
     it('应支持分页第2页', async () => {
@@ -942,7 +905,7 @@ describe('GraphDBProvider', () => {
       ring1: string[];
       ring2: string[];
     }> {
-      // 创建中心节点
+
       const centerOut = new AddGraphNodeOutput();
       await graphDb.addGraphNode(
         { data: makeNode('center', { name: 'center' }) } as AddGraphNodeInput,
@@ -950,7 +913,6 @@ describe('GraphDBProvider', () => {
       );
       const center = centerOut.id;
 
-      // 验证中心节点可查询
       const checkCenter = new GetGraphNodeOutput();
       await graphDb.soGraphNode({ id: center } as GetGraphNodeInput, checkCenter, new GraphContext());
       if (!checkCenter.node) {
@@ -960,7 +922,6 @@ describe('GraphDBProvider', () => {
       const ring1: string[] = [];
       const ring2: string[] = [];
 
-      // 创建第一层邻居（3个）并连接
       for (let i = 0; i < 3; i++) {
         const out = new AddGraphNodeOutput();
         await graphDb.addGraphNode(
@@ -974,7 +935,6 @@ describe('GraphDBProvider', () => {
         );
       }
 
-      // 创建第二层邻居（2个）连接至 ring1[0]
       for (let i = 0; i < 2; i++) {
         const out = new AddGraphNodeOutput();
         await graphDb.addGraphNode(
@@ -1038,7 +998,7 @@ describe('GraphDBProvider', () => {
 
     it('应按 edge_type 过滤', async () => {
       const { center } = await createGraph();
-      // 创建一条不同类型的边
+
       const out = new AddGraphNodeOutput();
       await graphDb.addGraphNode(
         { data: makeNode('extra', {}) } as AddGraphNodeInput,
@@ -1100,10 +1060,6 @@ describe('GraphDBProvider', () => {
       expect(output.list.length).toBe(0);
     });
   });
-
-  // ==========================================================================
-  // 边生命周期
-  // ==========================================================================
 
   describe('activateGraphEdge', () => {
     let edgeId: string;
@@ -1167,7 +1123,7 @@ describe('GraphDBProvider', () => {
     });
 
     it('多次激活应累计按天激活次数', async () => {
-      // 激活3次
+
       for (let i = 0; i < 3; i++) {
         await graphDb.activateGraphEdge(
           { edge_id: edgeId } as ActivateGraphEdgeInput,
@@ -1175,7 +1131,6 @@ describe('GraphDBProvider', () => {
         );
       }
 
-      // 验证边仍然是激活的
       const getOut = new GetGraphEdgeOutput();
       await graphDb.soGraphEdge({ id: edgeId } as GetGraphEdgeInput, getOut, new GraphContext());
       expect(getOut.edge!.is_active).toBe(true);
@@ -1202,7 +1157,7 @@ describe('GraphDBProvider', () => {
 
   describe('ageGraphEdge', () => {
     it('应老化在保留窗口内无足够激活的旧边', async () => {
-      // 创建边并激活少量次数（< min_activation_count = 5）
+
       const out1 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('a', {}) } as AddGraphNodeInput, out1, new GraphContext());
       const out2 = new AddGraphNodeOutput();
@@ -1213,7 +1168,6 @@ describe('GraphDBProvider', () => {
         edgeOut, new GraphContext(),
       );
 
-      // 激活2次（< min_activation_count = 5）
       for (let i = 0; i < 2; i++) {
         await graphDb.activateGraphEdge(
           { edge_id: edgeOut.id } as ActivateGraphEdgeInput,
@@ -1221,26 +1175,16 @@ describe('GraphDBProvider', () => {
         );
       }
 
-      // 修改 retention_days 和 min_activation_count 来触发老化
-      // 注意：默认 retention_days=30, min_activation_count=5
-      // 新边因为创建时间在保留窗口内（未满 observation period），不会被老化
-      // 我们需要让边创建时间超过 retention_days 才能老化
-      // 由于无法修改 created 时间，我们降低 min_activation_count 的阈值
-
-      // 或者设置 min_activation_count 为 3，让 2 次激活不通过
-      // 但新边仍在保留窗口内，不会被老化
-      // 因此这个测试主要验证 aging 过程不会报错，且返回 aged_count
-
       const output = new AgeGraphEdgeOutput();
       await graphDb.ageGraphEdge(new AgeGraphEdgeInput(), output, new GraphContext());
       expect(typeof output.aged_count).toBe('number');
-      expect(output.aged_count).toBe(0); // 新边在保留窗口内不会被老化
+      expect(output.aged_count).toBe(0);
     });
 
     it('应清理过期的按天激活统计和激活事件数据', async () => {
       const output = new AgeGraphEdgeOutput();
       await graphDb.ageGraphEdge(new AgeGraphEdgeInput(), output, new GraphContext());
-      // 即使没有可老化的边，清理操作也应正常完成
+
       expect(typeof output.aged_count).toBe('number');
     });
 
@@ -1250,10 +1194,6 @@ describe('GraphDBProvider', () => {
       expect(output.aged_count).toBeGreaterThanOrEqual(0);
     });
   });
-
-  // ==========================================================================
-  // 可视化与运维
-  // ==========================================================================
 
   describe('visualizedGraph', () => {
     it('scope=health 应返回健康状态', async () => {
@@ -1269,7 +1209,7 @@ describe('GraphDBProvider', () => {
     });
 
     it('scope=volume 应返回数据量', async () => {
-      // 创建一些数据
+
       const out = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('test', { x: 1 }) } as AddGraphNodeInput, out, new GraphContext());
 
@@ -1315,13 +1255,12 @@ describe('GraphDBProvider', () => {
 
   describe('enableGraphDB', () => {
     it('应支持禁用和启用图数据库', async () => {
-      // 禁用
+
       await graphDb.enableGraphDB(
         { enable: false } as EnableGraphDBInput,
         new EnableGraphDBOutput(), new GraphContext(),
       );
 
-      // 禁用后所有操作应失败
       const output = new AddGraphNodeOutput();
       await expect(
         graphDb.addGraphNode(
@@ -1330,13 +1269,11 @@ describe('GraphDBProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // 重新启用
       await graphDb.enableGraphDB(
         { enable: true } as EnableGraphDBInput,
         new EnableGraphDBOutput(), new GraphContext(),
       );
 
-      // 启用后操作应正常
       const out2 = new AddGraphNodeOutput();
       await graphDb.addGraphNode(
         { data: makeNode('test', { x: 1 }) } as AddGraphNodeInput,
@@ -1407,10 +1344,6 @@ describe('GraphDBProvider', () => {
     });
   });
 
-  // ==========================================================================
-  // 边缘场景与组合测试
-  // ==========================================================================
-
   describe('边缘场景', () => {
     it('selectGraph 查询空边集应返回空列表', async () => {
       const output = new SelectGraphOutput();
@@ -1464,7 +1397,6 @@ describe('GraphDBProvider', () => {
       const out3 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('test', { idx: 3 }) } as AddGraphNodeInput, out3, new GraphContext());
 
-      // 使用 BETWEEN 查询 created 在两个节点的 created 之间
       const t1 = (await (async () => {
         const o = new GetGraphNodeOutput();
         await graphDb.soGraphNode({ id: out1.id } as GetGraphNodeInput, o, new GraphContext());
@@ -1543,7 +1475,7 @@ describe('GraphDBProvider', () => {
 
       const getOut = new GetGraphEdgeOutput();
       await graphDb.soGraphEdge({ id: edgeOut.id } as GetGraphEdgeInput, getOut, new GraphContext());
-      // PRD: properties 可空，默认为空
+
       expect(getOut.edge!.properties).toBeNull();
     });
 
@@ -1580,7 +1512,7 @@ describe('GraphDBProvider', () => {
           new EnableGraphDBOutput(), new GraphContext(),
         );
       }
-      // 最终应能正常使用
+
       const output = new AddGraphNodeOutput();
       await graphDb.addGraphNode(
         { data: makeNode('test', { x: 1 }) } as AddGraphNodeInput,
@@ -1608,8 +1540,7 @@ describe('GraphDBProvider', () => {
     });
 
     it('soGraphNeighbors 默认使用配置 default_depth=1', async () => {
-      // 验证默认深度：配置 default_depth 默认为 1
-      // 但是这里依赖 initialize 的正确性
+
       const out1 = new AddGraphNodeOutput();
       await graphDb.addGraphNode({ data: makeNode('c', { a: 1 }) } as AddGraphNodeInput, out1, new GraphContext());
       const out2 = new AddGraphNodeOutput();
@@ -1624,7 +1555,7 @@ describe('GraphDBProvider', () => {
         { node_id: out1.id } as GetGraphNeighborsInput,
         output, new GraphContext(),
       );
-      // depth 默认 1，应返回 1 个邻居
+
       expect(output.list.length).toBe(1);
     });
   });

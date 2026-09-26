@@ -58,10 +58,10 @@ import {
   GetLearningResultsInput, GetLearningResultsOutput,
   GetLearningStatsInput, GetLearningStatsOutput,
   LearningTaskRecord, LearningTaskStatus, ListLearningTasksInput, ListLearningTasksOutput,
+  type LearningPassResult,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,
 } from '../domain/types';
 
-/** Tag 图谱边记录（内部类型） */
 interface TagGraphEdge {
   edge_id: string;
   from_tag_id: string;
@@ -73,7 +73,6 @@ interface TagGraphEdge {
   last_activation_time: number;
 }
 
-/** Tag 图谱收集工作集（内部类型） */
 interface TagGraphCollections {
   tagNodeMap: Map<string, { tag_id: string; tag_name: string; info_count: number; created: number }>;
   tagActivationMap: Map<string, number>;
@@ -81,22 +80,42 @@ interface TagGraphCollections {
   edgeKeySet: Set<string>;
 }
 
+interface TagStageResult {
+  error?: string;
+  count: number;
+}
+
 export class SelfLearningService {
-  // ===== 修改后的字段：系统唯一的定时器 = 随机概率触发器 =====
-  // 手动触发改为"立即完整执行一次"的单轮任务，不再安装 document/tag 等 per-mode 定时器；
-  // 对话学习改为 Evolutor runEvalOnce 单轮闭环，不再依赖常驻评估调度（原 evalSchedule* 标记随之移除）。
-  /** 唯一的系统定时器：按概率触发三类学习任务（RANDOM / ALL 启动时确保其运行） */
+
   private randomLearningTimer: ReturnType<typeof setInterval> | null = null;
-  /** 三类单轮任务的防重入标志：同一时刻同模式只允许一轮完整执行 */
-  private documentPassRunning = false;
-  private conversationPassRunning = false;
-  private tagMaintenanceRunning = false;
-  /** 手动停止意图：进行中的单轮任务在单元边界（文件 / 建图-激活阶段）检查后提前结束 */
+
+  private readonly passRunning = new Set<LearningTaskRecord['mode']>();
+
   private readonly cancelRequested = new Set<LearningTaskRecord['mode']>();
 
-  /** 文档伴读声明式 Agent 定义 ID 缓存（ensureBuiltinDocumentAgent 落账后填充） */
+  private async runModePass(
+    mode: LearningTaskRecord['mode'],
+    logLabel: string,
+    core: () => Promise<LearningPassResult>,
+  ): Promise<LearningPassResult> {
+    if (this.passRunning.has(mode)) return { skipped: true };
+    this.passRunning.add(mode);
+
+    this.cancelRequested.delete(mode);
+    try {
+      return await core();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger?.error?.(`${logLabel} error`, { error: message });
+      return { error: message };
+    } finally {
+      this.passRunning.delete(mode);
+      this.cancelRequested.delete(mode);
+    }
+  }
+
   private documentAgentDefId = '';
-  /** 文档伴读内置 Soul ID 缓存（ensureDocumentReadingSoul 落账后填充） */
+
   private documentAgentSoulId = '';
 
   constructor(
@@ -112,15 +131,11 @@ export class SelfLearningService {
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
     private readonly logger?: Logger,
-    /** 文档伴读内置 Soul 的读写入口（Base.SoulProvider；缺省则跳过内置 Agent 装配） */
+
     private readonly soulAccess?: SoulAccess,
-    /** 文档伴读声明式 Agent 的注册/快照入口（Runtime.Agents；缺省则回退直连 LLM） */
+
     private readonly agentDefAccess?: AgentDefAccess,
   ) {}
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // addLibrary
-  // ─────────────────────────────────────────────────────────────────────────
 
   async addLibrary(input: AddLibraryInput, output: AddLibraryOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -155,15 +170,6 @@ export class SelfLearningService {
     return true;
   }
 
-  /**
-   * 递归扫描资料库目录，将子目录与文件（含层级结构）写入 self_learning_file 表。
-   *
-   * 目录记录：is_directory=1，file_size=0，status='PENDING'（不参与文档学习）。
-   * 文件记录：is_directory=0，status='PENDING'，relative_path/parent_path 记录层级。
-   *
-   * @param skipExisting 传入时为增量模式：relative_path 或 file_path（绝对路径）已存在的条目跳过入库（保留原状态），其子目录仍会递归
-   * @returns 扫描到的文件数与目录数
-   */
   private async scanLibraryDirectory(
     libraryId: string,
     rootPath: string,
@@ -249,10 +255,6 @@ export class SelfLearningService {
     return { fileCount, dirCount };
   }
 
-  /**
-   * 增量同步资料库目录：把磁盘上新增的文件/目录登记为 PENDING。
-   * 已有记录保持原状态（COMPLETED 不重复学习），磁盘上已移除的记录不删除。
-   */
   private async syncLibraryFiles(libraryId: string, rootPath: string, now: number): Promise<void> {
     if (!rootPath) return;
     const existing = await this.relationDb.select('self_learning_file', {
@@ -260,7 +262,7 @@ export class SelfLearningService {
         { field: 'library_id', operator: Operator.EQ, value: libraryId },
       ],
     });
-    // 遗留数据可能没有 relative_path（空串），故同时按 file_path 绝对路径判重
+
     const knownPaths = new Set<string>();
     for (const r of existing) {
       const rel = String(r.relative_path ?? '');
@@ -270,10 +272,6 @@ export class SelfLearningService {
     }
     await this.scanLibraryDirectory(libraryId, rootPath, now, knownPaths);
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // deleteLibrary
-  // ─────────────────────────────────────────────────────────────────────────
 
   async deleteLibrary(input: DeleteLibraryInput, _output: DeleteLibraryOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -300,10 +298,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // setLibraryEnabled
-  // ─────────────────────────────────────────────────────────────────────────
-
   async setLibraryEnabled(input: SetLibraryEnabledInput, output: SetLibraryEnabledOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const libRow = await this.relationDb.selectOne('self_learning_library', [
@@ -323,7 +317,6 @@ export class SelfLearningService {
       [{ field: 'library_id', operator: Operator.EQ, value: input.library_id }],
     );
 
-    // 启用时重新扫描目录，刷新文件与层级结构数据
     if (input.enabled) {
       await this.relationDb.delete('self_learning_file', [
         { field: 'library_id', operator: Operator.EQ, value: input.library_id },
@@ -342,10 +335,6 @@ export class SelfLearningService {
     output.enabled = input.enabled;
     return true;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLibrary
-  // ─────────────────────────────────────────────────────────────────────────
 
   async soLibrary(input: SearchLibraryInput, output: SearchLibraryOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -376,7 +365,6 @@ export class SelfLearningService {
     const selOutput = Object.assign(new SelectDBOutput(), {});
     await this.relationDb.selectDB(selInput, selOutput, new DBContext());
 
-    // ===== 修改后的方法：单次 GROUP BY 查询替代 N+1 count =====
     const libraryIds = selOutput.rows.map(r => r.library_id as string);
     const statsMap = new Map<string, { total_files: number; learned_files: number }>();
     if (libraryIds.length > 0) {
@@ -406,10 +394,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLibraryFiles
-  // ─────────────────────────────────────────────────────────────────────────
-
   async soLibraryFiles(input: GetLibraryFilesInput, output: GetLibraryFilesOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const baseConds: string[] = ['"library_id" = ?'];
@@ -422,13 +406,12 @@ export class SelfLearningService {
       baseConds.push('"file_name" LIKE ?');
       baseArgs.push(`%${input.keyword}%`);
     }
-    // directory 显式传入时才按目录过滤（旧调用不传 directory 时返回该库全部文件）
+
     if (input.directory !== undefined) {
       baseConds.push('"parent_path" = ?');
       baseArgs.push(input.directory);
     }
 
-    // total：符合条件的总数（不含分页条件）
     const countRows = this.relationDb.queryRaw<{ c: number }>(
       `SELECT COUNT(*) AS "c" FROM "self_learning_file" WHERE ${baseConds.join(' AND ')}`,
       baseArgs,
@@ -440,10 +423,10 @@ export class SelfLearningService {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 500);
 
     if (input.page_current !== undefined && input.page_size !== undefined) {
-      // 旧 offset 分页（兼容既有调用与测试）
+
       const pageSize = input.page_size;
       const offset = (input.page_current - 1) * pageSize;
-      // ===== 修改后：明确列名，排除 error_message 大字段 =====
+
       const fileColumns = '"id","created","updated","library_id","file_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
       const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "file_id" ASC LIMIT ${pageSize} OFFSET ${offset}`;
       output.files = this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
@@ -452,7 +435,6 @@ export class SelfLearningService {
       return true;
     }
 
-    // 游标分页（id + page_size）：created ASC, file_id ASC，游标格式 created:file_id
     if (input.cursor) {
       const idx = input.cursor.indexOf(':');
       const cCreated = idx > 0 ? Number(input.cursor.slice(0, idx)) : NaN;
@@ -462,7 +444,7 @@ export class SelfLearningService {
         args.push(cCreated, cCreated, cId);
       }
     }
-    // ===== 修改后：明确列名，排除 error_message 大字段 =====
+
     const fileColumns = '"id","created","updated","library_id","file_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
     const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "file_id" ASC LIMIT ${limit + 1}`;
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
@@ -476,13 +458,9 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLibraryTree
-  // ─────────────────────────────────────────────────────────────────────────
-
   async soLibraryTree(input: GetLibraryTreeInput, output: GetLibraryTreeOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    // ===== 修改后：添加 LIMIT 防止大库全量加载 =====
+
     const treeLimit = 5000;
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
       `SELECT "file_id", "file_name", "relative_path", "parent_path", "is_directory" FROM "self_learning_file" WHERE "library_id" = ? ORDER BY "is_directory" DESC, "file_name" ASC LIMIT ${treeLimit}`,
@@ -527,10 +505,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soFileContent
-  // ─────────────────────────────────────────────────────────────────────────
-
   async soFileContent(input: GetFileContentInput, output: GetFileContentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
@@ -559,15 +533,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // queryDocument（文档内容选中解释）
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ===== 修改后的方法（2026-09-21）：文档伴读专用 Agent + 专用 Prompt + 专用 Soul =====
-  // 变更原因：此前直连 execLLM 且 Prompt 仅做简单解释，缺少独立人设与阅读伴读方法论；
-  // 现改为经「文档伴读」声明式 Agent 取 system（身份 + 专用 Soul）与默认模型，
-  // Prompt 走增强后的 builtin.document_query（含文档标题与伴读式回答要求）；
-  // 配置项 document_query_prompt_template_id / document_query_llm_id 仍作为覆盖优先级最高项。
   async queryDocument(input: QueryDocumentInput, output: QueryDocumentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selection = (input.selection || input.content || '').trim();
@@ -582,10 +547,8 @@ export class SelfLearningService {
     const templateId = String(config.document_query_prompt_template_id ?? '');
     const configuredLlmId = String(config.document_query_llm_id ?? '');
 
-    // 1. 文档伴读专用 Agent 快照：system（身份 + Soul）+ 默认模型 + 温度
     const agent = await this.soDocumentReadingAgent(question);
 
-    // 2. 渲染专用 Prompt（含文档标题与伴读式回答要求；未配置时用内置模板）
     const prompt = await this.renderPrompt(
       templateId,
       '文档阅读问答',
@@ -599,7 +562,6 @@ export class SelfLearningService {
       PROMPT_IDS.documentQuery,
     );
 
-    // 3. 模型：配置 > Agent 快照 > 自动匹配
     let llmId = configuredLlmId || agent.llm_id;
     if (!llmId) llmId = await this.matchDocumentQueryLlm();
     if (!llmId) {
@@ -608,21 +570,10 @@ export class SelfLearningService {
     }
     output.llm_id = llmId;
 
-    // 4. 调用 LLM（system 注入专用 Soul / 身份）
     await this.execDocumentQueryLlm(llmId, prompt, agent.system, agent.temperature, output);
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 文档伴读专用 Agent / Soul 装配（ensureBuiltinDocumentAgent 等）
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * 确保文档伴读专用资源就绪（幂等）：内置 Soul + 声明式 Agent。
-   *
-   * Agent 以 status=Disabled 声明：不参与主对话的 Agent 匹配（避免文档人设劫持普通问答），
-   * 仅由 queryDocument 按 def_id 显式取快照。任一依赖缺失时静默跳过并返回空串。
-   */
   async ensureBuiltinDocumentAgent(): Promise<string> {
     if (!this.soulAccess || !this.agentDefAccess) return '';
     if (this.documentAgentDefId) return this.documentAgentDefId;
@@ -647,7 +598,6 @@ export class SelfLearningService {
     return this.documentAgentDefId;
   }
 
-  /** 内置文档伴读 Soul 幂等 upsert（数据处理；返回 soul_id） */
   private async ensureDocumentReadingSoul(): Promise<string> {
     const soOut = new SoSoulOutput();
     await this.soulAccess!.soSoul(
@@ -672,15 +622,6 @@ export class SelfLearningService {
     return addOut.id;
   }
 
-  /**
-   * 文档伴读 Agent 配置解析（逻辑控制）：
-   * - 模型 / 温度：读声明式 Agent 定义（按 name 解析，取 model_id / temperature）；
-   * - system：由专用身份 Prompt（builtin 内置模板，内存渲染）+ 绑定 Soul 组装。
-   *
-   * 说明：内置 Prompt 播种在新版已收敛到 PromptProvider/DB 管理，DB 中可能没有
-   * `builtin.document_reading_identity` 行，因此 system 直接取内置模板内存渲染，
-   * 避免因缺模板导致快照失败；Agent 本身仍作为 Soul 绑定与模型/温度的配置载体。
-   */
   private async soDocumentReadingAgent(_question: string): Promise<{ system: string; llm_id: string; temperature?: number }> {
     const system = await this.buildDocumentReadingSystem();
     if (!this.agentDefAccess) return { system, llm_id: '' };
@@ -696,7 +637,6 @@ export class SelfLearningService {
     }
   }
 
-  /** 文档伴读 system 组装（数据处理）：专用身份模板 + 绑定 Soul 内存渲染 */
   private async buildDocumentReadingSystem(): Promise<string> {
     const soul = await this.soDocumentReadingSoulContent();
     const template = getBuiltinTemplate(PROMPT_IDS.documentReadingIdentity) || '';
@@ -707,7 +647,6 @@ export class SelfLearningService {
     });
   }
 
-  /** 读取文档伴读绑定 Soul 的内容（逻辑控制；缺失返回空串） */
   private async soDocumentReadingSoulContent(): Promise<string> {
     if (!this.soulAccess) return '';
     try {
@@ -726,7 +665,6 @@ export class SelfLearningService {
     }
   }
 
-  /** 文档问答模型自动匹配（逻辑控制；matchLLM 失败视为未配置） */
   private async matchDocumentQueryLlm(): Promise<string> {
     try {
       const matchOut = new MatchLLMOutput();
@@ -745,7 +683,6 @@ export class SelfLearningService {
     }
   }
 
-  /** 文档问答 LLM 调用（数据处理；system 非空时注入专用 Soul） */
   private async execDocumentQueryLlm(
     llmId: string,
     prompt: string,
@@ -773,10 +710,6 @@ export class SelfLearningService {
     }
   }
 
-  /**
-   * 渲染 Prompt：配置模板优先；未配置时优先用内置模板内存渲染（`builtinTemplateId`），
-   * 再按标题查 DB；均缺失时 fail-loud。
-   */
   private async renderPrompt(
     templateId: string | undefined,
     fallbackTitle: string,
@@ -811,10 +744,6 @@ export class SelfLearningService {
     throw new ValidationError(`Prompt 模板不可用或渲染为空: ${id}`);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // saveAnnotation（保存文档咨询卡片）
-  // ─────────────────────────────────────────────────────────────────────────
-
   async saveAnnotation(input: SaveAnnotationInput, output: SaveAnnotationOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const now = IdGenerator.now();
@@ -836,10 +765,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soFileAnnotations（查询文件的咨询卡片）
-  // ─────────────────────────────────────────────────────────────────────────
-
   async soFileAnnotations(input: GetFileAnnotationsInput, output: GetFileAnnotationsOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
@@ -849,10 +774,6 @@ export class SelfLearningService {
     output.annotations = rows;
     return true;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // updateFileContent（文档编辑：写回本地文件）
-  // ─────────────────────────────────────────────────────────────────────────
 
   async updateFileContent(input: UpdateFileContentInput, output: UpdateFileContentOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -871,7 +792,7 @@ export class SelfLearningService {
     fs.writeFileSync(filePath, input.content ?? '', 'utf-8');
     const size = Buffer.byteLength(input.content ?? '', 'utf-8');
     const now = IdGenerator.now();
-    // 内容变更 → 重置学习状态为 PENDING，使下一轮文档学习重新抽取知识点
+
     await this.relationDb.update('self_learning_file', [
       { field: 'file_size', value: size },
       { field: 'status', value: 'PENDING' },
@@ -887,10 +808,6 @@ export class SelfLearningService {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // deleteFile（文档删除：删除本地文件 + 级联清理索引与注释）
-  // ─────────────────────────────────────────────────────────────────────────
-
   async deleteFile(input: DeleteFileInput, output: DeleteFileOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const file = await this.soFileRecord(input.file_id);
@@ -901,7 +818,6 @@ export class SelfLearningService {
       throw new ValidationError('目录不可删除');
     }
 
-    // 删除本地文件；文件已不存在时视为成功（幂等）
     const filePath = String(file.file_path ?? '');
     if (filePath) {
       try {
@@ -936,7 +852,6 @@ export class SelfLearningService {
     return true;
   }
 
-  /** 按 file_id 读取文件索引行（数据处理；不存在返回 null） */
   private async soFileRecord(fileId: string): Promise<Record<string, unknown> | null> {
     const selInput = Object.assign(new SelectOneDBInput(), {
       query_param: {
@@ -951,12 +866,6 @@ export class SelfLearningService {
     return selOutput.row ?? null;
   }
 
-  // ===== 修改后的 startLearning：手动触发 = 立即完整执行一次指定任务 =====
-  // 原逻辑：手动触发会顺带安装 60s 文档定时器 / 30min Tag 定时器，并启动 Evolutor 常驻评估调度
-  //（系统内实际存在 3+ 个定时器，手动触发≠一次完整执行）。
-  // 新逻辑：手动触发对每个指定模式注册任务并完整执行一轮（同步跑完该轮，fire-and-forget 不阻塞 HTTP），
-  // 任务列表 running→completed/failed 可观测；不再创建任何 per-mode 定时器。
-  // 系统唯一定时器为随机概率触发器，仅在 mode 为 ALL / RANDOM 时确保其运行。
   async startLearning(input: StartLearningInput, _output: StartLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
@@ -966,20 +875,20 @@ export class SelfLearningService {
     if (!mode || mode === 'ALL' || mode.includes('DOCUMENT')) {
       const taskId = this.registerLearningTask('DOCUMENT', '从文档学习');
       void this.runDocumentLearningPass(input.library_id, learningRate)
-        .then(() => this.finishLearningTask(taskId))
-        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+        .then((r) => this.finishLearningTask(taskId, r))
+        .catch((err: unknown) => this.finishLearningTask(taskId, { error: err instanceof Error ? err.message : String(err) }));
     }
     if (mode === 'ALL' || mode.includes('CONVERSATION')) {
       const taskId = this.registerLearningTask('CONVERSATION', '从对话学习');
       void this.runConversationLearningPass()
-        .then(() => this.finishLearningTask(taskId))
-        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+        .then((r) => this.finishLearningTask(taskId, r))
+        .catch((err: unknown) => this.finishLearningTask(taskId, { error: err instanceof Error ? err.message : String(err) }));
     }
     if (mode === 'ALL' || mode.includes('TAG_MAINTENANCE')) {
       const taskId = this.registerLearningTask('TAG_MAINTENANCE', 'Tag图维护');
-      void this.startTagMaintenanceGuarded(config)
-        .then(() => this.finishLearningTask(taskId))
-        .catch((err: unknown) => this.finishLearningTask(taskId, err instanceof Error ? err.message : String(err)));
+      void this.startTagMaintenance(config)
+        .then((r) => this.finishLearningTask(taskId, r))
+        .catch((err: unknown) => this.finishLearningTask(taskId, { error: err instanceof Error ? err.message : String(err) }));
     }
 
     if (mode === 'ALL' || mode === 'RANDOM') {
@@ -1005,7 +914,6 @@ export class SelfLearningService {
         const hasRecentActivity = await this.checkUserRecentActivity(5 * 60 * 1000);
         if (hasRecentActivity) return;
 
-        // 每次 tick 读取最新配置，各模式独立按自己的随机因子与自动开关决定是否触发
         const fresh = await this.getConfig();
         const rate = (fresh.default_learning_rate as number) ?? 5;
 
@@ -1024,7 +932,7 @@ export class SelfLearningService {
         if (Number(fresh.tag_auto_enable) !== 0) {
           const rf = (fresh.tag_random_factor as number) ?? 10;
           if (Math.floor(Math.random() * 101) < rf) {
-            await this.startTagMaintenanceGuarded(fresh);
+            await this.startTagMaintenance(fresh);
           }
         }
       } catch (err: unknown) {
@@ -1056,18 +964,11 @@ export class SelfLearningService {
     }
   }
 
-  // ===== 修改后的方法：文档学习单轮完整执行 =====
-  // 原逻辑：每 60s 一个定时器 tick，每轮每库只处理 learning_rate 条 PENDING（学习慢、但会悬挂定时器）。
-  // 新逻辑：一次调用即完整处理本轮——同步目录后分页循环，直到各启用库没有 PENDING 文件；
-  // 不安装任何定时器；防重入 + stopLearning 取消意图（文件边界生效）。
   private async runDocumentLearningPass(
     libraryId: string | undefined,
     learningRate: number,
-  ): Promise<void> {
-    if (this.documentPassRunning) return;
-    this.documentPassRunning = true;
-    this.cancelRequested.delete('DOCUMENT');
-    try {
+  ): Promise<LearningPassResult> {
+    return this.runModePass('DOCUMENT', 'Document learning pass', async () => {
       const libraryConditions: Condition[] = [
         { field: 'enable_self_learning', operator: Operator.EQ, value: 1 },
       ];
@@ -1081,17 +982,16 @@ export class SelfLearningService {
       const libOut = Object.assign(new SelectDBOutput(), {});
       await this.relationDb.selectDB(libSel, libOut, new DBContext());
 
+      let processed = 0;
       for (const lib of libOut.rows) {
-        if (this.cancelRequested.has('DOCUMENT')) return;
+        if (this.cancelRequested.has('DOCUMENT')) return { detail: '已手动停止，本轮提前结束' };
         const lid = lib.library_id as string;
         const libRate = (lib.learning_rate as number) ?? learningRate;
 
-        // 先增量同步目录：磁盘上新增的文件登记为 PENDING（已有记录保持原状态）
         await this.syncLibraryFiles(lid, String(lib.library_path ?? ''), IdGenerator.now());
 
-        // 完整一轮：分页取 PENDING 直至取空（每页 libRate 条）
         for (;;) {
-          if (this.cancelRequested.has('DOCUMENT')) return;
+          if (this.cancelRequested.has('DOCUMENT')) return { detail: '已手动停止，本轮提前结束' };
           const fileConditions: Condition[] = [
             { field: 'library_id', operator: Operator.EQ, value: lid },
             { field: 'status', operator: Operator.EQ, value: 'PENDING' },
@@ -1109,88 +1009,55 @@ export class SelfLearningService {
           if (!fileOut.rows.length) break;
 
           for (const file of fileOut.rows) {
-            if (this.cancelRequested.has('DOCUMENT')) return;
+            if (this.cancelRequested.has('DOCUMENT')) return { detail: '已手动停止，本轮提前结束' };
             await this.handleDocumentLearning(file);
+            processed++;
           }
           if (fileOut.rows.length < libRate) break;
         }
       }
-    } catch (err: unknown) {
-      this.logger?.error?.('Document learning pass error', { error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      this.documentPassRunning = false;
-      this.cancelRequested.delete('DOCUMENT');
-    }
+      return { detail: processed > 0 ? `本轮处理 ${processed} 个文档` : '无待学习文档' };
+    });
   }
 
-  // ===== 修改后的方法：对话学习单轮完整执行 =====
-  // 原逻辑：调用 Evolutor startEvalSchedule 启动常驻评估调度（worker + 1h schedule 定时器），
-  // 任务"完成"仅代表调度器已挂上，并非一次完整评估闭环。
-  // 新逻辑：调用 Evolutor runEvalOnce 立即执行一次完整评估闭环（扫描未评估 usage → 同步评估 → Agent 老化），
-  // 返回即代表本轮闭环执行完毕；不依赖任何常驻 worker / 定时器。
-  private async runConversationLearningPass(): Promise<void> {
-    if (this.conversationPassRunning) return;
-    this.conversationPassRunning = true;
-    this.cancelRequested.delete('CONVERSATION');
-    try {
-      if (this.cancelRequested.has('CONVERSATION')) return;
+  private async runConversationLearningPass(): Promise<LearningPassResult> {
+    return this.runModePass('CONVERSATION', 'Conversation learning pass', async () => {
+      const evalOut = new RunEvalOnceOutput();
       await this.evolutorAgent.runEvalOnce(
         Object.assign(new RunEvalOnceInput(), {}),
-        Object.assign(new RunEvalOnceOutput(), {}),
+        evalOut,
         new EvolutorAgentContext(),
       );
-    } catch (err: unknown) {
-      this.logger?.error?.('Conversation learning pass error', { error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      this.conversationPassRunning = false;
-      this.cancelRequested.delete('CONVERSATION');
-    }
+      const evaluated = Number(evalOut.evaluated_count) || 0;
+      const scanned = Number(evalOut.scanned_agents) || 0;
+      const skipped = Number(evalOut.skipped_count) || 0;
+      if (evaluated > 0) {
+        const detail = `评估 ${evaluated} 条对话（扫描 ${scanned} 个 Agent，跳过 ${skipped} 条旧记录）`;
+        await this.insertLearningResult('CONVERSATION', 'CONVERSATION', `从对话学习完成：${detail}`, null);
+        return { detail };
+      }
+      if (skipped > 0) {
+        return { detail: `无可评估对话：${skipped} 条旧记录缺 usage_context 被跳过` };
+      }
+      return { detail: scanned > 0 ? '待评估对话未达评估阈值，本轮 0 条评估' : '近 7 天没有待评估的新对话' };
+    });
   }
 
-  /** Tag 维护守护壳：防重入，维护异常不外溢 */
-  private async startTagMaintenanceGuarded(config: Record<string, unknown>): Promise<void> {
-    if (this.tagMaintenanceRunning) return;
-    this.tagMaintenanceRunning = true;
-    try {
-      await this.startTagMaintenance(config);
-    } catch (err: unknown) {
-      this.logger?.error?.('Tag maintenance error', { error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      this.tagMaintenanceRunning = false;
-    }
+  private async startTagMaintenance(config: Record<string, unknown>): Promise<LearningPassResult> {
+    return this.runModePass('TAG_MAINTENANCE', 'Tag maintenance', async () => {
+      void config;
+      const connection = await this.runTagConnectionEstablishment();
+      if (this.cancelRequested.has('TAG_MAINTENANCE')) {
+        return { error: connection.error, detail: '已手动停止，本轮提前结束' };
+      }
+      const activation = await this.runTagActivation();
+      const detail = (connection.count === 0 && activation.count === 0)
+        ? '近 24h 无需维护的标签图'
+        : `连接 ${connection.count} 个标签入图，激活 ${activation.count} 条边`;
+      return { error: connection.error ?? activation.error, detail };
+    });
   }
 
-  // ===== 修改后的方法：Tag 维护单轮完整执行 =====
-  // 原逻辑：先安装 tagConnectionTimer / tagEstablishTimer 两个 30min 定时器，再顺带执行一次
-  // 建立+激活（定时器悬挂在实例上，且 aging/orphan 已由 CronProvider 接管）。
-  // 新逻辑：一次调用 = 一轮完整维护（连接建立 → 标签激活），跑完即止；不再创建任何定时器，
-  // 周期化需求由唯一概率触发定时器（randomLearningTimer）承担。
-  private async startTagMaintenance(config: Record<string, unknown>): Promise<void> {
-    void config;
-    await this.startTagConnectionEstablishment();
-    if (this.cancelRequested.has('TAG_MAINTENANCE')) return;
-    await this.startTagActivation();
-  }
-
-  // ===== clearTagTimers 已移除（保留作为参考）=====
-  // private clearTagTimers(): void {
-  //   if (this.tagConnectionTimer) { clearInterval(this.tagConnectionTimer); this.tagConnectionTimer = null; }
-  //   if (this.tagEstablishTimer) { clearInterval(this.tagEstablishTimer); this.tagEstablishTimer = null; }
-  //   if (this.tagAgingTimer) { clearInterval(this.tagAgingTimer); this.tagAgingTimer = null; }
-  //   if (this.orphanTagTimer) { clearInterval(this.orphanTagTimer); this.orphanTagTimer = null; }
-  // }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // stopLearning
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ===== 修改后的 stopLearning：系统唯一定时器 = 概率触发调度器 =====
-  // 新语义：
-  //  - ALL / RANDOM：停止概率触发调度器（唯一可"停止"的常驻定时器）；
-  //  - 具体模式：登记取消意图，进行中的同模式单轮任务在单元边界（文件 / 建图-激活阶段）提前结束；
-  //    未在执行时幂等无副作用（不存在需要清理的 per-mode 定时器）。
-  // 兼容清理：对话学习已改为 runEvalOnce 单轮，不再依赖 Evolutor 常驻评估调度，
-  // 仍保留一次幂等 stopEvalSchedule（best-effort）以清理历史版本可能残留的 worker。
   async stopLearning(input: StopLearningInput, _output: StopLearningOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const mode = input.learning_mode ?? 'ALL';
@@ -1218,7 +1085,7 @@ export class SelfLearningService {
         const stopOutput = Object.assign(new StopEvalScheduleOutput(), {});
         await this.evolutorAgent.stopEvalSchedule(stopInput, stopOutput, new EvolutorAgentContext());
       } catch (err) {
-        /* best-effort：历史常驻调度残留清理，失败不影响停止语义 */
+
         metrics?.warn('SelfLearningService.stopLearning 历史常驻调度清理失败（不影响停止语义）', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -1227,10 +1094,6 @@ export class SelfLearningService {
 
     return true;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // handleDocumentLearning (private)
-  // ─────────────────────────────────────────────────────────────────────────
 
   private async handleDocumentLearning(file: Record<string, unknown>): Promise<void> {
     const fileId = file.file_id as string;
@@ -1272,13 +1135,12 @@ export class SelfLearningService {
         const trimmed = chunk.trim();
         if (!trimmed) continue;
 
-        // LLM 抽取知识点（从文档学习）：产出 KNOWLEDGE 记录 → 学习页「知识」列表可见
         const extracted = await this.extractKnowledgeFromChunk(trimmed, fileName);
         for (const point of extracted) {
           await this.insertLearningResult('KNOWLEDGE', 'DOCUMENT', point.content, point.tags ?? null);
         }
         if (extracted.length === 0) {
-          // LLM 抽取失败时兜底：将 chunk 原文记录为知识条目，保证触发有可见产出
+
           await this.insertLearningResult('KNOWLEDGE', 'DOCUMENT', trimmed.slice(0, 2000), null);
         }
       }
@@ -1321,41 +1183,6 @@ export class SelfLearningService {
     return sessionId;
   }
 
-  private splitByHeaders(content: string): string[] {
-    const lines = content.split('\n');
-    const chunks: string[] = [];
-    let currentChunk = '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('# ') || trimmed.startsWith('## ') || trimmed === '#' || trimmed === '##') {
-        if (currentChunk.trim()) {
-          chunks.push(currentChunk);
-        }
-        currentChunk = line + '\n';
-      } else if (!trimmed.startsWith('#') && trimmed.match(/^#{1,2}\s/)) {
-        if (currentChunk.trim()) {
-          chunks.push(currentChunk);
-        }
-        currentChunk = line + '\n';
-      } else {
-        currentChunk += line + '\n';
-      }
-    }
-    if (currentChunk.trim()) {
-      chunks.push(currentChunk);
-    }
-    return chunks;
-  }
-
-  private splitBySize(content: string, chunkSize: number): string[] {
-    const chunks: string[] = [];
-    for (let i = 0; i < content.length; i += chunkSize) {
-      chunks.push(content.substring(i, i + chunkSize));
-    }
-    return chunks;
-  }
-
   private async updateFileStatus(fileId: string, status: string, errorMessage: string | null): Promise<void> {
     const now = IdGenerator.now();
     const data: DataObject[] = [
@@ -1378,10 +1205,6 @@ export class SelfLearningService {
     await this.relationDb.updateDB(updInput, Object.assign(new UpdateDBOutput(), {}), new DBContext());
   }
 
-  /**
-   * LLM 抽取文档 chunk 中的知识点（从文档学习的核心步骤）。
-   * 返回 {content, tags?} 列表；LLM 失败或解析失败返回空数组（调用方兜底记录原文）。
-   */
   private async extractKnowledgeFromChunk(chunk: string, fileName: string): Promise<Array<{ content: string; tags?: string[] | null }>> {
     if (!this.llmAccess) return [];
     const prompt = [
@@ -1448,18 +1271,8 @@ export class SelfLearningService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // startTagConnectionEstablishment
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * 标签图全量维护的分批让出：RelationDB(better-sqlite3) 与 TinyGraphDB(leveldb)
-   * 均为同步驱动，逐标签建图/激活边是 O(标签数×邻居) 的纯 CPU 计算，
-   * 不让出事件循环会冻结全部 HTTP 请求数分钟（页面表现为"切几个页面就卡死"）。
-   */
   private static readonly TAG_MAINTENANCE_BATCH = 20;
-  // 注：tagMaintenanceRunning 已上移到类字段区（与 documentPassRunning / conversationPassRunning 统一）
-  /** 全局图统计缓存（60s TTL；避免每次统计全量扫描图数据库） */
+
   private graphStatsCache: { at: number; data: Record<string, unknown> } | null = null;
   private graphStatsComputing = false;
 
@@ -1468,8 +1281,13 @@ export class SelfLearningService {
   }
 
   async startTagConnectionEstablishment(): Promise<void> {
-    if (this.tagMaintenanceRunning) return;
-    this.tagMaintenanceRunning = true;
+    await this.runModePass('TAG_MAINTENANCE', 'Tag connection establishment', async () => {
+      await this.runTagConnectionEstablishment();
+      return {};
+    });
+  }
+
+  private async runTagConnectionEstablishment(): Promise<TagStageResult> {
     try {
       const now = IdGenerator.now();
       const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
@@ -1499,7 +1317,7 @@ export class SelfLearningService {
           await this.infoCore.graphTag(graphInput, graphOutput, new InfoCoreContext());
           count++;
         } catch {
-          // skip failed graph tags
+
         }
         if (count % SelfLearningService.TAG_MAINTENANCE_BATCH === 0) {
           await this.yieldToEventLoop();
@@ -1509,20 +1327,22 @@ export class SelfLearningService {
       if (count > 0) {
         await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Connected ${count} recent tags to graph`, null);
       }
+      return { count };
     } catch (err: unknown) {
-      this.logger?.error?.('startTagConnectionEstablishment error', { error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      this.tagMaintenanceRunning = false;
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger?.error?.('startTagConnectionEstablishment error', { error: message });
+      return { error: message, count: 0 };
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // startTagActivation
-  // ─────────────────────────────────────────────────────────────────────────
-
   async startTagActivation(): Promise<void> {
-    if (this.tagMaintenanceRunning) return;
-    this.tagMaintenanceRunning = true;
+    await this.runModePass('TAG_MAINTENANCE', 'Tag activation', async () => {
+      await this.runTagActivation();
+      return {};
+    });
+  }
+
+  private async runTagActivation(): Promise<TagStageResult> {
     try {
       const now = IdGenerator.now();
       const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
@@ -1588,7 +1408,7 @@ export class SelfLearningService {
             );
             activatedCount++;
           } catch {
-            // skip
+
           }
         }
         scannedNodes++;
@@ -1600,16 +1420,13 @@ export class SelfLearningService {
       if (activatedCount > 0) {
         await this.insertLearningResult('TAG_MAINTENANCE', 'TAG_MAINTENANCE', `Activated ${activatedCount} graph edges`, null);
       }
+      return { count: activatedCount };
     } catch (err: unknown) {
-      this.logger?.error?.('startTagActivation error', { error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      this.tagMaintenanceRunning = false;
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger?.error?.('startTagActivation error', { error: message });
+      return { error: message, count: 0 };
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // startTagAging
-  // ─────────────────────────────────────────────────────────────────────────
 
   async startTagAging(): Promise<void> {
     try {
@@ -1624,10 +1441,6 @@ export class SelfLearningService {
       this.logger?.error?.('startTagAging error', { error: err instanceof Error ? err.message : String(err) });
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // startOrphanTagCheck
-  // ─────────────────────────────────────────────────────────────────────────
 
   async startOrphanTagCheck(): Promise<void> {
     try {
@@ -1662,7 +1475,7 @@ export class SelfLearningService {
               orphanCount++;
             }
           } catch {
-            // skip
+
           }
         }
       }
@@ -1675,13 +1488,6 @@ export class SelfLearningService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soTagGraph
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ===== 修改后的方法（2026-09-22 方法长度拆分批次1）：156 行单方法拆为
-  // 「取数 → 收集 → 建节点 → 过滤 → 裁剪 → 出参」编排 + 纯数据子方法
-  //（原始单方法已删除，等价结构见 git 历史）。
   async soTagGraph(input: GetTagGraphInput, output: GetTagGraphOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const graphSelOutput = await this.soTagGraphNodes();
@@ -1710,7 +1516,6 @@ export class SelfLearningService {
     return true;
   }
 
-  /** 图谱 Tag 节点查询（数据处理） */
   private async soTagGraphNodes(): Promise<SelectGraphOutput> {
     const graphSelOutput = Object.assign(new SelectGraphOutput(), {});
     await this.graphDBAccess.selectGraph(
@@ -1724,7 +1529,6 @@ export class SelfLearningService {
     return graphSelOutput;
   }
 
-  /** 收集 Tag 节点信息/边/激活计数（逻辑控制；遍历图谱节点及其邻居） */
   private async collectTagGraph(nodeList: Array<Record<string, unknown>>, onlyActive: boolean): Promise<TagGraphCollections> {
     const collections: TagGraphCollections = {
       tagNodeMap: new Map(),
@@ -1741,7 +1545,6 @@ export class SelfLearningService {
     return collections;
   }
 
-  /** 单 Tag 节点信息（数据处理；info_tag 计数 + 创建时间） */
   private async soTagNodeInfo(node: Record<string, unknown>): Promise<{ tag_id: string; tag_name: string; info_count: number; created: number }> {
     const nid = String(node.id);
     const content = (node as unknown as { content?: Record<string, unknown> }).content;
@@ -1755,7 +1558,6 @@ export class SelfLearningService {
     return { tag_id: nid, tag_name: tagName, info_count: infoCount, created: (node.created as number) || 0 };
   }
 
-  /** 邻居边收集（逻辑控制；去重 + 激活计数累计：仅 active 边计入，only_active=false 时全部计入） */
   private async collectTagEdges(nid: string, node: Record<string, unknown>, collections: TagGraphCollections, onlyActive: boolean): Promise<void> {
     const neighbors = Object.assign(new GetGraphNeighborsOutput(), {});
     const neighborInput = Object.assign(new GetGraphNeighborsInput(), {
@@ -1779,7 +1581,6 @@ export class SelfLearningService {
     }
   }
 
-/** 邻居行 → Tag 边记录（数据处理） */
 private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     const weight = (nEdge.weight as number) || 0;
     return {
@@ -1794,7 +1595,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     };
   }
 
-  /** 构建 Tag 节点（数据处理；激活计数对数尺度映射节点大小） */
   private buildTagNodes(collections: TagGraphCollections): Array<Record<string, unknown>> {
     const maxActivation = Math.max(1, ...Array.from(collections.tagActivationMap.values(), (v) => v || 0));
     const nodes: Array<Record<string, unknown>> = [];
@@ -1813,7 +1613,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return nodes;
   }
 
-  /** 保留与边相连的节点（数据处理） */
   private filterNodesByEdges(nodes: Array<Record<string, unknown>>, edges: TagGraphEdge[]): Array<Record<string, unknown>> {
     const touchedIds = new Set<string>();
     for (const e of edges) {
@@ -1823,13 +1622,11 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return nodes.filter((n) => touchedIds.has(n.tag_id as string));
   }
 
-  /** 保留与节点相连的边（数据处理） */
   private filterEdgesByNodes(edges: TagGraphEdge[], nodes: Array<Record<string, unknown>>): TagGraphEdge[] {
     const keptIds = new Set(nodes.map((n) => n.tag_id as string));
     return edges.filter((e) => keptIds.has(e.from_tag_id) || keptIds.has(e.to_tag_id));
   }
 
-  /** 孤立节点计数（数据处理；过滤后无边相连的节点） */
   private countOrphanNodes(nodes: Array<Record<string, unknown>>, edges: TagGraphEdge[]): number {
     let orphanCount = 0;
     for (const n of nodes) {
@@ -1839,13 +1636,11 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return orphanCount;
   }
 
-  /** 超限时按激活数裁剪节点（数据处理；激活降序截取 limit 条） */
   private applyTagLimit(nodes: Array<Record<string, unknown>>, limit: number): Array<Record<string, unknown>> {
     nodes.sort((a, b) => (b.activation_count as number) - (a.activation_count as number));
     return nodes.slice(0, limit);
   }
 
-  /** 图谱元数据组装（数据处理） */
   private buildTagGraphMetadata(collections: TagGraphCollections, orphanCount: number): Record<string, unknown> {
     return {
       total_nodes: collections.tagNodeMap.size,
@@ -1854,10 +1649,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       orphan_nodes: orphanCount,
     };
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // soTagRelatedInfo
-  // ─────────────────────────────────────────────────────────────────────────
 
   async soTagRelatedInfo(input: GetTagRelatedInfoInput, output: GetTagRelatedInfoOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -1940,10 +1731,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLearningProgress
-  // ─────────────────────────────────────────────────────────────────────────
-
   async soLearningProgress(input: GetLearningProgressInput, output: GetLearningProgressOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const sourceCond = input.source
@@ -1999,19 +1786,14 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return true;
   }
 
-  /** 学习是否正在运行：概率触发调度器活动，或存在进行中的单轮任务（running 状态任务） */
   private isLearningRunning(): boolean {
     if (this.randomLearningTimer) return true;
-    if (this.documentPassRunning || this.conversationPassRunning || this.tagMaintenanceRunning) return true;
+    if (this.passRunning.size > 0) return true;
     for (const t of this.learningTasks.values()) {
       if (t.status === LearningTaskStatus.Running) return true;
     }
     return false;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLearningResults
-  // ─────────────────────────────────────────────────────────────────────────
 
   async soLearningResults(input: GetLearningResultsInput, output: GetLearningResultsOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -2070,15 +1852,9 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return true;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // soLearningStats
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /** 学习任务注册表（实例内存；手动触发的后台任务可视化） */
   private readonly learningTasks = new Map<string, LearningTaskRecord>();
   private learningTaskOrder: string[] = [];
 
-  /** 注册学习任务（数据处理） */
   private registerLearningTask(mode: LearningTaskRecord['mode'], label: string): string {
     const taskId = IdGenerator.generate();
     this.learningTasks.set(taskId, {
@@ -2091,16 +1867,21 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     return taskId;
   }
 
-  /** 完成学习任务（数据处理；error 非空即失败） */
-  private finishLearningTask(taskId: string, error?: string): void {
+  private finishLearningTask(taskId: string, result?: LearningPassResult): void {
     const t = this.learningTasks.get(taskId);
     if (!t || t.status !== LearningTaskStatus.Running) return;
-    t.status = error ? LearningTaskStatus.Failed : LearningTaskStatus.Completed;
+    if (result?.skipped) {
+      t.status = LearningTaskStatus.Skipped;
+    } else if (result?.error) {
+      t.status = LearningTaskStatus.Failed;
+      t.error = result.error;
+    } else {
+      t.status = LearningTaskStatus.Completed;
+    }
+    if (result?.detail) t.detail = result.detail;
     t.finished_at = Date.now();
-    t.error = error;
   }
 
-  /** 查询学习任务列表（逻辑控制；running 优先，其余按开始时间倒序） */
   async soLearningTasks(input: ListLearningTasksInput, output: ListLearningTasksOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const limit = input.limit ?? 20;
@@ -2120,6 +1901,32 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       ? [{ field: 'source', operator: Operator.EQ, value: input.source }] as Condition[]
       : [];
 
+    const resultStats = await this.countLearningResults(sourceConds, now);
+    const documentLearning = await this.countLearningFiles();
+    this.mergeGraphStatsCache(input.source, output);
+
+    const trend = this.buildLearningTrend(now, sourceConds, input.source);
+
+    output.stats = {
+      total_learning_count: resultStats.total,
+      total_knowledge_count: resultStats.knowledge,
+      total_insight_count: resultStats.insight,
+      this_week_learning_count: resultStats.thisWeek,
+      document_learning: documentLearning,
+      tag_graph: this.emptyTagGraphStats(),
+      learning_trend: trend,
+    };
+
+    if (!input.source) {
+      this.graphStatsCache = { at: Date.now(), data: JSON.parse(JSON.stringify(output.stats)) };
+    }
+    return true;
+  }
+
+  private async countLearningResults(
+    sourceConds: Condition[],
+    now: number,
+  ): Promise<{ total: number; knowledge: number; insight: number; thisWeek: number }> {
     const totalResults = await this.relationDb.count('self_learning_result', sourceConds);
     const totalKnowledgeCount = await this.relationDb.count('self_learning_result', [
       ...sourceConds,
@@ -2134,7 +1941,10 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       ...sourceConds,
       { field: 'learned_at', operator: Operator.GE, value: thisWeekStart },
     ]);
+    return { total: totalResults, knowledge: totalKnowledgeCount, insight: totalInsightCount, thisWeek: thisWeekLearningCount };
+  }
 
+  private async countLearningFiles(): Promise<Record<string, unknown>> {
     const totalFiles = await this.relationDb.count('self_learning_file');
     const completedFiles = await this.relationDb.count('self_learning_file', [
       { field: 'status', operator: Operator.EQ, value: 'COMPLETED' },
@@ -2146,37 +1956,53 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       { field: 'status', operator: Operator.EQ, value: 'PENDING' },
     ]);
     const completionRate = totalFiles > 0 ? Math.round((completedFiles / totalFiles) * 100) / 100 : 0;
+    return {
+      total_files: totalFiles,
+      learned_files: completedFiles,
+      failed_files: failedFiles,
+      pending_files: pendingFiles,
+      completion_rate: completionRate,
+    };
+  }
 
-    const totalTagNodes = 0;
-    const totalTagEdges = 0;
-    const activeEdges = 0;
-    const orphanTags = 0;
-    const agedEdgesThisWeek = 0;
-    const newEdgesThisWeek = 0;
+  private emptyTagGraphStats(): Record<string, unknown> {
+    return {
+      total_tags: 0,
+      total_edges: 0,
+      active_edges: 0,
+      orphan_tags: 0,
+      aged_edges_this_week: 0,
+      new_edges_this_week: 0,
+    };
+  }
 
-    // 图统计读取（2026-09-06）：请求路径绝不执行 O(节点数) 扫描——
-    // 60s TTL 内命中缓存；过期返回旧值并后台重算；无缓存返回零值并后台首算
-    if (!input.source) {
-      const cached = this.graphStatsCache;
-      if (cached) {
-        Object.assign(output.stats, cached.data);
-      }
-      if (!this.graphStatsComputing && (!cached || Date.now() - cached.at >= 60000)) {
-        this.graphStatsComputing = true;
-        void this.computeGraphStatsInBackground().finally(() => {
-          this.graphStatsComputing = false;
-        });
-      }
+  private mergeGraphStatsCache(source: string | undefined, output: GetLearningStatsOutput): void {
+    if (source) return;
+
+    const cached = this.graphStatsCache;
+    if (cached) {
+      Object.assign(output.stats, cached.data);
     }
+    if (!this.graphStatsComputing && (!cached || Date.now() - cached.at >= 60000)) {
+      this.graphStatsComputing = true;
+      void this.computeGraphStatsInBackground().finally(() => {
+        this.graphStatsComputing = false;
+      });
+    }
+  }
 
-    // 学习趋势：近 365 天，用单条 GROUP BY 查询统计每日学习次数
+  private buildLearningTrend(
+    now: number,
+    sourceConds: Condition[],
+    source: string | undefined,
+  ): Array<Record<string, unknown>> {
     const trendDays = 365;
     const trendStart = now - trendDays * 24 * 60 * 60 * 1000;
     const trendRows = this.relationDb.queryRaw<{ date: string; count: number }>(
       sourceConds.length > 0
         ? 'SELECT strftime(\'%Y-%m-%d\', "learned_at" / 1000, \'unixepoch\') AS "date", COUNT(*) AS "count" FROM "self_learning_result" WHERE "learned_at" >= ? AND "source" = ? GROUP BY "date"'
         : 'SELECT strftime(\'%Y-%m-%d\', "learned_at" / 1000, \'unixepoch\') AS "date", COUNT(*) AS "count" FROM "self_learning_result" WHERE "learned_at" >= ? GROUP BY "date"',
-      sourceConds.length > 0 ? [trendStart, input.source] : [trendStart],
+      sourceConds.length > 0 ? [trendStart, source] : [trendStart],
     );
     const countMap = new Map<string, number>();
     for (const r of trendRows) {
@@ -2188,39 +2014,9 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       const dateStr = new Date(dayEnd).toISOString().split('T')[0];
       trend.push({ date: dateStr, count: countMap.get(dateStr) || 0 });
     }
-
-    output.stats = {
-      total_learning_count: totalResults,
-      total_knowledge_count: totalKnowledgeCount,
-      total_insight_count: totalInsightCount,
-      this_week_learning_count: thisWeekLearningCount,
-      document_learning: {
-        total_files: totalFiles,
-        learned_files: completedFiles,
-        failed_files: failedFiles,
-        pending_files: pendingFiles,
-        completion_rate: completionRate,
-      },
-      tag_graph: {
-        total_tags: totalTagNodes,
-        total_edges: totalTagEdges,
-        active_edges: activeEdges,
-        orphan_tags: orphanTags,
-        aged_edges_this_week: agedEdgesThisWeek,
-        new_edges_this_week: newEdgesThisWeek,
-      },
-      learning_trend: trend,
-    };
-    // 图统计写入 60s TTL 缓存（仅全局统计含图数据；学习触发后的页面刷新直接命中缓存，不再全量扫描）
-    if (!input.source) {
-      this.graphStatsCache = { at: Date.now(), data: JSON.parse(JSON.stringify(output.stats)) };
-    }
-    return true;
+    return trend;
   }
 
-
-  /** 后台计算全局图统计（逻辑控制；批处理让出事件循环；写 60s TTL 缓存，请求路径不扫描） */
-  /** 后台计算全局图统计（逻辑控制；批处理让出事件循环；写 60s TTL 缓存，请求路径不扫描） */
   private async computeGraphStatsInBackground(): Promise<void> {
     try {
       const graphNodes = Object.assign(new SelectGraphOutput(), {});
@@ -2298,10 +2094,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // configSelfLearning
-  // ─────────────────────────────────────────────────────────────────────────
-
   async configSelfLearning(input: ConfigSelfLearningInput, output: ConfigSelfLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
@@ -2358,10 +2150,6 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     output.config = (refreshed.row ?? {}) as Record<string, unknown>;
     return true;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Private helpers
-  // ─────────────────────────────────────────────────────────────────────────
 
   private async getConfig(): Promise<Record<string, unknown>> {
     const selInput = Object.assign(new SelectOneDBInput(), {

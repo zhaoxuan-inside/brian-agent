@@ -1,10 +1,3 @@
-/**
- * @fileoverview Session 模块表结构初始化（Runtime v2 · 阶段1）。
- *
- * 创建 runtime_session / runtime_message / runtime_message_part 三张表
- * （Session-PRD §2）。DDL 通过 RelationDBAccess.executeRaw 执行。
- */
-
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
   RUNTIME_SESSION_TABLE,
@@ -13,13 +6,9 @@ import {
   RUNTIME_SESSION_CONFIG_TABLE,
 } from '../domain/types';
 
-/**
- * SessionSchemaInitializer。
- */
 export class SessionSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  /** 创建所有 Session 表（IF NOT EXISTS 语义，可安全重复调用） */
   init(): void {
     this.initSessionTable();
     this.initMessageTable();
@@ -28,21 +17,16 @@ export class SessionSchemaInitializer {
     this.migrateTokenCountColumn();
   }
 
-  /**
-   * 兼容迁移：runtime_message.token_usage → token_count（2026-09-05 统一命名，
-   * 与 Part 表 token_count 同义同名；旧列不存在或已迁移时静默跳过）。
-   */
   private migrateTokenCountColumn(): void {
     try {
       this.relationDb.executeRaw(
         `ALTER TABLE "${RUNTIME_MESSAGE_TABLE}" RENAME COLUMN "token_usage" TO "token_count"`,
       );
     } catch {
-      /* 全新库或已迁移 */
+
     }
   }
 
-  /** runtime_session 表 */
   private initSessionTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_SESSION_TABLE}" (
@@ -61,7 +45,6 @@ export class SessionSchemaInitializer {
     );
   }
 
-  /** runtime_message 表 */
   private initMessageTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_MESSAGE_TABLE}" (
@@ -84,7 +67,6 @@ export class SessionSchemaInitializer {
     );
   }
 
-  /** runtime_message_part 表 */
   private initPartTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_MESSAGE_PART_TABLE}" (
@@ -106,14 +88,12 @@ export class SessionSchemaInitializer {
         "elapsed_ms"  INTEGER NOT NULL DEFAULT 0
       )
     `);
-    // 存量库列名迁移（2026-09-22 术语统一）：聊天消息标识统一为 msg_id（与 SSE 协议、
-    // 前端契约一致）；message_id 仅保留给 MQ 队列信封概念。RENAME 后索引定义自动跟随，
-    // 索引名保持不变；列不存在（新库）或已迁移时报错忽略，幂等。
+
     try {
       this.relationDb.executeRaw(
         `ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" RENAME COLUMN message_id TO msg_id`,
       );
-    } catch { /* message_id 列不存在（新库或已迁移）时忽略 */ }
+    } catch {  }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_MESSAGE_PART_TABLE}_message" ON "${RUNTIME_MESSAGE_PART_TABLE}" ("msg_id", "part_order")`,
     );
@@ -122,7 +102,6 @@ export class SessionSchemaInitializer {
     );
   }
 
-  /** runtime_session_config 配置表（config_key 主键，与各 Provider config 表形状一致） */
   private initConfigTable(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${RUNTIME_SESSION_CONFIG_TABLE}" (

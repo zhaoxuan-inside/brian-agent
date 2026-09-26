@@ -1,56 +1,24 @@
-/**
- * @fileoverview 基于 isolated-vm 的沙箱实现。
- *
- * 使用 isolated-vm 提供真正的进程级隔离：
- * - 独立 V8 Isolate：拥有自己的堆内存空间，与宿主 Node.js 主 Isolate 完全隔离；
- * - 内存限制：通过 memoryLimit 限制沙箱可用内存，防止恶意脚本耗尽系统内存；
- * - 超时控制：通过 timeout 机制限制脚本执行时间；
- * - console.log 空实现：避免沙箱输出污染主进程。
- *
- * isolated-vm 为 C++ 原生扩展，通过预编译的 .node 文件随离线包集成。
- * 入口文件 isolated-vm.js 自动检测平台（OS + CPU 架构 + Node.js ABI），
- * 从 prebuilt/ 目录加载匹配的原生模块。
- */
-
 import type { ISandbox, SandboxResult } from './ISandbox';
 
-/** isolated-vm 命名空间的类型（运行时延迟加载，见构造函数） */
 type IvmModule = typeof import('isolated-vm');
 
-/**
- * isolated-vm 沙箱实现。
- *
- * 每次 execute 调用会创建新的 Context 并在其中执行代码，
- * 执行完毕后自动释放 Context。Isolate 实例在 dispose 时销毁。
- */
 export class IsolatedVMSandbox implements ISandbox {
   private isolate: InstanceType<IvmModule['Isolate']>;
 
-  /**
-   * @param memoryLimitMB 沙箱可用内存上限（MB），默认 128MB。
-   *  该值影响 v8 堆大小与外部分配内存的总和。
-   */
+  
+
   constructor(memoryLimitMB = 128) {
-    // 延迟加载：优先使用 prebuilt/ 离线二进制；当前平台（OS + arch + ABI）
-    // 缺失时由 vendored loader 自动从源码编译兜底（Win/macOS/Linux 三平台均可用，
-    // 见 vendor/isolated-vm/isolated-vm.js），任何加载失败直接抛错（fail-fast）
+    
+    
+    
+    
     // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
     const ivm = require('isolated-vm') as IvmModule;
     this.isolate = new ivm.Isolate({ memoryLimit: memoryLimitMB });
   }
 
-  /**
-   * 在 isolated-vm 沙箱中执行 Skill 的操作指南（work）。
-   *
-   * 处理流程：
-   * 1. 创建 Context（独立的全局作用域）；
-   * 2. 将 params 通过 ExternalCopy 拷贝进沙箱全局作用域；
-   * 3. 将 result 初始化为 null；
-   * 4. 在沙箱代码头部注入 no-op console 定义，避免 console.log 污染主进程；
-   * 5. 编译并执行代码（带超时限制，超时抛出错误）；
-   * 6. 从沙箱全局作用域读取 result 并拷贝回主进程；
-   * 7. 释放 Context 资源。
-   */
+  
+
   async execute(
     code: string,
     params: Record<string, unknown>,
@@ -74,9 +42,8 @@ export class IsolatedVMSandbox implements ISandbox {
     }
   }
 
-  /**
-   * 销毁 Isolate 实例，释放 V8 堆及所有关联资源。
-   */
+  
+
   dispose(): void {
     this.isolate.dispose();
   }

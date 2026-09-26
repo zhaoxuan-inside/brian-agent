@@ -1,12 +1,3 @@
-/**
- * @fileoverview AgentLibrary 绑定 API 单元测试。
- *
- * 验证绑定唯一事实源 = agent 表（skill_ids_json / mcp_ids_json / soul_id / prompt_template_id）：
- * - bindAgentComponent 幂等 upsert（同 kind 全量替换）；
- * - unbindAgentComponent 幂等解绑（缺省解绑该类全部）；
- * - 未知 agent fail-loud（NotFoundError）。
- */
-
 import { describe, it, expect, beforeAll } from 'vitest';
 import { NotFoundError } from '@brian-agent/base';
 import { AgentLibraryService } from '../AgentLibrary/application/AgentLibraryService';
@@ -26,7 +17,7 @@ describe('AgentLibrary 绑定 API（绑定唯一事实源 = agent 表）', () =>
     const db = await createTestDb();
     try {
       db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
-    } catch { /* 已存在 */ }
+    } catch {  }
     service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
   });
 
@@ -53,7 +44,6 @@ describe('AgentLibrary 绑定 API（绑定唯一事实源 = agent 表）', () =>
     }), out, new AgentLibraryContext());
     expect(out.bound).toEqual(['skill-a', 'skill-b']);
 
-    // 再次绑定 → 全量替换（幂等 upsert）
     await service.bindAgentComponent(Object.assign(new BindAgentComponentInput(), {
       agent_id: agentId, component_kind: ComponentKind.Skill, component_ids: ['skill-c'],
     }), new BindAgentComponentOutput(), new AgentLibraryContext());
@@ -83,7 +73,6 @@ describe('AgentLibrary 绑定 API（绑定唯一事实源 = agent 表）', () =>
     record = await getRecord(agentId);
     expect(record.soul_id).toBe('');
 
-    // 幂等：再解绑无变更
     const again = new UnbindAgentComponentOutput();
     await service.unbindAgentComponent(Object.assign(new UnbindAgentComponentInput(), {
       agent_id: agentId, component_kind: ComponentKind.Soul,

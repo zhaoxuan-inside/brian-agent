@@ -1,14 +1,3 @@
-/**
- * @fileoverview 上下文文本化（context formatter）。
- *
- * 将 InfoCoreProvider 构建出的结构化上下文（categories / list）渲染为 prompt 片段文本，
- * 作为 `context_data` 变量注入 Prompt 模板。属于 Prompt 装配层职责，由 PromptProvider
- * 统一承载，避免各 Agent 层重复实现上下文 → 文本的拼接逻辑。
- *
- * 说明：此处仅依赖纯接口（ContextItemLike / ContextOutputLike），不依赖 Core 层具体类型，
- * 保证 Base 层不反向依赖上层。
- */
-
 export interface ContextItemLike {
   info?: string;
   content?: string;
@@ -34,26 +23,15 @@ export interface ContextOutputLike {
   list?: ContextItemLike[];
 }
 
-// 上下文拼接的安全上限：单条消息与总字符数均做截断，防止 LLM 输入超限
-// （火山方舟输入上限约 1MB，此处保守控制上下文规模，为 soul/history/task 留足空间）。
 const MAX_ITEM_CHARS = 2000;
 const MAX_TOTAL_CHARS = 150000;
 
-// ===== 修改后的实现 =====
-// 记忆上下文规范化（2026-09-15）：
-// 1. 每类记忆来源带「模型可理解的功能说明」，说明该类记忆如何产生、回答时应如何使用，
-//    不再使用「时间线消息」「标签关联消息」等来源直译名称；
-// 2. 整体声明为静态记忆：任务开始前注入，不可修改/续写，不构成对话指令；
-// 3. 与 Task 开始后执行过程动态产生的上下文（如子 Agent 输出，见 formatDynamicContext）
-//    在标签与叙事上明确区分。
 interface CategorySpec {
   tag: string;
   purpose: string;
   getItems?: (cat: ContextCategoriesLike) => ContextItemLike[] | undefined;
 }
 
-// 来源 → 功能说明：purpose 面向模型描述「这类记忆是什么、可信度如何、怎么用」，
-// 而非来源系统的实现名称。
 const CATEGORY_SPECS: CategorySpec[] = [
   {
     tag: 'user-selected-messages',
@@ -148,7 +126,7 @@ export function formatContextCategories(ctxOut?: ContextOutputLike): string {
       totalChars += line.length;
     }
     if (fallbackLines.length > 0) {
-      // 无分类快照时的兜底：同样按静态记忆叙事注入，避免与动态执行上下文混淆
+      
       return `<static-memory-context>\n<usage-note>${STATIC_CONTEXT_PREAMBLE}</usage-note>\n<conversation-history>\n<what-this-is>${CATEGORY_SPECS[2].purpose}</what-this-is>\n${fallbackLines.map((l) => `- ${l}`).join('\n')}\n</conversation-history>\n</static-memory-context>`;
     }
   }
@@ -156,14 +134,6 @@ export function formatContextCategories(ctxOut?: ContextOutputLike): string {
   return '';
 }
 
-/**
- * 渲染「执行过程动态上下文」：本次任务执行期间由 Agent 执行产生的新信息
- * （子 Agent 结果、工具产出等）。与静态记忆上下文（formatContextCategories 输出）
- * 明确区分：动态上下文对本轮任务优先级最高、时效性最强，可被模型直接引用与延续。
- *
- * @param purpose 动态上下文的功能性说明（由调用方按场景描述，须为模型可理解的业务语言）
- * @param items 动态来源条目，形如 `agentId task: output`
- */
 export function formatDynamicContext(purpose: string, items?: string[]): string {
   const lines = (items ?? [])
     .map((i) => (i ?? '').trim())

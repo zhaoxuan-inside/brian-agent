@@ -10,6 +10,7 @@ import { createTestDb, makeAccess, setupAgentTestMocks,
   EvalWriterAgentInput, EvalWriterAgentOutput,
   GetEvaluationInput, GetEvaluationOutput, GetEvolutionReportInput, GetEvolutionReportOutput,
   ConfigEvolutorAgentInput, ConfigEvolutorAgentOutput,
+  RunEvalOnceInput, RunEvalOnceOutput,
 } from '../EvolutorAgent/domain/types';
 import { AgentLibraryContext, AddAgentInput, AddAgentOutput,
   UpdateAgentInput, UpdateAgentOutput, RecordAgentUsageInput, RecordAgentUsageOutput,
@@ -88,7 +89,7 @@ describe('EvolutorAgent', () => {
       await evolutor.evalWorkAgent(Object.assign(new EvalWorkAgentInput(), {
         agent_id: agentId, work_id: 'w-x', run_id: 'i', task_content: 't', agent_output: 'o', trace_id: 'tr',
       }), new EvalWorkAgentOutput(), new EvolutorAgentContext());
-      // (70*5 + 50) / 6 = 400/6 = 66.67 → 67
+      
       const getOut = new GetAgentOutput();
       await libSvc.soAgent(Object.assign(new GetAgentInput(), { agent_id: agentId }),
         getOut, new AgentLibraryContext());
@@ -176,6 +177,75 @@ describe('EvolutorAgent', () => {
       );
       expect(rows.length).toBe(1);
       expect(rows[0].total_token_usage).toBe(100);
+    });
+  });
+
+  describe('runEvalOnce（单轮评估闭环）', () => {
+    it('TC-EA-041: 空 usage_context 旧记录不饿死其后可评估的新记录', async () => {
+      const agentId = aid();
+      await addTestAgent(agentId);
+      
+      for (let i = 0; i < 25; i++) {
+        await libSvc.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
+          agent_id: agentId, work_id: `w-empty-${i}`, run_id: 'i',
+        }), new RecordAgentUsageOutput(), new AgentLibraryContext());
+      }
+      for (let i = 0; i < 6; i++) {
+        await libSvc.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
+          agent_id: agentId, work_id: `w-valid-${i}`, run_id: 'i',
+          usage_context: JSON.stringify({ trace_id: `tr-${i}`, task_content: `任务 ${i}`, agent_output: `产出 ${i}` }),
+        }), new RecordAgentUsageOutput(), new AgentLibraryContext());
+      }
+
+      const out = new RunEvalOnceOutput();
+      await evolutor.runEvalOnce(
+        Object.assign(new RunEvalOnceInput(), { eval_frequency_threshold: 5, eval_batch_size: 20 }),
+        out, new EvolutorAgentContext(),
+      );
+
+      
+      
+      expect(out.scanned_agents).toBeGreaterThanOrEqual(1);
+      expect(out.evaluated_count).toBeGreaterThanOrEqual(6);
+      expect(out.skipped_count).toBeGreaterThanOrEqual(25);
+      const evaluated = db.queryRaw<{ work_id: string }>(
+        'SELECT "work_id" FROM "agent_evaluation" WHERE "agent_id" = ? AND "eval_type" = \'WORK_AGENT\'',
+        [agentId],
+      ).map((r) => r.work_id);
+      expect(evaluated).toHaveLength(6);
+      expect(evaluated.filter((w) => w.startsWith('w-valid-'))).toHaveLength(6);
+    });
+
+    it('TC-EA-042: 可评估记录未达阈值 → 0 评估（空上下文不计入阈值）', async () => {
+      const agentId = aid();
+      await addTestAgent(agentId);
+      for (let i = 0; i < 25; i++) {
+        await libSvc.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
+          agent_id: agentId, work_id: `w2-empty-${i}`, run_id: 'i',
+        }), new RecordAgentUsageOutput(), new AgentLibraryContext());
+      }
+      
+      for (let i = 0; i < 2; i++) {
+        await libSvc.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
+          agent_id: agentId, work_id: `w2-valid-${i}`, run_id: 'i',
+          usage_context: JSON.stringify({ trace_id: `tr-${i}`, task_content: `任务 ${i}`, agent_output: `产出 ${i}` }),
+        }), new RecordAgentUsageOutput(), new AgentLibraryContext());
+      }
+
+      const before = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation"')[0].c;
+      const out = new RunEvalOnceOutput();
+      await evolutor.runEvalOnce(
+        Object.assign(new RunEvalOnceInput(), { eval_frequency_threshold: 5, eval_batch_size: 20 }),
+        out, new EvolutorAgentContext(),
+      );
+      const after = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation"')[0].c;
+
+      
+      expect(after - before).toBe(0);
+      expect(db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM "agent_evaluation" WHERE "agent_id" = ?',
+        [agentId],
+      )[0].c).toBe(0);
     });
   });
 });

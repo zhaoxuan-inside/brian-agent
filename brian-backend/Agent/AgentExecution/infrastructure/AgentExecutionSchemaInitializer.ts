@@ -23,7 +23,7 @@ export class AgentExecutionSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS idx_agent_execution_config_updated ON ${AGENT_EXECUTION_CONFIG_TABLE}(updated)`,
     );
 
-    // agent_execution_trace 表：每次 execAgent 的完整轨迹持久化
+    
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_EXECUTION_TRACE_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,

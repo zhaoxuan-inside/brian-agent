@@ -1,13 +1,3 @@
-/**
- * @fileoverview SoulProvider 模块测试。
- *
- * 测试 SoulProvider 的全部接口：addSoul / delSoul / updateSoul /
- * soSoulById / soSoul / enableSoul / closeSoul / recordSoulUsage。
- *
- * 不使用任何 MOCK 数据，使用真实 SQLite 数据库。
- * 所有数据访问通过 RelationDBProvider，遵循 PromptsProvider.test.ts 的测试模式。
- */
-
 import { Metrics } from '../shared/base/Metrics';
 import { Report } from '../shared/base/Report';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -44,11 +34,6 @@ import {
   DatabaseError,
 } from '../shared/errors';
 
-// ---------------------------------------------------------------------------
-// 测试辅助函数
-// ---------------------------------------------------------------------------
-
-/** 生成唯一的 Soul 测试数据 */
 function makeSoulData(overrides?: Record<string, unknown>) {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -58,10 +43,6 @@ function makeSoulData(overrides?: Record<string, unknown>) {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// 测试套件
-// ---------------------------------------------------------------------------
 
 describe('SoulProvider', () => {
   let tempDir: string;
@@ -87,7 +68,7 @@ describe('SoulProvider', () => {
         new CloseSoulOutput(), new SoulContext(),
       );
     } catch {
-      // 忽略关闭时的错误
+
     }
     try {
       await relationDb.closeDB(
@@ -95,7 +76,7 @@ describe('SoulProvider', () => {
         new CloseDBOutput(), new DBContext(),
       );
     } catch {
-      // 忽略关闭时的错误
+
     }
     await new Promise((r) => setTimeout(r, 100));
 
@@ -103,14 +84,10 @@ describe('SoulProvider', () => {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {
-        // 忽略清理错误
+
       }
     }
   });
-
-  // =========================================================================
-  // addSoul - 新增 Soul
-  // =========================================================================
 
   describe('addSoul', () => {
     it('应该成功新增一个 Soul', async () => {
@@ -232,10 +209,6 @@ describe('SoulProvider', () => {
     });
   });
 
-  // =========================================================================
-  // delSoul - 删除 Soul
-  // =========================================================================
-
   describe('delSoul', () => {
     it('应该成功按 ID 删除 Soul', async () => {
       const addOut = new AddSoulOutput();
@@ -250,7 +223,6 @@ describe('SoulProvider', () => {
       expect(result).toBe(true);
       expect(output.affected_rows).toBe(1);
 
-      // 验证已删除
       const getInput = new GetSoulInput();
       getInput.id = addOut.id;
       const getOut = new GetSoulOutput();
@@ -275,7 +247,6 @@ describe('SoulProvider', () => {
       await soulAccess.delSoul(delInput, delOutput, new SoulContext());
       expect(delOutput.affected_rows).toBe(2);
 
-      // 验证都删除了
       const getOut1 = new GetSoulOutput();
       const getInput1 = new GetSoulInput();
       getInput1.id = out1.id;
@@ -327,7 +298,6 @@ describe('SoulProvider', () => {
       addInput.data = makeSoulData();
       await soulAccess.addSoul(addInput, out, new SoulContext());
 
-      // 记录一次使用
       const usageInput = new RecordSoulUsageInput();
       usageInput.soul_id = out.id;
       await soulAccess.recordSoulUsage(
@@ -335,12 +305,10 @@ describe('SoulProvider', () => {
         new RecordSoulUsageOutput(), new SoulContext(),
       );
 
-      // 删除 Soul
       const delInput = new DelSoulInput();
       delInput.ids = [out.id];
       await soulAccess.delSoul(delInput, new DelSoulOutput(), new SoulContext());
 
-      // 查询 soul_usage 是否被清理
       const soOut = new SoSoulOutput();
       const soInput = new SoSoulInput();
       soInput.order_by = [
@@ -348,16 +316,11 @@ describe('SoulProvider', () => {
       ];
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
 
-      // usage 关联记录应已不存在
       for (const s of soOut.list) {
         expect(s.id).not.toBe(out.id);
       }
     });
   });
-
-  // =========================================================================
-  // updateSoul - 更新 Soul
-  // =========================================================================
 
   describe('updateSoul', () => {
     it('应该成功按 ID 更新单个字段', async () => {
@@ -376,7 +339,6 @@ describe('SoulProvider', () => {
       );
       expect(updateOutput.affected_rows).toBe(1);
 
-      // 验证
       const getInput = new GetSoulInput();
       getInput.id = addOut.id;
       const getOut = new GetSoulOutput();
@@ -423,7 +385,6 @@ describe('SoulProvider', () => {
       await soulAccess.soSoulById(getInput1, getOut1, new SoulContext());
       const originalUpdated = getOut1.soul!.updated;
 
-      // 等待一小段时间确保时间戳变化
       await new Promise((r) => setTimeout(r, 10));
 
       const updateInput = new UpdateSoulInput();
@@ -472,7 +433,6 @@ describe('SoulProvider', () => {
       addInput.data = makeSoulData();
       await soulAccess.addSoul(addInput, addOut, new SoulContext());
 
-      // 禁用
       const updateInput = new UpdateSoulInput();
       updateInput.id = addOut.id;
       updateInput.data = { enable: false };
@@ -487,7 +447,6 @@ describe('SoulProvider', () => {
       await soulAccess.soSoulById(getInput, getOut, new SoulContext());
       expect(getOut.soul!.enable).toBeFalsy();
 
-      // 重新启用
       const reEnableInput = new UpdateSoulInput();
       reEnableInput.id = addOut.id;
       reEnableInput.data = { enable: true };
@@ -549,10 +508,6 @@ describe('SoulProvider', () => {
       expect(getOut2.soul!.updated).toBeGreaterThan(originalUpdated);
     });
   });
-
-  // =========================================================================
-  // soSoulById - 获取 Soul
-  // =========================================================================
 
   describe('soSoulById', () => {
     it('应该成功按 ID 获取 Soul', async () => {
@@ -636,10 +591,6 @@ describe('SoulProvider', () => {
       expect(getOut.soul).toHaveProperty('enable');
     });
   });
-
-  // =========================================================================
-  // soSoul - 搜索 Soul
-  // =========================================================================
 
   describe('soSoul', () => {
     it('无过滤条件的搜索应返回所有 Soul', async () => {
@@ -727,7 +678,7 @@ describe('SoulProvider', () => {
     });
 
     it('关键词 + 条件同时使用应正确分组过滤', async () => {
-      // 创建数据：有匹配关键词但不符合条件的，有符合条件但不匹配关键词的，有两者都匹配的
+
       const out1 = new AddSoulOutput();
       const input1 = new AddSoulInput();
       input1.data = makeSoulData({
@@ -752,7 +703,6 @@ describe('SoulProvider', () => {
       });
       await soulAccess.addSoul(input3, out3, new SoulContext());
 
-      // 搜索：关键词"翻译" AND soul_brief="Target"
       const soInput = new SoSoulInput();
       soInput.keyword = '翻译';
       soInput.conditions = [
@@ -761,7 +711,6 @@ describe('SoulProvider', () => {
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
 
-      // 只有 out1 同时匹配关键词和条件
       expect(soOut.total).toBe(1);
       expect(soOut.list[0].id).toBe(out1.id);
     });
@@ -776,7 +725,6 @@ describe('SoulProvider', () => {
         await soulAccess.addSoul(addInput, addOut, new SoulContext());
       }
 
-      // 第一页 10 条
       const soInput1 = new SoSoulInput();
       soInput1.page = { current: 1, size: 10 };
       soInput1.order_by = [
@@ -787,7 +735,6 @@ describe('SoulProvider', () => {
       expect(soOut1.list.length).toBe(10);
       expect(soOut1.total).toBe(15);
 
-      // 第二页 5 条
       const soInput2 = new SoSoulInput();
       soInput2.page = { current: 2, size: 10 };
       soInput2.order_by = [
@@ -812,7 +759,6 @@ describe('SoulProvider', () => {
       input2.data = makeSoulData({ soul_brief: 'ZZZ Last' });
       await soulAccess.addSoul(input2, out2, new SoulContext());
 
-      // ASC
       const soInputAsc = new SoSoulInput();
       soInputAsc.order_by = [
         { field: 'created', direction: Direction.ASC },
@@ -821,7 +767,6 @@ describe('SoulProvider', () => {
       await soulAccess.soSoul(soInputAsc, soOutAsc, new SoulContext());
       expect(soOutAsc.list[0].id).toBe(out1.id);
 
-      // DESC
       const soInputDesc = new SoSoulInput();
       soInputDesc.order_by = [
         { field: 'created', direction: Direction.DESC },
@@ -831,10 +776,6 @@ describe('SoulProvider', () => {
       expect(soOutDesc.list[0].id).toBe(out2.id);
     });
   });
-
-  // =========================================================================
-  // soSoul - 按使用频率排序
-  // =========================================================================
 
   describe('soSoul usage-based sorting', () => {
     it('应按 usage_today_count 排序', async () => {
@@ -848,7 +789,6 @@ describe('SoulProvider', () => {
       input2.data = makeSoulData({ soul_brief: 'LowUsageSoul' });
       await soulAccess.addSoul(input2, out2, new SoulContext());
 
-      // out1 记录 3 次使用
       for (let i = 0; i < 3; i++) {
         const usageInput = new RecordSoulUsageInput();
         usageInput.soul_id = out1.id;
@@ -858,7 +798,6 @@ describe('SoulProvider', () => {
         );
       }
 
-      // out2 记录 1 次使用
       const usageInput2 = new RecordSoulUsageInput();
       usageInput2.soul_id = out2.id;
       await soulAccess.recordSoulUsage(
@@ -873,7 +812,6 @@ describe('SoulProvider', () => {
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
 
-      // HighUsageSoul (3次) 应在 LowUsageSoul (1次) 前
       const idx1 = soOut.list.findIndex((s) => s.id === out1.id);
       const idx2 = soOut.list.findIndex((s) => s.id === out2.id);
       expect(idx1).toBeGreaterThanOrEqual(0);
@@ -887,7 +825,6 @@ describe('SoulProvider', () => {
       input.data = makeSoulData({ soul_brief: 'WeekUsageSoul' });
       await soulAccess.addSoul(input, out, new SoulContext());
 
-      // 记录使用
       const usageInput = new RecordSoulUsageInput();
       usageInput.soul_id = out.id;
       await soulAccess.recordSoulUsage(
@@ -941,7 +878,6 @@ describe('SoulProvider', () => {
         ids.push(addOut.id);
       }
 
-      // 每个记录不同使用次数用于测试排序
       for (let i = 0; i < ids.length; i++) {
         const usageInput = new RecordSoulUsageInput();
         usageInput.soul_id = ids[i];
@@ -994,14 +930,10 @@ describe('SoulProvider', () => {
 
       const idx1 = soOut.list.findIndex((s) => s.id === out1.id);
       const idx2 = soOut.list.findIndex((s) => s.id === out2.id);
-      expect(idx1).toBe(0); // NoUsage (0) 应在 HasUsage (5) 之前
+      expect(idx1).toBe(0);
       expect(idx2).toBe(1);
     });
   });
-
-  // =========================================================================
-  // enableSoul - 启用/禁用组件
-  // =========================================================================
 
   describe('enableSoul', () => {
     it('应该成功禁用 Soul 组件', async () => {
@@ -1012,7 +944,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // 禁用后操作应失败
       const addInput = new AddSoulInput();
       addInput.data = makeSoulData();
       const addOut = new AddSoulOutput();
@@ -1022,7 +953,7 @@ describe('SoulProvider', () => {
     });
 
     it('禁用后应可重新启用', async () => {
-      // 禁用
+
       const disableInput = new EnableSoulInput();
       disableInput.enable = false;
       await soulAccess.enableSoul(
@@ -1030,7 +961,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // 重新启用
       const enableInput = new EnableSoulInput();
       enableInput.enable = true;
       await soulAccess.enableSoul(
@@ -1038,7 +968,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // 启用后操作应成功
       const addInput = new AddSoulInput();
       addInput.data = makeSoulData();
       const addOut = new AddSoulOutput();
@@ -1058,7 +987,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // 创建新的 access 实例（使用同一个 relationDb）
       const newAccess = new SoulAccess(relationDb);
       await newAccess.initialize();
 
@@ -1071,7 +999,7 @@ describe('SoulProvider', () => {
     });
 
     it('初始化时应从 config 恢复 enable 状态', async () => {
-      // 先禁用
+
       const disableInput = new EnableSoulInput();
       disableInput.enable = false;
       await soulAccess.enableSoul(
@@ -1079,7 +1007,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // 重新初始化
       const newAccess = new SoulAccess(relationDb);
       await newAccess.initialize();
 
@@ -1092,17 +1019,15 @@ describe('SoulProvider', () => {
     });
 
     it('反复启用禁用应正常工作', async () => {
-      // 禁用
+
       const e1 = new EnableSoulInput();
       e1.enable = false;
       await soulAccess.enableSoul(e1, new EnableSoulOutput(), new SoulContext());
 
-      // 启用
       const e2 = new EnableSoulInput();
       e2.enable = true;
       await soulAccess.enableSoul(e2, new EnableSoulOutput(), new SoulContext());
 
-      // 再禁用
       const e3 = new EnableSoulInput();
       e3.enable = false;
       await soulAccess.enableSoul(e3, new EnableSoulOutput(), new SoulContext());
@@ -1123,7 +1048,6 @@ describe('SoulProvider', () => {
         new EnableSoulOutput(), new SoulContext(),
       );
 
-      // addSoul
       await expect(
         soulAccess.addSoul(
           Object.assign(new AddSoulInput(), { data: makeSoulData() }),
@@ -1131,7 +1055,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // delSoul
       await expect(
         soulAccess.delSoul(
           Object.assign(new DelSoulInput(), { ids: ['any'] }),
@@ -1139,7 +1062,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // updateSoul
       await expect(
         soulAccess.updateSoul(
           Object.assign(new UpdateSoulInput(), {
@@ -1150,7 +1072,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // soSoulById
       await expect(
         soulAccess.soSoulById(
           Object.assign(new GetSoulInput(), { id: 'any' }),
@@ -1158,7 +1079,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // soSoul
       await expect(
         soulAccess.soSoul(
           new SoSoulInput(),
@@ -1166,7 +1086,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(ComponentDisabledError);
 
-      // recordSoulUsage
       await expect(
         soulAccess.recordSoulUsage(
           Object.assign(new RecordSoulUsageInput(), { soul_id: 'any' }),
@@ -1175,10 +1094,6 @@ describe('SoulProvider', () => {
       ).rejects.toThrow(ComponentDisabledError);
     });
   });
-
-  // =========================================================================
-  // closeSoul - 关闭组件（终态操作）
-  // =========================================================================
 
   describe('closeSoul', () => {
     it('closeSoul 后所有操作应抛出 DatabaseError', async () => {
@@ -1254,7 +1169,6 @@ describe('SoulProvider', () => {
         new CloseSoulOutput(), new SoulContext(),
       );
 
-      // 创建新的 access 实例重新初始化
       const newAccess = new SoulAccess(relationDb);
       await newAccess.initialize();
 
@@ -1275,7 +1189,6 @@ describe('SoulProvider', () => {
         new CloseSoulOutput(), new SoulContext(),
       );
 
-      // delSoul
       await expect(
         soulAccess.delSoul(
           Object.assign(new DelSoulInput(), { ids: ['any'] }),
@@ -1283,7 +1196,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(DatabaseError);
 
-      // updateSoul
       await expect(
         soulAccess.updateSoul(
           Object.assign(new UpdateSoulInput(), {
@@ -1294,7 +1206,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(DatabaseError);
 
-      // soSoulById
       await expect(
         soulAccess.soSoulById(
           Object.assign(new GetSoulInput(), { id: 'any' }),
@@ -1302,7 +1213,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(DatabaseError);
 
-      // soSoul
       await expect(
         soulAccess.soSoul(
           new SoSoulInput(),
@@ -1310,7 +1220,6 @@ describe('SoulProvider', () => {
         ),
       ).rejects.toThrow(DatabaseError);
 
-      // recordSoulUsage
       await expect(
         soulAccess.recordSoulUsage(
           Object.assign(new RecordSoulUsageInput(), { soul_id: 'any' }),
@@ -1319,10 +1228,6 @@ describe('SoulProvider', () => {
       ).rejects.toThrow(DatabaseError);
     });
   });
-
-  // =========================================================================
-  // recordSoulUsage - 记录 Soul 使用
-  // =========================================================================
 
   describe('recordSoulUsage', () => {
     it('首次记录应新增 usage 记录（usage_count=1）', async () => {
@@ -1339,7 +1244,6 @@ describe('SoulProvider', () => {
       );
       expect(result).toBe(true);
 
-      // 验证 soSoul 按使用频率排序能找到
       const soInput = new SoSoulInput();
       soInput.order_by = [
         { field: 'usage_today_count', direction: Direction.DESC },
@@ -1360,7 +1264,6 @@ describe('SoulProvider', () => {
       const usageInput = new RecordSoulUsageInput();
       usageInput.soul_id = addOut.id;
 
-      // 记录 5 次
       for (let i = 0; i < 5; i++) {
         await soulAccess.recordSoulUsage(
           usageInput,
@@ -1375,7 +1278,6 @@ describe('SoulProvider', () => {
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
 
-      // 验证使用频率最高为 5（第一个位置）
       const idx = soOut.list.findIndex((s) => s.id === addOut.id);
       expect(idx).toBe(0);
     });
@@ -1412,7 +1314,6 @@ describe('SoulProvider', () => {
       input2.data = makeSoulData({ soul_brief: 'SoulB' });
       await soulAccess.addSoul(input2, out2, new SoulContext());
 
-      // SoulA 记录 3 次
       const usageA = new RecordSoulUsageInput();
       usageA.soul_id = out1.id;
       for (let i = 0; i < 3; i++) {
@@ -1422,7 +1323,6 @@ describe('SoulProvider', () => {
         );
       }
 
-      // SoulB 记录 1 次
       const usageB = new RecordSoulUsageInput();
       usageB.soul_id = out2.id;
       await soulAccess.recordSoulUsage(
@@ -1439,17 +1339,13 @@ describe('SoulProvider', () => {
 
       const idxA = soOut.list.findIndex((s) => s.id === out1.id);
       const idxB = soOut.list.findIndex((s) => s.id === out2.id);
-      expect(idxA).toBeLessThan(idxB); // SoulA (3次) 在 SoulB (1次) 前
+      expect(idxA).toBeLessThan(idxB);
     });
   });
 
-  // =========================================================================
-  // 集成测试 - 完整使用流程
-  // =========================================================================
-
   describe('集成测试', () => {
     it('完整 CRUD 流程：新增 -> 获取 -> 更新 -> 搜索 -> 删除', async () => {
-      // 1. 新增
+
       const addOut = new AddSoulOutput();
       const addInput = new AddSoulInput();
       addInput.data = makeSoulData({
@@ -1459,14 +1355,12 @@ describe('SoulProvider', () => {
       await soulAccess.addSoul(addInput, addOut, new SoulContext());
       expect(addOut.id).toBeTruthy();
 
-      // 2. 获取
       const getOut = new GetSoulOutput();
       const getInput = new GetSoulInput();
       getInput.id = addOut.id;
       await soulAccess.soSoulById(getInput, getOut, new SoulContext());
       expect(getOut.soul!.soul_content).toBe('集成测试Soul');
 
-      // 3. 更新
       const updateInput = new UpdateSoulInput();
       updateInput.id = addOut.id;
       updateInput.data = { soul_brief: '已更新' };
@@ -1474,26 +1368,22 @@ describe('SoulProvider', () => {
       await soulAccess.updateSoul(updateInput, updateOut, new SoulContext());
       expect(updateOut.affected_rows).toBe(1);
 
-      // 4. 验证更新
       const getOut2 = new GetSoulOutput();
       const getInput2 = new GetSoulInput();
       getInput2.id = addOut.id;
       await soulAccess.soSoulById(getInput2, getOut2, new SoulContext());
       expect(getOut2.soul!.soul_brief).toBe('已更新');
 
-      // 5. 搜索
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(new SoSoulInput(), soOut, new SoulContext());
       expect(soOut.list.some((s) => s.id === addOut.id)).toBe(true);
 
-      // 6. 删除
       const delInput = new DelSoulInput();
       delInput.ids = [addOut.id];
       const delOut = new DelSoulOutput();
       await soulAccess.delSoul(delInput, delOut, new SoulContext());
       expect(delOut.affected_rows).toBe(1);
 
-      // 7. 确认已删除
       const getOut3 = new GetSoulOutput();
       const getInput3 = new GetSoulInput();
       getInput3.id = addOut.id;
@@ -1502,7 +1392,7 @@ describe('SoulProvider', () => {
     });
 
     it('数据隔离：不同测试不应互相干扰', async () => {
-      // 新增一个独一无二的 Soul
+
       const uniqueId = `unique-${Date.now()}`;
       const addOut = new AddSoulOutput();
       const addInput = new AddSoulInput();

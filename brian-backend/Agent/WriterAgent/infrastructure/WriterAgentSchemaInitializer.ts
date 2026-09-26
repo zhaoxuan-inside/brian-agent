@@ -20,7 +20,7 @@ export class WriterAgentSchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${WRITER_AGENT_CONFIG_TABLE} ADD COLUMN llm_id TEXT`);
     } catch {
-      // 字段已存在
+
     }
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${WRITER_AGENT_USER_PROFILE_TABLE} (

@@ -1,13 +1,3 @@
-/**
- * @fileoverview 全系统 Prompt 模板配置键常量。
- *
- * 统一收敛各层分散的 `*_prompt_template_id` 配置键，消除魔数字符串。
- * config_key 命名规则与 configRegistrations.ts 保持一致：
- *   base/core/agent/app 模块：`<module>.<key>`
- *   orchestration 模块：`orchestration.<module>.<key>`
- */
-
-/** Prompt 槽位枚举（每个槽位对应一个内置 Prompt） */
 export const PROMPT_SLOTS = {
   LLM_MATCH: 'llm_core.prompt_template_id',
   INFO_TAG: 'info_core.tag_config.prompt_template_id',
@@ -21,7 +11,6 @@ export const PROMPT_SLOTS = {
   THINK: 'agent_execution.think_prompt_template_id',
   REFLECT: 'agent_execution.reflect_prompt_template_id',
   ANSWER: 'agent_execution.answer_prompt_template_id',
-  PLAN: 'planner_agent.plan_prompt_template_id',
   WRITE: 'writer_agent.write_prompt_template_id',
   EVAL_WORK: 'evolutor_agent.eval_work_prompt_template_id',
   EVAL_WRITE: 'evolutor_agent.eval_write_prompt_template_id',

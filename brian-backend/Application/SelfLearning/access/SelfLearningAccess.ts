@@ -29,7 +29,7 @@ import {
   GetLearningStatsInput, GetLearningStatsOutput,
   ConfigSelfLearningInput, ConfigSelfLearningOutput,  ListLearningTasksInput,
   ListLearningTasksOutput,
-  // LearningTaskStatus,  // 未使用，移除（eslint no-unused-vars）
+
 } from '../domain/types';
 
 export class SelfLearningAccess {
@@ -138,7 +138,6 @@ export class SelfLearningAccess {
     return this.service.deleteFile(i, o, c, metrics, report);
   }
 
-  /** 确保文档伴读专用 Agent/Soul 就绪（启动幂等装配；依赖缺失时返回空串） */
   async ensureBuiltinDocumentAgent(): Promise<string> {
     await this.initPromise;
     return this.service.ensureBuiltinDocumentAgent();
@@ -186,7 +185,6 @@ export class SelfLearningAccess {
     return this.service.soLearningStats(i, o, c, metrics, report);
   }
 
-  /** 查询学习任务列表（手动触发后台任务可视化） */
   async soLearningTasks(i: ListLearningTasksInput, o: ListLearningTasksOutput, c: SelfLearningContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.soLearningTasks(i, o, c, metrics, report);
@@ -198,13 +196,11 @@ export class SelfLearningAccess {
     return this.service.configSelfLearning(i, o, c, metrics, report);
   }
 
-  /** 标签老化（供 CronProvider 定时触发） */
   async startTagAging(): Promise<void> {
     await this.initPromise;
     await (this.service as unknown as { startTagAging(): Promise<void> }).startTagAging();
   }
 
-  /** 孤立标签检查（供 CronProvider 定时触发） */
   async startOrphanTagCheck(): Promise<void> {
     await this.initPromise;
     await (this.service as unknown as { startOrphanTagCheck(): Promise<void> }).startOrphanTagCheck();

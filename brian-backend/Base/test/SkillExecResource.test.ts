@@ -13,13 +13,6 @@ import {
 } from '@brian-agent/base';
 import { Operator } from '@brian-agent/base';
 
-/**
- * SkillProvider.execSkill 真机资源采集验证：
- * addSkill（含 scripts/collect.py）→ execSkill → LocalSandbox 真实 Python 执行 →
- * stdout JSON 解析为本机资源使用情况（CPU/内存/磁盘/负载）→ usage 记录落库。
- */
-
-/** 资源采集脚本（仅标准库；只向 stdout 输出一段 JSON，stderr 静默） */
 const COLLECT_PY = [
   'import json, os, shutil, time',
   '',
@@ -98,8 +91,8 @@ describe('SkillProvider.execSkill 真机资源采集（system-resource-report）
   });
 
   afterEach(async () => {
-    try { await relationDb.closeDB(); } catch { /* ignore */ }
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { await relationDb.closeDB(); } catch {  }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
   it.skipIf(!LINUX)('execSkill 真机执行 Python 脚本，返回本机资源使用情况并记录 usage', async () => {
@@ -110,7 +103,6 @@ describe('SkillProvider.execSkill 真机资源采集（system-resource-report）
     const ok = await skillAccess.execSkill(input, output, new SkillContext());
     expect(ok).toBe(true);
 
-    // stdout 为一段可解析 JSON（LocalSandbox 契约：py 脚本 stdout 即结果）
     const usage = JSON.parse(String(output.result)) as Record<string, unknown>;
     console.log('[本机资源使用情况]', JSON.stringify(usage, null, 2));
 
@@ -126,7 +118,6 @@ describe('SkillProvider.execSkill 真机资源采集（system-resource-report）
     expect((usage['load_avg_1m_5m_15m'] as number[])).toHaveLength(3);
     expect(String(usage['hostname'])).toBe(os.hostname());
 
-    // execSkill 副作用：SKILL_USAGE_TABLE 当日 usage_count = 1
     const row = await relationDb.selectOne(SKILL_USAGE_TABLE, [
       { field: 'skill_id', operator: Operator.EQ, value: skillId },
     ]);

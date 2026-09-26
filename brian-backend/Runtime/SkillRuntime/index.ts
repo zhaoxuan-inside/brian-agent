@@ -1,11 +1,5 @@
-/**
- * @fileoverview Tools 模块统一导出（Runtime v2 · 阶段2）。
- */
-
-// access 层
 export { SkillRuntimeAccess } from './access/SkillRuntimeAccess';
 
-// domain 层
 export {
   SkillRuntimeContext,
   SkillResultStatus,
@@ -32,8 +26,8 @@ export type {
 } from './domain/types';
 export { zodToJSONSchema } from './domain/zodToJsonSchema';
 export { LEGACY_TOOL_TO_SKILL_ID, SYSTEM_SKILLS } from './application/builtinSkills';
+export type { SystemSkillSpec } from './application/builtinSkills';
 
-// application 层（内置工具）
 export {
   mcpExecTool,
   browserSkill,

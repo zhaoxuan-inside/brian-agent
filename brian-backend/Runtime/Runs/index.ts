@@ -1,15 +1,8 @@
-/**
- * @fileoverview Runs 模块统一导出（Runtime v2 · 阶段3/4 前置）。
- */
-
-// access 层
 export { RunGatewayAccess } from './access/RunGatewayAccess';
 export type { OutputEvaluator, OutputWriter } from './application/RunGatewayService';
 
-// infrastructure 层
 export { RunsSchemaInitializer } from './infrastructure/RunsSchemaInitializer';
 
-// domain 层
 export {
   RunGatewayContext,
   SubmitRunInput,

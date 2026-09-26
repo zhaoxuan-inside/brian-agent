@@ -101,7 +101,6 @@ interface StepResult {
   tracePiece: Partial<TraceIterationRecord>;
 }
 
-/** Agent 执行环境：聚合执行阶段所需的全部上下文，供各 step 处理函数消费。 */
 interface AgentExecutionEnv {
   input: ExecAgentInput;
   ctx: AgentExecutionContext;
@@ -120,7 +119,6 @@ interface AgentExecutionEnv {
   config: AgentExecutionConfigRecord | null;
 }
 
-/** execAgent 执行资源准备产物：策略规则源 + 技能/MCP 清单与工具定义。 */
 interface PreparedExecResources {
   stratOut: GetStrategyOutput;
   skills: { id: string; brief: string; work: string }[];
@@ -130,9 +128,21 @@ interface PreparedExecResources {
   toolsJson: string;
 }
 
+interface PhaseRunState {
+  phaseIdx: number;
+  currentStep: RuleStep | null;
+  currentPhase: RulePhase | null;
+  iteration: number;
+  finalAnswer: string;
+  totalTokens: number;
+  subSteps: string[];
+  subStepIndex: number;
+  history: string;
+}
+
 export class AgentExecutionService {
-  // 全量 LLM 轨迹（各阶段 prompt/raw_response/工具结果）单条可达数百 KB，
-  // 上限淘汰防止随执行次数无界增长；需要完整轨迹走 agent_execution_trace 落库查询。
+  
+  
   private static readonly TRACES_MAX = 100;
   private readonly traces = new Map<string, {
     agent_id: string;
@@ -171,7 +181,7 @@ export class AgentExecutionService {
   ): Promise<boolean> {
     const { start, config, traceId, maxIter, libCtx } = await this.prepareExecRun(input, ctx);
     const { agent, domain, agentName } = await this.soEnabledAgent(input.agent_id, libCtx);
-    // LLM 绑定只存在于 LLMProvider 的 agent_llm，执行时经 Core.matchLLM 解析
+    
     const llmId = await this.resolveLlm(input.agent_id, ctx);
     const contextData = await this.buildExecContextData(input, ctx, metrics);
     const { stratOut, ...execResources } = await this.prepareExecResources(input, ctx, agent, llmId);
@@ -192,7 +202,7 @@ export class AgentExecutionService {
     return this.finishExecOutput(output, finalAnswer, run.iteration, traceIterations, traceId, end - start);
   }
 
-  /** 准备执行运行时参数：计时起点、模块配置、轨迹 ID、迭代上限与 AgentLibrary 上下文。 */
+  
   private async prepareExecRun(input: ExecAgentInput, ctx: AgentExecutionContext): Promise<{
     start: number; config: AgentExecutionConfigRecord | null; traceId: string; maxIter: number; libCtx: AgentLibraryContext;
   }> {
@@ -204,7 +214,7 @@ export class AgentExecutionService {
     return { start, config, traceId, maxIter, libCtx };
   }
 
-  /** 加载并校验目标 Agent（未启用抛 NotFoundError），并解析任务签名中的领域与名称。 */
+  
   private async soEnabledAgent(agentId: string, libCtx: AgentLibraryContext): Promise<{ agent: AgentRecord; domain: string; agentName: string }> {
     const getOut = new GetAgentOutput();
     await this.agentLibrary.soAgent(Object.assign(new GetAgentInput(), { agent_id: agentId }), getOut, libCtx);
@@ -216,10 +226,8 @@ export class AgentExecutionService {
     return { agent, domain: domainMatch ? domainMatch[1] : 'general', agentName: agent.agent_name || agent.agent_id };
   }
 
-  /**
-   * 构建执行上下文：剥离 work_context 非内容 JSON 属性得到纯净 task_content（原地回写 input），
-   * 再经 InfoCore 多源检索分类包裹；失败降级为纯任务内容不阻断执行。
-   */
+  
+
   private async buildExecContextData(input: ExecAgentInput, ctx: AgentExecutionContext, metrics?: Metrics): Promise<string> {
     const { cleanTaskContent } = parseTaskContentAndContext(input.task_content);
     input.task_content = cleanTaskContent;
@@ -236,11 +244,11 @@ export class AgentExecutionService {
         ctxOut,
         new InfoCoreContext(),
       );
-      // 当前消息（本次输入）已由 InfoCoreProvider.context 单独拆出为 CURRENT 类型，不拼入上下文；上下文仅含历史引用消息，任务内容经 task_content 变量单独注入。
+      
       const formattedCtx = formatContextCategories(ctxOut);
       if (formattedCtx) contextData = formattedCtx;
     } catch (err) {
-      // 降级容忍：上下文构建失败不阻断执行，回退纯任务内容
+      
       metrics?.warn('AgentExecutionService.execAgent 构建会话上下文失败，降级为纯任务内容', {
         error: err instanceof Error ? err.message : String(err),
         session_id: sessionId, agent_id: input.agent_id,
@@ -249,16 +257,16 @@ export class AgentExecutionService {
     return contextData;
   }
 
-  /** 加载执行资源：策略 → 技能/MCP → 绑定校验（失效剔除）→ LLM 校验 → 工具清单。 */
+  
   private async prepareExecResources(input: ExecAgentInput, ctx: AgentExecutionContext, agent: AgentRecord, llmId: string): Promise<PreparedExecResources> {
     const stratOut = new GetStrategyOutput();
     await this.agentStrategy.soStrategyById(
       Object.assign(new GetStrategyInput(), { strategy_id: agent.strategy_id }), stratOut, new AgentStrategyContext(),
     );
-    // ===== 修改后（2026-09-22）：传入清洗后的 task_content，四层瀑布匹配链路才有任务语义 =====
+    
     const skillsLoaded = await this.loadSkills(input.agent_id, input.task_content ?? '', ctx);
     const mcpsLoaded = await this.loadMcps(input.agent_id, input.task_content ?? '', ctx);
-    // ===== Agent 绑定资源 DB 校验（Soul/Prompt/Skill/MCP）：失效绑定剔除后再进入执行 =====
+    
     const resourceValidation = await validateAgentResources({
       agentId: input.agent_id, soulId: agent.soul_id, promptId: agent.prompt_template_id,
       skillIds: agent.skill_ids ?? [], mcpIds: agent.mcp_ids ?? [],
@@ -270,7 +278,7 @@ export class AgentExecutionService {
     }
     const skills = skillsLoaded.filter((s) => !resourceValidation.invalid_skill_ids.includes(s.id));
     const mcps = mcpsLoaded.filter((m) => !resourceValidation.invalid_mcp_ids.includes(m.id));
-    // LLM 绑定 DB 校验（LLMProvider 存在且启用）：执行必须依赖有效 LLM，无效直接失败
+    
     if (!(await validateAgentLlm(this.llmAccess, llmId))) {
       throw new ValidationError(`Agent ${input.agent_id} 绑定的 LLM 不存在或已禁用: ${llmId}`);
     }
@@ -282,9 +290,8 @@ export class AgentExecutionService {
     return { stratOut, skills, mcps, skillIds: skills.map((s) => s.id), mcpIds: mcps.map((m) => m.id), toolsJson };
   }
 
-  /**
-   * 解析最终生效的执行规则：JSON 容错解析；工具可用但规则无 Act 步（如 CoT）时升级为 ReAct 循环。
-   */
+  
+
   private resolveExecRule(stratOut: GetStrategyOutput, skillIds: string[], mcpIds: string[], maxIter: number): { rule: ExecutionRule | null; maxFromRule: number } {
     let rule: ExecutionRule | null = null;
     try {
@@ -292,9 +299,9 @@ export class AgentExecutionService {
     } catch {
       rule = null;
     }
-    // ===== 工具可用但策略规则不含 Act 步（如 CoT）时，升级为 ReAct 工具循环 =====
-    // CoT 规则为 Think→Answer，缺少 Act，导致 Think 即使决定 tool_type=CDT/SKILL/MCP 也不会被执行。
-    // 只要 Agent 存在可用工具（绑定 Skill / MCP / 内置浏览器），就应保证工具决策能被实际执行。
+    
+    
+    
     const hasTools = skillIds.length > 0 || mcpIds.length > 0 || Boolean(this.cdtCore);
     const ruleHasAct = !!rule?.steps?.some((s) => s.step === 'Act')
       || !!rule?.phases?.some((p) => p.steps.some((s) => s.step === 'Act'));
@@ -313,7 +320,7 @@ export class AgentExecutionService {
     return { rule, maxFromRule: rule?.max_iterations ?? maxIter };
   }
 
-  /** 按规则分发执行：无规则/空规则直接 Answer；phases 优先；否则 steps 步进循环。 */
+  
   private async runExecRule(
     rule: ExecutionRule | null,
     env: AgentExecutionEnv,
@@ -333,10 +340,8 @@ export class AgentExecutionService {
     return { history, finalAnswer: '', totalTokens: 0, iteration: 0 };
   }
 
-  /**
-   * 直接执行 Answer 步（无规则路径与兜底路径共用）：追加答案轨迹，
-   * iteration_index 取当前轨迹长度（无规则首轮为 0，与原实现一致）。
-   */
+  
+
   private async runDirectAnswer(env: AgentExecutionEnv, history: string, traceIterations: TraceIterations): Promise<{ finalAnswer: string; totalTokens: number }> {
     const answerOut = new AnswerOutput();
     await this.execAnswer(this.buildAnswerInput(env, history), answerOut, env.ctx);
@@ -348,7 +353,7 @@ export class AgentExecutionService {
     return { finalAnswer: answerOut.answer, totalTokens: answerOut.token_usage };
   }
 
-  /** 记录 Agent 使用统计（upsert 语义），usage_context 携带轨迹与产出摘要。 */
+  
   private async recordExecUsage(input: ExecAgentInput, ctx: AgentExecutionContext, libCtx: AgentLibraryContext, traceId: string, finalAnswer: string): Promise<void> {
     await this.agentLibrary.recordAgentUsage(
       Object.assign(new RecordAgentUsageInput(), {
@@ -366,14 +371,12 @@ export class AgentExecutionService {
     );
   }
 
-  /**
-   * 归档执行结果到记忆链路（saveInfo，InfoType.ACT）；空答案先行标记 output.error 视为执行失败。
-   * best-effort：存档失败不阻断执行，轨迹仍在 traceStore 落库。
-   */
+  
+
   private async saveExecTraceInfo(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics: Metrics | undefined,
     traceId: string, finalAnswer: string, totalTokens: number): Promise<boolean> {
-    // 空答案视为执行失败：LLM 不可用时 ReACT 循环可能"正常"跑完但产出为空，需显式失败，
-    // 避免上游编排层把空输出当作成功结果继续 Writer / Evolutor 阶段。
+    
+    
     const producedOutput = Boolean(finalAnswer && finalAnswer.trim());
     if (!producedOutput) {
       output.error = 'Work Agent 未产生有效输出（LLM 调用失败或返回为空）';
@@ -393,20 +396,20 @@ export class AgentExecutionService {
         new InfoCoreContext(),
       );
     } catch (err) {
-      // 容忍执行结果存档失败（best-effort）：轨迹仍在 traceStore 落库，info 存档缺失仅影响记忆链路
+      
       metrics?.warn('AgentExecutionService.execAgent 执行结果存档 saveInfo 失败已容忍',
         { error: err instanceof Error ? err.message : String(err), agent_id: input.agent_id, session_id: sessionId });
     }
     return producedOutput;
   }
 
-  /** 轨迹入库：内存 LRU 淘汰（上限 TRACES_MAX）+ agent_execution_trace 落库。 */
+  
   private async storeExecTrace(
     input: ExecAgentInput, traceId: string, start: number, end: number,
     iterations: TraceIterations, totalTokens: number, answer: string, metrics?: Metrics,
   ): Promise<void> {
     while (this.traces.size >= AgentExecutionService.TRACES_MAX) {
-      // Map 迭代序即插入序，淘汰最早写入的轨迹
+      
       const oldest = this.traces.keys().next().value;
       if (oldest === undefined) break;
       this.traces.delete(oldest);
@@ -421,7 +424,7 @@ export class AgentExecutionService {
     }, metrics);
   }
 
-  /** 回写执行输出（answer/iterations/trace_id/elapsed_ms）并判定产出有效性。 */
+  
   private finishExecOutput(
     output: ExecAgentOutput, finalAnswer: string, iteration: number,
     traceIterations: TraceIterations, traceId: string, elapsedMs: number,
@@ -499,8 +502,8 @@ export class AgentExecutionService {
         new MQCoreContext(),
       );
     } catch (err) {
-      /* worker may already exist */
-      // 容忍启动失败：startWorker 对同队列幂等复用，此分支通常为重复启动；非幂等错误需可见
+      
+      
       metrics?.warn('AgentExecutionService.execAgentAsync 启动执行 worker 失败已容忍（可能已存在）', {
         error: err instanceof Error ? err.message : String(err),
         queue: EXEC_QUEUE,
@@ -511,11 +514,8 @@ export class AgentExecutionService {
     return true;
   }
 
-  /**
-   * 统一封装 LLM 文本生成调用：execLLM 失败（返回 false）时抛出带阶段名的
-   * ValidationError，保证 think / reflect / answer 三阶段对 LLM 失败的语义一致，
-   * 避免下游把“空输出”误判为正常完成。
-   */
+  
+
   private async execLLMOrThrow(
     llmId: string,
     prompt: string,
@@ -784,7 +784,7 @@ export class AgentExecutionService {
       return true;
     }
 
-    // 回退 InfoCore lastN 检索
+    
     try {
       const lastOut = new LastNInfoOutput();
       await this.infoCore.lastNInfo(
@@ -814,8 +814,8 @@ export class AgentExecutionService {
         return true;
       }
     } catch (err) {
-      /* ignore */
-      // 降级容忍：回退检索失败按"未找到 trace"处理（output.trace = null）
+      
+      
       metrics?.warn('AgentExecutionService.soTrace 回退 InfoCore 检索 trace 失败，返回空 trace', {
         error: err instanceof Error ? err.message : String(err),
         trace_id: input.trace_id,
@@ -911,9 +911,9 @@ export class AgentExecutionService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
-  // 规则引擎
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
   private async runSteps(
     steps: RuleStep[],
@@ -967,9 +967,8 @@ export class AgentExecutionService {
     return { history, finalAnswer, totalTokens, iteration };
   }
 
-  /**
-   * Plan-and-Solve：支持 phase 跳转（SolvePhase / SummaryAnswer）、loop_over sub_steps。
-   */
+  
+
   private async runPhases(
     rule: ExecutionRule,
     env: AgentExecutionEnv,
@@ -978,7 +977,27 @@ export class AgentExecutionService {
     traceIterations: TraceIterations,
   ): Promise<{ history: string; finalAnswer: string; totalTokens: number; iteration: number }> {
     const phases = rule.phases ?? [];
-    // 全局 step 索引：phase.step 与 裸 step 名
+    const globalSteps = this.buildPhaseStepIndex(phases);
+    const state = this.initPhaseRunState(phases, history);
+
+    while (state.currentStep && state.currentPhase && state.iteration < maxIter) {
+      const result = await this.runPhaseIteration(state, env, maxIter, traceIterations);
+
+      if (result.finalAnswer) {
+        state.finalAnswer = result.finalAnswer;
+        break;
+      }
+
+      if (this.advancePhaseState(phases, globalSteps, state, result)) break;
+      state.iteration++;
+    }
+
+    return { history: state.history, finalAnswer: state.finalAnswer, totalTokens: state.totalTokens, iteration: state.iteration };
+  }
+
+  private buildPhaseStepIndex(
+    phases: RulePhase[],
+  ): Map<string, { phase: RulePhase; step: RuleStep }> {
     const globalSteps = new Map<string, { phase: RulePhase; step: RuleStep }>();
     for (const p of phases) {
       for (const s of p.steps) {
@@ -989,92 +1008,113 @@ export class AgentExecutionService {
       globalSteps.set(`${p.phase}Phase`, { phase: p, step: p.steps[0] });
       globalSteps.set(`${p.phase.toLowerCase()}phase`, { phase: p, step: p.steps[0] });
     }
+    return globalSteps;
+  }
 
-    let phaseIdx = 0;
-    let currentStep: RuleStep | null = phases[0]?.steps[0] ?? null;
-    let currentPhase: RulePhase | null = phases[0] ?? null;
-    let iteration = 0;
-    let finalAnswer = '';
-    let totalTokens = 0;
-    let subSteps: string[] = [];
-    let subStepIndex = 0;
+  private initPhaseRunState(phases: RulePhase[], history: string): PhaseRunState {
+    return {
+      phaseIdx: 0,
+      currentStep: phases[0]?.steps[0] ?? null,
+      currentPhase: phases[0] ?? null,
+      iteration: 0,
+      finalAnswer: '',
+      totalTokens: 0,
+      subSteps: [],
+      subStepIndex: 0,
+      history,
+    };
+  }
 
-    while (currentStep && currentPhase && iteration < maxIter) {
-      const t0 = IdGenerator.now();
-      // loop_over：将当前 sub_step 注入 context
-      let stepEnv = env;
-      if (currentPhase.loop_over === 'sub_steps' && subSteps.length > 0) {
-        const sub = subSteps[Math.min(subStepIndex, subSteps.length - 1)];
-        stepEnv = {
-          ...env,
-          contextData: `${env.contextData}\nCurrent sub_step: ${sub}`,
-        };
-      }
+  private async runPhaseIteration(
+    state: PhaseRunState,
+    env: AgentExecutionEnv,
+    maxIter: number,
+    traceIterations: TraceIterations,
+  ): Promise<StepResult> {
+    const t0 = IdGenerator.now();
 
-      const result = await this.executeAtomic(currentStep, stepEnv, history, iteration, maxIter);
-      history = result.history;
-      totalTokens += result.token_usage ?? 0;
-      if (result.subSteps?.length) subSteps = result.subSteps;
-      traceIterations.push({
-        iteration_index: iteration,
-        ...result.tracePiece,
-        iteration_elapsed_ms: IdGenerator.now() - t0,
-      });
+    const stepEnv = this.resolvePhaseStepEnv(env, state.currentPhase!, state.subSteps, state.subStepIndex);
+    const result = await this.executeAtomic(state.currentStep!, stepEnv, state.history, state.iteration, maxIter);
+    state.history = result.history;
+    state.totalTokens += result.token_usage ?? 0;
+    if (result.subSteps?.length) state.subSteps = result.subSteps;
+    traceIterations.push({
+      iteration_index: state.iteration,
+      ...result.tracePiece,
+      iteration_elapsed_ms: IdGenerator.now() - t0,
+    });
+    return result;
+  }
 
-      if (result.finalAnswer) {
-        finalAnswer = result.finalAnswer;
-        break;
-      }
-
-      let nextName: string | null = null;
-      if (result.jumpTarget) {
-        nextName = result.jumpTarget;
-      } else if (result.conditionValue === false) {
-        nextName = currentStep.false_next ?? null;
-      } else if (result.conditionValue === true) {
-        nextName = currentStep.true_next ?? currentStep.next ?? null;
-      } else {
-        nextName = currentStep.next ?? null;
-      }
-
-      // Reflect false → 若 loop 还有 sub_step，继续 Act；否则走 false_next
-      if (
-        currentStep.step === 'Reflect'
-        && result.conditionValue === false
-        && currentPhase.loop_over === 'sub_steps'
-        && subStepIndex < subSteps.length - 1
-      ) {
-        subStepIndex++;
-        nextName = 'Act';
-      }
-
-      if (!nextName) {
-        // 进入下一 phase
-        phaseIdx++;
-        currentPhase = phases[phaseIdx] ?? null;
-        currentStep = currentPhase?.steps[0] ?? null;
-        iteration++;
-        continue;
-      }
-
-      const resolved = this.resolveJump(nextName, globalSteps, currentPhase);
-      if (!resolved) {
-        // 尝试 Answer
-        const answer = globalSteps.get('Answer');
-        if (answer) {
-          currentPhase = answer.phase;
-          currentStep = answer.step;
-        } else {
-          break;
-        }
-      } else {
-        currentPhase = resolved.phase;
-        currentStep = resolved.step;
-      }
-      iteration++;
+  private resolvePhaseStepEnv(
+    env: AgentExecutionEnv,
+    currentPhase: RulePhase,
+    subSteps: string[],
+    subStepIndex: number,
+  ): AgentExecutionEnv {
+    if (currentPhase.loop_over === 'sub_steps' && subSteps.length > 0) {
+      const sub = subSteps[Math.min(subStepIndex, subSteps.length - 1)];
+      return {
+        ...env,
+        contextData: `${env.contextData}\nCurrent sub_step: ${sub}`,
+      };
     }
+    return env;
+  }
 
-    return { history, finalAnswer, totalTokens, iteration };
+  private advancePhaseState(
+    phases: RulePhase[],
+    globalSteps: Map<string, { phase: RulePhase; step: RuleStep }>,
+    state: PhaseRunState,
+    result: StepResult,
+  ): boolean {
+    const currentStep = state.currentStep!;
+    const currentPhase = state.currentPhase!;
+    let nextName = this.pickPhaseNextName(currentStep, result);
+    if (
+      currentStep.step === 'Reflect'
+      && result.conditionValue === false
+      && currentPhase.loop_over === 'sub_steps'
+      && state.subStepIndex < state.subSteps.length - 1
+    ) {
+      state.subStepIndex++;
+      nextName = 'Act';
+    }
+    if (nextName) {
+      const next = this.applyPhaseJump(nextName, globalSteps, currentPhase);
+      if (!next) return true;
+      state.currentPhase = next.phase;
+      state.currentStep = next.step;
+      return false;
+    }
+    state.phaseIdx++;
+    state.currentPhase = phases[state.phaseIdx] ?? null;
+    state.currentStep = state.currentPhase?.steps[0] ?? null;
+    return false;
+  }
+
+  private pickPhaseNextName(currentStep: RuleStep, result: StepResult): string | null {
+    let nextName: string | null = null;
+    if (result.jumpTarget) {
+      nextName = result.jumpTarget;
+    } else if (result.conditionValue === false) {
+      nextName = currentStep.false_next ?? null;
+    } else if (result.conditionValue === true) {
+      nextName = currentStep.true_next ?? currentStep.next ?? null;
+    } else {
+      nextName = currentStep.next ?? null;
+    }
+    return nextName;
+  }
+
+  private applyPhaseJump(
+    nextName: string,
+    globalSteps: Map<string, { phase: RulePhase; step: RuleStep }>,
+    currentPhase: RulePhase,
+  ): { phase: RulePhase; step: RuleStep } | null {
+    const resolved = this.resolveJump(nextName, globalSteps, currentPhase);
+    if (resolved) return resolved;
+    return globalSteps.get('Answer') ?? null;
   }
 
   private resolveJump(
@@ -1085,7 +1125,7 @@ export class AgentExecutionService {
     if (globalSteps.has(target)) return globalSteps.get(target)!;
     const lower = target.toLowerCase();
     if (globalSteps.has(lower)) return globalSteps.get(lower)!;
-    // 同 phase 内
+    
     const local = currentPhase.steps.find((s) => s.step === target);
     if (local) return { phase: currentPhase, step: local };
     return null;
@@ -1139,10 +1179,10 @@ export class AgentExecutionService {
     this.pushThink(env, step.step, thinkOut, iteration);
     const nextAction = parseJsonObject(thinkOut.next_action);
     const subSteps = this.extractSubSteps(nextAction);
-    // ===== 优化：think 判定无需外部工具（tool_type=NONE）时直接进入 Answer，跳过 Act+Reflect =====
-    // 对于「推荐/规划/问答」类任务，Think 一轮即可判定无需工具，此时 Reflect 空转（LLM 常把
-    // 答案写进 reflection 却仍返回 should_continue=true）是「执行慢」的主要来源。跳过 Reflect
-    // 可省掉一整轮 LLM 调用，直接产出最终回答。
+    
+    
+    
+    
     const toolType = String(nextAction?.tool_type ?? 'NONE').toUpperCase();
     const skipToAnswer = !toolType || toolType === 'NONE';
     return {
@@ -1307,13 +1347,12 @@ export class AgentExecutionService {
     }).catch(() => {});
   }
 
-  // ---------------------------------------------------------------------------
-  // helpers
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
-  /**
-   * 通过 Core.matchLLM 解析 Agent 绑定的 LLM（绑定只存在于 LLMProvider 的 agent_llm）。
-   */
+  
+
   private async resolveLlm(agentId: string, ctx: AgentExecutionContext): Promise<string> {
     const llmOut = new MatchLLMOutput();
     await this.llmCore.matchLLM(
@@ -1392,7 +1431,7 @@ export class AgentExecutionService {
     if (!out.list?.length) throw new ValidationError(`prompt_template_id 不存在: ${id}`);
   }
 
-  /** 读取 Agent 当前绑定（逻辑控制；绑定唯一事实源 = agent 表，经 AgentLibrary.soAgent） */
+  
   private async soBoundComponentIds(agentId: string, kind: ComponentKind): Promise<string[]> {
     const out = new GetAgentOutput();
     await this.agentLibrary.soAgent(
@@ -1407,11 +1446,8 @@ export class AgentExecutionService {
     return record.soul_id ? [record.soul_id] : [];
   }
 
-  /**
-   * 读取 Agent 当前绑定的 Skill 列表（绑定唯一事实源 = agent 表 skill_ids_json）。
-   * 绑定经 matchSkill 的 bound_skill_ids 确定性水合（Core 不再持有绑定）。
-   * taskContent（清洗后任务内容）供无绑定时四层瀑布匹配（判定合并排序/GitHub/自建）使用。
-   */
+  
+
   private async loadSkills(agentId: string, taskContent: string, ctx: AgentExecutionContext): Promise<{ id: string; brief: string; work: string }[]> {
     try {
       const boundSkillIds = await this.soBoundComponentIds(agentId, ComponentKind.Skill);
@@ -1430,7 +1466,7 @@ export class AgentExecutionService {
       const entries = out.skills ?? [];
       if (entries.length === 0) return [];
       const ids = entries.map((s) => s.skill_id);
-      // ===== 修改后的代码：work 字段取自 skill_md 列（skill 表实际存在的工作指令列）=====
+      
       const skillRows = this.relationDb.queryRaw<{ id: string; skill_brief: string; skill_md: string }>(
         `SELECT "id", "skill_brief", "skill_md" FROM "skill" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
         ids,
@@ -1442,11 +1478,8 @@ export class AgentExecutionService {
     }
   }
 
-  /**
-   * 读取 Agent 当前绑定的 MCP 列表（绑定唯一事实源 = agent 表 mcp_ids_json）。
-   * 绑定经 matchMCP 的 bound_mcp_ids 确定性水合。
-   * taskContent（清洗后任务内容）供无绑定时四层瀑布匹配（判定合并排序/提供商市场）使用。
-   */
+  
+
   private async loadMcps(agentId: string, taskContent: string, ctx: AgentExecutionContext): Promise<{ id: string; title: string; brief: string }[]> {
     try {
       const boundMcpIds = await this.soBoundComponentIds(agentId, ComponentKind.Mcp);
@@ -1474,13 +1507,8 @@ export class AgentExecutionService {
     }
   }
 
-  /**
-   * 构建浏览器工具清单（CDT 内置浏览器自动化能力）。
-   *
-   * 浏览器能力无需像 Skill / MCP 那样绑定到 Agent，而是作为内置能力始终可用
-   * （前提是 CDTCoreAccess 已注入）。调用方式：next_action.tool_type="CDT"，
-   * tool_id 取下方 operations 中的 id，params 按各 operation 的参数填写。
-   */
+  
+
   private buildBrowserToolDef(): Record<string, unknown> {
     return {
       enabled: Boolean(this.cdtCore),
@@ -1496,12 +1524,8 @@ export class AgentExecutionService {
     };
   }
 
-  /**
-   * 执行 CDT 浏览器操作。
-   *
-   * 所有浏览器调用统一经 CDTCoreAccess（Core 层）完成，最终落到 CDTProvider（Base 层）
-   * 的 Chrome DevTools Protocol 通道，保证浏览器操作不绕过 CDT 链路。
-   */
+  
+
   private async execCdtAction(operation: string, params: Record<string, unknown>): Promise<string> {
     const cdt = this.cdtCore;
     if (!cdt) throw new ValidationError('CDT 浏览器能力未注入（cdtCore 为空）');
@@ -1585,7 +1609,7 @@ export class AgentExecutionService {
     }
   }
 
-  /** 从 CDP Runtime.evaluate 结果对象中提取文本值。 */
+  
   private extractEvalText(raw: unknown): string {
     const value = (raw as { result?: { value?: unknown } } | undefined)?.result?.value;
     if (typeof value === 'string') return value;
@@ -1618,9 +1642,9 @@ export class AgentExecutionService {
         new InfoCoreContext(),
       );
     } catch (err) {
-      /* best-effort */
-      // 容忍步骤信息落库失败：步骤存档为 trace 展示的可选增强，失败不阻断 ReACT 执行循环；
-      // 调用链经 runSteps/runPhases 距 metrics 持有方超 2 跳，不穿透 metrics
+      
+      
+      
       void err;
     }
   }

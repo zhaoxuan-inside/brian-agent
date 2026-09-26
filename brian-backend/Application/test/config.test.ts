@@ -14,7 +14,7 @@ describe('ConfigService', () => {
   let llmAccess: any, soulAccess: any, skillAccess: any, mcpAccess: any, promptsAccess: any, logAccess: any;
   let mqAccess: any, graphDBAccess: any, vectorDBAccess: any;
   let llmCore: any, infoCore: any, mcpCore: any, skillCore: any, soulCore: any;
-  let writerAgent: any, evolutorAgent: any, plannerAgent: any, agentLibrary: any, agentBuilder: any, agentExecution: any, agentStrategy: any, agentContext: any;
+  let writerAgent: any, evolutorAgent: any, agentLibrary: any, agentBuilder: any, agentExecution: any, agentStrategy: any, agentContext: any;
   let chatAccess: any, selfLearningAccess: any, userProfileAccess: any, visualizationAccess: any;
   let logger: any;
   let service: ConfigService;
@@ -41,7 +41,6 @@ describe('ConfigService', () => {
     soulCore = realCtx.soulCore;
     writerAgent = realCtx.writerAgent;
     evolutorAgent = realCtx.evolutorAgent;
-    plannerAgent = realCtx.plannerAgent;
     agentLibrary = realCtx.agentLibrary;
     agentBuilder = realCtx.agentBuilder;
     agentExecution = realCtx.agentExecution;
@@ -77,7 +76,7 @@ describe('ConfigService', () => {
       logAccess,
       mqAccess, graphDBAccess, vectorDBAccess,
       llmCore, infoCore, mcpCore, skillCore, soulCore,
-      writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
+      writerAgent, evolutorAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
       chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess);
   });
 
@@ -86,9 +85,9 @@ describe('ConfigService', () => {
     vi.restoreAllMocks();
   });
 
-  // =====================================================================
-  // updateLayerPrivilege
-  // =====================================================================
+  
+  
+  
 
   describe('updateLayerPrivilege', () => {
     it('TC-CFG-020: Set layer unreadable', async () => {
@@ -175,9 +174,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // updateModulePrivilege
-  // =====================================================================
+  
+  
+  
 
   describe('updateModulePrivilege', () => {
     it('TC-CFG-030: Set module unreadable', async () => {
@@ -256,9 +255,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // soConfigDetail
-  // =====================================================================
+  
+  
+  
 
   describe('soConfigDetail', () => {
     it('TC-CFG-060: Get full config detail returns layers→modules→categories→configs', async () => {
@@ -286,8 +285,8 @@ describe('ConfigService', () => {
       expect(keys).toContain('chat.default_history_lastN');
     });
 
-    // ===== 修改后（2026-09-22）：Orchestration 层配置种子已随 Runtime v2 退役清单（Runtime-PRD §10）删除，
-    // 过滤夹具改用存活的 AGENT 层注册 =====
+    
+    
     it('TC-CFG-061: Filter by layer', async () => {
       const input = new GetConfigDetailInput();
       input.layer = 'AGENT';
@@ -408,9 +407,10 @@ describe('ConfigService', () => {
       const chatLayer = output.layers.find((l: any) => l.layer === 'APPLICATION');
       const mod = (chatLayer!.modules as any[]).find((m: any) => m.module === 'chat');
       const cat = (mod.categories as any[]).find((c: any) => c.category === 'basic');
-      const item = (cat.items as any[]).find((i: any) => i.config_key === 'chat.sse_heartbeat_interval_ms');
+      
+      const item = (cat.items as any[]).find((i: any) => i.config_key === 'chat.default_history_lastN');
       expect(item).toBeDefined();
-      expect(item.config_description).toBe('SSE 长连接保活心跳间隔');
+      expect(item.config_description).toBe('首次加载历史对话时返回给前端展示的消息数量（对话区/图谱）；与「记忆与信息 > 上下文构建」的上下文参数无关');
     });
 
     it('TC-CFG-069: Static registrations are always present', async () => {
@@ -421,7 +421,7 @@ describe('ConfigService', () => {
         logAccess,
         mqAccess, graphDBAccess, vectorDBAccess,
         llmCore, infoCore, mcpCore, skillCore, soulCore,
-        writerAgent, evolutorAgent, plannerAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
+        writerAgent, evolutorAgent, agentLibrary, agentBuilder, agentExecution, agentStrategy, agentContext,
           chatAccess, selfLearningAccess, userProfileAccess, visualizationAccess);
 
       const input = new GetConfigDetailInput();
@@ -431,9 +431,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // soConfigItem
-  // =====================================================================
+  
+  
+  
 
   describe('soConfigItem', () => {
     const itemKey = 'llm_core.regen_rate';
@@ -472,9 +472,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // updateConfig
-  // =====================================================================
+  
+  
+  
 
   describe('updateConfig', () => {
     it('TC-CFG-085: BOOLEAN update succeeds', async () => {
@@ -511,7 +511,6 @@ describe('ConfigService', () => {
       const result = await service.updateConfig(input, output, ctx());
       expect(result).toBe(true);
     });
-
 
     it('TC-CFG-091: Non-existent key throws NotFoundError', async () => {
       const input = new UpdateConfigInput();
@@ -618,9 +617,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // configConfig
-  // =====================================================================
+  
+  
+  
 
   describe('configConfig', () => {
     it('TC-CFG-170: Set default_readable=false', async () => {
@@ -669,9 +668,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // LLM Proxy Methods  TC-CFG-100 ~ TC-CFG-112
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('LLM proxy methods', () => {
     it('TC-CFG-100: addLLMProviderProxy delegates to addLLMProvider with params', async () => {
@@ -810,9 +809,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Soul Proxy Methods  TC-CFG-120 ~ TC-CFG-126
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('Soul proxy methods', () => {
     it('TC-CFG-120: addSoulProxy delegates to addSoul with params', async () => {
@@ -902,9 +901,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Skill Proxy Methods  TC-CFG-130 ~ TC-CFG-136
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('Skill proxy methods', () => {
     it('TC-CFG-130: addSkillProxy delegates to addSkill with params', async () => {
@@ -994,9 +993,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // MCP Proxy Methods  TC-CFG-140 ~ TC-CFG-153
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('MCP proxy methods', () => {
     it('TC-CFG-140: addMcpProviderProxy delegates to addMcpProvider with params', async () => {
@@ -1170,9 +1169,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Prompt Proxy Methods  TC-CFG-160 ~ TC-CFG-164
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('Prompt proxy methods', () => {
     it('TC-CFG-160: addPromptProxy delegates to addPrompt with params', async () => {
@@ -1238,9 +1237,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Cross-module constraints — endpoints not exposed by other modules
-  // ═══════════════════════════════════════════════════════════
+  
+  
+  
 
   describe('Cross-module constraints', () => {
     it('TC-CFG-180: Config is the sole config update entry point', async () => {
@@ -1297,9 +1296,9 @@ describe('ConfigService', () => {
     });
   });
 
-  // =====================================================================
-  // Base provider config routing (mq_provider 等基础设施 Provider 读写)
-  // =====================================================================
+  
+  
+  
 
   describe('Base provider config routing', () => {
     it('writes and reads back mq_provider non-enabled param from mq_config', async () => {
@@ -1333,7 +1332,7 @@ describe('ConfigService', () => {
     });
   });
 
-  // ===== 新增（2026-09-22）：配置变更历史（TODO-List §2）=====
+  
   describe('soConfigHistory', () => {
     it('TC-CFG-100: updateConfig 应记录 old/new 变更历史', async () => {
       vi.spyOn(llmCore, 'configLLMCore').mockResolvedValue(true);

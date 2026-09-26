@@ -1,6 +1,3 @@
-/**
- * Metrics Span 树计时框架测试（2026-09-15 endSpan 按句柄配对收口修复）。
- */
 import { describe, it, expect } from 'vitest';
 import { Metrics } from '../shared/base/Metrics';
 
@@ -12,7 +9,7 @@ describe('Metrics.endSpan 按 handle 配对收口', () => {
     const closed = m.endSpan(a);
     expect(closed?.key).toBe('a');
     expect(closed?.end).toBeDefined();
-    // 栈顶 b 未被误关
+    
     expect(m.spans.find((s) => s.key === 'b')?.end).toBeUndefined();
   });
 
@@ -31,7 +28,7 @@ describe('Metrics.endSpan 按 handle 配对收口', () => {
     const a = m.beginSpan('a');
     m.beginSpan('b');
     m.endSpan(a);
-    m.endSpan(a); // 已闭合，no-op
+    m.endSpan(a);
     expect(m.spans.find((s) => s.key === 'b')?.end).toBeUndefined();
   });
 
@@ -63,7 +60,7 @@ describe('Metrics.spanSelfMs 负值回退', () => {
     const parent = m.beginSpan('parent');
     m.endSpan(parent);
     const row = m.spans.find((s) => s.key === 'parent')!;
-    // 手动构造交叠时间轴：父 0-100，两个子各覆盖 0-100（子之和 200 > 父 duration）
+    
     row.start = 0;
     row.end = 100;
     m.spans.push({ id: m.spans.length + 1, key: 'child', start: 0, end: 100, parent: row.id });

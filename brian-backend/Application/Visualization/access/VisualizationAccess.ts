@@ -16,7 +16,6 @@ import type {
   AgentLibraryAccess,
   AgentContextAccess,
   EvolutorAgentAccess,
-  PlannerAgentAccess,
 } from '@brian-agent/agent';
 import { VisualizationSchemaInitializer } from '../infrastructure/VisualizationSchemaInitializer';
 import { VisualizationService } from '../application/VisualizationService';
@@ -52,7 +51,6 @@ export class VisualizationAccess {
     agentLibrary: AgentLibraryAccess,
     agentContext: AgentContextAccess,
     evolutorAgent: EvolutorAgentAccess,
-    plannerAgent: PlannerAgentAccess,
     infoCore: InfoCoreAccess,
     llmAccess: LLMAccess,
     soulAccess: SoulAccess,
@@ -69,7 +67,6 @@ export class VisualizationAccess {
       agentLibrary,
       agentContext,
       evolutorAgent,
-      plannerAgent,
       infoCore,
       llmAccess,
       soulAccess,

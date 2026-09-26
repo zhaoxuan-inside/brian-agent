@@ -1,31 +1,12 @@
-/**
- * @fileoverview MQProvider 表结构初始化。
- *
- * 创建 queue_message、mq_config 两张表。
- * DDL 通过 RelationDBAccess.executeRaw 执行，依赖 RelationDBProvider 的底层数据库。
- *
- * 表结构依据 `MQProvider-PRD.md` 第 4 节。
- */
-
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import { QUEUE_MESSAGE_TABLE, MQ_CONFIG_TABLE } from '../domain/types';
 
-/**
- * MQProvider 表结构初始化器。
- *
- * 在 MQAccess 初始化时调用，确保所有表存在。
- */
 export class MQSchemaInitializer {
-  /**
-   * @param relationDb RelationDBProvider 接入层实例
-   */
+
   constructor(private readonly relationDb: RelationDBAccess) {}
 
-  /**
-   * 创建所有 MQProvider 表（IF NOT EXISTS 语义，可安全重复调用）。
-   */
   init(): void {
-    // queue_message 表（消息队列表）
+
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${QUEUE_MESSAGE_TABLE}" (
         "id"           TEXT    NOT NULL PRIMARY KEY,
@@ -53,10 +34,8 @@ export class MQSchemaInitializer {
       `CREATE INDEX IF NOT EXISTS "idx_${QUEUE_MESSAGE_TABLE}_status" ON "${QUEUE_MESSAGE_TABLE}" ("status")`,
     );
 
-    // 增量 schema：next_retry_at 延迟重试列
-    try { this.relationDb.executeRaw(`ALTER TABLE "${QUEUE_MESSAGE_TABLE}" ADD COLUMN "next_retry_at" INTEGER`); } catch { /* exists */ }
+    try { this.relationDb.executeRaw(`ALTER TABLE "${QUEUE_MESSAGE_TABLE}" ADD COLUMN "next_retry_at" INTEGER`); } catch {  }
 
-    // mq_config 配置表
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${MQ_CONFIG_TABLE}" (
         "config_key"   TEXT    NOT NULL PRIMARY KEY,
