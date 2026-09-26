@@ -106,7 +106,7 @@ function save() {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      class="fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm"
       @click.self="emit('close')"
     >
       <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-lg mx-4 overflow-hidden">
@@ -121,7 +121,6 @@ function save() {
         </div>
 
         <div class="px-5 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
-          <!-- 手动编写 -->
           <div>
             <label class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400 block mb-1.5">Cron 表达式（秒 分 时 日 月 周）</label>
             <input
@@ -139,7 +138,6 @@ function save() {
             </div>
           </div>
 
-          <!-- 通过字段生成 -->
           <div class="rounded-xl border border-apple-gray-100 dark:border-apple-gray-700 p-3">
             <div class="flex items-center justify-between mb-2">
               <label class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400">通过时间字段生成</label>
@@ -152,7 +150,7 @@ function save() {
             </div>
             <div class="grid grid-cols-3 gap-2">
               <div v-for="f in FIELD_DEFS" :key="f.key" class="space-y-1">
-                <label class="text-[11px] text-apple-gray-400 block">{{ f.label }}</label>
+                <label class="text-2xs text-apple-gray-400 block">{{ f.label }}</label>
                 <input
                   v-model="fields[f.key]"
                   type="text"
@@ -161,7 +159,7 @@ function save() {
                 />
               </div>
             </div>
-            <p class="text-[10px] text-apple-gray-400 mt-2">支持 *（任意）、单值、列表（1,15,30）、区间（10-20）、步长（*/5）</p>
+            <p class="text-4xs text-apple-gray-400 mt-2">支持 *（任意）、单值、列表（1,15,30）、区间（10-20）、步长（*/5）</p>
           </div>
         </div>
 

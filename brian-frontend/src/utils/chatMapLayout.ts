@@ -1,12 +1,3 @@
-// ChatMap 消息关系图布局：将「顺序问答」与「引用问答」两种模式排布到二维画布。
-//
-// 规则：
-// - QUESTION_ANSWER（问题→回答）：回答放在问题正下方（同列，纵向），居中对齐。
-// - FOLLOW_UP（上一回答→本次提问）：追问放在上一回答正下方（同列，纵向衔接）。
-// - CITATION（被引用→引用方）：引用方放在被引用方右边（横向），
-//   且引用方与被引用消息中「行最大（最靠下）」的那一个顶部对齐。
-// - 同一列内的所有节点 X 坐标一致（居中对齐），每个网格单元最多容纳一个节点，绝不允许重叠。
-
 export type ChatMapEdgeType = 'QUESTION_ANSWER' | 'CITATION' | 'FOLLOW_UP'
 
 export interface ChatMapLayoutNode {
@@ -29,13 +20,11 @@ export const CHAT_MAP_BASE_Y = 180
 
 const CITATION_EXTRA_COL_GAP = 60
 
-/** 消息框尺寸：宽/高在原始基础上放大为 1.5 倍（220→330，108→162），布局与视图共用 */
 export const NODE_W = 330
 export const NODE_H = 162
 
 const RESPONSE_TYPE = 'RESPONSE'
 
-/** 就地计算每个节点的 x / y 坐标。 */
 export function layoutChatMap(nodes: ChatMapLayoutNode[], edges: ChatMapLayoutEdge[]): void {
   const ordered = [...nodes].sort((a, b) => a.created - b.created)
   const incoming = buildIncoming(edges)
@@ -139,7 +128,6 @@ function placeRequest(
   return false
 }
 
-// ===== 修改后：引用列标记，同一列内所有节点共享横向偏移，实现居中对齐 =====
 function placeCited(
   node: ChatMapLayoutNode,
   citations: ChatMapLayoutEdge[],
@@ -157,7 +145,6 @@ function placeCited(
   return true
 }
 
-// ===== 修改后：按列标记决定横向偏移，同一列内所有节点（提问+回答）共享同一 X 坐标 =====
 function applyCoordinates(
   nodes: ChatMapLayoutNode[],
   col: Map<string, number>,
@@ -171,8 +158,6 @@ function applyCoordinates(
   }
 }
 
-// ===== 后处理：检测并解决节点重叠（完全消除重叠） =====
-/** 碰撞检测：两个矩形是否重叠（布局重叠消解与拖拽推离共用） */
 export function rectsOverlap(
   ax: number, ay: number, aw: number, ah: number,
   bx: number, by: number, bw: number, bh: number,

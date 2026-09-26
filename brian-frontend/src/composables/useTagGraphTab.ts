@@ -1,19 +1,9 @@
-/**
- * @fileoverview 信息页「标签图谱 / 关键词图谱」页签业务逻辑（Obsidian 风格力导向图），
- * 并兼任信息页壳控制器（页签懒加载、全局滚动/点击监听）。
- *
- * 两个图谱页签原本是 ~200 行镜像重复的状态与处理函数，现收敛为
- * createGraphState 工厂：tag / keyword 各实例化一次，差异仅注入
- * 数据源 / 记忆检索 / 清理 API / 配置持久化键。
- * 力导向布局纯算法见 utils/forceDirectedLayout。
- */
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { configApi, memoryApi } from '../api'
 import type { GraphEdge, GraphNode, MemoryItem } from '../api/types'
 import type { InfoTabKey } from '../api/types'
 import { forceDirectedLayout, type TagLayoutNode } from '../utils/forceDirectedLayout'
 
-/** 标签图谱页签依赖的跨页签能力（由 InfoView 注入） */
 export interface TagGraphTabDeps {
   activeTab: Ref<InfoTabKey>
   closeContextMenu: () => void
@@ -27,17 +17,14 @@ export interface TagGraphTabDeps {
   stopDateCountRefresh: () => void
 }
 
-/** 图谱画布固定视口尺寸（与模板 viewBox 一致） */
 const GRAPH_SIZE = 700
 
-/** 单个图谱页签的 I/O 差异注入：数据源 / 记忆检索 / 一键清理 */
 interface GraphStateIO {
   fetchGraph: () => Promise<{ nodes?: GraphNode[]; edges?: GraphEdge[] }>
   fetchMemories: (name: string) => Promise<MemoryItem[]>
   clearApi: () => Promise<unknown>
 }
 
-/** 创建单个图谱页签的完整状态与操作（tag / keyword 共用一份实现） */
 function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
   const nodes = ref<GraphNode[]>([])
   const edges = ref<GraphEdge[]>([])
@@ -56,7 +43,6 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
   const search = ref('')
   const clearing = ref(false)
 
-  // 画布参数：从配置加载，调整后防抖保存
   const repulsion = ref(2000)
   const springStrength = ref(0.2)
   const showLabels = ref(true)
@@ -69,7 +55,7 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       repulsion.value = cfg.graph_repulsion ?? 2000
       springStrength.value = cfg.graph_spring_strength ?? 0.2
       showLabels.value = cfg.graph_show_labels ?? true
-    } catch { /* use defaults */ }
+    } catch {  }
   }
 
   function saveConfig() {
@@ -138,7 +124,6 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
     } finally { loading.value = false }
   }
 
-  // 屏幕坐标 → 画布视图坐标（考虑 viewBox 等比缩放留白与平移缩放）
   function svgToView(event: MouseEvent): { x: number; y: number } {
     const rect = svgRef.value ? svgRef.value.getBoundingClientRect() : null
     if (!rect || rect.width === 0 || rect.height === 0) return { x: 0, y: 0 }
@@ -210,11 +195,10 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       scale.value = 1
       tx.value = 0
       ty.value = 0
-    } catch { /* ignore */ }
+    } catch {  }
     finally { clearing.value = false }
   }
 
-  /** 按搜索词定位节点（精确名优先，其次按权重取包含者）并居中选中 */
   async function focusNode() {
     const q = search.value.trim().toLowerCase()
     if (!q) return
@@ -250,9 +234,6 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
 
 export type GraphState = ReturnType<typeof createGraphState>
 
-/**
- * 标签/关键词图谱页签状态与操作 + 信息页壳控制器。
- */
 export function useTagGraphTab({ activeTab, closeContextMenu, loadHistory, loadMemory, loadAllDateCounts, loadLibraries, loadProfile, onMemoryScroll, startDateCountRefresh, stopDateCountRefresh }: TagGraphTabDeps) {
   const tag = createGraphState('tag', {
     fetchGraph: () => memoryApi.tagGraph(),
@@ -265,7 +246,6 @@ export function useTagGraphTab({ activeTab, closeContextMenu, loadHistory, loadM
     clearApi: () => memoryApi.clearKeywordGraph(),
   })
 
-  // Track which tabs have been loaded (lazy-load on first activation)
   const loadedTabs = ref<Set<string>>(new Set())
 
   function loadTabData(tab: InfoTabKey) {

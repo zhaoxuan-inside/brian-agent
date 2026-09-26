@@ -156,10 +156,10 @@ onMounted(loadTasks)
               </div>
               <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="task.enabled === 1 ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="task.enabled === 1 ? '启用' : '禁用'" />
             </div>
-            <p class="text-[11px] text-apple-gray-400 line-clamp-2">{{ task.description || '暂无描述' }}</p>
+            <p class="text-2xs text-apple-gray-400 line-clamp-2">{{ task.description || '暂无描述' }}</p>
           </div>
 
-          <div class="space-y-1 text-[11px] flex-1 min-h-0">
+          <div class="space-y-1 text-2xs flex-1 min-h-0">
             <p class="font-mono text-brian-blue truncate" :title="task.cron">{{ task.cron }}</p>
             <p class="text-apple-gray-400 truncate">上次: {{ formatTime(task.last_run) }}</p>
             <p class="text-apple-gray-400 truncate">下次: {{ formatTime(task.next_run) }}</p>
@@ -176,7 +176,7 @@ onMounted(loadTasks)
                 <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="task.enabled === 1 ? 'translate-x-4' : ''" />
               </button>
               <button
-                class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors"
+                class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors"
                 :disabled="triggering[task.name]"
                 @click.stop="triggerTask(task)"
               >
@@ -185,7 +185,7 @@ onMounted(loadTasks)
                 触发
               </button>
               <button
-                class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+                class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
                 @click.stop="openRuns(task)"
               >
                 执行情况
@@ -202,7 +202,6 @@ onMounted(loadTasks)
         </div>
       </div>
 
-      <!-- 执行情况弹窗 -->
       <Teleport to="body">
         <div v-if="runsVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" @click.self="closeRuns">
           <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6 max-h-[80vh] flex flex-col">
@@ -216,13 +215,13 @@ onMounted(loadTasks)
                 <CheckCircle2 v-if="run.status === 'SUCCESS'" :size="14" class="text-success-green shrink-0 mt-0.5" />
                 <XCircle v-else :size="14" class="text-error-red shrink-0 mt-0.5" />
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 text-[11px] text-apple-gray-500 dark:text-apple-gray-400">
+                  <div class="flex items-center gap-2 text-2xs text-apple-gray-500 dark:text-apple-gray-400">
                     <span>{{ formatTime(run.started_at) }}</span>
                     <span class="text-apple-gray-300">·</span>
                     <span>{{ formatDuration(run) }}</span>
-                    <span class="px-1.5 py-0.5 rounded-full text-[10px]" :class="run.status === 'SUCCESS' ? 'bg-success-green/10 text-success-green' : 'bg-error-red/10 text-error-red'">{{ run.result || run.status }}</span>
+                    <span class="px-1.5 py-0.5 rounded-full text-4xs" :class="run.status === 'SUCCESS' ? 'bg-success-green/10 text-success-green' : 'bg-error-red/10 text-error-red'">{{ run.result || run.status }}</span>
                   </div>
-                  <p v-if="run.error" class="text-[11px] text-error-red mt-1 whitespace-pre-wrap break-words">{{ run.error }}</p>
+                  <p v-if="run.error" class="text-2xs text-error-red mt-1 whitespace-pre-wrap break-words">{{ run.error }}</p>
                 </div>
               </div>
             </div>

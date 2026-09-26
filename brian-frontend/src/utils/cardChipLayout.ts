@@ -1,10 +1,3 @@
-/**
- * @fileoverview 卡片内引用/状态胶囊的布局纯函数（HeroAppShot 与 HomeView 记忆地图共用）。
- *
- * 胶囊按卡片宽度自动换行，行底对齐（先算行再从底部向上排），
- * 坐标为画布绝对坐标，直接用于 SVG rect/text 定位。
- */
-
 export interface ChipLike {
   label: string
   kind: 'blue' | 'gray' | 'eval'
@@ -18,7 +11,6 @@ export interface LaidChip {
   w: number
 }
 
-/** 胶囊宽度：内边距 12 + 逐字符累计（CJK 8.4px，其余 4.9px，8px 字号经验值） */
 export function chipWidthOf(label: string): number {
   let w = 12
   for (const ch of label) w += ch.charCodeAt(0) > 0x2e80 ? 8.4 : 4.9
@@ -30,7 +22,6 @@ const CARD_PADDING = 24
 const ROW_HEIGHT = 17
 const BOTTOM_PADDING = 20
 
-/** 卡片内胶囊布局：超出卡片内宽自动换行，行整体底对齐 */
 export function layoutChipsInCard(chips: ChipLike[], card: { x: number; y: number; w: number; h: number }): LaidChip[] {
   const rows: LaidChip[][] = [[]]
   let rowW = 0

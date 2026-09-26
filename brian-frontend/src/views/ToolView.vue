@@ -24,9 +24,6 @@ async function copyText(text: string) {
   await copyToClipboard(text)
 }
 
-// ---------------------------------------------------------------------------
-// ID 生成
-// ---------------------------------------------------------------------------
 const idCount = ref(1)
 const idList = ref<string[]>([])
 
@@ -38,9 +35,6 @@ async function generateIds() {
   } catch { idList.value = [] }
 }
 
-// ---------------------------------------------------------------------------
-// JSON
-// ---------------------------------------------------------------------------
 const jsonText = ref('')
 const jsonIndent = ref(2)
 const jsonOutput = ref('')
@@ -72,9 +66,6 @@ async function jsonMinify() {
   setJsonResult(out, (out as ToolTransformResult).result || '')
 }
 
-// ---------------------------------------------------------------------------
-// XML
-// ---------------------------------------------------------------------------
 const xmlText = ref('')
 const xmlIndent = ref(2)
 const xmlOutput = ref('')
@@ -106,9 +97,6 @@ async function xmlMinify() {
   setXmlResult(out, (out as ToolTransformResult).result || '')
 }
 
-// ---------------------------------------------------------------------------
-// 正则
-// ---------------------------------------------------------------------------
 const regexPattern = ref('')
 const regexFlags = ref('')
 const regexText = ref('')
@@ -154,7 +142,6 @@ async function runRegex() {
         </div>
       </div>
 
-      <!-- ID 生成 -->
       <div v-if="activeTab === 'id'" class="max-w-3xl space-y-4">
         <div class="block-card rounded-xl p-6">
           <h3 class="text-lg font-semibold flex items-center gap-2">
@@ -178,7 +165,6 @@ async function runRegex() {
         </div>
       </div>
 
-      <!-- JSON -->
       <div v-if="activeTab === 'json'" class="space-y-4">
         <div class="block-card rounded-xl p-6">
           <h3 class="text-lg font-semibold flex items-center gap-2">
@@ -214,7 +200,6 @@ async function runRegex() {
         </div>
       </div>
 
-      <!-- XML -->
       <div v-if="activeTab === 'xml'" class="space-y-4">
         <div class="block-card rounded-xl p-6">
           <h3 class="text-lg font-semibold flex items-center gap-2">
@@ -250,7 +235,6 @@ async function runRegex() {
         </div>
       </div>
 
-      <!-- 正则 -->
       <div v-if="activeTab === 'regex'" class="space-y-4">
         <div class="block-card rounded-xl p-6">
           <h3 class="text-lg font-semibold flex items-center gap-2">

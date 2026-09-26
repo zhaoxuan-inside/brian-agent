@@ -42,10 +42,8 @@ function drawFlow() {
   ctx.scale(dpr, dpr)
   ctx.clearRect(0, 0, parentWidth, canvasHeight)
 
-  // 构造真实节点序列
   const nodes: FlowNode[] = []
   
-  // 1. 输入节点
   nodes.push({
     id: 'node-input',
     label: '任务输入',
@@ -58,7 +56,6 @@ function drawFlow() {
     status: 'done',
   })
 
-  // 2. 真实 Step 节点
   if (props.steps && props.steps.length > 0) {
     props.steps.forEach((step, idx) => {
       let label = '思考推理'
@@ -68,7 +65,7 @@ function drawFlow() {
       if (step.phase === 'THINK') {
         label = 'THINK 推理'
       } else if (step.phase === 'ACT') {
-        label = 'ACT 工具执行'
+        label = 'ACT 技能执行'
         type = 'act'
         if (step.toolCalls?.length) {
           subLabel = step.toolCalls[0].toolName || 'Tool'
@@ -106,7 +103,6 @@ function drawFlow() {
     })
   }
 
-  // 3. 产出节点
   nodes.push({
     id: 'node-output',
     label: '阶段产出',
@@ -119,7 +115,6 @@ function drawFlow() {
     status: 'done',
   })
 
-  // 布局计算
   const nodeGap = 28
   const totalNodesW = nodes.reduce((acc, n) => acc + n.w, 0) + (nodes.length - 1) * nodeGap
   const startX = Math.max(15, (parentWidth - totalNodesW) / 2)
@@ -130,7 +125,6 @@ function drawFlow() {
     currentX += n.w + nodeGap
   })
 
-  // 绘制箭头连线
   for (let i = 0; i < nodes.length - 1; i++) {
     const from = nodes[i]
     const to = nodes[i + 1]
@@ -149,7 +143,6 @@ function drawFlow() {
     ctx.stroke()
     ctx.setLineDash([])
 
-    // 绘制箭头头部
     ctx.beginPath()
     ctx.moveTo(toX, toY)
     ctx.lineTo(toX - 6, toY - 4)
@@ -159,9 +152,7 @@ function drawFlow() {
     ctx.fill()
   }
 
-  // 绘制各个节点
   nodes.forEach((n, idx) => {
-    // 背景填充色
     let bgColor = '#f3e8ff'
     let borderColor = '#c084fc'
     let textColor = '#6b21a8'
@@ -188,7 +179,6 @@ function drawFlow() {
       borderColor = '#7e22ce'
     }
 
-    // 绘制圆角矩形
     const r = 8
     ctx.beginPath()
     ctx.moveTo(n.x + r, n.y)
@@ -208,14 +198,12 @@ function drawFlow() {
     ctx.strokeStyle = borderColor
     ctx.stroke()
 
-    // 绘制文字 Label
     ctx.font = 'bold 11px sans-serif'
     ctx.fillStyle = textColor
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(n.label, n.x + n.w / 2, n.y + 16)
 
-    // 绘制文字 SubLabel
     ctx.font = '9px sans-serif'
     ctx.fillStyle = '#6b7280'
     const subText = n.subLabel.length > 12 ? `${n.subLabel.slice(0, 10)}..` : n.subLabel
@@ -237,9 +225,9 @@ watch(() => [props.steps, props.input, props.output], () => {
 <template>
   <div class="canvas-react-flow w-full overflow-x-auto py-1">
     <div class="min-w-[500px]">
-      <div class="flex items-center justify-between text-[11px] font-medium text-purple-700 dark:text-purple-300 mb-1 px-1">
+      <div class="flex items-center justify-between text-2xs font-medium text-purple-700 dark:text-purple-300 mb-1 px-1">
         <span>CoT / ReAct 状态机流转路线 (Canvas 渲染)</span>
-        <span class="text-[10px] text-apple-gray-400">Think ⇄ Act ⇄ Reflect</span>
+        <span class="text-4xs text-apple-gray-400">Think ⇄ Act ⇄ Reflect</span>
       </div>
       <canvas ref="canvasRef" class="w-full rounded-lg bg-purple-50/20 dark:bg-purple-950/20 border border-purple-100/50 dark:border-purple-900/30" />
     </div>

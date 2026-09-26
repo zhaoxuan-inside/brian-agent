@@ -13,7 +13,7 @@ import {
   Eye, EyeOff,
   Search, Monitor, Terminal, MessageSquare, Send,
   BarChart3, Zap, Plug, Radio, Clock, GripVertical,
-  History,
+  History, ShieldCheck,
 } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
@@ -1822,7 +1822,6 @@ async function handleToggleSoul(soulId: string) {
   }
 }
 
-
 // ============================================================
 // 画像维度 数据
 // ============================================================
@@ -1927,6 +1926,7 @@ interface BackendSkill {
   assets?: { name: string; content: string }[]
   enabled?: boolean
   enable?: boolean
+  system?: boolean
 }
 
 interface SkillFileEntry {
@@ -1987,6 +1987,10 @@ async function loadSkills() {
 }
 
 function openSkillModal(skill?: BackendSkill) {
+  if (skill?.system) {
+    showToast('系统级 Skill 不允许修改')
+    return
+  }
   if (skill) {
     editingSkill.value = skill
     skillForm.value = {
@@ -2069,6 +2073,11 @@ async function submitSkillForm() {
 }
 
 async function handleDeleteSkill(skillId: string) {
+  const target = skills.value.find(s => s.id === skillId)
+  if (target?.system) {
+    showToast('系统级 Skill 不允许删除')
+    return
+  }
   try {
     await skillApi.delete(skillId)
     skills.value = skills.value.filter(s => s.id !== skillId)
@@ -2079,6 +2088,11 @@ async function handleDeleteSkill(skillId: string) {
 }
 
 async function handleToggleSkill(skillId: string) {
+  const target = skills.value.find(s => s.id === skillId)
+  if (target?.system) {
+    showToast('系统级 Skill 不允许停用')
+    return
+  }
   try {
     await skillApi.toggle(skillId)
     await loadSkills()
@@ -2757,7 +2771,6 @@ interface OrchStrategy {
 
 const orchStrategies = ref<OrchStrategy[]>([])
 const orchStrategiesLoading = ref(false)
-const orchStrategyHelpCollapsed = ref(true)
 const orchStrategyDetailVisible = ref(false)
 const selectedOrchStrategy = ref<OrchStrategy | null>(null)
 
@@ -3467,9 +3480,6 @@ watch(activeSubSection, async (val) => {
       await loadMqQueues()
       await loadMqStats()
     }
-    if (sub.configModule === 'strategy' && orchStrategies.value.length === 0) {
-      await loadOrchStrategies()
-    }
   }
 }, { immediate: true })
 </script>
@@ -3480,7 +3490,6 @@ watch(activeSubSection, async (val) => {
     <Header />
     <div class="pt-12 h-full relative z-10 flex">
 
-      <!-- ═══════════════ 左侧边栏导航 ═══════════════ -->
       <aside
         class="flex-shrink-0 flex flex-col border-r border-apple-gray-200 dark:border-apple-gray-700 bg-white/90 dark:bg-apple-gray-800/90 backdrop-blur-md transition-all duration-200"
         :class="sidebarCollapsed ? 'w-14' : 'w-60'"
@@ -3505,7 +3514,7 @@ watch(activeSubSection, async (val) => {
         >
           <Search :size="13" />
           <span class="flex-1 text-left">搜索配置...</span>
-          <kbd class="text-[10px] px-1.5 py-0.5 rounded border border-apple-gray-300 dark:border-apple-gray-600 text-apple-gray-400">⌘K</kbd>
+          <kbd class="text-4xs px-1.5 py-0.5 rounded border border-apple-gray-300 dark:border-apple-gray-600 text-apple-gray-400">⌘K</kbd>
         </button>
 
         <nav class="flex-1 overflow-y-auto py-1">
@@ -3531,7 +3540,7 @@ watch(activeSubSection, async (val) => {
               <button
                 v-for="sub in section.subsections"
                 :key="sub.key"
-                class="w-full flex items-center gap-2 pl-6 pr-3 py-1.5 text-[13px] transition-colors"
+                class="w-full flex items-center gap-2 pl-6 pr-3 py-1.5 text-xs transition-colors"
                 :class="activeSubSection === sub.key
                   ? 'text-brian-blue font-medium bg-brian-blue/[0.06]'
                   : 'text-apple-gray-500 dark:text-apple-gray-400 hover:text-apple-gray-700 dark:hover:text-apple-gray-200'"
@@ -3540,7 +3549,7 @@ watch(activeSubSection, async (val) => {
                 <component :is="sub.icon" :size="13" class="flex-shrink-0" />
                 <span class="truncate">{{ sub.label }}</span>
                 <span
-                  class="ml-auto text-[10px] px-1 py-0.5 rounded-full flex-shrink-0"
+                  class="ml-auto text-4xs px-1 py-0.5 rounded-full flex-shrink-0"
                   :class="sub.type === 'entity' ? 'bg-brian-blue/10 text-brian-blue' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500'"
                 >{{ sub.type === 'entity' ? '实体' : '参数' }}</span>
               </button>
@@ -3549,7 +3558,6 @@ watch(activeSubSection, async (val) => {
         </nav>
       </aside>
 
-      <!-- ═══════════════ 右侧内容区 ═══════════════ -->
       <main class="flex-1 bg-apple-gray-50 dark:bg-apple-gray-900" :class="mcpMarketSelectedProvider ? 'overflow-hidden' : 'overflow-y-auto'">
         <div class="sticky top-0 z-10 flex items-center gap-1.5 px-5 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
           <Layers :size="15" class="text-brian-blue flex-shrink-0" />
@@ -3564,7 +3572,6 @@ watch(activeSubSection, async (val) => {
           <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-1">{{ currentSection.desc }}</p>
         </div>
 
-        <!-- ========================== 参数配置视图 ========================== -->
         <div v-if="isParamsView" class="px-5 pb-6">
           <div v-if="configLoading" class="flex items-center justify-center py-16">
             <Loader2 :size="24" class="animate-spin text-brian-blue" />
@@ -3579,9 +3586,7 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">暂无配置参数</p>
           </div>
           <div v-else class="space-y-5">
-            <!-- MQ 消息队列操作面板（仅 mq_provider 模块展示） -->
             <div v-if="currentSub?.configModule === 'mq_provider'" class="space-y-4">
-              <!-- 搜索 & 创建 -->
               <div class="flex gap-2 items-end">
                 <div class="flex-1 relative">
                   <Search :size="14" class="absolute left-3 top-1/2 -translate-y-1/2 text-apple-gray-400" />
@@ -3603,7 +3608,6 @@ watch(activeSubSection, async (val) => {
               <div v-if="mqCreateError" class="flex items-center gap-2 text-xs text-error-red"><AlertCircle :size="14" /> {{ mqCreateError }}</div>
               <div v-if="mqCreateResult" class="flex items-center gap-2 text-xs text-success-green"><Check :size="14" /> {{ mqCreateResult }}</div>
 
-              <!-- 队列列表（含每队列统计 + 操作） -->
               <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
                 <div class="px-4 py-2.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between">
                   <div class="flex items-center gap-2">
@@ -3640,8 +3644,7 @@ watch(activeSubSection, async (val) => {
                       class="flex-1 text-left text-sm text-apple-gray-700 dark:text-apple-gray-200 truncate hover:text-brian-blue hover:underline cursor-pointer"
                       @click="selectMqQueue(q)"
                     >{{ q }}</button>
-                    <!-- Inline stats -->
-                    <div class="flex items-center gap-2 text-[11px] flex-shrink-0">
+                    <div class="flex items-center gap-2 text-2xs flex-shrink-0">
                       <template v-if="getQueueStats(q)">
                         <span class="flex items-center gap-1" title="待消费">
                           <span class="w-2 h-2 rounded-full bg-warning-orange"></span>
@@ -3688,11 +3691,10 @@ watch(activeSubSection, async (val) => {
               </div>
             </div>
 
-            <!-- MQ 队列弹窗（发送 / 消费） -->
             <Teleport to="body">
               <div
                 v-if="mqModalVisible"
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
                 @click.self="mqModalVisible = false"
               >
                 <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-2xl mx-4 overflow-hidden flex flex-col" style="height: 85vh; max-height: 800px;">
@@ -3706,7 +3708,6 @@ watch(activeSubSection, async (val) => {
                     </button>
                   </div>
                   <div class="px-5 py-4 space-y-4 flex-1 overflow-y-auto" style="min-height: 0;">
-                    <!-- 发送 -->
                     <div class="flex flex-col" style="flex: 1 1 40%; min-height: 0;">
                       <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-2 flex-shrink-0">发送消息</h4>
                       <div class="flex gap-2 mb-2 flex-shrink-0">
@@ -3730,22 +3731,21 @@ watch(activeSubSection, async (val) => {
                         style="flex: 1; min-height: 80px; font-size: 12px; line-height: 1.5; font-family: ui-monospace, monospace;"
                         @keyup.ctrl.enter="sendMqMessage()"
                       ></textarea>
-                      <div v-if="mqSendError" class="flex items-center gap-2 text-[11px] text-error-red mt-1 flex-shrink-0"><AlertCircle :size="13" /> {{ mqSendError }}</div>
-                      <div v-if="mqSendResult" class="flex items-center gap-2 text-[11px] text-success-green mt-1 flex-shrink-0"><Check :size="13" /> {{ mqSendResult }}</div>
+                      <div v-if="mqSendError" class="flex items-center gap-2 text-2xs text-error-red mt-1 flex-shrink-0"><AlertCircle :size="13" /> {{ mqSendError }}</div>
+                      <div v-if="mqSendResult" class="flex items-center gap-2 text-2xs text-success-green mt-1 flex-shrink-0"><Check :size="13" /> {{ mqSendResult }}</div>
                     </div>
 
-                    <!-- 消费 -->
                     <div class="flex flex-col" style="flex: 1 1 50%; min-height: 0;">
                       <div class="flex items-center justify-between mb-2 flex-shrink-0">
                         <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400">消费消息</h4>
                         <div class="flex items-center gap-1.5" v-if="mqConsumedMessage">
-                          <span class="text-[10px] text-apple-gray-400">{{ mqContentLineCount }} 行</span>
+                          <span class="text-4xs text-apple-gray-400">{{ mqContentLineCount }} 行</span>
                           <input
                             v-model.number="mqTextLineJump"
                             type="number"
                             min="1"
                             placeholder="跳转行"
-                            class="w-16 px-1.5 py-0.5 text-[10px] border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
+                            class="w-16 px-1.5 py-0.5 text-4xs border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
                             @keyup.enter="jumpToLine()"
                           />
                         </div>
@@ -3765,7 +3765,7 @@ watch(activeSubSection, async (val) => {
                           <input v-model="mqResetTime" type="datetime-local" :class="inputClass" style="padding-top: 4px; padding-bottom: 4px; font-size: 11px;" />
                         </div>
                         <button
-                          class="flex items-center gap-1 px-2.5 py-2 text-[11px] font-medium text-apple-gray-600 dark:text-apple-gray-300 bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-600 rounded-lg hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                          class="flex items-center gap-1 px-2.5 py-2 text-2xs font-medium text-apple-gray-600 dark:text-apple-gray-300 bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-600 rounded-lg hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 disabled:opacity-50 transition-colors flex-shrink-0"
                           :disabled="mqConsuming || mqResetting"
                           @click="resetMqQueue(activeMqQueue)"
                         >
@@ -3774,9 +3774,9 @@ watch(activeSubSection, async (val) => {
                           {{ mqResetting ? '...' : '重新消费' }}
                         </button>
                       </div>
-                      <div v-if="mqConsumeError" class="flex items-center gap-2 text-[11px] text-error-red mb-2 flex-shrink-0"><AlertCircle :size="13" /> {{ mqConsumeError }}</div>
+                      <div v-if="mqConsumeError" class="flex items-center gap-2 text-2xs text-error-red mb-2 flex-shrink-0"><AlertCircle :size="13" /> {{ mqConsumeError }}</div>
                       <div v-if="mqConsumedMessage" class="flex flex-col flex-1 min-h-0 rounded-lg border border-apple-gray-100 dark:border-apple-gray-700 overflow-hidden">
-                        <div class="px-3 py-1.5 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center gap-3 text-[10px] text-apple-gray-400 flex-shrink-0">
+                        <div class="px-3 py-1.5 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center gap-3 text-4xs text-apple-gray-400 flex-shrink-0">
                           <span>ID: {{ mqConsumedMessage.id.substring(0, 8) }}...</span>
                           <span>状态: <span class="font-medium" :class="mqConsumedMessage.status === 'COMPLETED' ? 'text-success-green' : 'text-warning-orange'">{{ mqConsumedMessage.status }}</span></span>
                           <span>优先级: {{ mqConsumedMessage.priority }}</span>
@@ -3786,7 +3786,7 @@ watch(activeSubSection, async (val) => {
                             <input
                               v-model="mqTextSearch"
                               type="text"
-                              class="w-24 px-1.5 py-0.5 text-[10px] border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
+                              class="w-24 px-1.5 py-0.5 text-4xs border border-apple-gray-200 dark:border-apple-gray-600 rounded bg-transparent text-apple-gray-700 dark:text-apple-gray-300"
                               placeholder="搜索内容..."
                               @keyup.enter="searchInText('next')"
                             />
@@ -3798,10 +3798,10 @@ watch(activeSubSection, async (val) => {
                           ref="mqOutputRef"
                           :value="mqConsumedContent"
                           readonly
-                          class="w-full flex-1 min-h-0 px-3 py-2 text-[11px] text-apple-gray-700 dark:text-apple-gray-200 font-mono leading-relaxed bg-transparent resize-none border-0 focus:outline-none"
+                          class="w-full flex-1 min-h-0 px-3 py-2 text-2xs text-apple-gray-700 dark:text-apple-gray-200 font-mono leading-relaxed bg-transparent resize-none border-0 focus:outline-none"
                         ></textarea>
                       </div>
-                      <div v-else-if="!mqConsuming && !mqConsumeError" class="flex-1 flex items-center justify-center text-[11px] text-apple-gray-300 min-h-[60px]">
+                      <div v-else-if="!mqConsuming && !mqConsumeError" class="flex-1 flex items-center justify-center text-2xs text-apple-gray-300 min-h-[60px]">
                         点击上方按钮消费消息
                       </div>
                     </div>
@@ -3810,7 +3810,6 @@ watch(activeSubSection, async (val) => {
               </div>
             </Teleport>
 
-            <!-- VectorDB 语义搜索（仅 vectordb_provider 模块展示） -->
             <div v-if="currentSub?.configModule === 'vectordb_provider'" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
               <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">语义搜索</h3>
@@ -3862,11 +3861,10 @@ watch(activeSubSection, async (val) => {
               </div>
             </div>
 
-            <!-- VectorDB 语义搜索结果弹窗 -->
             <Teleport to="body">
               <div
                 v-if="vectordbModalVisible"
-                class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+                class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
                 @click.self="vectordbModalVisible = false"
               >
                 <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-3xl mx-4 overflow-hidden flex flex-col" style="height: 85vh; max-height: 800px;">
@@ -3903,12 +3901,12 @@ watch(activeSubSection, async (val) => {
                     >
                       <div class="flex items-center gap-2 flex-wrap">
                         <span
-                          class="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                          class="text-4xs font-medium px-1.5 py-0.5 rounded-full"
                           :class="hit.info_type === 'REQUEST' ? 'bg-brian-blue/10 text-brian-blue' : hit.info_type === 'RESPONSE' ? 'bg-success-green/10 text-success-green' : 'bg-warning-orange/10 text-warning-orange'"
                         >{{ infoTypeLabel(hit.info_type) }}</span>
-                        <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">{{ infoCreatorLabel(hit.info_creator_role) }}</span>
-                        <span class="text-[10px] font-mono text-apple-gray-400">{{ hit.info_id }}</span>
-                        <span class="ml-auto flex items-center gap-3 text-[10px] text-apple-gray-400">
+                        <span class="text-4xs font-medium px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">{{ infoCreatorLabel(hit.info_creator_role) }}</span>
+                        <span class="text-4xs font-mono text-apple-gray-400">{{ hit.info_id }}</span>
+                        <span class="ml-auto flex items-center gap-3 text-4xs text-apple-gray-400">
                           <span class="flex items-center gap-1"><Clock :size="11" /> {{ formatVectorTime(hit.created) }}</span>
                           <span>{{ hit.info_length }} 字符</span>
                           <span class="font-mono px-1.5 py-0.5 rounded-full"
@@ -3922,7 +3920,6 @@ watch(activeSubSection, async (val) => {
                 </div>
               </div>
             </Teleport>
-            <!-- GraphDB 标签图遍历搜索（仅 graphdb_provider 模块展示） -->
             <div v-if="currentSub?.configModule === 'graphdb_provider'" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
               <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">标签图搜索</h3>
@@ -3975,20 +3972,19 @@ watch(activeSubSection, async (val) => {
                   <div v-for="(path, pi) in graphSearchResult.paths" :key="path.root_id" class="rounded-lg border border-apple-gray-100 dark:border-apple-gray-700 overflow-hidden">
                     <div class="px-3 py-2 bg-apple-gray-50 dark:bg-apple-gray-800/50 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center justify-between">
                       <span class="text-xs font-semibold text-brian-blue">路径 #{{ pi + 1 }}: {{ path.root_tag }}</span>
-                      <span class="text-[10px] text-apple-gray-400">{{ path.nodes.length }} 节点 · {{ path.edges.length }} 边</span>
+                      <span class="text-4xs text-apple-gray-400">{{ path.nodes.length }} 节点 · {{ path.edges.length }} 边</span>
                     </div>
-                    <!-- Nodes by depth -->
                     <div class="px-3 py-2 space-y-1.5">
                       <template v-for="depth in graphSearchMaxDepth" :key="depth">
                         <div v-if="path.nodes.filter(n => n.depth === depth).length > 0">
                           <div class="flex items-center gap-1 mb-1">
-                            <span class="text-[10px] px-1 rounded bg-brian-blue/10 text-brian-blue">深度 {{ depth }}</span>
+                            <span class="text-4xs px-1 rounded bg-brian-blue/10 text-brian-blue">深度 {{ depth }}</span>
                           </div>
                           <div class="flex flex-wrap gap-1">
                             <span
                               v-for="node in path.nodes.filter(n => n.depth === depth)"
                               :key="node.id"
-                              class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-700 dark:text-apple-gray-200"
+                              class="inline-flex items-center gap-1 text-4xs px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-700 dark:text-apple-gray-200"
                               :title="`关联 ${node.info_ids.length} 条原始数据`"
                             >
                               {{ node.tag }}
@@ -3997,10 +3993,9 @@ watch(activeSubSection, async (val) => {
                           </div>
                         </div>
                       </template>
-                      <!-- Edges -->
                       <div v-if="path.edges.length > 0">
-                        <span class="text-[10px] text-apple-gray-400 mb-1 block">边详情（按复合权重排序）</span>
-                        <div v-for="edge in path.edges" :key="edge.from_id + '-' + edge.to_id" class="flex items-center gap-1 text-[10px] text-apple-gray-500 py-0.5">
+                        <span class="text-4xs text-apple-gray-400 mb-1 block">边详情（按复合权重排序）</span>
+                        <div v-for="edge in path.edges" :key="edge.from_id + '-' + edge.to_id" class="flex items-center gap-1 text-4xs text-apple-gray-500 py-0.5">
                           <span :class="edge.active ? 'text-success-green' : 'text-apple-gray-300'">{{ edge.active ? '●' : '○' }}</span>
                           <span class="font-mono truncate max-w-[100px]">{{ edge.from_id.substring(0, 6) }} → {{ edge.to_id.substring(0, 6) }}</span>
                           <span class="text-apple-gray-400">raw:{{ edge.weight.toFixed(2) }}</span>
@@ -4015,7 +4010,6 @@ watch(activeSubSection, async (val) => {
                 </div>
               </div>
             </div>
-            <!-- 参数列表 -->
             <div v-for="group in currentParamsGroups" :key="group.cat" :class="isCardView ? '' : 'rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800'">
               <div v-if="!isCardView" class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ group.label }}</h3>
@@ -4030,7 +4024,7 @@ watch(activeSubSection, async (val) => {
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-2">
                         <span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ item.config_name }}</span>
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-full" :class="
+                        <span class="text-4xs px-1.5 py-0.5 rounded-full" :class="
                           item.config_type === 'BOOLEAN' ? 'bg-brian-blue/10 text-brian-blue' :
                           item.config_type === 'INT' || item.config_type === 'DOUBLE' ? 'bg-success-green/10 text-success-green' :
                           item.config_type === 'ENUM' ? 'bg-warning-orange/10 text-warning-orange' :
@@ -4038,7 +4032,7 @@ watch(activeSubSection, async (val) => {
                         ">{{ item.config_type }}</span>
                         <span
                           v-if="item.writable === false"
-                          class="text-[10px] px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400"
+                          class="text-4xs px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400"
                         >只读</span>
                       </div>
                       <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">
@@ -4047,7 +4041,7 @@ watch(activeSubSection, async (val) => {
                           · {{ formatConfigDuration(item.config_key, getConfigPrimitiveValue(item) as string | number) }}
                         </template>
                       </p>
-                      <p class="text-[10px] font-mono text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_key }}</p>
+                      <p class="text-4xs font-mono text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_key }}</p>
                     </div>
                     <div :class="isCardView ? 'flex flex-col gap-2 mt-auto' : 'flex items-center gap-2 flex-shrink-0'">
                       <template v-if="isCardView">
@@ -4212,7 +4206,6 @@ watch(activeSubSection, async (val) => {
                         <span v-else class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
                           {{ getConfigDisplayValue(item) }}
                         </span>
-                        <!-- ===== 新增（2026-09-22）：变更历史入口（TODO-List §2）===== -->
                         <button
                           class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 hover:text-brian-blue transition-colors"
                           title="变更历史"
@@ -4237,7 +4230,6 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <!-- ========================== 快照管理视图 ========================== -->
         <div v-if="isSnapshotView" class="px-5 pb-6 max-w-2xl">
           <div class="mb-6 p-4 rounded-xl border border-warning-orange/30 bg-warning-orange/5">
             <div class="flex items-center gap-2 mb-2">
@@ -4296,7 +4288,7 @@ watch(activeSubSection, async (val) => {
                   @keydown.enter="saveSnapName(snap)"
                 />
                 <span v-else class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ snap.name }}</span>
-                <span class="text-[11px] text-apple-gray-400">{{ formatTime(snap.created) }}</span>
+                <span class="text-2xs text-apple-gray-400">{{ formatTime(snap.created) }}</span>
               </div>
               <div class="flex items-center gap-2 mt-2">
                 <button
@@ -4316,7 +4308,6 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - Provider ========================== -->
         <div v-if="isEntityView && currentEntityType === 'provider'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
             <span class="text-xs text-apple-gray-400">{{ providers.length }} 个提供商</span>
@@ -4332,25 +4323,25 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="p in providers" :key="p.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               @click="openProviderModal(p)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Globe :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p._displayName || p.id }}</h3>
-                    <p class="text-[11px] text-apple-gray-400 truncate">{{ p._displayUrl || '' }}</p>
+                    <p class="text-2xs text-apple-gray-400 truncate">{{ p._displayUrl || '' }}</p>
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(p.api_key as string) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="(p.api_key as string) ? '已配置密钥' : '未配置密钥'" />
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="p.llm_provider_brief || ''">
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="p.llm_provider_brief || ''">
                   {{ p.llm_provider_brief || '暂无描述' }}
                 </p>
               </div>
               <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
                 <div class="flex items-center gap-1">
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors" @click.stop="handleTestProvider(p.id)"><FlaskConical :size="11" /> 测试</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors" @click.stop="handleTestProvider(p.id)"><FlaskConical :size="11" /> 测试</button>
                   <button
                     class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0"
                     :class="p.enable ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
@@ -4359,14 +4350,13 @@ watch(activeSubSection, async (val) => {
                   >
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="p.enable ? 'translate-x-4' : ''" />
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteProvider(p.id)"><Trash2 :size="11" /> 删除</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteProvider(p.id)"><Trash2 :size="11" /> 删除</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - Model ========================== -->
         <div v-if="isEntityView && currentEntityType === 'model'" class="px-5 pb-6">
           <div class="flex items-center gap-3 mb-4">
             <div class="relative flex-1 max-w-sm">
@@ -4387,20 +4377,20 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="m in filteredModels" :key="m.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               @click="openModelModal(m)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Boxes :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.modelName || '' }}</h3>
-                    <p class="text-[11px] text-apple-gray-400 truncate">{{ m.providerName || m.providerId || '' }}</p>
+                    <p class="text-2xs text-apple-gray-400 truncate">{{ m.providerName || m.providerId || '' }}</p>
                   </div>
-                  <span v-if="m.isDefault" class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-brian-blue/10 text-brian-blue flex-shrink-0"><Star :size="10" /> 默认</span>
+                  <span v-if="m.isDefault" class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-4xs font-medium rounded-full bg-brian-blue/10 text-brian-blue flex-shrink-0"><Star :size="10" /> 默认</span>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="m.enable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="m.enable ? '启用' : '停用'" />
                 </div>
-                <p class="text-[11px] text-apple-gray-400">
+                <p class="text-2xs text-apple-gray-400">
                   {{ (m.maxTokens || 0) >= 1000000 ? ((m.maxTokens || 0) / 1000000).toFixed(1) + 'M' : (m.maxTokens || 0) >= 1000 ? ((m.maxTokens || 0) / 1000).toFixed(0) + 'K' : (m.maxTokens || 0) }} tokens
                 </p>
               </div>
@@ -4410,21 +4400,20 @@ watch(activeSubSection, async (val) => {
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="m.enable ? 'translate-x-4' : ''" />
                   </button>
                   <button
-                    class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded transition-colors"
+                    class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded transition-colors"
                     :class="m.isDefault ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20'"
                     :disabled="!!m.isDefault"
                     @click.stop="handleSetDefault(m.id)"
                   >
                     <Star :size="11" /> {{ m.isDefault ? '默认' : '设为默认' }}
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteModel(m.id)"><Trash2 :size="11" /> 删除</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteModel(m.id)"><Trash2 :size="11" /> 删除</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - Soul ========================== -->
         <div v-if="isEntityView && currentEntityType === 'soul'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
             <span class="text-xs text-apple-gray-400">{{ souls.length }} 个 Soul</span>
@@ -4440,19 +4429,19 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="s in souls" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               @click="openSoulModal(s)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Heart :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.soul_brief || s.id }}</h3>
-                    <p class="text-[11px] text-apple-gray-400">{{ s.soul_usage || '' }}</p>
+                    <p class="text-2xs text-apple-gray-400">{{ s.soul_usage || '' }}</p>
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(s.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="(s.soul_content || '')">
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="(s.soul_content || '')">
                   {{ (s.soul_content || '').slice(0, 120) || '暂无内容' }}
                 </p>
               </div>
@@ -4461,14 +4450,13 @@ watch(activeSubSection, async (val) => {
                   <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(s.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleSoul(s.id)">
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(s.enabled ?? true) ? 'translate-x-4' : ''" />
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSoul(s.id)"><Trash2 :size="11" /> 删除</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSoul(s.id)"><Trash2 :size="11" /> 删除</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - Skill ========================== -->
         <div v-if="isEntityView && currentEntityType === 'skill'" class="px-5 pb-6">
           <div class="flex items-center gap-3 mb-4">
             <div class="relative flex-1 max-w-sm">
@@ -4492,39 +4480,50 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="sk in filteredSkills" :key="sk.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden"
+              :class="sk.system ? '' : 'cursor-pointer'"
               @click="openSkillModal(sk)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Wand2 :size="18" /></div>
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="sk.system ? 'bg-violet-500/10 text-violet-500' : 'bg-brian-blue/10 text-brian-blue'">
+                    <ShieldCheck v-if="sk.system" :size="18" />
+                    <Wand2 v-else :size="18" />
+                  </div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ sk.name || sk.id }}</h3>
-                    <p class="text-[11px] text-apple-gray-400">{{ sk.enabled ?? true ? '启用' : '停用' }}</p>
+                    <p class="text-2xs text-apple-gray-400">{{ sk.enabled ?? true ? '启用' : '停用' }}</p>
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="sk.skill_brief || sk.name">{{ sk.skill_brief || sk.name || '暂无描述' }}</p>
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="sk.skill_brief || sk.name">{{ sk.skill_brief || sk.name || '暂无描述' }}</p>
               </div>
               <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="openSkillTestModal(sk)">
-                  <FlaskConical :size="11" />
-                  测试
-                </button>
-                <div class="flex items-center gap-1">
-                  <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleSkill(sk.id)">
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(sk.enabled ?? true) ? 'translate-x-4' : ''" />
+                <template v-if="sk.system">
+                  <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-4xs font-medium rounded bg-violet-500/10 text-violet-500">
+                    <ShieldCheck :size="11" />
+                    系统
+                  </span>
+                  <span class="text-4xs text-apple-gray-400">内置 · 不可删改</span>
+                </template>
+                <template v-else>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="openSkillTestModal(sk)">
+                    <FlaskConical :size="11" />
+                    测试
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSkill(sk.id)"><Trash2 :size="11" /> 删除</button>
-                </div>
+                  <div class="flex items-center gap-1">
+                    <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleSkill(sk.id)">
+                      <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(sk.enabled ?? true) ? 'translate-x-4' : ''" />
+                    </button>
+                    <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSkill(sk.id)"><Trash2 :size="11" /> 删除</button>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - MCP 市场 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'mcp-provider'" :class="mcpMarketSelectedProvider ? 'flex flex-col h-full' : 'px-5 pb-6'">
-          <!-- ═══ 市场详情页：工具浏览器 ═══ -->
           <template v-if="mcpMarketSelectedProvider">
             <div class="flex-shrink-0 px-5 pt-5">
               <div class="flex items-center gap-2 mb-5">
@@ -4566,16 +4565,16 @@ watch(activeSubSection, async (val) => {
               <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
                 <div
                   v-for="tool in filteredMcpMarketTools" :key="tool.id"
-                  class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:border-brian-blue/30 hover:shadow-sm transition-all p-4 aspect-[3/2] flex flex-col"
+                  class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:border-brian-blue/30 hover:shadow-sm transition-all p-4 aspect-[3/2] flex flex-col overflow-hidden"
                 >
-                  <div class="mb-3">
+                  <div class="mb-3 min-h-0 overflow-hidden">
                     <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 leading-snug truncate">{{ tool.title || tool.id }}</p>
-                    <p v-if="tool.brief" class="text-[11px] text-apple-gray-400 mt-1.5 line-clamp-2" :title="tool.brief">{{ tool.brief }}</p>
+                    <p v-if="tool.brief" class="text-2xs text-apple-gray-400 mt-1.5 line-clamp-2" :title="tool.brief">{{ tool.brief }}</p>
                   </div>
                   <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                    <span class="text-[10px] text-apple-gray-400">{{ mcpMarketSelectedProvider === 'github' ? 'npm' : 'http' }}</span>
+                    <span class="text-4xs text-apple-gray-400">{{ mcpMarketSelectedProvider === 'github' ? 'npm' : 'http' }}</span>
                     <button
-                      class="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg transition-colors"
+                      class="flex items-center gap-1 px-2.5 py-1.5 text-2xs font-medium rounded-lg transition-colors"
                       :class="tool.installed ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue text-white hover:bg-brian-blue/90'"
                       :disabled="!!tool.installed"
                       @click="handleInstallMcp(mcpMarketSelectedProvider!, tool.id)"
@@ -4606,11 +4605,10 @@ watch(activeSubSection, async (val) => {
             </Transition>
           </template>
 
-          <!-- ═══ 市场卡片列表 ═══ -->
           <template v-else>
             <div class="flex items-center mb-4">
               <span class="text-xs text-apple-gray-400">{{ mcpProviders.length }} 个内置 MCP 市场</span>
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue ml-2">系统内置</span>
+              <span class="text-4xs px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue ml-2">系统内置</span>
             </div>
             <div v-if="mcpProvidersLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
             <div v-else-if="mcpProviders.length === 0" class="flex flex-col items-center justify-center py-16">
@@ -4620,40 +4618,39 @@ watch(activeSubSection, async (val) => {
             <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
               <div
                 v-for="p in mcpProviders" :key="p.id"
-                class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-all cursor-pointer p-4 group aspect-[3/2] flex flex-col"
+                class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-all cursor-pointer p-4 group aspect-[3/2] flex flex-col overflow-hidden"
                 @click="toggleMcpMarket(p.provider_code || p.id)"
               >
-                <div class="mb-3">
+                <div class="mb-3 min-h-0 overflow-hidden">
                   <div class="flex items-center gap-2.5 mb-2">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue group-hover:bg-brian-blue/20 transition-colors"><Globe :size="18" /></div>
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate flex-1 min-w-0">{{ p._displayName || p.id }}</h3>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 flex-shrink-0">内置</span>
+                    <span class="text-4xs px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 flex-shrink-0">内置</span>
                   </div>
-                  <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="p.mcp_provider_brief">{{ p.mcp_provider_brief || '' }}</p>
+                  <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="p.mcp_provider_brief">{{ p.mcp_provider_brief || '' }}</p>
                 </div>
                 <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto" @click.stop>
                   <div class="flex items-center gap-1.5">
-                    <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestMcpProvider(p.provider_code || p.id)"><FlaskConical :size="11" /> 测试</button>
+                    <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="handleTestMcpProvider(p.provider_code || p.id)"><FlaskConical :size="11" /> 测试</button>
                     <a
                       v-if="p.mcp_provider_url"
                       :href="p.mcp_provider_url"
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors"
+                      class="inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors"
                     >
                       <ExternalLink :size="11" />
                       访问官网
                     </a>
                   </div>
-                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openMcpConfigModal(p.provider_code || p.id)"><Key :size="11" /> 配置</button>
+                  <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="openMcpConfigModal(p.provider_code || p.id)"><Key :size="11" /> 配置</button>
                 </div>
               </div>
             </div>
 
-            <!-- API Key 配置弹窗 -->
             <Teleport to="body">
               <Transition name="modal">
-                <div v-if="mcpConfigModalVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="closeMcpConfigModal">
+                <div v-if="mcpConfigModalVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="closeMcpConfigModal">
                   <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
                     <h2 class="text-lg font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-1">
                       {{ mcpProviders.find(p => (p.provider_code || p.id) === mcpConfigProviderId)?._displayName || '' }} 配置
@@ -4674,7 +4671,7 @@ watch(activeSubSection, async (val) => {
                             <EyeOff v-else :size="14" />
                           </button>
                         </div>
-                        <p class="text-[10px] text-apple-gray-400 mt-1">{{ mcpConfigKeyHint }}</p>
+                        <p class="text-4xs text-apple-gray-400 mt-1">{{ mcpConfigKeyHint }}</p>
                       </div>
                     </div>
                     <div class="flex justify-between gap-2 mt-6">
@@ -4691,7 +4688,6 @@ watch(activeSubSection, async (val) => {
           </template>
         </div>
 
-        <!-- ========================== 实体管理视图 - MCP 实例 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'mcp'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
             <span class="text-xs text-apple-gray-400">{{ mcps.length }} 个已安装 MCP</span>
@@ -4725,15 +4721,15 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="item in mcps" :key="item.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-[3/2] flex flex-col"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-start justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2.5 min-w-0">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="18" /></div>
                     <div class="min-w-0">
                       <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ item.displayName || item.name || item.id }}</h3>
-                      <p class="text-[11px] text-apple-gray-400">{{ item.enabled ?? true ? '启用' : '停用' }}{{ item.version ? ` · v${item.version}` : '' }}</p>
+                      <p class="text-2xs text-apple-gray-400">{{ item.enabled ?? true ? '启用' : '停用' }}{{ item.version ? ` · v${item.version}` : '' }}</p>
                     </div>
                   </div>
                   <div class="flex items-center gap-2 flex-shrink-0">
@@ -4741,26 +4737,25 @@ watch(activeSubSection, async (val) => {
                     <input type="checkbox" :value="item.id" v-model="selectedMcpIds" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue focus:ring-brian-blue flex-shrink-0 cursor-pointer" />
                   </div>
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="item.description">{{ item.description || '暂无描述' }}</p>
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="item.description">{{ item.description || '暂无描述' }}</p>
               </div>
               <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
                 <div class="flex items-center gap-1">
-                  <button v-if="!item.running" class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click="handleStartMcp(item.id)"><Zap :size="11" /> 启动</button>
-                  <button v-else class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20 transition-colors" @click="handleStopMcp(item.id)"><span class="inline-block w-1.5 h-1.5 rounded-full bg-current" /> 关闭</button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="handleUpgradeMcp(item.id)"><RefreshCw :size="11" /> 更新</button>
+                  <button v-if="!item.running" class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click="handleStartMcp(item.id)"><Zap :size="11" /> 启动</button>
+                  <button v-else class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20 transition-colors" @click="handleStopMcp(item.id)"><span class="inline-block w-1.5 h-1.5 rounded-full bg-current" /> 关闭</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="handleUpgradeMcp(item.id)"><RefreshCw :size="11" /> 更新</button>
                 </div>
                 <div class="flex items-center gap-1">
                   <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(item.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleMcp(item.id)">
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(item.enabled ?? true) ? 'translate-x-4' : ''" />
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleUninstallMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleUninstallMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - MCP 调用统计 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'mcp-stats'" class="px-5 pb-6">
           <div v-if="mcpsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
           <div v-else-if="mcps.length === 0" class="flex flex-col items-center justify-center py-16">
@@ -4813,7 +4808,6 @@ watch(activeSubSection, async (val) => {
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - Agent ========================== -->
         <div v-if="isEntityView && currentEntityType === 'agent'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
             <span class="text-xs text-apple-gray-400">{{ agents.length }} 个 Agent</span>
@@ -4829,7 +4823,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
             <div
               v-for="a in agents" :key="a.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-square cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-square overflow-hidden cursor-pointer"
               @click="openAgentModal(a)"
             >
               <div class="flex flex-col h-full">
@@ -4839,15 +4833,15 @@ watch(activeSubSection, async (val) => {
                     <div class="min-w-0">
                       <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ a.agent_name || a.name || a.id }}</h3>
                       <div class="flex items-center gap-2 mt-0.5">
-                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.agent_type || a.type || 'WORKER' }}</span>
-                        <span class="text-[11px] text-apple-gray-400">{{ a.enable ?? a.enabled ?? true ? '启用' : '停用' }}</span>
+                        <span class="text-4xs px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.agent_type || a.type || 'WORKER' }}</span>
+                        <span class="text-2xs text-apple-gray-400">{{ a.enable ?? a.enabled ?? true ? '启用' : '停用' }}</span>
                       </div>
                     </div>
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(a.enable ?? a.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
                 <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 min-h-[32px] line-clamp-2">{{ a.agent_purpose || a.description || a.task_signature || '暂无描述' }}</p>
-                <div class="flex flex-col gap-1.5 text-[10px] mb-3">
+                <div class="flex flex-col gap-1.5 text-4xs mb-3 min-h-0 overflow-hidden">
                   <div v-if="a.strategy_id" class="flex items-center gap-1.5 min-w-0">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">策略</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getStrategyLabel(a.strategy_id) }}</span>
@@ -4873,15 +4867,13 @@ watch(activeSubSection, async (val) => {
                   <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(a.enable ?? a.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleAgent(a.id)">
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(a.enable ?? a.enabled ?? true) ? 'translate-x-4' : ''" />
                   </button>
-                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
+                  <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 占位视图：未实现的实体类型 ========================== -->
-        <!-- ========================== 实体管理视图 - Prompt 模板 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'prompt'" class="px-5 pb-6">
           <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
             <button class="w-full flex items-center justify-between text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 cursor-pointer" @click="promptHelpCollapsed = !promptHelpCollapsed">
@@ -4892,23 +4884,23 @@ watch(activeSubSection, async (val) => {
               <ChevronRight :size="16" class="text-apple-gray-400 transition-transform" :class="{ 'rotate-90': !promptHelpCollapsed }" />
             </button>
             <div v-show="!promptHelpCollapsed" class="text-xs text-apple-gray-600 dark:text-apple-gray-300 space-y-1.5 leading-relaxed mt-2">
-              <p>提示词模板使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{ 变量名 }}</code> 语法嵌入动态变量。后端执行模板时将变量替换为实际值。</p>
+              <p>提示词模板使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-2xs">{{ 变量名 }}</code> 语法嵌入动态变量。后端执行模板时将变量替换为实际值。</p>
               <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mt-2">
                 <dt class="font-medium text-apple-gray-500">模板内容：</dt>
-                <dd>支持 Markdown 格式，模板内容将原样保留结构，仅替换 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{变量}}</code> 占位符。</dd>
+                <dd>支持 Markdown 格式，模板内容将原样保留结构，仅替换 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-2xs">{{变量}}</code> 占位符。</dd>
                 <dt class="font-medium text-apple-gray-500">变量语法：</dt>
-                <dd>使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-[11px]">{{变量名}}</code> 形式，花括号内首尾空格可省略。同一变量可在模板中多次出现，都会被替换。</dd>
+                <dd>使用 <code v-pre class="px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-brian-blue font-mono text-2xs">{{变量名}}</code> 形式，花括号内首尾空格可省略。同一变量可在模板中多次出现，都会被替换。</dd>
                 <dt class="font-medium text-apple-gray-500">变量处理：</dt>
                 <dd>所有变量值均转为字符串后替换；模板中存在的占位符若无对应变量则保留原文；调用方传入的多余变量会被忽略。</dd>
               </dl>
               <div class="mt-2 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 border border-apple-gray-100 dark:border-apple-gray-700">
-                <p class="text-[11px] font-medium text-apple-gray-500 mb-1.5">示例：</p>
-                <pre v-pre class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap">请将以下内容翻译为{{target_lang}}：
+                <p class="text-2xs font-medium text-apple-gray-500 mb-1.5">示例：</p>
+                <pre v-pre class="text-2xs text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap">请将以下内容翻译为{{target_lang}}：
 
 原文：{{source}}
 
 要求：{{requirement}}</pre>
-                <p class="text-[11px] text-apple-gray-400 mt-1.5">调用 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">execPrompt</code> 传入 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">{ target_lang: "英文", source: "你好世界", requirement: "保持原意" }</code> 即可得到渲染后的完整提示词。</p>
+                <p class="text-2xs text-apple-gray-400 mt-1.5">调用 <code class="text-4xs px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">execPrompt</code> 传入 <code class="text-4xs px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">{ target_lang: "英文", source: "你好世界", requirement: "保持原意" }</code> 即可得到渲染后的完整提示词。</p>
               </div>
             </div>
           </div>
@@ -4939,11 +4931,11 @@ watch(activeSubSection, async (val) => {
             </button>
             <div
               v-for="p in filteredPrompts" :key="p.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               :class="selectedPrompts.has(p.id) ? 'border-brian-blue/40 bg-brian-blue/5' : ''"
               @click="openPromptModal(p)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><MessageSquare :size="18" /></div>
                   <div class="min-w-0 flex-1">
@@ -4958,78 +4950,43 @@ watch(activeSubSection, async (val) => {
                   </button>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="p.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="p.brief || ''">
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="p.brief || ''">
                   {{ p.brief || '暂无简介' }}
                 </p>
               </div>
               <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeletePrompt(p.id)"><Trash2 :size="11" /> 删除</button>
+                <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeletePrompt(p.id)"><Trash2 :size="11" /> 删除</button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 实体管理视图 - 编排策略 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'orch-strategy'" class="px-5 pb-6">
           <div class="flex items-center gap-3 mb-4">
             <span class="text-xs text-apple-gray-400">{{ orchStrategies.length }} 个策略</span>
-            <span v-if="orchStrategies.every(s => s.label === 'SIMPLE' || s.label === 'PLANNING')" class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue">系统内置</span>
+            <span v-if="orchStrategies.every(s => s.label === 'SIMPLE' || s.label === 'PLANNING')" class="text-4xs px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue">系统内置</span>
           </div>
 
           <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
-            <button class="w-full flex items-center justify-between text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 cursor-pointer" @click="orchStrategyHelpCollapsed = !orchStrategyHelpCollapsed">
-              <span class="flex items-center gap-1.5">
-                <Lightbulb :size="15" class="text-brian-blue" />
-                编排策略说明
-              </span>
-              <ChevronRight :size="16" class="text-apple-gray-400 transition-transform" :class="{ 'rotate-90': !orchStrategyHelpCollapsed }" />
-            </button>
-            <div v-show="!orchStrategyHelpCollapsed" class="text-xs text-apple-gray-600 dark:text-apple-gray-300 space-y-2 leading-relaxed mt-2">
-              <p>编排策略定义了 Agent 处理用户任务的<strong>执行流程</strong>。每个策略由多个 JSONNode 节点组成，按顺序执行，节点间通过 <code class="text-[10px] px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">next</code> 串联，通过 <code class="text-[10px] px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">on_error</code> 定义错误路径。</p>
-
-              <dl class="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1.5 mt-2">
-                <dt class="font-medium text-brian-blue">SIMPLE</dt>
-                <dd>单 Agent 直行模式。构建一个 WorkAgent，直接执行任务并返回结果。适用于<strong>简单问答、单一任务</strong>。</dd>
-                <dt class="font-medium text-brian-blue">PLANNING</dt>
-                <dd>多 Agent 并行模式。通过 PlannerAgent 分解任务，单任务走单 Agent 路径，多任务构建 Agent DAG 并行执行。适用于<strong>复杂分析、多步骤任务</strong>。</dd>
-              </dl>
-
-              <div class="mt-2 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 border border-apple-gray-100 dark:border-apple-gray-700">
-                <p class="text-[11px] font-medium text-apple-gray-500 mb-1.5">策略选择机制</p>
-                <p class="text-[11px]">系统根据 <code class="text-[10px] px-1 bg-apple-gray-200 dark:bg-apple-gray-600 rounded">complexity_decompose_threshold</code>（默认 50）判断任务复杂度：低于阈值走 SIMPLE，高于阈值走 PLANNING。复杂度由 LLM 分析或规则判断（查询长度 + 疑问词数 + 步骤关键词）。</p>
-              </div>
-
-              <p class="text-[11px] text-apple-gray-400">
-                节点类型: <span class="text-brian-blue font-mono">SAVE_USER_INPUT</span> 保存输入 |
-                <span class="text-success-green font-mono">BUILD_WORK_CONTEXT</span> 构建上下文 |
-                <span class="text-success-green font-mono">PLAN_WORK</span> 任务规划 |
-                <span class="text-success-green font-mono">BUILD_WORK_AGENT</span> 构建Agent |
-                <span class="text-success-green font-mono">BUILD_AGENT_DAG</span> 构建DAG |
-                <span class="text-warning-orange font-mono">EXEC_AGENT</span> 执行Agent |
-                <span class="text-warning-orange font-mono">EXEC_DAG</span> 执行DAG |
-                <span class="text-brian-blue font-mono">WRITE_RESULT</span> 写结果 |
-                <span class="text-purple-500 font-mono">EVAL_RESULT</span> 评估结果 |
-                <span class="text-brian-blue font-mono">SAVE_RESPONSE</span> 保存响应 |
-                <span class="text-apple-gray-500 font-mono">CONDITION</span> 条件分支 |
-                <span class="text-error-red font-mono">HANDLE_ERROR</span> 错误兜底
-              </p>
-            </div>
+            <p class="text-xs text-apple-gray-600 dark:text-apple-gray-300 leading-relaxed">
+              编排策略定义了 Agent 处理用户任务的<strong>执行流程</strong>。每个策略由多个 JSONNode 节点组成，按顺序执行，节点间通过 <code class="text-4xs px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">next</code> 串联，通过 <code class="text-4xs px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">on_error</code> 定义错误路径。
+            </p>
           </div>
           <div v-if="orchStrategiesLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
             <div
               v-for="s in orchStrategies" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               @click="openOrchStrategyDetail(s)"
             >
-              <div class="flex items-start justify-between mb-2">
+              <div class="flex items-start justify-between mb-2 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 min-w-0">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="s.label === 'SIMPLE' ? 'bg-success-green/10 text-success-green' : 'bg-brian-blue/10 text-brian-blue'">
                     <component :is="s.label === 'SIMPLE' ? Zap : Network" :size="18" />
                   </div>
                   <div class="min-w-0">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.label }}</h3>
-                    <p class="text-[11px] text-apple-gray-400">{{ s.enabled ? '启用' : '停用' }} · {{ s.nodeCount }} 个节点</p>
+                    <p class="text-2xs text-apple-gray-400">{{ s.enabled ? '启用' : '停用' }} · {{ s.nodeCount }} 个节点</p>
                   </div>
                 </div>
                 <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="s.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
@@ -5038,11 +4995,10 @@ watch(activeSubSection, async (val) => {
             </div>
           </div>
 
-          <!-- 编排策略详情弹窗 -->
           <Teleport to="body">
             <Transition name="modal">
               <div v-if="orchStrategyDetailVisible" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeOrchStrategyDetail" />
+                <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeOrchStrategyDetail" />
                 <div class="relative w-full max-w-3xl bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden max-h-[85vh] flex flex-col">
                   <div class="flex items-center justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
                     <div class="flex items-center gap-2.5 min-w-0">
@@ -5051,7 +5007,7 @@ watch(activeSubSection, async (val) => {
                       </div>
                       <div class="min-w-0">
                         <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ selectedOrchStrategy?.label }}</h3>
-                        <p class="text-[11px] text-apple-gray-400">{{ selectedOrchStrategy?.enabled ? '启用' : '停用' }} · {{ selectedOrchStrategy?.nodeCount }} 个节点</p>
+                        <p class="text-2xs text-apple-gray-400">{{ selectedOrchStrategy?.enabled ? '启用' : '停用' }} · {{ selectedOrchStrategy?.nodeCount }} 个节点</p>
                       </div>
                     </div>
                     <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="closeOrchStrategyDetail"><X :size="18" /></button>
@@ -5059,22 +5015,20 @@ watch(activeSubSection, async (val) => {
                   <div class="flex-1 overflow-y-auto">
                     <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 px-5 pt-4">{{ selectedOrchStrategy?.description }}</p>
 
-                    <!-- DAG 流程图 -->
                     <div class="px-5 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
-                      <p class="text-[10px] text-apple-gray-400 uppercase tracking-wider mb-2">执行流 · {{ selectedOrchStrategy?.nodes.length }} 个节点 · 起始节点 {{ orchNodeNumber(selectedOrchStrategy?.startNode) }}</p>
+                      <p class="text-4xs text-apple-gray-400 uppercase tracking-wider mb-2">执行流 · {{ selectedOrchStrategy?.nodes.length }} 个节点 · 起始节点 {{ orchNodeNumber(selectedOrchStrategy?.startNode) }}</p>
                       <div class="flex flex-wrap items-center gap-1">
                         <template v-for="(node, ni) in selectedOrchStrategy?.nodes" :key="node.id">
-                          <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border" :class="nodeColor(node.type)" :title="(ni + 1) + ' · ' + JSON.stringify(node.params)">{{ node.type.replace(/_/g, ' ') }}</span>
+                          <span class="px-1.5 py-0.5 rounded text-4xs font-mono border" :class="nodeColor(node.type)" :title="(ni + 1) + ' · ' + JSON.stringify(node.params)">{{ node.type.replace(/_/g, ' ') }}</span>
                           <span v-if="ni < (selectedOrchStrategy?.nodes.length ?? 0) - 1 && node.next" class="text-[9px] text-apple-gray-300">→</span>
                         </template>
                       </div>
                     </div>
 
-                    <!-- 节点详情表 -->
                     <div class="px-5 py-3">
-                      <p class="text-[10px] text-apple-gray-400 uppercase tracking-wider mb-2">节点详情</p>
+                      <p class="text-4xs text-apple-gray-400 uppercase tracking-wider mb-2">节点详情</p>
                       <div class="overflow-x-auto">
-                        <table class="w-full text-[11px]">
+                        <table class="w-full text-2xs">
                           <thead>
                             <tr class="text-left text-apple-gray-400 border-b border-apple-gray-200 dark:border-apple-gray-700">
                               <th class="py-1.5 pr-3 font-medium">#</th>
@@ -5087,22 +5041,21 @@ watch(activeSubSection, async (val) => {
                           <tbody class="text-apple-gray-600 dark:text-apple-gray-300">
                             <tr v-for="(node, ni) in selectedOrchStrategy?.nodes" :key="node.id" class="border-b border-apple-gray-100 dark:border-apple-gray-800">
                               <td class="py-1.5 pr-3 font-mono text-apple-gray-400" :title="Object.keys(node.params).length > 0 ? JSON.stringify(node.params, null, 2) : '无参数'">{{ ni + 1 }}</td>
-                              <td class="py-1.5 pr-3"><span class="px-1.5 py-0.5 rounded text-[10px] font-mono border" :class="nodeColor(node.type)">{{ node.type.replace(/_/g, ' ') }}</span></td>
-                              <td class="py-1.5 pr-3 font-mono text-[10px]" :class="node.next ? 'text-apple-gray-500' : 'text-apple-gray-300'">{{ node.next ? orchNodeNumber(node.next) : '终止' }}</td>
-                              <td class="py-1.5 pr-3 font-mono text-[10px]" :class="(node.trueNext || node.falseNext) ? 'text-brian-blue/80' : 'text-apple-gray-300'">
+                              <td class="py-1.5 pr-3"><span class="px-1.5 py-0.5 rounded text-4xs font-mono border" :class="nodeColor(node.type)">{{ node.type.replace(/_/g, ' ') }}</span></td>
+                              <td class="py-1.5 pr-3 font-mono text-4xs" :class="node.next ? 'text-apple-gray-500' : 'text-apple-gray-300'">{{ node.next ? orchNodeNumber(node.next) : '终止' }}</td>
+                              <td class="py-1.5 pr-3 font-mono text-4xs" :class="(node.trueNext || node.falseNext) ? 'text-brian-blue/80' : 'text-apple-gray-300'">
                                 <template v-if="node.trueNext || node.falseNext">真: {{ orchNodeNumber(node.trueNext) }} / 假: {{ orchNodeNumber(node.falseNext) }}</template>
                                 <template v-else>—</template>
                               </td>
-                              <td class="py-1.5 font-mono text-[10px]" :class="node.onError ? 'text-error-red/70' : 'text-apple-gray-300'">{{ orchNodeNumber(node.onError) }}</td>
+                              <td class="py-1.5 font-mono text-4xs" :class="node.onError ? 'text-error-red/70' : 'text-apple-gray-300'">{{ orchNodeNumber(node.onError) }}</td>
                             </tr>
                           </tbody>
                         </table>
                       </div>
                     </div>
 
-                    <!-- 配置提示 -->
                     <div class="px-5 py-2 border-t border-apple-gray-200 dark:border-apple-gray-700">
-                      <p class="text-[10px] text-apple-gray-400">
+                      <p class="text-4xs text-apple-gray-400">
                         配置: 编排配置 → <span class="text-brian-blue">编排入口</span> (complexity_decompose_threshold 控制 SIMPLE/PLANNING 选择) | 
                         <span class="text-brian-blue">策略参数</span> (max_plan_retries 控制计划重试次数)
                       </p>
@@ -5114,7 +5067,6 @@ watch(activeSubSection, async (val) => {
           </Teleport>
         </div>
 
-        <!-- ========================== 实体管理视图 - CDT 浏览器状态 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'cdt-status'" class="px-5 pb-6">
           <div class="mb-4">
             <div class="flex items-center gap-3 mb-4">
@@ -5151,7 +5103,6 @@ watch(activeSubSection, async (val) => {
           <p class="text-xs text-apple-gray-400">提示：启动浏览器后，Chrome 窗口将打开。请勿手动关闭——通过此页面停止会自动清理进程。</p>
         </div>
 
-        <!-- ========================== 实体管理视图 - CDT 网页访问 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'cdt-page'" class="px-5 pb-6">
           <div class="mb-4">
             <div class="flex items-center gap-3 mb-4">
@@ -5161,13 +5112,12 @@ watch(activeSubSection, async (val) => {
               </div>
             </div>
 
-            <!-- 书签 -->
             <div class="mb-4">
               <div class="flex items-center justify-between mb-2">
                 <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 uppercase tracking-wide">书签</h4>
                 <div class="flex items-center gap-1">
-                  <button class="flex items-center gap-1 px-2 py-1 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="bookmarkNewItemUrl = cdtPageUrl; addBookmarkItem()" :disabled="!cdtPageUrl.trim()" title="收藏当前页面"><Star :size="10" /> 收藏</button>
-                  <button class="px-2 py-1 text-[10px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="loadBookmarks()" title="刷新"><RefreshCw :size="10" /></button>
+                  <button class="flex items-center gap-1 px-2 py-1 text-4xs rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="bookmarkNewItemUrl = cdtPageUrl; addBookmarkItem()" :disabled="!cdtPageUrl.trim()" title="收藏当前页面"><Star :size="10" /> 收藏</button>
+                  <button class="px-2 py-1 text-4xs rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 hover:text-brian-blue transition-colors" @click="loadBookmarks()" title="刷新"><RefreshCw :size="10" /></button>
                 </div>
               </div>
               <div v-if="bookmarkLoading" class="py-4 flex justify-center"><Loader2 :size="16" class="animate-spin text-brian-blue" /></div>
@@ -5196,7 +5146,6 @@ watch(activeSubSection, async (val) => {
               </div>
             </div>
 
-            <!-- URL 输入 -->
             <div class="flex items-center gap-2 mb-4">
               <div class="flex-1">
                 <input v-model="cdtPageUrl" :class="inputClass + ' !py-1.5 !text-sm'" placeholder="输入网页 URL（如 https://github.com）" @keyup.enter="cdtNavigate" />
@@ -5205,18 +5154,17 @@ watch(activeSubSection, async (val) => {
                 <button class="flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:border-brian-blue/30 transition-colors" @click="cdtScreencastSettingsOpen = !cdtScreencastSettingsOpen">
                   <Settings :size="14" />
                 </button>
-                <!-- 设置弹窗 -->
                 <div v-if="cdtScreencastSettingsOpen" class="absolute right-0 top-full mt-1 z-20 w-64 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 shadow-lg p-3">
-                  <div class="mb-3">
-                    <label class="block text-[11px] font-medium text-apple-gray-500 mb-1.5">分辨率</label>
+                  <div class="mb-3 min-h-0 overflow-hidden">
+                    <label class="block text-2xs font-medium text-apple-gray-500 mb-1.5">分辨率</label>
                     <div class="grid grid-cols-2 gap-1">
-                      <button v-for="r in cdtResolutions" :key="r.w" class="px-2 py-1.5 text-[11px] rounded-md transition-colors text-left" :class="cdtScreencastW === r.w && cdtScreencastH === r.h ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(r.w, r.h, cdtScreencastQ)">{{ r.label }}</button>
+                      <button v-for="r in cdtResolutions" :key="r.w" class="px-2 py-1.5 text-2xs rounded-md transition-colors text-left" :class="cdtScreencastW === r.w && cdtScreencastH === r.h ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(r.w, r.h, cdtScreencastQ)">{{ r.label }}</button>
                     </div>
                   </div>
                   <div>
-                    <label class="block text-[11px] font-medium text-apple-gray-500 mb-1.5">画质</label>
+                    <label class="block text-2xs font-medium text-apple-gray-500 mb-1.5">画质</label>
                     <div class="flex items-center gap-1">
-                      <button v-for="q in cdtQualities" :key="q" class="flex-1 py-1 text-[11px] rounded-md transition-colors" :class="cdtScreencastQ === q ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(cdtScreencastW, cdtScreencastH, q)">{{ q }}%</button>
+                      <button v-for="q in cdtQualities" :key="q" class="flex-1 py-1 text-2xs rounded-md transition-colors" :class="cdtScreencastQ === q ? 'bg-brian-blue/10 text-brian-blue font-medium' : 'text-apple-gray-600 dark:text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700'" @click="applyCdtScreencastSettings(cdtScreencastW, cdtScreencastH, q)">{{ q }}%</button>
                     </div>
                   </div>
                 </div>
@@ -5227,7 +5175,6 @@ watch(activeSubSection, async (val) => {
               </button>
             </div>
 
-            <!-- Remote Browser 内嵌视图 -->
             <div
               v-if="cdtPageFrame"
               ref="cdtBrowserRef"
@@ -5245,14 +5192,13 @@ watch(activeSubSection, async (val) => {
               @contextmenu="onBrowserContextMenu"
             >
               <img :src="cdtPageFrame" alt="Remote Browser" class="w-full pointer-events-none" draggable="false" />
-              <div class="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/40 text-white text-[10px]">
+              <div class="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/50 text-white text-4xs">
                 <span class="w-1.5 h-1.5 rounded-full bg-success-green animate-pulse" />
                 实时画面（250ms 刷新）
               </div>
             </div>
             <div v-else-if="cdtPageLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
 
-            <!-- 自定义右击菜单（headless Chrome 无原生菜单） -->
             <Teleport to="body">
               <div
                 v-if="ctxMenuVisible"
@@ -5266,10 +5212,8 @@ watch(activeSubSection, async (val) => {
                 <button class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-apple-gray-700 dark:text-apple-gray-200 hover:bg-brian-blue/10 transition-colors" @click="ctxSelectAll">✅ 全选</button>
               </div>
             </Teleport>
-            <!-- 点击任意位置关闭菜单 -->
             <div v-if="ctxMenuVisible" class="fixed inset-0 z-[199]" @click="hideCtxMenu" @contextmenu.prevent="hideCtxMenu" />
 
-            <!-- 凭证操作 -->
             <div class="flex items-center gap-2 mb-4">
               <button class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors disabled:opacity-60" :disabled="!cdtStatus.running || !cdtPageUrl.trim()" @click="cdtSaveCredential">
                 <Save :size="13" /> 保存凭证
@@ -5277,18 +5221,17 @@ watch(activeSubSection, async (val) => {
             </div>
             <span v-if="!cdtStatus.running" class="text-xs text-warning-orange">请先在"浏览器状态"中启动 CDT</span>
 
-            <!-- 已保存凭证列表 -->
             <div v-if="savedCDTSessions.length > 0" class="mt-5">
               <h4 class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-3 uppercase tracking-wide">已保存的登录凭证</h4>
               <div class="space-y-2">
                 <div v-for="s in savedCDTSessions" :key="s.domain" class="flex items-center justify-between rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 px-3 py-2">
                   <div class="min-w-0">
                     <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.domain }}</p>
-                    <p class="text-[10px] text-apple-gray-400 mt-0.5">{{ s.url }} · {{ new Date(s.timestamp).toLocaleString() }}</p>
+                    <p class="text-4xs text-apple-gray-400 mt-0.5">{{ s.url }} · {{ new Date(s.timestamp).toLocaleString() }}</p>
                   </div>
                   <div class="flex items-center gap-1.5 flex-shrink-0 ml-3">
-                    <button class="px-2 py-1 text-[11px] font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors disabled:opacity-60" :disabled="!cdtStatus.running" @click="cdtRestoreCredential(s.domain, s.cookiesJson, s.url)">恢复</button>
-                    <button class="px-2 py-1 text-[11px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="cdtDeleteCredential(s.domain)"><Trash2 :size="12" /></button>
+                    <button class="px-2 py-1 text-2xs font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors disabled:opacity-60" :disabled="!cdtStatus.running" @click="cdtRestoreCredential(s.domain, s.cookiesJson, s.url)">恢复</button>
+                    <button class="px-2 py-1 text-2xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="cdtDeleteCredential(s.domain)"><Trash2 :size="12" /></button>
                   </div>
                 </div>
               </div>
@@ -5311,24 +5254,24 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
             <div
               v-for="d in profileDirections" :key="d.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
               @click="openProfileDirModal(d)"
             >
-              <div class="mb-3">
+              <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-center gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Layers :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ d.direction_name }}</h3>
-                    <p class="text-[11px] text-apple-gray-400">{{ d.direction_key }}</p>
+                    <p class="text-2xs text-apple-gray-400">{{ d.direction_key }}</p>
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="d.enable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
-                <div class="flex items-center gap-2 text-[11px] text-apple-gray-400 mb-1">
+                <div class="flex items-center gap-2 text-2xs text-apple-gray-400 mb-1">
                   <span>权重 {{ d.weight }}</span>
                   <span v-if="d.prompt_template_id" class="text-brian-blue">· 自定义 Prompt</span>
                   <span v-if="d.llm_id" class="text-brian-blue">· 自定义 LLM</span>
                 </div>
-                <p class="text-[11px] text-apple-gray-400 line-clamp-2" :title="d.direction_description || ''">
+                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="d.direction_description || ''">
                   {{ d.direction_description || '暂无描述' }}
                 </p>
               </div>
@@ -5337,15 +5280,14 @@ watch(activeSubSection, async (val) => {
                   <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="d.enable ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="toggleProfileDir(d)">
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="d.enable ? 'translate-x-4' : ''" />
                   </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-[10px] font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="deleteProfileDir(d.direction_key)"><Trash2 :size="11" /> 删除</button>
+                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="deleteProfileDir(d.direction_key)"><Trash2 :size="11" /> 删除</button>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Modal: 添加/编辑维度 -->
           <Teleport to="body">
-            <div v-if="profileDirModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="closeProfileDirModal">
+            <div v-if="profileDirModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="closeProfileDirModal">
               <div class="w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6">
                 <h3 class="text-lg font-semibold mb-4">{{ editingProfileDir ? '编辑维度' : '添加维度' }}</h3>
                 <div class="space-y-3">
@@ -5411,7 +5353,6 @@ watch(activeSubSection, async (val) => {
           </Teleport>
         </div>
 
-        <!-- ========================== 实体管理视图 - 执行策略 ========================== -->
         <div v-if="isEntityView && currentEntityType === 'strategy'" class="px-5 pb-6">
           <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
             <h4 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-2 flex items-center gap-1.5">
@@ -5435,31 +5376,30 @@ watch(activeSubSection, async (val) => {
               @click="openStrategyDetail(s)"
             >
               <div class="flex flex-col h-full">
-                <div class="flex items-start justify-between mb-2">
+                <div class="flex items-start justify-between mb-2 min-h-0 overflow-hidden">
                   <div class="flex items-center gap-2.5 min-w-0">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue">
                       <GitBranch :size="18" />
                     </div>
                     <div class="min-w-0">
                       <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.strategy_label }}</h3>
-                      <p class="text-[11px] text-apple-gray-400">复杂度 {{ s.suitable_complexity_min }}-{{ s.suitable_complexity_max }} · {{ parseDomains(s.suitable_domains) }}</p>
+                      <p class="text-2xs text-apple-gray-400">复杂度 {{ s.suitable_complexity_min }}-{{ s.suitable_complexity_max }} · {{ parseDomains(s.suitable_domains) }}</p>
                     </div>
                   </div>
                   <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="s.enable ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="toggleStrategy(s)">
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="s.enable ? 'translate-x-4' : ''" />
                   </button>
                 </div>
-                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 font-mono mt-auto">{{ formatStrategyRule(s.execution_rule) }}</p>
+                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 font-mono mt-auto line-clamp-2 min-h-0">{{ formatStrategyRule(s.execution_rule) }}</p>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ========================== 执行策略详情弹窗 ========================== -->
         <Teleport to="body">
           <Transition name="modal">
             <div v-if="strategyDetailVisible" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-              <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeStrategyDetail" />
+              <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeStrategyDetail" />
               <div class="relative w-full max-w-2xl bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden max-h-[85vh] flex flex-col">
                 <div class="flex items-center justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
                   <div class="flex items-center gap-2">
@@ -5471,7 +5411,6 @@ watch(activeSubSection, async (val) => {
 
                 <div class="px-5 py-4 overflow-y-auto flex-1">
                   <template v-if="selectedStrategy">
-                    <!-- 基本信息 -->
                     <div class="flex items-center gap-3 mb-4">
                       <div class="w-12 h-12 rounded-xl flex items-center justify-center bg-brian-blue/10 text-brian-blue"><GitBranch :size="22" /></div>
                       <div class="min-w-0">
@@ -5483,24 +5422,22 @@ watch(activeSubSection, async (val) => {
                       </div>
                     </div>
 
-                    <!-- 元信息 -->
                     <div v-if="selectedStrategyRule.version || selectedStrategyRule.max_iterations" class="flex items-center gap-2 mb-4">
-                      <span v-if="selectedStrategyRule.version" class="px-2 py-1 text-[11px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">version {{ selectedStrategyRule.version }}</span>
-                      <span v-if="selectedStrategyRule.max_iterations" class="px-2 py-1 text-[11px] rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">最大迭代 {{ selectedStrategyRule.max_iterations }}</span>
+                      <span v-if="selectedStrategyRule.version" class="px-2 py-1 text-2xs rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">version {{ selectedStrategyRule.version }}</span>
+                      <span v-if="selectedStrategyRule.max_iterations" class="px-2 py-1 text-2xs rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500">最大迭代 {{ selectedStrategyRule.max_iterations }}</span>
                     </div>
 
-                    <!-- 工作方式：steps 执行流 -->
                     <div v-if="selectedStrategyRule.steps">
                       <p class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-2">执行流程（steps）</p>
                       <div class="space-y-2">
                         <div v-for="(st, i) in selectedStrategyRule.steps" :key="i" class="rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 p-3">
                           <div class="flex items-center justify-between">
                             <span class="font-mono font-medium text-brian-blue">{{ st.step }}</span>
-                            <span class="text-[10px] text-apple-gray-400">第 {{ i + 1 }} 步</span>
+                            <span class="text-4xs text-apple-gray-400">第 {{ i + 1 }} 步</span>
                           </div>
-                          <div class="text-[11px] text-apple-gray-500 dark:text-apple-gray-400 mt-1 space-y-1">
+                          <div class="text-2xs text-apple-gray-500 dark:text-apple-gray-400 mt-1 space-y-1">
                             <template v-if="st.condition_field">
-                              <div>判断 <code class="text-[10px] px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">{{ st.condition_field }}</code>：是 → <span class="font-medium">{{ st.true_next || '—' }}</span>，否 → <span class="font-medium">{{ st.false_next || '—' }}</span></div>
+                              <div>判断 <code class="text-4xs px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">{{ st.condition_field }}</code>：是 → <span class="font-medium">{{ st.true_next || '—' }}</span>，否 → <span class="font-medium">{{ st.false_next || '—' }}</span></div>
                             </template>
                             <template v-else>
                               <div>下一步 → <span class="font-medium">{{ st.next || '结束' }}</span></div>
@@ -5511,29 +5448,27 @@ watch(activeSubSection, async (val) => {
                       </div>
                     </div>
 
-                    <!-- 工作方式：phases 执行阶段 -->
                     <div v-if="selectedStrategyRule.phases">
                       <p class="text-xs font-semibold text-apple-gray-500 dark:text-apple-gray-400 mb-2">执行阶段（phases）</p>
                       <div class="space-y-3">
                         <div v-for="(ph, i) in selectedStrategyRule.phases" :key="i" class="rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 p-3">
                           <div class="flex items-center justify-between mb-2">
                             <span class="font-semibold text-apple-gray-800 dark:text-apple-gray-100">{{ ph.phase }}</span>
-                            <span v-if="ph.loop_over" class="text-[10px] text-apple-gray-400">循环 {{ ph.loop_over }}</span>
+                            <span v-if="ph.loop_over" class="text-4xs text-apple-gray-400">循环 {{ ph.loop_over }}</span>
                           </div>
                           <div class="flex flex-wrap items-center gap-1">
                             <template v-for="(st, j) in ph.steps" :key="j">
-                              <span class="px-2 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 font-mono text-[11px]">{{ st.step }}</span>
-                              <span v-if="j < ph.steps.length - 1" class="text-apple-gray-300 text-[11px]">→</span>
+                              <span class="px-2 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 font-mono text-2xs">{{ st.step }}</span>
+                              <span v-if="j < ph.steps.length - 1" class="text-apple-gray-300 text-2xs">→</span>
                             </template>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    <!-- 原始 JSON -->
                     <div class="mt-4">
-                      <p class="text-[10px] text-apple-gray-400 uppercase tracking-wider mb-1.5">原始 execution_rule</p>
-                      <pre class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 overflow-x-auto bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-3 border border-apple-gray-100 dark:border-apple-gray-700">{{ prettyJson(selectedStrategy.execution_rule) }}</pre>
+                      <p class="text-4xs text-apple-gray-400 uppercase tracking-wider mb-1.5">原始 execution_rule</p>
+                      <pre class="text-2xs text-apple-gray-600 dark:text-apple-gray-300 overflow-x-auto bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-3 border border-apple-gray-100 dark:border-apple-gray-700">{{ prettyJson(selectedStrategy.execution_rule) }}</pre>
                     </div>
                   </template>
                 </div>
@@ -5551,10 +5486,9 @@ watch(activeSubSection, async (val) => {
       </main>
     </div>
 
-    <!-- ═══════════════ 全局搜索模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="searchVisible" class="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSearch" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSearch" />
         <div class="relative w-full max-w-lg bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
           <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <Search :size="16" class="text-apple-gray-400" />
@@ -5566,7 +5500,7 @@ watch(activeSubSection, async (val) => {
               autofocus
               @keydown.escape="closeSearch"
             />
-            <kbd class="text-[10px] px-1.5 py-0.5 rounded border border-apple-gray-200 dark:border-apple-gray-600 text-apple-gray-400">esc</kbd>
+            <kbd class="text-4xs px-1.5 py-0.5 rounded border border-apple-gray-200 dark:border-apple-gray-600 text-apple-gray-400">esc</kbd>
           </div>
           <div v-if="searchResults.length > 0" class="max-h-64 overflow-y-auto py-1">
             <button
@@ -5588,10 +5522,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Provider 模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="providerModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeProviderModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeProviderModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5634,14 +5567,14 @@ watch(activeSubSection, async (val) => {
             <fieldset class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg p-3">
               <legend class="text-xs font-medium text-apple-gray-500 dark:text-apple-gray-400 px-1">配额设置（0 = 不限制）</legend>
               <div class="grid grid-cols-3 gap-2">
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日 Token</label><input v-model.number="providerForm.quotaTokensPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周 Token</label><input v-model.number="providerForm.quotaTokensPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月 Token</label><input v-model.number="providerForm.quotaTokensPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每日 Token</label><input v-model.number="providerForm.quotaTokensPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每周 Token</label><input v-model.number="providerForm.quotaTokensPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每月 Token</label><input v-model.number="providerForm.quotaTokensPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
               </div>
               <div class="grid grid-cols-3 gap-2 mt-2">
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每日调用</label><input v-model.number="providerForm.quotaCallsPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每周调用</label><input v-model.number="providerForm.quotaCallsPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
-                <div><label class="block text-[11px] text-apple-gray-400 mb-1">每月调用</label><input v-model.number="providerForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每日调用</label><input v-model.number="providerForm.quotaCallsPerDay" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每周调用</label><input v-model.number="providerForm.quotaCallsPerWeek" type="number" :class="inputClass + ' !py-1.5'" /></div>
+                <div><label class="block text-2xs text-apple-gray-400 mb-1">每月调用</label><input v-model.number="providerForm.quotaCallsPerMonth" type="number" :class="inputClass + ' !py-1.5'" /></div>
               </div>
             </fieldset>
             <div v-if="editingProvider" class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3 space-y-2">
@@ -5654,13 +5587,13 @@ watch(activeSubSection, async (val) => {
                   <Loader2 v-if="fetchingModels" :size="13" class="animate-spin" />
                   <Download v-else :size="13" /> 获取模型列表
                 </button>
-                <span v-if="cachedModels.length > 0" class="text-[11px] text-apple-gray-400">
+                <span v-if="cachedModels.length > 0" class="text-2xs text-apple-gray-400">
                   共 {{ cachedModels.length }} 个，已选 {{ selectedModelIds.size }}
                 </span>
               </div>
               <div class="h-52 flex flex-col">
                 <div v-if="cachedModels.length === 0 && !fetchingModels" class="flex-1 flex items-center justify-center">
-                  <span class="text-[11px] text-apple-gray-400">暂无模型缓存，请点击「获取模型列表」</span>
+                  <span class="text-2xs text-apple-gray-400">暂无模型缓存，请点击「获取模型列表」</span>
                 </div>
                 <template v-else>
                   <div class="space-y-1 mb-2">
@@ -5668,7 +5601,7 @@ watch(activeSubSection, async (val) => {
                       <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
                       <input v-model="modelSearchQuery" type="text" :class="inputClass + ' !py-1.5 !pl-8'" placeholder="搜索..." />
                     </div>
-                    <label class="flex items-center gap-2 px-2 text-[11px] text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
+                    <label class="flex items-center gap-2 px-2 text-2xs text-apple-gray-400 hover:text-apple-gray-600 cursor-pointer select-none">
                       <input type="checkbox" :checked="filteredCachedModels.filter(m => !m.enabled).length > 0 && selectedModelIds.size === filteredCachedModels.filter(m => !m.enabled).length" @change="selectAllModels" class="rounded" />
                       全选
                     </label>
@@ -5683,7 +5616,7 @@ watch(activeSubSection, async (val) => {
                       <input type="checkbox" :checked="m.enabled || selectedModelIds.has(m.id)" :disabled="m.enabled" @change="toggleModelSelection(m.id)" class="rounded mt-0.5 flex-shrink-0" />
                       <div class="min-w-0">
                         <p class="text-xs font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.name }}</p>
-                        <p v-if="m.id !== m.name" class="text-[10px] text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
+                        <p v-if="m.id !== m.name" class="text-4xs text-apple-gray-400 font-mono truncate">{{ m.id }}</p>
                       </div>
                     </label>
                   </div>
@@ -5718,10 +5651,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Model 模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="modelModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeModelModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeModelModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5764,11 +5696,10 @@ watch(activeSubSection, async (val) => {
               <textarea v-model="modelForm.usageDesc" :class="inputClass" rows="3" placeholder="描述模型的典型用途，用于模型动态选择（如：代码生成、长文本写作、数学推理）" />
             </div>
 
-            <!-- 模型测试：根据模型类型调用不同接口 -->
             <div v-if="editingModel" class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">
                 模型测试
-                <span class="ml-1 text-[11px] font-normal text-apple-gray-400">{{ isEmbeddingModel ? '(向量化 / embedding)' : '(对话补全 / chat)' }}</span>
+                <span class="ml-1 text-2xs font-normal text-apple-gray-400">{{ isEmbeddingModel ? '(向量化 / embedding)' : '(对话补全 / chat)' }}</span>
               </label>
               <textarea
                 v-model="modelChatPrompt"
@@ -5787,7 +5718,7 @@ watch(activeSubSection, async (val) => {
                   <Send v-else :size="13" />
                   {{ modelChatLoading ? '调用中...' : '发送' }}
                 </button>
-                <span v-if="modelChatResult || modelChatError" class="text-[11px] text-apple-gray-400">
+                <span v-if="modelChatResult || modelChatError" class="text-2xs text-apple-gray-400">
                   <template v-if="isEmbeddingModel">
                     维度 {{ modelChatDimension }} · {{ modelChatMeta.input_tokens }} in · {{ modelChatMeta.duration_ms }}ms
                   </template>
@@ -5802,7 +5733,7 @@ watch(activeSubSection, async (val) => {
               </div>
               <div v-else-if="modelChatResult" class="mt-2 rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
                 <div class="flex items-center justify-between px-3 py-1.5 bg-apple-gray-50 dark:bg-apple-gray-900/60 border-b border-apple-gray-200 dark:border-apple-gray-700">
-                  <span class="text-[11px] font-medium text-apple-gray-500 dark:text-apple-gray-400">原始响应</span>
+                  <span class="text-2xs font-medium text-apple-gray-500 dark:text-apple-gray-400">原始响应</span>
                 </div>
                 <pre class="text-xs text-apple-gray-700 dark:text-apple-gray-300 p-3 whitespace-pre-wrap break-words max-h-48 overflow-y-auto font-mono">{{ formattedModelResult }}</pre>
               </div>
@@ -5830,10 +5761,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Soul 模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="soulModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSoulModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSoulModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5846,17 +5776,17 @@ watch(activeSubSection, async (val) => {
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简要名称 (soul_brief) *</label>
               <input v-model="soulForm.soulBrief" type="text" :class="inputClass" placeholder="例如：严苛导师、幽默伙伴" />
-              <p class="text-[10px] text-apple-gray-400 mt-0.5">简短标签，用于 Agent 匹配时的快速筛选</p>
+              <p class="text-4xs text-apple-gray-400 mt-0.5">简短标签，用于 Agent 匹配时的快速筛选</p>
             </div>
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">人格描述 (soul_content) *</label>
               <textarea v-model="soulForm.soulContent" :class="inputClass" rows="6" placeholder="描述角色性格、语气风格、行为准则、说话方式...&#10;&#10;例如：&#10;你是一位经验丰富的编程导师，说话简洁有力，&#10;从不绕弯子。对代码质量要求严苛，&#10;但会在学生突破后不吝夸奖。" />
-              <p class="text-[10px] text-apple-gray-400 mt-0.5">这是 Soul 的核心——定义 Agent 的「人格」。会被注入到 LLM 的 System Prompt 中</p>
+              <p class="text-4xs text-apple-gray-400 mt-0.5">这是 Soul 的核心——定义 Agent 的「人格」。会被注入到 LLM 的 System Prompt 中</p>
             </div>
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">应用场景 (soul_usage)</label>
               <input v-model="soulForm.soulUsage" type="text" :class="inputClass" placeholder="编程教学、代码审查、技术答疑" />
-              <p class="text-[10px] text-apple-gray-400 mt-0.5">可选，描述此 Soul 最适合的应用场景</p>
+              <p class="text-4xs text-apple-gray-400 mt-0.5">可选，描述此 Soul 最适合的应用场景</p>
             </div>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
@@ -5871,10 +5801,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Skill 模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="skillModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSkillModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSkillModal" />
         <div class="relative w-full max-w-2xl max-h-[90vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5888,24 +5817,23 @@ watch(activeSubSection, async (val) => {
               <div>
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">
                   Skill 名称 *
-                  <span v-if="skillForm.name.length > 10" class="text-error-red">({{ skillForm.name.length }}/10)</span>
+                  <span v-if="skillForm.name.length > 15" class="text-error-red">({{ skillForm.name.length }}/10)</span>
                 </label>
-                <input v-model="skillForm.name" type="text" :class="inputClass" maxlength="20" placeholder="天气预报" />
-                <p class="text-[10px] text-apple-gray-400 mt-0.5">≤10 字符，前端展示用</p>
+                <input v-model="skillForm.name" type="text" :class="inputClass" maxlength="20" placeholder="互联网信息搜索" />
+                <p class="text-4xs text-apple-gray-400 mt-0.5">中文 5-15 字，体现技能功能，前端展示用</p>
               </div>
               <div>
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简述 (skill_brief) *</label>
                 <input v-model="skillForm.skillBrief" type="text" :class="inputClass" placeholder="根据城市名称获取天气信息" />
-                <p class="text-[10px] text-apple-gray-400 mt-0.5">简述用途，与 SKILL.md 一起用于 LLM 匹配</p>
+                <p class="text-4xs text-apple-gray-400 mt-0.5">简述用途，与 SKILL.md 一起用于 LLM 匹配</p>
               </div>
             </div>
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">SKILL.md 内容 * <span class="font-normal text-apple-gray-400">— 技能的"大脑"，LLM 筛选的核心线索</span></label>
               <textarea v-model="skillForm.skillMd" :class="[inputClass, 'font-mono text-xs resize-y']" rows="10" placeholder="# 技能名称&#10;&#10;## 何时使用&#10;当用户需要...&#10;&#10;## 如何执行&#10;1. 接收参数...&#10;2. 调用脚本...&#10;3. 返回结果..." />
-              <p class="text-[10px] text-apple-gray-400 mt-0.5">Markdown 格式。智能体据此判断何时调用、如何执行此技能</p>
+              <p class="text-4xs text-apple-gray-400 mt-0.5">Markdown 格式。智能体据此判断何时调用、如何执行此技能</p>
             </div>
 
-            <!-- 文件目录编辑区 -->
             <template v-for="dir in [{key:'scripts',label:'scripts/',icon:'Terminal'},{key:'references',label:'references/',icon:'FileText'},{key:'assets',label:'assets/',icon:'Image'}]" :key="dir.key">
               <div class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
                 <div class="flex items-center justify-between mb-2">
@@ -5913,11 +5841,11 @@ watch(activeSubSection, async (val) => {
                     <component :is="dir.icon === 'Terminal' ? Terminal : dir.icon === 'FileText' ? FileText : Globe" :size="12" class="inline-block mr-1" />
                     {{ dir.label }} <span class="font-normal text-apple-gray-400">({{ (skillForm as any)[dir.key].length }} 个文件)</span>
                   </label>
-                  <button class="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors" @click="addFileEntry((skillForm as any)[dir.key])">
+                  <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded text-brian-blue hover:bg-brian-blue/10 transition-colors" @click="addFileEntry((skillForm as any)[dir.key])">
                     <Plus :size="11" /> 添加
                   </button>
                 </div>
-                <div v-if="(skillForm as any)[dir.key].length === 0" class="text-[11px] text-apple-gray-400 py-2">暂无文件</div>
+                <div v-if="(skillForm as any)[dir.key].length === 0" class="text-2xs text-apple-gray-400 py-2">暂无文件</div>
                 <div v-for="(file, fi) in (skillForm as any)[dir.key]" :key="fi" class="mb-2 p-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
                   <div class="flex items-center gap-2 mb-1.5">
                     <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1'" placeholder="文件名" style="flex:1" />
@@ -5932,7 +5860,7 @@ watch(activeSubSection, async (val) => {
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSkillModal">取消</button>
-            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="skillSubmitting || !skillForm.name.trim() || skillForm.name.length > 10 || !skillForm.skillMd.trim()" @click="submitSkillForm">
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="skillSubmitting || !skillForm.name.trim() || skillForm.name.length > 15 || !skillForm.skillMd.trim()" @click="submitSkillForm">
               <Loader2 v-if="skillSubmitting" :size="14" class="animate-spin" />
               <Save v-else :size="14" />
               保存
@@ -5942,10 +5870,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Skill 测试模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="skillTestModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeSkillTestModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeSkillTestModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5958,7 +5885,7 @@ watch(activeSubSection, async (val) => {
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">测试参数（JSON）</label>
               <textarea v-model="skillTestParams" :class="[inputClass, 'font-mono text-xs resize-y']" rows="4" placeholder='{"a": 1, "b": 2}' />
-              <p class="text-[10px] text-apple-gray-400 mt-0.5">JSON 格式，如 {"a":1,"b":2}；空对象 {} 表示无参测试</p>
+              <p class="text-4xs text-apple-gray-400 mt-0.5">JSON 格式，如 {"a":1,"b":2}；空对象 {} 表示无参测试</p>
             </div>
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">执行结果</label>
@@ -5977,10 +5904,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Agent 模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="agentModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeAgentModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeAgentModal" />
         <div class="relative w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -5999,7 +5925,6 @@ watch(activeSubSection, async (val) => {
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Agent 类型 *</label>
                 <select v-model="agentForm.type" :class="inputClass">
                   <option value="WORKER">WORKER</option>
-                  <option value="PLANNER">PLANNER</option>
                   <option value="WRITER">WRITER</option>
                   <option value="EVOLUTOR">EVOLUTOR</option>
                   <option value="SUMMARY">SUMMARY</option>
@@ -6051,10 +5976,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ Prompt 模板模态 ═══════════════ -->
     <Transition name="modal">
       <div v-if="promptModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closePromptModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closePromptModal" />
         <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6093,7 +6017,6 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- Toast -->
     <Transition name="toast">
       <div
         v-if="toastVisible"
@@ -6108,7 +6031,6 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ 重置确认弹窗 ═══════════════ -->
     <Transition name="modal">
       <div v-if="showResetConfirm" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="cancelReset" />
@@ -6152,10 +6074,9 @@ watch(activeSubSection, async (val) => {
       @save="saveCronConfig"
     />
 
-    <!-- ═══════════════ 摘要生成信息类型弹窗 ═══════════════ -->
     <Transition name="modal">
       <div v-if="infoTypesModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeInfoTypesModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closeInfoTypesModal" />
         <div class="relative w-full max-w-md max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6211,10 +6132,9 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ═══════════════ 维度优先级顺序弹窗 ═══════════════ -->
     <Transition name="modal">
       <div v-if="priorityOrderModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closePriorityOrderModal" />
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="closePriorityOrderModal" />
         <div class="relative w-full max-w-md max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
@@ -6245,7 +6165,7 @@ watch(activeSubSection, async (val) => {
               </span>
               <span class="text-xs font-mono text-apple-gray-400 dark:text-apple-gray-500 w-6 shrink-0">{{ i + 1 }}</span>
               <span class="flex-1 text-sm text-apple-gray-800 dark:text-apple-gray-100">{{ COLLECTION_SOURCE_LABELS[row.source] ?? row.source }}</span>
-              <span class="text-[10px] font-mono text-apple-gray-400 dark:text-apple-gray-500">{{ row.source }}</span>
+              <span class="text-4xs font-mono text-apple-gray-400 dark:text-apple-gray-500">{{ row.source }}</span>
               <button
                 class="relative w-10 h-6 rounded-full transition-colors duration-200 shrink-0"
                 :class="row.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
@@ -6273,9 +6193,8 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ===== 新增（2026-09-22）：修改前 Diff 确认弹窗（TODO-List §2 L5 Diff 对比视图）===== -->
     <Transition name="fade">
-      <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="diffConfirm = null">
+      <div v-if="diffConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="diffConfirm = null">
         <div class="bg-white dark:bg-apple-gray-900 rounded-2xl shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
           <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800">
             <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">确认修改</h3>
@@ -6300,7 +6219,6 @@ watch(activeSubSection, async (val) => {
       </div>
     </Transition>
 
-    <!-- ===== 新增（2026-09-22）：配置变更历史弹窗（TODO-List §2）===== -->
     <ConfigHistoryModal
       v-if="historyItem"
       :config-key="historyItem.config_key"

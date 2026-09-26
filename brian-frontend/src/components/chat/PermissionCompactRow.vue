@@ -39,17 +39,17 @@ function formatTime(ts?: number) {
         {{ permission.toolId }}
       </span>
       <span
-        class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+        class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
         :class="isAllowed
           ? 'bg-success-green/10 text-success-green'
           : 'bg-error-red/10 text-error-red'"
       >
         {{ isAllowed ? '已允许' : '已拒绝' }}
       </span>
-      <span v-if="formatTime(permission.answeredAt || permission.askedAt)" class="flex-shrink-0 text-[10px] text-apple-gray-300 hidden sm:inline">
+      <span v-if="formatTime(permission.answeredAt || permission.askedAt)" class="flex-shrink-0 text-4xs text-apple-gray-300 hidden sm:inline">
         {{ formatTime(permission.answeredAt || permission.askedAt) }}
       </span>
-      <span class="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-brian-blue opacity-70 group-hover:opacity-100">
+      <span class="flex-shrink-0 flex items-center gap-0.5 text-4xs text-brian-blue opacity-70 group-hover:opacity-100">
         思考过程
         <ChevronRight :size="11" />
       </span>

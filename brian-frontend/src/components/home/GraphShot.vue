@@ -7,9 +7,6 @@ import {
 import { useOnceVisible } from '@/composables/useOnceVisible'
 import type { GraphShotEdge, GraphShotNode } from './graphData'
 
-// GraphShot：首页「涌现图 / 关键词图」动态示意。
-// 布局坐标与连边由 graphData.ts 经力导向算法确定性生成；
-// 本组件只负责渲染：节点缓慢漂移、悬浮高亮关联节点与连线。
 const props = defineProps<{
   nodes: GraphShotNode[]
   edges: GraphShotEdge[]
@@ -28,7 +25,6 @@ const tabs = [
   { label: '画像', icon: markRaw(User) },
 ]
 
-interface GraphEdgeRef { a: number; b: number }
 
 const edges = computed(() => props.edges)
 const hovered = ref<number | null>(null)
@@ -48,7 +44,6 @@ const hotNodeSet = computed(() => {
   return set
 })
 
-// ===== 漂移动画：直接操作 DOM 属性，避免高频响应式开销 =====
 const rootEl = ref<Element | null>(null)
 const nodeEls: (SVGGElement | null)[] = []
 const lineEls: (SVGLineElement | null)[] = []
@@ -116,15 +111,14 @@ onUnmounted(stopDrift)
 
 <template>
   <div ref="rootEl" class="select-none" role="img" :aria-label="label">
-    <!-- 应用窗口 chrome：标题栏 / 页签 / 搜索操作栏 -->
     <div class="flex items-center px-4 h-9 bg-[#232327] border-b border-white/[.06]">
-      <span class="text-[13px] font-bold text-brian-blue">Brian</span>
-      <span class="ml-4 text-[11px] text-apple-gray-500">
+      <span class="text-xs font-bold text-brian-blue">Brian</span>
+      <span class="ml-4 text-2xs text-apple-gray-500">
         信息 <span class="mx-1 opacity-50">›</span> {{ breadcrumb }}
         <Copy :size="10" class="inline ml-1 opacity-40" />
       </span>
     </div>
-    <div class="flex items-center gap-1 px-3 h-10 bg-[#1D1D20] border-b border-white/[.06] text-[11px] text-apple-gray-400">
+    <div class="flex items-center gap-1 px-3 h-10 bg-[#1D1D20] border-b border-white/[.06] text-2xs text-apple-gray-400">
       <span
         v-for="t in tabs" :key="t.label"
         class="gs-tab" :class="{ on: t.label === activeTab }"
@@ -132,7 +126,7 @@ onUnmounted(stopDrift)
         <component :is="t.icon" :size="11" />{{ t.label }}
       </span>
     </div>
-    <div class="flex items-center gap-2 px-3.5 py-2 bg-[#1D1D20] border-b border-white/[.06] text-[10.5px] text-apple-gray-400">
+    <div class="flex items-center gap-2 px-3.5 py-2 bg-[#1D1D20] border-b border-white/[.06] text-4xs text-apple-gray-400">
       <span class="gs-search"><Search :size="10" />{{ searchPlaceholder }}</span>
       <span class="gs-btn gs-btn-blue"><Crosshair :size="10" />定位</span>
       <span class="gs-btn gs-btn-gray">重置视图</span>
@@ -143,7 +137,6 @@ onUnmounted(stopDrift)
       <span class="ml-auto gs-clean"><Trash2 :size="10" />一键清理</span>
     </div>
 
-    <!-- 画布：连线 + 漂移节点 -->
     <div class="relative bg-[#131316]">
       <svg viewBox="0 0 1000 560" class="w-full h-auto block" @mouseleave="hovered = null">
         <line
@@ -164,8 +157,7 @@ onUnmounted(stopDrift)
         </g>
       </svg>
 
-      <!-- 图例 -->
-      <div class="absolute right-3 top-3 px-3.5 py-2.5 rounded-xl bg-black/55 backdrop-blur border border-white/10 text-[10.5px] leading-6 text-apple-gray-300 space-y-0.5">
+      <div class="absolute right-3 top-3 px-3.5 py-2.5 rounded-xl bg-black/50 backdrop-blur border border-white/10 text-4xs leading-6 text-apple-gray-300 space-y-0.5">
         <div class="flex items-center gap-2">
           <span class="inline-flex items-center gap-1"><i class="w-2 h-2 rounded-full bg-apple-gray-300 inline-block" /><i class="w-1.5 h-1.5 rounded-full bg-apple-gray-500 inline-block" /></span>
           节点大小：越大连接度越高

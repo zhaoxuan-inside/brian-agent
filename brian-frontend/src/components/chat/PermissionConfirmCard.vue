@@ -5,7 +5,6 @@ import type { PermissionCardData } from '@/api/types'
 
 const props = defineProps<{
   permission: PermissionCardData
-  /** 应答进行中（禁用按钮并展示加载态） */
   submitting: boolean
 }>()
 
@@ -13,7 +12,6 @@ const emit = defineEmits<{
   confirm: [approved: boolean, remember: boolean]
 }>()
 
-/** 工具入参摘要：对象/文本都收敛为单行小字，避免长参撑开卡片 */
 const argsText = computed(() => {
   const raw = props.permission.input
   if (raw == null || raw === '') return '（无参数）'
@@ -37,14 +35,13 @@ const interactive = computed(() => props.permission.status === 'pending' && !pro
 </script>
 
 <template>
-  <!-- 工具权限确认卡片（对话区内联；不复用需求理解确认卡） -->
   <div class="flex items-start gap-2 justify-end">
     <div class="max-w-[85%] min-w-0">
       <div class="rounded-2xl bg-white dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-2">
           <ShieldCheck :size="16" class="text-brian-blue" />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-100">工具执行授权</p>
+            <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-100">技能执行授权</p>
             <p class="text-xs text-apple-gray-400 mt-0.5">Agent 请求执行 {{ permission.toolId }}，需要你的授权</p>
           </div>
           <span class="ml-auto flex-shrink-0 text-xs font-medium" :class="statusMeta.cls">{{ statusMeta.text }}</span>
@@ -64,10 +61,9 @@ const interactive = computed(() => props.permission.status === 'pending' && !pro
             <X v-if="submitting" :size="14" class="animate-spin" />
             拒绝
           </button>
-          <!-- ===== 新增（2026-09-12）：永久批准——批准且工具入信任表，后续同工具不再询问 ===== -->
           <button
             class="px-3 py-1.5 rounded-lg text-sm text-brian-blue hover:bg-brian-blue/10 disabled:opacity-50 flex items-center gap-1"
-            title="以后执行该工具不再询问"
+            title="以后执行该技能不再询问"
             :disabled="!interactive"
             @click="emit('confirm', true, true)"
           >

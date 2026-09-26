@@ -8,10 +8,6 @@ export interface BlockMeta {
   updatedAt: number
 }
 
-// ============================================================
-// Agent 执行运行时状态（每个 Agent 独立的"思考中"状态）
-// ============================================================
-
 export type AgentExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'ERROR'
 
 export interface AgentRuntimeInfo {
@@ -47,7 +43,6 @@ export interface CodeBlock extends BlockBase {
   content: string
 }
 
-// ===== 修改后的 ThinkingBlock 定义（支持完整 Agent 上下文、输入输出及步骤轨迹） =====
 export interface ThinkingStep {
   phase: 'THINK' | 'ACT' | 'REFLECT' | string
   iteration?: number
@@ -57,9 +52,9 @@ export interface ThinkingStep {
   passed?: boolean
   tokenUsage?: number
   elapsedMs?: number
-  /** 本轮输入（发送给 LLM 的 prompt / 用户消息） */
+  
   input?: string
-  /** 本轮输出（LLM 回复内容） */
+  
   output?: string
 }
 
@@ -124,30 +119,6 @@ export interface ToolCallBlock extends BlockBase {
   relatedBlockId?: string
 }
 
-// ============================================================
-// Planning 策略拆解（Task DAG / Agent DAG / 编排执行步骤）
-// ============================================================
-
-export interface TaskDagNode {
-  id: string
-  label: string
-  domain?: string
-  content?: string
-  complexity?: number
-  priority?: number
-  dependencies?: string[]
-}
-
-export interface TaskDagEdge {
-  source: string
-  target: string
-}
-
-export interface TaskDagData {
-  nodes: TaskDagNode[]
-  edges: TaskDagEdge[]
-}
-
 export interface DagNodeItem {
   id: string
   label: string
@@ -170,9 +141,7 @@ export interface DagEdgeItem {
 }
 
 export interface AgentDagData {
-  planId?: string
   totalCount?: number
-  taskDag?: TaskDagData
   nodes: DagNodeItem[]
   edges: DagEdgeItem[]
 }
@@ -186,8 +155,6 @@ export interface DagExecutionStep {
 }
 
 export interface PlanningData {
-  planId?: string
-  taskDag?: TaskDagData
   agentDag?: AgentDagData
   executionSteps?: DagExecutionStep[]
   status: 'idle' | 'streaming' | 'done'
@@ -242,15 +209,14 @@ export interface FeedbackProcessLogRecord {
   details: string
 }
 
-/** 处理日志列表项（后端批量关联的人性化展示字段） */
 export interface FeedbackProcessLogListItem extends FeedbackProcessLogRecord {
-  /** 反馈来源：user（用户提交）/ agent（Agent 评估产生） */
+  
   source?: 'user' | 'agent'
-  /** 反馈分类 */
+  
   category?: string
-  /** 用户评论文本 */
+  
   comment?: string
-  /** 关联的用户提问摘要 */
+  
   user_question?: string
 }
 
@@ -263,14 +229,6 @@ export interface FeedbackProcessLogDetail {
   } | null
   user_question: string
   system_answer: string
-}
-
-export interface FeedbackConfig {
-  id: string
-  created: number
-  updated: number
-  disband_threshold: number
-  enable_auto_disband: boolean
 }
 
 export type Block =
@@ -332,13 +290,12 @@ export interface ChatMessage {
   citedInfoIds?: string[]
   citingInfoIds?: string[]
   pin?: boolean
-  /** 权限确认卡（PERMISSION 落库记录 / SSE permission.asked 实时卡） */
+  
   permission?: PermissionCardData
-  /** ask_user 提问卡（SSE permission.asked kind=ask_user；答复经 /api/chat/ask/answer 恢复） */
+  
   askUser?: AskUserCardData
 }
 
-/** ask_user 提问数据：Agent 澄清/确认（Deferred 挂起，答复=下一条 user 消息） */
 export interface AskUserCardData {
   askId: string
   question: string
@@ -348,7 +305,6 @@ export interface AskUserCardData {
   answeredAt?: number
 }
 
-/** 权限确认数据：工具执行前询问（答允许/拒绝；status 收敛后仅展示） */
 export interface PermissionCardData {
   permissionId: string
   toolId: string
@@ -356,14 +312,9 @@ export interface PermissionCardData {
   status: 'pending' | 'allowed' | 'denied'
   askedAt?: number
   answeredAt?: number
-  /** 所属 V2 run（= workId），用于“在思考过程中查看详情”定位 */
+  
   runId?: string
 }
-
-// ============================================================
-// V2 完整执行轨迹（Runtime 直连 run：timeline/tools/permissions/run）
-// 后端 buildThinkingBlocksFromRuntime 组装，前端“思考过程”弹窗按此渲染
-// ============================================================
 
 export interface ThinkingTimelineItem {
   seq: number
@@ -372,18 +323,18 @@ export interface ThinkingTimelineItem {
   title: string
   detail?: string
   kind: string
-  /** 执行内容卡片跳转锚点（data-anchor；空串表示不可跳转） */
+  
   target?: string
-  /** 悬浮展示的原始组件 ID 等机器标识（展示名称友好、ID 悬浮可见；空串不展示） */
+  
   tooltip?: string
-  /** 本步动作耗时（毫秒；后端 trace 下发，前端实时时间线由相邻 ts 推导） */
+  
   elapsedMs?: number
 }
 
 export interface ThinkingToolTrace {
   index: number
   partId: string
-  /** 执行内容卡片跳转锚点（data-anchor） */
+  
   targetKey?: string
   toolId: string
   params: unknown
@@ -391,21 +342,21 @@ export interface ThinkingToolTrace {
   status: string
   elapsedMs: number
   tokenCount: number
-  /** 是否内置工具（skill_exec/mcp_exec/cdt_browser/update_plan/delegate） */
+  
   builtin?: boolean
-  /** 所属组件类型（skill_exec → skill、mcp_exec → mcp，其余为空） */
+  
   componentKind?: 'skill' | 'mcp' | ''
-  /** 所属组件 ID（skill_id / mcp_id） */
+  
   componentId?: string
-  /** 所属组件名称（DB 解析，缺失回退原始 ID） */
+  
   componentName?: string
-  /** mcp_exec 的二级工具名（input.tool_name） */
+  
   componentSubTool?: string
 }
 
 export interface ThinkingPermissionTrace {
   permissionId: string
-  /** 执行内容卡片跳转锚点（data-anchor） */
+  
   targetKey?: string
   toolId: string
   input: unknown
@@ -413,15 +364,15 @@ export interface ThinkingPermissionTrace {
   askedAt: number
   answeredAt: number
   autoApproved?: boolean
-  /** 是否内置工具 */
+  
   builtin?: boolean
-  /** 所属组件类型（skill_exec → skill、mcp_exec → mcp，其余为空） */
+  
   componentKind?: 'skill' | 'mcp' | ''
-  /** 所属组件 ID（skill_id / mcp_id） */
+  
   componentId?: string
-  /** 所属组件名称（DB 解析，缺失回退原始 ID） */
+  
   componentName?: string
-  /** mcp_exec 的二级工具名（input.tool_name） */
+  
   componentSubTool?: string
 }
 
@@ -434,9 +385,9 @@ export interface ThinkingRunTrace {
   soulId?: string
   durationMs: number
   tokenUsage: number
-  /** 输入 Token 合计（LLMProvider 明细账，提供商返回真实值） */
+  
   inputTokens?: number
-  /** 输出 Token 合计（LLMProvider 明细账，提供商返回真实值） */
+  
   outputTokens?: number
   budgetUsed: number
   toolCount: number
@@ -445,7 +396,7 @@ export interface ThinkingRunTrace {
   replyChars: number
   startedAt: number
   settledAt: number
-  /** 本次问答组件清单（名称+ID），运行概览「组件清单」汇总区 */
+  
   components?: {
     agent?: { id: string; name: string } | null
     llm?: { id: string; name: string } | null
@@ -458,21 +409,20 @@ export interface ThinkingRunTrace {
 
 export interface ThinkingContextRound {
   round: number
-  /** 执行内容卡片跳转锚点（data-anchor） */
+  
   targetKey?: string
   messageCount: number
   messages: Array<{ role: string; content: string }>
 }
 
-/** 运行节点详情：意图分析/Agent 选择/组件装配/模型与提示词等过程节点的结构化明细 */
 export interface ThinkingNodeTrace {
   seq: number
-  /** 执行内容卡片跳转锚点（data-anchor） */
+  
   targetKey: string
   title: string
   kind: string
   detail?: string
-  /** value 为组件展示名称（用户可读），id 为原始组件 ID（悬浮 tooltip 可见） */
+  
   fields: Array<{ label: string; value: string; id?: string }>
 }
 
@@ -481,16 +431,11 @@ export interface ThinkingTrace {
   timeline: ThinkingTimelineItem[]
   tools: ThinkingToolTrace[]
   permissions: ThinkingPermissionTrace[]
-  /** 运行节点结构化明细（每个时间线节点都有可点开的结构化详情） */
+  
   nodes: ThinkingNodeTrace[]
   contextRounds: ThinkingContextRound[]
 }
 
-// ============================================================
-// 需求理解确认 / 需求补充（流式事件驱动的对话区内联卡片）
-// ============================================================
-
-/** 需求理解确认：IntentAgent 匹配得分低于阈值时，由 intent_confirmation_required 事件驱动 */
 export interface IntentConfirmation {
   session_id: string
   work_id: string
@@ -500,15 +445,6 @@ export interface IntentConfirmation {
   match_score: number
   threshold_score: number
   reasoning: string
-}
-
-/** 需求补充：Planner 识别出需用户补充参数才能执行的任务时，由 clarification_required 事件驱动 */
-export interface ClarificationRequest {
-  session_id: string
-  work_id: string
-  run_id: string
-  original_query: string
-  clarifications: Array<{ question: string; domain?: string; answer: string }>
 }
 
 export interface ChatSession {
@@ -627,7 +563,6 @@ export interface LibraryTreeNode {
   children: LibraryTreeNode[]
 }
 
-/** 文档咨询注释（选中内容的一次性问答卡片） */
 export interface DocumentAnnotation {
   id: string
   file_id: string
@@ -711,10 +646,6 @@ export interface UserProfile {
   updatedAt: number
 }
 
-// ============================================================
-// Config tree types
-// ============================================================
-
 export interface ConfigTreeLayer {
   layer: string
   label: string
@@ -724,7 +655,6 @@ export interface ConfigTreeLayer {
   modules: ConfigTreeModule[]
 }
 
-/** ===== 新增（2026-09-22）：配置变更历史记录（TODO-List §2：历史 + Diff 对比）===== */
 export interface ConfigHistoryRecord {
   id: string
   config_key: string
@@ -767,10 +697,6 @@ export interface ConfigTreeItem {
   current_value: unknown
 }
 
-// ============================================================
-// MQ types (message queue)
-// ============================================================
-
 export interface MQMessage {
   id: string
   queue: string
@@ -798,10 +724,6 @@ export interface McpUsageRecord {
   usage_date: string
   usage_count: number
 }
-
-// ============================================================
-// 用户画像 types
-// ============================================================
 
 export interface ProfileDimension {
   value: unknown
@@ -844,10 +766,6 @@ export interface ProfileVersionData {
   dimensions: Record<string, ProfileDimension>
   profile_summary: string
 }
-
-// ============================================================
-// 可视化 types
-// ============================================================
 
 export interface VisualizedMessage {
   info_id: string
@@ -932,5 +850,4 @@ export interface ComponentMatchConfig {
   prompt_template_id?: string
 }
 
-/** 信息页页签标识 */
 export type InfoTabKey = 'history' | 'memory' | 'library' | 'tagGraph' | 'keywordGraph' | 'profile'

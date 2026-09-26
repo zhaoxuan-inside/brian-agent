@@ -1,11 +1,3 @@
-<!--
-上下文 (Context) 展示区："思考过程"弹窗的第 1 部分
-完整展示本次问答使用的上下文信息，包含：
-1. 引用的消息：根据消息采集方式（显式引用/时间线/钉住/语义相似/标签相关/关键词/随机采样/手动勾选）进行分类并统计数量
-2. 用户画像与偏好 (Profile)
-3. 保存的各分类上下文 ID 列表
-4. 最近工作与相关知识/背景
--->
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
@@ -31,13 +23,10 @@ const props = defineProps<{
   blocks: ThinkingBlock[]
 }>()
 
-// 上下文环境整体折叠状态（默认展开）
 const isContextCollapsed = ref(false)
 
-// 引用消息与上下文背景折叠状态（默认展开）
 const isContextMessagesCollapsed = ref(false)
 
-// 引用消息与上下文背景的标签切换（默认「全部」）
 const activeCategoryTab = ref<string>('all')
 
 interface ContextView {
@@ -114,7 +103,6 @@ const agg = computed<ContextView>(() => {
   return out
 })
 
-// ===== 各采集方式消息列表与数量统计 =====
 const selectedCount = computed(() => agg.value.selectedMessages?.length || agg.value.categoryIds?.selected?.length || 0)
 const citingCount = computed(() => agg.value.citingMessages?.length || agg.value.categoryIds?.citing?.length || 0)
 const timelineCount = computed(() => agg.value.timelineMessages?.length || agg.value.categoryIds?.timeline?.length || 0)
@@ -140,13 +128,11 @@ const collectionCategoryStats = computed(() => [
   { key: 'selected', name: '手动勾选消息', sourceKey: 'SELECTED', count: selectedCount.value, icon: CheckSquare, badgeCls: 'bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200', bgCls: 'bg-blue-50/40 dark:bg-blue-950/20', borderCls: 'border-blue-200/40', textCls: 'text-blue-800 dark:text-blue-300', msgs: agg.value.selectedMessages || [] },
 ])
 
-// 当前激活标签对应的采集方式分类（'all' 时返回 null，表示展示全部）
 const activeCategoryStat = computed(() => {
   if (activeCategoryTab.value === 'all') return null
   return collectionCategoryStats.value.find((s) => s.key === activeCategoryTab.value) ?? null
 })
 
-// 根据激活标签计算需要展示的分类列表（仅保留有消息的分类）
 const displayedCategoryStats = computed(() => {
   if (activeCategoryTab.value === 'all') {
     return collectionCategoryStats.value.filter((s) => s.msgs.length > 0)
@@ -173,7 +159,6 @@ function formatJson(val: unknown): string {
   }
 }
 
-// 只渲染消息内容（不展示 info_id 等属性）
 function msgContent(val: unknown): string {
   if (typeof val === 'string') return val
   if (val && typeof val === 'object' && 'content' in val) {
@@ -197,26 +182,24 @@ function msgContent(val: unknown): string {
         <Database :size="15" class="text-sky-600 dark:text-sky-400 flex-shrink-0" />
         <span class="text-xs font-bold text-sky-900 dark:text-sky-200 truncate">运行与对话上下文环境 (Context)</span>
       </button>
-      <span v-if="agg.strategy" class="px-2 py-0.5 rounded-full text-[10px] bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 font-medium flex-shrink-0">
+      <span v-if="agg.strategy" class="px-2 py-0.5 rounded-full text-4xs bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 font-medium flex-shrink-0">
         策略: {{ agg.strategy }}
       </span>
     </div>
 
     <div v-if="!isContextCollapsed" class="space-y-2.5 text-xs">
-      <!-- 1. 用户画像 -->
       <div v-if="agg.userProfile" class="p-2 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-100 dark:border-sky-900/40">
-        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-[11px] mb-1">
+        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-2xs mb-1">
           <UserRound :size="12" class="text-sky-600 dark:text-sky-400" />
           <span>用户画像与交互偏好 (Profile)</span>
         </div>
-        <pre class="text-[10px] text-apple-gray-700 dark:text-apple-gray-300 overflow-x-auto">{{ formatJson(agg.userProfile) }}</pre>
+        <pre class="text-4xs text-apple-gray-700 dark:text-apple-gray-300 overflow-x-auto">{{ formatJson(agg.userProfile) }}</pre>
       </div>
 
-      <!-- 2. 引用的消息（根据消息采集方式进行分类，并统计数量） -->
       <div class="p-2.5 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-200/80 dark:border-sky-800/60 space-y-2">
         <button
           type="button"
-          class="flex items-center justify-between w-full text-left font-bold text-sky-900 dark:text-sky-200 text-[11px] pb-1 border-b border-sky-100 dark:border-sky-900/30 cursor-pointer"
+          class="flex items-center justify-between w-full text-left font-bold text-sky-900 dark:text-sky-200 text-2xs pb-1 border-b border-sky-100 dark:border-sky-900/30 cursor-pointer"
           @click="isContextMessagesCollapsed = !isContextMessagesCollapsed"
         >
           <div class="flex items-center gap-1.5">
@@ -224,14 +207,13 @@ function msgContent(val: unknown): string {
             <MessagesSquare :size="13" class="text-sky-600 dark:text-sky-400" />
             <span>引用的消息与上下文背景 (Context Messages)</span>
           </div>
-          <span class="px-2 py-0.5 rounded-full text-[10px] bg-sky-100 dark:bg-sky-900/60 text-sky-800 dark:text-sky-200 font-medium">
+          <span class="px-2 py-0.5 rounded-full text-4xs bg-sky-100 dark:bg-sky-900/60 text-sky-800 dark:text-sky-200 font-medium">
             引用与关联消息总计: {{ totalCitedMessagesCount }} 条
           </span>
         </button>
 
         <div v-if="!isContextMessagesCollapsed">
-          <!-- 采集方式标签页 (Category Tabs)：按标签切换对应的引用消息内容 -->
-          <div class="flex flex-wrap gap-1.5 text-[10px] pt-0.5">
+          <div class="flex flex-wrap gap-1.5 text-4xs pt-0.5">
             <button
               type="button"
               class="px-2 py-1 rounded-lg border font-medium transition-colors"
@@ -258,37 +240,35 @@ function msgContent(val: unknown): string {
             </button>
           </div>
 
-          <!-- 对应标签下的引用消息列表 -->
           <div v-if="totalCitedMessagesCount > 0" class="space-y-2 pt-1">
             <template v-if="displayedCategoryStats.length > 0">
               <div v-for="stat in displayedCategoryStats" :key="'list-' + stat.key" class="p-2 rounded-lg border space-y-1" :class="[stat.bgCls, stat.borderCls]">
-                <div class="flex items-center justify-between font-semibold text-[11px]" :class="stat.textCls">
+                <div class="flex items-center justify-between font-semibold text-2xs" :class="stat.textCls">
                   <div class="flex items-center gap-1.5">
                     <component :is="stat.icon" :size="12" />
                     <span>{{ stat.name }} ({{ stat.sourceKey }})</span>
                   </div>
-                  <span class="text-[10px] font-normal opacity-80">{{ stat.msgs.length }} 条消息</span>
+                  <span class="text-4xs font-normal opacity-80">{{ stat.msgs.length }} 条消息</span>
                 </div>
                 <ul class="space-y-1 mt-1">
-                  <li v-for="(msg, mIdx) in stat.msgs" :key="mIdx" class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 bg-white/70 dark:bg-apple-gray-900/70 p-1.5 rounded border border-apple-gray-100 dark:border-apple-gray-800">
+                  <li v-for="(msg, mIdx) in stat.msgs" :key="mIdx" class="text-2xs text-apple-gray-700 dark:text-apple-gray-300 bg-white/70 dark:bg-apple-gray-900/70 p-1.5 rounded border border-apple-gray-100 dark:border-apple-gray-800">
                     • {{ msgContent(msg) }}
                   </li>
                 </ul>
               </div>
             </template>
-            <div v-else class="text-[10px] text-apple-gray-400 italic p-1">该标签下暂无引用的消息</div>
+            <div v-else class="text-4xs text-apple-gray-400 italic p-1">该标签下暂无引用的消息</div>
           </div>
-          <div v-else class="text-[10px] text-apple-gray-400 italic p-1">会话内未采集到任何关联或引用的消息</div>
+          <div v-else class="text-4xs text-apple-gray-400 italic p-1">会话内未采集到任何关联或引用的消息</div>
         </div>
       </div>
 
-      <!-- 3. 保存的分类上下文 ID 列表 -->
       <div v-if="agg.categoryIds" class="p-2 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-200/80 dark:border-sky-800/60 space-y-1">
-        <div class="flex items-center gap-1.5 font-bold text-sky-900 dark:text-sky-200 text-[11px]">
+        <div class="flex items-center gap-1.5 font-bold text-sky-900 dark:text-sky-200 text-2xs">
           <ListOrdered :size="12" class="text-sky-600 dark:text-sky-400" />
           <span>本次问答分类保存的上下文 ID 列表 (Category Message IDs)</span>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-1 text-[10px]">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-1 text-4xs">
           <div v-if="agg.categoryIds.timeline?.length" class="p-1.5 rounded bg-sky-50/60 dark:bg-sky-950/30">
             <span class="font-medium text-sky-800 dark:text-sky-300">🕒 时间线消息 IDs ({{ agg.categoryIds.timeline.length }}):</span>
             <div class="truncate text-apple-gray-600 dark:text-apple-gray-400 font-mono mt-0.5">{{ agg.categoryIds.timeline.join(', ') }}</div>
@@ -324,33 +304,30 @@ function msgContent(val: unknown): string {
         </div>
       </div>
 
-      <!-- 最近工作 -->
       <div v-if="agg.recentWorks && agg.recentWorks.length > 0" class="p-2 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-100 dark:border-sky-900/40">
-        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-[11px] mb-1">
+        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-2xs mb-1">
           <History :size="12" class="text-sky-600 dark:text-sky-400" />
           <span>最近工作 (Recent Works)</span>
         </div>
         <ul class="space-y-1">
-          <li v-for="(w, wIdx) in agg.recentWorks" :key="wIdx" class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300 bg-sky-50/40 dark:bg-sky-900/20 p-1.5 rounded">
+          <li v-for="(w, wIdx) in agg.recentWorks" :key="wIdx" class="text-2xs text-apple-gray-700 dark:text-apple-gray-300 bg-sky-50/40 dark:bg-sky-900/20 p-1.5 rounded">
             • {{ formatJson(w) }}
           </li>
         </ul>
       </div>
 
-      <!-- 相关知识 / 记忆背景 -->
       <div v-if="agg.customContext" class="p-2 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-100 dark:border-sky-900/40">
-        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-[11px] mb-1">
+        <div class="flex items-center gap-1.5 font-semibold text-sky-800 dark:text-sky-300 text-2xs mb-1">
           <BrainCircuit :size="12" class="text-sky-600 dark:text-sky-400" />
           <span>相关知识 / 记忆背景</span>
         </div>
-        <p class="text-[11px] text-apple-gray-600 dark:text-apple-gray-300 whitespace-pre-wrap">{{ agg.customContext }}</p>
+        <p class="text-2xs text-apple-gray-600 dark:text-apple-gray-300 whitespace-pre-wrap">{{ agg.customContext }}</p>
       </div>
 
-      <!-- 编排策略 -->
       <div v-if="agg.strategy" class="flex items-center gap-1.5 p-2 rounded-lg bg-white/80 dark:bg-apple-gray-900/80 border border-sky-100 dark:border-sky-900/40">
         <ShieldCheck :size="12" class="text-sky-600 dark:text-sky-400" />
-        <span class="font-semibold text-sky-800 dark:text-sky-300 text-[11px]">编排策略:</span>
-        <span class="text-[11px] text-apple-gray-700 dark:text-apple-gray-300">{{ agg.strategy }}</span>
+        <span class="font-semibold text-sky-800 dark:text-sky-300 text-2xs">编排策略:</span>
+        <span class="text-2xs text-apple-gray-700 dark:text-apple-gray-300">{{ agg.strategy }}</span>
       </div>
     </div>
   </div>

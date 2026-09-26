@@ -1,53 +1,46 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ClarificationRequest, ThinkingTrace, ThinkingTimelineItem, ThinkingContextRound } from '@/api/types'
+import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ThinkingTrace, ThinkingTimelineItem, ThinkingContextRound } from '@/api/types'
 import { chatApi } from '@/api'
 
-/**
- * 会话页交互 UI 状态：思考过程弹窗、Planning 拆解、Agent/任务执行运行时、
- * 评估结果弹窗、需求理解确认与需求补充弹窗。
- *
- * 与数据型状态（会话/消息/块/图谱，见 stores/session.ts）分离：
- * 流式事件适配层（chatStreamEvents）同时驱动两者，弹窗类组件只依赖本 store。
- */
 export const useChatUiStore = defineStore('chatUi', () => {
-  // 思考过程弹窗：targetMsgId 为空时展示当前流式思考，否则展示后端接口采集的指定消息思考过程
+  
   const thinkingModalVisible = ref(false)
   const thinkingTargetMsgId = ref<string | null>(null)
   const thinkingBlocks = ref<Block[]>([])
-  // 实时执行时间线：流式期间按业务事件（受理/意图/选择/装配/上下文/思考/工具/评估/排版/完成）实时推进
+  
   const liveTimeline = ref<ThinkingTimelineItem[]>([])
-  // 实时上下文轮次：流式期间由 context.built 事件累积（round/targetKey/messageCount/messages），
-  // 与后端 trace.contextRounds 同构，供思考面板「基础上下文」轮次卡片定位（data-anchor=ctx-N）
+  
+  
   const liveContextRounds = ref<ThinkingContextRound[]>([])
-  // 思考过程各模块独立/整体加载状态
+  
   const thinkingLoading = ref(false)
   const dagLoading = ref(false)
   const blocksLoading = ref(false)
-  // Planning 策略拆解：planning 为流式期间的实时拆解数据，thinkingDag 为指定消息接口采集的拆解数据
+  
   const planning = ref<PlanningData>({ status: 'idle' })
   const thinkingDag = ref<AgentDagData | null>(null)
-  // V2 完整执行轨迹：指定消息接口采集（timeline/tools/permissions/run），流式期间为空（由实时 blocks/messages 归约）
+  
   const thinkingTrace = ref<ThinkingTrace | null>(null)
-  // 思考过程弹窗动画原点（"思考过程"按钮的视口矩形），供入场/退场 FLIP 动画使用
+  
   const thinkingOrigin = ref<{ left: number; top: number; width: number; height: number } | null>(null)
-  // 弹窗打开时刻（用于自动关闭的 5 秒最小展示时长判定）
+  
   const thinkingOpenedAt = ref(0)
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
-  // 流式 run 是否激活：RunStarted 置 true，RunFinished/RunFailed 置 false，供思考过程弹窗状态判断
+  
   const runActive = ref(false)
-  // 每个 Agent 独立的执行运行时状态（思考中/成功/失败），key = agent_id
+  
   const agentExecutions = ref<Record<string, AgentRuntimeInfo>>({})
-  // 每个任务节点的执行运行时状态（同一 Agent 复用到多个任务时按 task_id 精确区分），key = task_id
+  
   const taskExecutions = ref<Record<string, AgentRuntimeInfo>>({})
-  // 评估结果弹窗：展示某消息对应 work 的 Evolutor 评估评分 JSON
+  
   const evalResultVisible = ref(false)
   const evalResultLoading = ref(false)
   const evalResult = ref<{ answer: string; created: number; elapsed_ms: number; agent_name: string } | null>(null)
   const evalResultError = ref('')
   const evalTraceId = ref('')
 
-  // 需求理解确认弹窗：IntentAgent 匹配得分低于阈值时，由 intent_confirmation_required 事件驱动
+  
   const intentConfirmation = ref<IntentConfirmation | null>(null)
 
   function setIntentConfirmation(data: Record<string, unknown> | null) {
@@ -74,38 +67,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     intentConfirmation.value = null
   }
 
-  // 需求补充弹窗：Planner 识别出需用户补充参数才能执行的任务时，由 clarification_required 事件驱动
-  const clarificationRequest = ref<ClarificationRequest | null>(null)
-
-  function setClarificationRequest(data: Record<string, unknown> | null) {
-    if (!data) {
-      clarificationRequest.value = null
-      return
-    }
-    const raw = Array.isArray(data.clarifications) ? data.clarifications : []
-    clarificationRequest.value = {
-      session_id: String(data.session_id ?? ''),
-      work_id: String(data.work_id ?? ''),
-      run_id: String(data.run_id ?? ''),
-      original_query: String(data.original_query ?? ''),
-      clarifications: raw
-        .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object'))
-        .map((c) => ({
-          question: String((c as Record<string, unknown>).question ?? ''),
-          domain: (c as Record<string, unknown>).domain
-            ? String((c as Record<string, unknown>).domain)
-            : undefined,
-          answer: '',
-        }))
-        .filter((c) => c.question),
-    }
-  }
-
-  function clearClarificationRequest() {
-    clarificationRequest.value = null
-  }
-
-  // ===== 思考过程弹窗与加载状态管理（仅 blocks + trace，不再有 V1 DAG 模块） =====
+  
   function setThinkingOrigin(rect: { left: number; top: number; width: number; height: number } | null) {
     thinkingOrigin.value = rect
   }
@@ -126,7 +88,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     thinkingModalVisible.value = true
   }
 
-  // 问答任务进行中自动弹出思考过程（实时模式，target 为空）：已打开时不重复触发，避免重置计时
+  
   function ensureLiveThinking() {
     if (thinkingModalVisible.value) return
     thinkingTargetMsgId.value = null
@@ -175,11 +137,11 @@ export const useChatUiStore = defineStore('chatUi', () => {
       clearTimeout(autoCloseTimer)
       autoCloseTimer = null
     }
-    // 仅隐藏：内容保留至退场动画结束后再清理，避免关闭瞬间内容闪空导致动画突兀
+    
     thinkingModalVisible.value = false
   }
 
-  // 退场动画结束后由 ThinkingModal @after-leave 调用：此时再清空内容与运行时状态
+  
   function cleanupThinkingModal() {
     if (thinkingModalVisible.value) return
     thinkingTargetMsgId.value = null
@@ -194,7 +156,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     thinkingOrigin.value = null
   }
 
-  // ===== 自动关闭：收到关闭事件且弹窗已展示超过最短时长才关闭；不足则延迟关闭，保证动画完整 =====
+  
   function requestAutoCloseThinkingModal() {
     if (!thinkingModalVisible.value) return
     const MIN_OPEN_MS = 3500
@@ -211,7 +173,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     }, remaining)
   }
 
-  // ===== 评估结果弹窗：打开时按 info_id 拉取 Evolutor 评估结果并展示 =====
+  
   async function openEvalResult(infoId: string) {
     evalResultVisible.value = true
     evalResultLoading.value = true
@@ -241,7 +203,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     evalTraceId.value = ''
   }
 
-  // Planning 拆解状态管理（流式期间实时更新）
+  
   function resetPlanning() {
     planning.value = { status: 'idle' }
   }
@@ -250,7 +212,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     planning.value = { ...planning.value, ...patch } as PlanningData
   }
 
-  // ===== Agent 执行运行时状态管理（每个 Agent 独立的"思考中"状态） =====
+  
   const NODE_STATUS_MAP: Record<AgentExecutionStatus, string> = {
     PENDING: 'PENDING',
     RUNNING: 'RUNNING',
@@ -258,8 +220,8 @@ export const useChatUiStore = defineStore('chatUi', () => {
     ERROR: 'EXEC_FAILED',
   }
 
-  // ===== 记录某 Agent 的执行状态，并同步到 AgentDAG 节点（供"思考过程"弹窗 AgentDAG 状态着色与执行联动） =====
-  // 状态只能向前推进：PENDING → RUNNING → SUCCESS/ERROR，不允许回退（如 SUCCESS → RUNNING）
+  
+  
   const STATUS_ORDER: Record<AgentExecutionStatus, number> = {
     PENDING: 0,
     RUNNING: 1,
@@ -270,7 +232,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
   function setAgentStatus(agentId: string | undefined, status: AgentExecutionStatus, agentName?: string, taskId?: string) {
     if (!agentId && !taskId) return
 
-    // 1) Agent 级运行时状态（供"执行过程"卡片展示），按 agent_id 向前推进
+    
     if (agentId) {
       const prev = agentExecutions.value[agentId]
       const prevOrder = prev ? (STATUS_ORDER[prev.status] ?? 0) : -1
@@ -287,7 +249,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
       }
     }
 
-    // 2) Task 级运行时状态（供 AgentDAG 节点着色），按 task_id 向前推进
+    
     const taskKey = taskId || ''
     if (taskKey) {
       const tPrev = taskExecutions.value[taskKey]
@@ -301,7 +263,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
       }
     }
 
-    // 3) 同步 AgentDAG 节点状态：优先按 task_id 精确定位节点（同一 Agent 复用多任务时避免广播）
+    
     const dag = planning.value.agentDag
     if (dag && dag.nodes.length > 0) {
       const matched = taskKey
@@ -355,7 +317,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
     runActive.value = active
   }
 
-  /** 清空会话/开始新会话时重置流式期间产生的交互状态 */
+  
   function resetWorkflowState() {
     planning.value = { status: 'idle' }
     thinkingDag.value = null
@@ -380,7 +342,6 @@ export const useChatUiStore = defineStore('chatUi', () => {
     setAgentStatus, setRunActive, resetAgentStatus, resetWorkflowState,
     evalResultVisible, evalResultLoading, evalResult, evalResultError, evalTraceId,
     openEvalResult, closeEvalResult,
-    intentConfirmation, setIntentConfirmation, clearIntentConfirmation,
-    clarificationRequest, setClarificationRequest, clearClarificationRequest
+    intentConfirmation, setIntentConfirmation, clearIntentConfirmation
   }
 })

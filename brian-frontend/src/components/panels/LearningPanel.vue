@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle } from '@lucide/vue'
+import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle, MinusCircle } from '@lucide/vue'
 import { learningApi } from '@/api'
 import type { LearningStats, LearningProgress } from '@/api/types'
 
@@ -88,7 +88,6 @@ function onFactorChange(mode: string, val: number) {
   }, 500)
 }
 
-// 学习热力图：按展示条宽度动态计算展示日期范围（小块 8px + 间隔 2px = 10px）
 const HEATMAP_CELL = 8
 const HEATMAP_GAP = 2
 const HEATMAP_PITCH = HEATMAP_CELL + HEATMAP_GAP
@@ -112,7 +111,6 @@ function setHeatmapRef(mode: string, el: Element | null) {
   heatmapObserver.observe(el)
 }
 
-// 步骤 1/2/3：展示条宽度 ÷ (小块宽 + 间隔) = 展示日期范围
 function trendDaysOf(mode: string): number {
   const w = heatmapWidths.value[mode] || 0
   if (!w) return 30
@@ -137,8 +135,7 @@ function trendColor(mode: string, count: number): string {
   return 'bg-brian-blue'
 }
 
-// 学习任务（后端 fire-and-forget 任务可视化：running 优先展示）
-const tasks = ref<Array<{ task_id: string; mode: string; label: string; status: string; started_at: number; error?: string }>>([])
+const tasks = ref<Array<{ task_id: string; mode: string; label: string; status: string; started_at: number; error?: string; detail?: string }>>([])
 
 async function fetchTasks() {
   try { tasks.value = (await learningApi.getTasks()).tasks ?? [] } catch { /* */ }
@@ -152,6 +149,14 @@ function taskTime(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function taskStatusText(status: string): string {
+  if (status === 'running') return '执行中'
+  if (status === 'completed') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'skipped') return '已跳过（同模式任务执行中）'
+  return status
 }
 
 onMounted(() => {
@@ -170,38 +175,40 @@ onUnmounted(() => {
 
 <template>
   <div class="h-full flex flex-col">
-    <!-- Learning control -->
     <div class="block-card rounded-2xl p-6 flex-1 min-h-0 flex flex-col">
       <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 shrink-0">
         <Brain :size="20" class="text-brian-blue" /> 学习控制
       </h2>
 
-      <!-- 学习任务条（后端 fire-and-forget 任务可视化，running 优先，2s 轮询） -->
       <div v-if="tasks.length > 0" class="mb-3 shrink-0">
         <div class="flex items-center gap-2 mb-1.5">
-          <span class="text-[11px] text-apple-gray-500">学习任务</span>
+          <span class="text-2xs text-apple-gray-500">学习任务</span>
           <span
             v-if="runningTaskCount > 0"
-            class="text-[10px] px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue"
+            class="text-4xs px-1.5 py-0.5 rounded-full bg-brian-blue/10 text-brian-blue"
           >{{ runningTaskCount }} 个执行中</span>
         </div>
         <div class="flex flex-wrap gap-1.5">
           <div
             v-for="t in visibleTasks"
             :key="t.task_id"
-            class="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] border"
+            class="flex items-center gap-1.5 px-2 py-1 rounded-lg text-2xs border"
             :class="t.status === 'running'
               ? 'border-brian-blue/40 bg-brian-blue/5 text-brian-blue'
               : t.status === 'failed'
                 ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400'
-                : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 text-apple-gray-500 dark:text-apple-gray-400'"
-            :title="t.error || `${t.label} · ${t.status}`"
+                : t.status === 'skipped'
+                  ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400'
+                  : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 text-apple-gray-500 dark:text-apple-gray-400'"
+            :title="t.error || t.detail || `${t.label} · ${taskStatusText(t.status)}`"
           >
             <Loader2 v-if="t.status === 'running'" :size="12" class="animate-spin" />
             <CheckCircle2 v-else-if="t.status === 'completed'" :size="12" class="text-success-green" />
+            <MinusCircle v-else-if="t.status === 'skipped'" :size="12" />
             <XCircle v-else :size="12" />
             <span class="font-medium">{{ t.label }}</span>
             <span class="opacity-70">{{ taskTime(t.started_at) }}</span>
+            <span v-if="t.detail" class="max-w-52 truncate opacity-80">{{ t.detail }}</span>
             <span v-if="t.error" class="max-w-40 truncate opacity-80">{{ t.error }}</span>
           </div>
         </div>
@@ -213,7 +220,6 @@ onUnmounted(() => {
           :key="card.key"
           class="flex flex-col p-4 rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-900/50 h-full min-h-0"
         >
-          <!-- 头部 -->
           <div class="flex items-center gap-2 mb-2 shrink-0">
             <component :is="card.icon" :size="18" class="text-brian-blue flex-shrink-0" />
             <span class="text-sm font-medium">{{ card.label }}</span>
@@ -231,7 +237,6 @@ onUnmounted(() => {
           </div>
           <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-3 line-clamp-2 shrink-0">{{ card.desc }}</p>
 
-          <!-- 随机因子 -->
           <div class="mb-3 shrink-0">
             <div class="flex items-center justify-between">
               <span class="text-xs text-apple-gray-500">随机因子</span>
@@ -248,31 +253,29 @@ onUnmounted(() => {
             />
           </div>
 
-          <!-- 统计 -->
           <div class="grid grid-cols-4 gap-1.5 mb-3 shrink-0">
             <div class="p-2 rounded-lg bg-white dark:bg-apple-gray-800 text-center">
               <p class="text-sm font-bold">{{ statsOf(card.key).totalLearnCount }}</p>
-              <p class="text-[10px] text-apple-gray-400">总学习</p>
+              <p class="text-4xs text-apple-gray-400">总学习</p>
             </div>
             <div class="p-2 rounded-lg bg-white dark:bg-apple-gray-800 text-center">
               <p class="text-sm font-bold">{{ statsOf(card.key).knowledgeCount }}</p>
-              <p class="text-[10px] text-apple-gray-400">知识点</p>
+              <p class="text-4xs text-apple-gray-400">知识点</p>
             </div>
             <div class="p-2 rounded-lg bg-white dark:bg-apple-gray-800 text-center">
               <p class="text-sm font-bold">{{ statsOf(card.key).insightCount }}</p>
-              <p class="text-[10px] text-apple-gray-400">洞察</p>
+              <p class="text-4xs text-apple-gray-400">洞察</p>
             </div>
             <div class="p-2 rounded-lg bg-white dark:bg-apple-gray-800 text-center">
               <p class="text-sm font-bold">{{ statsOf(card.key).weeklyLearnCount }}</p>
-              <p class="text-[10px] text-apple-gray-400">本周</p>
+              <p class="text-4xs text-apple-gray-400">本周</p>
             </div>
           </div>
 
-          <!-- 学习热力图 -->
           <div class="mb-3 shrink-0">
             <div class="flex items-center justify-between mb-1">
-              <span class="text-[11px] text-apple-gray-500">学习记录（近 {{ visibleTrend(card.key).length }} 天）</span>
-              <span class="text-[10px] text-apple-gray-400">少 → 多</span>
+              <span class="text-2xs text-apple-gray-500">学习记录（近 {{ visibleTrend(card.key).length }} 天）</span>
+              <span class="text-4xs text-apple-gray-400">少 → 多</span>
             </div>
             <div :ref="(el) => setHeatmapRef(card.key, el as Element | null)" class="flex gap-[2px]">
               <div
@@ -285,40 +288,36 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 学习队列 -->
           <div class="mb-3 shrink-0">
-            <span class="text-[11px] text-apple-gray-500">学习队列</span>
+            <span class="text-2xs text-apple-gray-500">学习队列</span>
             <div class="mt-1 h-16 overflow-y-auto space-y-1">
-              <div v-if="(modeQueue[card.key] || []).length === 0" class="text-[11px] text-apple-gray-400">队列为空</div>
-              <div v-for="(t, i) in (modeQueue[card.key] || []).slice(0, 5)" :key="i" class="text-[11px] truncate text-apple-gray-600 dark:text-apple-gray-300">
+              <div v-if="(modeQueue[card.key] || []).length === 0" class="text-2xs text-apple-gray-400">队列为空</div>
+              <div v-for="(t, i) in (modeQueue[card.key] || []).slice(0, 5)" :key="i" class="text-2xs truncate text-apple-gray-600 dark:text-apple-gray-300">
                 {{ (t as Record<string, unknown>).task_name || (t as Record<string, unknown>).task_id || `任务 #${i + 1}` }}
               </div>
             </div>
           </div>
 
-          <!-- 知识点 -->
           <div class="mb-3 flex-1 min-h-0 flex flex-col">
-            <span class="text-[11px] text-apple-gray-500 shrink-0">知识点（{{ (modeKnowledge[card.key] || []).length }}）</span>
+            <span class="text-2xs text-apple-gray-500 shrink-0">知识点（{{ (modeKnowledge[card.key] || []).length }}）</span>
             <div class="mt-1 flex-1 min-h-0 overflow-y-auto space-y-1">
-              <div v-if="(modeKnowledge[card.key] || []).length === 0" class="text-[11px] text-apple-gray-400">暂无知识点</div>
-              <div v-for="(item, i) in (modeKnowledge[card.key] || []).slice(0, 10)" :key="i" class="text-[11px] truncate text-apple-gray-600 dark:text-apple-gray-300" :title="(item as Record<string, unknown>).content as string">
+              <div v-if="(modeKnowledge[card.key] || []).length === 0" class="text-2xs text-apple-gray-400">暂无知识点</div>
+              <div v-for="(item, i) in (modeKnowledge[card.key] || []).slice(0, 10)" :key="i" class="text-2xs truncate text-apple-gray-600 dark:text-apple-gray-300" :title="(item as Record<string, unknown>).content as string">
                 {{ (item as Record<string, unknown>).content || '-' }}
               </div>
             </div>
           </div>
 
-          <!-- 洞察发现 -->
           <div class="mb-3 flex-1 min-h-0 flex flex-col">
-            <span class="text-[11px] text-apple-gray-500 shrink-0">洞察发现（{{ (modeInsights[card.key] || []).length }}）</span>
+            <span class="text-2xs text-apple-gray-500 shrink-0">洞察发现（{{ (modeInsights[card.key] || []).length }}）</span>
             <div class="mt-1 flex-1 min-h-0 overflow-y-auto space-y-1">
-              <div v-if="(modeInsights[card.key] || []).length === 0" class="text-[11px] text-apple-gray-400">暂无洞察</div>
-              <div v-for="(item, i) in (modeInsights[card.key] || []).slice(0, 10)" :key="i" class="text-[11px] truncate text-apple-gray-600 dark:text-apple-gray-300" :title="(item as Record<string, unknown>).content as string">
+              <div v-if="(modeInsights[card.key] || []).length === 0" class="text-2xs text-apple-gray-400">暂无洞察</div>
+              <div v-for="(item, i) in (modeInsights[card.key] || []).slice(0, 10)" :key="i" class="text-2xs truncate text-apple-gray-600 dark:text-apple-gray-300" :title="(item as Record<string, unknown>).content as string">
                 {{ (item as Record<string, unknown>).content || '-' }}
               </div>
             </div>
           </div>
 
-          <!-- 操作按钮 -->
           <button
             class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white bg-brian-blue hover:bg-brian-blue/90 transition-colors disabled:opacity-60 shrink-0"
             :disabled="triggering !== ''"

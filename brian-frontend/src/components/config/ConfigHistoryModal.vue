@@ -5,10 +5,6 @@ import { configApi } from '@/api'
 import type { ConfigHistoryRecord } from '@/api/types'
 import ConfigValueDiff from './ConfigValueDiff.vue'
 
-/**
- * 配置变更历史弹窗（TODO-List §2：`getConfigHistory` GET 消费端）。
- * 按配置项拉取变更记录（change_time 降序），每条渲染 old→new Diff。
- */
 const props = defineProps<{
   configKey: string
   configName: string
@@ -43,7 +39,7 @@ function formatTime(ts: number): string {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="emit('close')">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="emit('close')">
     <div class="bg-white dark:bg-apple-gray-900 rounded-2xl shadow-xl w-[560px] max-w-[92vw] max-h-[80vh] flex flex-col overflow-hidden">
       <div class="px-5 py-4 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-2">
         <History :size="16" class="text-brian-blue" />

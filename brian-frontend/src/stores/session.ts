@@ -6,10 +6,6 @@ import { layoutChatMap } from '@/utils/chatMapLayout'
 import { buildMessageGraph } from '@/utils/messageGraph'
 import { useChatUiStore } from './chatUi'
 
-/**
- * 会话数据 store：会话/消息/块/图谱数据与流式任务生命周期。
- * 交互 UI 状态（思考弹窗/Planning/Agent 运行时/评估与确认弹窗）见 stores/chatUi.ts。
- */
 export const useSessionStore = defineStore('session', () => {
   const currentSessionId = ref(localStorage.getItem('chat-current-session-id') || '')
   const messages = shallowRef<ChatMessage[]>([])
@@ -22,7 +18,7 @@ export const useSessionStore = defineStore('session', () => {
   const cancelToken = ref<AbortController | null>(null)
   const selectedMsgIds = ref<Set<string>>(new Set())
   const citingMode = ref(false)
-  // ChatMap 与对话列表双向定位：focusInfoId 由 ChatMap 触发滚动列表，centerInfoId 由列表触发平移 ChatMap
+
   const focusInfoId = ref<string | null>(null)
   const centerInfoId = ref<string | null>(null)
   let pendingRaf: number | null = null
@@ -39,12 +35,12 @@ export const useSessionStore = defineStore('session', () => {
 
   async function ensureSession(): Promise<string> {
     if (currentSessionId.value) {
-      // 校验本地缓存的会话是否真实存在于后端，避免使用失效/本地伪造的 session_id
+
       try {
         await chatApi.getSessionDetail(currentSessionId.value)
         return currentSessionId.value
       } catch {
-        /* 会话已不存在，落入下方创建新会话 */
+
       }
     }
     const created = await chatApi.createSession()
@@ -53,14 +49,12 @@ export const useSessionStore = defineStore('session', () => {
     return created.session_id
   }
 
-  // ===== loadChatHistory：加载历史消息并提取恢复各 Agent 的 ThinkingBlocks =====
   async function loadChatHistory(sessionId: string, userId: string) {
     currentSessionId.value = sessionId
     localStorage.setItem('chat-current-session-id', sessionId)
     const historyMsgs = await chatApi.history(sessionId, userId)
     messages.value = historyMsgs
 
-    // 从消息记录的 blocks 数组中恢复 ThinkingBlocks
     const loadedBlocks: Block[] = []
     for (const msg of historyMsgs) {
       if (Array.isArray(msg.blocks) && msg.blocks.length > 0) {
@@ -75,8 +69,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function loadDag(sessionId: string, _userId: string) {
     try {
-      // ChatMap 展示消息关系图谱（一问一答 + 引用），而非 Agent 执行 DAG；
-      // 原始图 → 展示模型装配见 utils/messageGraph（纯函数）。
+
       const result = await visualizationApi.messageDAG({
         session_id: sessionId,
         include_question_answer_edges: true,
@@ -87,15 +80,11 @@ export const useSessionStore = defineStore('session', () => {
         (result.graph?.edges ?? []) as Array<Record<string, unknown>>,
       )
 
-      // ===== 布局：顺序问答纵向排布、引用问答横向展开 =====
-      // 布局算法抽离至 @/utils/chatMapLayout（纯函数，便于单元测试）：
-      // - QUESTION_ANSWER / FOLLOW_UP：纵向排布（回答/追问在提问正下方）
-      // - CITATION：引用方放在被引用方右边，且与被引用消息中最靠下的一个顶部对齐
       layoutChatMap(nodes, edges)
 
       chatMapNodes.value = nodes
       chatMapEdges.value = edges
-    } catch { /* ignore */ }
+    } catch {  }
   }
 
   async function togglePin(infoId: string) {
@@ -115,8 +104,6 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  // ===== 新增（2026-09-21 批量删除）：一次请求删除多个会话（含关联数据级联清理），
-  // 成功后统一从列表移除；若当前会话在删除集合内则重置对话区状态 =====
   async function deleteSessions(sessionIds: string[]) {
     const ids = sessionIds.filter(Boolean)
     if (ids.length === 0) return
@@ -145,7 +132,6 @@ export const useSessionStore = defineStore('session', () => {
     messages.value = [...messages.value, msg]
   }
 
-  // 按内容（从后往前）定位最近一条用户消息并移除（取消需求理解时丢弃用户原始输入）
   function removeUserMessageByContent(originalContent: string) {
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const m = messages.value[i]
@@ -156,7 +142,6 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  // 按消息 id 幂等更新（权限卡应答后把 pending → allowed/denied 等翻转场景）
   function updateMessage(msgId: string, updates: Partial<ChatMessage>) {
     const idx = messages.value.findIndex(m => m.id === msgId)
     if (idx < 0) return
@@ -212,10 +197,6 @@ export const useSessionStore = defineStore('session', () => {
     triggerRef(blocks)
   }
 
-  // ===== 最终回复开始流式输出时，将仍处于 streaming 的思考块收敛为 done =====
-  // 思考块（ThinkingChain）此前仅在 done 事件才被 finalizeBlocks 置为 done，
-  // 但最终回复（text_chunk）在 done 之前就开始流式输出，导致「思考过程」弹窗
-  // 在系统回复已展示时仍因残留 streaming 状态而显示「思考中...」。
   function finalizeThinkingBlocks(msgId: string) {
     let changed = false
     for (let i = 0; i < blocks.value.length; i++) {

@@ -21,7 +21,6 @@ interface EvalPayload {
   [key: string]: unknown
 }
 
-// 解析 answer JSON 字符串，失败时回退为 null（直接展示原始文本）
 const parsed = computed<EvalPayload | null>(() => {
   const raw = evaluation.value?.answer ?? ''
   if (!raw.trim()) return null
@@ -82,7 +81,7 @@ function formatTime(ts: number): string {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-[130] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/50 backdrop-blur-sm"
       @click.self="close"
     >
       <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-xl mx-4 overflow-hidden flex flex-col max-h-[80vh]">
@@ -114,7 +113,7 @@ function formatTime(ts: number): string {
               <span v-if="evaluation.elapsed_ms" class="font-mono">{{ evaluation.elapsed_ms }}ms</span>
               <span v-if="evaluation.created" class="ml-auto">{{ formatTime(evaluation.created) }}</span>
             </div>
-            <div v-if="traceId" class="flex items-center gap-1 text-[11px] text-apple-gray-400 font-mono">
+            <div v-if="traceId" class="flex items-center gap-1 text-2xs text-apple-gray-400 font-mono">
               <span class="flex-shrink-0">TraceId:</span>
               <span class="truncate select-text">{{ traceId }}</span>
               <button
@@ -161,7 +160,7 @@ function formatTime(ts: number): string {
 
             <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 p-3">
               <div class="text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">原始评估结果</div>
-              <pre class="text-[11px] text-apple-gray-800 dark:text-apple-gray-200 font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900/50 p-2.5 rounded-lg">{{ evaluation.answer }}</pre>
+              <pre class="text-2xs text-apple-gray-800 dark:text-apple-gray-200 font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900/50 p-2.5 rounded-lg">{{ evaluation.answer }}</pre>
             </div>
           </template>
 

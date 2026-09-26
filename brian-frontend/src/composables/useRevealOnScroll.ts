@@ -4,8 +4,6 @@ interface RevealHost extends HTMLElement {
   __revealIO?: IntersectionObserver
 }
 
-// v-reveal：元素进入视口时添加 .is-visible，触发渐显上浮动画
-// 可选值作为 transition-delay（如 v-reveal="'120ms'"），用于同屏多元素的错峰效果
 export const vReveal: Directive<RevealHost, string | undefined> = {
   mounted(el, binding) {
     if (!('IntersectionObserver' in window)) {

@@ -1,23 +1,13 @@
 <script setup lang="ts">
-/**
- * 信息页共用「月度热力图」卡片（历史/记忆页签左下角）。
- *
- * 两页签共用本组件以保证样式一致：按日计数格子 + 月份切换；
- * 颜色按当月最大计数分档（GitHub 贡献图风格，与 MonitorPanel tokenCalendar 同 palette）。
- */
 import { computed } from 'vue'
 import { ChevronLeft, ChevronRight } from '@lucide/vue'
 
 const props = defineProps<{
-  /** 月历格子（含占位 null），由页签 composable 按月生成 */
   cells: { day: number | null; count: number }[]
   year: number
   month: number
-  /** 计数单位，用于悬浮提示（如「个会话」「条记忆」） */
   unit: string
-  /** 当前高亮的日号；不在显示月份内时传 null */
   activeDay?: number | null
-  /** 是否允许切换到下一月（显示当前月时应禁用） */
   canGoNext?: boolean
 }>()
 

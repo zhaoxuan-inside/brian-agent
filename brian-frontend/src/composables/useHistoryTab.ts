@@ -1,14 +1,3 @@
-/**
- * @fileoverview 信息页「会话历史」页签的业务逻辑组合式函数。
- *
- * 从 InfoView.vue 分离的数据获取 / 过滤 / 时间线分组 / 热力图 / 勾选与删除逻辑；
- * 模板经解构引用，函数名与原先保持一致。
- *
- * 修改：
- * - 左侧日期导航从 dateCountCache 派生（与热力图一致），不再依赖已加载的会话列表
- * - 会话列表支持分页 + 无限滚动
- */
-
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { chatApi } from '../api'
@@ -19,9 +8,6 @@ import {
 
 const HISTORY_PAGE_SIZE = 20
 
-/**
- * 会话历史页签状态与操作。
- */
 export function useHistoryTab() {
   const router = useRouter()
 
@@ -34,7 +20,6 @@ const loadingMoreHistory = ref(false)
 const hasMoreHistory = ref(false)
 const historyPage = ref(1)
 const selectedSessions = ref<Set<string>>(new Set())
-
 
 const viewingTagsSession = ref<ChatSession | null>(null)
 
@@ -66,7 +51,7 @@ async function loadHistory(reset = true) {
     }
     hasMoreHistory.value = data.sessions.length >= HISTORY_PAGE_SIZE
   }
-  catch { /* ignore */ }
+  catch {  }
   finally {
     if (reset) loadingHistory.value = false
     else loadingMoreHistory.value = false
@@ -79,7 +64,6 @@ async function loadMoreHistory() {
   await loadHistory(false)
 }
 
-// 搜索条件变化防抖后刷新
 let historySearchTimer: ReturnType<typeof setTimeout> | null = null
 watch([historySearch, historyStartTime, historyEndTime], () => {
   if (historySearchTimer) clearTimeout(historySearchTimer)
@@ -111,7 +95,6 @@ const historyTimeline = computed(() => {
   return groups
 })
 
-// 左侧日期导航：从 dateCountCache 派生（与热力图数据源一致），而非从已加载会话列表派生
 const historyDateNavTimeline = computed(() => {
   return Object.entries(dateCountCache.value)
     .filter(([, count]) => count > 0)
@@ -137,8 +120,6 @@ function scrollToHistoryDate(dateKey: string) {
   document.getElementById(`history-group-${dateKey}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// 历史页热力图：每日会话数来自 /chat/date-counts（全量会话、按客户端本地日分桶），
-// 与列表加载的分页/搜索过滤解耦；历史缓存 1 分钟轮询刷新当天计数
 const historyHeatmapYear = ref(new Date().getFullYear())
 const historyHeatmapMonth = ref(new Date().getMonth() + 1)
 const dateCountCache = ref<Record<string, number>>({})
@@ -163,7 +144,7 @@ async function loadHistoryDateCounts() {
         }
       }
     }
-  } catch { /* ignore */ }
+  } catch {  }
 }
 
 function ensureDateCounts() {
@@ -224,7 +205,6 @@ const historyHeatmapActiveDay = computed(() => {
   return y === historyHeatmapYear.value && m === historyHeatmapMonth.value - 1 ? d : null
 })
 
-// 热力图点击的按日筛选状态
 const historyDateFilter = ref<string | null>(null)
 
 function clickHistoryHeatmapDay(day: number | null) {
@@ -255,7 +235,6 @@ function clickHistoryDateNav(dateKey: string) {
   })
 }
 
-// 无限滚动 sentinel
 const historySentinel = ref<HTMLElement | null>(null)
 let historyObserver: IntersectionObserver | null = null
 
@@ -301,16 +280,6 @@ async function handleDeleteSession(sessionId: string) {
   chatList.value = chatList.value.filter(c => c.sessionId !== sessionId)
 }
 
-// ===== 修改前（2026-09-21）：逐条 Promise.allSettled 调用单条接口，关联数据清理分散在多次请求中 =====
-// async function handleBatchDelete() {
-//   const ids = [...selectedSessions.value]
-//   const results = await Promise.allSettled(ids.map(id => chatApi.deleteSession(id)))
-//   const okIds = ids.filter((_, i) => results[i].status === 'fulfilled')
-//   chatList.value = chatList.value.filter(c => !okIds.includes(c.sessionId))
-//   selectedSessions.value = new Set()
-// }
-
-// ===== 修改后：一次调用批量删除接口提交 session_ids[]，后端统一级联清理关联数据 =====
 async function handleBatchDelete() {
   const ids = [...selectedSessions.value].filter(Boolean)
   if (ids.length === 0) {

@@ -15,11 +15,6 @@ import { useOnceVisible } from '@/composables/useOnceVisible'
 import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
 import { layoutChipsInCard } from '@/utils/cardChipLayout'
 
-// ===== 原始实现（保留作为参考）：静态截图，已替换为下方动态组件 =====
-// import heroMap from '@/assets/home/hero-map.png'
-// import memoryPin from '@/assets/home/memory-pin.png'
-// import tagGraph from '@/assets/home/tag-graph.png'
-// import keywordGraph from '@/assets/home/keyword-graph.png'
 import qrQq from '@/assets/home/qr-qq.jpg'
 import qrWechat from '@/assets/home/qr-wechat.jpg'
 import HeroAppShot from '@/components/home/HeroAppShot.vue'
@@ -45,7 +40,6 @@ function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 }
 
-// ===== 首页展示卡片的静态数据 =====
 const growCards = [
   { icon: markRaw(Network), title: '发现你从没意识到的联系', text: '节点越大关联越多，颜色越红出现越频繁。有时你会盯着图愣一下：「原来我最近一直在纠结这件事。」' },
   { icon: markRaw(Compass), title: '顺着网找记忆', text: '除了字面相似，它还沿标签和关键词的关系去捞旧事，常能想起靠搜索根本找不到的过去。' },
@@ -65,13 +59,31 @@ const privacyCards = [
   { icon: markRaw(Package), title: '解压即用', text: '发行包内含运行环境，Linux / macOS / Windows 全覆盖，目标机器无需安装任何依赖；支持离线安装、程序与数据分离，升级重装都不丢数据。' },
   { icon: markRaw(Puzzle), title: '开源，可自建', text: 'Apache 2.0，代码全开放。个人用是本地 Agent，想给团队用也能改造成服务。' },
 ]
-const timelineOverview = [
-  { value: '12.4s', label: '总耗时' },
-  { value: '3,148', label: '输入 Token' },
-  { value: '5', label: '工具调用' },
-  { value: '1', label: '需求确认' },
-]
-// ===== 记忆地图示意：整齐两行三列网格（与 Hero 同款布局语义），节点悬浮高亮 + 连线入场 =====
+const lastRunOverview = ref<{ duration: string; tokens: string; skills: string; confirms: string }>({
+  duration: '—', tokens: '—', skills: '—', confirms: '—',
+})
+async function loadLastRunOverview() {
+  try {
+    const res = await fetch('/api/analytics/last-run-overview').then(r => r.json()) as {
+      available?: boolean; duration_s?: number; input_tokens?: number; skill_calls?: number; permission_asks?: number
+    }
+    if (!res?.available) return
+    lastRunOverview.value = {
+      duration: `${res.duration_s ?? 0}s`,
+      tokens: String(res.input_tokens ?? 0),
+      skills: String(res.skill_calls ?? 0),
+      confirms: String(res.permission_asks ?? 0),
+    }
+  } catch {  }
+}
+void loadLastRunOverview()
+
+const timelineOverview = computed(() => [
+  { value: lastRunOverview.value.duration, label: '最近问答总耗时' },
+  { value: lastRunOverview.value.tokens, label: '最近问答输入 Token' },
+  { value: lastRunOverview.value.skills, label: '最近问答技能调用' },
+  { value: lastRunOverview.value.confirms, label: '最近问答需求确认' },
+])
 interface MapCardChip { label: string; kind: 'blue' | 'gray' | 'eval' }
 
 interface MapCard {
@@ -88,16 +100,6 @@ interface MapCard {
   pinned?: boolean
 }
 
-// ===== 原始实现（保留作为参考）：尺寸不一、行列错位的自由布点，图例浮层遮挡卡片 =====
-// const mapNodes = [
-//   { id: 'n1', x: 45, y: 60, w: 210, h: 90, title: '北京今天天气怎么样？', sub: '提问' },
-//   { id: 'n2', x: 45, y: 250, w: 210, h: 115, title: '多云转小雨 29/21℃', sub: '风力 3 级 · 傍晚有雨', pinned: true },
-//   { id: 'n3', x: 495, y: 255, w: 210, h: 115, title: '追问：适合穿什么？', sub: '引用了上一条天气' },
-//   { id: 'n4', x: 495, y: 455, w: 210, h: 70, title: '短袖 + 薄外套 + 雨伞', sub: '' },
-//   { id: 'n5', x: 665, y: 70, w: 220, h: 120, title: '下午去博物馆还是商场？', sub: '勾选了「天气」作为依据' },
-//   { id: 'n6', x: 665, y: 270, w: 220, h: 120, title: '建议上午户外，下午室内', sub: '点节点可跳回原文', pinned: true },
-// ]
-// 两行三列：列 x=40/340/640（宽 250），行 y=50/250（高 140）
 const mapNodes: MapCard[] = [
   { id: 'n1', x: 40, y: 50, w: 250, h: 140, time: '13:02', title: '北京今天天气怎么样？', sub: '提问 · 开启话题', chips: [{ label: '引用 0', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }], chars: '8字' },
   { id: 'n2', x: 340, y: 50, w: 250, h: 140, time: '13:02', title: '多云转小雨 29/21℃', sub: '风力 3 级 · 傍晚有雨', chips: [{ label: '引用 1', kind: 'blue' }, { label: '被引用 2', kind: 'gray' }, { label: '思考过程', kind: 'blue' }], chars: '188字', pinned: true },
@@ -107,7 +109,6 @@ const mapNodes: MapCard[] = [
   { id: 'n6', x: 640, y: 250, w: 250, h: 140, time: '13:04', title: '建议上午户外，下午室内', sub: '点节点可跳回原文', chips: [{ label: '引用 2', kind: 'blue' }, { label: '被引用 0', kind: 'gray' }], chars: '302字', pinned: true },
 ]
 
-// ===== 统计数字 =====
 const statItems = [
   { target: 4, suffix: '', label: '种记忆检索维度' },
   { target: 13, suffix: '+', label: '家模型提供商' },
@@ -118,7 +119,6 @@ const statDisplays = statItems.map((s) => useCountUp(s.target, s.suffix))
 const statsEl = ref<Element | null>(null)
 useOnceVisible(statsEl, () => statDisplays.forEach((s) => s.start()), 0.6)
 
-// ===== 记忆地图示意：节点悬浮高亮 + 连线入场 =====
 const mapEl = ref<Element | null>(null)
 const mapDrawn = ref(false)
 useOnceVisible(mapEl, () => { mapDrawn.value = true }, 0.3)
@@ -134,15 +134,6 @@ interface MapEdge {
   delay: string
 }
 
-// ===== 原始实现（保留作为参考）：手写坐标连线，直线/折角生硬且锚点脱靶 =====
-// const mapEdges = [
-//   { from: 'n1', to: 'n2', solid: true, d: 'M150,150 L150,250', delay: '0.2s' },
-//   { from: 'n2', to: 'n3', solid: false, d: 'M150,365 L600,255', delay: '0.5s' },
-//   { from: 'n3', to: 'n4', solid: true, d: 'M600,370 L600,455', delay: '0.8s' },
-//   { from: 'n2', to: 'n5', solid: false, d: 'M250,300 L720,120', delay: '1.1s' },
-//   { from: 'n5', to: 'n6', solid: true, d: 'M775,190 L775,270', delay: '1.4s' },
-// ]
-// 连线全部沿网格正交方向：问答链 = solid，引用 / 勾选依据 = dashed
 const mapEdges: MapEdge[] = [
   { from: 'n1', fromSide: 'right', to: 'n2', toSide: 'left', solid: true, delay: '0.15s' },
   { from: 'n2', fromSide: 'right', to: 'n5', toSide: 'left', solid: false, delay: '0.4s' },
@@ -169,14 +160,13 @@ function isEdgeHot(edge: { from: string; to: string }) {
   return hoveredNode.value === edge.from || hoveredNode.value === edge.to
 }
 
-// ===== 思考时间线：进入视口后逐步点亮并循环 =====
 const timelineSteps = [
-  { label: '需求理解 Agent', time: '0.8s' },
-  { label: '选择 Agent 与模型', time: '1.2s' },
-  { label: '组件装配 · Skill / MCP', time: '2.1s' },
-  { label: '多轮思考与工具执行', time: '6.4s' },
-  { label: '评估 Agent 质量打分', time: '1.1s' },
-  { label: '写作 Agent 美化排版', time: '0.8s' },
+  { label: '需求理解 Agent' },
+  { label: '选择 Agent 与模型' },
+  { label: '组件装配 · Skill / MCP' },
+  { label: '多轮思考与技能执行' },
+  { label: '评估 Agent 质量打分' },
+  { label: '写作 Agent 美化排版' },
 ]
 const timelineEl = ref<Element | null>(null)
 const timelineActive = ref(0)
@@ -196,7 +186,6 @@ function runTimeline(idx: number) {
 
 useOnceVisible(timelineEl, () => runTimeline(0), 0.4)
 
-// ===== 终端打字 =====
 const terminalEl = ref<Element | null>(null)
 const { rendered, start: startTyping, stop: stopTyping } = useTypewriter([
   { t: '$ npm i -g brian-agent', c: 'cmd' },
@@ -206,19 +195,17 @@ const { rendered, start: startTyping, stop: stopTyping } = useTypewriter([
 ])
 useOnceVisible(terminalEl, startTyping, 0.4)
 
-// ===== 对比表 =====
 const compareRows = [
   { concern: '长对话记忆', others: '自动塞最近 N 轮，容易断片', brian: '勾选引用 + Pin，你说了算' },
   { concern: '记忆长什么样', others: '一堆散乱历史', brian: '一张可拖可点、能看见关系的记忆地图' },
   { concern: '越用越懂你', others: '基本不变', brian: '主动学习、知识沉淀、画像持续更新' },
   { concern: '本地资料', others: '通常不支持', brian: '本地 Markdown 资料库 + 自学习 + 选中即问' },
-  { concern: '思考透明', others: '黑盒', brian: '需求确认、工具调用、耗时与评分全可见' },
+  { concern: '思考透明', others: '黑盒', brian: '需求确认、技能调用、耗时与评分全可见' },
   { concern: '数据归属', others: '在平台服务器', brian: '全在本机，API Key 自己保管' },
   { concern: '模型选择', others: '平台指定', brian: '主流提供商任选，含用量限额' },
   { concern: '部署形态', others: '只能用云', brian: '本地运行，也能自建为服务' },
 ]
 
-// ===== 交流群 =====
 const qqCopied = ref(false)
 
 async function copyQqGroup() {
@@ -244,23 +231,21 @@ onUnmounted(() => {
     <NeuralBackground />
     <Header />
 
-    <!-- 锚点导航 -->
     <div class="sticky top-14 z-40 glass-panel border-b">
       <div class="home-wrap flex items-center gap-1 overflow-x-auto scrollbar-hide">
         <button
           v-for="a in anchors" :key="a.id"
-          class="shrink-0 px-3 py-2.5 text-[13px] text-apple-gray-500 dark:text-apple-gray-400 hover:text-brian-blue transition-colors"
+          class="shrink-0 px-3 py-2.5 text-xs text-apple-gray-500 dark:text-apple-gray-400 hover:text-brian-blue transition-colors"
           @click="scrollToSection(a.id)"
         >{{ a.label }}</button>
-        <button class="shrink-0 ml-auto px-3.5 py-1.5 my-1.5 rounded-lg bg-brian-blue text-white text-[13px] font-medium hover:bg-brian-blue/90 transition-colors" @click="goChat">
+        <button class="shrink-0 ml-auto px-3.5 py-1.5 my-1.5 rounded-lg bg-brian-blue text-white text-xs font-medium hover:bg-brian-blue/90 transition-colors" @click="goChat">
           立即体验
         </button>
       </div>
     </div>
 
-    <!-- HERO -->
     <header class="home-wrap pt-16 pb-10 text-center relative z-10">
-      <div v-reveal class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-panel text-[13px] text-apple-gray-600 dark:text-apple-gray-300">
+      <div v-reveal class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-panel text-xs text-apple-gray-600 dark:text-apple-gray-300">
         <span class="w-2 h-2 rounded-full bg-success-green motion-safe:animate-pulse-soft"></span>
         本地运行 · 开源 · 解压即用
       </div>
@@ -284,38 +269,35 @@ onUnmounted(() => {
       </p>
 
       <div v-reveal class="home-shot mt-12 text-left">
-        <p class="px-4 py-2.5 text-[12.5px] text-apple-gray-400 border-b border-apple-gray-200/60 dark:border-apple-gray-700/60">
+        <p class="px-4 py-2.5 text-xs text-apple-gray-400 border-b border-apple-gray-200/60 dark:border-apple-gray-700/60">
           左边，是你和 AI 的全部记忆画成的一张可操作地图；右边，是正常的对话问答。
         </p>
-        <!-- 原始实现（保留作为参考）：<img :src="heroMap" alt="Brian-Agent 对话页：左侧 ChatMap 记忆地图，右侧对话" class="block w-full" /> -->
         <HeroAppShot />
       </div>
     </header>
 
-    <!-- STATS -->
     <div ref="statsEl" class="home-wrap relative z-10">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div v-for="(s, i) in statItems" :key="s.label" v-reveal="i * 60 + 'ms'" class="block-card !rounded-2xl py-7 text-center">
           <div class="text-3xl md:text-4xl font-bold text-brian-blue tabular-nums">{{ statDisplays[i].display.value }}</div>
-          <div class="mt-1 text-[13px] text-apple-gray-400">{{ s.label }}</div>
+          <div class="mt-1 text-xs text-apple-gray-400">{{ s.label }}</div>
         </div>
       </div>
     </div>
 
-    <!-- PAIN -->
     <section class="py-24 relative z-10">
       <div class="home-wrap text-center">
         <p v-reveal class="home-eyebrow">你一定经历过</p>
         <h2 v-reveal="'80ms'" class="home-h2">第 50 轮，它忘了第 3 轮</h2>
         <div v-reveal="'160ms'" class="max-w-2xl mx-auto mt-10 glass-panel rounded-2xl shadow-xl p-7 text-left space-y-3.5">
           <div class="flex justify-end">
-            <p class="home-bubble home-bubble-me"><span class="block text-[11px] opacity-70 mb-0.5">你</span>我们不是说好只看周末吗？</p>
+            <p class="home-bubble home-bubble-me"><span class="block text-2xs opacity-70 mb-0.5">你</span>我们不是说好只看周末吗？</p>
           </div>
           <div>
-            <p class="home-bubble home-bubble-ai"><span class="block text-[11px] opacity-60 mb-0.5">AI</span>抱歉，我没有看到相关信息。</p>
+            <p class="home-bubble home-bubble-ai"><span class="block text-2xs opacity-60 mb-0.5">AI</span>抱歉，我没有看到相关信息。</p>
           </div>
           <div>
-            <p class="home-bubble home-bubble-ai"><span class="block text-[11px] opacity-60 mb-0.5">你（第 17 次）</span>于是又把三天前那两段对话翻出来，重新贴了一遍。</p>
+            <p class="home-bubble home-bubble-ai"><span class="block text-2xs opacity-60 mb-0.5">你（第 17 次）</span>于是又把三天前那两段对话翻出来，重新贴了一遍。</p>
           </div>
         </div>
         <p v-reveal class="mt-10 max-w-3xl mx-auto text-lg md:text-2xl font-semibold leading-relaxed">
@@ -325,7 +307,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 01 记忆地图 -->
     <section id="memory" class="scroll-mt-28 py-20 relative z-10">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">01 · 记忆地图</p>
@@ -336,20 +317,12 @@ onUnmounted(() => {
 
         <div class="grid lg:grid-cols-2 gap-10 mt-10 items-start">
           <div ref="mapEl" v-reveal class="block-card relative overflow-hidden" :class="{ 'home-map-drawn': mapDrawn }">
-            <!-- ===== 原始实现（保留作为参考）：绝对定位图例浮层，会遮挡右下角卡片 =====
-            <div class="absolute right-4 bottom-4 z-10 text-[11.5px] leading-7 text-right bg-white/70 dark:bg-black/40 backdrop-blur px-3 py-2 rounded-lg border border-apple-gray-200/60 dark:border-apple-gray-700/60">
-              <div><i class="home-legend-dot" style="border-color:#007AFF"></i>提问 / 回答</div>
-              <div><i class="home-legend-dot" style="border-color:#AF52DE"></i>引用关系（可勾选）</div>
-              <div><i class="home-legend-dot" style="border-color:#FF9500"></i>Pin（永久生效）</div>
-            </div>
-            ===== 图例已移至画布下方页脚条，不再遮挡任何卡片 ===== -->
             <svg viewBox="0 0 900 450" class="w-full h-auto block" @mouseleave="hoveredNode = null">
               <path
                 v-for="(e, i) in mapEdgePaths" :key="e.from + e.to"
                 class="home-mline" :class="{ solid: e.solid, hot: isEdgeHot(e) }"
                 :d="e.d" :style="{ animationDelay: e.delay }"
               />
-              <!-- solid 连线上的流动光点（SMIL 不响应 reduced-motion，故按需渲染） -->
               <g v-if="!reduceMotion">
                 <circle v-for="(e, i) in solidMapEdgePaths" :key="`mp${i}`" class="home-pulse" r="2.3">
                   <animateMotion :path="e.d" dur="3s" repeatCount="indefinite" :begin="`${-i}s`" />
@@ -368,8 +341,7 @@ onUnmounted(() => {
                 <text class="home-mchars" :x="n.x + n.w - 12" :y="n.y + n.h - 7" text-anchor="end">{{ n.chars }}</text>
               </g>
             </svg>
-            <!-- 图例页脚条：不再浮于画布之上 -->
-            <div class="flex flex-wrap items-center justify-center gap-x-7 gap-y-1 px-4 py-3 border-t border-apple-gray-200/60 dark:border-apple-gray-700/60 text-[11.5px] text-apple-gray-500 dark:text-apple-gray-400">
+            <div class="flex flex-wrap items-center justify-center gap-x-7 gap-y-1 px-4 py-3 border-t border-apple-gray-200/60 dark:border-apple-gray-700/60 text-2xs text-apple-gray-500 dark:text-apple-gray-400">
               <span><i class="home-legend-dot" style="border-color:#007AFF"></i>提问 / 回答</span>
               <span><i class="home-legend-dot" style="border-color:#AF52DE"></i>引用关系（可勾选）</span>
               <span><i class="home-legend-dot" style="border-color:#FF9500"></i>Pin（永久生效）</span>
@@ -389,8 +361,7 @@ onUnmounted(() => {
               </li>
             </ul>
             <div v-reveal class="home-shot mt-6 relative">
-              <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-brian-blue/10 text-brian-blue border border-brian-blue/30">Memory Pin</span>
-              <!-- 原始实现（保留作为参考）：<img :src="memoryPin" alt="Memory Pin：把关键消息钉在上下文里" class="block w-full pt-11" /> -->
+              <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-brian-blue/10 text-brian-blue border border-brian-blue/30">Memory Pin</span>
               <MemoryPinShot class="pt-11" />
             </div>
             <p v-reveal class="home-sub mt-5">
@@ -401,7 +372,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 02 越长越懂你 -->
     <section id="grow" class="scroll-mt-28 py-20 relative z-10 bg-apple-gray-50/60 dark:bg-white/[.02]">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">02 · 越长越懂你</p>
@@ -411,8 +381,7 @@ onUnmounted(() => {
         </p>
 
         <div v-reveal class="home-shot mt-10 motion-safe:home-floaty">
-          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-violet-500/10 text-violet-500 border border-violet-500/30">涌现图 · Tag Graph</span>
-          <!-- 原始实现（保留作为参考）：<img :src="tagGraph" alt="涌现图：标签之间自动涌现的关联网络" class="block w-full pt-11" /> -->
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-violet-500/10 text-violet-500 border border-violet-500/30">涌现图 · Tag Graph</span>
           <GraphShot
             class="pt-11" :nodes="TAG_GRAPH.nodes" :edges="TAG_GRAPH.edges"
             breadcrumb="涌现" active-tab="涌现"
@@ -425,8 +394,7 @@ onUnmounted(() => {
         </p>
 
         <div v-reveal class="home-shot mt-9 motion-safe:home-floaty" style="animation-delay:1.5s">
-          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11.5px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">关键词图 · Keyword Graph</span>
-          <!-- 原始实现（保留作为参考）：<img :src="keywordGraph" alt="关键词图：被一个词激活的联想网络" class="block w-full pt-11" /> -->
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">关键词图 · Keyword Graph</span>
           <GraphShot
             class="pt-11" :nodes="KEYWORD_GRAPH.nodes" :edges="KEYWORD_GRAPH.edges"
             breadcrumb="关键词图" active-tab="关键词图"
@@ -443,14 +411,13 @@ onUnmounted(() => {
             <div class="w-10 h-10 rounded-xl bg-brian-blue/10 grid place-items-center mb-4">
               <component :is="c.icon" :size="20" class="text-brian-blue" />
             </div>
-            <h3 class="text-[17px] font-semibold mb-2">{{ c.title }}</h3>
-            <p class="text-[14.5px] text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
+            <h3 class="text-lg font-semibold mb-2">{{ c.title }}</h3>
+            <p class="text-sm text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 03 可见的思考 -->
     <section id="trust" class="scroll-mt-28 py-20 relative z-10">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">03 · 可见的思考</p>
@@ -465,16 +432,16 @@ onUnmounted(() => {
               <span class="w-2.5 h-2.5 rounded-full bg-error-red/80"></span>
               <span class="w-2.5 h-2.5 rounded-full bg-warning-orange/80"></span>
               <span class="w-2.5 h-2.5 rounded-full bg-success-green/80"></span>
-              <span class="ml-2 text-[12.5px] text-apple-gray-400">需求理解确认</span>
+              <span class="ml-2 text-xs text-apple-gray-400">需求理解确认</span>
             </div>
             <div class="p-6">
-              <p class="text-[15px] leading-relaxed">你好像想说的是：为一个「周末两天的北京行程」做规划，且只考虑室内外兼顾。是这个意思吗？</p>
+              <p class="text-base leading-relaxed">你好像想说的是：为一个「周末两天的北京行程」做规划，且只考虑室内外兼顾。是这个意思吗？</p>
               <div class="flex gap-2.5 mt-5 flex-wrap">
-                <span class="px-3.5 py-1.5 rounded-lg bg-brian-blue text-white text-[13px] font-medium">按理解执行</span>
-                <span class="px-3.5 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-[13px]">按原文执行</span>
-                <span class="px-3.5 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-[13px]">取消</span>
+                <span class="px-3.5 py-1.5 rounded-lg bg-brian-blue text-white text-xs font-medium">按理解执行</span>
+                <span class="px-3.5 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-xs">按原文执行</span>
+                <span class="px-3.5 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-xs">取消</span>
               </div>
-              <p class="mt-5 text-[13px] text-apple-gray-400">匹配度 0.62 / 阈值 0.75 · 判断依据：问题过于宽泛，缺少时间与范围约束</p>
+              <p class="mt-5 text-xs text-apple-gray-400">匹配度 0.62 / 阈值 0.75 · 判断依据：问题过于宽泛，缺少时间与范围约束</p>
             </div>
           </div>
 
@@ -487,7 +454,7 @@ onUnmounted(() => {
                 <b>每次回答都有评分和优化建议。</b>点「评估结果」，就能看到这次回答被打了多少分、哪里还能更好。
               </li>
             </ul>
-            <p v-reveal class="mt-6 text-[15.5px] font-semibold leading-relaxed">
+            <p v-reveal class="mt-6 text-base font-semibold leading-relaxed">
               一个愿意承认「我可能理解错了」的 AI，比一个永远自信地答错的 AI，可信太多。
             </p>
           </div>
@@ -499,13 +466,13 @@ onUnmounted(() => {
               <span class="w-2.5 h-2.5 rounded-full bg-error-red/80"></span>
               <span class="w-2.5 h-2.5 rounded-full bg-warning-orange/80"></span>
               <span class="w-2.5 h-2.5 rounded-full bg-success-green/80"></span>
-              <span class="ml-2 text-[12.5px] text-apple-gray-400">思考过程 · 执行时间线</span>
+              <span class="ml-2 text-xs text-apple-gray-400">思考过程 · 执行时间线</span>
             </div>
             <div class="p-6">
               <div class="grid grid-cols-4 gap-3 mb-6">
                 <div v-for="o in timelineOverview" :key="o.label" class="text-center py-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/70">
-                  <b class="block text-[17px] tabular-nums">{{ o.value }}</b>
-                  <span class="text-[11.5px] text-apple-gray-400">{{ o.label }}</span>
+                  <b class="block text-lg tabular-nums">{{ o.value }}</b>
+                  <span class="text-2xs text-apple-gray-400">{{ o.label }}</span>
                 </div>
               </div>
               <div ref="timelineEl" class="space-y-2.5">
@@ -513,7 +480,7 @@ onUnmounted(() => {
                   v-for="(s, i) in timelineSteps" :key="s.label"
                   class="home-step" :class="{ on: i < timelineActive }"
                 >
-                  {{ s.label }}<span class="ml-auto text-[12px] tabular-nums text-apple-gray-400">{{ s.time }}</span>
+                  {{ s.label }}
                 </div>
               </div>
             </div>
@@ -536,7 +503,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 04 第二大脑 -->
     <section id="brain" class="scroll-mt-28 py-20 relative z-10 bg-apple-gray-50/60 dark:bg-white/[.02]">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">04 · 第二大脑</p>
@@ -548,14 +514,13 @@ onUnmounted(() => {
             <div class="w-10 h-10 rounded-xl bg-brian-blue/10 grid place-items-center mb-4">
               <component :is="c.icon" :size="20" class="text-brian-blue" />
             </div>
-            <h3 class="text-[17px] font-semibold mb-2">{{ c.title }}</h3>
-            <p class="text-[14.5px] text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
+            <h3 class="text-lg font-semibold mb-2">{{ c.title }}</h3>
+            <p class="text-sm text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 05 数据归属 -->
     <section id="privacy" class="scroll-mt-28 py-20 relative z-10">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">05 · 数据归属</p>
@@ -566,14 +531,13 @@ onUnmounted(() => {
             <div class="w-10 h-10 rounded-xl bg-success-green/10 grid place-items-center mb-4">
               <component :is="c.icon" :size="20" class="text-success-green" />
             </div>
-            <h3 class="text-[17px] font-semibold mb-2">{{ c.title }}</h3>
-            <p class="text-[14.5px] text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
+            <h3 class="text-lg font-semibold mb-2">{{ c.title }}</h3>
+            <p class="text-sm text-apple-gray-500 dark:text-apple-gray-400 leading-relaxed">{{ c.text }}</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 现在就试 -->
     <section id="start" class="scroll-mt-28 py-20 relative z-10">
       <div class="home-wrap">
         <div v-reveal class="block-card !rounded-3xl text-center px-6 py-14 relative overflow-hidden">
@@ -588,9 +552,9 @@ onUnmounted(() => {
               <span class="w-2.5 h-2.5 rounded-full" style="background:#ff5f57"></span>
               <span class="w-2.5 h-2.5 rounded-full" style="background:#febc2e"></span>
               <span class="w-2.5 h-2.5 rounded-full" style="background:#28c840"></span>
-              <span class="ml-2 text-[12.5px] text-apple-gray-400">bash</span>
+              <span class="ml-2 text-xs text-apple-gray-400">bash</span>
             </div>
-            <pre class="px-6 py-6 font-mono text-[13.5px] leading-[1.9] whitespace-pre-wrap min-h-[150px]" v-html="rendered"></pre>
+            <pre class="px-6 py-6 font-mono text-xs leading-[1.9] whitespace-pre-wrap min-h-[150px]" v-html="rendered"></pre>
           </div>
 
           <div class="mt-8 flex items-center justify-center gap-3 flex-wrap relative z-10">
@@ -603,13 +567,12 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 对比 -->
     <section id="compare" class="scroll-mt-28 pt-4 pb-20 relative z-10">
       <div class="home-wrap">
         <p v-reveal class="home-eyebrow">一张表看懂</p>
         <h2 v-reveal="'80ms'" class="home-h2">它和「套壳聊天」的差距</h2>
         <div v-reveal="'160ms'" class="block-card mt-10 overflow-x-auto">
-          <table class="w-full text-[14.5px]">
+          <table class="w-full text-sm">
             <thead>
               <tr class="text-left border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <th class="px-5 py-3.5 font-semibold text-apple-gray-500 dark:text-apple-gray-400">你在意的事</th>
@@ -629,7 +592,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- 交流群 -->
     <section id="community" class="scroll-mt-28 pb-24 relative z-10">
       <div class="home-wrap text-center">
         <p v-reveal class="home-eyebrow">加入我们</p>
@@ -641,34 +603,34 @@ onUnmounted(() => {
             <div class="w-52 h-52 mx-auto p-2.5 rounded-2xl bg-white border border-apple-gray-200 shadow-md">
               <img :src="qrQq" alt="QQ 群二维码：Brian Agent（群号 942758906）" class="w-full h-full object-contain rounded-lg" loading="lazy" />
             </div>
-            <h3 class="mt-5 text-[17px] font-semibold">QQ 群</h3>
+            <h3 class="mt-5 text-lg font-semibold">QQ 群</h3>
             <button
-              class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-[14px] hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors"
+              class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-sm hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors"
               :title="qqCopied ? '已复制' : '点击复制群号'"
               @click="copyQqGroup"
             >
-              群号 <b class="font-mono text-[15px] tracking-wider text-brian-blue">{{ QQ_GROUP }}</b>
+              群号 <b class="font-mono text-base tracking-wider text-brian-blue">{{ QQ_GROUP }}</b>
               <Check v-if="qqCopied" :size="14" class="text-success-green" />
               <Copy v-else :size="14" class="text-apple-gray-400" />
             </button>
-            <p class="mt-2.5 text-[12.5px] text-apple-gray-400">扫码加入，或 QQ 搜索群号</p>
+            <p class="mt-2.5 text-xs text-apple-gray-400">扫码加入，或 QQ 搜索群号</p>
           </div>
 
           <div v-reveal="'90ms'" class="block-card p-7 hover:-translate-y-1.5 hover:shadow-lg transition-all duration-300">
             <div class="w-52 h-52 mx-auto p-2.5 rounded-2xl bg-white border border-apple-gray-200 shadow-md">
               <img :src="qrWechat" alt="微信群二维码：Brian Agent" class="w-full h-full object-contain rounded-lg" loading="lazy" />
             </div>
-            <h3 class="mt-5 text-[17px] font-semibold">微信群</h3>
-            <p class="mt-2 text-[14px] inline-flex items-center gap-1.5 text-apple-gray-500 dark:text-apple-gray-400">
+            <h3 class="mt-5 text-lg font-semibold">微信群</h3>
+            <p class="mt-2 text-sm inline-flex items-center gap-1.5 text-apple-gray-500 dark:text-apple-gray-400">
               <MessageCircle :size="15" /> 微信扫一扫，直接进群
             </p>
-            <p class="mt-2.5 text-[12.5px] text-apple-gray-400">群满时可先加 QQ 群备用</p>
+            <p class="mt-2.5 text-xs text-apple-gray-400">群满时可先加 QQ 群备用</p>
           </div>
         </div>
       </div>
     </section>
 
-    <footer class="border-t border-apple-gray-200 dark:border-apple-gray-700 py-12 text-center text-[13.5px] text-apple-gray-400 relative z-10">
+    <footer class="border-t border-apple-gray-200 dark:border-apple-gray-700 py-12 text-center text-xs text-apple-gray-400 relative z-10">
       <p>Brian-Agent · 一个会记住你、也会自己长大的本地个人 Agent</p>
       <div class="mt-3 flex items-center justify-center gap-5 flex-wrap">
         <a :href="GITHUB_URL" target="_blank" rel="noopener" class="hover:text-brian-blue transition-colors">GitHub</a>
@@ -703,7 +665,6 @@ onUnmounted(() => {
 .dark .home-check b { color: #E5E5EA; }
 .home-check::before { content: '✓'; position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(0, 122, 255, 0.12); color: #007AFF; font-size: 11px; display: grid; place-items: center; margin-top: 5px; }
 
-/* 记忆地图示意：圆帽点状虚线（引用）+ 实线（上下文延续），锚点由 edgePath 几何生成 */
 .home-mline { fill: none; stroke: rgba(0, 122, 255, 0.42); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; transition: 0.3s; }
 .home-mline.solid { stroke: rgba(0, 122, 255, 0.62); stroke-dasharray: none; }
 .home-map-drawn .home-mline:not(.solid) { opacity: 1; transition: opacity 0.8s ease; animation: home-flow 1.8s linear infinite; }
@@ -734,17 +695,14 @@ onUnmounted(() => {
 .home-pin { fill: #FF9500; animation: home-pulse 2s infinite; }
 .home-legend-dot { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
 
-/* 思考时间线 */
 .home-step { display: flex; align-items: center; padding: 10px 14px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; opacity: 0.35; transition: 0.4s; }
 .home-step.on { opacity: 1; border-color: rgba(0, 122, 255, 0.35); background: rgba(0, 122, 255, 0.06); }
 
-/* 终端 */
 .home-term { border-radius: 16px; overflow: hidden; border: 1px solid #3A3A3C; background: #060910; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
 .home-term pre { margin: 0; color: #CFE0FF; }
 .home-term :deep(.cmd) { color: #34C759; }
 .home-term :deep(.cur) { display: inline-block; width: 8px; height: 15px; background: #32ADE6; vertical-align: -3px; animation: home-blink 1s steps(1) infinite; }
 
-/* 渐显 */
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
 .reveal.is-visible { opacity: 1; transform: none; }
 

@@ -1,10 +1,3 @@
-/**
- * @fileoverview 消息关系图谱数据装配纯函数。
- *
- * 从 stores/session 的 loadDag 分离：可视化接口返回的原始节点/边 →
- * ChatMap 展示模型（REQUEST/RESPONSE 节点 + 一问一答/引用/追问边），
- * 布局交给 utils/chatMapLayout。
- */
 import type { ChatMapNode, ChatMapEdge } from '../api/types'
 
 function mapEdgeType(type: string): ChatMapEdge['edgeType'] {
@@ -14,12 +7,6 @@ function mapEdgeType(type: string): ChatMapEdge['edgeType'] {
   return 'CITATION'
 }
 
-/**
- * 将 messageDAG 接口的原始图数据装配为 ChatMap 节点与边。
- * - 仅保留 REQUEST / RESPONSE 节点，按创建时间升序；
- * - 丢弃端点缺失或自环的边，并按 (from,to) 去重；
- * - 坐标字段初始化为 0，由 layoutChatMap 就地计算。
- */
 export function buildMessageGraph(
   rawNodes: Array<Record<string, unknown>>,
   rawEdges: Array<Record<string, unknown>>,

@@ -3,9 +3,6 @@ import { ref } from 'vue'
 import { Brain, User, Pin, Gauge, Copy, ChevronDown } from '@lucide/vue'
 import { useOnceVisible } from '@/composables/useOnceVisible'
 
-// MemoryPinShot：首页「Memory Pin」动态示意——
-// 钉住的消息卡片右上角 Pin 图标持续红色高亮脉冲，替代原静态截图 memory-pin.png。
-
 const rootEl = ref<Element | null>(null)
 const entered = ref(false)
 useOnceVisible(rootEl, () => { entered.value = true }, 0.3)
@@ -14,7 +11,6 @@ useOnceVisible(rootEl, () => { entered.value = true }, 0.3)
 <template>
   <div ref="rootEl" class="select-none" :class="{ on: entered }" role="img" aria-label="Memory Pin 示意：把关键消息钉住，每轮对话都生效">
     <div class="bg-[#17171A] px-4 py-5 space-y-4 text-left">
-      <!-- 被钉住的用户消息 -->
       <div class="mp-msg flex items-start gap-2" style="animation-delay: 0.1s">
         <span class="mp-avatar"><User :size="11" /></span>
         <div class="mp-card relative flex-1 max-w-[88%]">
@@ -30,7 +26,7 @@ useOnceVisible(rootEl, () => { entered.value = true }, 0.3)
           </div>
           <p class="mp-fold">▸ 摘要</p>
           <p class="mp-fold">▾ 原文</p>
-          <p class="text-[12px] font-semibold text-apple-gray-100">回复的内容不要啰嗦</p>
+          <p class="text-xs font-semibold text-apple-gray-100">回复的内容不要啰嗦</p>
           <div class="mp-chips">
             <span class="mp-chip blue">引用 0 <ChevronDown :size="8" class="inline" /></span>
             <span class="mp-chip gray">被引用 1 <ChevronDown :size="8" class="inline" /></span>
@@ -42,7 +38,6 @@ useOnceVisible(rootEl, () => { entered.value = true }, 0.3)
         </div>
       </div>
 
-      <!-- 钉住后生效的 AI 回复 -->
       <div class="mp-msg flex items-start gap-2 justify-end" style="animation-delay: 0.45s">
         <div class="mp-card w-[86%]">
           <div class="flex items-center text-[9.5px] text-apple-gray-500">
@@ -54,12 +49,12 @@ useOnceVisible(rootEl, () => { entered.value = true }, 0.3)
           </div>
           <p class="mp-fold">▸ 摘要</p>
           <p class="mp-fold">▾ 原文</p>
-          <p class="text-[12px] font-semibold text-apple-gray-100">北京今日（8月27日）游玩推荐</p>
-          <p class="mt-1 text-[10.5px] leading-[1.6] text-apple-gray-300">
+          <p class="text-xs font-semibold text-apple-gray-100">北京今日（8月27日）游玩推荐</p>
+          <p class="mt-1 text-4xs leading-[1.6] text-apple-gray-300">
             今日北京多云转小雨，适合优先安排室内或半户外活动，下午 4 点后建议全部转入室内。
           </p>
-          <p class="mt-1 text-[10.5px] leading-[1.6] text-apple-gray-300">推荐方案</p>
-          <p class="mt-1 text-[10.5px] leading-[1.6] text-apple-gray-500">回复简洁直接，不重复已知信息，按「推荐方案」分点给出。</p>
+          <p class="mt-1 text-4xs leading-[1.6] text-apple-gray-300">推荐方案</p>
+          <p class="mt-1 text-4xs leading-[1.6] text-apple-gray-500">回复简洁直接，不重复已知信息，按「推荐方案」分点给出。</p>
         </div>
         <span class="mp-avatar mp-avatar-ai"><Brain :size="11" /></span>
       </div>

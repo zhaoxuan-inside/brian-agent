@@ -1,30 +1,20 @@
-/**
- * @fileoverview 信息页「学习资料库」页签的业务逻辑组合式函数。
- *
- * 从 InfoView.vue 分离：资料库增删与路径校验 / 文件树与目录导航 /
- * 文件阅读（分页 sentinel）/ 划词咨询（annotations）/ 右键菜单。
- */
-
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { LibraryFileEntry, LibraryPath, LibraryTreeNode } from '../api/types'
 import { libraryApi } from '../api'
 
-/** 一条读伴咨询（划词提问）的完整卡片数据 */
 export interface DocAnnotation {
   id: string
   question: string
   result: string
   selectionText: string
-  /** 原文已变更导致无法在正文中定位（下划线失效，但卡片仍展示） */
+
   stale: boolean
 }
 
-/** 模糊重锚定的字符重合度阈值 */
 export const FUZZY_MATCH_THRESHOLD = 0.6
-/** 模糊重锚定要求的最短归一化长度（过短易误锚定） */
+
 export const FUZZY_MIN_LENGTH = 6
 
-/** 归一化：去掉空白与标点/符号并转小写，返回压缩文本与到原下标的映射 */
 export function normalizeForFuzzy(s: string): { text: string; map: number[] } {
   const punct = /[\p{P}\p{S}]/u
   const chars: string[] = []
@@ -38,13 +28,6 @@ export function normalizeForFuzzy(s: string): { text: string; map: number[] } {
   return { text: chars.join(''), map }
 }
 
-/**
- * 模糊重锚定：编辑后原文微调（改字/加词/调标点）导致精确匹配失败时，
- * 以选中片段归一化后的头/中/尾探针在全文中收集候选窗口，按字符重合度
- * （顺序无关计数交集，对插入/删除/位移鲁棒）取最优，≥阈值视为命中。
- *
- * @returns 命中区域在原始全文中的 [start, end)；未命中返回 null。
- */
 export function fuzzyLocate(full: string, needle: string): { start: number; end: number } | null {
   const normNeedle = normalizeForFuzzy(needle)
   const needleText = normNeedle.text
@@ -94,9 +77,6 @@ export function fuzzyLocate(full: string, needle: string): { start: number; end:
   return { start: normFull.map[best], end: normFull.map[best + len - 1] + 1 }
 }
 
-/**
- * 学习资料库页签状态与操作。
- */
 export function useLibraryTab() {
 const loadingLibs = ref(false)
 const showAddLib = ref(false)
@@ -109,7 +89,7 @@ const libraries = ref<LibraryPath[]>([])
 async function loadLibraries() {
   loadingLibs.value = true
   try { libraries.value = await libraryApi.paths() }
-  catch { /* ignore */ }
+  catch {  }
   finally { loadingLibs.value = false }
 }
 
@@ -129,7 +109,7 @@ async function handleAddLibrary() {
     newLib.value = { name: '', description: '', path: '' }
     pathCheckResult.value = null
     await loadLibraries()
-  } catch { /* ignore */ }
+  } catch {  }
 }
 
 async function handleDeleteLibrary(id: string) {
@@ -142,10 +122,9 @@ async function handleToggleLibrary(lib: LibraryPath) {
     const result = await libraryApi.setEnabled(lib.id, !lib.enableSelfLearning)
     lib.enableSelfLearning = result.enabled
     await loadLibraries()
-  } catch { /* ignore */ }
+  } catch {  }
 }
 
-// Library detail
 const libraryFiles = ref<LibraryFileEntry[]>([])
 const libraryTree = ref<LibraryTreeNode[]>([])
 const currentDirectory = ref('')
@@ -191,7 +170,7 @@ async function loadLibraryFiles(reset = true) {
     else libraryFiles.value = [...libraryFiles.value, ...data.files]
     fileHasMore.value = data.has_more
     fileNextCursor.value = data.next_cursor
-  } catch { /* ignore */ }
+  } catch {  }
   finally {
     if (reset) fileLoading.value = false
     else fileLoadingMore.value = false
@@ -238,7 +217,7 @@ async function openFile(file: LibraryFileEntry) {
   if (contentResult.status === 'fulfilled') {
     selectedFile.value = { fileId: file.id, name: contentResult.value.fileName, content: contentResult.value.content }
   } else {
-    // ===== 修改后（2026-09-21）：文档可能已被删除/移动，给出可读的降级文案而非空白 =====
+
     selectedFile.value = { fileId: file.id, name: file.name, content: '> 文档内容读取失败：该文档可能已被删除或不可读。' }
   }
   selectedFileLoading.value = false
@@ -258,43 +237,10 @@ async function openFile(file: LibraryFileEntry) {
   }
 }
 
-// ===== 原始 restoreMark（保留作为参考，2026-09-21 改为跨节点匹配 + 模糊重锚定） =====
-// function restoreMark(text: string, id: string, index: number): boolean {
-//   const container = contentAreaRef.value
-//   if (!container || !text) return false
-//   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-//   let node: Node | null
-//   while ((node = walker.nextNode())) {
-//     if (node.parentElement?.classList.contains('doc-annotation-mark')) continue
-//     const nodeText = node.textContent || ''
-//     const idx = nodeText.indexOf(text)
-//     if (idx >= 0) {
-//       try {
-//         const range = document.createRange()
-//         range.setStart(node, idx)
-//         range.setEnd(node, idx + text.length)
-//         const mark = document.createElement('mark')
-//         mark.setAttribute('data-anchor-id', id)
-//         mark.setAttribute('data-anno-index', String(index))
-//         mark.className = 'doc-annotation-mark'
-//         range.surroundContents(mark)
-//         return true
-//       } catch { return false }
-//     }
-//   }
-//   return false
-// }
-
-/** 正文文本索引：拼接后每个字符对应的文本节点与节点内偏移，用于回放 Range */
 interface DomTextPos { node: Text; offset: number }
 
-/** 可包裹进内联 mark 的元素上限：跨块级元素的选中不绘制下划线（避免非法嵌套） */
 const INLINE_WRAP_BLOCK_SELECTOR = 'p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,table,ul,ol,div,hr'
 
-/**
- * 拼接容器内全部可见文本节点，记录每个字符的 (node, offset)。
- * 已标注（mark 内）的文本跳过，避免重复包裹。
- */
 function buildDomTextIndex(container: HTMLElement): { text: string; pos: DomTextPos[] } {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
   const chars: string[] = []
@@ -311,13 +257,6 @@ function buildDomTextIndex(container: HTMLElement): { text: string; pos: DomText
   return { text: chars.join(''), pos }
 }
 
-/**
- * 用带编号的 mark 包裹指定 Range。
- * surroundContents 仅支持单节点内 Range，跨内联节点（加粗/链接拆开文本）
- * 时退回 extract/insert 方式；跨块级元素会产生非法嵌套，放弃标注。
- *
- * @returns 是否成功绘制下划线。
- */
 function wrapRange(range: Range, id: string, index: number): boolean {
   const mark = document.createElement('mark')
   mark.setAttribute('data-anchor-id', id)
@@ -326,11 +265,11 @@ function wrapRange(range: Range, id: string, index: number): boolean {
   try {
     range.surroundContents(mark)
     return true
-  } catch { /* 跨节点：退回 extract/insert */ }
+  } catch {  }
   let frag: DocumentFragment
   try { frag = range.extractContents() } catch { return false }
   if (frag.querySelector(INLINE_WRAP_BLOCK_SELECTOR)) {
-    try { range.insertNode(frag) } catch { /* 还原失败也无从标注 */ }
+    try { range.insertNode(frag) } catch {  }
     return false
   }
   mark.appendChild(frag)
@@ -340,14 +279,6 @@ function wrapRange(range: Range, id: string, index: number): boolean {
   } catch { return false }
 }
 
-/**
- * 在正文中定位一条咨询的原文位置并绘制下划线（2026-09-21 重写）：
- * 1) 全文拼接文本节点精确匹配——支持同一块级元素内跨内联节点；
- * 2) 失败时按 fuzzyLocate 模糊重锚定——编辑后原文微调仍能对齐；
- * 3) 仍失败返回 false，由调用方标记「原文已变更」。
- *
- * @returns 是否成功标注。
- */
 function restoreMark(text: string, id: string, index: number): boolean {
   const container = contentAreaRef.value
   if (!container || !text) return false
@@ -371,29 +302,6 @@ function restoreMark(text: string, id: string, index: number): boolean {
   return wrapRange(range, id, index)
 }
 
-/**
- * 重建全部咨询标注（内容变更 / 编辑保存后调用）：
- * 清除旧 mark 后逐条按 selection_text 重新匹配，匹配失败者标记 stale（原文已变更）。
- */
-// ===== 原始 refreshAnnotationMarks（保留作为参考，2026-09-21 增加边注重排触发） =====
-// function refreshAnnotationMarks(): void {
-//   const container = contentAreaRef.value
-//   if (!container) return
-//   container.querySelectorAll('mark.doc-annotation-mark').forEach((el) => {
-//     const parent = el.parentNode
-//     if (!parent) return
-//     while (el.firstChild) parent.insertBefore(el.firstChild, el)
-//     parent.removeChild(el)
-//   })
-//   let index = 0
-//   for (const ann of annotations.value) {
-//     index += 1
-//     ann.stale = !restoreMark(ann.selectionText, ann.id, index)
-//   }
-//   setActiveAnnotation(activeAnnotationId.value)
-// }
-
-// ===== 修改后的 refreshAnnotationMarks（2026-09-21）：重建标注后同步重排边注 =====
 function refreshAnnotationMarks(): void {
   const container = contentAreaRef.value
   if (!container) return
@@ -409,24 +317,10 @@ function refreshAnnotationMarks(): void {
     ann.stale = !restoreMark(ann.selectionText, ann.id, index)
   }
   setActiveAnnotation(activeAnnotationId.value)
-  // 标注位置已变化：边注卡片需重新对齐
+
   void nextTick().then(relayoutMarginNotes)
 }
 
-// ===== 原始 setActiveAnnotation（保留作为参考，2026-09-21 增加边注卡片联动滚动） =====
-// function setActiveAnnotation(id: string | null): void {
-//   const container = contentAreaRef.value
-//   if (!container) return
-//   container.querySelectorAll('mark.doc-annotation-mark').forEach((el) => el.classList.remove('is-active'))
-//   if (!id) return
-//   const el = container.querySelector(`mark[data-anchor-id="${id}"]`) as HTMLElement | null
-//   if (el) {
-//     el.classList.add('is-active')
-//     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-//   }
-// }
-
-// ===== 修改后的 setActiveAnnotation（2026-09-21）：正文标注与边注卡片双向联动 =====
 function setActiveAnnotation(id: string | null): void {
   const container = contentAreaRef.value
   if (!container) return
@@ -437,43 +331,36 @@ function setActiveAnnotation(id: string | null): void {
     el.classList.add('is-active')
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
-  // 激活的边注卡片若被顺延出可视区，滚入视口（block:'nearest' 已可见时不打断滚动）
+
   if (marginMode.value) {
     const card = marginLayerRef.value?.querySelector(`[data-note-id="${id}"]`) as HTMLElement | null
     card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
 
-// ========== 文档展示区：注释（咨询） ==========
 const annotations = ref<DocAnnotation[]>([])
 const activeAnnotationId = ref<string | null>(null)
 const askDialog = ref<{ selectionText: string; contextBefore: string; contextAfter: string; question: string } | null>(null)
-/** 询问读伴的失败反馈（弹窗内展示；成功后清空） */
+
 const askError = ref('')
 const asking = ref(false)
 const contextMenu = ref<{ x: number; y: number } | null>(null)
 const contentAreaRef = ref<HTMLElement | null>(null)
 
-// ========== 边注（marginalia）模式（2026-09-21） ==========
-// 思想来自读纸质书：在正文旁的空白区写批注。宽屏（≥1360px）时问答卡片
-// 脱离独立右栏，垂直对齐到正文对应标注右侧的空白处，编号徽章 + 引线
-// 建立补充内容与原文的视觉联系；窄屏回退为右栏列表。
-/** 边注模式断点：视口 ≥1360px 时正文右侧有足够空白承载边注 */
 const MARGIN_MEDIA_QUERY = '(min-width: 1360px)'
-/** 相邻边注卡片之间的最小垂直间距（px） */
+
 const MARGIN_NOTE_GAP = 16
-/** 边注卡片相对其正文标注的垂直偏移（px），让编号徽章大致对齐标注行 */
+
 const MARGIN_NOTE_OFFSET = 4
 
 const marginMode = ref(false)
-/** 每条边注的垂直偏移（相对正文内容区顶部，px），键为注释 id */
+
 const noteTops = ref<Record<string, number>>({})
 const marginLayerRef = ref<HTMLElement | null>(null)
 let marginMedia: MediaQueryList | null = null
 let marginMediaHandler: (() => void) | null = null
 let contentResizeObserver: ResizeObserver | null = null
 
-/** 正文内容区的 relative 包裹层（承载边注层与 min-height 撑开） */
 function marginWrap(): HTMLElement | null {
   return contentAreaRef.value?.parentElement ?? null
 }
@@ -486,14 +373,10 @@ function updateMarginMode(): void {
     noteTops.value = {}
     marginWrap()?.style.removeProperty('min-height')
   }
-  // 切换到边注模式：等边注层挂载后再测量定位
+
   void nextTick().then(relayoutMarginNotes)
 }
 
-/**
- * 重排边注：按正文标注的垂直位置对齐卡片，相邻卡片重叠时向下顺延；
- * 并以最后一张卡片的底边撑开内容区（绝对定位的边注超出正文高度时仍可滚动到）。
- */
 function relayoutMarginNotes(): void {
   if (!marginMode.value) return
   const textEl = contentAreaRef.value
@@ -514,7 +397,6 @@ function relayoutMarginNotes(): void {
   if (wrap) wrap.style.minHeight = `${Math.max(cursor - MARGIN_NOTE_GAP, 0)}px`
 }
 
-/** 事件委托：点击正文中的咨询标注，联动激活对应边注卡片 */
 function handleMarkClick(event: MouseEvent): void {
   const target = event.target as HTMLElement | null
   const mark = target?.closest('mark.doc-annotation-mark') as HTMLElement | null
@@ -523,7 +405,6 @@ function handleMarkClick(event: MouseEvent): void {
   if (id) handleCardClick(id)
 }
 
-// ===== 文档编辑 / 删除（2026-09-21）=====
 const editorOpen = ref(false)
 const editorContent = ref('')
 const savingFile = ref(false)
@@ -588,21 +469,6 @@ function openAskDialog() {
   contextMenu.value = null
 }
 
-// ===== 原始 submitAsk（保留作为参考，2026-09-21 增加错误反馈） =====
-// async function submitAsk() {
-//   if (!askDialog.value) return
-//   const dlg = askDialog.value
-//   asking.value = true
-//   try {
-//     const data = await libraryApi.queryDocument({ /* … */ })
-//     // …落卡与持久化…
-//   } catch { /* ignore */ }
-//   finally { asking.value = false }
-// }
-
-// ===== 修改后的 submitAsk（2026-09-21）：失败在弹窗内给出可见错误，保留输入便于重试 =====
-// 背景：读伴问答是同步 LLM 推理（实测 10~30s+），此前失败被静默吞掉，
-// 用户只看到按钮转圈/停止，无任何反馈，感知为「一直在转圈」。
 async function submitAsk() {
   if (!askDialog.value) return
   const dlg = askDialog.value
@@ -631,7 +497,7 @@ async function submitAsk() {
     await nextTick()
     relayoutMarginNotes()
     setActiveAnnotation(id)
-    // 持久化咨询卡片与关联关系
+
     if (selectedFile.value && pendingAskContext) {
       try {
         await libraryApi.saveAnnotation({
@@ -644,10 +510,10 @@ async function submitAsk() {
           result: data.result,
           llm_id: data.llm_id,
         })
-      } catch { /* ignore */ }
+      } catch {  }
     }
   } catch (err: unknown) {
-    // 超时（AbortSignal.timeout → TimeoutError）与一般失败都给出可读提示
+
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       askError.value = '咨询超时：读伴响应超过 60 秒，请稍后重试或缩短选中的内容。'
     } else {
@@ -676,22 +542,6 @@ function scrollToSection(section: ArticleSection) {
   }
 }
 
-// ===== 原始 markSelection（保留作为参考，2026-09-21 改用 wrapRange 支持跨内联节点） =====
-// function markSelection(id: string, index: number) {
-//   if (!pendingSelection) return
-//   try {
-//     const range = document.createRange()
-//     range.setStart(pendingSelection.startContainer, pendingSelection.startOffset)
-//     range.setEnd(pendingSelection.endContainer, pendingSelection.endOffset)
-//     const mark = document.createElement('mark')
-//     mark.setAttribute('data-anchor-id', id)
-//     mark.setAttribute('data-anno-index', String(index))
-//     mark.className = 'doc-annotation-mark'
-//     range.surroundContents(mark)
-//   } catch { /* 跨节点选中无法包裹，跳过下划线 */ }
-// }
-
-// ===== 修改后的 markSelection（2026-09-21）：跨内联节点选中也能落标注 =====
 function markSelection(id: string, index: number) {
   if (!pendingSelection) return
   try {
@@ -699,10 +549,9 @@ function markSelection(id: string, index: number) {
     range.setStart(pendingSelection.startContainer, pendingSelection.startOffset)
     range.setEnd(pendingSelection.endContainer, pendingSelection.endOffset)
     wrapRange(range, id, index)
-  } catch { /* 无法包裹时跳过下划线 */ }
+  } catch {  }
 }
 
-// ===== 文档编辑：写回本地文件 =====
 function openEditor() {
   if (!selectedFile.value) return
   editorContent.value = selectedFile.value.content
@@ -730,13 +579,12 @@ async function saveEditor() {
     }
     closeEditor()
     await nextTick()
-    // 内容已变更：重新匹配注释下划线，匹配失败的标记为「原文已变更」
+
     refreshAnnotationMarks()
-  } catch { /* ignore */ }
+  } catch {  }
   finally { savingFile.value = false }
 }
 
-// ===== 文档删除：删除本地文件 + 级联清理注释 =====
 function requestDeleteFile() {
   if (!selectedFile.value) return
   deleteConfirm.value = true
@@ -755,7 +603,7 @@ async function confirmDeleteFile() {
     libraryFiles.value = libraryFiles.value.filter((f) => f.id !== file.fileId)
     deleteConfirm.value = false
     closeFileModal()
-  } catch { /* ignore */ }
+  } catch {  }
   finally { deletingFile.value = false }
 }
 
@@ -770,7 +618,7 @@ function closeFileModal() {
   deleteConfirm.value = false
   pendingSelection = null
   pendingAskContext = null
-  // 边注状态随阅读视图一并清理（2026-09-21）
+
   noteTops.value = {}
 }
 
@@ -787,8 +635,6 @@ watch(libraryFileSentinel, (el) => {
   }
 })
 
-// ===== 边注模式监听（2026-09-21） =====
-// 正文高度变化（图片加载 / 编辑写回 / 窗口缩放引起换行变化）时重排边注
 watch(contentAreaRef, (el) => {
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
@@ -811,7 +657,6 @@ watch(fileKeyword, () => {
   fileSearchTimer = setTimeout(() => { loadLibraryFiles(true) }, 300)
 })
 
-  // 注意：清理钩子必须在 return 之前注册——return 之后本函数已退出，代码不可达
   onBeforeUnmount(() => {
     libraryFileObserver?.disconnect()
     libraryFileObserver = null

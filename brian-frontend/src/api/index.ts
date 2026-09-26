@@ -10,45 +10,12 @@ import type {
   VisualizedMessage, MessageGraphNode, MessageGraphEdge, AgentDAG, AgentTrace,
   McpUsageRecord,
   Block, AgentDagData,
-  FeedbackProcessLogListItem, FeedbackProcessLogDetail, FeedbackConfig,
+  FeedbackProcessLogListItem, FeedbackProcessLogDetail,
 } from './types'
 import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
 
 const API_BASE = '/api'
 
-// ===== 修改后（2026-09-14 trace 源头治理）：traceId 在请求源头（前端每次请求）生成，
-// 经 X-Trace-Id 头向下游全链路传播；后端只消费、不重复生成 =====
-// ===== 原始方法（保留作为参考）=====
-// async function request<T>(path: string, options?: RequestInit): Promise<T> {
-//   const res = await fetch(`${API_BASE}${path}`, {
-//     headers: { 'Content-Type': 'application/json', ...options?.headers },
-//     ...options
-//   })
-//   if (!res.ok) {
-//     const err = await res.json().catch(() => ({ message: res.statusText }))
-//     throw new Error(err.error || err.message || `HTTP ${res.status}`)
-//   }
-//   return res.json()
-// }
-// ===== 原始 request（保留作为参考，2026-09-21 增加可选 timeoutMs） =====
-// async function request<T>(path: string, options?: RequestInit): Promise<T> {
-//   const res = await fetch(`${API_BASE}${path}`, {
-//     ...options,
-//     headers: {
-//       'Content-Type': 'application/json',
-//       [TRACE_ID_HEADER]: newTraceId(),
-//       ...((options?.headers ?? {}) as Record<string, string>),
-//     },
-//   })
-//   if (!res.ok) {
-//     const err = await res.json().catch(() => ({ message: res.statusText }))
-//     throw new Error(err.error || err.message || `HTTP ${res.status}`)
-//   }
-//   return res.json()
-// }
-
-// ===== 修改后的 request（2026-09-21）：支持可选 timeoutMs，超时自动中止请求 =====
-// 默认不超时（保持所有既有接口行为不变），仅长耗时接口（如读伴问答）显式传入。
 async function request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const { timeoutMs, ...rest } = options ?? {}
   const res = await fetch(`${API_BASE}${path}`, {
@@ -93,8 +60,8 @@ export const chatApi = {
     request<{ session: { session_id: string } }>(`/chat/session/${encodeURIComponent(sessionId)}`),
   deleteSession: (sessionId: string) =>
     request<void>(`/chat/session/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
-  // ===== 新增（2026-09-21 批量删除会话）：一次提交 session_ids[]，服务端统一级联清理
-  // 记忆 / Runtime / 用户画像等关联数据，替代逐条 DELETE 循环 =====
+  
+  
   deleteSessions: (sessionIds: string[]) =>
     request<{ deleted_count: number }>('/chat/session', {
       method: 'DELETE',
@@ -107,13 +74,13 @@ export const chatApi = {
     }),
   search: (keyword: string) =>
     request<{ sessions: ChatSession[] }>(`/chat/search?keyword=${encodeURIComponent(keyword)}`).then(r => r.sessions),
-  // 会话历史热力图：每日会话数（后端按客户端时区分桶，与列表无关，不受搜索/时间过滤影响）
+  
   dateCounts: () =>
     request<{ dates: Record<string, number> }>(`/chat/date-counts?tz=${-new Date().getTimezoneOffset()}`),
   pinMessage: (infoId: string) =>
     request<{ pin: boolean }>(`/chat/message/${encodeURIComponent(infoId)}/pin`, { method: 'POST' }),
-  // ===== 修改后：支持模块化独立的思考过程数据采集 (module='all'|'dag'|'blocks') =====
-  // ===== 修改后（V2）：同时返回完整执行轨迹 trace（timeline/tools/permissions/run），供思考过程弹窗完整追溯 =====
+  
+  
   thinking: (infoId: string, module: 'all' | 'dag' | 'blocks' = 'all') =>
     request<{ work_id: string; run_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; trace?: import('./types').ThinkingTrace | null; module?: string }>(
       `/chat/thinking?info_id=${encodeURIComponent(infoId)}&module=${module}`,
@@ -205,7 +172,7 @@ export const configApi = {
     update: (configKey: string, value: unknown) =>
       request<void>('/config', { method: 'PUT', body: JSON.stringify({ config_key: configKey, value }) }),
   },
-  // ===== 新增（2026-09-22）：配置变更历史（TODO-List §2：历史查询 + Diff 对比）=====
+  
   history: {
     forKey: (configKey: string) =>
       request<{ records: ConfigHistoryRecord[] }>(`/config/history/${encodeURIComponent(configKey)}`),
@@ -404,13 +371,6 @@ export const feedbackApi = {
     request<{ logs: FeedbackProcessLogListItem[]; total: number }>(`/feedback/records?limit=${limit}`),
   recordDetail: (processId: string) =>
     request<FeedbackProcessLogDetail>(`/feedback/records/${encodeURIComponent(processId)}`),
-  getConfig: () =>
-    request<{ config: FeedbackConfig | null }>('/feedback/config'),
-  updateConfig: (data: { disband_threshold?: number; enable_auto_disband?: boolean }) =>
-    request<{ config: FeedbackConfig | null }>('/feedback/config', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
 }
 
 export const libraryApi = {
@@ -445,7 +405,7 @@ export const libraryApi = {
   queryDocument: (opts: { selection: string; context_before?: string; context_after?: string; question?: string; document_title?: string }) =>
     request<{ result: string; llm_id: string }>('/library/query', {
       method: 'POST',
-      // 读伴问答为同步 LLM 推理（实测 10~30s+），60s 超时避免无限转圈
+      
       timeoutMs: 60000, body: JSON.stringify(opts)
     }),
   saveAnnotation: (opts: { library_id?: string; file_id: string; selection_text: string; selection_start: number; selection_end: number; question: string; result: string; llm_id?: string }) =>
@@ -508,7 +468,6 @@ export const visualizationApi = {
     request<Record<string, unknown>>(`/visualization/resource/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}`),
 }
 
-/** 语义搜索结果：命中信息记录（相似度搜索直接返回 info 的 id 及其详情） */
 export interface VectorSearchInfo {
   info_id: string;
   info_type: string;
@@ -551,8 +510,6 @@ export const mqApi = {
 
 export interface CDTStatus { running: boolean; pid: number; port: number; endpoint?: string }
 
-// ===== 修改后（2026-09-14 trace 治理）：fire-and-forget 请求同样在源头携带 X-Trace-Id =====
-// ===== 原始方法（保留作为参考）：以下各方法内联 fetch，headers 无 X-Trace-Id =====
 function cdtFire(path: string, body?: string) {
   return fetch(`${API_BASE}${path}`, {
     method: 'POST',
@@ -569,11 +526,11 @@ export const cdtApi = {
     request<{ result?: unknown; error?: string }>('/cdt/navigate', { method: 'POST', body: JSON.stringify({ url }) }),
   evaluate: (expression: string) =>
     request<{ result?: unknown; error?: string }>('/cdt/evaluate', { method: 'POST', body: JSON.stringify({ expression }) }),
-  // Remote Browser
+  
   screencastStart: (w = 1920, h = 1080, q = 80) =>
     request<{ started: boolean }>(`/cdt/screencast/start?w=${w}&h=${h}&q=${q}`),
   frame: () => request<{ dataUrl: string; width: number; height: number }>('/cdt/frame'),
-  // ===== 修改后（2026-09-14 trace 治理）：fire-and-forget 请求统一走源头携带 X-Trace-Id 的 cdtFire =====
+  
   mouse: (type: string, x: number, y: number, button = 'left', clickCount = 1, deltaX = 0, deltaY = 0, ctrl = false, alt = false, shift = false, meta = false) =>
     cdtFire('/cdt/mouse', JSON.stringify({ type, x, y, button, clickCount, deltaX, deltaY, ctrl, alt, shift, meta })),
   click: (x: number, y: number, ctrl = false, alt = false, shift = false, meta = false) =>
@@ -641,10 +598,6 @@ export const toolApi = {
   regex: (pattern: string, text: string, flags = '') =>
     request<ToolRegexResult>('/tool/regex', { method: 'POST', body: JSON.stringify({ pattern, text, flags }) }),
 }
-
-// ============================================================
-// Cron 定时任务
-// ============================================================
 
 export interface CronTask {
   id: string;
@@ -718,12 +671,10 @@ export const cronToolApi = {
 
 export { request as fetchApi }
 
-/** 权限应答（v2 权限门：permission.asked → 应答唤醒挂起的 Loop；remember=true 为"始终允许"，工具入信任表） */
 export function answerPermission(permission_id: string, approved: boolean, remember = false): Promise<{ ok: boolean; answered: boolean }> {
   return request('/chat/permission/answer', { method: 'POST', body: JSON.stringify({ permission_id, approved, remember }) })
 }
 
-/** ask_user 应答（v2 编排原语：答复恢复为下一条 user 消息，唤醒挂起的 ask_user 工具） */
 export function answerUserAsk(ask_id: string, answer: string): Promise<{ ok: boolean; answered: boolean }> {
   return request('/chat/ask/answer', { method: 'POST', body: JSON.stringify({ ask_id, answer }) })
 }

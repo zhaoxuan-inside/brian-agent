@@ -1,11 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-/**
- * 配置值 Diff 渲染（TODO-List §2：修改前 Diff 对比视图）。
- * 原语值（INT/DOUBLE/BOOLEAN/短字符串）渲染单行 旧值→新值；
- * 多行字符串（列表/脚本类配置）渲染行级 diff（仅保留变化行 + 上下文）。
- */
 const props = defineProps<{
   oldValue: unknown
   newValue: unknown
@@ -24,7 +19,6 @@ const isMultiLine = computed(() => oldText.value.includes('\n') || newText.value
 
 const changed = computed(() => oldText.value !== newText.value)
 
-/** 行级 diff（数据处理）：以旧行为基准做 LCS 最长公共子序列，标注 added/removed */
 const lineDiff = computed(() => {
   const oldLines = oldText.value.split('\n')
   const newLines = newText.value.split('\n')

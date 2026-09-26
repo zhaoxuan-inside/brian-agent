@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * 信息页「会话历史」页签视图：会话卡片时间线 / 日期导航 / 热力图 / 删除与标签弹窗。
- * 业务逻辑来自 useHistoryTab（经 InfoView 注入）。
- *
- * 修改：
- * - 左侧日期导航改用 historyDateNavTimeline（来自 dateCountCache，与热力图一致）
- * - 添加无限滚动 sentinel 支持分页加载
- */
 import { inject } from 'vue'
 import {
   Search, Trash2, CheckSquare, Square, Tag, X,
@@ -116,7 +108,7 @@ const {
                 </div>
               </div>
               <span class="text-xs text-apple-gray-400">{{ formatTime(item.lastTime) }}</span>
-              <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+              <div class="grid grid-cols-3 gap-1.5 text-2xs">
                 <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" title="输入 / 输出 Token">
                   <p class="text-apple-gray-400">Tokens</p>
                   <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">{{ formatTokens(item.inputTokens) }} / {{ formatTokens(item.outputTokens) }}</p>
@@ -162,7 +154,6 @@ const {
       @next="nextHistoryHeatmapMonth"
     />
 
-    <!-- 删除确认弹窗 -->
     <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm = null">
       <div class="block-card w-full max-w-sm mx-4 p-6">
         <div class="flex items-center justify-between mb-4">
@@ -180,7 +171,6 @@ const {
       </div>
     </div>
 
-    <!-- 查看标签弹窗 -->
     <div v-if="viewingTagsSession" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="viewingTagsSession = null">
       <div class="block-card w-full max-w-md mx-4 p-6">
         <div class="flex items-center justify-between mb-4">

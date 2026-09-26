@@ -1,10 +1,3 @@
-/**
- * @fileoverview ChatMap（对话图谱画布）业务逻辑组合式函数。
- *
- * 从 ChatMap.vue 分离：画布缩放/平移、节点拖拽（碰撞推离 + 对齐吸附）、
- * 节点/连线选中与联动（列表↔图谱双向定位）、连线配色、思考过程加载。
- * 纯几何与吸附算法见 utils/chatMapGeometry / utils/chatMapLayout。
- */
 import { computed, nextTick, ref, watch } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
@@ -26,12 +19,12 @@ export function useChatMap() {
   const isPanning = ref(false)
   const panStart = ref({ x: 0, y: 0 })
 
-  // 选中状态：activeNodeId 选中消息展示框，activeEdgeId 选中单条连线
+  
   const activeNodeId = ref<string | null>(null)
   const activeEdgeId = ref<string | null>(null)
   const hoveredNodeId = ref<string | null>(null)
 
-  // 拖动状态
+  
   const draggingNodeId = ref<string | null>(null)
   const dragOffset = ref({ x: 0, y: 0 })
   const dragStartPos = ref({ x: 0, y: 0 })
@@ -58,7 +51,7 @@ export function useChatMap() {
     return maxY + NODE_H + 200
   })
 
-  // ===== 基于位置和状态的 z-index 分层，避免遮挡 =====
+  
   function nodeStyle(n: ChatMapNode) {
     let z = 1
     if (draggingNodeId.value === n.id) {
@@ -66,7 +59,7 @@ export function useChatMap() {
     } else if (hoveredNodeId.value === n.id || activeNodeId.value === n.id) {
       z = 50
     } else {
-      // 右下方的节点 z-index 更高，避免重叠时上方节点遮挡下方
+      
       z = Math.round(n.y / 100) * 10 + Math.round(n.x / 100)
     }
     return {
@@ -78,7 +71,7 @@ export function useChatMap() {
     }
   }
 
-  // ===== 连线路径与箭头（从 nodeMap 解析端点后委托纯函数） =====
+  
   function edgePath(e: EdgeRef): string {
     const s = nodeMap.value.get(e.source)
     const t = nodeMap.value.get(e.target)
@@ -137,14 +130,14 @@ export function useChatMap() {
     return getEdgeStroke(e)
   }
 
-  // ===== 缩放 / 平移 / 拖拽 =====
+  
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     const delta = e.deltaY > 0 ? 0.9 : 1.1
     scale.value = Math.max(0.2, Math.min(2.5, scale.value * delta))
   }
 
-  // 坐标转换：屏幕坐标 → 世界坐标（考虑缩放和偏移）
+  
   function screenToWorld(clientX: number, clientY: number): { x: number; y: number } {
     if (!containerRef.value) return { x: 0, y: 0 }
     const rect = containerRef.value.getBoundingClientRect()
@@ -186,7 +179,7 @@ export function useChatMap() {
     offset.value = { x: e.clientX - panStart.value.x, y: e.clientY - panStart.value.y }
   }
 
-  /** 拖拽：碰撞推离 → 对齐吸附 → 再次碰撞推离（确保吸附没有导致重叠） */
+  
   function handleDrag(e: MouseEvent) {
     const nodeId = draggingNodeId.value
     if (!nodeId) return
@@ -216,7 +209,7 @@ export function useChatMap() {
     isPanning.value = false
   }
 
-  // ===== 选中与联动 =====
+  
   function onContainerClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('.chat-map-node') || (e.target as HTMLElement).closest('.chat-map-edge')) return
     activeNodeId.value = null
@@ -243,7 +236,7 @@ export function useChatMap() {
     sessionStore.triggerFocus(infoId)
   }
 
-  // 思考过程加载：请求思考块与执行轨迹并展示弹窗
+  
   async function showThinking(infoId: string) {
     chatUi.startThinkingLoading(infoId)
 
@@ -257,7 +250,7 @@ export function useChatMap() {
     }
   }
 
-  // 列表点击消息 -> 平移 ChatMap 使该消息居中并高亮
+  
   watch(() => sessionStore.centerInfoId, async (id) => {
     if (!id) return
     activeNodeId.value = id

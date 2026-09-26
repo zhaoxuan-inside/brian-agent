@@ -1,5 +1,3 @@
-// DAG 分层布局工具：将 nodes + edges 按依赖层级（最长路径）排布为多列图，供 Canvas 式 DAG 图组件使用
-
 export interface DagLayoutNode {
   id: string
   label: string
@@ -41,10 +39,6 @@ export const DAG_NODE_H = 72
 export const DAG_COL_GAP = 130
 export const DAG_ROW_GAP = 28
 
-/**
- * 计算 DAG 分层：每个节点 layer = 从任一源节点到达它的最长路径长度
- * 处理环 / 孤立节点（退化为同一层或串行）。
- */
 export function computeLayers(
   nodes: DagLayoutNode[],
   edges: DagLayoutEdge[],
@@ -79,7 +73,7 @@ export function computeLayers(
     queue = next
   }
 
-  // 兜底：环内 / 未分层的节点按出现顺序串行分配
+  
   const ordered = nodes.map((n) => n.id)
   let fallbackLayer = layers.size === 0 ? 0 : Math.max(0, ...layers.values()) + 1
   for (const id of ordered) {
@@ -90,16 +84,13 @@ export function computeLayers(
   return layers
 }
 
-/**
- * 根据分层结果计算每个节点在画布上的绝对坐标。
- */
 export function layoutDag(
   nodes: DagLayoutNode[],
   edges: DagLayoutEdge[],
 ): DagLayoutResult {
   const layers = computeLayers(nodes, edges)
 
-  // 按层分组，层内保持原始顺序（更稳定）
+  
   const groups = new Map<number, string[]>()
   const originalIndex = new Map<string, number>()
   nodes.forEach((n, i) => {
@@ -136,7 +127,7 @@ export function layoutDag(
   const totalWidth = (maxLayer + 1) * (DAG_NODE_W + DAG_COL_GAP)
   const totalHeight = maxRows * DAG_NODE_H + (maxRows - 1) * DAG_ROW_GAP
 
-  // 整体垂直居中：将所有节点坐标向下平移 halfHeight，避免负坐标导致节点被容器裁剪
+  
   const halfHeight = totalHeight / 2
   for (const pos of positions.values()) {
     pos.y += halfHeight

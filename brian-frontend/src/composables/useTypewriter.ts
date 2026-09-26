@@ -5,8 +5,6 @@ export interface TypeLine {
   c?: string
 }
 
-// useTypewriter：终端逐行打字动画
-// start() 幂等触发；打完停留 holdMs 后自动循环重放
 export function useTypewriter(lines: TypeLine[], holdMs = 6000) {
   const rendered = ref('')
   let timer: ReturnType<typeof setTimeout> | null = null

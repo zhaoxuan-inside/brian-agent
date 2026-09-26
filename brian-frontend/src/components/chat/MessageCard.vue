@@ -84,7 +84,6 @@ async function submitRating(score: number) {
   } catch { feedbackRating.value = 0 }
 }
 
-// 摘要/原文折叠状态：默认态由 mode 决定（Map 展开摘要折叠原文，Timeline 展开原文折叠摘要），用户可手动切换
 const summaryOpen = ref(props.mode === 'map')
 const contentOpen = ref(props.mode === 'timeline')
 
@@ -101,7 +100,6 @@ const targetId = computed(() => props.infoId || props.id)
 const isUser = computed(() => props.role === 'user' || props.role === 'USER' || props.role === 'REQUEST')
 const isError = computed(() => props.content.startsWith('[错误]') || props.summary.startsWith('[错误]'))
 
-// 消息内容按 Markdown 渲染（流式期间使用纯文本渲染以避免 O(n²) 解析成本）
 const renderedContent = computed(() => {
   if (props.isStreaming) {
     return props.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
@@ -109,7 +107,6 @@ const renderedContent = computed(() => {
   return renderMarkdown(props.content)
 })
 
-// 摘要按 Markdown 渲染（无摘要时回退原文）
 const renderedSummary = computed(() => {
   const raw = props.summary || props.content || ''
   return raw.trim() ? renderMarkdown(raw) : '(无内容)'
@@ -200,9 +197,8 @@ async function copyTraceId() {
     ]"
     @click="handleCardClick"
   >
-    <!-- 顶部栏：时间居左，错误标识 + 复选框 + 钉住按钮居右 -->
     <div
-      class="flex items-center justify-between mb-1 text-[10px]"
+      class="flex items-center justify-between mb-1 text-4xs"
       :class="mode === 'map' ? 'px-2 pt-1.5' : ''"
     >
       <span class="text-apple-gray-400">
@@ -232,10 +228,7 @@ async function copyTraceId() {
       </div>
     </div>
 
-    <!-- 内容展示：摘要 + 原文双区（结构统一，均支持折叠/展开，均渲染 Markdown）。
-         Map 模式：默认展开摘要、折叠原文；Timeline 模式：默认展开原文、折叠摘要。差异仅由 mode 样式覆盖区分。 -->
     <div class="space-y-0.5">
-      <!-- 摘要区 -->
       <details
         class="px-2 py-0.5"
         :class="isError ? 'text-error-red' : 'text-apple-gray-500 dark:text-apple-gray-400'"
@@ -243,7 +236,7 @@ async function copyTraceId() {
         @toggle="onSummaryToggle"
         @click.stop
       >
-        <summary class="cursor-pointer text-[10px] font-medium select-none">
+        <summary class="cursor-pointer text-4xs font-medium select-none">
           <span class="inline-block transition-transform duration-150" :class="summaryOpen ? 'rotate-90' : ''">▸</span>
           摘要
         </summary>
@@ -251,37 +244,35 @@ async function copyTraceId() {
           class="markdown-body break-words max-h-[120px] overflow-y-auto"
           :class="mode === 'map'
             ? 'text-xs text-apple-gray-700 dark:text-apple-gray-200'
-            : 'text-[11px] text-apple-gray-600 dark:text-apple-gray-300'"
+            : 'text-2xs text-apple-gray-600 dark:text-apple-gray-300'"
           v-html="renderedSummary"
         />
       </details>
 
-      <!-- 原文区 -->
       <details
         class="px-2 py-0.5"
         :open="contentOpen"
         @toggle="onContentToggle"
         @click.stop
       >
-        <summary class="cursor-pointer text-[10px] font-medium select-none">
+        <summary class="cursor-pointer text-4xs font-medium select-none">
           <span class="inline-block transition-transform duration-150" :class="contentOpen ? 'rotate-90' : ''">▸</span>
           原文
         </summary>
         <div
           class="markdown-body break-words overflow-y-auto"
-            :class="mode === 'map' ? 'text-[11px] max-h-[120px]' : 'text-sm'"
+            :class="mode === 'map' ? 'text-2xs max-h-[120px]' : 'text-sm'"
           v-html="renderedContent"
         />
       </details>
     </div>
 
-    <!-- 底部栏：引用/被引用胶囊、复制TraceId与字数统计 -->
     <div
       class="flex items-center gap-1.5 mt-1.5 flex-wrap"
       :class="mode === 'map' ? 'px-2 pb-1.5' : ''"
     >
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
         @click.stop="expandedCited = !expandedCited; if (expandedCited) expandedCiting = false"
       >
         引用 {{ effectiveCitedCount }}
@@ -289,7 +280,7 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 hover:bg-apple-gray-200"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 hover:bg-apple-gray-200"
         @click.stop="expandedCiting = !expandedCiting; if (expandedCiting) expandedCited = false"
       >
         被引用 {{ effectiveCitingCount }}
@@ -297,7 +288,7 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
         title="查看思考过程"
         :data-thinking-id="targetId"
         @click.stop="handleShowThinking"
@@ -307,7 +298,7 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-colors bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-800/60"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-800/60"
         title="查看评估结果"
         @click.stop="handleShowEval"
       >
@@ -315,7 +306,6 @@ async function copyTraceId() {
         评估结果
       </button>
 
-      <!-- 反馈评分星星（仅系统回复显示） -->
       <template v-if="!isUser">
         <div v-if="feedbackSubmitted" class="flex items-center gap-0.5">
           <span
@@ -343,7 +333,7 @@ async function copyTraceId() {
       </template>
 
       <button
-        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
+        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-4xs transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
         :title="effectiveTraceId ? `复制 TraceId: ${effectiveTraceId}` : '复制 TraceId'"
         @click.stop="copyTraceId"
       >
@@ -351,12 +341,11 @@ async function copyTraceId() {
         {{ copied ? '已复制' : '复制 TraceId' }}
       </button>
 
-      <span class="ml-auto text-[10px] text-apple-gray-300">
+      <span class="ml-auto text-4xs text-apple-gray-300">
         {{ textLength }}字
       </span>
     </div>
 
-    <!-- 展开：引用列表 -->
     <div
       v-if="expandedCited"
       class="mt-1.5 space-y-0.5 border-t pt-1"
@@ -365,20 +354,19 @@ async function copyTraceId() {
       ]"
       @click.stop
     >
-      <p class="text-[10px] font-medium text-apple-gray-400">引用以下消息：</p>
+      <p class="text-4xs font-medium text-apple-gray-400">引用以下消息：</p>
       <button
         v-for="cid in citedInfoIds"
         :key="cid"
-        class="flex items-center gap-1 w-full text-left text-[11px] truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
+        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
         @click.stop="handleJump(cid)"
       >
         <CornerUpRight :size="10" class="flex-shrink-0" />
         <span class="truncate">{{ getSummary(cid) }}</span>
       </button>
-      <p v-if="!citedInfoIds?.length" class="text-[10px] opacity-60">无引用消息</p>
+      <p v-if="!citedInfoIds?.length" class="text-4xs opacity-60">无引用消息</p>
     </div>
 
-    <!-- 展开：被引用列表 -->
     <div
       v-if="expandedCiting"
       class="mt-1.5 space-y-0.5 border-t pt-1"
@@ -387,32 +375,19 @@ async function copyTraceId() {
       ]"
       @click.stop
     >
-      <p class="text-[10px] font-medium text-apple-gray-400">被以下消息引用：</p>
+      <p class="text-4xs font-medium text-apple-gray-400">被以下消息引用：</p>
       <button
         v-for="cid in citingInfoIds"
         :key="cid"
-        class="flex items-center gap-1 w-full text-left text-[11px] truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
+        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
         @click.stop="handleJump(cid)"
       >
         <CornerUpRight :size="10" class="flex-shrink-0" />
         <span class="truncate">{{ getSummary(cid) }}</span>
       </button>
-      <p v-if="!citingInfoIds?.length" class="text-[10px] opacity-60">无被引用记录</p>
+      <p v-if="!citingInfoIds?.length" class="text-4xs opacity-60">无被引用记录</p>
     </div>
 
-    <!-- ===== 原始代码（保留作为参考）：Timeline 模式下的引用消息胶囊快捷展示（与上方"引用"折叠按钮重复，已移除）=====
-    <div v-if="mode === 'timeline' && citedInfoIds?.length" class="mt-1.5 flex flex-wrap gap-1" @click.stop>
-      <span
-        v-for="cid in citedInfoIds"
-        :key="cid"
-        class="px-2 py-0.5 text-[10px] rounded-full cursor-pointer transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
-        title="点击在对话列表中定位被引用的消息"
-        @click.stop="handleJump(cid)"
-      >
-        引用: {{ getSummary(cid) }}
-      </span>
-    </div>
-    -->
   </div>
 </template>
 

@@ -1,22 +1,9 @@
-/**
- * @fileoverview Obsidian 风格力导向布局纯算法。
- *
- * 从 useTagGraphTab 分离：固定迭代次数的斥力/弹簧/向心/边界力模拟，
- * 输出节点坐标、半径（按连接度）与配色（按权重蓝→红）。
- * 无状态纯函数，可单元测试。
- */
 import type { GraphNode } from '../api/types'
 
-/** 布局输出节点：在 GraphNode 基础上附加坐标、半径与配色 */
 export interface TagLayoutNode extends GraphNode { x: number; y: number; r: number; color: string }
 
 interface LayoutEdge { source: string; target: string; weight: number }
 
-/**
- * 计算力导向布局坐标。
- * @param repulsion 节点间斥力（默认 2000）
- * @param springStrength 弹簧引力系数（默认 0.2）
- */
 export function forceDirectedLayout(
   nodes: GraphNode[], edges: LayoutEdge[], width: number, height: number,
   repulsion = 2000, springStrength = 0.2,

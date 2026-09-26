@@ -1,9 +1,3 @@
-<!--
-AgentDAG Canvas 图（Agent 名称 / 任务 → Agent 映射）：
-- 以分层 DAG 画布方式展示多 Agent 协同依赖关系
-- 节点状态着色与执行联动：未执行灰色 / 执行中黄色 / 成功绿色 / 失败红色
-- 点击节点可将下方对应的 Work Agent 执行区联动高亮
--->
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Network } from '@lucide/vue'
@@ -37,10 +31,6 @@ const containerStyle = computed(() => {
   return { width: `${l.totalWidth}px`, height: `${h}px` }
 })
 
-// 节点状态解析：优先取任务级实时执行状态（taskExecutions，key = task_id），
-// 其次取 agent 级实时状态（agentExecutions），最后回退节点自带 status。
-// 关键：同一 Agent 复用到多个任务时，必须按 task_id 区分，避免一个任务完成导致
-// 所有复用该 Agent 的节点被误标为执行完成。
 function resolveStatus(node: (typeof nodes.value)[number]): AgentExecutionStatus {
   const taskKey = node.taskId ?? node.id
   const tt = taskKey ? chatUi.taskExecutions[taskKey] : undefined
@@ -118,7 +108,6 @@ function edgeColor(source: string): string {
 
 function handleSelect(node: (typeof nodes.value)[number]) {
   selectedId.value = selectedId.value === node.id ? null : node.id
-  // 点击节点 → 联动下方 Agent 执行区：按 agent_id 定位（节点主键 id 为 task_id）
   emit('select', node.agentId || node.id)
 }
 
@@ -141,7 +130,7 @@ function formatJson(val: unknown): string {
         <Network :size="15" class="text-blue-600 dark:text-blue-400" />
         <span class="text-xs font-bold text-blue-900 dark:text-blue-200">Agent DAG ({{ dag.nodes.length }} 个 Agent 节点)</span>
       </div>
-      <div class="flex items-center gap-2 text-[10px]">
+      <div class="flex items-center gap-2 text-4xs">
         <span class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-300">
           <span class="w-1.5 h-1.5 rounded-full bg-apple-gray-400" /> 未执行
         </span>
@@ -159,7 +148,6 @@ function formatJson(val: unknown): string {
 
     <div class="overflow-x-auto">
       <div class="relative" :style="containerStyle">
-        <!-- 依赖箭头 (SVG 覆盖层) -->
         <svg
           class="absolute inset-0 pointer-events-none"
           :width="layout.totalWidth"
@@ -177,7 +165,6 @@ function formatJson(val: unknown): string {
           />
         </svg>
 
-        <!-- Agent 节点 -->
         <button
           v-for="node in dag.nodes"
           :key="node.id"
@@ -193,12 +180,12 @@ function formatJson(val: unknown): string {
           <div class="flex items-center justify-between gap-1 w-full">
             <div class="flex items-center gap-1 min-w-0">
               <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="STATUS_META[resolveStatus(node)].dot" />
-              <span class="text-[10px] font-bold truncate">{{ node.agentName || node.label || `Agent ${node.id.slice(0, 8)}` }}</span>
+              <span class="text-4xs font-bold truncate">{{ node.agentName || node.label || `Agent ${node.id.slice(0, 8)}` }}</span>
             </div>
             <span v-if="node.tokenUsage" class="text-[9px] opacity-70 flex-shrink-0">{{ node.tokenUsage }}t</span>
           </div>
 
-          <p class="text-[10px] truncate w-full opacity-80 mt-0.5">{{ node.content || node.label || '' }}</p>
+          <p class="text-4xs truncate w-full opacity-80 mt-0.5">{{ node.content || node.label || '' }}</p>
 
           <div class="flex items-center justify-between mt-auto pt-1">
             <span class="text-[9px] px-1 py-px rounded" :class="STATUS_META[resolveStatus(node)].chip">
@@ -210,11 +197,10 @@ function formatJson(val: unknown): string {
       </div>
     </div>
 
-    <!-- 点击节点的具体输入输出与 Token 详情展示区 -->
     <div v-if="activeNode" class="mt-2 p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-white/90 dark:bg-apple-gray-900/90 text-xs space-y-2">
       <div class="flex items-center justify-between font-bold text-blue-900 dark:text-blue-200 border-b pb-1">
         <span>节点详情: {{ activeNode.agentName || activeNode.label }}</span>
-        <div class="flex items-center gap-3 text-[11px] font-normal text-apple-gray-500">
+        <div class="flex items-center gap-3 text-2xs font-normal text-apple-gray-500">
           <span v-if="activeNode.taskId" class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400">任务: {{ activeNode.taskId }}</span>
           <span v-if="activeNode.elapsedMs">{{ formatDuration(activeNode.elapsedMs) }}</span>
           <span v-if="activeNode.tokenUsage">{{ activeNode.tokenUsage }} tokens</span>
@@ -223,12 +209,12 @@ function formatJson(val: unknown): string {
 
       <div v-if="activeNode.input" class="p-2 rounded bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40">
         <span class="font-semibold text-blue-800 dark:text-blue-300">子任务指令 (Input):</span>
-        <pre class="mt-0.5 text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap max-h-24 overflow-y-auto">{{ formatJson(activeNode.input) }}</pre>
+        <pre class="mt-0.5 text-2xs text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap max-h-24 overflow-y-auto">{{ formatJson(activeNode.input) }}</pre>
       </div>
 
       <div v-if="activeNode.output" class="p-2 rounded bg-emerald-50/50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40">
         <span class="font-semibold text-emerald-800 dark:text-emerald-300">子任务产出 (Output):</span>
-        <pre class="mt-0.5 text-[11px] text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap max-h-36 overflow-y-auto">{{ formatJson(activeNode.output) }}</pre>
+        <pre class="mt-0.5 text-2xs text-apple-gray-700 dark:text-apple-gray-300 whitespace-pre-wrap max-h-36 overflow-y-auto">{{ formatJson(activeNode.output) }}</pre>
       </div>
     </div>
   </div>

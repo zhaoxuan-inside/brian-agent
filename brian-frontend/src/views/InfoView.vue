@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * @fileoverview 信息页壳：装配各页签组合式函数（每者仅实例化一次）并向
- * 页签视图子组件 provide 注入；本组件只保留页签栏 / 面包屑与页签切换。
- *
- * 页签业务逻辑见 composables/useInfoTabs 各 useXxxTab；
- * 页签视图见 components/info/（HistoryTab/MemoryTab/LibraryTab/GraphPane/ProfileTab）。
- */
 import { computed, provide, ref } from 'vue'
 import {
   Clock, Brain, Database, Network, GitBranch, UserRound,
@@ -26,7 +19,6 @@ import {
   type InfoTabsApi,
 } from '@/composables/useInfoTabs'
 
-// Tabs
 const i18nStore = useI18nStore()
 const infoTabKeys: InfoTabKey[] = ['history', 'memory', 'library', 'tagGraph', 'keywordGraph', 'profile']
 const storedInfoTab = localStorage.getItem('brian-info-active-tab')
@@ -45,8 +37,6 @@ const pagePath = computed(() => {
   return [i18nStore.t('nav.info'), ...(active ? [active.label] : [])]
 })
 
-// 页签业务逻辑装配：graph 兼任壳控制器（页签懒加载、全局滚动/点击监听），
-// 并注入各页签的跨页签能力
 const history = useHistoryTab()
 const memory = useMemoryTab()
 const library = useLibraryTab()
@@ -94,7 +84,6 @@ provide(INFO_TABS_KEY, { activeTab, history, memory, library, profile, graph } s
         </div>
       </div>
 
-      <!-- 页签视图（业务逻辑在 InfoView 装配的组合式函数中，页签切换仅重挂视图） -->
       <HistoryTab v-if="activeTab === 'history'" />
       <MemoryTab v-else-if="activeTab === 'memory'" />
       <LibraryTab v-else-if="activeTab === 'library'" />

@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 信息页「用户画像」页签视图：画像总结 / 维度列表 / 历史版本与版本详情 / 重置确认弹窗。
- * 业务逻辑来自 useProfileTab（经 InfoView 注入）。
- */
 import { inject } from 'vue'
 import {
   UserRound, Trash2, RefreshCw, Loader2, Sparkles, Brain, History, X,
@@ -66,9 +62,7 @@ const {
       <p class="text-xs text-apple-gray-400 mt-1">点击右上角「生成画像」基于用户对话生成第一版画像</p>
     </div>
     <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <!-- 画像总结 + 维度 -->
       <div class="lg:col-span-2 space-y-4">
-        <!-- 画像总结 -->
         <div class="block-card rounded-xl p-5">
           <div class="flex items-center justify-between mb-3">
             <h4 class="text-sm font-semibold flex items-center gap-1.5">
@@ -80,7 +74,6 @@ const {
           <p class="text-xs text-apple-gray-400 mt-3">生成时间: {{ formatProfileTime(profile.generated_at) }}</p>
         </div>
 
-        <!-- 维度列表 -->
         <div class="block-card rounded-xl p-5">
           <h4 class="text-sm font-semibold mb-3 flex items-center gap-1.5">
             <Brain :size="15" class="text-brian-blue" /> 画像维度
@@ -108,7 +101,6 @@ const {
         </div>
       </div>
 
-      <!-- 历史版本 -->
       <div class="space-y-4">
         <div class="block-card rounded-xl p-5">
           <h4 class="text-sm font-semibold mb-3 flex items-center gap-1.5">
@@ -133,7 +125,6 @@ const {
           </div>
         </div>
 
-        <!-- 版本详情 -->
         <div v-if="selectedVersion || loadingVersion" class="block-card rounded-xl p-5">
           <div class="flex items-center justify-between mb-3">
             <h4 class="text-sm font-semibold">版本详情</h4>
@@ -154,7 +145,6 @@ const {
       </div>
     </div>
 
-    <!-- 重置画像确认弹窗（页签根级：空状态下也可从头部按钮触发） -->
     <div v-if="resetProfileConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="resetProfileConfirm = false">
       <div class="block-card w-full max-w-sm mx-4 p-6">
         <div class="flex items-center justify-between mb-4">

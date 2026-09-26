@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * 信息页「标签图谱 / 关键词图谱」页签共用视图（Obsidian 风格力导向图）。
- *
- * 两个页签的模板原本有 ~95% 重复（各 ~118 行），现以 kind 选择
- * useTagGraphTab 工厂产出的对应状态包（reactive 自动解包内部 ref，
- * v-model 直接可用），共用一份模板。业务逻辑经 InfoView 注入。
- */
 import { computed, inject, reactive } from 'vue'
 import {
   Search, Trash2, Eye, EyeOff, X,
@@ -25,7 +18,6 @@ const relatedEmptyText = isTag.value ? '暂无关联内容' : '暂无关联信�
 const graph = inject(INFO_TABS_KEY)!.graph
 const g = reactive(props.kind === 'tag' ? graph.tag : graph.keyword)
 
-/** 函数式 ref：SVG 画布元素回填到图谱组合式函数（坐标换算依赖它） */
 function setSvgRef(el: unknown) {
   g.svgRef = (el as SVGSVGElement | null) ?? null
 }
@@ -128,8 +120,8 @@ function setSvgRef(el: unknown) {
             <g v-if="g.hoveredId" pointer-events="none">
               <template v-for="node in g.layoutNodes.filter(n => n.id === g.hoveredId)" :key="'tooltip-' + node.id">
                 <rect :x="node.x - 70" :y="node.y - node.r - 46" width="140" height="38" rx="6" fill="rgba(0,0,0,0.78)" />
-                <text :x="node.x" :y="node.y - node.r - 28" text-anchor="middle" class="text-[11px] font-medium" fill="#ffffff">{{ node.name }}</text>
-                <text :x="node.x" :y="node.y - node.r - 15" text-anchor="middle" class="text-[10px]" fill="#d1d1d6">关联 {{ node.degree }} · 激活 {{ node.weight }}</text>
+                <text :x="node.x" :y="node.y - node.r - 28" text-anchor="middle" class="text-2xs font-medium" fill="#ffffff">{{ node.name }}</text>
+                <text :x="node.x" :y="node.y - node.r - 15" text-anchor="middle" class="text-4xs" fill="#d1d1d6">关联 {{ node.degree }} · 激活 {{ node.weight }}</text>
               </template>
             </g>
           </g>

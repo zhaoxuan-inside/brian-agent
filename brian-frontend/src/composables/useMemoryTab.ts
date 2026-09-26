@@ -1,10 +1,3 @@
-/**
- * @fileoverview 信息页「记忆检索」页签的业务逻辑组合式函数。
- *
- * 从 InfoView.vue 分离：记忆加载（分页 sentinel）/ 标签与时间过滤 /
- * 勾选删除 / 展开 / 向量相似查询。
- */
-
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { memoryApi } from '../api'
 import type { MemoryItem } from '../api/types'
@@ -12,9 +5,6 @@ import {
   compareDateKeys, dateKeyToRange, hasDataInMonth, latestDateKey, toLocalInputValue,
 } from '../utils/heatmap'
 
-/**
- * 记忆页签状态与操作。
- */
 export function useMemoryTab() {
   const memorySearchTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const memories = ref<MemoryItem[]>([])
@@ -96,7 +86,7 @@ async function loadMemory(reset = true) {
     hasMoreMemory.value = data.has_more
     nextMemoryCursor.value = data.next_cursor
   }
-  catch { /* ignore */ }
+  catch {  }
   finally {
     if (reset) loadingMemory.value = false
     else loadingMoreMemory.value = false
@@ -108,7 +98,6 @@ async function loadMoreMemory() {
   await loadMemory(false)
 }
 
-// 时间过滤变化防抖后刷新；搜索框回车立即检索（原位于 useTagGraphTab，归位至本页签）
 watch([memoryStartTime, memoryEndTime], () => {
   if (memorySearchTimer.value) clearTimeout(memorySearchTimer.value)
   memorySearchTimer.value = setTimeout(() => { loadMemory() }, 300)
@@ -165,7 +154,6 @@ const typeColors: Record<string, string> = {
   working: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
 }
 
-// 记忆类型中文映射（语义/情景/程序性/工作记忆）
 const typeLabels: Record<string, string> = {
   semantic: '语义记忆',
   episodic: '情景记忆',
@@ -195,7 +183,6 @@ function onMemoryScroll() {
   }
 }
 
-// Date navigation (all dates from cache, sorted desc) — drives both left nav & heatmap
 const dateNavTimeline = computed(() => {
   return Object.entries(dateCountCache.value)
     .filter(([, count]) => count > 0)
@@ -240,7 +227,6 @@ function clickDateNav(dateKey: string) {
   })
 }
 
-// Memory heatmap & date count cache（全量日期计数，历史永久缓存，1 分钟轮询保持当天计数新鲜）
 const dateCountCache = ref<Record<string, number>>({})
 let dateCountRefreshTimer: ReturnType<typeof setInterval> | null = null
 const heatmapAutoJumped = ref(false)
@@ -249,7 +235,7 @@ async function loadAllDateCounts() {
   try {
     const data = await memoryApi.dateCounts()
     dateCountCache.value = data.dates
-    // 首次加载后：若当前月无数据则自动定位到最近有数据的月份，避免打开即空白
+
     if (!heatmapAutoJumped.value && Object.keys(data.dates).length > 0) {
       heatmapAutoJumped.value = true
       if (!hasDataInMonth(data.dates, heatmapYear.value, heatmapMonth.value)) {
@@ -261,7 +247,7 @@ async function loadAllDateCounts() {
         }
       }
     }
-  } catch { /* ignore */ }
+  } catch {  }
 }
 
 function startDateCountRefresh() {
@@ -328,9 +314,6 @@ function clickHeatmapDay(day: number | null) {
   clickDateNav(heatmapDateKey(day))
 }
 
-// Library tab
-
-  // 注意：清理钩子必须在 return 之前注册——return 之后本函数已退出，代码不可达
   onBeforeUnmount(() => {
     memoryObserver?.disconnect()
     memoryObserver = null

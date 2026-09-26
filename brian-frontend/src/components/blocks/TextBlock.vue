@@ -9,8 +9,6 @@ const isStreaming = computed(() => props.block.meta.status === 'streaming')
 const isHeading = computed(() => props.block.type === 'Heading')
 const headingLevel = computed(() => isHeading.value ? (props.block as HeadingBlock).level || 2 : null)
 
-// ===== 新增（2026-09-12）：流式 markdown 节流渲染（实现见 utils/markdown） =====
-// 原实现恒为纯文本（whitespace-pre-wrap），流式过程中 markdown 始终不渲染。
 const getDisplayHtml = createThrottledMarkdownRenderer(300)
 
 const headingClasses = computed(() => {
@@ -32,7 +30,6 @@ const headingClasses = computed(() => {
       ]"
       :aria-live="isStreaming ? 'polite' : undefined"
     >
-      <!-- Citing tags -->
       <div v-if="'citingIds' in block && block.citingIds?.length" class="flex flex-wrap gap-1 mb-1.5">
         <span
           v-for="cid in block.citingIds"
@@ -41,7 +38,6 @@ const headingClasses = computed(() => {
         >{{ cid.slice(-8) }}</span>
       </div>
 
-      <!-- Content：正文按 Markdown 渲染（流式节流），标题保持纯文本样式 -->
       <p
         v-if="isHeading"
         class="whitespace-pre-wrap"
@@ -57,7 +53,6 @@ const headingClasses = computed(() => {
       />
       <span v-if="isStreaming" class="inline-block w-1.5 h-4 bg-brian-blue animate-cursor-blink align-middle ml-0.5" />
 
-      <!-- Cited count badge -->
       <div v-if="'citedCount' in block && block.citedCount && block.citedCount > 0" class="mt-2 flex items-center">
         <span class="text-xs text-apple-gray-400">{{ block.citedCount }} 次引用</span>
       </div>

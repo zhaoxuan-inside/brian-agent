@@ -1,18 +1,9 @@
-/**
- * @fileoverview 信息页「用户画像」页签的业务逻辑组合式函数。
- *
- * 从 InfoView.vue 分离：画像加载、历史版本、方向编辑与重置。
- */
-
 import { ref } from 'vue'
 import { userProfileApi } from '../api'
 import type { ProfileHistoryItem, ProfileVersionData, UserProfileData } from '../api/types'
 
-/**
- * 用户画像页签状态与操作。
- */
 export function useProfileTab() {
-// Profile tab
+
 const profile = ref<UserProfileData | null>(null)
 const profileHistory = ref<ProfileHistoryItem[]>([])
 const loadingProfile = ref(false)
@@ -27,7 +18,7 @@ async function loadProfile() {
   try {
     profile.value = await userProfileApi.get()
     profileHistory.value = await userProfileApi.history()
-  } catch { /* ignore */ }
+  } catch {  }
   finally { loadingProfile.value = false }
 }
 
@@ -36,7 +27,7 @@ async function handleGenerateProfile() {
   try {
     await userProfileApi.generate()
     await loadProfile()
-  } catch { /* ignore */ }
+  } catch {  }
   finally { generatingProfile.value = false }
 }
 
@@ -51,7 +42,7 @@ async function confirmResetProfile() {
     await userProfileApi.reset()
     selectedVersion.value = null
     await loadProfile()
-  } catch { /* ignore */ }
+  } catch {  }
   finally { resettingProfile.value = false }
 }
 
@@ -60,7 +51,7 @@ async function openVersion(version: number) {
   selectedVersion.value = null
   try {
     selectedVersion.value = await userProfileApi.version(version)
-  } catch { /* ignore */ }
+  } catch {  }
   finally { loadingVersion.value = false }
 }
 

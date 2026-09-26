@@ -5,7 +5,6 @@ import type { AskUserCardData } from '@/api/types'
 
 const props = defineProps<{
   askUser: AskUserCardData
-  /** 应答提交中（禁用输入与按钮） */
   submitting: boolean
 }>()
 
@@ -30,7 +29,6 @@ function submit() {
 </script>
 
 <template>
-  <!-- ask_user 提问卡（对话区内联）：问题 + 文本答复；答复恢复为会话下一条 user 消息 -->
   <div class="flex items-start gap-2 justify-end">
     <div class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center mt-1">
       <Brain :size="16" />

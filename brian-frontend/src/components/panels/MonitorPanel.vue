@@ -45,15 +45,6 @@ const fbDetailOpen = ref(false)
 const fbDetail = ref<FeedbackProcessLogDetail | null>(null)
 const fbDetailLoading = ref(false)
 
-// ===== 原始方法（保留作为参考）=====
-// async function fetchFeedbackRecords() {
-//   fbLoading.value = true
-//   try { fbRecords.value = (await feedbackApi.records(50)).logs } catch { fbRecords.value = [] }
-//   fbLoading.value = false
-// }
-
-// ===== 修改后的方法：仅首次加载展示阻塞式"加载中"；10s 轮询与手动刷新静默更新，
-// 避免表格每 10 秒被"加载中..."整体替换而闪烁；轮询失败时保留旧数据而非清空误显"暂无" =====
 async function fetchFeedbackRecords(manual = false) {
   const initial = !fbLoaded.value
   if (initial) fbLoading.value = true
@@ -116,8 +107,6 @@ const sourceLabels: Record<string, string> = {
   agent: 'Agent 评估',
 }
 
-// 评分 0-100 → 人话标签：≥70 好评 / ≤40（且 >0）差评 / 其余中评 / 0 未评分
-// 阈值与后端 FeedbackService 的 RATING_POSITIVE_THRESHOLD / RATING_NEGATIVE_THRESHOLD 保持一致
 function ratingBadge(rating: number): { label: string; cls: string } {
   if (!rating || rating <= 0) return { label: '未评分', cls: 'text-apple-gray-400 bg-apple-gray-100 dark:bg-apple-gray-800' }
   if (rating >= 70) return { label: `好评 ${rating}`, cls: 'text-success-green bg-success-green/10' }
@@ -125,7 +114,6 @@ function ratingBadge(rating: number): { label: string; cls: string } {
   return { label: `中评 ${rating}`, cls: 'text-warning-orange bg-warning-orange/10' }
 }
 
-// 列表主文案：优先用户提问，其次用户评论，再次分类——不再以 ID 为主体
 function feedbackSummary(r: FeedbackProcessLogListItem): string {
   if (r.user_question) return r.user_question
   if (r.comment) return r.comment
@@ -133,7 +121,6 @@ function feedbackSummary(r: FeedbackProcessLogListItem): string {
   return '暂无提问内容，点击查看详情'
 }
 
-// 相对时间：比绝对时间戳更符合人的阅读习惯（悬浮仍有完整时间）
 function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts
   if (diff < 60_000) return '刚刚'
@@ -157,18 +144,6 @@ function buildLogQuery() {
   }
 }
 
-// ===== 原始方法（保留作为参考）=====
-// async function fetchAll() {
-//   try { health.value = await monitorApi.health() } catch { /* */ }
-//   try { resources.value = await monitorApi.resources() } catch { /* */ }
-//   try { tokenTrend.value = await monitorApi.tokenTrend() } catch { /* */ }
-//   try { modelDist.value = await monitorApi.modelDistribution() } catch { /* */ }
-//   try { logs.value = await monitorApi.logs(buildLogQuery()) } catch { /* */ }
-// }
-
-// ===== 修改后的方法：并行请求，减少加载时间 =====
-// 日志查询在大库上是重操作（COUNT 全表扫描同步阻塞事件循环），
-// 仅页面进入与手动搜索/刷新时执行，绝不参与 10 秒轮询。
 async function fetchAll(includeLogs = false) {
   const logsTask = includeLogs ? monitorApi.logs(buildLogQuery()) : undefined
   const all = await Promise.allSettled([
@@ -284,8 +259,6 @@ onUnmounted(() => {
   if (healthResizeObserver) { healthResizeObserver.disconnect(); healthResizeObserver = null }
 })
 
-// 步骤1/2/3：当日历容器渲染后（tokenTrend 为空时该容器不渲染），监听其宽度变化，
-// 按「格子宽度(10px) + 间距(3px)」计算可容纳的周数，从而确定日期范围。
 watchEffect(() => {
   const el = calendarBox.value
   if (!el || resizeObserver) return
@@ -295,7 +268,6 @@ watchEffect(() => {
   resizeObserver.observe(el)
 })
 
-// 监听「系统健康」卡片高度，将其作为 Token 趋势 / 模型分布卡片锁定的固定高度
 watchEffect(() => {
   const el = healthCard.value
   if (!el || healthResizeObserver) return
@@ -327,11 +299,8 @@ function formatUptime(seconds: number) {
   return `${d}d ${h}h ${m}m`
 }
 
-// Token 使用趋势：GitHub 贡献图风格的日历热力图
 const DAY_LABELS = ['一', '', '三', '', '五', '', '日']
 
-// 根据容器宽度动态计算可容纳的周数，填充宽度、避免过多留白
-// 容器宽度 ≈ 标签列(12px) + 间距(3px) + N个格子(10px) + (N-1)个间距(3px) = 12 + 13N
 const calendarWeeks = computed(() => {
   const w = calendarBoxWidth.value
   if (!w) return 53
@@ -376,7 +345,6 @@ const tokenCalendar = computed(() => {
   return weeks
 })
 
-// 展平为一维数组（周优先 → 天优先），供 grid-flow-col 按列填充
 const flatCalendar = computed(() => tokenCalendar.value.flat())
 
 function tokenCellColor(tokens: number, future: boolean): string {
@@ -391,7 +359,6 @@ function tokenCellColor(tokens: number, future: boolean): string {
   return `${base} bg-brian-blue`
 }
 
-// 模型分布：按类型分 tab 展示，总 token、占比、显示名
 const MODEL_TYPE_LABELS: Record<string, string> = {
   text: '文本生成',
   vision: '多模态',
@@ -455,7 +422,6 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
 
 <template>
   <div class="space-y-6">
-    <!-- Health status -->
     <div ref="healthCard" class="block-card rounded-2xl p-6">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold flex items-center gap-2">
@@ -474,12 +440,12 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
             <span class="w-2 h-2 rounded-full flex-shrink-0" :class="statusIcon(comp.status)" />
           </div>
           <div class="flex-1 space-y-1 min-w-0">
-            <div v-for="(val, key) in comp.details" :key="key" class="flex items-center justify-between gap-1 text-[11px] min-w-0">
+            <div v-for="(val, key) in comp.details" :key="key" class="flex items-center justify-between gap-1 text-2xs min-w-0">
               <span class="text-apple-gray-400 truncate" :title="String(key)">{{ key }}</span>
               <span class="text-apple-gray-700 dark:text-apple-gray-200 font-medium truncate" :title="String(val)">{{ val }}</span>
             </div>
           </div>
-          <p class="mt-2 pt-1.5 text-[10px] text-apple-gray-400 border-t border-apple-gray-100 dark:border-apple-gray-700/60 truncate">{{ comp.message }}</p>
+          <p class="mt-2 pt-1.5 text-4xs text-apple-gray-400 border-t border-apple-gray-100 dark:border-apple-gray-700/60 truncate">{{ comp.message }}</p>
         </div>
       </div>
 
@@ -499,7 +465,6 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
     </div>
 
-    <!-- Token usage -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="block-card rounded-2xl p-6 flex flex-col" :style="healthCardHeight ? { height: `${healthCardHeight}px` } : undefined">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -509,7 +474,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
         <div v-else ref="calendarBox" class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center">
           <div class="flex gap-[3px]">
             <div class="grid grid-rows-7 gap-[3px] w-3 shrink-0">
-              <span v-for="(label, i) in DAY_LABELS" :key="i" class="flex items-center h-2.5 text-[10px] leading-none text-apple-gray-400">{{ label }}</span>
+              <span v-for="(label, i) in DAY_LABELS" :key="i" class="flex items-center h-2.5 text-4xs leading-none text-apple-gray-400">{{ label }}</span>
             </div>
             <div class="grid grid-rows-7 grid-flow-col gap-[3px]">
               <div
@@ -521,7 +486,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
               />
             </div>
           </div>
-          <div class="flex items-center justify-end gap-1 mt-2 text-[10px] text-apple-gray-400">
+          <div class="flex items-center justify-end gap-1 mt-2 text-4xs text-apple-gray-400">
             <span>少</span>
             <span class="w-2.5 h-2.5 rounded-sm border border-apple-gray-200 dark:border-apple-gray-600 bg-apple-gray-100 dark:bg-apple-gray-700" />
             <span class="w-2.5 h-2.5 rounded-sm border border-apple-gray-200 dark:border-apple-gray-600 bg-brian-blue/20" />
@@ -553,7 +518,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
               <button
                 v-for="o in MODEL_SORT_OPTIONS"
                 :key="o.value"
-                class="px-2 py-0.5 text-[11px] rounded-md transition-colors"
+                class="px-2 py-0.5 text-2xs rounded-md transition-colors"
                 :class="modelSort === o.value ? 'bg-white dark:bg-apple-gray-600 text-apple-gray-900 dark:text-white shadow-sm' : 'text-apple-gray-500 hover:text-apple-gray-700 dark:hover:text-apple-gray-300'"
                 @click="modelSort = o.value"
               >
@@ -563,7 +528,7 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
           </div>
           <div v-if="activeModels.length === 0" class="text-center py-4 text-apple-gray-400 text-sm">暂无数据</div>
           <div v-else class="space-y-2.5 flex-1 min-h-0 overflow-y-auto pr-1">
-            <div class="flex items-center justify-between pb-1 text-[11px] border-b border-apple-gray-100 dark:border-apple-gray-700">
+            <div class="flex items-center justify-between pb-1 text-2xs border-b border-apple-gray-100 dark:border-apple-gray-700">
               <span class="text-apple-gray-400">合计</span>
               <span class="flex items-center gap-3">
                 <span class="flex items-center gap-1">
@@ -593,7 +558,6 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
     </div>
 
-    <!-- Logs -->
     <div class="block-card rounded-2xl p-6">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold flex items-center gap-2">
@@ -700,12 +664,11 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
     </div>
 
-    <!-- 反馈处理记录：卡片流——人话优先（评分/动作/提问摘要/相对时间），ID 仅作辅助 -->
     <div class="block-card rounded-2xl p-6">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold flex items-center gap-2">
           <MessageSquare :size="16" class="text-warning-orange" /> 反馈处理记录
-          <span v-if="fbTotal > 0" class="text-[11px] font-normal text-apple-gray-400">共 {{ fbTotal }} 条</span>
+          <span v-if="fbTotal > 0" class="text-2xs font-normal text-apple-gray-400">共 {{ fbTotal }} 条</span>
         </h3>
         <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" title="刷新" @click="fetchFeedbackRecords(true)">
           <RefreshCw :size="14" :class="{ 'animate-spin': fbLoading || fbRefreshing }" />
@@ -721,19 +684,19 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
           @click="openFeedbackDetail(r.process_id)"
         >
           <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
-            <span class="px-1.5 py-0.5 rounded-md text-[11px] font-semibold shrink-0" :class="ratingBadge(r.rating).cls">{{ ratingBadge(r.rating).label }}</span>
-            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1 shrink-0" :class="actionColors[r.action] || ''">
+            <span class="px-1.5 py-0.5 rounded-md text-2xs font-semibold shrink-0" :class="ratingBadge(r.rating).cls">{{ ratingBadge(r.rating).label }}</span>
+            <span class="px-1.5 py-0.5 rounded-full text-4xs font-medium flex items-center gap-1 shrink-0" :class="actionColors[r.action] || ''">
               <component :is="actionIcons[r.action]" :size="11" />
               {{ actionLabels[r.action] || r.action }}
             </span>
             <span
               v-if="r.source"
-              class="px-1.5 py-0.5 rounded-full text-[10px] text-apple-gray-500 bg-apple-gray-100 dark:bg-apple-gray-800 shrink-0"
+              class="px-1.5 py-0.5 rounded-full text-4xs text-apple-gray-500 bg-apple-gray-100 dark:bg-apple-gray-800 shrink-0"
             >{{ sourceLabels[r.source] || r.source }}</span>
-            <span class="ml-auto text-[11px] text-apple-gray-400 shrink-0" :title="new Date(r.created).toLocaleString('zh-CN')">{{ formatRelativeTime(r.created) }}</span>
+            <span class="ml-auto text-2xs text-apple-gray-400 shrink-0" :title="new Date(r.created).toLocaleString('zh-CN')">{{ formatRelativeTime(r.created) }}</span>
           </div>
           <p class="text-sm text-apple-gray-700 dark:text-apple-gray-200 line-clamp-2 break-words">{{ feedbackSummary(r) }}</p>
-          <div v-if="r.category || r.agent_id" class="flex items-center gap-3 mt-1.5 text-[11px] text-apple-gray-400 min-w-0">
+          <div v-if="r.category || r.agent_id" class="flex items-center gap-3 mt-1.5 text-2xs text-apple-gray-400 min-w-0">
             <span v-if="r.category" class="flex items-center gap-0.5 shrink-0"><Tag :size="10" /> {{ r.category }}</span>
             <span v-if="r.agent_id" class="font-mono truncate min-w-0" :title="r.agent_id">{{ r.agent_id }}</span>
           </div>
@@ -741,11 +704,10 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
       </div>
     </div>
 
-    <!-- 反馈详情弹窗 -->
     <Teleport to="body">
       <div
         v-if="fbDetailOpen"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
         @click.self="closeFeedbackDetail"
       >
         <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">

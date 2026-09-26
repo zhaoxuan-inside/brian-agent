@@ -42,7 +42,6 @@ async function saveSessionTitle(sessionId: string) {
 }
 
 onMounted(async () => {
-  // 从「信息 > 历史」卡片跳转进入时，优先使用 URL 中的 session 参数打开对应会话
   const querySid = route.query.session
   const sid = (typeof querySid === 'string' && querySid) ? querySid : sessionStore.currentSessionId
   if (!sid) return
@@ -52,11 +51,6 @@ onMounted(async () => {
   await sessionStore.loadDag(sid, 'default-user')
 })
 
-// ===== 保持 URL 的 session 参数与当前会话同步 =====
-// 侧边栏切换会话、新建对话、删除当前会话、发送首条消息创建会话等场景都会改写 currentSessionId，
-// 若不同步 URL 中的 session 参数，刷新后 onMounted 会优先读取到过期的 ?session=xxx，
-// 导致「刷新后会话变成其他会话」。这里统一在 currentSessionId 变化时用 replace 同步 query，
-// 不新增历史记录（避免返回键在会话间来回跳转）。
 watch(() => sessionStore.currentSessionId, (sid) => {
   const currentQuery = typeof route.query.session === 'string' ? route.query.session : ''
   if (sid && sid !== currentQuery) {
@@ -118,19 +112,6 @@ function handleNewChat() {
   showSidebar.value = false
 }
 
-// ===== 修改前（2026-09-21）：删除无二次确认，批量删除逐个调用单条接口且无失败处理，
-// 任一失败会中断循环，导致部分会话未删除、关联数据（记忆/画像/写作偏好）残留 =====
-// async function handleDeleteSession(sessionId: string) {
-//   await sessionStore.deleteSession(sessionId)
-// }
-//
-// async function handleBatchDelete() {
-//   for (const id of selectedSessions.value) await sessionStore.deleteSession(id)
-//   selectedSessions.value = new Set()
-// }
-
-// ===== 修改后：单条/批量统一走二次确认；批量删除调用批量接口一次提交 session_ids[]，
-// 后端统一级联清理关联数据，失败时保留选中项便于重试 =====
 const deleteConfirm = ref<{ type: 'single' | 'batch'; sessionId?: string } | null>(null)
 
 function requestDeleteSession(sessionId: string) {
@@ -277,7 +258,6 @@ function formatTime(ts: number) {
 
     <ChatArea />
 
-    <!-- 删除确认弹窗（单条 / 批量） -->
     <div v-if="deleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm = null">
       <div class="block-card w-full max-w-sm mx-4 p-6">
         <div class="flex items-center justify-between mb-4">

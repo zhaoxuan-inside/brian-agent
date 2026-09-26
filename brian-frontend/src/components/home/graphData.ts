@@ -1,8 +1,3 @@
-// ===== 首页动态图谱示意的静态数据（涌现图 / 关键词图）=====
-// 数据与编排分离：本文件只负责「画布上有什么、长什么样」——
-// 节点按主题簇组织，坐标由项目同款力导向算法（utils/forceDirectedLayout，
-// 与真实涌现页共用）确定性生成，GraphShot.vue 只负责渲染与漂移动画。
-
 import { forceDirectedLayout } from '@/utils/forceDirectedLayout'
 import type { GraphEdge, GraphNode } from '@/api/types'
 
@@ -24,12 +19,11 @@ export interface GraphShotGraph {
   edges: GraphShotEdge[]
 }
 
-// 画布逻辑尺寸，与 GraphShot.vue 的 viewBox 保持一致
 export const GRAPH_SHOT_W = 1000
 export const GRAPH_SHOT_H = 560
 
 interface ClusterDef {
-  /** 簇内标签，首位为簇枢纽（权重最高 → 颜色偏红） */
+  
   labels: string[]
   hubWeight: number
 }
@@ -38,7 +32,7 @@ function makeNodes(defs: ClusterDef[]): GraphNode[] {
   const nodes: GraphNode[] = []
   defs.forEach(({ labels, hubWeight }) => {
     labels.forEach((label, i) => {
-      // 指数衰减：枢纽突出、次级快速回落，接近真实频率分布
+      
       const weight = Math.max(1, Math.round(hubWeight * Math.pow(0.72, i)))
       nodes.push({ id: label, name: label, weight, degree: 0 })
     })
@@ -46,7 +40,6 @@ function makeNodes(defs: ClusterDef[]): GraphNode[] {
   return nodes
 }
 
-/** 簇内连边：相邻链 + 每隔 3 个的跳连，让簇内呈网状而非链状 */
 function intraEdges(defs: ClusterDef[]): GraphEdge[] {
   const edges: GraphEdge[] = []
   defs.forEach(({ labels }) => {
@@ -71,7 +64,7 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[]): GraphShotGraph {
   const laid = forceDirectedLayout(nodes, dedupe(edges), GRAPH_SHOT_W, GRAPH_SHOT_H, 2600, 0.16)
   const index = new Map(laid.map((n, i) => [n.id, i]))
   return {
-    // 半径按权重（频率）：低频 5.4px，最高频枢纽 13px（对应图例「越大连接度越高」）
+    
     nodes: laid.map((n) => ({
       label: n.name,
       x: Math.round(n.x * 10) / 10,
@@ -83,8 +76,6 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[]): GraphShotGraph {
   }
 }
 
-// ===== 涌现图 · Tag Graph =====
-// 四个主题簇（面板行业为独立孤岛，还原原图形态），簇间以少量语义桥接相连
 const TAG_CLUSTERS: ClusterDef[] = [
   { labels: ['面板行业', '投资分析', '财务分析OLED', '华为oled显示', '定性研究', 'LCD', 'AMOLED'], hubWeight: 6 },
   { labels: ['旅行规划', '故宫', '颐和园', '八达岭长城', '地铁出行', '博物馆预约', '博物馆通票', '行程提醒', '天气App', '天气数据', '中国天气网', '气象预警', '穿搭建议', '穿搭提醒', '雨具清单', '室内活动'], hubWeight: 10 },
@@ -100,8 +91,6 @@ const TAG_BRIDGES: [string, string][] = [
 const TAG_GRAPH_RAW = layoutGraph(makeNodes(TAG_CLUSTERS), [...intraEdges(TAG_CLUSTERS), ...TAG_BRIDGES.map(([s, t]) => ({ source: s, target: t, weight: 1 }))])
 export const TAG_GRAPH: GraphShotGraph = TAG_GRAPH_RAW
 
-// ===== 关键词图 · Keyword Graph =====
-// 四个语义簇（API / Agent / 存储 / 通用词）+ 外围稀疏孤点 + 顶部 external/required/tool 三角
 const KEYWORD_CLUSTERS: ClusterDef[] = [
   { labels: ['api', 'http', 'https', 'request', 'response', 'server', 'url', 'token', 'json', 'schema', 'query', 'param'], hubWeight: 10 },
   { labels: ['agent', 'model', 'prompt', 'llm', 'tool', 'memory', 'skill', 'mcp', 'plan', 'task', 'message', 'system'], hubWeight: 8 },
@@ -120,12 +109,12 @@ function keywordGraph(): GraphShotGraph {
   const nodes = makeNodes(KEYWORD_CLUSTERS)
   const coreLabels = KEYWORD_CLUSTERS.flatMap((c) => c.labels)
   const edges = [...intraEdges(KEYWORD_CLUSTERS), ...KEYWORD_BRIDGES.map(([s, t]) => ({ source: s, target: t, weight: 1 }))]
-  // 外围孤点：各自挂在一条核心边上，形成稀疏边缘
+  
   KEYWORD_FRINGE.forEach((label, i) => {
     nodes.push({ id: label, name: label, weight: 1, degree: 0 })
     edges.push({ source: label, target: coreLabels[(i * 5) % coreLabels.length], weight: 1 })
   })
-  // 顶部三角：external / required 挂在 tool 上
+  
   nodes.push({ id: 'external', name: 'external', weight: 1, degree: 0 })
   nodes.push({ id: 'required', name: 'required', weight: 1, degree: 0 })
   edges.push({ source: 'external', target: 'tool', weight: 1 })

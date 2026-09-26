@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 信息页「记忆检索」页签视图：记忆卡片时间线 / 日期导航 / 热力图 / 勾选删除。
- * 业务逻辑来自 useMemoryTab（经 InfoView 注入）。
- */
 import { inject } from 'vue'
 import {
   Search, Trash2, CheckSquare, Square, ChevronRight, X,
@@ -168,7 +164,6 @@ const {
       @prev="prevHeatmapMonth"
       @next="nextHeatmapMonth"
     />
-    <!-- 记忆删除确认弹窗 -->
     <div v-if="memoryDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="memoryDeleteConfirm = null">
       <div class="block-card w-full max-w-sm mx-4 p-6">
         <div class="flex items-center justify-between mb-4">

@@ -54,13 +54,11 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <!-- Theme Toggle -->
       <button class="icon-btn" :title="themeStore.isDark ? '浅色模式' : '深色模式'" @click="themeStore.toggleTheme()">
         <Sun v-if="themeStore.isDark" :size="18" />
         <Moon v-else :size="18" />
       </button>
 
-      <!-- i18n -->
       <button
         class="icon-btn"
         :title="i18nStore.locale === 'zh-CN' ? 'English' : '中文'"
@@ -71,7 +69,6 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <!-- User / Lock -->
       <button class="icon-btn" title="锁定" @click="authStore.lock()">
         <Lock :size="16" />
       </button>

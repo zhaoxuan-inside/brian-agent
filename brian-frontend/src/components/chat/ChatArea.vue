@@ -35,7 +35,6 @@ const rightWidth = computed(() => `${(1 - sessionStore.splitRatio) * 100}%`)
 const isDragging = ref(false)
 const listRef = ref<HTMLDivElement | null>(null)
 
-// ===== 引用计数辅助：优先取 ChatMap 节点上的计数/引用清单，缺失时回退消息自身字段 =====
 const nodeMap = computed(() => {
   const m = new Map<string, { summary: string; pin: boolean; citingCount: number; citedCount: number; citingInfoIds: string[]; citedInfoIds: string[] }>()
   for (const n of sessionStore.chatMapNodes) {
@@ -75,7 +74,6 @@ function getCitingIds(msg: ChatMessage): string[] {
   return []
 }
 
-// ChatMap 点击节点 -> 滚动列表使该消息居中
 watch(() => sessionStore.focusInfoId, async (id) => {
   if (!id) return
   await nextTick()
@@ -86,11 +84,10 @@ watch(() => sessionStore.focusInfoId, async (id) => {
   listRef.value.scrollTop += elRect.top - listRect.top - listRect.height / 2 + elRect.height / 2
 })
 
-// 需求确认 / 需求补充卡片出现时滚动到底部，确保表单可见可交互
 watch(
-  () => [chatUi.intentConfirmation, chatUi.clarificationRequest],
-  async ([intent, clarify]) => {
-    if (!intent && !clarify) return
+  () => chatUi.intentConfirmation,
+  async (intent) => {
+    if (!intent) return
     await nextTick()
     if (listRef.value) {
       listRef.value.scrollTop = listRef.value.scrollHeight
@@ -114,7 +111,6 @@ function jumpTo(id: string) {
   scrollListTo(id)
 }
 
-// 思考过程按消息加载：请求思考块与执行轨迹并展示弹窗
 async function showThinking(id: string) {
   chatUi.startThinkingLoading(id)
 
@@ -132,7 +128,6 @@ type TimelineEntry =
   | { kind: 'message'; key: string; sort: number; message: ChatMessage }
   | { kind: 'block'; key: string; sort: number; block: Block }
 
-// timeline：对话区仅展示用户提问与最终回复；授权确认不在对话区展示，统一在思考过程弹窗内完成
 const timeline = computed<TimelineEntry[]>(() => {
   const entries: TimelineEntry[] = []
   for (const m of sessionStore.messages) {
@@ -144,17 +139,12 @@ const timeline = computed<TimelineEntry[]>(() => {
   }
   entries.sort((a, b) => {
     if (a.sort !== b.sort) return a.sort - b.sort
-    // 同一时间戳内：用户消息(USER) < 思考Block(Thinking) < 最终回复消息(ASSISTANT)
     if (a.kind !== b.kind) {
       if (a.kind === 'message' && a.message.role === 'user') return -1
       if (b.kind === 'message' && b.message.role === 'user') return 1
       if (a.kind === 'block') return -1
       if (b.kind === 'block') return 1
     }
-    // ===== 修改后（2026-09-09）：同 kind 消息按角色稳定排序（user < assistant） =====
-    // 原代码：直接落入 key（UUID）字符串比较——历史同步时 user/assistant 落库同一时间戳，
-    // 排序结果由 UUID 随机决定，出现"用户消息显示在系统回复下面"的顺序颠倒。
-    // 现按角色 tie-break（提问在前、回复在后），与时间线语义一致。
     if (a.kind === 'message' && b.kind === 'message' && a.message.role !== b.message.role) {
       return a.message.role === 'user' ? -1 : 1
     }
@@ -185,12 +175,10 @@ function startResize(e: MouseEvent) {
 
 <template>
   <div class="chat-area flex flex-1 overflow-hidden" :class="{ 'select-none': isDragging }">
-    <!-- Left: ChatMap -->
     <div class="flex-shrink-0 h-full overflow-hidden" :style="{ width: leftWidth }">
       <ChatMap />
     </div>
 
-    <!-- Resizable Divider -->
     <div
       class="w-1.5 cursor-col-resize bg-apple-gray-100 dark:bg-apple-gray-800 hover:bg-brian-blue/50 transition-colors relative group flex-shrink-0"
       @mousedown="startResize"
@@ -198,7 +186,6 @@ function startResize(e: MouseEvent) {
       <div class="absolute inset-y-0 -left-1 -right-1" />
     </div>
 
-    <!-- Right: Conversation Panel -->
     <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden" :style="{ width: rightWidth }">
       <div ref="listRef" class="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         <div v-if="!sessionStore.currentSessionId && sessionStore.messages.length === 0" class="flex flex-col items-center justify-center h-full text-apple-gray-400">
@@ -208,7 +195,6 @@ function startResize(e: MouseEvent) {
         </div>
 
         <template v-for="entry in timeline" :key="entry.key">
-          <!-- ===== 新增（2026-09-22）：ask_user 提问卡（对话区内联；答复=下一条 user 消息） ===== -->
           <div v-if="entry.kind === 'message' && entry.message.askUser" class="flex items-start gap-2 justify-end">
             <AskUserCard
               :ask-user="entry.message.askUser"
@@ -223,7 +209,6 @@ function startResize(e: MouseEvent) {
             :class="entry.message.role === 'user' ? 'justify-start' : 'justify-end'"
             :data-info-id="entry.message.id"
           >
-            <!-- 用户消息：靠左，头像在消息框左侧 -->
             <div v-if="entry.message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 text-brian-blue flex items-center justify-center mt-1">
               <UserRound :size="16" />
             </div>
@@ -258,26 +243,11 @@ function startResize(e: MouseEvent) {
               />
             </div>
 
-            <!-- 系统回复：靠右，主题蓝头像在消息框右侧 -->
             <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center mt-1">
               <Brain :size="16" />
             </div>
           </div>
 
-          <!-- ===== 修改后（2026-09-12）：ToolInvocation 执行卡靠右（与系统回复消息一致）；其余块维持原布局 ===== -->
-          <!-- ===== 原始代码（保留作为参考）：所有非 Thinking 块按 block.role 分左右，role==='tool' 的 -->
-          <!-- ToolInvocation 落到 mr-auto 靠左、与用户消息同侧，视觉上误读为用户输入 -->
-          <!-- <div v-else-if="entry.block.type !== 'ThinkingChain'" class="max-w-[85%]" -->
-          <!--   :class="entry.block.role === 'user' ? 'ml-auto' : 'mr-auto'"> -->
-          <!--   <BlockRenderer :block="entry.block" /> -->
-          <!-- </div> -->
-          <!-- ===== 修改后（2026-09-12）：所有 Block 按 role 对齐——仅 user 靠左（与用户消息一致）， ===== -->
-          <!-- assistant/tool/system 靠右（与系统回复一致）；TextParagraph 流式文本不再落在用户同侧 -->
-          <!-- ===== 原始代码（保留作为参考）：仅 ToolInvocation 靠右，其余（含 assistant 的 TextParagraph）靠左 ===== -->
-          <!-- <div v-else-if="entry.block.type !== 'ThinkingChain'" class="max-w-[85%]" -->
-          <!--   :class="entry.block.type === 'ToolInvocation' ? 'ml-auto' : 'mr-auto'"> -->
-          <!--   <BlockRenderer :block="entry.block" /> -->
-          <!-- </div> -->
           <div
             v-else-if="entry.block.type !== 'ThinkingChain'"
             class="max-w-[85%]"
@@ -287,13 +257,11 @@ function startResize(e: MouseEvent) {
           </div>
         </template>
 
-        <!-- Streaming cursor -->
         <div v-if="sessionStore.isStreaming" class="flex items-center gap-2 text-apple-gray-400 text-sm">
           <Loader2 :size="14" class="animate-spin" />
           <span>思考中...</span>
         </div>
 
-        <!-- 需求理解确认卡片（对话区内联） -->
         <IntentConfirmCard
           v-if="chatUi.intentConfirmation"
           :confirmation="chatUi.intentConfirmation"
@@ -316,10 +284,8 @@ function startResize(e: MouseEvent) {
       </div>
     </div>
 
-    <!-- 思考过程弹窗 -->
     <ThinkingModal />
 
-    <!-- 评估结果弹窗 -->
     <EvalResultModal />
   </div>
 </template>

@@ -1,8 +1,3 @@
-<!--
-===== ComponentInfoModal.vue 组件详情弹窗 =====
-展示 Agent 构建组件（Prompt / Soul / LLM / Skill / MCP）的详细信息。
-由 ThinkingBlock 的构建组件 Chip 点击触发：按 kind 拉取对应组件详情并展示。
--->
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { X, Loader2, FileText, Sparkles, Cpu, Wrench, Layers } from '@lucide/vue'
@@ -28,7 +23,6 @@ const KIND_META: Record<ComponentKind, { label: string; icon: unknown }> = {
   mcp: { label: 'MCP 服务', icon: Layers },
 }
 
-// 优先展示的友好字段（其余落入完整 JSON 区）
 const FRIENDLY_FIELDS: Record<ComponentKind, string[]> = {
   prompt: ['title', 'brief', 'enabled', 'template'],
   soul: ['name', 'description', 'traits', 'enabled', 'enabled_scope'],
@@ -115,7 +109,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <div
-      class="fixed inset-0 z-[130] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       @click.self="emit('close')"
     >
       <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-xl overflow-hidden flex flex-col max-h-[80vh]">
@@ -126,7 +120,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </span>
             <div class="min-w-0">
               <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ meta.label }}</h3>
-              <p class="text-[11px] text-apple-gray-400 font-mono truncate">{{ refId }}</p>
+              <p class="text-2xs text-apple-gray-400 font-mono truncate">{{ refId }}</p>
             </div>
           </div>
           <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0" @click="emit('close')">
@@ -153,14 +147,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 :key="row.key"
                 class="rounded-xl border border-apple-gray-200/70 dark:border-apple-gray-700/60 overflow-hidden"
               >
-                <p class="px-3 py-1.5 text-[10px] font-medium text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800/60 border-b border-apple-gray-100 dark:border-apple-gray-800 font-mono">{{ row.key }}</p>
-                <pre class="px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-apple-gray-700 dark:text-apple-gray-200 bg-white dark:bg-apple-gray-900">{{ displayValue(row.value) }}</pre>
+                <p class="px-3 py-1.5 text-4xs font-medium text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800/60 border-b border-apple-gray-100 dark:border-apple-gray-800 font-mono">{{ row.key }}</p>
+                <pre class="px-3 py-2 text-2xs leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-apple-gray-700 dark:text-apple-gray-200 bg-white dark:bg-apple-gray-900">{{ displayValue(row.value) }}</pre>
               </div>
             </div>
 
-            <details v-if="jsonText" class="text-[11px] text-apple-gray-500">
+            <details v-if="jsonText" class="text-2xs text-apple-gray-500">
               <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300 font-medium">完整数据</summary>
-              <pre class="mt-1 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 overflow-x-auto text-[10px] leading-relaxed max-h-56 overflow-y-auto">{{ jsonText }}</pre>
+              <pre class="mt-1 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 overflow-x-auto text-4xs leading-relaxed max-h-56 overflow-y-auto">{{ jsonText }}</pre>
             </details>
           </template>
         </div>

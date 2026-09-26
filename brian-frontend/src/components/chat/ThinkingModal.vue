@@ -21,7 +21,6 @@ const visible = computed(() => chatUi.thinkingModalVisible)
 const targetMsgId = computed(() => chatUi.thinkingTargetMsgId)
 const thinkingLoading = computed(() => chatUi.thinkingLoading)
 
-// 指定消息 → 接口采集的思考块；未指定（任务进行中）→ 展示当前实时思考块
 const thinkingBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
     return chatUi.thinkingBlocks as ThinkingBlock[]
@@ -31,10 +30,8 @@ const thinkingBlocks = computed<ThinkingBlock[]>(() => {
   )
 })
 
-// 历史问答取接口下发的 trace；任务进行中由实时 blocks/messages 归约
 const historyTrace = computed<ThinkingTrace | null>(() => (targetMsgId.value ? chatUi.thinkingTrace : null))
 
-// 基础上下文数据源（ContextProvider 提供）：历史采集块 / 实时思考块中的 context 字段
 const contextBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
     return chatUi.thinkingBlocks as ThinkingBlock[]
@@ -42,12 +39,9 @@ const contextBlocks = computed<ThinkingBlock[]>(() => {
   return sessionStore.blocks.filter((b): b is ThinkingBlock => b.type === 'ThinkingChain')
 })
 
-// 执行时间线节点 → 执行内容卡片跳转（smooth 滚动 + 短暂高亮）
 const jumpTarget = ref('')
 async function scrollToAnchor(target?: string) {
   if (!target) return
-  // 目标锚点可能位于折叠分区内（v-if 未渲染，querySelector 查不到）：
-  // 先展开对应分区并等待 DOM 渲染完成，再执行定位与高亮
   const shouldExpand = (target.startsWith('ctx-') && !secContext.value)
     || (target.startsWith('tool-') && !secTools.value)
     || (target.startsWith('perm-') && !secPermissions.value)
@@ -102,7 +96,7 @@ const liveTimeline = computed<LiveTimelineItem[]>(() => {
           for (const tc of s.toolCalls) {
             items.push({
               key: `act-${b.id}-${s.iteration}-${tc.toolName}`, seq: b.meta.updatedAt, ts: b.meta.updatedAt,
-              event: 'tool.live', title: `调用工具：${tc.toolName || 'Tool'}`,
+              event: 'tool.live', title: `调用技能：${tc.toolName || 'Skill'}`,
               detail: JSON.stringify(tc.params ?? {}).slice(0, 200), kind: 'tool',
             })
           }
@@ -114,7 +108,7 @@ const liveTimeline = computed<LiveTimelineItem[]>(() => {
       const failed = b.meta.status === 'error'
       items.push({
         key: `tool-${b.id}`, seq: b.meta.createdAt, ts: b.meta.createdAt,
-        event: 'tool.live-result', title: `工具${failed ? '失败' : done ? '完成' : '执行中'}：${tb.toolName || 'Tool'}`,
+        event: 'tool.live-result', title: `技能${failed ? '失败' : done ? '完成' : '执行中'}：${tb.toolName || 'Skill'}`,
         detail: done ? String(JSON.stringify(tb.result ?? '')).slice(0, 220) : '执行中…',
         kind: failed ? 'tool-fail' : done ? 'tool-ok' : 'tool', target: `tool-${b.id}`,
       })
@@ -137,14 +131,12 @@ const liveTimeline = computed<LiveTimelineItem[]>(() => {
   return items.sort((a, b) => a.ts - b.ts)
 })
 
-// 统一时间线：历史用 trace.timeline，任务进行中优先用 chatUi.liveTimeline 实时队列（回退 liveTimeline）
 const timeline = computed<ThinkingTimelineItem[]>(() => {
   if (historyTrace.value?.timeline?.length) return historyTrace.value.timeline
   if (chatUi.liveTimeline && chatUi.liveTimeline.length > 0) return chatUi.liveTimeline
   return liveTimeline.value
 })
 
-// 执行时间线每步耗时：优先使用由 Metrics 精确记录的流程耗时（item.elapsedMs），不再做跨节点盲目时间相减
 const timelineWithElapsed = computed<Array<ThinkingTimelineItem & { elapsedMs: number }>>(() => {
   const list = timeline.value
   if (list.length === 0) return []
@@ -154,8 +146,6 @@ const timelineWithElapsed = computed<Array<ThinkingTimelineItem & { elapsedMs: n
   })
 })
 
-// 实时工具/授权所属组件解析（与后端 toolComponentOf 同规则）：skill_exec → Skill、mcp_exec → MCP；
-// 实时路径无 DB 名称解析，名称回退原始 ID（历史 trace 由后端下发解析后的名称）
 const REALTIME_BUILTIN_TOOL_IDS = new Set(['skill_exec', 'mcp_exec', 'cdt_browser', 'update_plan', 'delegate'])
 function realtimeToolComponentOf(toolId: string, params: Record<string, unknown>): { builtin: boolean; kind: 'skill' | 'mcp' | ''; id: string; name: string; subTool: string } {
   const builtin = REALTIME_BUILTIN_TOOL_IDS.has(toolId)
@@ -170,7 +160,6 @@ function realtimeToolComponentOf(toolId: string, params: Record<string, unknown>
   return { builtin, kind: '', id: '', name: '', subTool: '' }
 }
 
-// 统一工具 / 授权：历史用 trace，任务进行中用实时 blocks/messages
 const toolTraces = computed<Array<ThinkingToolTrace>>(() => {
   if (historyTrace.value?.tools?.length) return historyTrace.value.tools
   return sessionStore.blocks
@@ -223,7 +212,6 @@ const pendingPermissions = computed(() => permissionTraces.value.filter((p) => p
 const answeredPermissions = computed(() => permissionTraces.value.filter((p) => p.status !== 'pending'))
 
 const runOverview = computed(() => historyTrace.value?.run ?? null)
-// 运行概览「组件清单」：本次问答用到的 Agent/LLM/Prompt/Soul/Skill/MCP（名称显示、悬浮可见 ID）
 const overviewComponents = computed<Array<{ kind: string; id: string; name: string; icon: unknown }>>(() => {
   const c = runOverview.value?.components
   if (!c) return []
@@ -236,11 +224,9 @@ const overviewComponents = computed<Array<{ kind: string; id: string; name: stri
   for (const m of c.mcps || []) list.push({ kind: 'MCP', id: m.id, name: m.name, icon: Layers })
   return list
 })
-// 上下文轮次：历史取 trace.contextRounds（回放），任务进行中取实时 context.built 累积的轮次
 const contextRounds = computed(() => historyTrace.value?.contextRounds ?? chatUi.liveContextRounds ?? [])
 const runNodes = computed(() => historyTrace.value?.nodes ?? [])
 
-// 整体的"思考中"状态：任一思考块流式中或任一 Agent 执行中
 const overallStreaming = computed(() => {
   if (thinkingBlocks.value.some((b) => b.meta.status === 'streaming')) return true
   return Object.values(chatUi.agentExecutions).some((i) => i.status === 'RUNNING')
@@ -253,7 +239,6 @@ const isEmpty = computed(() => (
   && permissionTraces.value.length === 0
 ))
 
-// 分区折叠状态（执行时间线常驻展开，不可折叠；其余默认展开）
 const secTools = ref(true)
 const secPermissions = ref(true)
 const secAgent = ref(true)
@@ -284,7 +269,6 @@ function toggleNode(key: string) {
   expandedNodes.value = next
 }
 
-// 时间线配色（三色：进行中=主题蓝，完成=绿，失败=红）
 const KIND_DOT: Record<string, string> = {
   'lifecycle': 'bg-brian-blue',
   'lifecycle-ok': 'bg-success-green',
@@ -368,7 +352,6 @@ const renderedToolResults = computed(() => {
 
 const agentDetailBlocks = computed<ThinkingBlock[]>(() => thinkingBlocks.value)
 
-// 授权确认（弹窗内完成，对话区不再展示）：允许 / 拒绝 / 始终允许
 const permittingId = ref<string | null>(null)
 async function confirmPermission(permissionId: string, approved: boolean, remember = false) {
   if (!permissionId || permittingId.value) return
@@ -393,22 +376,16 @@ function close() {
   chatUi.closeThinkingModal()
 }
 
-// 退场动画播完再清空内容，避免关闭瞬间内容闪空
 function onAfterLeave() {
   chatUi.cleanupThinkingModal()
 }
 
-// ===== Dock 式 Genie 动画（借鉴 macOS 从 Dock 打开 / 最小化回 Dock）=====
-// 有 origin（点了某条消息的"思考过程"按钮）时：卡片从按钮位置生长出来，关闭时飞回按钮；
-// 无 origin（任务进行中自动弹出）时：退化为中央浮现。用 WAAPI 而非 CSS 过渡，
-// 因为起飞点需要实测卡片落位后的矩形做 FLIP 换算，纯 CSS 写不出"飞向按钮"的位移。
 interface GenieTarget { dx: number; dy: number; s: number }
 
 function getCardEl(overlay: Element): HTMLElement | null {
   return overlay.querySelector('.thinking-card')
 }
 
-/** 卡片中心 → 按钮中心的位移 + 收缩比例（macOS 最小化的 Scale 效果近似） */
 function genieTarget(cardRect: DOMRect): GenieTarget | null {
   const o = chatUi.thinkingOrigin
   if (!o || !cardRect.width || !cardRect.height) return null
@@ -426,7 +403,6 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-// Dock 图标式回跳：打开时让源按钮轻 bounce 一下，呼应 macOS 点击 Dock 图标的效果
 function bounceOriginButton() {
   try {
     const id = targetMsgId.value
@@ -450,7 +426,6 @@ function cancelAnims() {
   liveAnims.forEach((a) => { try { a.cancel() } catch { /* ignore */ } })
   liveAnims.clear()
 }
-/** 跑一组动画后调 done；被新动画顶掉（enter→leave）时老回调自动失效，避免重复 done */
 function playAnims(anims: Animation[], done: () => void, timeoutMs: number, cleanup: () => void) {
   cancelAnims()
   const token = ++animToken
@@ -466,7 +441,6 @@ function playAnims(anims: Animation[], done: () => void, timeoutMs: number, clea
   setTimeout(finish, timeoutMs)
 }
 
-// before-enter 在元素插入前触发：先藏起来，避免插入到 onEnter 之间的首帧闪现
 function onGenieBeforeEnter(overlay: Element) {
   const oEl = overlay as HTMLElement
   oEl.style.opacity = '0'
@@ -544,11 +518,9 @@ function onGenieLeave(overlay: Element, done: () => void) {
         ],
         { duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' },
       )
-  // 退场元素播完即被移除：先 done 让 Vue 摘节点，再取消动画避免 detached 节点残留
   playAnims([oAnim, cAnim], done, 450, () => cancelAnims())
 }
 
-// enter 被 leave 顶掉等取消场景：只清理动画残留，不调 done（由接管方负责）
 function onGenieCancelled() {
   animToken++
   cancelAnims()
@@ -561,7 +533,6 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
-// 执行时间线常驻展示：任务进行中新增环节时自动滚动到底部，保持最新进展可见
 const timelineListRef = ref<HTMLElement | null>(null)
 watch(
   () => timeline.value.length,
@@ -588,13 +559,12 @@ watch(
     >
       <div
         v-if="visible"
-        class="thinking-overlay fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        class="thinking-overlay fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm"
         @click.self="close"
       >
         <div
           class="thinking-card bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-4xl mx-4 overflow-hidden flex flex-col max-h-[85vh]"
         >
-          <!-- 头部 -->
           <div class="px-5 py-3.5 border-b border-apple-gray-200/80 dark:border-apple-gray-700/80 flex items-center justify-between flex-shrink-0">
             <div class="flex items-center gap-2.5 min-w-0">
               <span class="w-7 h-7 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center flex-shrink-0">
@@ -604,15 +574,15 @@ watch(
                 <div class="flex items-center gap-2">
                   <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">思考过程</h3>
                   <Loader2 v-if="thinkingLoading || overallStreaming" :size="13" class="animate-spin text-brian-blue" />
-                  <span v-else-if="pendingPermissions.length > 0" class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
-                  <span v-else-if="!targetMsgId && chatUi.runActive" class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-brian-blue/10 text-brian-blue">思考中</span>
-                  <span v-else class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-success-green/10 text-success-green">已完成</span>
+                  <span v-else-if="pendingPermissions.length > 0" class="px-1.5 py-0.5 rounded-md text-4xs font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
+                  <span v-else-if="!targetMsgId && chatUi.runActive" class="px-1.5 py-0.5 rounded-md text-4xs font-medium bg-brian-blue/10 text-brian-blue">思考中</span>
+                  <span v-else class="px-1.5 py-0.5 rounded-md text-4xs font-medium bg-success-green/10 text-success-green">已完成</span>
                 </div>
-                <p class="text-[11px] text-apple-gray-400 truncate">
+                <p class="text-2xs text-apple-gray-400 truncate">
                   <span v-if="thinkingLoading">正在加载思考过程…</span>
                   <span v-else-if="overallStreaming">正在思考，内容实时更新…</span>
                   <span v-else-if="!targetMsgId && chatUi.runActive">正在思考，内容即将展现…</span>
-                  <span v-else-if="timeline.length">{{ timeline.length }} 个环节 · {{ toolTraces.length }} 次工具调用 · {{ permissionTraces.length }} 次授权</span>
+                  <span v-else-if="timeline.length">{{ timeline.length }} 个环节 · {{ toolTraces.length }} 次技能调用 · {{ permissionTraces.length }} 次授权</span>
                   <span v-else>暂无可展示的思考内容</span>
                 </p>
               </div>
@@ -623,7 +593,6 @@ watch(
           </div>
 
           <div class="px-5 py-4 flex-1 overflow-y-auto space-y-4">
-            <!-- 加载态 -->
             <div v-if="thinkingLoading && isEmpty" class="flex flex-col items-center justify-center py-14 space-y-3">
               <span class="w-11 h-11 rounded-full bg-brian-blue/10 flex items-center justify-center">
                 <Loader2 :size="22" class="animate-spin text-brian-blue" />
@@ -632,23 +601,22 @@ watch(
             </div>
 
             <template v-else>
-              <!-- 待授权：置顶展示，在弹窗内直接确认 -->
               <section v-if="pendingPermissions.length > 0" class="rounded-2xl border border-brian-blue/25 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
                 <div class="px-4 py-3 flex items-center gap-2">
                   <ShieldCheck :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">等待授权</h4>
-                  <span class="text-[11px] text-apple-gray-400">{{ pendingPermissions.length }} 项需要确认</span>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">等待授权</h4>
+                  <span class="text-2xs text-apple-gray-400">{{ pendingPermissions.length }} 项需要确认</span>
                 </div>
                 <div class="px-4 pb-4 space-y-2">
                   <div v-for="p in pendingPermissions" :key="p.permissionId" class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 p-3">
                     <div class="flex items-center gap-2 min-w-0">
                       <ShieldCheck :size="13" class="text-brian-blue flex-shrink-0" />
                       <span class="text-xs font-mono font-medium text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ p.toolId }}</span>
-                      <span class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
-                      <span class="ml-auto hidden sm:inline text-[10px] tabular-nums text-apple-gray-400 flex-shrink-0">{{ formatTs(p.askedAt) }}</span>
+                      <span class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-brian-blue/10 text-brian-blue">等待授权</span>
+                      <span class="ml-auto hidden sm:inline text-4xs tabular-nums text-apple-gray-400 flex-shrink-0">{{ formatTs(p.askedAt) }}</span>
                     </div>
-                    <pre v-if="formatJson(p.input)" class="mt-2 text-[11px] font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(p.input) }}</pre>
-                    <p v-else class="mt-2 text-[11px] text-apple-gray-300">（无参数）</p>
+                    <pre v-if="formatJson(p.input)" class="mt-2 text-2xs font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(p.input) }}</pre>
+                    <p v-else class="mt-2 text-2xs text-apple-gray-300">（无参数）</p>
                     <div class="mt-2.5 flex items-center justify-end gap-2">
                       <button
                         class="px-3 py-1.5 rounded-lg text-xs text-error-red hover:bg-error-red/10 disabled:opacity-50 transition-colors"
@@ -659,7 +627,7 @@ watch(
                       </button>
                       <button
                         class="px-3 py-1.5 rounded-lg text-xs text-brian-blue hover:bg-brian-blue/10 disabled:opacity-50 transition-colors"
-                        title="以后执行该工具不再询问"
+                        title="以后执行该技能不再询问"
                         :disabled="permittingId === p.permissionId"
                         @click="confirmPermission(p.permissionId, true, true)"
                       >
@@ -679,13 +647,12 @@ watch(
                 </div>
               </section>
 
-              <!-- 运行概览 -->
               <section v-if="runOverview" class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 p-4">
                 <div class="flex items-center gap-2 mb-3">
                   <Bot :size="14" class="text-brian-blue" />
-                  <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">运行概览</h4>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">运行概览</h4>
                   <span
-                    class="ml-auto px-2 py-0.5 rounded-full text-[10px] font-medium"
+                    class="ml-auto px-2 py-0.5 rounded-full text-4xs font-medium"
                     :class="String(runOverview.status) === 'finished'
                       ? 'bg-success-green/10 text-success-green'
                       : /fail|error/i.test(String(runOverview.status)) ? 'bg-error-red/10 text-error-red' : 'bg-brian-blue/10 text-brian-blue'"
@@ -693,29 +660,27 @@ watch(
                     {{ String(runOverview.status) === 'finished' ? '执行完成' : runOverview.status }}
                   </span>
                 </div>
-                <!-- 运行概览是整个问答（run）的整体情况，不展示单个 Agent 的内部运行时名称（w2-xxx-8位随机后缀） -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 border border-apple-gray-200/60 dark:border-apple-gray-700/60 px-3 py-2">
-                    <p class="text-[10px] text-apple-gray-400 flex items-center gap-1"><Clock3 :size="10" />耗时</p>
+                    <p class="text-4xs text-apple-gray-400 flex items-center gap-1"><Clock3 :size="10" />耗时</p>
                     <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mt-0.5">{{ formatDuration(runOverview.durationMs) }}</p>
                   </div>
                   <div class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 border border-apple-gray-200/60 dark:border-apple-gray-700/60 px-3 py-2">
-                    <p class="text-[10px] text-apple-gray-400 flex items-center gap-1"><Zap :size="10" />Token 输入/输出</p>
+                    <p class="text-4xs text-apple-gray-400 flex items-center gap-1"><Zap :size="10" />Token 输入/输出</p>
                     <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mt-0.5">{{ runOverview.inputTokens ?? 0 }} / {{ runOverview.outputTokens ?? runOverview.tokenUsage }}</p>
                   </div>
                   <div class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 border border-apple-gray-200/60 dark:border-apple-gray-700/60 px-3 py-2">
-                    <p class="text-[10px] text-apple-gray-400 flex items-center gap-1"><Wrench :size="10" />工具调用</p>
+                    <p class="text-4xs text-apple-gray-400 flex items-center gap-1"><Wrench :size="10" />技能调用</p>
                     <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mt-0.5">{{ runOverview.toolCount }} 次</p>
                   </div>
                   <div class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 border border-apple-gray-200/60 dark:border-apple-gray-700/60 px-3 py-2">
-                    <p class="text-[10px] text-apple-gray-400 flex items-center gap-1"><ShieldCheck :size="10" />授权</p>
+                    <p class="text-4xs text-apple-gray-400 flex items-center gap-1"><ShieldCheck :size="10" />授权</p>
                     <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mt-0.5">{{ runOverview.permissionCount }} 次</p>
                   </div>
                 </div>
-                <!-- 本次问答组件清单：Agent/LLM/Prompt/Soul/Skill/MCP 名称+ID（观测本次执行用到了哪些组件） -->
                 <div v-if="overviewComponents" class="mt-3 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-800">
-                  <p class="text-[10px] font-medium text-apple-gray-400 mb-1.5">组件清单</p>
-                  <div class="flex items-center gap-1.5 flex-wrap text-[11px]">
+                  <p class="text-4xs font-medium text-apple-gray-400 mb-1.5">组件清单</p>
+                  <div class="flex items-center gap-1.5 flex-wrap text-2xs">
                     <span
                       v-for="c in overviewComponents"
                       :key="`${c.kind}-${c.id || c.name}`"
@@ -730,12 +695,11 @@ watch(
                 </div>
               </section>
 
-              <!-- 基础上下文（ContextProvider 提供）：引用消息/画像/策略 + 每轮上下文轮次 -->
               <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
                 <button class="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/60 transition-colors" @click="secContext = !secContext">
                   <MessagesSquare :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">基础上下文</h4>
-                  <span class="text-[11px] text-apple-gray-400">{{ contextRounds.length }} 轮 · {{ contextBlocks.filter((b) => b.context).length }} 块</span>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">基础上下文</h4>
+                  <span class="text-2xs text-apple-gray-400">{{ contextRounds.length }} 轮 · {{ contextBlocks.filter((b) => b.context).length }} 块</span>
                   <ChevronDown :size="14" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secContext }" />
                 </button>
                 <div v-if="secContext" class="px-4 pb-4 space-y-3">
@@ -747,9 +711,9 @@ watch(
                       :data-anchor="round.targetKey || `ctx-${round.round}`"
                       class="rounded-xl border border-apple-gray-200/70 dark:border-apple-gray-700/60 p-3"
                     >
-                      <p class="text-[11px] font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">第 {{ round.round }} 轮 · {{ round.messageCount }} 条消息</p>
+                      <p class="text-2xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">第 {{ round.round }} 轮 · {{ round.messageCount }} 条消息</p>
                       <div class="space-y-1.5 max-h-56 overflow-y-auto">
-                        <div v-for="(m, mi) in round.messages" :key="mi" class="text-[11px] leading-relaxed rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 px-2.5 py-1.5">
+                        <div v-for="(m, mi) in round.messages" :key="mi" class="text-2xs leading-relaxed rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 px-2.5 py-1.5">
                           <span class="font-mono font-medium text-brian-blue mr-1.5">[{{ m.role }}]</span>
                           <span class="text-apple-gray-600 dark:text-apple-gray-300 break-words">{{ m.content }}</span>
                         </div>
@@ -759,12 +723,11 @@ watch(
                 </div>
               </section>
 
-              <!-- 执行时间线（常驻展示，不可折叠；节点可点击跳转对应执行内容；任务进行中实时追加并自动滚动） -->
               <section class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
                 <div class="w-full flex items-center gap-2 px-4 py-3">
                   <ListTree :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行时间线</h4>
-                  <span class="text-[11px] text-apple-gray-400">{{ timeline.length }} 个环节</span>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行时间线</h4>
+                  <span class="text-2xs text-apple-gray-400">{{ timeline.length }} 个环节</span>
                   <Loader2 v-if="overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue" />
                 </div>
                 <div class="px-4 pb-4">
@@ -792,17 +755,17 @@ watch(
                                 class="text-xs font-medium text-apple-gray-800 dark:text-apple-gray-100 leading-relaxed"
                                 :title="item.tooltip || undefined"
                               >{{ item.title }}</p>
-                              <span v-if="item.ts" class="text-[10px] tabular-nums text-apple-gray-300">{{ formatTs(item.ts) }}</span>
-                              <span v-if="item.elapsedMs" class="text-[10px] tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(item.elapsedMs) }}</span>
-                              <span v-if="item.target" class="text-[10px] text-brian-blue opacity-0 group-hover:opacity-100 transition-opacity">查看详情 →</span>
+                              <span v-if="item.ts" class="text-4xs tabular-nums text-apple-gray-300">{{ formatTs(item.ts) }}</span>
+                              <span v-if="item.elapsedMs" class="text-4xs tabular-nums text-brian-blue/70 flex items-center gap-0.5"><Clock3 :size="10" />{{ formatDuration(item.elapsedMs) }}</span>
+                              <span v-if="item.target" class="text-4xs text-brian-blue opacity-0 group-hover:opacity-100 transition-opacity">查看详情 →</span>
                             </div>
-                            <p v-if="item.detail" class="mt-0.5 text-[11px] leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words line-clamp-3">{{ item.detail }}</p>
+                            <p v-if="item.detail" class="mt-0.5 text-2xs leading-relaxed text-apple-gray-500 dark:text-apple-gray-400 break-words line-clamp-3">{{ item.detail }}</p>
                           </div>
                         </div>
                       </li>
                     </ol>
                   </div>
-                  <div v-else class="flex items-center gap-2 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 px-3 py-3 text-[11px] text-apple-gray-400">
+                  <div v-else class="flex items-center gap-2 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-800/60 px-3 py-3 text-2xs text-apple-gray-400">
                     <Loader2 v-if="thinkingLoading || overallStreaming || (!targetMsgId && chatUi.runActive)" :size="12" class="animate-spin text-brian-blue flex-shrink-0" />
                     <span v-if="thinkingLoading">正在加载执行时间线…</span>
                     <span v-else-if="overallStreaming">执行环节将实时追加…</span>
@@ -812,21 +775,19 @@ watch(
                 </div>
               </section>
 
-              <!-- 执行内容：执行时间线中每个节点的工作详细内容（分组行展示，不叠加卡片嵌套） -->
               <section v-if="toolTraces.length + answeredPermissions.length + agentDetailBlocks.length + runNodes.length > 0" class="rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-900/40 overflow-hidden">
                 <div class="flex items-center gap-2 px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800">
                   <Brain :size="14" class="text-brian-blue flex-shrink-0" />
-                  <h4 class="text-[13px] font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行内容</h4>
-                  <span class="text-[11px] text-apple-gray-400">{{ toolTraces.length }} 次工具 · {{ answeredPermissions.length }} 次授权 · {{ agentDetailBlocks.length }} 个思考 · {{ runNodes.length }} 个节点</span>
+                  <h4 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">执行内容</h4>
+                  <span class="text-2xs text-apple-gray-400">{{ toolTraces.length }} 次工具 · {{ answeredPermissions.length }} 次授权 · {{ agentDetailBlocks.length }} 个思考 · {{ runNodes.length }} 个节点</span>
                 </div>
                 <div class="p-4 space-y-6">
 
-                  <!-- 运行节点（意图分析 / Agent 选择 / 组件装配 / 模型与提示词等过程节点结构化明细） -->
                   <div v-if="runNodes.length > 0">
                     <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secNodes = !secNodes">
                       <ListTree :size="13" class="text-brian-blue flex-shrink-0" />
                       <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">运行节点</h5>
-                      <span class="text-[11px] text-apple-gray-400">{{ runNodes.length }} 个</span>
+                      <span class="text-2xs text-apple-gray-400">{{ runNodes.length }} 个</span>
                       <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secNodes }" />
                     </button>
                     <div v-if="secNodes" class="mt-2.5 space-y-2">
@@ -842,11 +803,11 @@ watch(
                           <ChevronRight :size="13" class="ml-auto text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedNodes.has(n.targetKey) }" />
                         </button>
                         <div v-if="expandedNodes.has(n.targetKey)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800">
-                          <p v-if="n.detail" class="text-[11px] text-apple-gray-400 break-words">{{ n.detail }}</p>
+                          <p v-if="n.detail" class="text-2xs text-apple-gray-400 break-words">{{ n.detail }}</p>
                           <div
                             v-for="f in n.fields"
                             :key="f.label"
-                            class="grid grid-cols-[96px_1fr] gap-2 text-[11px]"
+                            class="grid grid-cols-[96px_1fr] gap-2 text-2xs"
                           >
                             <span class="text-apple-gray-400">{{ f.label }}</span>
                             <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words font-mono" :title="f.id || undefined">{{ f.value }}</span>
@@ -856,12 +817,11 @@ watch(
                     </div>
                   </div>
 
-                  <!-- 工具调用（分组行 + 卡片，不再叠加子卡片容器） -->
                   <div v-if="toolTraces.length > 0">
                     <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secTools = !secTools">
                       <Wrench :size="13" class="text-brian-blue flex-shrink-0" />
-                      <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">工具调用</h5>
-                      <span class="text-[11px] text-apple-gray-400">{{ toolTraces.length }} 次</span>
+                      <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">技能调用</h5>
+                      <span class="text-2xs text-apple-gray-400">{{ toolTraces.length }} 次</span>
                       <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secTools }" />
                     </button>
                     <div v-if="secTools" class="mt-2.5 space-y-2">
@@ -872,54 +832,53 @@ watch(
                         class="rounded-xl border border-apple-gray-200/80 dark:border-apple-gray-700/70 overflow-hidden"
                       >
                         <button class="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-apple-gray-50/70 dark:bg-apple-gray-800/50 hover:bg-brian-blue/[0.04] transition-colors" @click="toggleTool(String(t.partId || t.index))">
-                          <span class="w-5 h-5 rounded-md bg-brian-blue/10 text-brian-blue text-[10px] font-bold flex items-center justify-center flex-shrink-0">{{ t.index }}</span>
+                          <span class="w-5 h-5 rounded-md bg-brian-blue/10 text-brian-blue text-4xs font-bold flex items-center justify-center flex-shrink-0">{{ t.index }}</span>
                           <span class="text-xs font-mono font-medium text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ t.toolId }}</span>
                           <span
                             v-if="t.componentName"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
                             :title="`${t.componentKind === 'skill' ? 'Skill' : 'MCP'}：${t.componentName}（ID：${t.componentId}）${t.componentSubTool ? ` · 工具：${t.componentSubTool}` : ''}`"
                           >{{ t.componentName }}<template v-if="t.componentSubTool"> · {{ t.componentSubTool }}</template></span>
                           <span
                             v-else-if="t.builtin"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
                           >内置</span>
                           <span
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
                             :class="toolStatusMeta(t.status).cls"
                           >
                             {{ toolStatusMeta(t.status).text }}
                           </span>
-                          <span v-if="t.elapsedMs" class="hidden sm:inline text-[10px] text-apple-gray-400">{{ formatDuration(t.elapsedMs) }}</span>
+                          <span v-if="t.elapsedMs" class="hidden sm:inline text-4xs text-apple-gray-400">{{ formatDuration(t.elapsedMs) }}</span>
                           <ChevronRight :size="13" class="ml-auto text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedTools.has(String(t.partId || t.index)) }" />
                         </button>
                         <div v-if="expandedTools.has(String(t.partId || t.index))" class="px-3 py-2.5 space-y-2 border-t border-apple-gray-100 dark:border-apple-gray-800">
-                          <div v-if="t.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-[11px]">
+                          <div v-if="t.componentName" class="grid grid-cols-[96px_1fr] gap-2 text-2xs">
                             <span class="text-apple-gray-400">所属{{ t.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
                             <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${t.componentId}`">
-                              {{ t.componentName }}<span v-if="t.componentId" class="ml-1.5 font-mono text-[10px] text-apple-gray-400">{{ t.componentId }}</span>
+                              {{ t.componentName }}<span v-if="t.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ t.componentId }}</span>
                             </span>
                           </div>
                           <div>
-                            <p class="text-[10px] font-medium text-apple-gray-400 mb-1">输入参数</p>
-                            <pre v-if="formatJson(t.params)" class="text-[11px] font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(t.params) }}</pre>
-                            <p v-else class="text-[11px] text-apple-gray-300">（无参数）</p>
+                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">输入参数</p>
+                            <pre v-if="formatJson(t.params)" class="text-2xs font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(t.params) }}</pre>
+                            <p v-else class="text-2xs text-apple-gray-300">（无参数）</p>
                           </div>
                           <div>
-                            <p class="text-[10px] font-medium text-apple-gray-400 mb-1">返回结果</p>
-                            <div v-if="renderedToolResults.get(String(t.partId || t.index))" class="markdown-body text-[11px] leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 break-words" v-html="renderedToolResults.get(String(t.partId || t.index))" />
-                            <p v-else class="text-[11px] text-apple-gray-300">（无返回）</p>
+                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">返回结果</p>
+                            <div v-if="renderedToolResults.get(String(t.partId || t.index))" class="markdown-body text-2xs leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 break-words" v-html="renderedToolResults.get(String(t.partId || t.index))" />
+                            <p v-else class="text-2xs text-apple-gray-300">（无返回）</p>
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <!-- 授权记录 -->
                   <div v-if="answeredPermissions.length > 0">
                     <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secPermissions = !secPermissions">
                       <ShieldCheck :size="13" class="text-brian-blue flex-shrink-0" />
                       <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">授权记录</h5>
-                      <span class="text-[11px] text-apple-gray-400">{{ answeredPermissions.length }} 次</span>
+                      <span class="text-2xs text-apple-gray-400">{{ answeredPermissions.length }} 次</span>
                       <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secPermissions }" />
                     </button>
                     <div v-if="secPermissions" class="mt-2.5 space-y-2">
@@ -934,28 +893,28 @@ watch(
                           <span class="text-xs font-mono text-apple-gray-800 dark:text-apple-gray-100 truncate">{{ p.toolId }}</span>
                           <span
                             v-if="p.componentName"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-brian-blue/10 text-brian-blue max-w-44 truncate"
                             :title="`${p.componentKind === 'skill' ? 'Skill' : 'MCP'}：${p.componentName}（ID：${p.componentId}）${p.componentSubTool ? ` · 工具：${p.componentSubTool}` : ''}`"
                           >{{ p.componentName }}<template v-if="p.componentSubTool"> · {{ p.componentSubTool }}</template></span>
                           <span
                             v-else-if="p.builtin"
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium bg-apple-gray-100 dark:bg-apple-gray-700/60 text-apple-gray-500 dark:text-apple-gray-400"
                           >内置</span>
                           <span
-                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                            class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
                             :class="permStatusMeta(p.status).cls"
                           >
                             {{ permStatusMeta(p.status).text }}
                           </span>
-                          <span v-if="p.autoApproved" class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] bg-brian-blue/10 text-brian-blue">自动放行</span>
-                          <span class="ml-auto hidden sm:inline text-[10px] tabular-nums text-apple-gray-400 flex-shrink-0">{{ formatTs(p.answeredAt || p.askedAt) }}</span>
+                          <span v-if="p.autoApproved" class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs bg-brian-blue/10 text-brian-blue">自动放行</span>
+                          <span class="ml-auto hidden sm:inline text-4xs tabular-nums text-apple-gray-400 flex-shrink-0">{{ formatTs(p.answeredAt || p.askedAt) }}</span>
                           <ChevronRight :size="13" class="text-apple-gray-300 transition-transform flex-shrink-0" :class="{ 'rotate-90': expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`) }" />
                         </button>
-                        <div v-if="expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800 text-[11px]">
+                        <div v-if="expandedPerms.has(p.permissionId || `${p.toolId}-${p.askedAt}`)" class="px-3 py-2.5 space-y-1.5 border-t border-apple-gray-100 dark:border-apple-gray-800 text-2xs">
                           <div v-if="p.componentName" class="grid grid-cols-[96px_1fr] gap-2">
                             <span class="text-apple-gray-400">所属{{ p.componentKind === 'skill' ? 'Skill' : 'MCP' }}</span>
                             <span class="text-apple-gray-700 dark:text-apple-gray-200 break-words" :title="`ID：${p.componentId}`">
-                              {{ p.componentName }}<span v-if="p.componentId" class="ml-1.5 font-mono text-[10px] text-apple-gray-400">{{ p.componentId }}</span>
+                              {{ p.componentName }}<span v-if="p.componentId" class="ml-1.5 font-mono text-4xs text-apple-gray-400">{{ p.componentId }}</span>
                             </span>
                           </div>
                           <div class="flex items-center gap-3 text-apple-gray-400">
@@ -963,7 +922,7 @@ watch(
                             <span>应答：{{ formatTs(p.answeredAt) || '—' }}</span>
                           </div>
                           <div>
-                            <p class="text-[10px] font-medium text-apple-gray-400 mb-1">授权参数</p>
+                            <p class="text-4xs font-medium text-apple-gray-400 mb-1">授权参数</p>
                             <pre v-if="formatJson(p.input)" class="font-mono leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-all text-apple-gray-700 dark:text-apple-gray-200">{{ formatJson(p.input) }}</pre>
                             <p v-else class="text-apple-gray-300">（无参数）</p>
                           </div>
@@ -972,12 +931,11 @@ watch(
                     </div>
                   </div>
 
-                  <!-- 深度思考（Agent 构建组件 / CoT-ReACT 每轮输入输出） -->
                   <div v-if="agentDetailBlocks.length > 0" data-anchor="agent-0">
                     <button class="w-full flex items-center gap-2 pb-1.5 text-left border-b border-apple-gray-100 dark:border-apple-gray-800 hover:opacity-80 transition-opacity" @click="secAgent = !secAgent">
                       <Brain :size="13" class="text-brian-blue flex-shrink-0" />
                       <h5 class="text-xs font-semibold text-apple-gray-900 dark:text-apple-gray-50">深度思考</h5>
-                      <span class="text-[11px] text-apple-gray-400">{{ agentDetailBlocks.length }} 个</span>
+                      <span class="text-2xs text-apple-gray-400">{{ agentDetailBlocks.length }} 个</span>
                       <ChevronDown :size="13" class="ml-auto text-apple-gray-400 transition-transform" :class="{ 'rotate-180': !secAgent }" />
                     </button>
                     <div v-if="secAgent" class="mt-2.5">
@@ -986,7 +944,6 @@ watch(
                         :key="block.id"
                         class="rounded-xl transition-shadow"
                       >
-                        <!-- Agent 名称/序号已由卡片内部展示，不再重复 -->
                         <ThinkingBlockView
                           :block="block"
                           hide-context
@@ -1016,7 +973,6 @@ watch(
   overflow: hidden;
 }
 
-/* 执行时间线节点点击跳转后的短暂高亮（scrollIntoView 定位 + 闪烁框提示落点） */
 .thinking-jump-flash {
   animation: thinking-jump-flash 1.5s ease;
   border-radius: 0.75rem;
@@ -1028,9 +984,6 @@ watch(
   100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
 }
 
-/* 开合动画由 JS（WAAPI Genie 效果，见 onGenieEnter/onGenieLeave）驱动：
-   有来源按钮时卡片从按钮位置飞出/飞回（macOS Dock 式），无来源时中央浮现。
-   这里只保留动画所需的性能提示，JS 侧已处理 prefers-reduced-motion。 */
 .thinking-card {
   will-change: opacity, transform, filter;
 }

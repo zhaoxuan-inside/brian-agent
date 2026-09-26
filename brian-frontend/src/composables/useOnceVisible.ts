@@ -1,6 +1,5 @@
 import { watch, onUnmounted, type Ref } from 'vue'
 
-// useOnceVisible：目标元素首次进入视口时执行一次回调（用于触发首页各区块的动画）
 export function useOnceVisible(target: Ref<Element | null>, cb: () => void, threshold = 0.4) {
   let io: IntersectionObserver | null = null
   let fired = false

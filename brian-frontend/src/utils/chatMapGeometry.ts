@@ -1,13 +1,5 @@
-/**
- * @fileoverview ChatMap 连线几何与拖拽吸附的纯计算逻辑。
- *
- * 从 ChatMap.vue 分离：贝塞尔连线路径、箭头锚点、碰撞推离与对齐吸附
- * 全部为无状态纯函数（节点尺寸/矩形重叠复用 chatMapLayout 的常量与工具），
- * 交互状态与事件编排见 composables/useChatMap。
- */
 import { NODE_H, NODE_W, rectsOverlap, type ChatMapEdgeType } from './chatMapLayout'
 
-/** 连线端点标识（视图选中态以此为主键） */
 export type EdgeRef = { source: string; target: string; edgeType: ChatMapEdgeType | string }
 
 interface Pos { x: number; y: number }
@@ -19,7 +11,6 @@ export interface SnapGuide {
   end: number
 }
 
-/** 对齐吸附阈值（像素） */
 export const SNAP_THRESHOLD = 8
 
 export function edgeKey(e: EdgeRef): string {
@@ -30,7 +21,6 @@ export function isVerticalEdge(e: EdgeRef): boolean {
   return e.edgeType === 'QUESTION_ANSWER' || e.edgeType === 'FOLLOW_UP'
 }
 
-// ===== 纵向连线：平滑贝塞尔曲线 =====
 export function verticalEdgePath(s: Pos, t: Pos): string {
   const sx = s.x + NODE_W / 2
   const sy = s.y + NODE_H
@@ -40,15 +30,14 @@ export function verticalEdgePath(s: Pos, t: Pos): string {
   const dy = Math.abs(ty - sy)
   const cpOffset = Math.min(dy * 0.4, 80)
   if (dx < 5) {
-    // 几乎同列：直接用竖直贝塞尔
+    
     return `M ${sx} ${sy} C ${sx} ${sy + cpOffset}, ${tx} ${ty - cpOffset}, ${tx} ${ty}`
   }
-  // 不同列：弯折贝塞尔
+  
   const midY = (sy + ty) / 2
   return `M ${sx} ${sy} C ${sx} ${sy + cpOffset}, ${sx} ${midY}, ${(sx + tx) / 2} ${midY} S ${tx} ${ty - cpOffset}, ${tx} ${ty}`
 }
 
-// ===== 引用连线：平滑贝塞尔曲线 =====
 export function citationEdgePath(s: Pos, t: Pos): string {
   const sx = s.x + NODE_W
   const sy = s.y + NODE_H / 2
@@ -59,7 +48,7 @@ export function citationEdgePath(s: Pos, t: Pos): string {
     const cpOffset = Math.min(dx * 0.4, 80)
     return `M ${sx} ${sy} C ${sx + cpOffset} ${sy}, ${tx - cpOffset} ${ty}, ${tx} ${ty}`
   }
-  // 引用节点在左侧：弧形绕行
+  
   const offsetSide = Math.min(40, dx * 0.3)
   const midY = (sy + ty) / 2
   return `M ${sx} ${sy} C ${sx + offsetSide} ${sy}, ${sx + offsetSide} ${midY}, ${(sx + tx) / 2} ${midY} S ${tx - offsetSide} ${ty}, ${tx} ${ty}`
@@ -85,7 +74,6 @@ export function arrowPoint(e: EdgeRef, t: Pos): string {
   return isVerticalEdge(e) ? verticalArrowPoint(t) : citationArrowPoint(t)
 }
 
-// ===== 拖拽碰撞推离：将拖动节点从重叠的其他节点中完全推出 =====
 interface DragTarget { id: string; x: number; y: number }
 
 export function pushOutOfOverlap(
@@ -126,7 +114,6 @@ export function pushOutOfOverlap(
   return { x, y }
 }
 
-/** 在阈值内扫描所有节点的边/中心对齐候选，返回最优吸附位置与引导线 */
 export function snapPosition(
   newX: number, newY: number, otherNodes: DragTarget[],
 ): { x: number; y: number; guides: SnapGuide[] } {

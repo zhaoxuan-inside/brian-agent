@@ -4,7 +4,6 @@ import type { IntentConfirmation } from '@/api/types'
 
 defineProps<{
   confirmation: IntentConfirmation
-  /** 确认请求进行中（禁用按钮并展示加载态） */
   submitting: boolean
 }>()
 
@@ -14,7 +13,6 @@ defineEmits<{
 </script>
 
 <template>
-  <!-- 需求理解确认卡片（对话区内联，参考 Cursor 需求补充样式） -->
   <div class="flex items-start gap-2 justify-end">
     <div class="max-w-[85%] min-w-0">
       <div class="rounded-2xl bg-white dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 shadow-sm overflow-hidden">
