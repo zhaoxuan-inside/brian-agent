@@ -190,7 +190,7 @@ async function copyTraceId() {
       mode === 'map' ? 'rounded-lg border bg-white/95 dark:bg-apple-gray-800/95 shadow-sm text-xs' : 'rounded-2xl px-3 py-2.5',
       mode === 'map'
         ? (isError
-            ? 'border-error-red/50 bg-error-red//50 dark:bg-error-red//30'
+            ? 'border-error-red/50 bg-error-red/10 dark:bg-error-red/30'
             : (isUser ? 'border-brian-blue/40' : 'border-apple-gray-200 dark:border-apple-gray-700'))
         : (isError ? 'block-card border-error-red/40 bg-error-red/5 text-error-red' : 'block-card'),
       active ? 'ring-2 ring-brian-blue shadow-lg border-brian-blue' : (mode === 'map' ? 'hover:border-brian-blue/60' : '')
@@ -298,7 +298,7 @@ async function copyTraceId() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-warning-orange/100 dark:bg-warning-orange//40 text-warning-orange/100 dark:text-warning-orange/100 hover:bg-warning-orange/100 dark:hover:bg-warning-orange//60"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-warning-orange/10 dark:bg-warning-orange/40 text-warning-orange dark:text-warning-orange/80 hover:bg-warning-orange/15 dark:hover:bg-warning-orange/60"
         title="查看评估结果"
         @click.stop="handleShowEval"
       >

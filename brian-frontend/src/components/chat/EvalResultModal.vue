@@ -65,9 +65,9 @@ async function copyTraceId() {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 80) return 'text-success-green dark:text-success-green/80 bg-success-green/100 dark:bg-success-green//40'
-  if (score >= 60) return 'text-warning-orange dark:text-warning-orange/80 bg-warning-orange/10 dark:bg-warning-orange//40'
-  return 'text-error-red dark:text-error-red/80 bg-error-red/10 dark:bg-error-red//40'
+  if (score >= 80) return 'text-success-green dark:text-success-green/80 bg-success-green/10 dark:bg-success-green/40'
+  if (score >= 60) return 'text-warning-orange dark:text-warning-orange/80 bg-warning-orange/10 dark:bg-warning-orange/40'
+  return 'text-error-red dark:text-error-red/80 bg-error-red/10 dark:bg-error-red/40'
 }
 
 

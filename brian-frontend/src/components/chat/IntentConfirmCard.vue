@@ -56,7 +56,7 @@ defineEmits<{
         </div>
       </div>
     </div>
-    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 dark:bg-brian-blue//40 text-brian-blue dark:text-brian-blue/70 flex items-center justify-center mt-1">
+    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 dark:bg-brian-blue/40 text-brian-blue dark:text-brian-blue/70 flex items-center justify-center mt-1">
       <Brain :size="16" />
     </div>
   </div>

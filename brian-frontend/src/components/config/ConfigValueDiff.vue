@@ -57,14 +57,14 @@ const lineDiff = computed(() => {
   <div v-else-if="!isMultiLine" class="flex items-center gap-2 text-xs font-mono min-w-0">
     <span class="px-1.5 py-0.5 rounded bg-error-red/10 text-error-red dark:text-error-red/80 line-through break-all whitespace-pre-wrap">{{ oldText }}</span>
     <span class="text-apple-gray-400">→</span>
-    <span class="px-1.5 py-0.5 rounded bg-success-green//10 text-success-green dark:text-success-green/80 break-all whitespace-pre-wrap">{{ newText }}</span>
+    <span class="px-1.5 py-0.5 rounded bg-success-green/10 text-success-green dark:text-success-green/80 break-all whitespace-pre-wrap">{{ newText }}</span>
   </div>
   <div v-else class="rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden text-xs font-mono max-h-56 overflow-y-auto">
     <div
       v-for="(row, idx) in lineDiff"
       :key="idx"
       class="px-2 py-0.5 whitespace-pre-wrap break-all"
-      :class="row.kind === 'removed' ? 'bg-error-red/10 text-error-red dark:text-error-red/80' : row.kind === 'added' ? 'bg-success-green//10 text-success-green dark:text-success-green/80' : 'text-apple-gray-400'"
+      :class="row.kind === 'removed' ? 'bg-error-red/10 text-error-red dark:text-error-red/80' : row.kind === 'added' ? 'bg-success-green/10 text-success-green dark:text-success-green/80' : 'text-apple-gray-400'"
     >
       <span class="select-none mr-1">{{ row.kind === 'removed' ? '-' : row.kind === 'added' ? '+' : ' ' }}</span>{{ row.text || ' ' }}
     </div>

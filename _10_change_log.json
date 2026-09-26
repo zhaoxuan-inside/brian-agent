@@ -123,6 +123,24 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": false
+    },
+    {
+      "id": "chg-005",
+      "date": "2026-09-26",
+      "requirement": "fix: 用户反馈对话区与 ChatMap 消息卡『评估结果』按钮文字不可见。根因:T-F04 语义色映射脚本对 MessageCard/ThinkingContext/EvalResultModal/IntentConfirmCard/PermissionConfirmCard/ConfigValueDiff/LearningPanel 产生两类坏类——文字与背景同色同透明度(warning-orange/100)及双斜杠无效类(//40)。修复:/100 按前缀恢复(bg→/10、hover→/15、border→/40、text 纯色、dark:text→/80),//N 折叠为 /N;浏览器实测浅色/暗色、对话区/ChatMap 四种组合文字均清晰",
+      "changed_files": [
+        "brian-frontend/src/components/chat/MessageCard.vue",
+        "brian-frontend/src/components/chat/ThinkingContext.vue",
+        "brian-frontend/src/components/chat/EvalResultModal.vue",
+        "brian-frontend/src/components/chat/IntentConfirmCard.vue",
+        "brian-frontend/src/components/chat/PermissionConfirmCard.vue",
+        "brian-frontend/src/components/config/ConfigValueDiff.vue",
+        "brian-frontend/src/components/panels/LearningPanel.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }
