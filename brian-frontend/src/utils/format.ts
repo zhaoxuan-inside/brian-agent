@@ -39,3 +39,9 @@ export function formatDuration(ms?: number): string {
   if (totalSec >= 1) return `${totalSec.toFixed(1)}s`
   return `${totalSec.toFixed(2)}s`
 }
+
+export function formatDateTime(ts: number | undefined | null): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${formatDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}

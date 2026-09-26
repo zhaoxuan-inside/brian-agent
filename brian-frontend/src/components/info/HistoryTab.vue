@@ -31,7 +31,7 @@ const {
     <StatusNote v-if="loadingHistory && historyTimeline.length === 0" state="loading" />
     <div v-else-if="!loadingHistory && historyDateNavTimeline.length === 0" class="text-center py-8 text-apple-gray-400">暂无历史会话</div>
     <div v-else class="flex gap-6">
-      <div class="w-40 flex-shrink-0">
+      <div class="hidden sm:block w-40 flex-shrink-0">
         <div class="sticky top-[160px] space-y-1 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
           <button
             v-for="item in historyDateNavTimeline"

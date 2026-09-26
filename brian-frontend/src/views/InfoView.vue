@@ -66,8 +66,8 @@ provide(INFO_TABS_KEY, { activeTab, history, memory, library, profile, graph } s
         <div class="h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700">
           <PageBreadcrumb :path="pagePath" />
         </div>
-        <div class="px-6">
-          <div class="flex items-center gap-1 mt-3 mb-4 border-b border-apple-gray-200 dark:border-apple-gray-700 pb-2">
+        <div class="px-5">
+          <div class="flex items-center gap-1 mt-3 mb-4 border-b border-apple-gray-200 dark:border-apple-gray-700 pb-2 overflow-x-auto scrollbar-hide">
             <button
               v-for="tab in tabs"
               :key="tab.key"

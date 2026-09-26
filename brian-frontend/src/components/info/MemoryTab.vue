@@ -50,7 +50,7 @@ const {
     <StatusNote v-if="loadingMemory && memoryTimeline.length === 0" state="loading" />
     <div v-else-if="!loadingMemory && dateNavTimeline.length === 0" class="text-center py-8 text-apple-gray-400">暂无记忆</div>
     <div v-else class="flex gap-6">
-      <div class="w-40 flex-shrink-0">
+      <div class="hidden sm:block w-40 flex-shrink-0">
         <div class="sticky top-[160px] space-y-1 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
           <button
             v-for="item in dateNavTimeline"

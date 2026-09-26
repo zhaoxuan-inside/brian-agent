@@ -4,6 +4,7 @@ import { History, Loader2, X } from '@lucide/vue'
 import { configApi } from '@/api'
 import type { ConfigHistoryRecord } from '@/api/types'
 import ConfigValueDiff from './ConfigValueDiff.vue'
+import { formatDateTime as formatTime } from '@/utils/format'
 
 const props = defineProps<{
   configKey: string
@@ -31,11 +32,7 @@ async function load() {
 
 watch(() => props.configKey, () => { if (props.configKey) load() }, { immediate: true })
 
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+
 </script>
 
 <template>

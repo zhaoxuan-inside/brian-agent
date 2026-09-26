@@ -31,20 +31,21 @@ function navigate(routePath: string) {
 </script>
 
 <template>
-  <header class="fixed top-0 left-0 right-0 h-14 z-50 glass-panel border-b flex items-center justify-between px-4 select-none">
+  <header class="fixed top-0 left-0 right-0 h-14 z-50 glass-panel border-b flex items-center justify-between px-2 sm:px-4 select-none">
     <div class="flex items-center">
       <button class="text-xl font-bold text-brian-blue mr-6" @click="navigate('/')">
         Brian
       </button>
     </div>
 
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-0.5 sm:gap-1 max-w-[60vw] overflow-x-auto scrollbar-hide">
       <button
         v-for="item in navItems"
         :key="item.route"
         class="icon-btn relative group"
         :class="{ 'text-brian-blue': currentRoute === item.route }"
         :title="item.name"
+        :aria-label="item.name"
         @click="navigate(item.route)"
       >
         <component :is="item.icon" :size="18" />
@@ -54,7 +55,7 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <button class="icon-btn" :title="themeStore.isDark ? '浅色模式' : '深色模式'" @click="themeStore.toggleTheme()">
+      <button class="icon-btn" :title="themeStore.isDark ? '浅色模式' : '深色模式'" :aria-label="themeStore.isDark ? '切换到浅色模式' : '切换到深色模式'" @click="themeStore.toggleTheme()">
         <Sun v-if="themeStore.isDark" :size="18" />
         <Moon v-else :size="18" />
       </button>
@@ -62,6 +63,7 @@ function navigate(routePath: string) {
       <button
         class="icon-btn"
         :title="i18nStore.locale === 'zh-CN' ? 'English' : '中文'"
+        :aria-label="i18nStore.locale === 'zh-CN' ? '切换到 English' : '切换到中文'"
         @click="i18nStore.setLocale(i18nStore.locale === 'zh-CN' ? 'en-US' : 'zh-CN')"
       >
         <Globe :size="18" />
@@ -69,10 +71,10 @@ function navigate(routePath: string) {
 
       <div class="w-px h-5 bg-apple-gray-200 dark:bg-apple-gray-700 mx-2" />
 
-      <button class="icon-btn" title="锁定" @click="authStore.lock()">
+      <button class="icon-btn" title="锁定" aria-label="锁定应用" @click="authStore.lock()">
         <Lock :size="16" />
       </button>
-      <button class="icon-btn" title="用户">
+      <button class="icon-btn" title="用户" aria-label="用户">
         <User :size="18" />
       </button>
     </div>

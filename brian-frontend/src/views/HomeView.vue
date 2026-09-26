@@ -12,6 +12,7 @@ import { vReveal } from '@/composables/useRevealOnScroll'
 import { useCountUp } from '@/composables/useCountUp'
 import { useTypewriter } from '@/composables/useTypewriter'
 import { useOnceVisible } from '@/composables/useOnceVisible'
+import { monitorApi } from '@/api'
 import { smoothEdgePath, type EdgeSide } from '@/utils/edgePath'
 import { layoutChipsInCard } from '@/utils/cardChipLayout'
 
@@ -64,9 +65,7 @@ const lastRunOverview = ref<{ duration: string; tokens: string; skills: string; 
 })
 async function loadLastRunOverview() {
   try {
-    const res = await fetch('/api/analytics/last-run-overview').then(r => r.json()) as {
-      available?: boolean; duration_s?: number; input_tokens?: number; skill_calls?: number; permission_asks?: number
-    }
+    const res = await monitorApi.lastRunOverview()
     if (!res?.available) return
     lastRunOverview.value = {
       duration: `${res.duration_s ?? 0}s`,

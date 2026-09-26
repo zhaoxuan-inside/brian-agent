@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { X, Gauge, Loader2, Lightbulb, CircleCheck, CircleAlert, Copy, Check } from '@lucide/vue'
 import { useChatUiStore } from '@/stores/chatUi'
 import { copyToClipboard } from '@/utils/clipboard'
+import { formatDateTime as formatTime } from '@/utils/format'
 
 const chatUi = useChatUiStore()
 
@@ -69,12 +70,7 @@ function scoreColor(score: number): string {
   return 'text-error-red dark:text-error-red/80 bg-error-red/10 dark:bg-error-red//40'
 }
 
-function formatTime(ts: number): string {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const pad = (x: number) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+
 </script>
 
 <template>

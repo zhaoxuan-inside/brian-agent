@@ -324,6 +324,7 @@ export const learningApi = {
 export const monitorApi = {
   health: () => request<SystemHealth>('/monitor/health-all'),
   resources: () => request<{ cpu: number; memory: number; disk: number }>('/monitor/resources'),
+  lastRunOverview: () => request<{ available?: boolean; duration_s?: number; input_tokens?: number; skill_calls?: number; permission_asks?: number }>('/analytics/last-run-overview'),
   tokenTrend: () => request<{ points: { date: string; tokens: number }[] }>('/analytics/token-trend').then(r => r.points),
   modelDistribution: () => request<{ models: { model: string; tokens: number; input_tokens: number; output_tokens: number; deleted?: boolean; type?: string }[] }>('/analytics/model-distribution').then(r => r.models),
   tokenUsage: (params?: { session_id?: string; run_id?: string; work_id?: string }) => {

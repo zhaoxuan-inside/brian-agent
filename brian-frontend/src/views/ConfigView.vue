@@ -27,6 +27,7 @@ import type { VectorSearchInfo } from '@/api'
 import type { ConfigTreeLayer, MQMessage, MQStats, McpUsageRecord } from '@/api/types'
 
 import { NAV_SECTIONS } from '@/utils/configDisplay'
+import { formatDateTime as formatTime } from '@/utils/format'
 
 const navSections = NAV_SECTIONS
 
@@ -689,11 +690,7 @@ async function saveSnapName(_snap: Snapshot) {
   editingSnapId.value = ''
 }
 
-function formatTime(ts: number) {
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+
 
 function formatDurationSeconds(sec: number): string {
   if (sec < 60) return (sec % 1 === 0 ? `${sec}` : `${sec.toFixed(1)}`) + ' 秒'
@@ -3752,8 +3749,7 @@ watch(activeSubSection, async (val) => {
                       </div>
                       <div class="flex gap-2 mb-2 flex-shrink-0">
                         <button
-                          class="flex items-center justify-center gap-1.5 py-2 text-xs font-medium bg-success-green text-white rounded-lg hover:bg-success-green/90 disabled:opacity-50 transition-colors flex-shrink-0"
-                          class="flex-[1_1_auto]"
+                          class="flex items-center justify-center gap-1.5 py-2 text-xs font-medium bg-success-green text-white rounded-lg hover:bg-success-green/90 disabled:opacity-50 transition-colors flex-shrink-0 flex-[1_1_auto]"
                           :disabled="mqConsuming"
                           @click="consumeMqMessage()"
                         >
@@ -5848,7 +5844,7 @@ watch(activeSubSection, async (val) => {
                 <div v-if="(skillForm as any)[dir.key].length === 0" class="text-2xs text-apple-gray-400 py-2">暂无文件</div>
                 <div v-for="(file, fi) in (skillForm as any)[dir.key]" :key="fi" class="mb-2 p-2 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
                   <div class="flex items-center gap-2 mb-1.5">
-                    <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1'" placeholder="文件名" class="flex-1" />
+                    <input v-model="file.name" type="text" :class="inputClass + ' !text-xs !py-1 flex-1'" placeholder="文件名" />
                     <button class="p-1 text-error-red hover:bg-error-red/10 rounded transition-colors" title="移除" @click="removeFileEntry((skillForm as any)[dir.key], fi)">
                       <Trash2 :size="12" />
                     </button>

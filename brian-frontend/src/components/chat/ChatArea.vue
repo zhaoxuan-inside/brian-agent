@@ -175,12 +175,15 @@ function startResize(e: MouseEvent) {
 
 <template>
   <div class="chat-area flex flex-1 overflow-hidden" :class="{ 'select-none': isDragging }">
-    <div class="flex-shrink-0 h-full overflow-hidden" :style="{ width: leftWidth }">
+    <div class="hidden md:block flex-shrink-0 h-full overflow-hidden" :style="{ width: leftWidth }">
       <ChatMap />
     </div>
 
     <div
-      class="w-1.5 cursor-col-resize bg-apple-gray-100 dark:bg-apple-gray-800 hover:bg-brian-blue/50 transition-colors relative group flex-shrink-0"
+      class="hidden md:block w-1.5 cursor-col-resize bg-apple-gray-100 dark:bg-apple-gray-800 hover:bg-brian-blue/50 transition-colors relative group flex-shrink-0"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖拽调整图谱与消息区分栏"
       @mousedown="startResize"
     >
       <div class="absolute inset-y-0 -left-1 -right-1" />
