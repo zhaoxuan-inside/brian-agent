@@ -126,20 +126,27 @@ function formatSessionTitle(title?: string): string {
                 创建于 {{ formatTime(item.createdTime || item.created || item.lastTime) }}
               </span>
               <div class="grid grid-cols-3 gap-1.5 text-2xs">
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`Token 消耗：总计 ${((item.inputTokens ?? 0) + (item.outputTokens ?? 0)).toLocaleString()} (输入 ${item.inputTokens ?? 0} / 输出 ${item.outputTokens ?? 0})`">
-                  <p class="text-apple-gray-400">Tokens</p>
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1 flex flex-col justify-between" :title="`Token 消耗：总计 ${((item.inputTokens ?? 0) + (item.outputTokens ?? 0)).toLocaleString()} (输入 ${item.inputTokens ?? 0} / 输出 ${item.outputTokens ?? 0})`">
+                  <p class="text-apple-gray-400 text-3xs">Token 消耗</p>
                   <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">
                     {{ formatTokens((item.inputTokens ?? 0) + (item.outputTokens ?? 0)) }}
                   </p>
+                  <p class="text-3xs text-apple-gray-400 dark:text-apple-gray-500 truncate" :title="`输入: ${item.inputTokens ?? 0} · 输出: ${item.outputTokens ?? 0}`">
+                    {{ formatTokens(item.inputTokens) }} / {{ formatTokens(item.outputTokens) }}
+                  </p>
                 </div>
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`成对完整问答轮数：${item.qaCount ?? 0} 轮`">
-                  <p class="text-apple-gray-400">问答</p>
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1 flex flex-col justify-between" :title="`成对完整问答轮数：${item.qaCount ?? 0} 轮`">
+                  <p class="text-apple-gray-400 text-3xs">完整问答</p>
                   <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200">{{ item.qaCount ?? 0 }} 轮</p>
+                  <p class="text-3xs text-apple-gray-400 dark:text-apple-gray-500 truncate">成对匹配</p>
                 </div>
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`会话总字符数：总计 ${((item.questionChars ?? 0) + (item.answerChars ?? 0)).toLocaleString()} (提问 ${item.questionChars ?? 0} / 回答 ${item.answerChars ?? 0})`">
-                  <p class="text-apple-gray-400">字符数</p>
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1 flex flex-col justify-between" :title="`会话总字符数：总计 ${((item.questionChars ?? 0) + (item.answerChars ?? 0)).toLocaleString()} (提问 ${item.questionChars ?? 0} / 回答 ${item.answerChars ?? 0})`">
+                  <p class="text-apple-gray-400 text-3xs">字符统计</p>
                   <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">
                     {{ formatTokens((item.questionChars ?? 0) + (item.answerChars ?? 0)) }}
+                  </p>
+                  <p class="text-3xs text-apple-gray-400 dark:text-apple-gray-500 truncate" :title="`提问: ${item.questionChars ?? 0} · 回答: ${item.answerChars ?? 0}`">
+                    {{ formatTokens(item.questionChars) }} / {{ formatTokens(item.answerChars) }}
                   </p>
                 </div>
               </div>
