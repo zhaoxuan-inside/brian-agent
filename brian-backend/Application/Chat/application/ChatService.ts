@@ -561,7 +561,10 @@ export class ChatService {
     try {
       const statRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
         `SELECT "session_id",
-           SUM(CASE WHEN "info_type" = 'REQUEST' THEN 1 ELSE 0 END) AS qa_count,
+           MIN(
+             SUM(CASE WHEN "info_type" = 'REQUEST' THEN 1 ELSE 0 END),
+             SUM(CASE WHEN "info_type" = 'RESPONSE' THEN 1 ELSE 0 END)
+           ) AS qa_count,
            SUM(CASE WHEN "info_type" = 'REQUEST' THEN "info_length" ELSE 0 END) AS question_chars,
            SUM(CASE WHEN "info_type" = 'RESPONSE' THEN "info_length" ELSE 0 END) AS answer_chars
          FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
@@ -569,7 +572,7 @@ export class ChatService {
       );
       for (const r of statRows) {
         statMap.set(String(r.session_id), {
-          qa_count: Number(r.qa_count ?? 0) || 0,
+          qa_count: Math.max(0, Number(r.qa_count ?? 0) || 0),
           question_chars: Number(r.question_chars ?? 0) || 0,
           answer_chars: Number(r.answer_chars ?? 0) || 0,
         });
@@ -616,8 +619,42 @@ export class ChatService {
 
   private soSessionTokenStats(sessionIds: string[], metrics?: Metrics): Map<string, { input_tokens: number; output_tokens: number }> {
     const tokenMap = new Map<string, { input_tokens: number; output_tokens: number }>();
+    if (sessionIds.length === 0) return tokenMap;
+    const placeholders = sessionIds.map(() => '?').join(',');
     try {
-      const placeholders = sessionIds.map(() => '?').join(',');
+      const logRows = this.relationDb.queryRaw<{ session_id: string; input_tokens: number; output_tokens: number }>(
+        `SELECT "session_id",
+           COALESCE(SUM("input_tokens"), 0) AS input_tokens,
+           COALESCE(SUM("output_tokens"), 0) AS output_tokens
+         FROM "llm_call_log"
+         WHERE "session_id" IN (${placeholders})
+         GROUP BY "session_id"`,
+        sessionIds,
+      );
+      for (const r of logRows ?? []) {
+        tokenMap.set(String(r.session_id), {
+          input_tokens: Number(r.input_tokens ?? 0) || 0,
+          output_tokens: Number(r.output_tokens ?? 0) || 0,
+        });
+      }
+    } catch (err) {
+      metrics?.warn('ChatService.soSession 会话 token 聚合失败（llm_call_log 降级为 trace 聚合）', {
+        error: err instanceof Error ? err.message : String(err),
+        session_ids: sessionIds,
+      });
+    }
+    this.fallbackTraceTokenStats(sessionIds, tokenMap, metrics);
+    return tokenMap;
+  }
+
+  private fallbackTraceTokenStats(sessionIds: string[], tokenMap: Map<string, { input_tokens: number; output_tokens: number }>, metrics?: Metrics): void {
+    const missing = sessionIds.filter((sid) => {
+      const t = tokenMap.get(sid);
+      return !t || (t.input_tokens === 0 && t.output_tokens === 0);
+    });
+    if (missing.length === 0) return;
+    try {
+      const placeholders = missing.map(() => '?').join(',');
       const traceRows = this.relationDb.queryRaw<{ session_id: string; trace_id: string; iterations_json: string; total_token_usage: number }>(
         `SELECT ow."session_id", t."trace_id", t."iterations_json", t."total_token_usage"
          FROM "orchestration_work" ow
@@ -625,17 +662,10 @@ export class ChatService {
          INNER JOIN "agent_execution_trace" t ON e."trace_id" = t."trace_id" AND e."trace_id" IS NOT NULL AND e."trace_id" != ''
          WHERE ow."session_id" IN (${placeholders})
          GROUP BY ow."session_id", t."trace_id"`,
-        sessionIds,
+        missing,
       );
       this.aggregateTraceTokenRows(traceRows, tokenMap, metrics);
-    } catch (err) {
-
-      metrics?.warn('ChatService.soSession 会话 token 聚合失败（token 统计降级为 0）', {
-        error: err instanceof Error ? err.message : String(err),
-        session_ids: sessionIds,
-      });
-    }
-    return tokenMap;
+    } catch {  }
   }
 
   private aggregateTraceTokenRows(

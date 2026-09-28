@@ -440,6 +440,151 @@ describe('ChatService', () => {
       expect(output.sessions.length).toBe(1);
       expect(output.total).toBe(3);
     });
+
+    it('TC-CHAT-069a: Full token aggregation from llm_call_log including agent turn and auxiliary matching calls', async () => {
+      const createOut = new CreateSessionOutput();
+      await service.createSession(
+        Object.assign(new CreateSessionInput(), { session_title: 'Token Test' }),
+        createOut, new ChatContext(),
+      );
+      const sid = createOut.session_id;
+
+      // 1. Agent main call
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'llm_call_log',
+          data: [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: IdGenerator.now() },
+            { field: 'updated', value: IdGenerator.now() },
+            { field: 'llm_available_id', value: 'mock-llm' },
+            { field: 'session_id', value: sid },
+            { field: 'caller', value: 'AgentLoopService.callLLMTurn' },
+            { field: 'input_tokens', value: 100 },
+            { field: 'output_tokens', value: 50 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      // 2. Skill ranking auxiliary call
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'llm_call_log',
+          data: [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: IdGenerator.now() },
+            { field: 'updated', value: IdGenerator.now() },
+            { field: 'llm_available_id', value: 'mock-llm' },
+            { field: 'session_id', value: sid },
+            { field: 'caller', value: 'SkillCoreService.rankSkills' },
+            { field: 'input_tokens', value: 40 },
+            { field: 'output_tokens', value: 10 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      // 3. Prompt template matching auxiliary call
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'llm_call_log',
+          data: [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: IdGenerator.now() },
+            { field: 'updated', value: IdGenerator.now() },
+            { field: 'llm_available_id', value: 'mock-llm' },
+            { field: 'session_id', value: sid },
+            { field: 'caller', value: 'AgentBuilderService.matchPromptTemplate' },
+            { field: 'input_tokens', value: 20 },
+            { field: 'output_tokens', value: 5 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      const searchIn = Object.assign(new SearchSessionInput(), { keyword: 'Token Test' });
+      const searchOut = new SearchSessionOutput();
+      await service.soSession(searchIn, searchOut, new ChatContext());
+
+      expect(searchOut.sessions.length).toBe(1);
+      const s = searchOut.sessions[0];
+      expect(s.input_tokens).toBe(160);
+      expect(s.output_tokens).toBe(65);
+    });
+
+    it('TC-CHAT-069b: qa_count counts only completed request-response pairs', async () => {
+      const createOut = new CreateSessionOutput();
+      await service.createSession(
+        Object.assign(new CreateSessionInput(), { session_title: 'QA Count Test' }),
+        createOut, new ChatContext(),
+      );
+      const sid = createOut.session_id;
+
+      // Only REQUEST inserted, no RESPONSE yet
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'info_raw',
+          data: [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: 1700000000001 },
+            { field: 'updated', value: 1700000000001 },
+            { field: 'session_id', value: sid },
+            { field: 'work_id', value: 'work-1' },
+            { field: 'run_id', value: 'run-1' },
+            { field: 'info_id', value: 'info-req-1' },
+            { field: 'info_type', value: 'REQUEST' },
+            { field: 'info_creator_role', value: 'USER' },
+            { field: 'info', value: 'Question 1' },
+            { field: 'info_length', value: 10 },
+            { field: 'pin', value: 0 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      const searchIn1 = Object.assign(new SearchSessionInput(), { keyword: 'QA Count Test' });
+      const searchOut1 = new SearchSessionOutput();
+      await service.soSession(searchIn1, searchOut1, new ChatContext());
+
+      expect(searchOut1.sessions.length).toBe(1);
+      expect(searchOut1.sessions[0].qa_count).toBe(0);
+      expect(searchOut1.sessions[0].question_chars).toBe(10);
+      expect(searchOut1.sessions[0].answer_chars).toBe(0);
+
+      // Now insert the matching RESPONSE
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'info_raw',
+          data: [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: 1700000000002 },
+            { field: 'updated', value: 1700000000002 },
+            { field: 'session_id', value: sid },
+            { field: 'work_id', value: 'work-1' },
+            { field: 'run_id', value: 'run-1' },
+            { field: 'info_id', value: 'info-resp-1' },
+            { field: 'info_type', value: 'RESPONSE' },
+            { field: 'info_creator_role', value: 'ASSISTANT' },
+            { field: 'info', value: 'Answer 1' },
+            { field: 'info_length', value: 8 },
+            { field: 'pin', value: 0 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      const searchOut2 = new SearchSessionOutput();
+      await service.soSession(searchIn1, searchOut2, new ChatContext());
+      expect(searchOut2.sessions[0].qa_count).toBe(1);
+      expect(searchOut2.sessions[0].question_chars).toBe(10);
+      expect(searchOut2.sessions[0].answer_chars).toBe(8);
+    });
   });
 
   describe('soSessionDetail', () => {
