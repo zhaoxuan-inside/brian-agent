@@ -1443,9 +1443,11 @@ export class SelfLearningService {
 
   async startOrphanTagCheck(): Promise<void> {
     try {
-      const cleanIn = new CleanOrphanGraphNodesInput();
-      const cleanOut = new CleanOrphanGraphNodesOutput();
-      await this.infoCore.cleanOrphanGraphNodes(cleanIn, cleanOut, new InfoCoreContext());
+      if (typeof this.infoCore?.cleanOrphanGraphNodes === 'function') {
+        const cleanIn = new CleanOrphanGraphNodesInput();
+        const cleanOut = new CleanOrphanGraphNodesOutput();
+        await this.infoCore.cleanOrphanGraphNodes(cleanIn, cleanOut, new InfoCoreContext());
+      }
 
       const graphSelOutput = Object.assign(new SelectGraphOutput(), {});
       await this.graphDBAccess.selectGraph(

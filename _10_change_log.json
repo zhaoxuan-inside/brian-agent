@@ -224,6 +224,80 @@
       "changed_methods": [],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-011",
+      "date": "2026-09-27",
+      "requirement": "用户澄清:页面缩放卡片需求的对象是配置中心的卡片(非 ChatMap,ChatMap 误改已回退)。要求配置中心所有卡片与 LLM 配置 > 模型提供商管理页卡片的大小和风格一致。以 provider 卡为基准(rounded-xl/border-200/白底/hover:shadow-md+border-brian-blue/30/transition-shadow/p-4/aspect-[3/2]/flex-col/6列栅格 gap-3 p-3)统一 9 处偏差:agent 卡 aspect-square→3/2 并重构降级结构(min-h-0 包裹层,窄视口描述/芯片先收起、底栏恒可见,芯片改横排 flex-wrap);strategy 卡补 flex-col/overflow-hidden/hover 边框;运行参数卡片视图 rounded-lg→xl、border-100→200、半透明底→实底、shadow-sm→md、transition-all→shadow;agent/orch-strategy/strategy 3 个栅格补 p-3;mcp 卡补 hover 边框;MCP 市场两类卡 transition-all→shadow、shadow-sm→md。实测(1920 视口浏览器逐页测量):provider/agent/strategy/orch-strategy/params 卡均为 259×173 且页内零偏差;vue-tsc 0 错;构建通过;vitest 失败数与基线一致",
+      "changed_files": [
+        "brian-frontend/src/views/ConfigView.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
+    },
+    {
+      "id": "chg-012",
+      "date": "2026-09-27",
+      "requirement": "用户反馈配置中心卡片四问题+统一参数卡逻辑重设计。1)锁定卡片尺寸:13 处栅格 grid-cols-2/sm:3/xl:6(随视口伸缩)→ grid-cols-[repeat(auto-fill,264px)] 固定轨道,13 张卡片 aspect-[3/2] 流式比例 → h-[176px] 固定像素——拖拽缩放窗口只改变每行列数,卡片恒为 264×176(1280/1440/1920 三视口逐页实测 zero 偏差);2)固定内容分区防按钮挤出:参数卡改为 标题区+描述区(min-h-0 overflow-hidden,可收缩)+控件行(flex-shrink-0 mt-auto 恒贴底)三段结构,实体卡已有同款降级结构,全部页面按钮均在卡片边界内(逐页实测);3)参数卡移除 config_key 参数名行(历史对比弹窗保留);4)icon 统一左上角:7 处头部行 + 5 处嵌套 icon+标题块 items-center→items-start,修复标题换行时图标垂直居中下移(36px→17px),全部页面 icon 顶边距统一 17px;5)统一参数卡控件逻辑:9 类控件(布尔开关/枚举与关联ID下拉/数值文本输入/定时与信息类型与优先级入口按钮)统一为单行布局——控件 flex-1 占左,确认按钮固定右侧(只读卡隐藏确认,控件置灰),确认按钮从全宽独立行改为行内 compact。实测:vue-tsc 0 错,构建通过,vitest 失败数与基线一致,浏览器 DOM 几何全量断言通过",
+      "changed_files": [
+        "brian-frontend/src/views/ConfigView.vue"
+      ],
+      "commits": [],
+      "changed_methods": [],
+      "author": "Agent",
+      "verified": true
+    },
+    {
+      "id": "chg-013",
+      "date": "2026-09-28",
+      "requirement": "R5 历史会话卡片与图谱治理:1)源头截断会话标题8~12字并暴露创建时间(T-B05);2)从llm_call_log聚合全量Token(涵盖所有辅助匹配)并以MIN(req,resp)严格统计成对问答轮数(T-B06);3)会话级联删除时清理LLM流水与编排数据,严禁物理删除共享Tag/keyword图节点(T-B07);4)自学习图修复学习阶段精准清理无消息关联的孤立图节点(T-B08);5)历史卡片重构:展示8~12字标题、创建时间、总Token及明细、成对问答轮数、总字符数、前4个标签及+N更多弹窗、删除确认与点击跳转隔离(T-F09)",
+      "changed_files": [
+        "brian-backend/Application/Chat/application/ChatService.ts",
+        "brian-backend/Application/SelfLearning/application/SelfLearningService.ts",
+        "brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts",
+        "brian-backend/Core/InfoCoreProvider/access/InfoCoreAccess.ts",
+        "brian-backend/Core/InfoCoreProvider/domain/types.ts",
+        "brian-backend/Core/InfoCoreProvider/index.ts",
+        "brian-backend/dev-server.ts",
+        "brian-backend/Application/test/chat.test.ts",
+        "brian-backend/Core/test/InfoCoreProvider.test.ts",
+        "brian-frontend/src/api/types.ts",
+        "brian-frontend/src/components/info/HistoryTab.vue",
+        "brian-frontend/src/composables/useHistoryTab.ts",
+        "brian-frontend/test/historyCard.test.ts",
+        "_01_business/00_p0_clarification.md",
+        "_01_business/01_requirements.md",
+        "_02_principle/01_candidates.md",
+        "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md",
+        "_04_framework_design/02_data_flow.md",
+        "_05_function_design/01_function_matrix.md",
+        "_06_interface_design/01_external_api.md",
+        "_06_interface_design/02_internal_interfaces.md",
+        "_09_project_dict.json"
+      ],
+      "commits": [
+        "efd3ea2",
+        "17e6687",
+        "56511ce",
+        "0a74cb1",
+        "6d69238"
+      ],
+      "changed_methods": [
+        "ChatService.autoGenerateSessionTitleIfEmpty",
+        "ChatService.updateSessionTitle",
+        "ChatService.soSessionTokenStats",
+        "ChatService.soSessionQaStats",
+        "ChatService.deleteSingleSession",
+        "ChatService.deleteTokenLogsForSession",
+        "ChatService.deleteOrchestrationForSession",
+        "InfoCoreAccess.cleanOrphanGraphNodes",
+        "InfoCoreService.cleanOrphanGraphNodes",
+        "SelfLearningService.startOrphanTagCheck"
+      ],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }
