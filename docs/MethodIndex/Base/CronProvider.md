@@ -8,9 +8,9 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `registerTask` | `name: string, description: string | undefined, defaultCron: string, handler: CronHandler` | `Promise<void>` | 订阅定时任务：注册 name / 默认 cron / handler |
-| `start` | `` | `void` | 启动调度循环 |
-| `stop` | `` | `void` | 停止调度循环 |
+| `registerTask` | `name: string, description: string | undefined, defaultCron: string, handler: CronHandler` | `Promise<void>` | — |
+| `start` | `` | `void` | — |
+| `stop` | `` | `void` | — |
 | `listCronTasks` | `_input: ListCronTasksInput, output: ListCronTasksOutput, _context: CronContext, _metric...` | `Promise<boolean>` | — |
 | `soCronTask` | `input: GetCronTaskInput, output: GetCronTaskOutput, _context: CronContext, _metrics?: M...` | `Promise<boolean>` | — |
 | `setCronTask` | `input: SetCronTaskInput, output: SetCronTaskOutput, _context: CronContext, _metrics?: M...` | `Promise<boolean>` | — |

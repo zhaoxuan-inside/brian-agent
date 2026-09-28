@@ -146,7 +146,8 @@ export class RunGatewayService {
       ctxIn.session_id = input.session_key;
       ctxIn.work_id = runId;
       ctxIn.info = input.user_message;
-
+      ctxIn.selected_msg_ids = input.selected_msg_ids;
+      ctxIn.pinned_msg_ids = input.pinned_msg_ids;
       ctxIn.enable_cross_session = true;
 
       const ctxOut = new ContextInfoOutput();
@@ -286,7 +287,7 @@ export class RunGatewayService {
     parent: { metrics?: Metrics; report?: Report },
   ): Promise<{ runId: string; queued: boolean; steered: boolean }> {
     const mode = input.queue_mode ?? QueueMode.Steer;
-    if (mode === QueueMode.Steer) {
+    if (mode === QueueMode.Steer && lane.acceptingSteer) {
       lane.steering.push(input.user_message);
       return { runId: lane.activeRunId!, queued: false, steered: true };
     }
@@ -364,6 +365,8 @@ export class RunGatewayService {
 
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
     let matchOut: MatchAgentDefOutput | undefined;
+    const steerLane = this.soLane(`${input.lane_kind ?? LaneKind.Session}:${input.session_key}`);
+    steerLane.acceptingSteer = true;
     try {
       const sessionId = await this.soRunSessionId(runId, input, runtimeSessionId);
       const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
@@ -381,11 +384,16 @@ export class RunGatewayService {
       this.publishThoughtModeSelected(thoughtMode, systemSkillCount + boundSkillCount, mcpCount, parent?.report);
       this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
       const loopOutput = new ExecAgentLoopOutput();
-      await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
+      try {
+        await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
+      } finally {
+        steerLane.acceptingSteer = false;
+      }
       await this.finishRunByLane(runId, input, runtimeSessionId, matchOut, loopInput, loopOutput, parent);
       await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
       await this.recordRunOutcome(runId, input, matchOut, loopOutput, parent);
     } catch (err) {
+      steerLane.acceptingSteer = false;
       await this.settleRunFailure(runId, input, matchOut, err, parent);
     }
   }
@@ -930,7 +938,29 @@ export class RunGatewayService {
       lane.activeRunId = undefined;
     }
     this.laneRunning.set(laneKey, Math.max(0, (this.laneRunning.get(laneKey) ?? 1) - 1));
+    await this.drainResidualSteering(laneKey, lane, settled);
     await this.maybeDrainLane(laneKey);
+  }
+
+  /** run 结算时 loop 已退出，遗留的 steering 消息若不接管将永久丢失；此处以残留消息拉起后续 run。 */
+  private async drainResidualSteering(laneKey: string, lane: SessionLane, settledRow: Record<string, unknown>): Promise<void> {
+    if (lane.activeRunId || this.isLaneBusy(laneKey)) {
+      return;
+    }
+    const residual = lane.steering.splice(0, lane.steering.length);
+    if (residual.length === 0) {
+      return;
+    }
+    const input = new SubmitRunInput();
+    input.session_key = String(settledRow.session_key ?? '');
+    input.user_message = residual.join('\n\n');
+    input.lane_kind = String(settledRow.lane ?? LaneKind.Session) as LaneKind;
+    this.logger?.info?.('run 结算后仍有 steering 消息残留，自动拉起后续 run', {
+      lane: laneKey,
+      settled_run_id: String(settledRow.id ?? ''),
+      count: residual.length,
+    });
+    await this.startRun(input, String(settledRow.session_id ?? ''), undefined);
   }
 
   private async maybeDrainLane(laneKey: string): Promise<void> {

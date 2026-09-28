@@ -8,8 +8,8 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `syncInstallStatus` | `` | `Promise<number>` | 通过 npm list -g 同步 mcp_install 表的安装状态（返回移除的记录数） |
-| `stopAllMcp` | `` | `Promise<number>` | 停止所有运行中的 MCP（后端关闭时调用） |
+| `syncInstallStatus` | `` | `Promise<number>` | — |
+| `stopAllMcp` | `` | `Promise<number>` | — |
 | `addMcpProvider` | `i: AddMcpProviderInput, o: AddMcpProviderOutput, c: McpContext, metrics?: Metrics, repo...` | `void` | — |
 | `delMcpProvider` | `i: DelMcpProviderInput, o: DelMcpProviderOutput, c: McpContext, metrics?: Metrics, repo...` | `void` | — |
 | `updateMcpProvider` | `i: UpdateMcpProviderInput, o: UpdateMcpProviderOutput, c: McpContext, metrics?: Metrics...` | `void` | — |

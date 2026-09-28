@@ -13,7 +13,7 @@
 | `soConfigDetail` | `input: GetConfigDetailInput, output: GetConfigDetailOutput, context: ConfigContext, met...` | `Promise<boolean>` | — |
 | `soConfigItem` | `input: GetConfigItemInput, output: GetConfigItemOutput, context: ConfigContext, metrics...` | `Promise<boolean>` | — |
 | `updateConfig` | `input: UpdateConfigInput, output: UpdateConfigOutput, context: ConfigContext, metrics?:...` | `Promise<boolean>` | — |
-| `soConfigHistory` | `input: GetConfigHistoryInput, output: GetConfigHistoryOutput, context: ConfigContext, m...` | `Promise<boolean>` | 查询配置变更历史（config_key 缺省查全局；change_time 降序） |
+| `soConfigHistory` | `input: GetConfigHistoryInput, output: GetConfigHistoryOutput, context: ConfigContext, m...` | `Promise<boolean>` | — |
 | `configConfig` | `input: ConfigConfigInput, output: ConfigConfigOutput, context: ConfigContext, metrics?:...` | `Promise<boolean>` | — |
 | `addLLMProvider` | `input: AddLLMProviderInput, output: AddLLMProviderOutput, context: LLMContext, metrics?...` | `Promise<boolean>` | — |
 | `updateLLMProvider` | `input: UpdateLLMProviderInput, output: UpdateLLMProviderOutput, context: LLMContext, me...` | `Promise<boolean>` | — |
@@ -31,7 +31,6 @@
 | `delSoul` | `input: DelSoulInput, output: DelSoulOutput, context: SoulContext, metrics?: Metrics, re...` | `Promise<boolean>` | — |
 | `soSoul` | `input: SoSoulInput, output: SoSoulOutput, context: SoulContext, metrics?: Metrics, repo...` | `Promise<boolean>` | — |
 | `soSoulById` | `input: GetSoulInput, output: GetSoulOutput, context: SoulContext, metrics?: Metrics, re...` | `Promise<boolean>` | — |
-| `getSoulRule` | `input: SoSoulRuleInput, output: SoSoulRuleOutput, context: SoulCoreContext, metrics?: M...` | `Promise<boolean>` | — |
 | `updateSoulRule` | `input: UpdateSoulRuleInput, output: UpdateSoulRuleOutput, context: SoulCoreContext, met...` | `Promise<boolean>` | — |
 | `addSkill` | `input: AddSkillInput, output: AddSkillOutput, context: SkillContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `updateSkill` | `input: UpdateSkillInput, output: UpdateSkillOutput, context: SkillContext, metrics?: Me...` | `Promise<boolean>` | — |
@@ -39,7 +38,6 @@
 | `soSkill` | `input: SoSkillInput, output: SoSkillOutput, context: SkillContext, metrics?: Metrics, r...` | `Promise<boolean>` | — |
 | `execSkill` | `input: ExecSkillInput, output: ExecSkillOutput, context: SkillContext, metrics?: Metric...` | `Promise<boolean>` | — |
 | `soSkillById` | `input: GetSkillInput, output: GetSkillOutput, context: SkillContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
-| `getSkillRule` | `input: SoSkillRuleInput, output: SoSkillRuleOutput, context: SkillCoreContext, metrics?...` | `Promise<boolean>` | — |
 | `updateSkillRule` | `input: UpdateSkillRuleInput, output: UpdateSkillRuleOutput, context: SkillCoreContext, ...` | `Promise<boolean>` | — |
 | `addMcpProvider` | `input: AddMcpProviderInput, output: AddMcpProviderOutput, context: McpContext, metrics?...` | `Promise<boolean>` | — |
 | `updateMcpProvider` | `input: UpdateMcpProviderInput, output: UpdateMcpProviderOutput, context: McpContext, me...` | `Promise<boolean>` | — |

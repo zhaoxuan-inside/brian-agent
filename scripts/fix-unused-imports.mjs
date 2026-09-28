@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-/**
- * 未使用 import 清理 codemod：TS AST 找出 import 声明中未被文件其余部分引用的具名/默认导出，
- * 从 import 列表移除（整条语句空了则删除整行）。
- * 用法：node scripts/fix-unused-imports.mjs <file-or-dir>...
- */
+
 import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,11 +24,11 @@ function fixFile(file) {
     if (clause.name) specs.push({ node: clause.name, name: clause.name.text });
     if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
       for (const el of clause.namedBindings.elements) {
-        specs.push({ node: el.name, name: el.name.text }); // 检测局部名（别名后）
+        specs.push({ node: el.name, name: el.name.text });
       }
     }
     if (!specs.length) continue;
-    // 文件其余部分（去掉 import 语句区域）是否引用
+    
     const restStart = stmt.getStart(sf);
     const rest = src.slice(0, restStart) + src.slice(stmt.getEnd());
     const unused = specs.filter((s) => {
@@ -42,19 +38,19 @@ function fixFile(file) {
     if (!unused.length) continue;
     const kept = specs.filter((s) => !unused.includes(s));
     if (!kept.length) {
-      // 整条 import 删除（含行尾换行）
+      
       let end = stmt.getEnd();
       while (end < src.length && (src[end] === '\n' || src[end] === ' ' || src[end] === '\r')) end++;
       edits.push({ start: stmt.getStart(sf), end, text: '' });
     } else {
-      // 重写 namedBindings 列表（按源码顺序保留）
+      
       const nb = clause.namedBindings;
       if (ts.isNamedImports(nb)) {
         const keepEls = nb.elements.filter((el) => !unused.some((u) => u.node === el.name));
         const text = keepEls.map((el) => el.getText(sf)).join(', ');
         edits.push({ start: nb.getStart(sf), end: nb.getEnd(), text: `{ ${text} }` });
         if (clause.name) {
-          // 默认导入未使用则去掉 "Default, "
+          
           if (unused.some((u) => u.node === clause.name)) {
             const comma = src.indexOf(',', clause.name.getEnd());
             if (comma > -1 && comma < nb.getStart(sf)) {

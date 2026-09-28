@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle, MinusCircle } from '@lucide/vue'
+import { Brain, Loader2, FileText, MessageCircle, Network, Zap, CheckCircle2, XCircle, MinusCircle, Square } from '@lucide/vue'
 import { learningApi } from '@/api'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import type { LearningStats, LearningProgress } from '@/api/types'
@@ -9,6 +9,7 @@ const progress = ref<LearningProgress>({ mode: 'from-conversation', running: fal
 const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const tasksTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const triggering = ref('')
+const stopping = ref(false)
 
 const MODE_CARDS = [
   { key: 'from-document', label: '从文档学习', desc: '读取资料库中的 Markdown 文件，抽取知识点与洞察', icon: FileText },
@@ -40,10 +41,10 @@ function statsOf(mode: string): LearningStats {
 }
 
 async function fetchModeData(mode: string) {
-  try { modeStats.value[mode] = await learningApi.getStats(mode) } catch { /* */ }
-  try { modeKnowledge.value[mode] = await learningApi.getKnowledge(mode) } catch { /* */ }
-  try { modeInsights.value[mode] = await learningApi.getInsights(mode) } catch { /* */ }
-  try { modeQueue.value[mode] = await learningApi.getQueue(mode) } catch { /* */ }
+  try { modeStats.value[mode] = await learningApi.getStats(mode) } catch (e) { console.error(`[LearningPanel] 加载 ${mode} 统计失败`, e) }
+  try { modeKnowledge.value[mode] = await learningApi.getKnowledge(mode) } catch (e) { console.error(`[LearningPanel] 加载 ${mode} 知识点失败`, e) }
+  try { modeInsights.value[mode] = await learningApi.getInsights(mode) } catch (e) { console.error(`[LearningPanel] 加载 ${mode} 洞察失败`, e) }
+  try { modeQueue.value[mode] = await learningApi.getQueue(mode) } catch (e) { console.error(`[LearningPanel] 加载 ${mode} 队列失败`, e) }
 }
 
 async function fetchAll() {
@@ -55,7 +56,7 @@ async function fetchAll() {
         modeRandomFactor.value[key] = v.randomFactor
       }
     }
-  } catch { /* */ }
+  } catch (e) { console.error('[LearningPanel] 加载学习进度失败', e) }
   await Promise.all(modeKeys.map(m => fetchModeData(m)))
 }
 
@@ -64,9 +65,25 @@ async function triggerMode(mode: string) {
   triggering.value = mode
   try {
     await learningApi.start(mode)
-  } catch { /* */ }
+  } catch (e) {
+    console.error('[LearningPanel] 触发学习失败', e)
+  }
   finally {
     triggering.value = ''
+    await fetchTasks()
+    await fetchAll()
+  }
+}
+
+async function stopLearning() {
+  if (stopping.value) return
+  stopping.value = true
+  try {
+    await learningApi.stop()
+  } catch (e) {
+    console.error('[LearningPanel] 停止学习失败', e)
+  } finally {
+    stopping.value = false
     await fetchTasks()
     await fetchAll()
   }
@@ -77,7 +94,10 @@ async function toggleAuto(mode: string) {
   modeAuto.value[mode] = next
   try {
     await learningApi.setAuto(mode, next)
-  } catch { modeAuto.value[mode] = !next }
+  } catch (e) {
+    console.error('[LearningPanel] 切换自动学习失败', e)
+    modeAuto.value[mode] = !next
+  }
 }
 
 const factorDebounceMap: Record<string, ReturnType<typeof setTimeout> | null> = {}
@@ -85,7 +105,7 @@ function onFactorChange(mode: string, val: number) {
   modeRandomFactor.value[mode] = val
   if (factorDebounceMap[mode]) clearTimeout(factorDebounceMap[mode] as ReturnType<typeof setTimeout>)
   factorDebounceMap[mode] = setTimeout(async () => {
-    try { await learningApi.setRandomFactor(mode, val) } catch { /* */ }
+    try { await learningApi.setRandomFactor(mode, val) } catch (e) { console.error('[LearningPanel] 保存随机因子失败', e) }
   }, 500)
 }
 
@@ -139,7 +159,7 @@ function trendColor(mode: string, count: number): string {
 const tasks = ref<Array<{ task_id: string; mode: string; label: string; status: string; started_at: number; error?: string; detail?: string }>>([])
 
 async function fetchTasks() {
-  try { tasks.value = (await learningApi.getTasks()).tasks ?? [] } catch { /* */ }
+  try { tasks.value = (await learningApi.getTasks()).tasks ?? [] } catch (e) { console.error('[LearningPanel] 加载学习任务失败', e) }
 }
 
 const VISIBLE_TASK_COUNT = 5
@@ -314,15 +334,27 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <button
-            class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white bg-brian-blue hover:bg-brian-blue/90 transition-colors disabled:opacity-60 shrink-0"
-            :disabled="triggering !== ''"
-            @click="triggerMode(card.key)"
-          >
-            <Loader2 v-if="triggering === card.key" :size="14" class="animate-spin" />
-            <Zap v-else :size="14" />
-            {{ triggering === card.key ? '触发中...' : '手动触发' }}
-          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white bg-brian-blue hover:bg-brian-blue/90 transition-colors disabled:opacity-60"
+              :disabled="triggering !== ''"
+              @click="triggerMode(card.key)"
+            >
+              <Loader2 v-if="triggering === card.key" :size="14" class="animate-spin" />
+              <Zap v-else :size="14" />
+              {{ triggering === card.key ? '触发中...' : '手动触发' }}
+            </button>
+            <button
+              class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-apple-gray-600 dark:text-apple-gray-300 border border-apple-gray-200 dark:border-apple-gray-700 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors disabled:opacity-60 shrink-0"
+              :disabled="stopping"
+              title="停止当前学习任务"
+              @click="stopLearning"
+            >
+              <Loader2 v-if="stopping" :size="14" class="animate-spin" />
+              <Square v-else :size="14" />
+              停止
+            </button>
+          </div>
         </div>
       </div>
     </div>

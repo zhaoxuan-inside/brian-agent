@@ -1,6 +1,6 @@
 import type { GraphNode } from '../api/types'
 
-export interface TagLayoutNode extends GraphNode { x: number; y: number; r: number; color: string }
+export interface TagLayoutNode extends GraphNode { x: number; y: number; r: number; color: string; hue: number }
 
 interface LayoutEdge { source: string; target: string; weight: number }
 
@@ -88,16 +88,20 @@ export function forceDirectedLayout(
   }
 
   const maxWeight = Math.max(1, ...nodes.map((n) => n.weight || 0))
+  const maxDegree = Math.max(1, ...degree.values())
   return nodes.map((n) => {
     const p = positions.get(n.id)!
     const d = degree.get(n.id) || 0
     const wRatio = Math.min((n.weight || 0) / maxWeight, 1)
     const hue = 210 - 210 * wRatio
+    // 半径随连接度 sqrt 缩放(4–12),枢纽节点显著更大但不失真
+    const r = Math.min(4 + Math.sqrt(d / maxDegree) * 8, 12)
     return {
       ...n,
       x: p.x,
       y: p.y,
-      r: 3 + Math.min(Math.floor(Math.log10(Math.max(d, 1))) + 1, 4),
+      r,
+      hue,
       color: `hsl(${hue}, 75%, 52%)`,
     }
   })

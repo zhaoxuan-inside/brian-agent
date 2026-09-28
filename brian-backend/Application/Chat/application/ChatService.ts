@@ -21,6 +21,7 @@ import {
   PinInfoInput, PinInfoOutput,
   SaveInfoInput, SaveInfoOutput,
   InfoCoreContext,
+  DIALOG_TABLE,
 } from '@brian-agent/core';
 import {
   ChatContext,
@@ -156,10 +157,15 @@ export class ChatService {
     submitIn.session_key = sessionId;
     submitIn.session_id = sessionId;
     submitIn.user_message = input.msg_content;
+    submitIn.selected_msg_ids = input.selected_msg_ids;
+    submitIn.pinned_msg_ids = input.pinned_msg_ids;
+    submitIn.citing_msg_ids = input.citing_msg_ids;
     const submitOut = new SubmitRunOutput();
     await runtime.gateway.submitRun(submitIn, submitOut, new RunGatewayContext(), metrics, report2);
 
     const runId = submitOut.run_id;
+
+    const citingInfoIds = Array.from(new Set((input.citing_msg_ids ?? []).map(String).filter(Boolean)));
 
     try {
       const earlySaveInput = new SaveInfoInput();
@@ -170,6 +176,9 @@ export class ChatService {
       earlySaveInput.info_creator_role = 'USER';
       earlySaveInput.info = input.msg_content;
       earlySaveInput.trace_id = traceId;
+      if (citingInfoIds.length > 0) {
+        earlySaveInput.parent_info_ids = citingInfoIds;
+      }
       await this.infoCore.saveInfo(earlySaveInput, new SaveInfoOutput(), new InfoCoreContext(), metrics);
     } catch {  }
     const waitIn = new WaitRunInput();
@@ -187,7 +196,7 @@ export class ChatService {
       work_id: submitOut.run_id,
     });
 
-    await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId, metrics);
+    await this.syncRuntimeMessagesToInfoRaw(runtimeSessionId, sessionId, submitOut.run_id, traceId, metrics, citingInfoIds);
 
     const totalElapsed = typeof metrics?.getTotalDuration === 'function' ? metrics.getTotalDuration() : (metrics?.elapsed_ms ?? 0);
     if (waitOut.status === 'running') {
@@ -199,7 +208,7 @@ export class ChatService {
     return true;
   }
 
-  private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics): Promise<void> {
+  private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics, citingInfoIds: string[] = []): Promise<void> {
     try {
       const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
         `SELECT "id", "role", "content", "created", "run_id" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" DESC LIMIT 200`,
@@ -282,6 +291,9 @@ export class ChatService {
         saveInput.info = msg.content;
 
         saveInput.created = Number(msg.created) > 0 ? Number(msg.created) : undefined;
+        if (infoType === 'REQUEST' && workId === runId && citingInfoIds.length > 0) {
+          saveInput.parent_info_ids = citingInfoIds;
+        }
         const saveOutput = new SaveInfoOutput();
         await this.infoCore.saveInfo(saveInput, saveOutput, new InfoCoreContext(), metrics);
       }
@@ -605,7 +617,40 @@ export class ChatService {
 
   private soSessionQaStats(sessionIds: string[], metrics?: Metrics): Map<string, { qa_count: number; question_chars: number; answer_chars: number }> {
     const statMap = new Map<string, { qa_count: number; question_chars: number; answer_chars: number }>();
+    if (sessionIds.length === 0) return statMap;
     const placeholders = sessionIds.map(() => '?').join(',');
+    try {
+      const dialogRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
+        `SELECT "session_id",
+           MIN(
+             SUM(CASE WHEN "type" = 'REQUEST' THEN 1 ELSE 0 END),
+             SUM(CASE WHEN "type" = 'RESPONSE' THEN 1 ELSE 0 END)
+           ) AS qa_count,
+           SUM(CASE WHEN "type" = 'REQUEST' THEN "dialog_length" ELSE 0 END) AS question_chars,
+           SUM(CASE WHEN "type" = 'RESPONSE' THEN "dialog_length" ELSE 0 END) AS answer_chars
+         FROM "${DIALOG_TABLE}" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
+        sessionIds,
+      );
+      for (const r of dialogRows ?? []) {
+        statMap.set(String(r.session_id), {
+          qa_count: Math.max(0, Number(r.qa_count ?? 0) || 0),
+          question_chars: Number(r.question_chars ?? 0) || 0,
+          answer_chars: Number(r.answer_chars ?? 0) || 0,
+        });
+      }
+    } catch { }
+
+    const missingIds = sessionIds.filter((id) => !statMap.has(id));
+    if (missingIds.length > 0) this.fallbackInfoRawQaStats(missingIds, statMap, metrics);
+    return statMap;
+  }
+
+  private fallbackInfoRawQaStats(
+    missingIds: string[],
+    statMap: Map<string, { qa_count: number; question_chars: number; answer_chars: number }>,
+    metrics?: Metrics,
+  ): void {
+    const placeholders = missingIds.map(() => '?').join(',');
     try {
       const statRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
         `SELECT "session_id",
@@ -616,9 +661,9 @@ export class ChatService {
            SUM(CASE WHEN "info_type" = 'REQUEST' THEN "info_length" ELSE 0 END) AS question_chars,
            SUM(CASE WHEN "info_type" = 'RESPONSE' THEN "info_length" ELSE 0 END) AS answer_chars
          FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
-        sessionIds,
+        missingIds,
       );
-      for (const r of statRows) {
+      for (const r of statRows ?? []) {
         statMap.set(String(r.session_id), {
           qa_count: Math.max(0, Number(r.qa_count ?? 0) || 0),
           question_chars: Number(r.question_chars ?? 0) || 0,
@@ -626,13 +671,11 @@ export class ChatService {
         });
       }
     } catch (err) {
-
       metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
         error: err instanceof Error ? err.message : String(err),
-        session_ids: sessionIds,
+        session_ids: missingIds,
       });
     }
-    return statMap;
   }
 
   private soSessionTags(sessionIds: string[], metrics?: Metrics): Map<string, string[]> {
@@ -747,21 +790,59 @@ export class ChatService {
 
   private soSessionMessageCount(sessionIds: string[]): Map<string, number> {
     const countMap = new Map<string, number>();
+    if (sessionIds.length === 0) return countMap;
+    const placeholders = sessionIds.map(() => '?').join(',');
     try {
-      const placeholders = sessionIds.map(() => '?').join(',');
       const cntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
-        `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
+        `SELECT "session_id", COUNT(*) AS cnt FROM "${DIALOG_TABLE}" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
         sessionIds,
       );
-      for (const r of cntRows) countMap.set(String(r.session_id), Number(r.cnt));
-    } catch {  }
+      for (const r of cntRows ?? []) countMap.set(String(r.session_id), Number(r.cnt));
+    } catch { }
+
+    const missingIds = sessionIds.filter((id) => !countMap.has(id));
+    if (missingIds.length > 0) {
+      try {
+        const missingPlaceholders = missingIds.map(() => '?').join(',');
+        const rawCntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
+          `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${missingPlaceholders}) GROUP BY "session_id"`,
+          missingIds,
+        );
+        for (const r of rawCntRows ?? []) countMap.set(String(r.session_id), Number(r.cnt));
+      } catch { }
+    }
     return countMap;
   }
 
   private soSessionLastMessage(sessionIds: string[], metrics?: Metrics): Map<string, { time: number; msg: string }> {
     const lastMsgMap = new Map<string, { time: number; msg: string }>();
+    if (sessionIds.length === 0) return lastMsgMap;
+    const placeholders = sessionIds.map(() => '?').join(',');
     try {
-      const placeholders = sessionIds.map(() => '?').join(',');
+      const lastRows = this.relationDb.queryRaw<{ session_id: string; created: number; dialog: string }>(
+        `SELECT d."session_id", d."created", d."dialog"
+         FROM "${DIALOG_TABLE}" d
+         INNER JOIN (
+           SELECT "session_id", MAX("created") AS max_created
+           FROM "${DIALOG_TABLE}" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"
+         ) latest ON d."session_id" = latest."session_id" AND d."created" = latest.max_created`,
+        sessionIds,
+      );
+      for (const r of lastRows ?? []) {
+        lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.dialog ?? '') });
+      }
+    } catch { }
+
+    const missingIds = sessionIds.filter((id) => !lastMsgMap.has(id));
+    if (missingIds.length > 0) {
+      this.fallbackInfoRawLastMessage(missingIds, lastMsgMap, metrics);
+    }
+    return lastMsgMap;
+  }
+
+  private fallbackInfoRawLastMessage(missingIds: string[], lastMsgMap: Map<string, { time: number; msg: string }>, metrics?: Metrics): void {
+    const placeholders = missingIds.map(() => '?').join(',');
+    try {
       const lastRows = this.relationDb.queryRaw<{ session_id: string; created: number; info: string }>(
         `SELECT ir."session_id", ir."created", ir."info"
          FROM "info_raw" ir
@@ -769,19 +850,17 @@ export class ChatService {
            SELECT "session_id", MAX("created") AS max_created
            FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"
          ) latest ON ir."session_id" = latest."session_id" AND ir."created" = latest.max_created`,
-        sessionIds,
+        missingIds,
       );
-      for (const r of lastRows) {
+      for (const r of lastRows ?? []) {
         lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
       }
     } catch (err) {
-
       metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
         error: err instanceof Error ? err.message : String(err),
-        session_ids: sessionIds,
+        session_ids: missingIds,
       });
     }
-    return lastMsgMap;
   }
 
   private async countSessionTotal(conditions: Condition[], metrics?: Metrics): Promise<number> {
@@ -973,30 +1052,46 @@ export class ChatService {
     }
 
     const pageRows = allRows.slice(start, end);
+    const graphRows = await this.loadHistoryCitationRows(input.session_id);
+    output.messages = this.buildHistoryMessages(pageRows, allRows, graphRows);
+    output.total = allRows.length;
+    return true;
+  }
 
-    let graphRows: Array<{ citing_info_id: string; cited_info_id: string }> = [];
+  private async loadHistoryCitationRows(sessionId?: string): Promise<Array<{ citing_info_id: string; cited_info_id: string }>> {
     try {
+      const citeIn = new SoCitationEdgesInput();
+      if (sessionId) citeIn.session_id = sessionId;
       const citeOut = new SoCitationEdgesOutput();
-      await this.infoCore.soCitationEdges(new SoCitationEdgesInput(), citeOut, new InfoCoreContext());
-      graphRows = citeOut.edges;
-    } catch {  }
+      await this.infoCore.soCitationEdges(citeIn, citeOut, new InfoCoreContext());
+      return citeOut.edges;
+    } catch {
+      return [];
+    }
+  }
 
-    for (const row of pageRows) {
+  private buildHistoryMessages(
+    pageRows: any[],
+    allRows: any[],
+    graphRows: Array<{ citing_info_id: string; cited_info_id: string }>,
+  ): GetChatHistoryOutput['messages'] {
+    const workToReqMap = new Map<string, string>();
+    for (const r of allRows) {
+      if (r.work_id && String(r.info_type ?? '').toUpperCase() === 'REQUEST') {
+        workToReqMap.set(r.work_id, r.info_id);
+      }
+    }
+    return pageRows.map((row) => {
       const citingInfoIds: string[] = [];
       const citedInfoIds: string[] = [];
-
+      const reqId = row.work_id ? workToReqMap.get(row.work_id) : undefined;
       for (const g of graphRows) {
-        const citing = g.citing_info_id;
-        const cited = g.cited_info_id;
-        if (cited === row.info_id && citing) {
-          citingInfoIds.push(citing);
-        }
-        if (citing === row.info_id && cited) {
-          citedInfoIds.push(cited);
+        if (g.cited_info_id === row.info_id && g.citing_info_id) citingInfoIds.push(g.citing_info_id);
+        if ((g.citing_info_id === row.info_id || (reqId && g.citing_info_id === reqId)) && g.cited_info_id) {
+          citedInfoIds.push(g.cited_info_id);
         }
       }
-
-      messages.push({
+      return {
         info_id: row.info_id,
         info_type: row.info_type,
         info_creator_role: row.info_creator_role,
@@ -1010,12 +1105,8 @@ export class ChatService {
         cited_count: citedInfoIds.length,
         citing_info_ids: [...new Set(citingInfoIds)],
         cited_info_ids: [...new Set(citedInfoIds)],
-      });
-    }
-
-    output.messages = messages;
-    output.total = allRows.length;
-    return true;
+      };
+    });
   }
 
   async soMessage(input: SearchMessageInput, output: SearchMessageOutput, _context: ChatContext, metrics?: Metrics, _report?: Report,

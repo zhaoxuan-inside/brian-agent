@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-28T11:44:42.394Z",
+  "shard": "agent-intentagent",
+  "layer": "Agent",
+  "module": "IntentAgent",
+  "methods": [
+    {
+      "id": "m-intentagent-0001",
+      "signature": "boolean ensureBuiltin(ctx: IntentAgentContext): Promise<boolean>",
+      "name": "ensureBuiltin",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/access/IntentAgentAccess.ts",
+      "description": "确保就绪：builtin（返回成功与否，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0002",
+      "signature": "boolean understandRequirement(i: UnderstandRequirementInput, o: UnderstandRequirementOutput, c: IntentAgentContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "understandRequirement",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/access/IntentAgentAccess.ts",
+      "description": "处理 understand / requirement（返回成功与否，接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0003",
+      "signature": "boolean ensureBuiltin(_ctx: IntentAgentContext): Promise<boolean>",
+      "name": "ensureBuiltin",
+      "category": "data",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "确保就绪：builtin",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0004",
+      "signature": "boolean understandRequirement(input: UnderstandRequirementInput, output: UnderstandRequirementOutput, _ctx: IntentAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
+      "name": "understandRequirement",
+      "category": "data",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "处理 understand / requirement",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0005",
+      "signature": "boolean ensureBuiltinSoul(): Promise<string>",
+      "name": "ensureBuiltinSoul",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "确保就绪：builtin / 人设（异步编排）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0006",
+      "signature": "boolean getMatchThresholdConfig(metrics?: Metrics): Promise<number>",
+      "name": "getMatchThresholdConfig",
+      "category": "data",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "获取：match / threshold / 配置（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0007",
+      "signature": "boolean fetchRecentHistory(sessionId: string): Promise<string>",
+      "name": "fetchRecentHistory",
+      "category": "algorithm",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "获取：recent / 历史（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0008",
+      "signature": "boolean fetchPinnedInfo(sessionId: string, workId?: string): Promise<string>",
+      "name": "fetchPinnedInfo",
+      "category": "data",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "获取：pinned / 信息",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0009",
+      "signature": "boolean fetchCitingMessages(sessionId: string, citingIds: string[], selectedIds: string[]): Promise<string>",
+      "name": "fetchCitingMessages",
+      "category": "algorithm",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "获取：citing / messages（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-intentagent-0010",
+      "signature": "boolean soIntentPromptTemplateId(metrics?: Metrics): Promise<string>",
+      "name": "soIntentPromptTemplateId",
+      "category": "algorithm",
+      "layer": "Agent",
+      "module": "IntentAgent",
+      "location": "brian-backend/Agent/IntentAgent/application/IntentAgentService.ts",
+      "description": "查询：意图 / 提示词 / template / 标识（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    }
+  ],
+  "stats": {
+    "total": 10,
+    "by_category": {
+      "algorithm": 3,
+      "orchestration": 3,
+      "data": 4
+    }
+  }
+}

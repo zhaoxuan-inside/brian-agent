@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, IntentConfirmation, ThinkingTrace, ThinkingTimelineItem, ThinkingContextRound } from '@/api/types'
+import type { Block, PlanningData, AgentDagData, AgentExecutionStatus, AgentRuntimeInfo, ThinkingTrace, ThinkingTimelineItem, ThinkingContextRound } from '@/api/types'
 import { chatApi } from '@/api'
 
 export const useChatUiStore = defineStore('chatUi', () => {
@@ -29,7 +29,10 @@ export const useChatUiStore = defineStore('chatUi', () => {
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
   
   const runActive = ref(false)
-  
+
+  /** 当前问答作用域：本次问答（含意图确认等延续交互）涉及的所有 botMsgId，用于思考弹窗按问答隔离 */
+  const activeRunMsgIds = ref<Set<string>>(new Set())
+
   const agentExecutions = ref<Record<string, AgentRuntimeInfo>>({})
   
   const taskExecutions = ref<Record<string, AgentRuntimeInfo>>({})
@@ -40,34 +43,7 @@ export const useChatUiStore = defineStore('chatUi', () => {
   const evalResultError = ref('')
   const evalTraceId = ref('')
 
-  
-  const intentConfirmation = ref<IntentConfirmation | null>(null)
 
-  function setIntentConfirmation(data: Record<string, unknown> | null) {
-    if (!data) {
-      intentConfirmation.value = null
-      return
-    }
-    intentConfirmation.value = {
-      session_id: String(data.session_id ?? ''),
-      work_id: String(data.work_id ?? ''),
-      run_id: String(data.run_id ?? ''),
-      original_query: String(data.original_query ?? ''),
-      understood_requirement: String(data.understood_requirement ?? ''),
-      match_score: Number(data.match_score ?? 0),
-      threshold_score: Number(data.threshold_score ?? 0),
-      reasoning: String(data.reasoning ?? ''),
-      kind: String(data.kind ?? 'intent'),
-      permission_id: String(data.permission_id ?? ''),
-      tool_id: String(data.tool_id ?? ''),
-    } as IntentConfirmation
-  }
-
-  function clearIntentConfirmation() {
-    intentConfirmation.value = null
-  }
-
-  
   function setThinkingOrigin(rect: { left: number; top: number; width: number; height: number } | null) {
     thinkingOrigin.value = rect
   }
@@ -317,6 +293,17 @@ export const useChatUiStore = defineStore('chatUi', () => {
     runActive.value = active
   }
 
+  function beginRunScope(msgId: string) {
+    if (!msgId || activeRunMsgIds.value.has(msgId)) return
+    const next = new Set(activeRunMsgIds.value)
+    next.add(msgId)
+    activeRunMsgIds.value = next
+  }
+
+  function resetRunScope() {
+    activeRunMsgIds.value = new Set()
+  }
+
   
   function resetWorkflowState() {
     planning.value = { status: 'idle' }
@@ -327,12 +314,14 @@ export const useChatUiStore = defineStore('chatUi', () => {
     runActive.value = false
     liveTimeline.value = []
     liveContextRounds.value = []
+    activeRunMsgIds.value = new Set()
   }
 
   return {
     thinkingModalVisible, thinkingTargetMsgId, thinkingBlocks,
     thinkingLoading, dagLoading, blocksLoading,
     planning, thinkingDag, thinkingTrace, agentExecutions, taskExecutions, thinkingOrigin, runActive,
+    activeRunMsgIds, beginRunScope, resetRunScope,
     liveTimeline, resetLiveTimeline, pushLiveTimelineItem, updateOrPushLiveTimelineItem,
     liveContextRounds, pushLiveContextRound,
     setThinkingOrigin, clearThinkingOrigin,
@@ -342,6 +331,5 @@ export const useChatUiStore = defineStore('chatUi', () => {
     setAgentStatus, setRunActive, resetAgentStatus, resetWorkflowState,
     evalResultVisible, evalResultLoading, evalResult, evalResultError, evalTraceId,
     openEvalResult, closeEvalResult,
-    intentConfirmation, setIntentConfirmation, clearIntentConfirmation
   }
 })

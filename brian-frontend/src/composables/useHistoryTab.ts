@@ -312,7 +312,7 @@ async function confirmDelete() {
   }
 }
 
-function openSession(sessionId: string) { router.push(`/?session=${sessionId}`) }
+function openSession(sessionId: string) { router.push(`/chat?session=${sessionId}`) }
 
   return {
     historySearch, historyStartTime, historyEndTime,

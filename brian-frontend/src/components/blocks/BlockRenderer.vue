@@ -8,8 +8,9 @@ import ErrorBlockView from './ErrorBlock.vue'
 import FallbackBlockView from './FallbackBlock.vue'
 import FeedbackBlockView from './FeedbackBlock.vue'
 
-const _props = defineProps<{ block: Block }>()
-const isToolBlock = computed(() => _props.block.type === 'ToolInvocation')
+const props = defineProps<{ block: Block }>()
+const emit = defineEmits<{ retry: [] }>()
+const isToolBlock = computed(() => props.block.type === 'ToolInvocation')
 </script>
 
 <template>
@@ -24,6 +25,7 @@ const isToolBlock = computed(() => _props.block.type === 'ToolInvocation')
       FallbackBlockView
     "
     :block="block"
+    @retry="emit('retry')"
   />
   <template v-else />
 </template>

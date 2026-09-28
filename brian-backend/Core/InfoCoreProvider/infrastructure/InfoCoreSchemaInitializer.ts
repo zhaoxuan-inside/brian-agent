@@ -1,5 +1,8 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
+  DIALOG_TABLE,
+  EXECUTE_TABLE,
+  CONTEXT_TABLE,
   INFO_RAW_TABLE,
   INFO_CONTEXT_SOURCE_TABLE,
   INFO_VECTOR_TABLE,
@@ -23,6 +26,68 @@ export class InfoCoreSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   private readonly ddlStatements: readonly DdlEntry[] = [
+    `
+      CREATE TABLE IF NOT EXISTS "${DIALOG_TABLE}" (
+        "id"            TEXT    NOT NULL PRIMARY KEY,
+        "created"       INTEGER NOT NULL,
+        "updated"       INTEGER NOT NULL,
+        "session_id"    TEXT    NOT NULL,
+        "work_id"       TEXT    NOT NULL,
+        "type"          TEXT    NOT NULL,
+        "dialog"        TEXT    NOT NULL,
+        "dialog_length" INTEGER NOT NULL DEFAULT 0,
+        "dialog_brief"  TEXT    NOT NULL DEFAULT '',
+        "trace_id"      TEXT    NOT NULL DEFAULT ''
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS "idx_${DIALOG_TABLE}_session_id" ON "${DIALOG_TABLE}" ("session_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${DIALOG_TABLE}_work_id"    ON "${DIALOG_TABLE}" ("work_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${DIALOG_TABLE}_created"    ON "${DIALOG_TABLE}" ("created")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${DIALOG_TABLE}_sess_time"  ON "${DIALOG_TABLE}" ("session_id", "created")`,
+
+    `
+      CREATE TABLE IF NOT EXISTS "${EXECUTE_TABLE}" (
+        "id"             TEXT    NOT NULL PRIMARY KEY,
+        "created"        INTEGER NOT NULL,
+        "updated"        INTEGER NOT NULL,
+        "session_id"     TEXT    NOT NULL,
+        "work_id"        TEXT    NOT NULL,
+        "run_id"         TEXT    NOT NULL DEFAULT '',
+        "trace_id"       TEXT    NOT NULL DEFAULT '',
+        "agent_id"       TEXT    NOT NULL DEFAULT '',
+        "exec_no"        INTEGER NOT NULL DEFAULT 0,
+        "component_id"   TEXT    NOT NULL DEFAULT '',
+        "component_type" TEXT    NOT NULL DEFAULT '',
+        "input"          TEXT    NOT NULL DEFAULT '',
+        "input_length"   INTEGER NOT NULL DEFAULT 0,
+        "output"         TEXT    NOT NULL DEFAULT '',
+        "output_length"  INTEGER NOT NULL DEFAULT 0,
+        "gap"            INTEGER NOT NULL DEFAULT 0
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS "idx_${EXECUTE_TABLE}_work_id"      ON "${EXECUTE_TABLE}" ("work_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${EXECUTE_TABLE}_session_id"   ON "${EXECUTE_TABLE}" ("session_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${EXECUTE_TABLE}_work_exec_no" ON "${EXECUTE_TABLE}" ("work_id", "exec_no")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${EXECUTE_TABLE}_created"      ON "${EXECUTE_TABLE}" ("created")`,
+
+    `
+      CREATE TABLE IF NOT EXISTS "${CONTEXT_TABLE}" (
+        "id"         TEXT    NOT NULL PRIMARY KEY,
+        "created"    INTEGER NOT NULL,
+        "updated"    INTEGER NOT NULL,
+        "session_id" TEXT    NOT NULL DEFAULT '',
+        "work_id"    TEXT    NOT NULL,
+        "dialog_id"  TEXT    NOT NULL,
+        "type"       TEXT    NOT NULL
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_work_id"      ON "${CONTEXT_TABLE}" ("work_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_session_id"   ON "${CONTEXT_TABLE}" ("session_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_dialog_id"    ON "${CONTEXT_TABLE}" ("dialog_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_sess_type"    ON "${CONTEXT_TABLE}" ("session_id", "type")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_work_type"    ON "${CONTEXT_TABLE}" ("work_id", "type")`,
+    { sql: `ALTER TABLE "${CONTEXT_TABLE}" ADD COLUMN "source" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
+    { sql: `ALTER TABLE "${CONTEXT_TABLE}" ADD COLUMN "info_id" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
 
     `
       CREATE TABLE IF NOT EXISTS "${INFO_RAW_TABLE}" (
@@ -210,5 +275,34 @@ export class InfoCoreSchemaInitializer {
         this.relationDb.executeRaw(ddl.sql);
       } catch {  }
     }
+
+    try {
+      this.relationDb.executeRaw(`
+        INSERT OR IGNORE INTO "${DIALOG_TABLE}" ("id", "created", "updated", "session_id", "work_id", "type", "dialog", "dialog_length", "dialog_brief", "trace_id")
+        SELECT "info_id", "created", "updated", "session_id", "work_id", "info_type", "info", "info_length", '', "trace_id"
+        FROM "${INFO_RAW_TABLE}"
+        WHERE "info_type" IN ('REQUEST', 'RESPONSE')
+      `);
+    } catch { }
+
+    try {
+      this.relationDb.executeRaw(`
+        INSERT OR IGNORE INTO "${EXECUTE_TABLE}" ("id", "created", "updated", "session_id", "work_id", "run_id", "trace_id", "agent_id", "exec_no", "component_id", "component_type", "input", "input_length", "output", "output_length", "gap")
+        SELECT "info_id", "created", "updated", "session_id", "work_id", "run_id", "trace_id", "info_creator_id", 0, "info_type", "info_type", '', 0, "info", "info_length", 0
+        FROM "${INFO_RAW_TABLE}"
+        WHERE "info_type" NOT IN ('REQUEST', 'RESPONSE')
+      `);
+    } catch { }
+
+    try {
+      this.relationDb.executeRaw(`
+        INSERT OR IGNORE INTO "${CONTEXT_TABLE}" ("id", "created", "updated", "session_id", "work_id", "dialog_id", "type", "source", "info_id")
+        SELECT s."id", s."created", s."updated", COALESCE(d."session_id", r."session_id", ''), s."work_id", s."info_id", lower(s."source"), s."source", s."info_id"
+        FROM "info_context_source" s
+        LEFT JOIN "${DIALOG_TABLE}" d ON d."work_id" = s."work_id"
+        LEFT JOIN "${INFO_RAW_TABLE}" r ON r."work_id" = s."work_id"
+      `);
+    } catch { }
   }
 }
+

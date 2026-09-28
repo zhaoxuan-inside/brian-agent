@@ -676,7 +676,9 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
   function onPermissionAsked(ctx: StreamEventCtx) {
     const permissionId = String(ctx.payload.permission_id ?? '')
     if (!permissionId) return
-    if (String(ctx.payload.tool_id ?? '') === 'ask_user') {
+    // ask_user 内置技能的 tool_id 为 skill_builtin-ask-user（历史值 ask_user 兼容保留）
+    const askToolId = String(ctx.payload.tool_id ?? '')
+    if (askToolId === 'ask_user' || askToolId === 'skill_builtin-ask-user') {
       const msgId = `ask-${permissionId}`
       if (ctx.chat.messages.some(m => m.id === msgId)) {
         ensureLiveThinkingOpen()
@@ -796,6 +798,9 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
       role: 'assistant',
       type: 'Feedback',
       traceId: String(ctx.payload.trace_id || currentTraceId || ''),
+      runId: String(ctx.payload.run_id || chat.currentRunId || ''),
+      workId: String(ctx.payload.work_id || ''),
+      sessionId: chat.currentSessionId || '',
       meta: { status: 'done', createdAt: ctx.serverTime, updatedAt: ctx.serverTime },
     } as Block
     chat.addBlock(feedbackBlock)
@@ -830,13 +835,15 @@ export function createChatStreamEventHandler(chat: ChatStore, ui: ChatUiStore): 
 
   function onRunAccepted(ctx: StreamEventCtx) {
     ui.setRunActive(true)
+    const runId = String(ctx.payload.run_id ?? '')
+    if (runId) chat.setCurrentRunId(runId)
     ensureLiveThinkingOpen()
     ui.pushLiveTimelineItem({
       seq: 0,
       ts: ctx.serverTime,
       event: 'run.accepted',
       title: '开始受理请求',
-      detail: ctx.payload.run_id ? `run ${String(ctx.payload.run_id).slice(0, 8)}` : '',
+      detail: runId ? `run ${runId.slice(0, 8)}` : '',
       kind: 'lifecycle',
     })
   }

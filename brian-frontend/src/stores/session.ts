@@ -16,11 +16,14 @@ export const useSessionStore = defineStore('session', () => {
   const splitRatio = ref(parseFloat(localStorage.getItem('chat-split-ratio') || '0.65'))
   const isStreaming = ref(false)
   const cancelToken = ref<AbortController | null>(null)
+  const currentRunId = ref('')
   const selectedMsgIds = ref<Set<string>>(new Set())
+  const pinnedMsgIds = ref<Set<string>>(new Set())
   const citingMode = ref(false)
 
   const focusInfoId = ref<string | null>(null)
   const centerInfoId = ref<string | null>(null)
+  const followInfoId = ref<string | null>(null)
   let pendingRaf: number | null = null
 
   function setSplitRatio(ratio: number) {
@@ -49,10 +52,10 @@ export const useSessionStore = defineStore('session', () => {
     return created.session_id
   }
 
-  async function loadChatHistory(sessionId: string, userId: string) {
+  async function loadChatHistory(sessionId: string, userId: string, lastN?: number) {
     currentSessionId.value = sessionId
     localStorage.setItem('chat-current-session-id', sessionId)
-    const historyMsgs = await chatApi.history(sessionId, userId)
+    const historyMsgs = await chatApi.history(sessionId, userId, lastN)
     messages.value = historyMsgs
 
     const loadedBlocks: Block[] = []
@@ -88,12 +91,32 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function togglePin(infoId: string) {
+    const nextSet = new Set(pinnedMsgIds.value)
+    let isPinned = false
+    if (nextSet.has(infoId)) {
+      nextSet.delete(infoId)
+      isPinned = false
+    } else {
+      nextSet.add(infoId)
+      isPinned = true
+    }
+    pinnedMsgIds.value = nextSet
+
+    const node = chatMapNodes.value.find(n => n.infoId === infoId)
+    if (node) node.pin = isPinned
+
+    const msgIdx = messages.value.findIndex(m => m.id === infoId || (m as any).infoId === infoId)
+    if (msgIdx >= 0) {
+      const updated = [...messages.value]
+      updated[msgIdx] = { ...updated[msgIdx], pin: isPinned }
+      messages.value = updated
+    }
+
     try {
-      const res = await chatApi.pinMessage(infoId)
-      const node = chatMapNodes.value.find(n => n.infoId === infoId)
-      if (node) node.pin = res.pin
-      return res.pin
-    } catch { return false }
+      chatApi.pinMessage(infoId).catch(() => {})
+    } catch { }
+
+    return isPinned
   }
 
   async function deleteSession(sessionId: string) {
@@ -123,23 +146,17 @@ export const useSessionStore = defineStore('session', () => {
     chatMapEdges.value = []
     currentSessionId.value = ''
     selectedMsgIds.value = new Set()
+    pinnedMsgIds.value = new Set()
     citingMode.value = false
+    focusInfoId.value = null
+    centerInfoId.value = null
+    followInfoId.value = null
     useChatUiStore().resetWorkflowState()
     localStorage.removeItem('chat-current-session-id')
   }
 
   function addMessage(msg: ChatMessage) {
     messages.value = [...messages.value, msg]
-  }
-
-  function removeUserMessageByContent(originalContent: string) {
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      const m = messages.value[i]
-      if (m.role === 'user' && m.content === originalContent) {
-        messages.value = [...messages.value.slice(0, i), ...messages.value.slice(i + 1)]
-        return
-      }
-    }
   }
 
   function updateMessage(msgId: string, updates: Partial<ChatMessage>) {
@@ -241,6 +258,10 @@ export const useSessionStore = defineStore('session', () => {
     centerInfoId.value = infoId
   }
 
+  function setFollowInfoId(infoId: string) {
+    followInfoId.value = infoId
+  }
+
   function setStreaming(streaming: boolean) {
     isStreaming.value = streaming
   }
@@ -249,7 +270,16 @@ export const useSessionStore = defineStore('session', () => {
     cancelToken.value = ctrl
   }
 
+  function setCurrentRunId(runId: string) {
+    currentRunId.value = runId
+  }
+
   function cancelCurrentTask() {
+    // 先通知后端中止 run（真正的取消），再断开本地 SSE 连接
+    if (currentRunId.value) {
+      chatApi.cancelTask(currentRunId.value).catch(() => { /* 后端中止失败不阻塞本地断开 */ })
+    }
+    currentRunId.value = ''
     cancelToken.value?.abort()
     cancelToken.value = null
     isStreaming.value = false
@@ -257,12 +287,13 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     currentSessionId, messages, blocks, chatList, chatMapNodes, chatMapEdges,
-    splitRatio, isStreaming, selectedMsgIds, citingMode,
-    focusInfoId, centerInfoId,
+    splitRatio, isStreaming, selectedMsgIds, pinnedMsgIds, citingMode,
+    focusInfoId, centerInfoId, followInfoId,
     setSplitRatio, loadChatList, ensureSession, loadChatHistory, loadDag,
-    deleteSession, deleteSessions, clearMessages, addMessage, updateMessage, removeUserMessageByContent, addBlock,
+    deleteSession, deleteSessions, clearMessages, addMessage, updateMessage, addBlock,
     updateBlock, appendBlockContent, finalizeBlocks, finalizeThinkingBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
-    toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter,
-    setStreaming, setCancelController, cancelCurrentTask,
+    toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter, setFollowInfoId,
+    setStreaming, setCancelController, setCurrentRunId, cancelCurrentTask,
+    currentRunId,
   }
 })

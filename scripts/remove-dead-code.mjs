@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-/**
- * 注释保留的死代码清理（精确边界版）。
- * 模式：`// ===== 原始... =====` 标记行之后，删除紧随其后的一个完整 `/* ... *​/` 块注释，
- * 或连续的 `//` 注释行；随后跳过一个空行。其余内容一律不动。
- * 用法：node scripts/remove-dead-code.mjs <file-or-dir>...
- */
+
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -23,16 +18,16 @@ function processFile(file) {
   const lines = fs.readFileSync(file, 'utf8').split('\n');
   const out = [];
   let removed = 0;
-  // 「===== 修改后」是设计决策记录（why 注释），即使紧跟在原始代码块内也必须保留
+  
   const isModifiedBoundary = (l) => l.includes('===== 修改后');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!MARKER.test(line)) { out.push(line); continue; }
-    removed++; // 标记行
+    removed++;
     let j = i + 1;
-    while (j < lines.length && lines[j].trim() === '') { removed++; j++; } // 空行
+    while (j < lines.length && lines[j].trim() === '') { removed++; j++; }
     if (j < lines.length && lines[j].trim().startsWith('/*')) {
-      // 块注释：若内含「修改后」说明则整体保留，仅标记行删除
+      
       let k = j; let hasModified = false;
       while (k < lines.length && !lines[k].trim().endsWith('*/')) {
         if (isModifiedBoundary(lines[k])) { hasModified = true; break; }
@@ -42,14 +37,14 @@ function processFile(file) {
       if (hasModified) { i = j - 1; continue; }
       removed++; j++;
       while (j < lines.length && !lines[j].trim().endsWith('*/')) { removed++; j++; }
-      if (j < lines.length) { removed++; j++; } // */ 行
+      if (j < lines.length) { removed++; j++; }
     } else if (j < lines.length && lines[j].trim().startsWith('//')) {
       while (j < lines.length && lines[j].trim().startsWith('//')) {
-        if (isModifiedBoundary(lines[j])) break; // 保留「修改后」及之后内容
+        if (isModifiedBoundary(lines[j])) break;
         removed++; j++;
       }
     }
-    if (j < lines.length && lines[j].trim() === '') { removed++; j++; } // 尾部空行
+    if (j < lines.length && lines[j].trim() === '') { removed++; j++; }
     i = j - 1;
   }
   if (removed > 0) {

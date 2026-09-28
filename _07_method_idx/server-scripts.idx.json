@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-28T11:44:42.432Z",
+  "shard": "server-scripts",
+  "layer": "Server",
+  "module": "scripts",
+  "methods": [
+    {
+      "id": "m-scripts-0001",
+      "signature": "boolean log(msg: unknown)",
+      "name": "log",
+      "category": "orchestration",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/build-isolated-vm.js",
+      "description": "写入/新增相关数据",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0002",
+      "signature": "boolean fail(msg: unknown)",
+      "name": "fail",
+      "category": "data",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/build-isolated-vm.js",
+      "description": "处理 失败",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0003",
+      "signature": "boolean resolveNodeGyp()",
+      "name": "resolveNodeGyp",
+      "category": "data",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/build-isolated-vm.js",
+      "description": "获取：节点 / gyp（文件系统）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0004",
+      "signature": "boolean copyIfNeeded(src: unknown, dest: unknown, label: unknown)",
+      "name": "copyIfNeeded",
+      "category": "data",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/copy-prebuilt.js",
+      "description": "处理 复制 / needed（文件系统）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0005",
+      "signature": "boolean resolvePrebuilt(moduleName: unknown, fileName: unknown)",
+      "name": "resolvePrebuilt",
+      "category": "algorithm",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/copy-prebuilt.js",
+      "description": "获取：prebuilt（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0006",
+      "signature": "boolean assert(cond: unknown, msg: unknown)",
+      "name": "assert",
+      "category": "data",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/e2e-cdt-profile-snapshot.mjs",
+      "description": "处理 assert",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-scripts-0007",
+      "signature": "boolean apply(templateId: unknown, brief: unknown, content: unknown, marker: unknown)",
+      "name": "apply",
+      "category": "data",
+      "layer": "Server",
+      "module": "scripts",
+      "location": "brian-backend/scripts/fix-matching-prompts.mjs",
+      "description": "更新相关数据",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    }
+  ],
+  "stats": {
+    "total": 7,
+    "by_category": {
+      "algorithm": 1,
+      "orchestration": 1,
+      "data": 5
+    }
+  }
+}

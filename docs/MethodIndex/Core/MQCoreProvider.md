@@ -8,6 +8,6 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `startWorker` | `input: StartWorkerInput, output: StartWorkerOutput, context: MQCoreContext, metrics?: M...` | `Promise<boolean>` | 启动一个轮询消费工作器 |
-| `stopWorker` | `input: StopWorkerInput, output: StopWorkerOutput, context: MQCoreContext, metrics?: Met...` | `Promise<boolean>` | 停止工作器（按 ID 或队列名称） |
-| `soWorker` | `input: SoWorkerInput, output: SoWorkerOutput, context: MQCoreContext, metrics?: Metrics...` | `Promise<boolean>` | 查询运行中的工作器 |
+| `startWorker` | `input: StartWorkerInput, output: StartWorkerOutput, context: MQCoreContext, metrics?: M...` | `Promise<boolean>` | — |
+| `stopWorker` | `input: StopWorkerInput, output: StopWorkerOutput, context: MQCoreContext, metrics?: Met...` | `Promise<boolean>` | — |
+| `soWorker` | `input: SoWorkerInput, output: SoWorkerOutput, context: MQCoreContext, metrics?: Metrics...` | `Promise<boolean>` | — |

@@ -20,8 +20,6 @@ import {
   newRecord,
   newPatch,
   ConfigService,
-  ValidationError,
-  NotFoundError,
   renderTemplate,
   LLMContext,
   ExecLLMInput,
@@ -43,6 +41,7 @@ import {
   DelAgentOutput,
   parseJsonObject,
 } from '@brian-agent/agent';
+import { rankCandidatesByBM25 } from './bm25';
 import { DEFAULT_BUDGET_TOTAL } from '../../shared/types';
 import {
   SoulCoreContext,
@@ -247,10 +246,28 @@ export class AgentDefService {
   async matchAgentDef(input: MatchAgentDefInput, output: MatchAgentDefOutput, _context: AgentDefContext, _metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     if (!input.task_content) {
-      throw new ValidationError('task_content 不能为空');
+      output.error = 'task_content 不能为空';
+      output.error_code = 'VALIDATION_ERROR';
+      return false;
     }
     const defs = await this.soActiveDefs();
+    if (this.tryMatchDirect(input, defs, output, report)) {
+      return true;
+    }
 
+    if (input.force_new !== true && defs.length > 0) {
+      const matchRes = await this.matchCascaded(input, defs, _metrics, report);
+      if (matchRes) {
+        output.def_id = matchRes.def.id;
+        output.matched_by = matchRes.layer;
+        output.def = matchRes.def;
+        return true;
+      }
+    }
+    return this.buildAndAssignNewDef(input, output, _metrics, report);
+  }
+
+  private tryMatchDirect(input: MatchAgentDefInput, defs: AgentDefRecord[], output: MatchAgentDefOutput, report?: Report): boolean {
     const referred = input.agent_ref ? this.soDefByAgentRef(defs, input.agent_ref) : null;
     if (referred) {
       output.def_id = referred.id;
@@ -270,27 +287,89 @@ export class AgentDefService {
       output.def = exact;
       return true;
     }
-    if (input.force_new !== true && defs.length > 0) {
-      const vectorHit = await this.soVectorRankedDef(input, defs, _metrics, report);
-      if (vectorHit) {
-        output.def_id = vectorHit.def.id;
-        output.matched_by = AgentMatchLayer.Vector;
-        output.def = vectorHit.def;
-        return true;
-      }
-      const llmHit = await this.soLLMRankedDef(input, defs, _metrics, report);
-      if (llmHit) {
-        output.def_id = llmHit.id;
-        output.matched_by = AgentMatchLayer.LLM;
-        output.def = llmHit;
-        return true;
+    return false;
+  }
+
+  private async matchCascaded(
+    input: MatchAgentDefInput, defs: AgentDefRecord[], metrics?: Metrics, report?: Report,
+  ): Promise<{ def: AgentDefRecord; layer: AgentMatchLayer } | null> {
+    const bm25Candidates = await this.filterByBM25(input.task_content, defs, report);
+    if (bm25Candidates.length === 0) {
+      return null;
+    }
+
+    const vectorRes = await this.filterByVector(input, bm25Candidates, metrics, report);
+    if (vectorRes.directHit) {
+      return { def: vectorRes.directHit, layer: AgentMatchLayer.Vector };
+    }
+    if (vectorRes.candidates.length === 0) {
+      return null;
+    }
+
+    const llmHit = await this.soLLMRankedDef(input, vectorRes.candidates, metrics, report);
+    if (llmHit) {
+      return { def: llmHit, layer: AgentMatchLayer.LLM };
+    }
+    return null;
+  }
+
+  private async filterByBM25(taskContent: string, defs: AgentDefRecord[], report?: Report): Promise<AgentDefRecord[]> {
+    const threshold = await this.soMatchBm25Threshold();
+    const docs = defs.map((d) => ({
+      id: d.id,
+      text: `${d.name} ${d.agent_purpose || ''} ${d.task_signature || ''}`.trim(),
+    }));
+    const ranked = rankCandidatesByBM25(taskContent, docs, threshold);
+    if (ranked.length === 0) {
+      report?.pushBusinessEvent(BusinessEvent.IntentAnalyzed, {
+        score: 0,
+        reason: `BM25 粗筛无候选得分达到阈值（${threshold}），直接走新建 Agent 流程`,
+        candidates_count: 0,
+        adopted: false,
+        matched_via: 'bm25',
+      });
+      return [];
+    }
+    const hitIds = new Set(ranked.map((r) => r.id));
+    return defs.filter((d) => hitIds.has(d.id));
+  }
+
+  private async filterByVector(
+    input: MatchAgentDefInput, defs: AgentDefRecord[], metrics?: Metrics, report?: Report,
+  ): Promise<{ directHit: AgentDefRecord | null; candidates: AgentDefRecord[] }> {
+    const query = await this.soTaskEmbedding(input, metrics);
+    if (query.length === 0) {
+      return { directHit: null, candidates: defs };
+    }
+    const vectorThreshold = (await this.soMatchVectorThreshold()) / 100;
+    const directAdoptThreshold = this.vectorThreshold;
+    let bestHit: AgentDefRecord | null = null;
+    let bestScore = 0;
+    const qualified: AgentDefRecord[] = [];
+
+    for (const def of defs) {
+      const defEmb = await this.soDefEmbedding(def, input, metrics);
+      if (defEmb.length === 0) continue;
+      const sim = AgentDefService.cosineSimilarity(query, defEmb);
+      if (sim >= vectorThreshold) qualified.push(def);
+      if (sim > bestScore && sim >= directAdoptThreshold) {
+        bestScore = sim;
+        bestHit = def;
       }
     }
-    const built = await this.buildNewDef(input, _metrics, report);
-    output.def_id = built.id;
-    output.matched_by = AgentMatchLayer.Built;
-    output.def = built;
-    return true;
+    if (bestHit) {
+      report?.pushBusinessEvent(BusinessEvent.IntentAnalyzed, {
+        score: Math.round(bestScore * 100),
+        reason: `向量余弦相似度（${bestScore.toFixed(2)} ≥ 阈值 ${directAdoptThreshold}）高置信命中，直接采纳`,
+        agent_id: bestHit.agent_ref || bestHit.id,
+        agent_name: bestHit.name,
+        adopted: true,
+        candidates_count: defs.length,
+        matched_via: 'vector',
+      });
+      return { directHit: bestHit, candidates: [] };
+    }
+    return { directHit: null, candidates: qualified };
   }
 
   private async soActiveDefs(): Promise<AgentDefRecord[]> {
@@ -321,29 +400,12 @@ export class AgentDefService {
     return defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
   }
 
-  private async soCandidateProfiles(defs: AgentDefRecord[]): Promise<Array<Record<string, unknown>>> {
-    const profiles: Array<Record<string, unknown>> = [];
-    for (const def of defs) {
-      const binding = def.agent_ref ? await this.soAgentBinding(def.agent_ref) : null;
-      const skillIds = binding ? this.soJsonIdArray(binding.skill_ids_json) : [];
-      const mcpIds = binding ? this.soJsonIdArray(binding.mcp_ids_json) : [];
-      const defTools = this.parseDefTools(def);
-      const mergedSkills = this.uniqueJoin(skillIds, defTools.skills);
-      const mergedMcps = this.uniqueJoin(mcpIds, defTools.mcps);
-      profiles.push({
-        agent_id: def.agent_ref || def.id,
-        agent_name: def.name,
-        purpose: def.agent_purpose || def.task_signature,
-        task_signature: def.task_signature,
-        agent_type: def.mode,
-        capabilities: {
-          skills: this.soNamesByIds(mergedSkills, 'skill', 'name', 'skill_brief'),
-          mcps: this.soNamesByIds(mergedMcps, 'mcp_install', 'mcp_title', 'mcp_brief'),
-          bound_count: this.uniqueJoin(skillIds, defTools.skills).length + this.uniqueJoin(mcpIds, defTools.mcps).length,
-        },
-      });
-    }
-    return profiles;
+  private soCandidateProfiles(defs: AgentDefRecord[]): Array<Record<string, unknown>> {
+    return defs.map((def) => ({
+      agent_id: def.agent_ref || def.id,
+      agent_name: def.name,
+      description: def.agent_purpose || def.task_signature || '',
+    }));
   }
 
   private parseDefTools(def: AgentDefRecord): { skills: string[]; mcps: string[] } {
@@ -509,15 +571,17 @@ export class AgentDefService {
 
   private async soLLMRankedDef(input: MatchAgentDefInput, defs: AgentDefRecord[], metrics?: Metrics, report?: Report): Promise<AgentDefRecord | null> {
     const adoptThreshold = await this.soMatchScoreThreshold();
-    const taskContent = input.task_content;
-    const candidates = JSON.stringify(await this.soCandidateProfiles(defs));
+    const candidates = JSON.stringify(this.soCandidateProfiles(defs));
     const matchPromptId = await this.soMatchPromptTemplateId();
-    const prompt = await this.renderMatchPrompt(matchPromptId, { task_content: taskContent, candidates });
+    const prompt = await this.renderMatchPrompt(matchPromptId, { task_content: input.task_content, candidates });
 
     report?.pushBusinessEvent(BusinessEvent.IntentStarted, { candidates_count: defs.length });
     const execInput = new ExecLLMInput();
     execInput.prompt = prompt;
-    execInput.max_tokens = 300;
+    execInput.max_tokens = await this.soMatchMaxTokens();
+    if (!(await this.soMatchEnableThinking())) {
+      execInput.extra = { thinking: { type: 'disabled' }, enable_thinking: false };
+    }
     execInput.session_id = input.session_id ?? '';
     execInput.run_id = input.run_id ?? '';
     execInput.work_id = input.work_id ?? '';
@@ -528,31 +592,24 @@ export class AgentDefService {
     if (!ok || !execOutput.result) {
       return null;
     }
-    const parsed = parseJsonObject(execOutput.result);
-    if (!parsed) {
-      return null;
-    }
-    const parsedScore = Number(parsed.score ?? 0);
+    return this.parseAndEvaluateLLMResult(execOutput.result, defs, adoptThreshold, report);
+  }
 
+  private parseAndEvaluateLLMResult(
+    result: string, defs: AgentDefRecord[], adoptThreshold: number, report?: Report,
+  ): AgentDefRecord | null {
+    const parsed = parseJsonObject(result);
+    if (!parsed) return null;
+    const parsedScore = Number(parsed.score ?? 0);
     const score = parsedScore > 0 && parsedScore <= 1 ? Math.round(parsedScore * 100) : Math.round(parsedScore);
     const reason = String(parsed.reason ?? '');
     const agentRef = String(parsed.agent_id ?? '');
-
     const matchedDef = defs.find((def) => def.agent_ref === agentRef || def.id === agentRef) ?? null;
     report?.pushBusinessEvent(BusinessEvent.IntentAnalyzed, {
-      score,
-      reason: reason.slice(0, 1000),
-      agent_id: agentRef,
-      agent_name: matchedDef?.name ?? '',
-      adopted: score >= adoptThreshold,
-      candidates_count: defs.length,
-
-      matched_via: 'llm',
+      score, reason: reason.slice(0, 1000), agent_id: agentRef, agent_name: matchedDef?.name ?? '',
+      adopted: score >= adoptThreshold, candidates_count: defs.length, matched_via: 'llm',
     });
-    if (!(score >= adoptThreshold)) {
-      return null;
-    }
-    return matchedDef;
+    return score >= adoptThreshold ? matchedDef : null;
   }
 
   private async soMatchPromptTemplateId(): Promise<string> {
@@ -568,30 +625,53 @@ export class AgentDefService {
       { field: 'prompt_template_title', operator: Operator.EQ, value: 'Agent 匹配评估' },
     ]);
     if (row && row.id) return String(row.id);
-    throw new ValidationError('未找到 Agent 匹配提示词模板');
+    return '';
   }
 
-  private async buildNewDef(input: MatchAgentDefInput, metrics?: Metrics, report?: Report): Promise<AgentDefRecord> {
-    const buildInput = new BuildAgentInput();
-    buildInput.run_id = input.run_id ?? '';
-    buildInput.task_content = input.task_content;
-    buildInput.task_domain = input.task_domain;
-    buildInput.force_new = true;
-    const buildOutput = new BuildAgentOutput();
-    const ctx = this.prepareBuilderContext(input);
-    const ok = await this.components.agentBuilder.buildAgent(buildInput, buildOutput, ctx, metrics, report);
-    if (!ok || !buildOutput.agent_id) {
-      throw new ValidationError('Agent 构建失败（AgentBuilder 无返回）');
+  private async buildAndAssignNewDef(
+    input: MatchAgentDefInput, output: MatchAgentDefOutput, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    const built = await this.buildNewDef(input, metrics, report);
+    if (!built) {
+      output.error = 'Agent 构建失败';
+      output.error_code = 'BUILD_ERROR';
+      return false;
     }
-    const def = await this.insertDefFromAgent(buildOutput.agent_id, input);
-    report?.pushBusinessEvent(BusinessEvent.AgentBuilt, {
-      agent_id: buildOutput.agent_id,
-      def_id: def.id,
-      name: def.name,
-      purpose: String(def.agent_purpose ?? '').slice(0, 500),
-      task_signature: def.task_signature,
-    });
-    return def;
+    output.def_id = built.id;
+    output.matched_by = AgentMatchLayer.Built;
+    output.def = built;
+    return true;
+  }
+
+  private async buildNewDef(input: MatchAgentDefInput, metrics?: Metrics, report?: Report): Promise<AgentDefRecord | null> {
+    try {
+      const buildInput = new BuildAgentInput();
+      buildInput.run_id = input.run_id ?? '';
+      buildInput.task_content = input.task_content;
+      buildInput.task_domain = input.task_domain;
+      buildInput.force_new = true;
+      const buildOutput = new BuildAgentOutput();
+      const ctx = this.prepareBuilderContext(input);
+      const ok = await this.components.agentBuilder.buildAgent(buildInput, buildOutput, ctx, metrics, report);
+      if (!ok || !buildOutput.agent_id) {
+        return null;
+      }
+      const def = await this.insertDefFromAgent(buildOutput.agent_id, input);
+      if (!def) {
+        return null;
+      }
+      report?.pushBusinessEvent(BusinessEvent.AgentBuilt, {
+        agent_id: buildOutput.agent_id,
+        def_id: def.id,
+        name: def.name,
+        purpose: String(def.agent_purpose ?? '').slice(0, 500),
+        task_signature: def.task_signature,
+      });
+      return def;
+    } catch (err) {
+      this.logger?.warn?.('buildNewDef 发生异常，已拦截', { error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
   }
 
   private prepareBuilderContext(input: MatchAgentDefInput): AgentBuilderContext {
@@ -602,7 +682,7 @@ export class AgentDefService {
     return ctx;
   }
 
-  private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord> {
+  private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord | null> {
     const asset = await this.soAgentAsset(agentId);
     const binding = await this.soAgentBinding(agentId);
     const name = asset?.agent_name || '通用问答';
@@ -631,7 +711,7 @@ export class AgentDefService {
       ]);
       this.activeDefsCacheUpdatedAt = 0;
       const row = await this.soDefRowById(String(existing.id));
-      return this.toDefRecord(row!);
+      return row ? this.toDefRecord(row) : null;
     }
 
     const record = newRecord({
@@ -652,11 +732,7 @@ export class AgentDefService {
     this.activeDefsCacheUpdatedAt = 0;
     const defId = String(record[0].value);
     const row = await this.soDefRowById(defId);
-
-    if (!row) {
-      throw new NotFoundError(RUNTIME_AGENT_DEF_TABLE, defId);
-    }
-    return this.toDefRecord(row);
+    return row ? this.toDefRecord(row) : null;
   }
 
   private async soAgentAsset(agentId: string): Promise<AgentRecordLike | null> {
@@ -680,19 +756,43 @@ export class AgentDefService {
     ]);
   }
 
-  async soAgentSnapshot(input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, metrics?: Metrics, report?: Report,
+  async soAgentSnapshot(
+    input: SoAgentSnapshotInput, output: SoAgentSnapshotOutput, _context: AgentDefContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
+    if (!input.def_id) {
+      output.error = 'def_id 不能为空';
+      output.error_code = 'VALIDATION_ERROR';
+      return false;
+    }
     const def = await this.soDefRow(input.def_id);
+    if (!def) {
+      output.error = `Agent 定义不存在: ${input.def_id}`;
+      output.error_code = 'NOT_FOUND';
+      return false;
+    }
 
     report?.pushBusinessEvent(BusinessEvent.LlmSelected, { llm_id: def.model_id, llm_name: this.soComponentName(def.model_id, 'llm_available', 'llm_title') });
     const soulId = def.soul_id || (def.agent_ref ? (await this.soAgentBinding(def.agent_ref))?.soul_id : '') || '';
     const soulContent = soulId ? await this.soSoulContentById(soulId) : '';
     const tools = await this.soSnapshotTools(def, report);
 
-    const systemSpan = metrics ? metrics.beginSpan('Runtime.Agents.AgentDefService.soAgentSnapshot.system') : undefined;
-    const system = await this.prepareSystemPrompt(def, soulContent, tools, input.user_message ?? input.task_content);
-    if (metrics && systemSpan) metrics.endSpan(systemSpan);
+    const system = await this.resolveSnapshotSystem(def, soulContent, tools, input.user_message ?? input.task_content, metrics);
     const templateId = def.prompt_template_id || await this.soDefaultIdentityTemplateId();
+    this.fillSnapshotOutput(def, soulId, soulContent, tools, system, templateId, output, report);
+    return true;
+  }
+
+  private async resolveSnapshotSystem(def: AgentDefRecord, soulContent: string, tools: SnapshotToolEntry[], userMsg?: string, metrics?: Metrics): Promise<string> {
+    const systemSpan = metrics ? metrics.beginSpan('Runtime.Agents.AgentDefService.soAgentSnapshot.system') : undefined;
+    const system = await this.prepareSystemPrompt(def, soulContent, tools, userMsg ?? '');
+    if (metrics && systemSpan) metrics.endSpan(systemSpan);
+    return system;
+  }
+
+  private fillSnapshotOutput(
+    def: AgentDefRecord, soulId: string, soulContent: string, tools: SnapshotToolEntry[],
+    system: string, templateId: string, output: SoAgentSnapshotOutput, report?: Report,
+  ): void {
     output.snapshot = {
       def_id: def.id,
       name: def.name,
@@ -703,7 +803,6 @@ export class AgentDefService {
       tools,
       meta: { soul_id: soulId || undefined, llm_id: def.model_id || undefined, matched_by: 'snapshot' },
     };
-
     report?.pushBusinessEvent(BusinessEvent.PromptSelected, {
       template_id: templateId,
       prompt_name: this.soComponentName(templateId, 'prompt_template', 'prompt_template_title'),
@@ -711,15 +810,14 @@ export class AgentDefService {
       soul_selected: Boolean(soulId && soulContent),
       tools_count: tools.length,
     });
-    return true;
   }
 
-  private async soDefRow(defId: string): Promise<AgentDefRecord> {
+  private async soDefRow(defId: string): Promise<AgentDefRecord | null> {
     const row = await this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
       { field: 'id', operator: Operator.EQ, value: defId },
     ]);
     if (!row) {
-      throw new NotFoundError('runtime_agent_def', defId);
+      return null;
     }
     return this.toDefRecord(row);
   }
@@ -843,7 +941,7 @@ export class AgentDefService {
       { field: 'is_system', operator: Operator.EQ, value: 1 },
     ]);
     if (systemRow && systemRow.id) return String(systemRow.id);
-    throw new ValidationError('未找到可用的身份提示词模板');
+    return '';
   }
 
   private async soMatchScoreThreshold(): Promise<number> {
@@ -853,27 +951,57 @@ export class AgentDefService {
         [],
       );
       const value = Number(rows?.[0]?.match_score_threshold);
-      return Number.isFinite(value) && value > 0 ? value : LLM_SCORE_DEFAULT;
-    } catch {
-      return LLM_SCORE_DEFAULT;
-    }
+      if (Number.isFinite(value) && value > 0) return value;
+    } catch {  }
+    return this.config.getInt('match_score_threshold', LLM_SCORE_DEFAULT);
+  }
+
+  private async soMatchBm25Threshold(): Promise<number> {
+    const val = await this.config.getInt('match_bm25_threshold', -1);
+    if (val >= 0) return val;
+    return this.config.getInt('agent_library.match_bm25_threshold', 50);
+  }
+
+  private async soMatchVectorThreshold(): Promise<number> {
+    const val = await this.config.getInt('match_vector_threshold', -1);
+    if (val >= 0) return val;
+    return this.config.getInt('agent_library.match_vector_threshold', 50);
+  }
+
+  private async soMatchMaxTokens(): Promise<number> {
+    const val = await this.config.getInt('match_max_tokens', -1);
+    if (val > 0) return val;
+    return this.config.getInt('agent_library.match_max_tokens', 512);
+  }
+
+  private async soMatchEnableThinking(): Promise<boolean> {
+    const val = await this.config.getString('match_enable_thinking');
+    if (val !== undefined) return val === 'true' || val === '1';
+    return this.config.getBoolean('agent_library.match_enable_thinking', false);
   }
 
   private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
-    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: templateId },
-    ]);
-    const template = row ? String(row['prompt_template'] ?? '') : '';
-    if (!template) {
-      throw new ValidationError(`Prompt 模板不可用: ${templateId}`);
+    if (!templateId) return '';
+    try {
+      const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: templateId },
+      ]);
+      const template = row ? String(row['prompt_template'] ?? '') : '';
+      if (!template) {
+        return '';
+      }
+      return renderTemplate(template, variables);
+    } catch {
+      return '';
     }
-    return renderTemplate(template, variables);
   }
 
   async declareAgent(input: DeclareAgentInput, output: DeclareAgentOutput, _context: AgentDefContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.name) {
-      throw new ValidationError('name 不能为空');
+      output.error = 'name 不能为空';
+      output.error_code = 'VALIDATION_ERROR';
+      return false;
     }
     const existing = await this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
       { field: 'name', operator: Operator.EQ, value: input.name },

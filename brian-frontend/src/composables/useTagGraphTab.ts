@@ -55,7 +55,9 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       repulsion.value = cfg.graph_repulsion ?? 2000
       springStrength.value = cfg.graph_spring_strength ?? 0.2
       showLabels.value = cfg.graph_show_labels ?? true
-    } catch {  }
+    } catch (err) {
+      console.error('[GraphPane] 加载图可视化配置失败', err)
+    }
   }
 
   function saveConfig() {
@@ -119,7 +121,8 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       nodes.value = data.nodes || []
       edges.value = data.edges || []
       layoutNodes.value = forceDirectedLayout(nodes.value, edges.value, GRAPH_SIZE, GRAPH_SIZE, repulsion.value, springStrength.value)
-    } catch {
+    } catch (err) {
+      console.error(`[GraphPane:${kind}] 加载图数据失败`, err)
       nodes.value = []; edges.value = []; layoutNodes.value = []
     } finally { loading.value = false }
   }
@@ -175,7 +178,10 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       try {
         const name = nodes.value.find(n => n.id === nodeId)?.name || nodeId
         selectedMemories.value = await io.fetchMemories(name)
-      } catch { selectedMemories.value = [] }
+      } catch (err) {
+        console.error('[GraphPane] 加载节点关联记忆失败', err)
+        selectedMemories.value = []
+      }
     } else {
       selectedMemories.value = []
     }
@@ -195,7 +201,9 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
       scale.value = 1
       tx.value = 0
       ty.value = 0
-    } catch {  }
+    } catch (err) {
+      console.error(`[GraphPane:${kind}] 清理图失败`, err)
+    }
     finally { clearing.value = false }
   }
 
@@ -213,7 +221,10 @@ function createGraphState(kind: 'tag' | 'keyword', io: GraphStateIO) {
     try {
       const name = nodes.value.find((n) => n.id === target!.id)?.name || target!.id
       selectedMemories.value = await io.fetchMemories(name)
-    } catch { selectedMemories.value = [] }
+    } catch (err) {
+      console.error('[GraphPane] 加载节点关联记忆失败', err)
+      selectedMemories.value = []
+    }
   }
 
   function resetView() {

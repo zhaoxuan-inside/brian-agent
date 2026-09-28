@@ -138,11 +138,18 @@ function mapInfoToMemory(row: any, tags: string[] = []): any {
   };
   const type = typeMap[row.info_type] || (row.info_creator_role === 'USER' ? 'episodic' : 'semantic');
   const info = row.info || '';
+  const rawRole = (row.info_creator_role || '').toLowerCase();
+  const isUser = row.info_type === InfoType.REQUEST || rawRole === 'user';
+  const role: 'user' | 'assistant' | 'system' = isUser ? 'user' : (rawRole === 'system' ? 'system' : 'assistant');
   return {
     id: row.info_id || row.id,
     type,
+    role,
+    infoType: row.info_type,
+    creatorRole: row.info_creator_role,
     content: info,
     tags,
+    sessionId: String(row.session_id || ''),
     confidence: computeMemoryConfidence(row.info_type, tags, info.length, Number(row.pin) || 0),
     createdAt: Number(row.created) || 0,
     updatedAt: Number(row.updated) || 0,
@@ -1597,7 +1604,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             created: s.created ?? 0,
             createdTime: s.created ?? 0,
             lastMessage: s.last_message || s.session_title || '',
-            lastTime: s.last_message_time,
+            lastTime: s.last_message_time || s.updated || s.created || 0,
             messageCount: s.message_count,
             qaCount: s.qa_count ?? 0,
             questionChars: s.question_chars ?? 0,
@@ -1611,7 +1618,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'GET' && pathname.startsWith('/api/chat/history/')) {
         const sid = pathname.split('/api/chat/history/')[1];
-        const input = Object.assign(new GetChatHistoryInput(), { session_id: sid });
+        const lastNParam = parseInt(params.get('lastN') || '', 10);
+        const input = Object.assign(new GetChatHistoryInput(), {
+          session_id: sid,
+          ...(Number.isFinite(lastNParam) && lastNParam > 0 ? { lastN: lastNParam } : {}),
+        });
         const output = new GetChatHistoryOutput();
         const context = new ChatContext();
         await ctx.chatAccess.soChatHistory(input, output, context);
@@ -1875,6 +1886,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const msgContent = typeof body.msg_content === 'string' ? body.msg_content : '';
         const citingMsgIds = Array.isArray(body.citing_msg_ids) ? body.citing_msg_ids : (Array.isArray(body.citingIds) ? body.citingIds : []);
         const selectedMsgIds = Array.isArray(body.selected_msg_ids) ? body.selected_msg_ids : (Array.isArray(body.selectedMsgIds) ? body.selectedMsgIds : []);
+        const pinnedMsgIds = Array.isArray(body.pinned_msg_ids) ? body.pinned_msg_ids : (Array.isArray(body.pinnedMsgIds) ? body.pinnedMsgIds : []);
         const allCitingIds = Array.from(new Set([...citingMsgIds, ...selectedMsgIds]));
 
         if (!sessionId) { sendJson(res, 400, { error: 'session_id is required' }); return; }
@@ -1928,6 +1940,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           msg_content: msgContent,
           citing_msg_ids: allCitingIds,
           selected_msg_ids: selectedMsgIds,
+          pinned_msg_ids: pinnedMsgIds,
           force_orchestration_strategy: typeof body.force_orchestration_strategy === 'string' ? body.force_orchestration_strategy : undefined,
 
           stream_endpoint_id: registerOutput.endpoint_id,
@@ -1935,7 +1948,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const streamOutput = new OpenChatStreamOutput();
 
         const traceId = soReqTraceId(req);
-        const chatMetrics = new Metrics(ctx.logAccess as unknown as MetricsLogger, 'ChatService.openChatStream', traceId);
+        const chatMetrics = new Metrics(fileLogger as unknown as MetricsLogger, 'ChatService.openChatStream', traceId);
 
         try {
           await ctx.chatAccess.openChatStream(streamInput, streamOutput, new ChatContext(), chatMetrics, undefined, onEvent);
@@ -2070,7 +2083,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
+          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "session_id", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;
@@ -2087,7 +2100,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const parts = pathname.split('/');
         const tag = decodeURIComponent(parts[parts.length - 1] || '');
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond()} ORDER BY r."created" DESC LIMIT 200`,
+          `SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."session_id", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond()} ORDER BY r."created" DESC LIMIT 200`,
           [tag, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, rows.map((r: any) => r.info_id));
@@ -2149,7 +2162,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
+          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "session_id", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;

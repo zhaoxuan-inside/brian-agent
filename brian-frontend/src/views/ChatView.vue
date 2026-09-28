@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, History, Search, Trash2, X, PanelRight, Square, CheckSquare, Edit3, Check } from '@lucide/vue'
 import NeuralBackground from '@/components/layout/NeuralBackground.vue'
@@ -45,14 +45,56 @@ async function saveSessionTitle(sessionId: string) {
   }
 }
 
+// 记忆页跳转携带 focus=<infoId>：加载会话后定位到对应消息，随后清除 focus 参数避免重复触发
+function queryFocusId(): string {
+  return typeof route.query.focus === 'string' ? route.query.focus : ''
+}
+
+async function focusFromQuery() {
+  const focusId = queryFocusId()
+  if (!focusId) return
+  await nextTick()
+  sessionStore.triggerFocus(focusId)
+  router.replace({ query: { ...route.query, focus: undefined } })
+}
+
 onMounted(async () => {
-  const querySid = route.query.session
-  const sid = (typeof querySid === 'string' && querySid) ? querySid : sessionStore.currentSessionId
-  if (!sid) return
   try {
-    await sessionStore.loadChatHistory(sid, 'default-user')
+    await sessionStore.loadChatList('default-user')
   } catch { /* ignore */ }
-  await sessionStore.loadDag(sid, 'default-user')
+
+  const querySid = typeof route.query.session === 'string' ? route.query.session : ''
+  if (!querySid) {
+    sessionStore.clearMessages()
+    return
+  }
+  if (querySid === sessionStore.currentSessionId && sessionStore.messages.length > 0) {
+    await focusFromQuery()
+    return
+  }
+  // 带 focus 跳转时扩大历史加载范围，避免目标消息超出默认 lastN 窗口而无法定位
+  const focusId = queryFocusId()
+  try {
+    await sessionStore.loadChatHistory(querySid, 'default-user', focusId ? 200 : undefined)
+  } catch { /* ignore */ }
+  await sessionStore.loadDag(querySid, 'default-user')
+  await focusFromQuery()
+})
+
+watch(() => route.query.session, async (newSid) => {
+  const sid = typeof newSid === 'string' ? newSid : ''
+  if (sid && sid !== sessionStore.currentSessionId) {
+    const focusId = queryFocusId()
+    try {
+      await sessionStore.loadChatHistory(sid, 'default-user', focusId ? 200 : undefined)
+      if (sessionStore.messages.length >= 100) {
+        overflowWarning.value = true
+        setTimeout(() => { overflowWarning.value = false }, 5000)
+      }
+    } catch { /* ignore */ }
+    await sessionStore.loadDag(sid, 'default-user')
+    await focusFromQuery()
+  }
 })
 
 watch(() => sessionStore.currentSessionId, (sid) => {

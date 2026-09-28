@@ -107,7 +107,17 @@ WHEN 会话标题生成或更新时 THE SYSTEM SHALL 从源头控制标题长度
 WHEN 用户点击标签更多按钮 THE SYSTEM SHALL 弹出模态框展示该会话全部关联标签。
 WHEN 用户删除会话 THE SYSTEM SHALL 级联删除会话表、消息、运行时表、llm_call_log全量Token记录及编排轨迹，同时仅解除图谱消息关联，保留共享Tag/keyword图节点。
 WHEN 执行图节点修复学习 THE SYSTEM SHALL 检测并物理删除完全无消息关联的孤立图节点与游离边。
-WHEN 用户点击卡片空白或主体区域 THE SYSTEM SHALL 路由跳转至 /?session={sessionId}。
+WHEN 用户点击卡片空白或主体区域 THE SYSTEM SHALL 路由跳转至 /chat?session={sessionId}。
+```
+
+R6 三表重构与复选框上下文增强验收(EARS):
+
+```text
+WHEN 系统初始化存储层 THE SYSTEM SHALL 创建 dialog、execute、context 三张物理表并建立索引，同时通过 info_raw 视图保证旧调用兼容。
+WHEN 智能体产生问答消息（REQUEST/RESPONSE）THE SYSTEM SHALL 持久化至 dialog 表，不含执行过程字段。
+WHEN 智能体产生中间执行日志（组件调用、思考反思等）THE SYSTEM SHALL 结构化记录至 execute 表（含组件类型、执行序号、输入、输出及耗时 gap）。
+WHEN 触发上下文构建且用户勾选了历史消息 THE SYSTEM SHALL 将选中消息存入 citing 候选，并从 context 表反查被选消息当时使用的上下文消息回填至 timeline 候选。
+WHEN 用户刷新页面 THE SYSTEM SHALL 自动重置前端复选与 Pin 置顶状态，不影响已持久化的历史问答快照。
 ```
 
 ## 8. 未决问题
@@ -118,4 +128,5 @@ WHEN 用户点击卡片空白或主体区域 THE SYSTEM SHALL 路由跳转至 /?
 | /ws WebSocket 仅 echo 占位 | 文档中标注为占位通道 | resolved(记录现状) |
 | AgentExecution v1 与 Runtime Loop v2 并存 | 新代码一律走 v2;v1 保留兼容 | resolved(记录现状) |
 | R5 会话卡片改造与图数据治理 | 经 P0 澄清完成确认 | confirmed |
+| R6 消息三表重构与上下文回溯 | 用户已确认三表字段设计与前端生命周期 | confirmed |
 

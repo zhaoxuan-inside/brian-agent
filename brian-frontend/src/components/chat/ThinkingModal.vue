@@ -21,11 +21,36 @@ const visible = computed(() => chatUi.thinkingModalVisible)
 const targetMsgId = computed(() => chatUi.thinkingTargetMsgId)
 const thinkingLoading = computed(() => chatUi.thinkingLoading)
 
+/**
+ * 问答作用域过滤：思考过程按"一次问答"隔离。
+ * 实时阶段：块属于本次问答的 botMsgId（chatUi.activeRunMsgIds）；
+ * 运行结束历史重载后：块 msgId 为服务端消息 id，按"最后一条用户消息及其后消息"窗口匹配。
+ */
+const currentQaMsgIds = computed(() => {
+  const msgs = sessionStore.messages
+  let start = -1
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    if (msgs[i].role === 'user') { start = i; break }
+  }
+  const ids = new Set<string>()
+  if (start < 0) return ids
+  for (let i = start; i < msgs.length; i += 1) ids.add(msgs[i].id)
+  return ids
+})
+
+const runScopedBlocks = computed(() => sessionStore.blocks.filter(
+  (b) => chatUi.activeRunMsgIds.has(b.msgId) || currentQaMsgIds.value.has(b.msgId),
+))
+
+const runScopedPermissionMsgs = computed(() => sessionStore.messages.filter(
+  (m) => m.permission && currentQaMsgIds.value.has(m.id),
+))
+
 const thinkingBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
     return chatUi.thinkingBlocks as ThinkingBlock[]
   }
-  return sessionStore.blocks.filter(
+  return runScopedBlocks.value.filter(
     (b): b is ThinkingBlock => b.type === 'ThinkingChain',
   )
 })
@@ -56,7 +81,7 @@ const contextBlocks = computed<ThinkingBlock[]>(() => {
   if (targetMsgId.value) {
     return chatUi.thinkingBlocks as ThinkingBlock[]
   }
-  return sessionStore.blocks.filter((b): b is ThinkingBlock => b.type === 'ThinkingChain')
+  return runScopedBlocks.value.filter((b): b is ThinkingBlock => b.type === 'ThinkingChain')
 })
 
 const jumpTarget = ref('')
@@ -87,7 +112,7 @@ interface LiveTimelineItem extends ThinkingTimelineItem {
 const liveTimeline = computed<LiveTimelineItem[]>(() => {
   if (targetMsgId.value) return []
   const items: LiveTimelineItem[] = []
-  for (const b of sessionStore.blocks) {
+  for (const b of runScopedBlocks.value) {
     if (b.type === 'ThinkingChain') {
       const tb = b as ThinkingBlock
       const rawName = tb.agentInfo?.name
@@ -128,7 +153,7 @@ const liveTimeline = computed<LiveTimelineItem[]>(() => {
       })
     }
   }
-  for (const m of sessionStore.messages) {
+  for (const m of runScopedPermissionMsgs.value) {
     if (m.permission) {
       const p = m.permission
       const answered = p.status !== 'pending'
@@ -176,7 +201,7 @@ function realtimeToolComponentOf(toolId: string, params: Record<string, unknown>
 
 const toolTraces = computed<Array<ThinkingToolTrace>>(() => {
   if (historyTrace.value?.tools?.length) return historyTrace.value.tools
-  return sessionStore.blocks
+  return runScopedBlocks.value
     .filter((b) => b.type === 'ToolInvocation')
     .map((b, i) => {
       const t = b as unknown as { toolName?: string; params?: unknown; result?: unknown; meta: { status: string } }
@@ -199,8 +224,7 @@ const toolTraces = computed<Array<ThinkingToolTrace>>(() => {
 
 const permissionTraces = computed<Array<ThinkingPermissionTrace>>(() => {
   if (historyTrace.value?.permissions?.length) return historyTrace.value.permissions
-  return sessionStore.messages
-    .filter((m) => m.permission)
+  return runScopedPermissionMsgs.value
     .map((m) => {
       const permInput = (m.permission!.input ?? {}) as Record<string, unknown>
       const comp = realtimeToolComponentOf(m.permission!.toolId, permInput)

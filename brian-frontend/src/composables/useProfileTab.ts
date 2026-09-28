@@ -18,8 +18,9 @@ async function loadProfile() {
   try {
     profile.value = await userProfileApi.get()
     profileHistory.value = await userProfileApi.history()
-  } catch {  }
-  finally { loadingProfile.value = false }
+  } catch (err) {
+    console.error('[ProfileTab] 加载画像失败', err)
+  } finally { loadingProfile.value = false }
 }
 
 async function handleGenerateProfile() {
@@ -27,8 +28,9 @@ async function handleGenerateProfile() {
   try {
     await userProfileApi.generate()
     await loadProfile()
-  } catch {  }
-  finally { generatingProfile.value = false }
+  } catch (err) {
+    console.error('[ProfileTab] 生成画像失败', err)
+  } finally { generatingProfile.value = false }
 }
 
 function handleResetProfile() {
@@ -42,8 +44,9 @@ async function confirmResetProfile() {
     await userProfileApi.reset()
     selectedVersion.value = null
     await loadProfile()
-  } catch {  }
-  finally { resettingProfile.value = false }
+  } catch (err) {
+    console.error('[ProfileTab] 重置画像失败', err)
+  } finally { resettingProfile.value = false }
 }
 
 async function openVersion(version: number) {
@@ -51,8 +54,9 @@ async function openVersion(version: number) {
   selectedVersion.value = null
   try {
     selectedVersion.value = await userProfileApi.version(version)
-  } catch {  }
-  finally { loadingVersion.value = false }
+  } catch (err) {
+    console.error('[ProfileTab] 加载画像版本失败', err)
+  } finally { loadingVersion.value = false }
 }
 
 function dimensionDisplayValue(v: unknown): string {

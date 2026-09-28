@@ -56,15 +56,16 @@ describe('LLMCoreProvider', () => {
   });
 
   describe('matchLLM', () => {
-    it('should throw ValidationError when agent_id is empty', async () => {
+    it('should return false and error when agent_id is empty', async () => {
       const input = new MatchLLMInput();
       input.agent_id = '';
       input.context_id = 'c1';
       input.run_id = 'i1';
-
-      await expect(
-        llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
-      ).rejects.toThrow(ValidationError);
+      const output = new MatchLLMOutput();
+      const ok = await llmCore.matchLLM(input, output, new LLMCoreContext());
+      expect(ok).toBe(false);
+      expect(output.error).toContain('agent_id');
+      expect(output.error_code).toBe('VALIDATION_ERROR');
     });
 
     it('should return from cache when available and regen allows', async () => {
@@ -105,7 +106,7 @@ describe('LLMCoreProvider', () => {
       expect(output.from_cache).toBe(true);
     });
 
-    it('绑定失效（LLM 已从 DB 删除）时清除缓存重新匹配，不返回合成记录', async () => {
+    it('绑定失效（LLM 已从 DB 删除）时清除缓存重新匹配，无可用模型返回 false', async () => {
       const now = IdGenerator.now();
 
       await relationDb.insert(AGENT_LLM_TABLE, [
@@ -129,10 +130,10 @@ describe('LLMCoreProvider', () => {
       input.agent_id = 'agent-stale';
       input.context_id = 'c1';
       input.run_id = 'i1';
-
-      await expect(
-        llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
-      ).rejects.toThrow(NotFoundError);
+      const output = new MatchLLMOutput();
+      const ok = await llmCore.matchLLM(input, output, new LLMCoreContext());
+      expect(ok).toBe(false);
+      expect(output.error).toContain('未找到可用的');
 
       const rows = await relationDb.select(AGENT_LLM_TABLE, {
         conditions: [{ field: 'agent_id', operator: Operator.EQ, value: 'agent-stale' }],
@@ -140,15 +141,44 @@ describe('LLMCoreProvider', () => {
       expect(rows.length).toBe(0);
     });
 
-    it('should throw NotFoundError when no LLMs available and not cached', async () => {
+    it('should return false and error when no LLMs available and not cached', async () => {
       const input = new MatchLLMInput();
       input.agent_id = 'agent-unknown';
       input.context_id = 'c1';
       input.run_id = 'i1';
+      const output = new MatchLLMOutput();
+      const ok = await llmCore.matchLLM(input, output, new LLMCoreContext());
+      expect(ok).toBe(false);
+      expect(output.error).toContain('未找到可用的');
+      expect(output.error_code).toBe('NOT_FOUND');
+    });
 
-      await expect(
-        llmCore.matchLLM(input, new MatchLLMOutput(), new LLMCoreContext()),
-      ).rejects.toThrow(NotFoundError);
+    it('根据 llm_type 精确隔离文本模型与向量模型', async () => {
+      const now = IdGenerator.now();
+      await relationDb.insert('llm_available', [
+        { field: 'id', value: 'llm-embed-only' },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'llm_provider_id', value: 'provider-1' },
+        { field: 'llm_title', value: 'embed-model' },
+        { field: 'llm_type', value: 'embedding' },
+        { field: 'enable', value: 1 },
+      ]);
+      const textInput = new MatchLLMInput();
+      textInput.agent_id = 'agent-check-text';
+      textInput.llm_type = 'text';
+      const textOutput = new MatchLLMOutput();
+      const textOk = await llmCore.matchLLM(textInput, textOutput, new LLMCoreContext());
+      expect(textOk).toBe(false);
+      expect(textOutput.error).toContain('text');
+
+      const embedInput = new MatchLLMInput();
+      embedInput.agent_id = 'agent-check-embed';
+      embedInput.llm_type = 'embedding';
+      const embedOutput = new MatchLLMOutput();
+      const embedOk = await llmCore.matchLLM(embedInput, embedOutput, new LLMCoreContext());
+      expect(embedOk).toBe(true);
+      expect(embedOutput.llm_id).toBe('llm-embed-only');
     });
   });
 

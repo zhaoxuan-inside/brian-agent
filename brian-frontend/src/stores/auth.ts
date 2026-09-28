@@ -1,67 +1,70 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
+import { fetchApi } from '@/api'
+
+interface AuthStatus {
+  has_password: boolean
+  authenticated: boolean
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = ref(false)
-  const userPassword = ref(localStorage.getItem('brian-auth-hash') || '')
-  const sessionToken = ref(localStorage.getItem('brian-auth-session'))
+  // authReady：checkSession 完成前置 false，App 据此避免登录页闪烁
+  const authReady = ref(false)
+  const hasPassword = ref(false)
+  const sessionToken = ref(localStorage.getItem('brian-auth-session') || '')
 
-  function checkSession() {
-    const token = sessionToken.value
-    if (!token) {
-      if (userPassword.value) {
-        isLoggedIn.value = false
-        return
-      }
-      isLoggedIn.value = true
-      return
-    }
-    try {
-      const data = JSON.parse(atob(token))
-      const now = Date.now()
-      if (now - data.created < 7 * 24 * 60 * 60 * 1000) {
-        isLoggedIn.value = true
-      }
-    } catch {
-      isLoggedIn.value = false
-    }
-  }
-
-  function hashPassword(pwd: string): string {
-    const salt = 'brian-v2-salt'
-    let hash = 0
-    const str = pwd + salt
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i)
-      hash = ((hash << 5) - hash) + char
-      hash |= 0
-    }
-    return Math.abs(hash).toString(16)
-  }
-
-  function login(password: string) {
-    const hashed = hashPassword(password)
-    if (!userPassword.value) {
-      userPassword.value = hashed
-      localStorage.setItem('brian-auth-hash', hashed)
-    } else if (userPassword.value !== hashed) {
-      throw new Error('密码错误')
-    }
-    const token = btoa(JSON.stringify({ created: Date.now() }))
+  function persistToken(token: string) {
     sessionToken.value = token
     localStorage.setItem('brian-auth-session', token)
+  }
+
+  function clearToken() {
+    sessionToken.value = ''
+    localStorage.removeItem('brian-auth-session')
+  }
+
+  // 先用本地 token 快速放行避免闪烁，再向后端 /api/auth/status 核实（是否已设密码、token 是否有效）
+  async function checkSession() {
+    if (!sessionToken.value) {
+      try {
+        const status = await fetchApi<AuthStatus>('/auth/status')
+        hasPassword.value = status.has_password
+        // 未设置密码 = 开放模式（与首次使用体验一致）；已设密码则需要登录
+        isLoggedIn.value = !status.has_password
+      } catch {
+        isLoggedIn.value = false
+      }
+      authReady.value = true
+      return
+    }
+    isLoggedIn.value = true
+    authReady.value = true
+    try {
+      const status = await fetchApi<AuthStatus>('/auth/status')
+      hasPassword.value = status.has_password
+      isLoggedIn.value = !status.has_password || status.authenticated
+      if (!isLoggedIn.value) clearToken()
+    } catch {
+      // 后端暂不可达时保留本地会话（离线容错）
+    }
+  }
+
+  async function login(password: string) {
+    const res = await fetchApi<{ token: string }>(
+      hasPassword.value ? '/auth/login' : '/auth/setup',
+      { method: 'POST', body: JSON.stringify({ password }) },
+    )
+    hasPassword.value = true
+    persistToken(res.token)
     isLoggedIn.value = true
   }
 
-  function logout() {
-    sessionToken.value = null
-    localStorage.removeItem('brian-auth-session')
-    isLoggedIn.value = false
-  }
-
   function lock() {
-    sessionToken.value = null
-    localStorage.removeItem('brian-auth-session')
+    if (sessionToken.value) {
+      fetchApi('/auth/logout', { method: 'POST' }).catch(() => { /* 本地锁定优先，服务端注销失败可忽略 */ })
+    }
+    clearToken()
     isLoggedIn.value = false
   }
 
@@ -69,7 +72,5 @@ export const useAuthStore = defineStore('auth', () => {
     return login(password)
   }
 
-  const hasPassword = computed(() => !!userPassword.value)
-
-  return { isLoggedIn, userPassword, sessionToken, checkSession, login, logout, lock, unlock, hasPassword }
+  return { isLoggedIn, authReady, sessionToken, checkSession, login, lock, unlock, hasPassword }
 })

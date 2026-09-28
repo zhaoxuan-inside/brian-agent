@@ -372,6 +372,8 @@ export class ContextInfoInput extends Input {
   
   custom_info_ids?: string[];
   
+  pinned_msg_ids?: string[];
+  
 
   enable_cross_session?: boolean;
   
@@ -499,6 +501,7 @@ export class DelInfoInput extends Input {}
 
 export class DelInfoOutput extends Output {
   deleted_count = 0;
+  deleted_vectors = 0;
 }
 
 export class UpdateInfoInput extends Input {
@@ -545,8 +548,53 @@ export class CleanOrphanGraphNodesOutput extends Output {
   deleted_nodes: string[] = [];
 }
 
+export const DIALOG_TABLE = 'dialog';
+export const EXECUTE_TABLE = 'execute';
+export const CONTEXT_TABLE = 'context';
 export const INFO_RAW_TABLE = 'info_raw';
-export const INFO_CONTEXT_SOURCE_TABLE = 'info_context_source';
+export const INFO_CONTEXT_SOURCE_TABLE = 'context';
+
+export interface DialogRecord {
+  id: string;
+  created: number;
+  updated: number;
+  session_id: string;
+  work_id: string;
+  type: string;
+  dialog: string;
+  dialog_length: number;
+  dialog_brief: string;
+  trace_id: string;
+}
+
+export interface ExecuteRecord {
+  id: string;
+  created: number;
+  updated: number;
+  session_id: string;
+  work_id: string;
+  run_id: string;
+  trace_id: string;
+  agent_id: string;
+  exec_no: number;
+  component_id: string;
+  component_type: string;
+  input: string;
+  input_length: number;
+  output: string;
+  output_length: number;
+  gap: number;
+}
+
+export interface ContextRecord {
+  id: string;
+  created: number;
+  updated: number;
+  session_id: string;
+  work_id: string;
+  dialog_id: string;
+  type: string;
+}
 export const INFO_VECTOR_TABLE = 'info_vector';
 export const INFO_TAG_TABLE = 'info_tag';
 export const INFO_TAG_VECTOR_TABLE = 'info_tag_vector';

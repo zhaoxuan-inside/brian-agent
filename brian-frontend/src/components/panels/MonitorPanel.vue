@@ -54,7 +54,10 @@ async function fetchFeedbackRecords(manual = false) {
     fbRecords.value = res.logs
     fbTotal.value = res.total ?? res.logs.length
     fbLoaded.value = true
-  } catch { if (initial) fbRecords.value = [] }
+  } catch (e) {
+    console.error('[MonitorPanel] 加载反馈处理记录失败', e)
+    if (initial) fbRecords.value = []
+  }
   if (initial) fbLoading.value = false
   fbRefreshing.value = false
 }
@@ -63,7 +66,7 @@ async function openFeedbackDetail(processId: string) {
   fbDetailOpen.value = true
   fbDetailLoading.value = true
   fbDetail.value = null
-  try { fbDetail.value = await feedbackApi.recordDetail(processId) } catch { /* */ }
+  try { fbDetail.value = await feedbackApi.recordDetail(processId) } catch (e) { console.error('[MonitorPanel] 加载反馈详情失败', e) }
   fbDetailLoading.value = false
 }
 
@@ -153,6 +156,10 @@ async function fetchAll(includeLogs = false) {
     monitorApi.modelDistribution(),
     ...(logsTask ? [logsTask] : []),
   ])
+  const labels = ['健康状态', '资源占用', 'Token 趋势', '模型分布', '日志']
+  all.forEach((r, i) => {
+    if (r.status === 'rejected') console.error(`[MonitorPanel] 加载${labels[i] ?? '数据'}失败`, r.reason)
+  })
   if (all[0].status === 'fulfilled') health.value = all[0].value
   if (all[1].status === 'fulfilled') resources.value = all[1].value
   if (all[2].status === 'fulfilled') tokenTrend.value = all[2].value
@@ -161,7 +168,7 @@ async function fetchAll(includeLogs = false) {
 }
 
 async function loadLogSources() {
-  try { logSources.value = await monitorApi.logSources() } catch { logSources.value = [] }
+  try { logSources.value = await monitorApi.logSources() } catch (e) { console.error('[MonitorPanel] 加载日志来源失败', e); logSources.value = [] }
 }
 
 function resetLogFilters() {
@@ -225,7 +232,9 @@ async function deleteLog(id: string) {
       selectedLogs.value = next
     }
     await fetchAll(true)
-  } catch { /* */ }
+  } catch (e) {
+    console.error('[MonitorPanel] 删除日志失败', e)
+  }
 }
 
 async function deleteSelectedLogs() {
@@ -235,7 +244,9 @@ async function deleteSelectedLogs() {
     await monitorApi.deleteLogs(ids)
     selectedLogs.value = new Set()
     await fetchAll(true)
-  } catch { /* */ }
+  } catch (e) {
+    console.error('[MonitorPanel] 批量删除日志失败', e)
+  }
 }
 
 async function clearAllLogs() {
@@ -244,7 +255,9 @@ async function clearAllLogs() {
     await monitorApi.clearLogs()
     selectedLogs.value = new Set()
     await fetchAll(true)
-  } catch { /* */ }
+  } catch (e) {
+    console.error('[MonitorPanel] 清空日志失败', e)
+  }
 }
 
 onMounted(() => {

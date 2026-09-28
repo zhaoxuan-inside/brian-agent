@@ -73,7 +73,9 @@ async function loadLastRunOverview() {
       skills: String(res.skill_calls ?? 0),
       confirms: String(res.permission_asks ?? 0),
     }
-  } catch {  }
+  } catch (e) {
+    console.error('[HomeView] 加载最近问答概览失败', e)
+  }
 }
 void loadLastRunOverview()
 

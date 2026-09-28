@@ -1,9 +1,9 @@
 import type {
-  ChatSession, ChatMessage, AgentChainNode,
+  ChatSession, ChatMessage,
   DagNode, DagEdge, MemoryItem, GraphNode, GraphEdge,
   ModelProvider, ModelInfo, LearningStats, LearningProgress,
-  SystemHealth, UserProfile, LibraryPath, LibraryFilePage, LibraryTreeNode,
-  DocumentAnnotation,
+  SystemHealth, LibraryPath, LibraryFilePage, LibraryTreeNode,
+  DocumentAnnotation, DirListing,
   ConfigTreeLayer,
   ConfigHistoryRecord,
   UserProfileData, ProfileVersionData, ProfileHistoryItem,
@@ -16,6 +16,21 @@ import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
 
 const API_BASE = '/api'
 
+export const AUTH_TOKEN_KEY = 'brian-auth-session'
+
+export function authTokenHeader(): Record<string, string> {
+  try {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY)
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
+}
+
+function clearAuthToken() {
+  try { localStorage.removeItem(AUTH_TOKEN_KEY) } catch {  }
+}
+
 async function request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const { timeoutMs, ...rest } = options ?? {}
   const res = await fetch(`${API_BASE}${path}`, {
@@ -24,10 +39,16 @@ async function request<T>(path: string, options?: RequestInit & { timeoutMs?: nu
     headers: {
       'Content-Type': 'application/json',
       [TRACE_ID_HEADER]: newTraceId(),
+      ...authTokenHeader(),
       ...((rest.headers ?? {}) as Record<string, string>),
     },
   })
   if (!res.ok) {
+    if (res.status === 401) {
+      // 会话失效：清掉本地 token 回登录页（auth/status 无需鉴权，刷新后不会循环 401）
+      clearAuthToken()
+      setTimeout(() => window.location.reload(), 0)
+    }
     const err = await res.json().catch(() => ({ message: res.statusText }))
     throw new Error(err.error || err.message || `HTTP ${res.status}`)
   }
@@ -37,20 +58,8 @@ async function request<T>(path: string, options?: RequestInit & { timeoutMs?: nu
 export const chatApi = {
   list: (userId: string, keyword?: string, startTime?: number, endTime?: number, pageCurrent?: number, pageSize?: number) =>
     request<{ sessions: ChatSession[]; total: number }>(`/chat/list?userId=${encodeURIComponent(userId)}${keyword ? `&keyword=${encodeURIComponent(keyword)}` : ''}${startTime ? `&start_time=${startTime}` : ''}${endTime ? `&end_time=${endTime}` : ''}${pageCurrent ? `&page_current=${pageCurrent}` : ''}${pageSize ? `&page_size=${pageSize}` : ''}`),
-  history: (sessionId: string, userId: string) =>
-    request<{ messages: ChatMessage[] }>(`/chat/history/${encodeURIComponent(sessionId)}?userId=${encodeURIComponent(userId)}`).then(r => r.messages),
-  dag: (sessionId: string, userId: string) =>
-    request<{ work_id: string; nodes: DagNode[]; edges: DagEdge[] }>(`/chat/dag?sessionId=${encodeURIComponent(sessionId)}&userId=${encodeURIComponent(userId)}`),
-  sendMessage: (sessionId: string, content: string, citingIds?: string[], selectedMsgIds?: string[]) =>
-    request<{ msgId: string; workId: string }>('/chat/send', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: sessionId,
-        msg_content: content,
-        citing_msg_ids: citingIds || [],
-        selected_msg_ids: selectedMsgIds || [],
-      })
-    }),
+  history: (sessionId: string, userId: string, lastN?: number) =>
+    request<{ messages: ChatMessage[] }>(`/chat/history/${encodeURIComponent(sessionId)}?userId=${encodeURIComponent(userId)}${lastN && lastN > 0 ? `&lastN=${lastN}` : ''}`).then(r => r.messages),
   createSession: (title?: string) =>
     request<{ session_id: string; session_title: string; created: number }>('/chat/create-session', {
       method: 'POST',
@@ -72,9 +81,7 @@ export const chatApi = {
       method: 'PUT',
       body: JSON.stringify({ title }),
     }),
-  search: (keyword: string) =>
-    request<{ sessions: ChatSession[] }>(`/chat/search?keyword=${encodeURIComponent(keyword)}`).then(r => r.sessions),
-  
+
   dateCounts: () =>
     request<{ dates: Record<string, number> }>(`/chat/date-counts?tz=${-new Date().getTimezoneOffset()}`),
   pinMessage: (infoId: string) =>
@@ -89,8 +96,6 @@ export const chatApi = {
     request<{ work_id: string; trace_id: string; found: boolean; evaluation: { answer: string; created: number; elapsed_ms: number; agent_name: string } | null }>(
       `/chat/eval-result?info_id=${encodeURIComponent(infoId)}`,
     ),
-  agentChain: (exchangeId: string) =>
-    request<{ nodes: AgentChainNode[] }>(`/chat/agent-chain/${encodeURIComponent(exchangeId)}`).then(r => r.nodes),
   cancelTask: (exchangeId: string) =>
     request<void>(`/chat/cancel/${encodeURIComponent(exchangeId)}`, { method: 'POST' }),
 }
@@ -227,13 +232,6 @@ export const configApi = {
     delete: (id: string) =>
       request<void>(`/config/soul/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
-  work: {
-    list: () => request<{ id: string; name: string; description: string; steps: string[]; enabled: boolean }[]>('/config/work'),
-    update: (id: string, data: Record<string, unknown>) =>
-      request<void>(`/config/work/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
-    delete: (id: string) =>
-      request<void>(`/config/work/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  },
   mcp: {
     list: () => request<unknown[]>('/config/mcp'),
     market: () => request<unknown[]>('/config/mcp/market'),
@@ -243,10 +241,6 @@ export const configApi = {
       request<void>(`/config/mcp/provider/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteProvider: (id: string) =>
       request<void>(`/config/mcp/provider/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    update: (id: string, data: Record<string, unknown>) =>
-      request<void>(`/config/mcp/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
-    delete: (id: string) =>
-      request<void>(`/config/mcp/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   prompts: {
     list: () => request<{ prompts: { id: string; title: string; brief: string; enabled: boolean }[] }>('/prompts').then(r => r.prompts),
@@ -417,12 +411,8 @@ export const libraryApi = {
     request<{ exists: boolean; isReadable: boolean; isWritable: boolean }>('/library/check-path', {
       method: 'POST', body: JSON.stringify({ path })
     }),
-}
-
-export const profileApi = {
-  get: (userId: string) => request<UserProfile>(`/profile/${encodeURIComponent(userId)}`),
-  update: (userId: string, data: Partial<UserProfile>) =>
-    request<void>(`/profile/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  browseDir: (path?: string) =>
+    request<DirListing>(`/library/browse-dir${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 }
 
 export const userProfileApi = {
@@ -514,7 +504,7 @@ export interface CDTStatus { running: boolean; pid: number; port: number; endpoi
 function cdtFire(path: string, body?: string) {
   return fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', [TRACE_ID_HEADER]: newTraceId() },
+    headers: { 'Content-Type': 'application/json', [TRACE_ID_HEADER]: newTraceId(), ...authTokenHeader() },
     body,
   })
 }

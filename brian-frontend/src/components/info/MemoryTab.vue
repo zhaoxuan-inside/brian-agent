@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { inject } from 'vue'
 import {
-  Search, Trash2, CheckSquare, Square, ChevronRight, X,
+  Search, Trash2, CheckSquare, Square,
 } from '@lucide/vue'
 import { INFO_TABS_KEY } from '@/composables/useInfoTabs'
 import HeatmapCard from '@/components/info/HeatmapCard.vue'
+import MemoryCard from '@/components/info/MemoryCard.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import StatusNote from '@/components/common/StatusNote.vue'
 
@@ -23,6 +24,7 @@ const {
   heatmapMonth,
   heatmapYear,
   isCurrentHeatmapMonth,
+  jumpToConversation,
   loadingMemory,
   loadingMoreMemory,
   memories,
@@ -110,41 +112,19 @@ const {
               <span class="text-sm font-semibold">{{ group.label }}</span>
               <span class="text-xs text-apple-gray-400">({{ getDateCount(group.dateKey) }})</span>
             </div>
-            <div
+            <MemoryCard
               v-for="mem in group.items"
               :key="mem.id"
-              class="block-card rounded-xl overflow-hidden cursor-pointer"
-              :class="selectedMemories.has(mem.id) ? 'border-brian-blue/40 bg-brian-blue/5' : 'hover:border-brian-blue/30'"
-              @click="expandedMemory = expandedMemory === mem.id ? null : mem.id"
-            >
-              <div class="p-4 flex items-start gap-3">
-                <button class="mt-0.5 text-apple-gray-300 hover:text-brian-blue flex-shrink-0" @click.stop="toggleMemorySelect(mem.id)">
-                  <component :is="selectedMemories.has(mem.id) ? CheckSquare : Square" :size="16" />
-                </button>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-start justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <span class="text-xs text-apple-gray-400">{{ new Date(mem.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</span>
-                      <span class="text-xs text-apple-gray-300">#{{ mem.id.slice(-8) }}</span>
-                    </div>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                      <span :class="['px-2 py-0.5 rounded text-xs font-medium', typeColors[mem.type] || 'bg-gray-100 text-gray-600']">{{ typeLabels[mem.type] || mem.type }}</span>
-                      <button class="p-1 rounded-lg text-apple-gray-400 hover:text-error-red hover:bg-error-red/10 flex-shrink-0" title="删除" @click.stop="requestMemoryDelete(mem.id)">
-                        <Trash2 :size="14" />
-                      </button>
-                    </div>
-                  </div>
-                  <p class="text-sm" :class="expandedMemory === mem.id ? '' : 'line-clamp-2'">{{ mem.content }}</p>
-                  <div class="flex items-center gap-3 mt-2">
-                    <div v-if="mem.tags?.length" class="flex flex-wrap gap-1">
-                      <span v-for="tag in mem.tags" :key="tag" class="px-1.5 py-0.5 rounded text-xs bg-brian-blue/10 text-brian-blue">#{{ tag }}</span>
-                    </div>
-                    <span class="text-xs text-apple-gray-400 ml-auto">置信度: {{ Math.round((mem.confidence ?? 0) * 100) }}%</span>
-                    <ChevronRight :size="14" class="text-apple-gray-400 transition-transform" :class="expandedMemory === mem.id ? 'rotate-90' : ''" />
-                  </div>
-                </div>
-              </div>
-            </div>
+              :memory="mem"
+              :selected="selectedMemories.has(mem.id)"
+              :expanded="expandedMemory === mem.id"
+              :type-colors="typeColors"
+              :type-labels="typeLabels"
+              @toggle-select="toggleMemorySelect"
+              @toggle-expand="(id) => expandedMemory = expandedMemory === id ? null : id"
+              @delete="requestMemoryDelete"
+              @jump="jumpToConversation"
+            />
           </template>
           </TransitionGroup>
           <div v-if="memoryDateFilter && memoryTimeline.length === 0 && !loadingMemory" class="text-center py-8 text-apple-gray-400">该日期暂无记忆</div>

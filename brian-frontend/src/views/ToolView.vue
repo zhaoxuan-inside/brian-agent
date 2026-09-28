@@ -34,7 +34,10 @@ async function generateIds() {
   try {
     const res = await toolApi.generateId(count)
     idList.value = res.ids || []
-  } catch { idList.value = [] }
+  } catch (e) {
+    console.error('[ToolView] 生成 ID 失败', e)
+    idList.value = []
+  }
 }
 
 const jsonText = ref('')
@@ -57,15 +60,27 @@ function setJsonResult(out: ToolCheckResult | ToolTransformResult | null, output
 }
 
 async function jsonCheck() {
-  setJsonResult(await toolApi.jsonCheck(jsonText.value))
+  try {
+    setJsonResult(await toolApi.jsonCheck(jsonText.value))
+  } catch (e) {
+    setJsonResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 async function jsonFormat() {
-  const out = await toolApi.jsonFormat(jsonText.value, Number(jsonIndent.value) || 2)
-  setJsonResult(out, (out as ToolTransformResult).result || '')
+  try {
+    const out = await toolApi.jsonFormat(jsonText.value, Number(jsonIndent.value) || 2)
+    setJsonResult(out, (out as ToolTransformResult).result || '')
+  } catch (e) {
+    setJsonResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 async function jsonMinify() {
-  const out = await toolApi.jsonMinify(jsonText.value)
-  setJsonResult(out, (out as ToolTransformResult).result || '')
+  try {
+    const out = await toolApi.jsonMinify(jsonText.value)
+    setJsonResult(out, (out as ToolTransformResult).result || '')
+  } catch (e) {
+    setJsonResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 
 const xmlText = ref('')
@@ -88,15 +103,27 @@ function setXmlResult(out: ToolCheckResult | ToolTransformResult | null, outputT
 }
 
 async function xmlCheck() {
-  setXmlResult(await toolApi.xmlCheck(xmlText.value))
+  try {
+    setXmlResult(await toolApi.xmlCheck(xmlText.value))
+  } catch (e) {
+    setXmlResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 async function xmlFormat() {
-  const out = await toolApi.xmlFormat(xmlText.value, Number(xmlIndent.value) || 2)
-  setXmlResult(out, (out as ToolTransformResult).result || '')
+  try {
+    const out = await toolApi.xmlFormat(xmlText.value, Number(xmlIndent.value) || 2)
+    setXmlResult(out, (out as ToolTransformResult).result || '')
+  } catch (e) {
+    setXmlResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 async function xmlMinify() {
-  const out = await toolApi.xmlMinify(xmlText.value)
-  setXmlResult(out, (out as ToolTransformResult).result || '')
+  try {
+    const out = await toolApi.xmlMinify(xmlText.value)
+    setXmlResult(out, (out as ToolTransformResult).result || '')
+  } catch (e) {
+    setXmlResult({ valid: false, error: e instanceof Error ? e.message : '请求失败' })
+  }
 }
 
 const regexPattern = ref('')

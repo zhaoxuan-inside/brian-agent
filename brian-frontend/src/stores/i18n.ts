@@ -65,6 +65,7 @@ const i18nMap: Record<string, Record<Locale, string>> = {
   'chat.emptyHint': { 'zh-CN': '开始一段对话', 'en-US': 'Start a conversation' },
   'chat.thinking': { 'zh-CN': '思考中...', 'en-US': 'Thinking...' },
   'chat.stop': { 'zh-CN': '停止生成', 'en-US': 'Stop generating' },
+  'chat.saveToLibrary': { 'zh-CN': '保存到资料库', 'en-US': 'Save to Library' },
   'msg.summary': { 'zh-CN': '摘要', 'en-US': 'Summary' },
   'msg.original': { 'zh-CN': '原文', 'en-US': 'Original' },
   'msg.citing': { 'zh-CN': '引用 {n}', 'en-US': 'Refs {n}' },

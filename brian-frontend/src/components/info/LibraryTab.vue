@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import {
-  Plus, Folder, Trash2, ArrowLeft, ChevronRight, Search,
+  Plus, Folder, FolderOpen, Trash2, ArrowLeft, ChevronRight, Search,
   FileText, Sparkles, Loader2, X, Pencil, Check, BookOpen,
 } from '@lucide/vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
@@ -24,12 +24,20 @@ const {
   checkingPath,
   closeEditor,
   closeFileModal,
+  confirmBrowseDir,
   confirmDeleteFile,
   contentAreaRef,
   contextMenu,
   currentDirectory,
   deleteConfirm,
   deletingFile,
+  dirBrowserEntries,
+  dirBrowserError,
+  dirBrowserLoading,
+  dirBrowserOpen,
+  dirBrowserParent,
+  dirBrowserPath,
+  dirBrowserDrives,
   editorContent,
   editorOpen,
   enterDirectory,
@@ -50,12 +58,14 @@ const {
   libraryFileSentinel,
   libraryFiles,
   libraryTree,
+  loadBrowseDir,
   loadingLibs,
   marginLayerRef,
   marginMode,
   newLib,
   noteTops,
   openAskDialog,
+  openDirBrowser,
   openEditor,
   openFile,
   openLibraryDetail,
@@ -138,7 +148,10 @@ const statusLabel = computed(() => {
             <div>
               <label class="text-xs font-medium text-apple-gray-500 mb-1 block">路径</label>
               <div class="flex gap-2">
-                <input v-model="newLib.path" placeholder="/path/to/library" class="flex-1 px-3 py-2 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-brian-blue" />
+                <input v-model="newLib.path" placeholder="/path/to/library" class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-brian-blue font-mono" />
+                <button class="px-3 py-2 text-xs font-medium btn-secondary whitespace-nowrap flex items-center gap-1" @click="openDirBrowser">
+                  <FolderOpen :size="13" /> 浏览
+                </button>
                 <button class="px-3 py-2 text-xs font-medium btn-secondary whitespace-nowrap" :disabled="checkingPath || !newLib.path" @click="checkLibPath">{{ checkingPath ? '检查中...' : '检查路径' }}</button>
               </div>
               <div v-if="pathCheckResult" class="mt-2 flex items-center gap-3 text-xs">
@@ -152,6 +165,44 @@ const statusLabel = computed(() => {
           </div>
         </div>
       </div>
+
+      <Teleport to="body">
+        <div v-if="dirBrowserOpen" class="fixed inset-0 z-popover flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-6" @click.self="dirBrowserOpen = false">
+          <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-apple-gray-800 shadow-xl p-6 flex flex-col max-h-[70vh]">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold flex items-center gap-1.5"><FolderOpen :size="17" class="text-brian-blue" /> 选择资料库目录</h3>
+              <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700" @click="dirBrowserOpen = false"><X :size="18" /></button>
+            </div>
+            <div class="flex items-center gap-2 mb-3">
+              <code class="flex-1 min-w-0 truncate text-xs px-3 py-2 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 font-mono" :title="dirBrowserPath">{{ dirBrowserPath }}</code>
+              <button v-if="dirBrowserParent" class="flex items-center gap-1 px-2.5 py-2 text-xs rounded-lg bg-apple-gray-100 dark:bg-apple-gray-900 text-apple-gray-500 hover:text-brian-blue transition-colors flex-shrink-0" @click="loadBrowseDir(dirBrowserParent)">
+                <ArrowLeft :size="12" /> 上级
+              </button>
+            </div>
+            <StatusNote v-if="dirBrowserLoading" state="loading" />
+            <div v-else-if="dirBrowserError" class="py-6 text-center text-xs text-error-red">{{ dirBrowserError }}</div>
+            <div v-else class="flex-1 min-h-0 overflow-y-auto border border-apple-gray-100 dark:border-apple-gray-700 rounded-lg">
+              <div v-if="dirBrowserDrives.length" class="px-3 py-2 flex flex-wrap gap-1.5 border-b border-apple-gray-100 dark:border-apple-gray-700">
+                <button v-for="drive in dirBrowserDrives" :key="drive" class="px-2 py-1 text-xs rounded-lg bg-apple-gray-100 dark:bg-apple-gray-900 hover:text-brian-blue transition-colors font-mono" @click="loadBrowseDir(drive)">{{ drive }}</button>
+              </div>
+              <button
+                v-for="entry in dirBrowserEntries"
+                :key="entry.path"
+                class="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-apple-gray-700 dark:text-apple-gray-200 hover:bg-brian-blue/5 transition-colors"
+                @click="loadBrowseDir(entry.path)"
+              >
+                <Folder :size="15" class="text-brian-blue flex-shrink-0" />
+                <span class="truncate">{{ entry.name }}</span>
+              </button>
+              <div v-if="dirBrowserEntries.length === 0 && dirBrowserDrives.length === 0" class="px-3 py-6 text-center text-xs text-apple-gray-400">此目录下没有子目录</div>
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+              <button class="btn-secondary" @click="dirBrowserOpen = false">取消</button>
+              <button class="btn-primary" :disabled="dirBrowserLoading || !!dirBrowserError" @click="confirmBrowseDir">使用当前目录</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
     </div>
 
     <div v-else>

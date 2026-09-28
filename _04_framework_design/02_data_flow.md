@@ -144,3 +144,25 @@ sequenceDiagram
     IC-->>SCH: 返回清理孤立节点与孤立边数量
 ```
 
+## 8. R6 消息三表重构与复选框上下文时序回溯数据流
+
+```mermaid
+sequenceDiagram
+    participant FE as 前端 (ChatArea/InputBox)
+    participant CS as ChatService
+    participant IC as InfoCoreService
+    participant RD as SQLite (brian.db)
+    
+    FE->>CS: POST /api/chat/stream { selected_msg_ids, pinned_msg_ids, msg_content }
+    CS->>IC: context(input: { selected_msg_ids, session_id, work_id })
+    IC->>RD: 查询 dialog 表提取 selected_msg_ids -> citingCandidates
+    IC->>RD: 根据选中消息 work_id 查 context 表 -> 反查历史上下文 dialog_id
+    IC->>RD: 查询 dialog 表批量获取历史消息 (created ASC) -> timelineCandidates
+    IC->>RD: 将当次问答上下文快照写入 context 表 (work_id, dialog_id, type)
+    IC-->>CS: 返回组装好的全维度上下文
+    CS->>RD: 问答完成，用户问题与助手回答写入 dialog 表
+    CS->>RD: 执行内部步骤（LLM/Skill/MCP）写入 execute 表 (含 exec_no, gap, input/output)
+    CS-->>FE: SSE 推送问答流与组件执行完成事件
+```
+
+

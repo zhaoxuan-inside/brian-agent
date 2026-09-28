@@ -89,7 +89,7 @@ const libraries = ref<LibraryPath[]>([])
 async function loadLibraries() {
   loadingLibs.value = true
   try { libraries.value = await libraryApi.paths() }
-  catch {  }
+  catch (err) { console.error('[LibraryTab] 加载资料库失败', err) }
   finally { loadingLibs.value = false }
 }
 
@@ -109,7 +109,50 @@ async function handleAddLibrary() {
     newLib.value = { name: '', description: '', path: '' }
     pathCheckResult.value = null
     await loadLibraries()
-  } catch {  }
+  } catch (err) {
+    console.error('[LibraryTab] 添加资料库失败', err)
+  }
+}
+
+const dirBrowserOpen = ref(false)
+const dirBrowserLoading = ref(false)
+const dirBrowserError = ref('')
+const dirBrowserPath = ref('')
+const dirBrowserParent = ref<string | null>(null)
+const dirBrowserDrives = ref<string[]>([])
+const dirBrowserEntries = ref<{ name: string; path: string }[]>([])
+
+async function loadBrowseDir(p?: string) {
+  dirBrowserLoading.value = true
+  dirBrowserError.value = ''
+  try {
+    const listing = await libraryApi.browseDir(p)
+    dirBrowserPath.value = listing.path
+    dirBrowserParent.value = listing.parent
+    dirBrowserDrives.value = listing.drives ?? []
+    dirBrowserEntries.value = listing.entries
+  } catch (err) {
+    dirBrowserError.value = err instanceof Error ? err.message : '目录读取失败'
+  } finally {
+    dirBrowserLoading.value = false
+  }
+}
+
+async function openDirBrowser() {
+  dirBrowserOpen.value = true
+  await loadBrowseDir()
+}
+
+function confirmBrowseDir() {
+  const p = dirBrowserPath.value
+  if (!p) return
+  newLib.value.path = p
+  if (!newLib.value.name) {
+    const basename = p.split(/[\\/]/).filter(Boolean).pop()
+    if (basename) newLib.value.name = basename
+  }
+  dirBrowserOpen.value = false
+  void checkLibPath()
 }
 
 async function handleDeleteLibrary(id: string) {
@@ -122,7 +165,9 @@ async function handleToggleLibrary(lib: LibraryPath) {
     const result = await libraryApi.setEnabled(lib.id, !lib.enableSelfLearning)
     lib.enableSelfLearning = result.enabled
     await loadLibraries()
-  } catch {  }
+  } catch (err) {
+    console.error('[LibraryTab] 切换资料库启用状态失败', err)
+  }
 }
 
 const libraryFiles = ref<LibraryFileEntry[]>([])
@@ -170,7 +215,9 @@ async function loadLibraryFiles(reset = true) {
     else libraryFiles.value = [...libraryFiles.value, ...data.files]
     fileHasMore.value = data.has_more
     fileNextCursor.value = data.next_cursor
-  } catch {  }
+  } catch (err) {
+    console.error('[LibraryTab] 加载文件列表失败', err)
+  }
   finally {
     if (reset) fileLoading.value = false
     else fileLoadingMore.value = false
@@ -682,10 +729,18 @@ watch(fileKeyword, () => {
     closeContextMenu,
     closeEditor,
     closeFileModal,
+    confirmBrowseDir,
     confirmDeleteFile,
     contentAreaRef,
     contextMenu,
     currentDirectory,
+    dirBrowserEntries,
+    dirBrowserError,
+    dirBrowserLoading,
+    dirBrowserOpen,
+    dirBrowserParent,
+    dirBrowserPath,
+    dirBrowserDrives,
     deleteConfirm,
     deletingFile,
     editorContent,
@@ -709,6 +764,7 @@ watch(fileKeyword, () => {
     libraryFileSentinel,
     libraryFiles,
     libraryTree,
+    loadBrowseDir,
     loadLibraries,
     loadLibraryFiles,
     loadLibraryTree,
@@ -719,6 +775,7 @@ watch(fileKeyword, () => {
     newLib,
     noteTops,
     openAskDialog,
+    openDirBrowser,
     openEditor,
     openFile,
     openLibraryDetail,

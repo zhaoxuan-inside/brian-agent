@@ -8,9 +8,9 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
-| `getRelationDb` | `` | `RelationDBAccess` | 获取日志模块底层的 RelationDBAccess 实例 |
-| `initialize` | `` | `Promise<void>` | 初始化组件 |
-| `getRawService` | `` | `LogService` | 获取原始 Service（未经 AOP 包装）。 |
+| `getRelationDb` | `` | `RelationDBAccess` | — |
+| `initialize` | `` | `Promise<void>` | — |
+| `getRawService` | `` | `LogService` | — |
 | `addLog` | `i: AddLogInput, o: AddLogOutput, c: LogContext, metrics?: Metrics, report?: Report` | `void` | — |
 | `soLogById` | `i: GetLogInput, o: GetLogOutput, c: LogContext, metrics?: Metrics, report?: Report` | `void` | — |
 | `soLog` | `i: SoLogInput, o: SoLogOutput, c: LogContext, metrics?: Metrics, report?: Report` | `void` | — |

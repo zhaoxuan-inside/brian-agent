@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-28T11:44:42.410Z",
+  "shard": "base-promptcatalog",
+  "layer": "Base",
+  "module": "PromptCatalog",
+  "methods": [
+    {
+      "id": "m-promptcatalog-0001",
+      "signature": "boolean seed(): Promise<void>",
+      "name": "seed",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/access/PromptCatalogAccess.ts",
+      "description": "处理 seed（遍历调度，异步编排）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0002",
+      "signature": "boolean seedOne(def: BuiltinPromptDef, now: number): Promise<void>",
+      "name": "seedOne",
+      "category": "data",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/access/PromptCatalogAccess.ts",
+      "description": "处理 seed / one（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0003",
+      "signature": "boolean refreshUnchanged(existing: Record<string, unknown>, def: BuiltinPromptDef, canonicalHash: string): Promise<void>",
+      "name": "refreshUnchanged",
+      "category": "data",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/access/PromptCatalogAccess.ts",
+      "description": "处理 refresh / unchanged（操作关系数据库）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0004",
+      "signature": "boolean toInsertFields(def: BuiltinPromptDef, now: number, canonicalHash: string): Array<{ field: string; value: unknown }>",
+      "name": "toInsertFields",
+      "category": "data",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/access/PromptCatalogAccess.ts",
+      "description": "格式化/序列化：insert / fields",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0005",
+      "signature": "boolean md5(text: string): string",
+      "name": "md5",
+      "category": "data",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/access/PromptCatalogAccess.ts",
+      "description": "处理 md5（接入层转发至 Service）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0006",
+      "signature": "boolean getBuiltinPrompt(id: string): BuiltinPromptDef | undefined",
+      "name": "getBuiltinPrompt",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/catalog.ts",
+      "description": "获取：builtin / 提示词",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0007",
+      "signature": "boolean getBuiltinTemplate(id: string): string | undefined",
+      "name": "getBuiltinTemplate",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/catalog.ts",
+      "description": "获取：builtin / template",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0008",
+      "signature": "boolean stripEmptyConditionalBlocks(template: string, variables: Record<string, unknown>): string",
+      "name": "stripEmptyConditionalBlocks",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/catalog.ts",
+      "description": "处理 strip / empty / conditional / blocks（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0009",
+      "signature": "boolean renderTemplate(template: string, variables: Record<string, unknown>): string",
+      "name": "renderTemplate",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/catalog.ts",
+      "description": "格式化/序列化：template（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0010",
+      "signature": "boolean formatContextCategories(ctxOut?: ContextOutputLike): string",
+      "name": "formatContextCategories",
+      "category": "data",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/contextFormatter.ts",
+      "description": "格式化/序列化：上下文 / categories",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-promptcatalog-0011",
+      "signature": "boolean formatDynamicContext(purpose: string, items?: string[]): string",
+      "name": "formatDynamicContext",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "PromptCatalog",
+      "location": "brian-backend/Base/PromptCatalog/contextFormatter.ts",
+      "description": "格式化/序列化：dynamic / 上下文（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    }
+  ],
+  "stats": {
+    "total": 11,
+    "by_category": {
+      "algorithm": 3,
+      "orchestration": 3,
+      "data": 5
+    }
+  }
+}

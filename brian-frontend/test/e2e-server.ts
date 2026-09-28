@@ -2,8 +2,8 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import { vi } from 'vitest';
-import { RelationDBAccess, IdGenerator, LLMAccess, MCPAccess, SoulAccess, SkillAccess, PromptsAccess, GraphDBAccess, MQAccess, LogAccess } from '@brian-agent/base';
-import { InfoCoreAccess, LLMCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess, MQCoreAccess } from '@brian-agent/core';
+import { RelationDBAccess, IdGenerator, LLMAccess, MCPAccess, SoulAccess, SkillAccess, PromptsAccess, GraphDBAccess, MQAccess, LogAccess, InfoType } from '@brian-agent/base';
+import { InfoCoreAccess, LLMCoreAccess, MCPCoreAccess, SkillCoreAccess, SoulCoreAccess, MQCoreAccess, SaveInfoInput, SaveInfoOutput, InfoCoreContext } from '@brian-agent/core';
 import { AgentLibraryAccess, AgentStrategyAccess, AgentBuilderAccess, AgentExecutionAccess, AgentContextAccess, WriterAgentAccess, EvolutorAgentAccess } from '@brian-agent/agent';
 
 const brianAppRoot = path.resolve(__dirname, '../../brian-backend/Application');
@@ -320,7 +320,53 @@ export function createE2ETestServer(ctx: E2ETestContext): http.Server {
 
       } else if (method === 'POST' && pathname === '/api/chat/send') {
 
-        sendJson(res, 501, { error: 'chat send 已迁移 Runtime v2（RunGateway），e2e 装配未覆盖，见 TR-对话页面' });
+        const sendSessionId = String(body.session_id || '');
+        const msgContent = String(body.msg_content ?? body.content ?? '');
+        if (!sendSessionId || !msgContent.trim()) {
+          sendJson(res, 500, { error: 'session_id 与 msg_content 不能为空' });
+          return;
+        }
+
+        // Runtime v2（RunGateway）未在 e2e 装配中覆盖，这里用 infoCore 模拟一次完整交互：
+        // 落一条 REQUEST + 一条 RESPONSE（引用的父消息仅透传，connectCitationEdges 会容忍不存在的父节点）
+        const parentInfoIds = Array.isArray(body.citing_msg_ids)
+          ? body.citing_msg_ids.map((x: unknown) => String(x)).filter(Boolean)
+          : [];
+        const workId = IdGenerator.generate();
+        const runId = IdGenerator.generate();
+
+        try {
+          const requestOut = new SaveInfoOutput();
+          await ctx.infoCore.saveInfo(
+            Object.assign(new SaveInfoInput(), {
+              session_id: sendSessionId,
+              work_id: workId,
+              run_id: runId,
+              info_type: InfoType.REQUEST,
+              info_creator_role: 'USER',
+              info: msgContent,
+              parent_info_ids: parentInfoIds,
+            }),
+            requestOut, new InfoCoreContext(),
+          );
+
+          const responseOut = new SaveInfoOutput();
+          await ctx.infoCore.saveInfo(
+            Object.assign(new SaveInfoInput(), {
+              session_id: sendSessionId,
+              work_id: workId,
+              run_id: runId,
+              info_type: InfoType.RESPONSE,
+              info_creator_role: 'ASSISTANT',
+              info: 'Mock LLM response for testing',
+            }),
+            responseOut, new InfoCoreContext(),
+          );
+
+          sendJson(res, 200, { work_id: workId, workId, msg_id: requestOut.info_id, msgId: requestOut.info_id });
+        } catch (err: any) {
+          sendJson(res, 500, { error: err?.message || 'chat send 模拟失败' });
+        }
 
       } else if (method === 'DELETE' && pathname === '/api/chat/session') {
 

@@ -24,6 +24,8 @@ export class SelfLearningSchemaInitializer {
       )
     `,
     'CREATE INDEX IF NOT EXISTS idx_sl_library_library_id ON self_learning_library(library_id)',
+    { sql: `ALTER TABLE self_learning_library ADD COLUMN "category" TEXT DEFAULT ''`, ignoreReason: '已存在 category 列时忽略' },
+    { sql: `ALTER TABLE self_learning_library ADD COLUMN "description" TEXT DEFAULT ''`, ignoreReason: '已存在 description 列时忽略' },
 
     `
       CREATE TABLE IF NOT EXISTS self_learning_file (

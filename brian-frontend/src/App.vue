@@ -14,6 +14,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <LoginPage v-if="!authStore.isLoggedIn" />
+  <div v-if="!authStore.authReady" class="min-h-screen bg-apple-gray-50 dark:bg-apple-dark-bg" />
+  <LoginPage v-else-if="!authStore.isLoggedIn" />
   <router-view v-else />
 </template>

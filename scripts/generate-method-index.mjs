@@ -1,12 +1,5 @@
 #!/usr/bin/env node
-/**
- * 方法索引生成器：解析 brian-backend 5 层全部 access 文件（TS AST），
- * 生成 docs/MethodIndex/ 下的分模块方法索引 Markdown。
- *
- * - 提取：模块名、access 类名、公开方法名、参数类型签名、返回类型、JSDoc 首行摘要
- * - 输出：docs/MethodIndex/README.md（总览）+ docs/MethodIndex/{layer}/{Module}.md
- * - 用法：node scripts/generate-method-index.mjs （或 npm run docs:index）
- */
+
 import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,11 +7,9 @@ import path from 'node:path';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BACKEND = path.join(ROOT, 'brian-backend');
 const OUT = path.join(ROOT, 'docs', 'MethodIndex');
-// 2026-09-07：Orchestration 层已随 V1 编排框架删除（b31f289），从层清单移除；
-// collectAccessFiles 对不存在的目录跳过（容错新增/删除层）
+
 const LAYERS = ['Base', 'Core', 'Runtime', 'Agent', 'Application'];
 
-/** 递归收集目录下的 access/*.ts */
 function collectAccessFiles(dir, out = []) {
   if (!fs.existsSync(dir)) return out;
   for (const f of fs.readdirSync(dir)) {
@@ -32,7 +23,6 @@ function collectAccessFiles(dir, out = []) {
   return out;
 }
 
-/** 提取一个 access 文件的方法信息 */
 function parseAccessFile(file) {
   const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
   const methods = [];
@@ -41,7 +31,7 @@ function parseAccessFile(file) {
     if (ts.isClassDeclaration(node) && node.name) className = node.name.text;
     if (ts.isMethodDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
       const name = node.name.text;
-      // 跳过构造/私有/生命周期
+      
       if (name === 'constructor' || node.modifiers?.some((m) => m.kind === ts.SyntaxKind.PrivateKeyword)) return;
       const sig = node.parameters
         .map((p) => {
@@ -51,7 +41,7 @@ function parseAccessFile(file) {
         })
         .join(', ');
       const ret = node.type ? node.type.getText(sf) : 'void';
-      // JSDoc 首行
+      
       const docs = ts.getJSDocCommentsAndTags(node);
       let summary = '';
       for (const d of docs) {
@@ -74,7 +64,7 @@ for (const layer of LAYERS) {
   const modules = {};
   for (const file of collectAccessFiles(layerDir)) {
     const rel = path.relative(layerDir, file);
-    const mod = rel.split(path.sep)[0]; // Provider/模块目录名
+    const mod = rel.split(path.sep)[0];
     const info = parseAccessFile(file);
     if (!info.methods.length) continue;
     (modules[mod] ??= []).push({ ...info, rel });
@@ -82,7 +72,6 @@ for (const layer of LAYERS) {
   layerData.push({ layer, modules });
 }
 
-// 输出
 fs.rmSync(OUT, { recursive: true, force: true });
 let totalMethods = 0;
 const toc = [];

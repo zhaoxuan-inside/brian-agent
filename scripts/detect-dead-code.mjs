@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// 检测残留的无标记注释死代码块：连续 >=6 行、形如代码的 // 注释（排除 ===== 标记与说明性文字）。
-// 用法：node scripts/detect-dead-code.mjs [minLines]
+
 import fs from 'node:fs';
 import path from 'node:path';
 

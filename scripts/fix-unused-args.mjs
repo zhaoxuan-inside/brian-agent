@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-/**
- * 未使用形参重命名 codemod：方法体未引用的 metrics/report/output/context/input 等形参
- * 统一改为 `_xxx`（并同步更新 JSDoc @param），消除 no-unused-vars。
- * 用法：node scripts/fix-unused-args.mjs <file-or-dir>...
- */
+
 import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,22 +25,22 @@ function fixFile(file) {
       node.parameters?.length &&
       node.body
     ) {
-      // 方法体文本（不含参数列表自身）
+      
       const bodyText = node.body.getText(sf);
       for (const param of node.parameters) {
         if (!ts.isIdentifier(param.name)) continue;
         const pname = param.name.text;
         if (!RENAMEABLE.has(pname)) continue;
-        // 跳过构造器参数属性（private/public/protected/readonly 修饰会生成 this.xxx）
+        
         if (param.modifiers?.length) continue;
         if (param.questionToken || param.type) {
-          // 可选参或带类型注解的参数，仅当全方法文本未引用时重命名
+          
           const re = new RegExp(`\\b${pname}\\b`);
           if (re.test(bodyText)) continue;
         } else continue;
         const start = param.getStart(sf);
         edits.push({ start, end: param.name.getEnd(), text: `_${pname}` });
-        // 同步 JSDoc @param
+        
         const jsdocs = ts.getJSDocCommentsAndTags(node);
         for (const d of jsdocs) {
           if (ts.isJSDoc(d) && d.comment) {

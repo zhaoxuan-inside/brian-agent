@@ -76,9 +76,6 @@ function navigate(routePath: string) {
       <button class="icon-btn" :title="i18nStore.t('header.lock')" :aria-label="i18nStore.t('header.lock')" @click="authStore.lock()">
         <Lock :size="16" />
       </button>
-      <button class="icon-btn" :title="i18nStore.t('header.user')" :aria-label="i18nStore.t('header.user')">
-        <User :size="18" />
-      </button>
     </div>
   </header>
 </template>

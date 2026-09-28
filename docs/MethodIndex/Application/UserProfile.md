@@ -9,8 +9,8 @@
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
 | `initialize` | `` | `Promise<void>` | — |
-| `startAutoGeneration` | `` | `Promise<void>` | 启动自动生成画像调度 |
-| `stopAutoGeneration` | `` | `Promise<void>` | 停止自动生成画像调度 |
+| `startAutoGeneration` | `` | `Promise<void>` | — |
+| `stopAutoGeneration` | `` | `Promise<void>` | — |
 | `configProfileDirection` | `i: ConfigProfileDirectionInput, o: ConfigProfileDirectionOutput, c: UserProfileContext,...` | `Promise<boolean>` | — |
 | `deleteProfileDirection` | `i: DeleteProfileDirectionInput, o: DeleteProfileDirectionOutput, c: UserProfileContext,...` | `Promise<boolean>` | — |
 | `soProfileDirection` | `i: GetProfileDirectionInput, o: GetProfileDirectionOutput, c: UserProfileContext, metri...` | `Promise<boolean>` | — |

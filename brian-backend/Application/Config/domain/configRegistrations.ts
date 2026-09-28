@@ -255,6 +255,10 @@ export const ALL_CONFIG_REGISTRATIONS: ConfigRegistration[] = [
   agent('agent_library', 'basic', 'prompt_template_id', 'Agent 匹配 Prompt', 'STRING', '', '第二层 LLM 匹配所用的 Prompt 模板 ID：大模型依据候选 Agent 的用途/名称对任务打分并选出最佳 Agent；留空使用内置默认提示词'),
   agent('agent_library', 'basic', 'max_agent_count', '最大 Agent 保留数量', 'INT', 100, 'Agent 库允许保留的最大启用数量：启用数量超过该值时自动触发老化淘汰（依据观察窗口内使用次数与评估分数禁用低活跃 Agent）'),
   agent('agent_library', 'basic', 'match_score_threshold', 'Agent 匹配采纳阈值（0-100）', 'INT', 70, 'Agent 匹配 LLM 打分采纳阈值（百分制）：命中分低于该值时走重建流程；同时控制"命中后重评估"路径的采纳判定'),
+  agent('agent_library', 'basic', 'match_bm25_threshold', 'Agent 匹配 BM25 粗筛阈值（0-100）', 'INT', 50, '候选 Agent BM25 文本相关度粗筛最低门槛（0-100），低于此阈值的 Agent 直接排除'),
+  agent('agent_library', 'basic', 'match_vector_threshold', 'Agent 匹配向量过滤阈值（0-100）', 'INT', 50, '候选 Agent 向量余弦相似度粗筛最低门槛（0-100），低于此阈值的 Agent 排除'),
+  agent('agent_library', 'basic', 'match_max_tokens', 'Agent 匹配最大 Tokens', 'INT', 512, 'Agent 匹配评估时 LLM 输出最大 Token 限制'),
+  agent('agent_library', 'basic', 'match_enable_thinking', 'Agent 匹配启用思考流', 'BOOLEAN', false, 'Agent 路由评估阶段是否启用思考流'),
 
   
   agent('agent_execution', 'basic', 'think_prompt_template_id', 'Think Prompt', 'STRING', '', 'Worker Think 阶段 Prompt 模板'),

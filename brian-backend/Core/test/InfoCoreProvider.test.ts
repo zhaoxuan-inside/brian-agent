@@ -78,6 +78,13 @@ import {
   RebuildCooccurGraphOutput,
   CleanOrphanGraphNodesInput,
   CleanOrphanGraphNodesOutput,
+  DelInfoByWorkInput,
+  DelInfoByWorkOutput,
+  DelInfoBySessionInput,
+  DelInfoBySessionOutput,
+  DIALOG_TABLE,
+  EXECUTE_TABLE,
+  CONTEXT_TABLE,
 } from '../InfoCoreProvider';
 import { ValidationError, NotFoundError } from '../shared/errors';
 
@@ -1088,6 +1095,76 @@ describe('InfoCoreProvider', () => {
         resetIn.priority_order = 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
         await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
       }
+    });
+
+    it('should recall historical context of selected messages as timeline candidates', async () => {
+      const sessionId = 'recall-hist-ctx-session';
+      const t1UserOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: 'work-1', info_type: 'REQUEST', info: 'Q1' }), t1UserOut, new InfoCoreContext());
+      const t1BotOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: 'work-1', info_type: 'RESPONSE', info: 'A1' }), t1BotOut, new InfoCoreContext());
+
+      const t2CtxOut = new ContextInfoOutput();
+      const t2CtxIn = new ContextInfoInput();
+      t2CtxIn.session_id = sessionId;
+      t2CtxIn.work_id = 'work-2';
+      await infoCore.context(t2CtxIn, t2CtxOut, new InfoCoreContext());
+
+      const t2UserOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: 'work-2', info_type: 'REQUEST', info: 'Q2' }), t2UserOut, new InfoCoreContext());
+      const t2BotOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: 'work-2', info_type: 'RESPONSE', info: 'A2' }), t2BotOut, new InfoCoreContext());
+
+      const t3CtxIn = new ContextInfoInput();
+      t3CtxIn.session_id = sessionId;
+      t3CtxIn.work_id = 'work-3';
+      t3CtxIn.selected_msg_ids = [t2BotOut.info_id];
+      const t3CtxOut = new ContextInfoOutput();
+      await infoCore.context(t3CtxIn, t3CtxOut, new InfoCoreContext());
+
+      const citingIds = t3CtxOut.categories?.citing.map((m) => m.info_id) ?? [];
+      const timelineIds = t3CtxOut.categories?.timeline.map((m) => m.info_id) ?? [];
+
+      expect(citingIds).toContain(t2BotOut.info_id);
+      expect(timelineIds.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should split storage across dialog and execute tables and cascade delete', async () => {
+      const sessionId = 'three-table-test-session';
+      const workId = 'three-table-work-1';
+
+      const reqOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: workId, info_type: 'REQUEST', info: 'User Question' }), reqOut, new InfoCoreContext());
+
+      const actOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: workId, info_type: 'ACT', info: 'Agent Tool Call' }), actOut, new InfoCoreContext());
+
+      const dialogRows = await relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+      });
+      expect(dialogRows.length).toBe(1);
+      expect(dialogRows[0]['type']).toBe('REQUEST');
+      expect(dialogRows[0]['dialog']).toBe('User Question');
+
+      const execRows = await relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+      });
+      expect(execRows.length).toBe(1);
+      expect(execRows[0]['output']).toBe('Agent Tool Call');
+
+      const delWorkIn = new DelInfoByWorkInput();
+      delWorkIn.work_id = workId;
+      await infoCore.delInfoByWork(delWorkIn, new DelInfoByWorkOutput(), new InfoCoreContext());
+
+      const dialogAfterDel = await relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'work_id', operator: Operator.EQ, value: workId }],
+      });
+      expect(dialogAfterDel.length).toBe(0);
+
+      const execAfterDel = await relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'work_id', operator: Operator.EQ, value: workId }],
+      });
+      expect(execAfterDel.length).toBe(0);
     });
   });
 

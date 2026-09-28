@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
-import { answerPermission, answerUserAsk } from '@/api'
+import { answerPermission, answerUserAsk, authTokenHeader } from '@/api'
 import type { AskUserCardData, Block, ChatMessage } from '@/api/types'
 import { readSSE } from './useSSE'
 import { createChatStreamEventHandler } from './chatStreamEvents'
@@ -24,8 +24,6 @@ export function useChatStream() {
   const chatUi = useChatUiStore()
   const streamHandler = createChatStreamEventHandler(sessionStore, chatUi)
 
-  const confirmingIntent = ref(false)
-
   const permitting = ref(false)
 
   const answeringAsk = ref(false)
@@ -45,6 +43,7 @@ export function useChatStream() {
   }
 
   async function runSseInteraction(opts: SseInteractionOptions) {
+    chatUi.beginRunScope(opts.botMsgId)
     sessionStore.setStreaming(true)
     chatUi.resetPlanning()
     chatUi.resetAgentStatus()
@@ -57,6 +56,7 @@ export function useChatStream() {
         headers: {
           'Content-Type': 'application/json',
           [TRACE_ID_HEADER]: newTraceId(),
+          ...authTokenHeader(),
         },
         body: JSON.stringify(opts.body),
         signal: abortCtrl.signal,
@@ -106,10 +106,24 @@ export function useChatStream() {
       content,
       timestamp: Date.now(),
       citingIds: combinedCitingIds,
+      citedInfoIds: combinedCitingIds,
+      citedCount: combinedCitingIds.length,
     }
     sessionStore.addMessage(userMsg)
 
+    for (const cid of combinedCitingIds) {
+      const target = sessionStore.messages.find((m) => m.id === cid)
+      if (target) {
+        const nextCiting = Array.from(new Set([...(target.citingInfoIds ?? []), userMsg.id]))
+        sessionStore.updateMessage(cid, {
+          citingInfoIds: nextCiting,
+          citingCount: nextCiting.length,
+        })
+      }
+    }
+
     streamHandler.reset(true)
+    chatUi.resetRunScope()
 
     await runSseInteraction({
       url: '/api/chat/stream',
@@ -118,40 +132,13 @@ export function useChatStream() {
         msg_content: content,
         citing_msg_ids: combinedCitingIds,
         selected_msg_ids: selectedMsgIds,
+        pinned_msg_ids: Array.from(sessionStore.pinnedMsgIds),
       },
       botMsgId: `msg-${Date.now()}-bot`,
       errorCode: 'STREAM_ERROR',
       retryAvailable: true,
       autoCloseThinkingOnError: true,
     })
-  }
-
-  async function handleIntentConfirm(action: 'APPROVE' | 'KEEP' | 'CANCEL') {
-    const conf = chatUi.intentConfirmation
-    if (!conf || confirmingIntent.value) return
-    confirmingIntent.value = true
-
-    chatUi.clearIntentConfirmation()
-    streamHandler.reset()
-
-    try {
-      await runSseInteraction({
-        url: '/api/chat/confirm-intent',
-        body: {
-          session_id: conf.session_id,
-          work_id: conf.work_id,
-          action,
-          understood_requirement: action === 'APPROVE' ? conf.understood_requirement : undefined,
-        },
-        botMsgId: `msg-${Date.now()}-confirm`,
-        errorCode: 'CONFIRM_INTENT_FAILED',
-        retryAvailable: false,
-      })
-
-      if (action === 'CANCEL') sessionStore.removeUserMessageByContent(conf.original_query)
-    } finally {
-      confirmingIntent.value = false
-    }
   }
 
   async function handlePermissionConfirm(permission: ChatMessage['permission'], approved: boolean, remember = false) {
@@ -187,11 +174,9 @@ export function useChatStream() {
   }
 
   return {
-    confirmingIntent,
     permitting,
     answeringAsk,
     handleSend,
-    handleIntentConfirm,
     handlePermissionConfirm,
     handleAskUserAnswer,
   }

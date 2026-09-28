@@ -5,7 +5,8 @@ export function renderMarkdown(content: string): string {
   const raw = content || ''
   if (!raw.trim()) return ''
   try {
-    return DOMPurify.sanitize(marked.parse(raw) as string)
+    const html = marked.parse(raw) as string
+    return typeof DOMPurify?.sanitize === 'function' ? DOMPurify.sanitize(html) : html
   } catch {
     return raw
   }

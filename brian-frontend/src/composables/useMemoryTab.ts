@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { memoryApi } from '../api'
 import type { MemoryItem } from '../api/types'
 import {
@@ -6,6 +7,7 @@ import {
 } from '../utils/heatmap'
 
 export function useMemoryTab() {
+  const router = useRouter()
   const memorySearchTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const memories = ref<MemoryItem[]>([])
 const loadingMemory = ref(false)
@@ -49,6 +51,11 @@ function requestMemoryDelete(id?: string) {
   memoryDeleteConfirm.value = id ? { type: 'single', id } : { type: 'batch' }
 }
 
+function jumpToConversation(memory: MemoryItem) {
+  if (!memory.sessionId) return
+  router.push({ path: '/chat', query: { session: memory.sessionId, focus: memory.id } })
+}
+
 async function confirmMemoryDelete() {
   if (!memoryDeleteConfirm.value) return
   const { type, id } = memoryDeleteConfirm.value
@@ -86,7 +93,9 @@ async function loadMemory(reset = true) {
     hasMoreMemory.value = data.has_more
     nextMemoryCursor.value = data.next_cursor
   }
-  catch {  }
+  catch (err) {
+    console.error('[MemoryTab] 加载记忆失败', err)
+  }
   finally {
     if (reset) loadingMemory.value = false
     else loadingMoreMemory.value = false
@@ -341,6 +350,7 @@ function clickHeatmapDay(day: number | null) {
     heatmapMonth,
     heatmapYear,
     isCurrentHeatmapMonth,
+    jumpToConversation,
     loadAllDateCounts,
     loadMemory,
     loadMoreMemory,

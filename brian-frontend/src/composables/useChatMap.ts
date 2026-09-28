@@ -250,20 +250,62 @@ export function useChatMap() {
     }
   }
 
-  
-  watch(() => sessionStore.centerInfoId, async (id) => {
-    if (!id) return
-    activeNodeId.value = id
-    activeEdgeId.value = null
-    const node = nodeMap.value.get(id)
-    if (!node || !containerRef.value) return
-    await nextTick()
+  function centerOnNode(node: ChatMapNode) {
+    if (!containerRef.value) return
     const cw = containerRef.value.clientWidth
     const ch = containerRef.value.clientHeight
     offset.value = {
       x: -(node.x + NODE_W / 2) * scale.value + cw / 2,
       y: -(node.y + NODE_H / 2) * scale.value + ch / 2,
     }
+  }
+
+  
+  const didCenterLatest = ref(false)
+
+  watch(() => sessionStore.currentSessionId, () => {
+    scale.value = 1
+    offset.value = { x: 40, y: 40 }
+    didCenterLatest.value = false
+  })
+
+  watch(nodes, async (list) => {
+    if (list.length === 0 || didCenterLatest.value) return
+    didCenterLatest.value = true
+    await nextTick()
+    const last = list[list.length - 1]
+    if (last) centerOnNode(last)
+  }, { immediate: true })
+
+  watch(() => sessionStore.centerInfoId, async (id) => {
+    if (!id) return
+    sessionStore.centerInfoId = null
+    activeNodeId.value = id
+    activeEdgeId.value = null
+    const node = nodeMap.value.get(id)
+    if (!node) return
+    await nextTick()
+    centerOnNode(node)
+  })
+
+  watch(() => sessionStore.followInfoId, (id) => {
+    if (!id) return
+    const node = nodeMap.value.get(id)
+    if (!node || !containerRef.value) return
+    const cw = containerRef.value.clientWidth
+    const ch = containerRef.value.clientHeight
+    const viewX = -offset.value.x / scale.value
+    const viewY = -offset.value.y / scale.value
+    const viewW = cw / scale.value
+    const viewH = ch / scale.value
+    const pad = 48
+    const visible =
+      node.x >= viewX + pad &&
+      node.y >= viewY + pad &&
+      node.x + NODE_W <= viewX + viewW - pad &&
+      node.y + NODE_H <= viewY + viewH - pad
+    if (visible) return
+    centerOnNode(node)
   })
 
   return {

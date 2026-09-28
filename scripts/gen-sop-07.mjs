@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * gen-sop-07.mjs —— 将 docs/method.idx.json 转换为 SOP _07 分片方法索引
- * 分片规则(_03_tech_stack/ADR 与 references/team-scale.md):_07/<layer>-<module>.idx.json + _07/_index.json
+ * gen-sop-07.mjs —— 将 docs/method.idx.json 转换为 SOP _07_method_idx 分片方法索引
+ * 分片规则(_03_tech_stack/ADR 与 references/team-scale.md):_07_method_idx/<layer>-<module>.idx.json + _07_method_idx/_index.json
  * id 规则:m-<module-slug>-<seq>,序号在分片内自增
  * 分类映射:逻辑控制→orchestration,数据处理→data,通用算法→algorithm
  */
@@ -10,11 +10,11 @@ import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = path.join(ROOT, 'docs', 'method.idx.json');
-const OUT = path.join(ROOT, '_07');
+const OUT = path.join(ROOT, '_07_method_idx');
 
 const CATEGORY = { 逻辑控制: 'orchestration', 数据处理: 'data', 通用算法: 'algorithm' };
 const slug = (s) => s.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase();
-// frontend-spec:UI 组件与视图不入 _07(组件在 _00.code.modules 登记);hooks/api/utils 为逻辑单元,登记
+// frontend-spec:UI 组件与视图不入 _07_method_idx(组件在 _00.code.modules 登记);hooks/api/utils 为逻辑单元,登记
 const EXCLUDE_SHARDS = new Set(['frontend-components', 'frontend-views']);
 
 const idx = JSON.parse(fs.readFileSync(SRC, 'utf8'));

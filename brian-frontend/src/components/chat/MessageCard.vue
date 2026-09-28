@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useI18nStore } from '@/stores/i18n'
 import { ref, computed } from 'vue'
-import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, Star } from '@lucide/vue'
+import { Pin, PinOff, ChevronDown, CornerUpRight, AlertCircle, Copy, Check, Brain, Gauge, Star, BookMarked, Loader2 } from '@lucide/vue'
 import { copyToClipboard } from '@/utils/clipboard'
+import { saveMarkdownFile, isUserCancelled } from '@/utils/fileSave'
 import { renderMarkdown } from '@/utils/markdown'
 import { useChatUiStore } from '@/stores/chatUi'
 import { formatTime as sharedFormatTime } from '../../utils/format'
@@ -124,7 +125,8 @@ const effectiveCitedCount = computed(() => {
 })
 
 const effectiveCitingCount = computed(() => {
-  return props.citingCount ?? props.citingInfoIds?.length ?? 0
+  if (props.citingCount && props.citingCount > 0) return props.citingCount
+  return props.citingInfoIds?.length ?? 0
 })
 
 function formatTime(ts: number) {
@@ -183,6 +185,33 @@ async function copyTraceId() {
     setTimeout(() => { copied.value = false }, 1500)
   }
 }
+
+const saveState = ref<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+let saveStateTimer: ReturnType<typeof setTimeout> | null = null
+
+async function handleSaveToLibrary() {
+  if (!props.content || saveState.value === 'saving') return
+  saveState.value = 'saving'
+  try {
+    await saveMarkdownFile(props.content)
+    saveState.value = 'saved'
+  } catch (err) {
+    if (isUserCancelled(err)) {
+      saveState.value = 'idle'
+      return
+    }
+    console.error('[MessageCard] save to library failed:', err)
+    saveState.value = 'failed'
+  } finally {
+    if (saveState.value === 'saved' || saveState.value === 'failed') {
+      if (saveStateTimer) clearTimeout(saveStateTimer)
+      saveStateTimer = setTimeout(() => {
+        saveState.value = 'idle'
+        saveStateTimer = null
+      }, 2000)
+    }
+  }
+}
 </script>
 
 <template>
@@ -209,6 +238,23 @@ async function copyTraceId() {
 
       <div class="flex items-center gap-1.5">
         <AlertCircle v-if="isError" :size="12" class="text-error-red flex-shrink-0" title="执行出错" />
+
+        <button
+          class="p-0.5 rounded transition-colors flex-shrink-0"
+          :class="saveState === 'saved'
+            ? 'text-success-green'
+            : saveState === 'failed'
+              ? 'text-error-red'
+              : 'text-apple-gray-400 hover:text-brian-blue'"
+          :title="i18nStore.t('chat.saveToLibrary')"
+          :disabled="saveState === 'saving'"
+          @click.stop="handleSaveToLibrary"
+        >
+          <Loader2 v-if="saveState === 'saving'" :size="12" class="animate-spin" />
+          <Check v-else-if="saveState === 'saved'" :size="12" />
+          <AlertCircle v-else-if="saveState === 'failed'" :size="12" />
+          <BookMarked v-else :size="12" />
+        </button>
 
         <label class="flex items-center cursor-pointer" title="勾选以指定本次问答上下文" @click.stop>
           <input

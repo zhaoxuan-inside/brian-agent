@@ -1,7 +1,7 @@
 # 01 功能矩阵与任务卡(_05_function_design)
 
 > 状态:confirmed　更新:2026-09-26
-> 范围:本次需求 R2(前端人性化改造)与 R3(后端重构治理)的任务卡;存量功能矩阵以 _04 模块职责表 + _07 方法索引(2529 方法)为准,不在此重复。
+> 范围:本次需求 R2(前端人性化改造)与 R3(后端重构治理)的任务卡;存量功能矩阵以 _04 模块职责表 + _07_method_idx 方法索引(2529 方法)为准,不在此重复。
 
 ## 1. 功能矩阵(本次需求相关)
 
@@ -88,8 +88,8 @@
 
 ### T-B04(后续)全量方法索引工具补全
 - 文件:`scripts/generate-method-index.mjs`、`scripts/gen-sop-07.mjs`
-- 产出:补全覆盖全部 2942+ 方法的全量扫描器(当前 docs:index 仅覆盖 Access 层 505 方法;docs/method.idx.json 为 2026-09-26 10:37 快照),并重跑 gen-sop-07 刷新 _07 分片(重构新增的私有方法入库)
-- 验收:`node scripts/gen-sop-07.mjs` 后 _07 分片与代码 grep 抽查一致
+- 产出:补全覆盖全部 2942+ 方法的全量扫描器(当前 docs:index 仅覆盖 Access 层 505 方法;docs/method.idx.json 为 2026-09-26 10:37 快照),并重跑 gen-sop-07 刷新 _07_method_idx 分片(重构新增的私有方法入库)
+- 验收:`node scripts/gen-sop-07.mjs` 后 _07_method_idx 分片与代码 grep 抽查一致
 - 预估:40 分钟
 
 ### T-F13 i18n 补全(用户选 B:保留语言按钮;分期)
@@ -146,11 +146,75 @@
   5. 总字符数：展示提问与回答总字符数 `formatTokens(item.questionChars + item.answerChars)`；
   6. 标签展示：默认渲染前 4 个标签徽章；超出 4 个时渲染 `+N 更多` 按钮，点击弹出标签浮层；
   7. 删除按钮：确认后级联删除；
-  8. 点击跳转：点击卡片主体进入 `/?session=${sessionId}`，各操作按钮使用 `@click.stop` 阻断冒泡。
+  8. 点击跳转：点击卡片主体进入 `/chat?session=${sessionId}`，各操作按钮使用 `@click.stop` 阻断冒泡。
 - 验收: `npm run build` 通过；Vue 模板类型检查 0 错；单测全绿。
 - 状态: **已完成 (commit 6d69238)**
 
-## 5. 里程碑
+## 5. 任务卡 — R6 LLM 选型隔离与 Agent 级联匹配优化
+
+### T-B10 LLMCore 模型类型隔离与非抛错健壮性重构
+- 文件: `brian-backend/Core/LLMCoreProvider/domain/types.ts`、`brian-backend/Core/LLMCoreProvider/application/LLMCoreService.ts`
+- 产出:
+  1. `MatchLLMInput` 支持 `llm_type?: 'text' | 'embedding'`。
+  2. `matchLLM` 支持类型过滤。无模型或缺失参数时不抛出异常，设 `output.error` / `output.error_code` 并返回 `false`。
+  3. 过滤后单一可用模型直接命中返回，免调 LLM 裁判。
+  4. 拆分私有辅助方法 `soAvailableLLMsByType`、`checkCachedLLM`、`fillSingleLLM`、`rankMultipleLLMs`，均严格 ≤30 行。
+- 验收: `npm test -w @brian-agent/core` 通过，20/20 单测全绿。
+
+### T-B11 BM25 纯算法粗筛模块
+- 文件: `brian-backend/Runtime/Agents/application/bm25.ts`、`brian-backend/Runtime/test/bm25.test.ts`
+- 产出:
+  1. 支持中英文混合分词、CJK bi-gram、BM25 打分与 0-100 归一化。
+  2. 纯计算无 I/O，符合算法类方法签名与无副作用规范。
+- 验收: 单测验证相关性打分与无匹配情况，全量测试通过。
+
+### T-B12 Agent 级联三级匹配与候选瘦身
+- 文件: `brian-backend/Runtime/Agents/application/AgentDefService.ts`、`brian-backend/Runtime/test/AgentDefVectorMatch.test.ts`
+- 产出:
+  1. Stage 1: BM25 粗筛（阈值默认 50），无候选即短路新建 Agent。
+  2. Stage 2: 向量过滤（阈值默认 50，高置信度 ≥85 直接采纳）。
+  3. Stage 3: LLM 语义精确裁判。
+  4. 候选 Profile 极大瘦身：仅传递 `agent_id` + `agent_name` + `description`，彻底剥离 Skill/MCP 组件，杜绝 Prompt 膨胀。
+  5. 快速路由阶段禁用思维链（`thinking: { type: 'disabled' }`）并限制 `max_tokens`（默认 512）。
+  6. 全面接入配置中心（`match_bm25_threshold`, `match_vector_threshold`, `match_max_tokens`, `match_enable_thinking`）。
+  7. 全量方法消除抛错，统一通过 `output.error` / `output.error_code` 返回 `false`，方法体 ≤30 行。
+- 验收: `npm test -w @brian-agent/runtime` 8/8 通过，66/66 单测全绿。
+
+### T-R6-01 存储层三表 DDL 与兼容迁移
+- 文件: `brian-backend/Core/InfoCoreProvider/infrastructure/InfoCoreSchemaInitializer.ts`、`brian-backend/Core/InfoCoreProvider/domain/types.ts`
+- 产出:
+  1. 新增 `dialog` 表（纯净问答实体，包含 id, session_id, work_id, type, dialog, dialog_length, dialog_brief, trace_id, created, updated）。
+  2. 新增 `execute` 表（组件级执行轨迹，包含 agent_id, exec_no, component_id, component_type, input, input_length, output, output_length, gap 等）。
+  3. 新增 `context` 表（仅关联 dialog 表，包含 id, session_id, work_id, dialog_id, type, created, updated）。
+  4. 建立高性能索引，并提供 `info_raw` 视图保证存量只读兼容。
+  5. 提供从 `info_raw` 和 `info_context_source` 到新三表的幂等数据迁移。
+- 验收: 单测验证建表与视图查询正常。
+
+### T-R6-02 InfoCore 与 ChatService 读写分流重构
+- 文件: `brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts`、`brian-backend/Application/Chat/application/ChatService.ts`
+- 产出:
+  1. `saveInfo`: REQUEST/RESPONSE 写入 `dialog` 表；其他中间执行或工具步骤写入 `execute` 表。
+  2. `soChatHistory` 与会话统计: 直接查询 `dialog` 表，彻底摆脱中间执行大 JSON 扫描，加载提速 5~10 倍。
+  3. `persistContextSourceMap` 与 `soContextByWork`: 对接 `context` 表的 `dialog_id` 关系映射。
+- 验收: `npm test -w @brian-agent/core` 与 `@brian-agent/application` 通过。
+
+### T-R6-03 复选框上下文历史时序回溯
+- 文件: `brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts`
+- 产出:
+  1. 改造 `collectSelectedOrTimelineCandidates`: 当提供 `selected_msg_ids` 时，除作为 `citingCandidates` 之外，提取选中消息的 `work_id`。
+  2. 查 `context` 表获取该 `work_id` 历史所使用的上下文 `dialog_id`。
+  3. 批量查 `dialog` 表按 `created ASC` 排序回填入 `timelineCandidates`。
+  4. 支持前端传入 `pinned_msg_ids` 作为置顶上下文快照。
+- 验收: 单元测试验证复选消息时 timelineCandidates 成功包含历史上下文。
+
+### T-R6-04 前端 Pin 与复选会话级内存化
+- 文件: `brian-frontend/src/stores/session.ts`、`brian-frontend/src/composables/useChatStream.ts`
+- 产出:
+  1. Pin 与复选状态统一为前端 Store 内存维护，页面刷新后自然重置失效。
+  2. 提问时同时附带 `selected_msg_ids` 与 `pinned_msg_ids`。
+- 验收: 前端构建通过，提问链路正常。
+
+## 6. 里程碑
 
 | 里程碑 | 包含任务 | 完成标志 | 状态 |
 |---|---|---|---|
@@ -160,4 +224,8 @@
 | M4 后端治理 | T-B01~B03 | typecheck+test 绿;offender 下降 | 已完成 |
 | M5 收敛验收 | P8 清单 | 证据留存;_10 置 verified;提示人工测试 | 已完成 |
 | M6 历史卡片与图谱治理 | T-B05~B08, T-F09 | 后端单测全绿、前端构建全绿、图安全与全量Token验证通过 | **已完成** |
+| M7 级联匹配与选型优化 | T-B10~B12 | Core/Runtime/Agent 全量单测与构建通过，零抛错与方法≤30行达标 | **已完成** |
+| M8 三表重构与上下文回溯 | T-R6-01~R6-04 | 消息三表重构完成、复选时序回溯生效、全量单测通过 | **进行中** |
+
+
 

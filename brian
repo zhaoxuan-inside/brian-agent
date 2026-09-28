@@ -116,6 +116,9 @@ start_backend() {
     return
   fi
 
+  fuser -k "$BACKEND_PORT/tcp" 2>/dev/null || true
+  sleep 0.5
+
   log "启动后端..."
   if [ ! -d "$BACKEND_DIR" ]; then
     fail "后端目录不存在: $BACKEND_DIR"
@@ -175,13 +178,14 @@ start_frontend() {
 # ---------------------------------------------------------------------------
 stop_backend() {
   local pid=$(backend_pid)
-  if [ -n "$pid" ]; then
-    log "停止后端 (PID $pid)..."
-    kill "$pid" 2>/dev/null || true
-    sleep 2
-    # 强制杀掉残留
-    kill -9 "$pid" 2>/dev/null || true
+  if [ -n "$pid" ] || fuser "$BACKEND_PORT/tcp" >/dev/null 2>&1; then
+    log "停止后端 (PID ${pid:-端口 $BACKEND_PORT})..."
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    sleep 1
+    # 强制杀掉残留与端口占用
+    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
     pkill -f "tsx.*dev-server" 2>/dev/null || true
+    fuser -k "$BACKEND_PORT/tcp" 2>/dev/null || true
     rm -f "$BACKEND_PID_FILE"
     ok "后端已停止"
   else
@@ -194,11 +198,13 @@ stop_backend() {
 # ---------------------------------------------------------------------------
 stop_frontend() {
   local pid=$(frontend_pid)
-  if [ -n "$pid" ]; then
-    log "停止前端 (PID $pid)..."
-    kill "$pid" 2>/dev/null || true
+  if [ -n "$pid" ] || fuser "$FRONTEND_PORT/tcp" >/dev/null 2>&1; then
+    log "停止前端 (PID ${pid:-端口 $FRONTEND_PORT})..."
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     sleep 1
-    kill -9 "$pid" 2>/dev/null || true
+    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+    pkill -f "node.*vite" 2>/dev/null || true
+    fuser -k "$FRONTEND_PORT/tcp" 2>/dev/null || true
     rm -f "$FRONTEND_PID_FILE"
     ok "前端已停止"
   else

@@ -18,6 +18,15 @@
   --brian-tooltip-bg: rgba(0, 0, 0, 0.78);
   --brian-tooltip-ink: #ffffff;
   --brian-accent-ring: rgba(0, 122, 255, 0.55);
+  /* 关系图谱(涌现/关键词图):SVG 里 Tailwind class 够不到的图元配色 */
+  --brian-graph-edge: #6E6E73;          /* 连线基色 = 次级灰,透明度按 weight 叠加 */
+  --brian-graph-node-s: 72%;            /* 节点饱和度 */
+  --brian-graph-node-l: 50%;            /* 节点亮度 */
+  --brian-graph-node-ring: #FBFBFD;     /* 节点描边环 = 舞台底色,造"挖空"分离感 */
+  --brian-graph-label: #48484A;         /* 节点标签文字 */
+  --brian-graph-stage-bg: #FBFBFD;      /* 图舞台底色 */
+  --brian-graph-stage-hi: rgba(0, 122, 255, 0.04);  /* 舞台顶部强调微光 */
+  --brian-graph-dot: rgba(60, 60, 67, 0.08);        /* 舞台点阵 */
 }
 .dark {
   --brian-accent: #4DA3FF;
@@ -30,6 +39,14 @@
   --brian-ink-2: #98989F;
   --brian-tooltip-bg: rgba(58, 58, 60, 0.95);
   --brian-accent-ring: rgba(77, 163, 255, 0.6);
+  --brian-graph-edge: #98989F;
+  --brian-graph-node-s: 64%;
+  --brian-graph-node-l: 60%;
+  --brian-graph-node-ring: #151517;
+  --brian-graph-label: #C7C7CC;
+  --brian-graph-stage-bg: #151517;
+  --brian-graph-stage-hi: rgba(77, 163, 255, 0.055);
+  --brian-graph-dot: rgba(255, 255, 255, 0.065);
 }
 
 @layer base {
@@ -86,6 +103,23 @@
   }
   .block-card {
     @apply bg-white dark:bg-apple-gray-800 rounded-2xl shadow-sm border border-apple-gray-200 dark:border-apple-gray-700;
+  }
+  /* 关系图谱舞台(Obsidian/Figma 式画布):主题感知底色 + 细点阵,
+     把力导向图与页面动态粒子背景隔离开 */
+  .graph-stage {
+    background-color: var(--brian-graph-stage-bg);
+    background-image:
+      radial-gradient(var(--brian-graph-dot) 1px, transparent 1.5px),
+      radial-gradient(ellipse 90% 70% at 50% 0%, var(--brian-graph-stage-hi), transparent 70%);
+    background-size: 22px 22px, 100% 100%;
+  }
+  /* 节点标签:底色描边晕(paint-order: stroke),压在连线上仍可读 */
+  .graph-label {
+    paint-order: stroke;
+    stroke: var(--brian-graph-stage-bg);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+    font-weight: 500;
   }
   .hover-lift {
     @apply transition-shadow duration-200 hover:shadow-lift dark:hover:shadow-lift-dark;

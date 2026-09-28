@@ -5,6 +5,7 @@ import type { ErrorBlock } from '@/api/types'
 import { copyToClipboard } from '@/utils/clipboard'
 
 const props = defineProps<{ block: ErrorBlock }>()
+const emit = defineEmits<{ retry: [] }>()
 const copied = ref(false)
 
 async function copyTraceId() {
@@ -37,6 +38,7 @@ async function copyTraceId() {
         <button
           v-if="block.retryAvailable"
           class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-error-red hover:bg-error-red/10 rounded-lg transition-colors flex-shrink-0"
+          @click="emit('retry')"
         >
           <RefreshCw :size="12" />
           重试

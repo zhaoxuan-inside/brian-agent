@@ -719,6 +719,66 @@ describe('ChatService', () => {
       expect(searchOut2.sessions[0].question_chars).toBe(10);
       expect(searchOut2.sessions[0].answer_chars).toBe(8);
     });
+
+    it('TC-CHAT-069c: qa_count and last_message prioritize dialog table', async () => {
+      const createOut = new CreateSessionOutput();
+      await service.createSession(
+        Object.assign(new CreateSessionInput(), { session_title: 'Dialog Table Test' }),
+        createOut, new ChatContext(),
+      );
+      const sid = createOut.session_id;
+
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'dialog',
+          data: [
+            { field: 'id', value: 'dlg-1' },
+            { field: 'created', value: 1700000000010 },
+            { field: 'updated', value: 1700000000010 },
+            { field: 'session_id', value: sid },
+            { field: 'work_id', value: 'work-dlg-1' },
+            { field: 'type', value: 'REQUEST' },
+            { field: 'dialog', value: 'Question from dialog table' },
+            { field: 'dialog_length', value: 26 },
+            { field: 'dialog_brief', value: '' },
+            { field: 'trace_id', value: 't-1' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'dialog',
+          data: [
+            { field: 'id', value: 'dlg-2' },
+            { field: 'created', value: 1700000000020 },
+            { field: 'updated', value: 1700000000020 },
+            { field: 'session_id', value: sid },
+            { field: 'work_id', value: 'work-dlg-1' },
+            { field: 'type', value: 'RESPONSE' },
+            { field: 'dialog', value: 'Answer from dialog table' },
+            { field: 'dialog_length', value: 24 },
+            { field: 'dialog_brief', value: '' },
+            { field: 'trace_id', value: 't-1' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      const searchIn = Object.assign(new SearchSessionInput(), { keyword: 'Dialog Table Test' });
+      const searchOut = new SearchSessionOutput();
+      await service.soSession(searchIn, searchOut, new ChatContext());
+
+      expect(searchOut.sessions.length).toBe(1);
+      const s = searchOut.sessions[0];
+      expect(s.qa_count).toBe(1);
+      expect(s.question_chars).toBe(26);
+      expect(s.answer_chars).toBe(24);
+      expect(s.last_message).toBe('Answer from dialog table');
+    });
   });
 
   describe('soSessionDetail', () => {

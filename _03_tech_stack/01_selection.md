@@ -52,3 +52,6 @@
 | ADR-006 | Tool 领域概念移除,Skill 一等工具承接 | accepted |
 | ADR-007 | 全后端统一五参签名 + AopProxy AOP | accepted |
 | ADR-008 | 前端设计令牌体系(本次 R2 改造) | accepted |
+| ADR-009 | 全量 Token 计量与图数据弱关联治理(本次 R5) | accepted |
+| ADR-010 | 消息三表重构(dialog/execute/context)与复选框上下文时序回溯(本次 R6) | accepted |
+

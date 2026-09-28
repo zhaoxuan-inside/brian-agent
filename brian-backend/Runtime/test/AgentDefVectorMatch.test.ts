@@ -41,7 +41,7 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
 
     relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
       '22222222-3333-4444-5555-666666666666', 1, 1, 'Agent 匹配评估', 'Agent 匹配评估提示词',
-      '评估候选 Agent 与任务的匹配度（能力感知：任务所需能力 vs candidates[].capabilities）。输出 JSON: {"score": 90, "reason": "匹配", "agent_id": "选中者"}。\n\n任务：{{task_content}}\n\n候选：{{candidates}}', 1, 1
+      '评估候选 Agent 与任务的匹配度。输出 JSON: {"score": 90, "reason": "匹配", "agent_id": "选中者"}。\n\n任务：{{task_content}}\n\n候选：{{candidates}}', 1, 1
     )`);
 
     relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_library_config (
@@ -60,7 +60,8 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
     embedLLMMock = vi.fn(async (input: EmbedLLMInput, output: EmbedLLMOutput) => {
       void input;
       const text = String(input.input ?? '');
-      output.embedding = text.includes('出行') ? [1, 0, 0]
+      output.embedding = text.includes('中置信出行') ? [0.707, 0.707, 0]
+        : text.includes('出行') ? [1, 0, 0]
         : text.includes('行情') ? [0, 1, 0]
         : [0, 0, 1];
       return true;
@@ -97,19 +98,21 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
   }
 
   it('向量置信度达标：直接采纳向量层，跳过 LLM 语义裁判', async () => {
-
     const result = await match('周末帮我推荐几个适合出行的城市散步路线');
     expect(result.matched_by).toBe('vector');
     expect(result.def_id).toBe('def-travel');
-
     expect(execLLMMock).not.toHaveBeenCalled();
   });
 
-  it('向量置信度不足：回退 LLM 语义裁判', async () => {
-
+  it('BM25 粗筛无候选达标：直接短路跳过向量与 LLM，走新建 Agent 流程', async () => {
     const result = await match('量子计算机的纠错编码基本原理是什么');
-    expect(result.matched_by).toBe('llm');
+    expect(result.matched_by).toBe('built');
+    expect(execLLMMock).not.toHaveBeenCalled();
+  });
 
+  it('向量置信度不足（仅达过滤阈值未达采纳阈值）：回退 LLM 语义裁判', async () => {
+    const result = await match('中置信出行散步休闲路线规划');
+    expect(result.matched_by).toBe('llm');
     expect(result.def_id).toBe('def-travel');
     expect(execLLMMock).toHaveBeenCalledTimes(1);
   });
@@ -124,19 +127,19 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
     expect(execLLMMock).toHaveBeenCalledTimes(1);
   });
 
-  it('LLM 裁判候选注入能力面（capabilities.bound_count/skills，判据从字面相似升级为能力核对）', async () => {
+  it('LLM 裁判候选 Profile 瘦身（仅包含 agent_id, agent_name, description，彻底剥离 capabilities/skills）', async () => {
+    embedLLMMock.mockImplementation(async (_input: EmbedLLMInput, output: EmbedLLMOutput) => {
+      output.embedding = [];
+      return false;
+    });
 
-    relationDb.executeRaw(`UPDATE agent SET skill_ids_json = '["11111111-2222-3333-4444-555555555555"]' WHERE agent_id='agent-travel'`);
-
-    agentDefAccess.invalidateAgentBindingCache();
-    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, name TEXT, skill_brief TEXT, skill_md TEXT, scripts TEXT, enable INTEGER)`);
-    relationDb.executeRaw(`INSERT INTO skill (id, created, updated, name, skill_brief, skill_md, scripts, enable) VALUES
-      ('11111111-2222-3333-4444-555555555555', 1, 1, '磁盘巡检', '查询磁盘可用空间', '# disk', '', 1)`);
-
-    await match('统计宿主机CPU使用率');
+    await match('城市散步休闲出行路线推荐');
+    expect(execLLMMock).toHaveBeenCalledTimes(1);
     const prompt = (execLLMMock.mock.calls[0][0] as ExecLLMInput).prompt;
-    expect(prompt).toContain('capabilities');
-    expect(prompt).toContain('bound_count');
-    expect(prompt).toContain('磁盘巡检');
+    expect(prompt).toContain('agent_id');
+    expect(prompt).toContain('agent_name');
+    expect(prompt).toContain('description');
+    expect(prompt).not.toContain('capabilities');
+    expect(prompt).not.toContain('bound_count');
   });
 });

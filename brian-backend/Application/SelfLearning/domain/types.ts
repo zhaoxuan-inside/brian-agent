@@ -7,6 +7,8 @@ export class SelfLearningContext extends Context {
 export class AddLibraryInput extends Input {
   library_path!: string;
   library_name?: string;
+  category?: string;
+  description?: string;
   enable_self_learning?: boolean;
   learning_rate?: number;
 }

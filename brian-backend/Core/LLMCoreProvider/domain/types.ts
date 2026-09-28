@@ -67,6 +67,9 @@ export class MatchLLMInput extends Input {
   run_id?: string;
   
   work_id?: string;
+
+  /** 期望匹配的模型类型：'text'（默认文本模型）或 'embedding'（向量模型） */
+  llm_type?: 'text' | 'embedding';
 }
 
 export class MatchLLMOutput extends Output {

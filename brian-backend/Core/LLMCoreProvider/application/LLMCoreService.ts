@@ -3,7 +3,6 @@ import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/ba
 import { IdGenerator, Operator } from '@brian-agent/base';
 import {
   ValidationError,
-  NotFoundError,
   ProcessingError,
 } from '../../shared/errors';
 import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
@@ -75,97 +74,84 @@ export class LLMCoreService {
   async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.agent_id) {
-      throw new ValidationError('matchLLM 需要提供 agent_id');
+      output.error = 'matchLLM 需要提供 agent_id';
+      output.error_code = 'VALIDATION_ERROR';
+      return false;
     }
-
     const config = await this.getCoreConfig();
-    const regenRate = config?.regen_rate ?? 75;
+    const targetType = (input.llm_type || 'text').toLowerCase();
+    const hit = await this.checkCachedLLM(input.agent_id, targetType, config?.regen_rate ?? 75, output);
+    if (hit) return true;
 
-    
+    const availableLLMs = await this.soAvailableLLMsByType(targetType);
+    if (availableLLMs.length === 0) {
+      output.error = `未找到可用的 ${targetType} 模型`;
+      output.error_code = 'NOT_FOUND';
+      return false;
+    }
+    if (availableLLMs.length === 1) {
+      return this.fillSingleLLM(availableLLMs[0].id, output);
+    }
+    return this.rankMultipleLLMs(input, output, context, availableLLMs, config);
+  }
+
+  private async soAvailableLLMsByType(targetType: string): Promise<SoLLMOutput['list']> {
     const soOutput = new SoLLMOutput();
     await this.llmAccess.soLLM({} as SoLLMInput, soOutput, new LLMContext());
-    const availableLLMs = soOutput.list;
+    return (soOutput.list ?? []).filter((l) => {
+      const t = (l.llm_type || 'text').toLowerCase();
+      return targetType === 'embedding' ? t === 'embedding' : t !== 'embedding';
+    });
+  }
 
-    
-    const cacheResult = await checkMatchCache(
-      this.relationDb, AGENT_LLM_TABLE, input.agent_id,
-      regenRate, 'random', 'llm_id',
-    );
-    if (cacheResult.hit && cacheResult.entries?.[0]) {
-      const boundId = cacheResult.entries[0].entity_id;
-      
-      const llmRecord = await this.getLLMById(boundId);
-      if (llmRecord && llmRecord.enable) {
+  private async checkCachedLLM(agentId: string, targetType: string, regenRate: number, output: MatchLLMOutput): Promise<boolean> {
+    const cacheResult = await checkMatchCache(this.relationDb, AGENT_LLM_TABLE, agentId, regenRate, 'random', 'llm_id');
+    if (!cacheResult.hit || !cacheResult.entries?.[0]) return false;
+    const boundId = cacheResult.entries[0].entity_id;
+    const llmRecord = await this.getLLMById(boundId);
+    if (llmRecord && llmRecord.enable) {
+      const cachedType = ((llmRecord.llm_type as string) || 'text').toLowerCase();
+      const match = targetType === 'embedding' ? cachedType === 'embedding' : cachedType !== 'embedding';
+      if (match) {
         output.llm_id = boundId;
         output.llm = llmRecord;
         output.from_cache = true;
         return true;
       }
-      
-      await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
     }
+    await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, agentId);
+    return false;
+  }
 
-    if (availableLLMs.length === 0) {
-      throw new NotFoundError('可用 LLM', 'any');
-    }
-
-    if (availableLLMs.length === 1) {
-      const llmRecord = await this.getLLMById(availableLLMs[0].id);
-      output.llm_id = availableLLMs[0].id;
-      output.llm = llmRecord;
-      output.from_cache = false;
-      return true;
-    }
-
-    
-    const selectionVariables = {
-      agent_id: input.agent_id,
-      context_id: input.context_id,
-      run_id: input.run_id,
-      available_llms: this.buildLlmList(availableLLMs),
-    };
-    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
-    const selectionPrompt = await this.renderMatchPrompt(
-      templateId,
-      selectionVariables,
-    );
-    const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
-    const execLLMOutput = new ExecLLMOutput();
-    const ok = await this.llmAccess.execLLM(
-      {
-        id: rankerLLM.id,
-        prompt: selectionPrompt,
-        temperature: 0.1,
-        max_tokens: 256,
-        session_id: context.session_id || '',
-        run_id: input.run_id || context.run_id || '',
-        work_id: context.work_id || input.work_id || '',
-        caller: 'LLMCoreService.matchLLM',
-      } as ExecLLMInput,
-      execLLMOutput, new LLMContext(),
-    );
-    const threshold = config?.score_threshold ?? ScoreThreshold.Default;
-    const ranked = ok
-      ? filterByThreshold(parseRankingCandidates(execLLMOutput.result ?? ''), threshold)
-      : [];
-    const llmIds = new Set(availableLLMs.map((l) => l.id));
-    let selectedLLMId = ranked
-      .map((c) => c.id)
-      .find((id) => llmIds.has(id)) ?? '';
-
-    
-    if (!selectedLLMId) {
-      selectedLLMId = rankerLLM.id;
-    }
-
-    await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
-    await persistMatchBinding(this.relationDb, AGENT_LLM_TABLE, input.agent_id, selectedLLMId, 'llm_id');
-
-    const llmRecord = await this.getLLMById(selectedLLMId);
-    output.llm_id = selectedLLMId;
-    output.llm = llmRecord;
+  private async fillSingleLLM(llmId: string, output: MatchLLMOutput): Promise<boolean> {
+    output.llm_id = llmId;
+    output.llm = await this.getLLMById(llmId);
     output.from_cache = false;
     return true;
+  }
+
+  private async rankMultipleLLMs(
+    input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext,
+    availableLLMs: SoLLMOutput['list'], config: LLMCoreConfigRecord | null,
+  ): Promise<boolean> {
+    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
+    const prompt = await this.renderMatchPrompt(templateId, {
+      agent_id: input.agent_id, context_id: input.context_id, run_id: input.run_id,
+      available_llms: this.buildLlmList(availableLLMs),
+    });
+    const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
+    const execOut = new ExecLLMOutput();
+    const ok = await this.llmAccess.execLLM({
+      id: rankerLLM.id, prompt, temperature: 0.1, max_tokens: 256,
+      session_id: context.session_id || '', run_id: input.run_id || context.run_id || '',
+      work_id: context.work_id || input.work_id || '', caller: 'LLMCoreService.matchLLM',
+    } as ExecLLMInput, execOut, new LLMContext());
+    const ranked = ok ? filterByThreshold(parseRankingCandidates(execOut.result ?? ''), config?.score_threshold ?? ScoreThreshold.Default) : [];
+    const llmIds = new Set(availableLLMs.map((l) => l.id));
+    const selectedLLMId = ranked.map((c) => c.id).find((id) => llmIds.has(id)) || rankerLLM.id;
+    await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
+    await persistMatchBinding(this.relationDb, AGENT_LLM_TABLE, input.agent_id, selectedLLMId, 'llm_id');
+    return this.fillSingleLLM(selectedLLMId, output);
   }
 
   

@@ -15,7 +15,12 @@ async function submitRating(score: number) {
   if (submitted.value) return
   rating.value = score
   try {
-    await feedbackApi.submit({ rating: score })
+    await feedbackApi.submit({
+      rating: score,
+      run_id: props.block.runId || undefined,
+      work_id: props.block.workId || undefined,
+      session_id: props.block.sessionId || undefined,
+    })
     submitted.value = true
   } catch { /* ignore */ }
 }
@@ -23,7 +28,12 @@ async function submitRating(score: number) {
 async function submitLike(type: 'like' | 'dislike') {
   if (submitted.value) return
   try {
-    await feedbackApi.submit({ rating: type === 'like' ? 5 : 1 })
+    await feedbackApi.submit({
+      rating: type === 'like' ? 5 : 1,
+      run_id: props.block.runId || undefined,
+      work_id: props.block.workId || undefined,
+      session_id: props.block.sessionId || undefined,
+    })
     submitted.value = true
   } catch { /* ignore */ }
 }

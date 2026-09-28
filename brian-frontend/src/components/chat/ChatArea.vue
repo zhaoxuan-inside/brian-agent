@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import {
   MessageCircle,
   Loader2,
@@ -17,7 +17,6 @@ import MessageCard from './MessageCard.vue'
 import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
 import EvalResultModal from './EvalResultModal.vue'
-import IntentConfirmCard from './IntentConfirmCard.vue'
 import AskUserCard from './AskUserCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
 
@@ -25,9 +24,7 @@ const sessionStore = useSessionStore()
 const i18nStore = useI18nStore()
 const chatUi = useChatUiStore()
 const {
-  confirmingIntent,
   handleSend,
-  handleIntentConfirm,
   handleAskUserAnswer,
   answeringAsk,
 } = useChatStream()
@@ -38,9 +35,25 @@ const isDragging = ref(false)
 const listRef = ref<HTMLDivElement | null>(null)
 
 const nodeMap = computed(() => {
-  const m = new Map<string, { summary: string; pin: boolean; citingCount: number; citedCount: number; citingInfoIds: string[]; citedInfoIds: string[] }>()
+  const m = new Map<string, { summary: string; info: string; pin: boolean; citingCount: number; citedCount: number; citingInfoIds: string[]; citedInfoIds: string[] }>()
   for (const n of sessionStore.chatMapNodes) {
-    m.set(n.infoId, { summary: n.summary, pin: n.pin, citingCount: n.citingCount, citedCount: n.citedCount, citingInfoIds: n.citingInfoIds, citedInfoIds: n.citedInfoIds })
+    m.set(n.infoId, { summary: n.summary, info: n.info, pin: n.pin, citingCount: n.citingCount, citedCount: n.citedCount, citingInfoIds: n.citingInfoIds, citedInfoIds: n.citedInfoIds })
+  }
+  for (const msg of sessionStore.messages) {
+    if (!m.has(msg.id)) {
+      m.set(msg.id, {
+        summary: '',
+        info: msg.content || '',
+        pin: msg.pin || false,
+        citingCount: msg.citingCount || 0,
+        citedCount: msg.citedCount || 0,
+        citingInfoIds: msg.citingInfoIds || [],
+        citedInfoIds: msg.citedInfoIds || [],
+      })
+    } else {
+      const existing = m.get(msg.id)!
+      if (!existing.info && msg.content) existing.info = msg.content
+    }
   }
   return m
 })
@@ -58,7 +71,8 @@ function getCitedCount(msg: ChatMessage): number {
 function getCitingCount(msg: ChatMessage): number {
   const fromNode = nodeOf(msg)?.citingCount
   if (fromNode !== undefined && fromNode > 0) return fromNode
-  return msg.citingCount ?? 0
+  if (msg.citingCount !== undefined && msg.citingCount > 0) return msg.citingCount
+  return getCitingIds(msg).length
 }
 
 function getCitedIds(msg: ChatMessage): string[] {
@@ -76,26 +90,66 @@ function getCitingIds(msg: ChatMessage): string[] {
   return []
 }
 
+async function scrollToLatest() {
+  await nextTick()
+  const list = listRef.value
+  if (!list) return
+  list.scrollTop = list.scrollHeight
+}
+
+watch(() => sessionStore.messages, () => { void scrollToLatest() })
+
+onMounted(() => {
+  if (sessionStore.messages.length > 0) void scrollToLatest()
+})
+
+const flashInfoId = ref('')
+let flashTimer: ReturnType<typeof setTimeout> | null = null
+
 watch(() => sessionStore.focusInfoId, async (id) => {
   if (!id) return
-  await nextTick()
-  const el = listRef.value?.querySelector(`[data-info-id="${id}"]`) as HTMLElement | null
+  sessionStore.focusInfoId = null
+  // 目标消息可能因渲染时序短暂不可查，做有限次重试
+  let el: HTMLElement | null = null
+  for (let i = 0; i < 6 && !el; i++) {
+    await nextTick()
+    el = listRef.value?.querySelector(`[data-info-id="${id}"]`) as HTMLElement | null
+    if (!el) await new Promise(r => setTimeout(r, 250))
+  }
   if (!el || !listRef.value) return
   const listRect = listRef.value.getBoundingClientRect()
   const elRect = el.getBoundingClientRect()
   listRef.value.scrollTop += elRect.top - listRect.top - listRect.height / 2 + elRect.height / 2
+  flashInfoId.value = id
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => { flashInfoId.value = '' }, 2400)
 })
 
-watch(
-  () => chatUi.intentConfirmation,
-  async (intent) => {
-    if (!intent) return
-    await nextTick()
-    if (listRef.value) {
-      listRef.value.scrollTop = listRef.value.scrollHeight
+let followRaf: number | null = null
+
+function syncMapToVisibleMessage() {
+  if (followRaf !== null) return
+  followRaf = requestAnimationFrame(() => {
+    followRaf = null
+    const list = listRef.value
+    if (!list) return
+    const listRect = list.getBoundingClientRect()
+    const viewCenter = listRect.top + listRect.height / 2
+    let bestId = ''
+    let bestDist = Number.POSITIVE_INFINITY
+    for (const el of list.querySelectorAll<HTMLElement>('[data-info-id]')) {
+      const rect = el.getBoundingClientRect()
+      const dist = Math.abs(rect.top + rect.height / 2 - viewCenter)
+      if (dist < bestDist) {
+        bestDist = dist
+        bestId = el.dataset.infoId || ''
+      }
     }
-  },
-)
+    if (bestId && bestId !== sessionStore.followInfoId) {
+      sessionStore.setFollowInfoId(bestId)
+    }
+  })
+}
 
 function scrollListTo(id: string) {
   sessionStore.triggerFocus(id)
@@ -109,6 +163,20 @@ function togglePin(id: string) {
   sessionStore.togglePin(id)
 }
 
+// 错误块“重试”：重发该错误所属交互之前最近的一条用户消息
+async function retryFailedInteraction(block: Block) {
+  if (sessionStore.isStreaming) return
+  const msgs = sessionStore.messages
+  const botIdx = msgs.findIndex(m => m.id === block.msgId)
+  for (let i = botIdx >= 0 ? botIdx : msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    if (m.role === 'user') {
+      await handleSend(m.content, m.citingIds ? [...m.citingIds] : [])
+      return
+    }
+  }
+}
+
 function jumpTo(id: string) {
   scrollListTo(id)
 }
@@ -120,7 +188,8 @@ async function showThinking(id: string) {
     const res = await chatApi.thinking(id, 'blocks')
     chatUi.setThinkingBlocks(res.blocks ?? [])
     chatUi.setThinkingTrace((res as { trace?: import('@/api/types').ThinkingTrace | null }).trace ?? null)
-  } catch {
+  } catch (err) {
+    console.error('[ChatArea] 加载思考过程失败', err)
     chatUi.setThinkingBlocks([])
     chatUi.setThinkingTrace(null)
   }
@@ -192,7 +261,7 @@ function startResize(e: MouseEvent) {
     </div>
 
     <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden" :style="{ width: rightWidth }">
-      <div ref="listRef" class="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div ref="listRef" class="flex-1 overflow-y-auto px-4 py-3 space-y-3" @scroll="syncMapToVisibleMessage">
         <div v-if="!sessionStore.currentSessionId && sessionStore.messages.length === 0" class="flex flex-col items-center justify-center h-full text-apple-gray-400">
           <MessageCircle :size="48" class="mb-4 text-apple-gray-300" />
           <p class="text-lg font-medium">Brian Agent</p>
@@ -218,7 +287,7 @@ function startResize(e: MouseEvent) {
               <UserRound :size="16" />
             </div>
 
-            <div class="max-w-[85%] min-w-0">
+            <div class="max-w-[85%] min-w-0" :class="{ 'msg-flash': entry.message.id === flashInfoId }">
               <MessageCard
                 :id="entry.message.id"
                 :info-id="entry.message.id"
@@ -226,7 +295,7 @@ function startResize(e: MouseEvent) {
                 :content="entry.message.content"
                 :summary="nodeOf(entry.message)?.summary || ''"
                 :timestamp="entry.message.timestamp"
-                :pin="nodeOf(entry.message)?.pin ?? entry.message.pin"
+                :pin="sessionStore.pinnedMsgIds.has(entry.message.id) || (nodeOf(entry.message)?.pin ?? entry.message.pin)"
                 :selected="sessionStore.selectedMsgIds.has(entry.message.id)"
                 :cited-count="getCitedCount(entry.message)"
                 :citing-count="getCitingCount(entry.message)"
@@ -258,7 +327,7 @@ function startResize(e: MouseEvent) {
             class="max-w-[85%]"
             :class="entry.block.role === 'user' ? 'mr-auto' : 'ml-auto'"
           >
-            <BlockRenderer :block="entry.block" />
+            <BlockRenderer :block="entry.block" @retry="retryFailedInteraction(entry.block)" />
           </div>
         </template>
 
@@ -266,13 +335,6 @@ function startResize(e: MouseEvent) {
           <Loader2 :size="14" class="animate-spin" />
           <span>{{ i18nStore.t('chat.thinking') }}</span>
         </div>
-
-        <IntentConfirmCard
-          v-if="chatUi.intentConfirmation"
-          :confirmation="chatUi.intentConfirmation"
-          :submitting="confirmingIntent"
-          @confirm="handleIntentConfirm"
-        />
 
       </div>
 
@@ -294,3 +356,16 @@ function startResize(e: MouseEvent) {
     <EvalResultModal />
   </div>
 </template>
+
+<style scoped>
+/* 定位跳转（记忆页/图谱跳转）时的目标消息高亮提示 */
+.msg-flash {
+  border-radius: 1rem;
+  animation: msg-flash-ring 2.4s ease-out;
+}
+@keyframes msg-flash-ring {
+  0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.45); background-color: rgba(0, 122, 255, 0.08); }
+  60% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); background-color: rgba(0, 122, 255, 0.05); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); background-color: transparent; }
+}
+</style>

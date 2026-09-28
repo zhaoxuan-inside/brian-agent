@@ -75,6 +75,10 @@ export class SubmitRunInput extends Input {
   parent_run_id?: string;
   
   agent_ref?: string;
+
+  citing_msg_ids?: string[];
+  selected_msg_ids?: string[];
+  pinned_msg_ids?: string[];
 }
 
 export class SubmitRunOutput extends Output {
@@ -228,6 +232,8 @@ export interface SessionLane {
   pending: Array<{ runId: string; input: SubmitRunInput; parent?: { metrics?: Metrics; report?: Report } }>;
   
   steering: string[];
+  
+  acceptingSteer?: boolean;
 }
 
 export interface Waiter {

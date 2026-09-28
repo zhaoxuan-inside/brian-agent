@@ -11,12 +11,13 @@ import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, DIALOG_TABLE, EXECUTE_TABLE, CONTEXT_TABLE, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
-import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
+import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, DelVectorByFilterInput, DelVectorByFilterOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
   VectorObject,
   VectorRecord,
+  VectorFilter,
   VectorQueryParam,
   VectorSearchResult,
   GraphNodeData,
@@ -172,6 +173,49 @@ export class InfoCoreService {
       { field: 'trace_id', value: input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '') },
       { field: 'handle_result_type', value: handleResultType },
     ]);
+
+    const rowTraceId = input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '');
+    if (input.info_type === 'REQUEST' || input.info_type === 'RESPONSE') {
+      try {
+        await this.relationDb.insert(DIALOG_TABLE, [
+          { field: 'id', value: infoId },
+          { field: 'created', value: createdAt },
+          { field: 'updated', value: createdAt },
+          { field: 'session_id', value: input.session_id },
+          { field: 'work_id', value: input.work_id },
+          { field: 'type', value: input.info_type },
+          { field: 'dialog', value: input.info },
+          { field: 'dialog_length', value: input.info.length },
+          { field: 'dialog_brief', value: input.summary || '' },
+          { field: 'trace_id', value: rowTraceId },
+        ]);
+      } catch (err) {
+        metrics?.warn('InfoCoreService.saveInfo 写入 dialog 失败已容忍', { error: String(err) });
+      }
+    } else {
+      try {
+        await this.relationDb.insert(EXECUTE_TABLE, [
+          { field: 'id', value: id },
+          { field: 'created', value: createdAt },
+          { field: 'updated', value: createdAt },
+          { field: 'session_id', value: input.session_id },
+          { field: 'work_id', value: input.work_id },
+          { field: 'run_id', value: input.run_id || '' },
+          { field: 'trace_id', value: rowTraceId },
+          { field: 'agent_id', value: input.info_creator_id || '' },
+          { field: 'exec_no', value: 0 },
+          { field: 'component_id', value: input.info_type || '' },
+          { field: 'component_type', value: input.info_type || 'Execution' },
+          { field: 'input', value: '' },
+          { field: 'input_length', value: 0 },
+          { field: 'output', value: input.info },
+          { field: 'output_length', value: input.info.length },
+          { field: 'gap', value: 0 },
+        ]);
+      } catch (err) {
+        metrics?.warn('InfoCoreService.saveInfo 写入 execute 失败已容忍', { error: String(err) });
+      }
+    }
 
     if (input.parent_info_ids && input.parent_info_ids.length > 0) {
       await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids, metrics);
@@ -976,22 +1020,74 @@ export class InfoCoreService {
   async soCitationEdges(input: SoCitationEdgesInput, output: SoCitationEdgesOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selOut = new SelectGraphOutput();
-    await this.graphDb.selectGraph(
-      { target: GraphTarget.EDGE, edge_type: CITATION_EDGE_TYPE } as SelectGraphInput,
-      selOut, new GraphContext(),
-    );
+    try {
+      await this.graphDb.selectGraph(
+        { target: GraphTarget.EDGE, edge_type: CITATION_EDGE_TYPE } as SelectGraphInput,
+        selOut, new GraphContext(),
+      );
+    } catch { }
     const edges = (selOut.list as GraphEdgeRecord[]).map((e) => ({
       id: e.id,
       citing_info_id: String(e.properties?.['citing_info_id'] ?? ''),
       cited_info_id: String(e.properties?.['cited_info_id'] ?? ''),
       session_id: String(e.properties?.['session_id'] ?? ''),
     }));
-    let result = edges;
-    if (input.session_id) result = result.filter((e) => e.session_id === input.session_id);
+
+    const contextEdges = await this.loadContextCitationEdges(input.session_id);
+    const seen = new Set<string>();
+    const merged: Array<{ id: string; citing_info_id: string; cited_info_id: string; session_id: string }> = [];
+    for (const e of [...edges, ...contextEdges]) {
+      if (!e.citing_info_id || !e.cited_info_id || e.citing_info_id === e.cited_info_id) continue;
+      const key = `${e.citing_info_id}->${e.cited_info_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(e);
+    }
+
+    let result = merged;
+    if (input.session_id) result = result.filter((e) => e.session_id === input.session_id || !e.session_id);
     if (input.citing_info_id) result = result.filter((e) => e.citing_info_id === input.citing_info_id);
     if (input.cited_info_id) result = result.filter((e) => e.cited_info_id === input.cited_info_id);
     output.edges = result;
     return true;
+  }
+
+  private async loadContextCitationEdges(sessionId?: string): Promise<Array<{ id: string; citing_info_id: string; cited_info_id: string; session_id: string }>> {
+    try {
+      const conds: string[] = [`("type" IN ('citing', 'selected') OR "source" IN ('CITING', 'SELECTED'))`];
+      const args: unknown[] = [];
+      if (sessionId) {
+        conds.push(`("session_id" = ? OR "session_id" = '')`);
+        args.push(sessionId);
+      }
+      const sql = `
+        SELECT c."id", c."session_id", c."work_id", COALESCE(NULLIF(c."dialog_id", ''), c."info_id") AS cited_id,
+               COALESCE(d."id", r."info_id") AS req_dialog_id,
+               COALESCE(d."session_id", r."session_id") AS resolved_session_id
+        FROM "${CONTEXT_TABLE}" c
+        LEFT JOIN "${DIALOG_TABLE}" d ON d."work_id" = c."work_id" AND d."type" = 'REQUEST'
+        LEFT JOIN "${INFO_RAW_TABLE}" r ON r."work_id" = c."work_id" AND r."info_type" = 'REQUEST'
+        WHERE ${conds.join(' AND ')}
+      `;
+      const rows = await this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
+      const edges: Array<{ id: string; citing_info_id: string; cited_info_id: string; session_id: string }> = [];
+      for (const r of rows ?? []) {
+        const citedId = String(r.cited_id ?? '');
+        const citingId = String(r.req_dialog_id ?? '');
+        const sid = String(r.session_id || r.resolved_session_id || '');
+        if (citedId && citingId && citedId !== citingId) {
+          edges.push({
+            id: `ctx_cite_${String(r.id || `${citingId}_${citedId}`)}`,
+            citing_info_id: citingId,
+            cited_info_id: citedId,
+            session_id: sid,
+          });
+        }
+      }
+      return edges;
+    } catch {
+      return [];
+    }
   }
 
   async delInfoGraph(input: DelInfoGraphInput, output: DelInfoGraphOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
@@ -1084,7 +1180,7 @@ export class InfoCoreService {
     const contextConfig = await this.getInfoContextConfig();
     const plan = this.prepareContextBuildPlan(input, contextConfig);
 
-    const pinnedCandidates = await this.collectPinnedCandidates(input.session_id);
+    const pinnedCandidates = await this.collectPinnedCandidates(input.session_id, input.pinned_msg_ids);
     const base = await this.collectSelectedOrTimelineCandidates(input, plan.selectedIds, plan.timelineLimit);
     const currentCandidate = await this.extractCurrentCandidate(input.session_id, plan.selectedIds, base.timelineCandidates);
     const baseContextCount = pinnedCandidates.length + base.citingCandidates.length + base.timelineCandidates.length;
@@ -1105,7 +1201,7 @@ export class InfoCoreService {
     output.categories = this.buildContextCategories(output.list);
     output.category_ids = this.buildContextCategoryIds(output.categories!);
     output.sources_summary = this.buildContextSourcesSummary(output.categories!);
-    await this.fillContextTriplesAndPersist(output, output.list, input.work_id, input.persist_snapshot !== false, metrics);
+    await this.fillContextTriplesAndPersist(output, output.list, input.work_id, input.session_id, input.persist_snapshot !== false, metrics);
     return true;
   }
 
@@ -1384,6 +1480,8 @@ export class InfoCoreService {
 
     if (toClear.length === 0) {
       output.deleted_count = 0;
+      const gc = await this.garbageCollectOrphanVectors(metrics);
+      output.deleted_vectors = gc.info_vectors + gc.tag_vectors;
       return true;
     }
 
@@ -1391,6 +1489,7 @@ export class InfoCoreService {
     const tagConfig = await this.getInfoTagConfig();
     const summaryConfig = await this.getInfoSummaryConfig();
 
+    const clearable: Array<{ id: string; info_id: string }> = [];
     for (const row of toClear) {
       const infoId = row['info_id'] as string;
 
@@ -1410,23 +1509,42 @@ export class InfoCoreService {
         const si = new ProcessInfoInput(); si.info_id = infoId;
         await this.summaryInfo(si, new SummaryInfoOutput(), _context, metrics, report).catch(() => {});
       }
+
+      if (!(await this.hasSummaryForInfo(infoId))) {
+        const rawText = String(row['info'] ?? '');
+        if (!rawText) continue;
+        const nowFallback = IdGenerator.now();
+        await this.relationDb.insert(INFO_SUMMARY_TABLE, [
+          { field: 'id', value: IdGenerator.generate() },
+          { field: 'created', value: nowFallback },
+          { field: 'updated', value: nowFallback },
+          { field: 'info_id', value: infoId },
+          { field: 'summary', value: rawText },
+        ]);
+        metrics?.warn('InfoCoreService.delInfo 摘要缺失，已将原文写入摘要保留后清理原始内容', {
+          info_id: infoId,
+        });
+      }
+      clearable.push({ id: row['id'] as string, info_id: infoId });
     }
 
-    const dbIds = toClear.map((r) => r['id'] as string);
     const now2 = IdGenerator.now();
 
-    for (const id of dbIds) {
+    for (const row of clearable) {
       await this.relationDb.update(
         INFO_RAW_TABLE,
         [
           { field: 'info', value: '' },
           { field: 'updated', value: now2 },
         ],
-        [{ field: 'id', operator: Operator.EQ, value: id }],
+        [{ field: 'id', operator: Operator.EQ, value: row.id }],
       );
     }
 
-    output.deleted_count = dbIds.length;
+    output.deleted_count = clearable.length;
+
+    const gcResult = await this.garbageCollectOrphanVectors(metrics);
+    output.deleted_vectors = gcResult.info_vectors + gcResult.tag_vectors;
     return true;
   }
 
@@ -1488,64 +1606,80 @@ export class InfoCoreService {
     return true;
   }
 
-  async delInfoByWork(input: DelInfoByWorkInput, output: DelInfoByWorkOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async delInfoByWork(input: DelInfoByWorkInput, output: DelInfoByWorkOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.work_id) {
       throw new ValidationError('delInfoByWork 需要提供 work_id');
     }
-
     const rows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }],
       fields: ['info_id'],
     });
     const infoIds = rows.map((r) => String(r['info_id'] ?? '')).filter(Boolean);
-
-    if (infoIds.length > 0) {
-      await this.relationDb.delete(INFO_TAG_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_SUMMARY_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_KEYWORD_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), _context);
-    }
+    await this.deleteAuxiliaryTablesByWork(input.work_id, infoIds, _context, metrics);
 
     const affected = await this.relationDb.delete(INFO_RAW_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
-    await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
-
     output.deleted_count = affected;
     return true;
   }
 
-  async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  private async deleteAuxiliaryTablesByWork(workId: string, infoIds: string[], context: InfoCoreContext, metrics?: Metrics): Promise<void> {
+    if (infoIds.length > 0) {
+      await this.deleteVectorsForInfoIds(infoIds, metrics);
+      await this.relationDb.delete(INFO_TAG_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_SUMMARY_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_KEYWORD_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), context);
+    }
+    await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]);
+    try { await this.relationDb.delete(CONTEXT_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
+    try { await this.relationDb.delete(DIALOG_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
+    try { await this.relationDb.delete(EXECUTE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
+  }
+
+  async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.session_id) {
       throw new ValidationError('delInfoBySession 需要提供 session_id');
     }
-
     const rawRows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
       fields: ['info_id', 'work_id'],
     });
     const infoIds = rawRows.map((r) => String(r['info_id'] ?? '')).filter(Boolean);
     const workIds = Array.from(new Set(rawRows.map((r) => String(r['work_id'] ?? '')).filter(Boolean)));
-
-    if (infoIds.length > 0) {
-      await this.relationDb.delete(INFO_TAG_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_SUMMARY_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_KEYWORD_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
-      await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), _context);
-    }
-    if (workIds.length > 0) {
-      await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.IN, value: workIds }]);
-    }
+    await this.deleteAuxiliaryTablesBySession(input.session_id, infoIds, workIds, _context, metrics);
 
     const affected = await this.relationDb.delete(INFO_RAW_TABLE, [
       { field: 'session_id', operator: Operator.EQ, value: input.session_id },
     ]);
-
     output.deleted_count = affected;
     output.deleted_work_ids = workIds;
     return true;
+  }
+
+  private async deleteAuxiliaryTablesBySession(
+    sessionId: string,
+    infoIds: string[],
+    workIds: string[],
+    context: InfoCoreContext,
+    metrics?: Metrics,
+  ): Promise<void> {
+    if (infoIds.length > 0) {
+      await this.deleteVectorsForInfoIds(infoIds, metrics);
+      await this.relationDb.delete(INFO_TAG_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_SUMMARY_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_KEYWORD_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+      await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), context);
+    }
+    if (workIds.length > 0) {
+      await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.IN, value: workIds }]);
+    }
+    try { await this.relationDb.delete(CONTEXT_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
+    try { await this.relationDb.delete(DIALOG_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
+    try { await this.relationDb.delete(EXECUTE_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
   }
 
   async existVectorInfo(input: ExistInfoInput, output: ExistInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
@@ -1695,7 +1829,36 @@ export class InfoCoreService {
     return 1;
   }
 
+  private toDialogAsInfoRawRecord(r: Record<string, unknown>): InfoRawRecord {
+    const isUser = String(r['type'] ?? '') === 'REQUEST';
+    return {
+      id: String(r['id'] ?? ''),
+      created: Number(r['created'] ?? 0),
+      updated: Number(r['updated'] ?? 0),
+      session_id: String(r['session_id'] ?? ''),
+      work_id: String(r['work_id'] ?? ''),
+      run_id: '',
+      info_id: String(r['id'] ?? ''),
+      info_type: String(r['type'] ?? 'REQUEST') as InfoType,
+      info_creator_role: isUser ? 'USER' : 'ASSISTANT',
+      info_creator_id: '',
+      info: String(r['dialog'] ?? ''),
+      info_length: Number(r['dialog_length'] ?? 0),
+      pin: 0,
+      trace_id: String(r['trace_id'] ?? ''),
+      handle_result_type: HandleResultType.CORRECT,
+    };
+  }
+
   private async getInfoByInfoId(infoId: string): Promise<InfoRawRecord | null> {
+    try {
+      const dRows = await this.relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: infoId }],
+        page: { current: 1, size: 1 },
+      });
+      if (dRows && dRows.length > 0) return this.toDialogAsInfoRawRecord(dRows[0]);
+    } catch { }
+
     const rows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [{ field: 'info_id', operator: Operator.EQ, value: infoId }],
       page: { current: 1, size: 1 },
@@ -1706,12 +1869,25 @@ export class InfoCoreService {
   private async getInfoBatchByInfoIds(infoIds: string[]): Promise<Map<string, InfoRawRecord>> {
     const result = new Map<string, InfoRawRecord>();
     if (infoIds.length === 0) return result;
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: [{ field: 'info_id', operator: Operator.IN, value: infoIds }],
-    });
-    for (const row of rows) {
-      const record = this.toInfoRawRecord(row);
-      result.set(record.info_id, record);
+    const remaining = new Set(infoIds);
+    try {
+      const dRows = await this.relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.IN, value: infoIds }],
+      });
+      for (const row of dRows ?? []) {
+        const record = this.toDialogAsInfoRawRecord(row);
+        result.set(record.info_id, record);
+        remaining.delete(record.info_id);
+      }
+    } catch { }
+    if (remaining.size > 0) {
+      const rows = await this.relationDb.select(INFO_RAW_TABLE, {
+        conditions: [{ field: 'info_id', operator: Operator.IN, value: Array.from(remaining) }],
+      });
+      for (const row of rows) {
+        const record = this.toInfoRawRecord(row);
+        result.set(record.info_id, record);
+      }
     }
     return result;
   }
@@ -1874,6 +2050,59 @@ export class InfoCoreService {
       { vectors: [{ id, content, embedding, metadata }] as VectorObject[] } as AddVectorInput,
       out, new VectorContext(),
     );
+  }
+
+  private async deleteVectorsByFilter(
+    filters: VectorFilter[],
+    metrics?: Metrics,
+  ): Promise<number> {
+    try {
+      const input = Object.assign(new DelVectorByFilterInput(), { filters }) as DelVectorByFilterInput;
+      const out = new DelVectorByFilterOutput();
+      await this.vectorDb.delVectorByFilter(input, out, new VectorContext());
+      return out.affected_rows ?? 0;
+    } catch (err) {
+      metrics?.warn('InfoCoreService 向量清理失败已容忍', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    }
+  }
+
+  private async deleteVectorsForInfoIds(infoIds: string[], metrics?: Metrics): Promise<number> {
+    const ids = [...new Set(infoIds.filter(Boolean))];
+    if (ids.length === 0) return 0;
+    return this.deleteVectorsByFilter([
+      { field: 'kind', operator: Operator.EQ, value: 'info' },
+      { field: 'info_id', operator: Operator.IN, value: ids },
+    ], metrics);
+  }
+
+  private async garbageCollectOrphanVectors(metrics?: Metrics): Promise<{ info_vectors: number; tag_vectors: number }> {
+    const vectorConfig = await this.getInfoVectorConfig();
+    if (!vectorConfig || vectorConfig.enable !== 1) {
+      return { info_vectors: 0, tag_vectors: 0 };
+    }
+
+    const result = { info_vectors: 0, tag_vectors: 0 };
+
+    const aliveInfoRows = await this.relationDb.select(INFO_RAW_TABLE, { fields: ['info_id'] });
+    const aliveInfoIds = [...new Set(aliveInfoRows.map((r) => String(r['info_id'] ?? '')).filter(Boolean))];
+    result.info_vectors = await this.deleteVectorsByFilter([
+      { field: 'kind', operator: Operator.EQ, value: 'info' },
+      { field: 'info_id', operator: Operator.IS_NOT_NULL },
+      { field: 'info_id', operator: Operator.NOT_IN, value: aliveInfoIds },
+    ], metrics);
+
+    const tagRows = await this.relationDb.select(INFO_TAG_TABLE, { fields: ['tag'] });
+    const aliveTags = [...new Set(tagRows.map((r) => String(r['tag'] ?? '')).filter(Boolean))];
+    result.tag_vectors = await this.deleteVectorsByFilter([
+      { field: 'kind', operator: Operator.EQ, value: 'tag' },
+      { field: 'tag', operator: Operator.IS_NOT_NULL },
+      { field: 'tag', operator: Operator.NOT_IN, value: aliveTags },
+    ], metrics);
+
+    return result;
   }
 
   private async getTagEmbedding(tag: string, _tagConfig: InfoTagConfigRecord, metrics?: Metrics): Promise<number[]> {
@@ -2301,7 +2530,7 @@ export class InfoCoreService {
     };
   }
 
-  private async collectPinnedCandidates(sessionId: string): Promise<InfoRawRecord[]> {
+  private async collectPinnedCandidates(sessionId: string, explicitPinnedIds?: string[]): Promise<InfoRawRecord[]> {
     const pinnedRows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [
         { field: 'session_id', operator: Operator.EQ, value: sessionId },
@@ -2309,7 +2538,74 @@ export class InfoCoreService {
       ],
       order_by: [{ field: 'created', direction: 'DESC' }],
     });
-    return pinnedRows.map((r) => this.toInfoRawRecord(r));
+    const result = pinnedRows.map((r) => this.toInfoRawRecord(r));
+    const seen = new Set(result.map((r) => r.info_id));
+
+    if (explicitPinnedIds && explicitPinnedIds.length > 0) {
+      for (const pid of explicitPinnedIds) {
+        if (!seen.has(pid)) {
+          const rec = await this.getInfoByInfoId(pid);
+          if (rec && rec.session_id === sessionId) {
+            seen.add(pid);
+            result.push(rec);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  private async collectCitingCandidates(sessionId: string, selectedIds: string[]): Promise<{
+    citingCandidates: InfoRawRecord[];
+    citingWorkIds: Set<string>;
+    citingIdSet: Set<string>;
+  }> {
+    const citingCandidates: InfoRawRecord[] = [];
+    const citingWorkIds = new Set<string>();
+    const citingIdSet = new Set<string>();
+    for (const msgId of selectedIds) {
+      const r = await this.getInfoByInfoId(msgId);
+      if (r && r.session_id === sessionId) {
+        citingCandidates.push(r);
+        citingIdSet.add(r.info_id);
+        if (r.work_id) citingWorkIds.add(r.work_id);
+      }
+    }
+    return { citingCandidates, citingWorkIds, citingIdSet };
+  }
+
+  private async queryHistoricalContextIds(workIds: string[], citingIdSet: Set<string>): Promise<string[]> {
+    if (workIds.length === 0) return [];
+    const placeholders = workIds.map(() => '?').join(',');
+    try {
+      let rows = await this.relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT DISTINCT COALESCE("dialog_id", "info_id") AS cid FROM "${CONTEXT_TABLE}" WHERE "work_id" IN (${placeholders})`,
+        workIds,
+      );
+      if (!rows || rows.length === 0) {
+        try {
+          rows = await this.relationDb.queryRaw<Record<string, unknown>>(
+            `SELECT DISTINCT "info_id" AS cid FROM "${INFO_CONTEXT_SOURCE_TABLE}" WHERE "work_id" IN (${placeholders})`,
+            workIds,
+          );
+        } catch { }
+      }
+      return Array.from(new Set((rows ?? []).map((r) => String((r as any).cid ?? '')).filter((id) => Boolean(id) && !citingIdSet.has(id))));
+    } catch {
+      return [];
+    }
+  }
+
+  private async fetchHistoricalContextRecords(sessionId: string, histIds: string[], citingIdSet: Set<string>, limit: number): Promise<InfoRawRecord[]> {
+    const records: InfoRawRecord[] = [];
+    for (const hid of histIds) {
+      const hRec = await this.getInfoByInfoId(hid);
+      if (hRec && hRec.session_id === sessionId && !citingIdSet.has(hRec.info_id)) {
+        records.push(hRec);
+      }
+    }
+    records.sort((a, b) => (Number(b.created) || 0) - (Number(a.created) || 0));
+    return records.slice(0, limit);
   }
 
   private async collectSelectedOrTimelineCandidates(
@@ -2317,21 +2613,13 @@ export class InfoCoreService {
     selectedIds: string[],
     timelineLimit: number,
   ): Promise<{ citingCandidates: InfoRawRecord[]; timelineCandidates: InfoRawRecord[] }> {
-    const citingCandidates: InfoRawRecord[] = [];
-    const timelineCandidates: InfoRawRecord[] = [];
-    if (selectedIds.length > 0) {
-      for (const msgId of selectedIds) {
-        const r = await this.getInfoByInfoId(msgId);
-        if (r && r.session_id === input.session_id) {
-          citingCandidates.push(r);
-        }
-      }
-    } else {
+    if (selectedIds.length === 0) {
       const tl = await this.lastNInfoTimeline(input.session_id, timelineLimit);
-      for (const item of tl) {
-        timelineCandidates.push(item);
-      }
+      return { citingCandidates: [], timelineCandidates: [...tl] };
     }
+    const { citingCandidates, citingWorkIds, citingIdSet } = await this.collectCitingCandidates(input.session_id, selectedIds);
+    const histIds = await this.queryHistoricalContextIds(Array.from(citingWorkIds), citingIdSet);
+    const timelineCandidates = await this.fetchHistoricalContextRecords(input.session_id, histIds, citingIdSet, timelineLimit);
     return { citingCandidates, timelineCandidates };
   }
 
@@ -2740,6 +3028,7 @@ export class InfoCoreService {
     output: ContextInfoOutput,
     resultList: ContextInfoItem[],
     workId: string,
+    sessionId?: string,
     persist: boolean = true,
     metrics?: Metrics,
   ): Promise<void> {
@@ -2781,13 +3070,14 @@ export class InfoCoreService {
     output.attribute_map = attributeMap;
 
     if (persist) {
-      await this.persistContextSourceMap(workId, sourceIdsMap, metrics);
+      await this.persistContextSourceMap(workId, sourceIdsMap, sessionId, metrics);
     }
   }
 
   private async persistContextSourceMap(
     workId: string,
     sourceIdsMap: ContextSourceIdMap,
+    sessionId?: string,
     metrics?: Metrics,
   ): Promise<void> {
     if (!workId) return;
@@ -2797,22 +3087,34 @@ export class InfoCoreService {
       ]);
     } catch {  }
 
+    let resolvedSessionId = sessionId || '';
+    if (!resolvedSessionId) {
+      try {
+        const dRow = await this.relationDb.queryRaw<{ session_id: string }>(
+          `SELECT "session_id" FROM "${DIALOG_TABLE}" WHERE "work_id" = ? LIMIT 1`, [workId],
+        );
+        resolvedSessionId = dRow?.[0]?.session_id || '';
+      } catch { }
+    }
+
     const now = IdGenerator.now();
     for (const [source, infoIds] of Object.entries(sourceIdsMap)) {
       if (!infoIds || infoIds.length === 0) continue;
       for (const infoId of infoIds) {
         if (!infoId) continue;
         try {
-          await this.relationDb.insert(INFO_CONTEXT_SOURCE_TABLE, [
+          await this.relationDb.insert(CONTEXT_TABLE, [
             { field: 'id', value: IdGenerator.generate() },
             { field: 'created', value: now },
             { field: 'updated', value: now },
+            { field: 'session_id', value: resolvedSessionId },
             { field: 'work_id', value: workId },
+            { field: 'dialog_id', value: infoId },
+            { field: 'type', value: source.toLowerCase() },
             { field: 'source', value: source },
             { field: 'info_id', value: infoId },
           ]);
         } catch (err) {
-
           metrics?.warn('InfoCoreService.persistContextSourceMap 来源关系落盘失败已容忍', {
             error: err instanceof Error ? err.message : String(err),
             work_id: workId,
@@ -2828,6 +3130,33 @@ export class InfoCoreService {
     sessionId: string,
     count: number,
   ): Promise<InfoRawRecord[]> {
+    try {
+      const dRows = await this.relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+        order_by: [{ field: 'created', direction: 'DESC' }],
+        page: { current: 1, size: count },
+      });
+      if (dRows && dRows.length > 0) {
+        return dRows.map((r) => ({
+          id: String(r['id'] ?? ''),
+          created: Number(r['created'] ?? 0),
+          updated: Number(r['updated'] ?? 0),
+          session_id: String(r['session_id'] ?? ''),
+          work_id: String(r['work_id'] ?? ''),
+          run_id: '',
+          info_id: String(r['id'] ?? ''),
+          info_type: String(r['type'] ?? 'REQUEST') as InfoType,
+          info_creator_role: String(r['type'] ?? '') === 'REQUEST' ? 'USER' : 'ASSISTANT',
+          info_creator_id: '',
+          info: String(r['dialog'] ?? ''),
+          info_length: Number(r['dialog_length'] ?? 0),
+          pin: 0,
+          trace_id: String(r['trace_id'] ?? ''),
+          handle_result_type: HandleResultType.CORRECT,
+        }));
+      }
+    } catch { }
+
     const rows = await this.relationDb.select(INFO_RAW_TABLE, {
       conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
       order_by: [{ field: 'created', direction: 'DESC' }],

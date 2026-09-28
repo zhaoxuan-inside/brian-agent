@@ -246,6 +246,7 @@ export class UserProfileService {
       20,
     );
     return trendRows.map((r) => ({
+      id: String(r.id ?? ''),
       version: Number(r.version),
       generated_at: Number(r.generated_at),
       profile_summary: String(r.profile_summary ?? ''),

@@ -222,6 +222,7 @@ export class OpenChatStreamInput extends Input {
   msg_content!: string;
   citing_msg_ids?: string[];
   selected_msg_ids?: string[];
+  pinned_msg_ids?: string[];
   force_orchestration_strategy?: string;
 }
 

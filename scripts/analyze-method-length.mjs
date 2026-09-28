@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-/**
- * 方法长度分析器（TS AST）：统计后端各层方法行数分布，
- * 输出超过阈值的方法清单（默认 >20 行），作为拆分工作队列。
- *
- * 用法：node scripts/analyze-method-length.mjs [阈值=20] [--layer Base,Core,...]
- */
+
 import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,13 +48,13 @@ for (const layer of LAYERS) {
         })();
         all.push({ layer, rel, cls, name, len, start });
         if (len > THRESHOLD) offenders.push({ layer, rel, cls, name, len, start });
-        // 合并候选：私有方法、方法体 ≤10 行、同文件仅 1 处调用（建议回并调用方）
+        
         const isPrivate = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.PrivateKeyword) || name.startsWith('_');
         if (isPrivate && len <= 11) {
           const callRe = new RegExp(`\\b${name}\\b`, 'g');
           const occurrences = (src.match(callRe) || []).length;
           if (occurrences === 2) {
-            // 声明 1 次 + 调用 1 次
+            
             mergeCandidates.push({ layer, rel, cls, name, len, start });
           }
         }
@@ -70,7 +65,6 @@ for (const layer of LAYERS) {
   }
 }
 
-// 分布统计
 const buckets = [0, 10, 20, 30, 50, 80, 120, Infinity];
 const dist = {};
 for (const m of all) {
@@ -86,7 +80,7 @@ console.log(`\n超过 ${THRESHOLD} 行的方法：${offenders.length} 个（Top 
 for (const o of offenders.slice(0, 50)) {
   console.log(`${String(o.len).padStart(4)} 行  ${o.rel}:${o.start}  ${o.cls}.${o.name}`);
 }
-// 全量清单落盘
+
 let mc = '';
 if (mergeCandidates.length) {
   mc = [

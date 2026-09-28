@@ -523,8 +523,12 @@ export interface ChatMapEdge {
 export interface MemoryItem {
   id: string
   type: 'semantic' | 'episodic' | 'procedural' | 'working'
+  role?: 'user' | 'assistant' | 'system'
+  infoType?: string
+  creatorRole?: string
   content: string
   tags: string[]
+  sessionId?: string
   confidence: number
   createdAt: number
   updatedAt: number

@@ -170,7 +170,7 @@ export class Metrics {
 
   
   debug(message: string, meta?: Record<string, unknown>): void {
-    this.logger?.debug(this.prefix(message), this.merge(meta));
+    this.logger?.debug?.(this.prefix(message), this.merge(meta));
   }
 
   
@@ -185,7 +185,7 @@ export class Metrics {
 
   
   error(message: string, meta?: Record<string, unknown>): void {
-    this.logger?.error(this.prefix(message), this.merge(meta));
+    this.logger?.error?.(this.prefix(message), this.merge(meta));
   }
 
   
@@ -237,10 +237,10 @@ export class Metrics {
         this.logger?.warn?.(text, payload);
         return;
       case 'ERROR':
-        this.logger?.error(text, payload);
+        this.logger?.error?.(text, payload);
         return;
       default:
-        this.logger?.debug(text, payload);
+        this.logger?.debug?.(text, payload);
     }
   }
 

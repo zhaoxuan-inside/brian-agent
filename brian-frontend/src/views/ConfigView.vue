@@ -464,10 +464,17 @@ async function loadMqQueues() {
 async function loadMqStats() {
   mqStatsLoading.value = true
   try {
-    await mqApi.stats()
-    // Update cache for each queue from "all queues" perspective—best effort
-    // We'll reload individual queue stats when user clicks
-  } catch { /* ignore */ }
+    // 刷新各队列的统计缓存（总数统计无独立展示，逐队列拉取才有意义）
+    const results = await Promise.allSettled(mqQueues.value.map(q => mqApi.stats(q)))
+    const cache = new Map<string, MQStats>()
+    mqQueues.value.forEach((q, i) => {
+      const r = results[i]
+      if (r.status === 'fulfilled') cache.set(q, r.value)
+    })
+    mqStatsCache.value = cache
+  } catch (e) {
+    console.error('[ConfigView] 刷新队列统计失败', e)
+  }
   finally { mqStatsLoading.value = false }
 }
 
@@ -554,18 +561,35 @@ async function createMqQueue() {
   } finally { mqCreating.value = false }
 }
 
-function deleteMqQueue(queue: string) {
-  mqDeletedQueues.value = new Set([...mqDeletedQueues.value, queue])
-  mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(q => q !== queue))
-  mqSelectedQueues.value = new Set([...mqSelectedQueues.value].filter(q => q !== queue))
+async function deleteMqQueue(queue: string) {
+  if (!window.confirm(`确定要删除队列 "${queue}" 吗？队列内所有消息将被一并删除。`)) return
+  try {
+    await mqApi.purge(queue)
+    mqDeletedQueues.value = new Set([...mqDeletedQueues.value, queue])
+    mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(q => q !== queue))
+    mqSelectedQueues.value = new Set([...mqSelectedQueues.value].filter(q => q !== queue))
+    await loadMqQueues()
+    showToast(`队列 "${queue}" 已删除`, 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '删除队列失败')
+  }
 }
 
-function deleteSelectedMqQueues() {
-  for (const q of mqSelectedQueues.value) {
-    mqDeletedQueues.value = new Set([...mqDeletedQueues.value, q])
-    mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(lq => lq !== q))
+async function deleteSelectedMqQueues() {
+  const queues = [...mqSelectedQueues.value]
+  if (queues.length === 0) return
+  if (!window.confirm(`确定要删除选中的 ${queues.length} 个队列吗？队列内所有消息将被一并删除。`)) return
+  const failed: string[] = []
+  for (const q of queues) {
+    try {
+      await mqApi.purge(q)
+      mqDeletedQueues.value = new Set([...mqDeletedQueues.value, q])
+      mqLocalQueues.value = new Set([...mqLocalQueues.value].filter(lq => lq !== q))
+    } catch { failed.push(q) }
   }
   mqSelectedQueues.value = new Set()
+  await loadMqQueues()
+  if (failed.length > 0) showToast(`部分队列删除失败: ${failed.join(', ')}`)
 }
 
 const mqPurging = ref(false)
@@ -684,12 +708,17 @@ function startEditName(snap: Snapshot) {
   editingSnapName.value = snap.name
 }
 
-async function saveSnapName(_snap: Snapshot) {
-  if (editingSnapName.value.trim()) {
-    // Snapshot name is stored in DB, we need an update endpoint or we can just recreate
-    // For now, display name is controlled locally
-  }
+async function saveSnapName(snap: Snapshot) {
+  const name = editingSnapName.value.trim()
   editingSnapId.value = ''
+  if (!name || name === snap.name) return
+  try {
+    await fetchApi(`/config/snapshot/${snap.id}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
+    snap.name = name
+    showToast('快照已重命名', 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '重命名失败')
+  }
 }
 
 
@@ -748,6 +777,7 @@ watch(() => activeSubSection.value, (val) => {
 
 const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
 const promptHelpCollapsed = ref(true)
+const strategyHelpCollapsed = ref(true)
 const promptSearchQuery = ref('')
 const selectedPrompts = ref<Set<string>>(new Set())
 
@@ -1678,6 +1708,7 @@ async function submitModelForm() {
     if (editingModel.value) {
       await configApi.model.update(editingModel.value.id, data)
     } else {
+      data.provider_id = modelForm.value.providerId
       await fetchApi('/config/model', { method: 'POST', body: JSON.stringify(data) })
     }
     showToast(editingModel.value ? '已更新' : '已创建', 'success')
@@ -2531,13 +2562,15 @@ async function handleTestMcpProvider(providerId: string) {
 async function handleInstallMcp(providerId: string, toolId: string) {
   installingMcpId.value = toolId
   try {
-    await fetchApi('/config/mcp/install', {
+    const res = await fetchApi<{ success: boolean; warning?: string }>('/config/mcp/install', {
       method: 'POST',
       body: JSON.stringify({ mcp_provider_id: providerId, mcp_id: toolId }),
     })
-    showToast('安装成功', 'success')
+    showToast(res?.warning || '安装成功', res?.warning ? undefined : 'success')
     await loadMcps()
-    await loadMcpMarketTools(providerId)
+    // 刷新当前市场页（reset=true），确保 installed 标记立即更新
+    mcpToolCache.delete(providerId)
+    await loadMcpMarketTools(providerId, true)
   } catch (e: unknown) {
     showToast(e instanceof Error ? e.message : '安装失败')
   } finally {
@@ -2614,7 +2647,7 @@ const agentModalVisible = ref(false)
 const editingAgent = ref<BackendAgent | null>(null)
 const agentForm = ref({
   name: '', type: 'WORKER', description: '',
-  strategyId: '', llmId: '', soulId: '', taskSignature: '',
+  strategyId: '', soulId: '', taskSignature: '',
 })
 const agentSubmitting = ref(false)
 
@@ -2682,13 +2715,12 @@ async function openAgentModal(agent?: BackendAgent) {
       type: agent.agent_type || agent.type || 'WORKER',
       description: agent.agent_purpose || agent.description || '',
       strategyId: agent.strategy_id || '',
-      llmId: agent.llm_id || '',
       soulId: agent.soul_id || '',
       taskSignature: agent.task_signature || '',
     }
   } else {
     editingAgent.value = null
-    agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', llmId: '', soulId: '', taskSignature: '' }
+    agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', soulId: '', taskSignature: '' }
   }
   agentModalVisible.value = true
 }
@@ -2704,7 +2736,6 @@ async function submitAgentForm() {
       description: agentForm.value.description,
       agent_purpose: agentForm.value.description,
       strategy_id: agentForm.value.strategyId,
-      llm_id: agentForm.value.llmId,
       soul_id: agentForm.value.soulId,
       task_signature: agentForm.value.taskSignature,
     }
@@ -4012,14 +4043,14 @@ watch(activeSubSection, async (val) => {
               <div v-if="!isCardView" class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
                 <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ group.label }}</h3>
               </div>
-              <div :class="isCardView ? 'grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3' : 'divide-y divide-apple-gray-100 dark:divide-apple-gray-700'">
+              <div :class="isCardView ? 'grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3' : 'divide-y divide-apple-gray-100 dark:divide-apple-gray-700'">
                 <div
                   v-for="item in group.items"
                   :key="item.config_key"
-                  :class="isCardView ? 'rounded-lg border border-apple-gray-100 dark:border-apple-gray-700 p-4 hover:border-brian-blue/40 hover:shadow-sm transition-all bg-white dark:bg-apple-gray-800/50 aspect-[3/2]' : 'px-4 py-3 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors'"
+                  :class="isCardView ? 'rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 p-4 hover:border-brian-blue/30 hover:shadow-md transition-shadow bg-white dark:bg-apple-gray-800 h-[176px] flex flex-col overflow-hidden' : 'px-4 py-3 hover:bg-apple-gray-50 dark:hover:bg-apple-gray-800/50 transition-colors'"
                 >
-                  <div :class="isCardView ? 'flex flex-col gap-3 h-full' : 'flex items-start justify-between gap-4'">
-                    <div class="flex-1 min-w-0">
+                  <div :class="isCardView ? 'flex flex-col h-full min-h-0' : 'flex items-start justify-between gap-4'">
+                    <div :class="isCardView ? 'min-h-0 overflow-hidden' : 'flex-1 min-w-0'">
                       <div class="flex items-center gap-2">
                         <span class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50">{{ item.config_name }}</span>
                         <span class="text-4xs px-1.5 py-0.5 rounded-full" :class="
@@ -4033,15 +4064,14 @@ watch(activeSubSection, async (val) => {
                           class="text-4xs px-1 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400"
                         >只读</span>
                       </div>
-                      <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">
+                      <p v-if="item.config_description" class="text-xs text-apple-gray-400 dark:text-apple-gray-500 mt-1 line-clamp-2">
                         {{ item.config_description }}
                         <template v-if="isTimeConfig(item.config_key) && getConfigPrimitiveValue(item) !== undefined">
                           · {{ formatConfigDuration(item.config_key, getConfigPrimitiveValue(item) as string | number) }}
                         </template>
                       </p>
-                      <p class="text-4xs font-mono text-apple-gray-400 dark:text-apple-gray-500 mt-0.5">{{ item.config_key }}</p>
                     </div>
-                    <div :class="isCardView ? 'flex flex-col gap-2 mt-auto' : 'flex items-center gap-2 flex-shrink-0'">
+                    <div :class="isCardView ? 'flex items-center gap-2 mt-auto flex-shrink-0' : 'flex items-center gap-2 flex-shrink-0'">
                       <template v-if="isCardView">
                         <button
                           v-if="item.config_type === 'BOOLEAN'"
@@ -4059,7 +4089,7 @@ watch(activeSubSection, async (val) => {
                           v-else-if="item.config_key.endsWith('prompt_template_id')"
                           v-model="cardValues[item.config_key]"
                           :disabled="item.writable === false"
-                          :class="inputClass + ' !w-full !py-1.5'"
+                          :class="inputClass + ' !py-1.5 flex-1 min-w-0'"
                         >
                           <option value="">prompt选择</option>
                           <option v-for="p in prompts" :key="p.id" :value="p.id">{{ p.title }}</option>
@@ -4068,7 +4098,7 @@ watch(activeSubSection, async (val) => {
                           v-else-if="item.config_key.endsWith('llm_id')"
                           v-model="cardValues[item.config_key]"
                           :disabled="item.writable === false"
-                          :class="inputClass + ' !w-full !py-1.5'"
+                          :class="inputClass + ' !py-1.5 flex-1 min-w-0'"
                         >
                           <option value="">选择模型</option>
                           <option v-for="m in (item.config_key.includes('vector_config') ? embeddingModels : models)" :key="m.id" :value="m.id">{{ m.modelName || m.id }}</option>
@@ -4077,7 +4107,7 @@ watch(activeSubSection, async (val) => {
                           v-else-if="item.config_key.endsWith('strategy_id')"
                           v-model="cardValues[item.config_key]"
                           :disabled="item.writable === false"
-                          :class="inputClass + ' !w-full !py-1.5'"
+                          :class="inputClass + ' !py-1.5 flex-1 min-w-0'"
                         >
                           <option value="">选择策略</option>
                           <option v-for="s in orchStrategies" :key="s.id" :value="s.strategyId">{{ s.label }}</option>
@@ -4086,13 +4116,13 @@ watch(activeSubSection, async (val) => {
                           v-else-if="item.config_type === 'ENUM' && item.config_enum_values"
                           v-model="cardValues[item.config_key]"
                           :disabled="item.writable === false"
-                          :class="inputClass + ' !w-full !py-1.5'"
+                          :class="inputClass + ' !py-1.5 flex-1 min-w-0'"
                         >
                           <option v-for="v in item.config_enum_values" :key="String(v)" :value="String(v)">{{ enumLabel(item.config_key, String(v)) }}</option>
                         </select>
                         <button
                           v-else-if="isCronConfig(item.config_key)"
-                          class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent font-mono text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
+                          class="flex-1 min-w-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent font-mono text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
                           :disabled="item.writable === false"
                           @click="startEditParam(item)"
                         >
@@ -4101,7 +4131,7 @@ watch(activeSubSection, async (val) => {
                         </button>
                         <button
                           v-else-if="isInfoTypesConfig(item.config_key)"
-                          class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
+                          class="flex-1 min-w-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
                           :disabled="item.writable === false"
                           @click="openInfoTypesModal(item)"
                         >
@@ -4110,7 +4140,7 @@ watch(activeSubSection, async (val) => {
                         </button>
                         <button
                           v-else-if="isPriorityOrderConfig(item.config_key)"
-                          class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
+                          class="flex-1 min-w-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
                           :disabled="item.writable === false"
                           @click="openPriorityOrderModal(item)"
                         >
@@ -4122,11 +4152,12 @@ watch(activeSubSection, async (val) => {
                           v-model="cardValues[item.config_key]"
                           :disabled="item.writable === false"
                           :type="item.config_type === 'INT' || item.config_type === 'DOUBLE' ? 'number' : 'text'"
-                          :class="inputClass + ' !w-full !py-1.5'"
+                          :class="inputClass + ' !py-1.5 flex-1 min-w-0'"
                         />
                         <button
-                          class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors"
-                          :disabled="cardSaving[item.config_key] || item.writable === false"
+                          v-if="item.writable !== false"
+                          class="flex-shrink-0 flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium bg-brian-blue text-white rounded-lg hover:bg-brian-blue/90 disabled:opacity-50 transition-colors"
+                          :disabled="cardSaving[item.config_key]"
                           @click="saveCard(item)"
                         >
                           <Loader2 v-if="cardSaving[item.config_key]" :size="14" class="animate-spin" />
@@ -4318,14 +4349,14 @@ watch(activeSubSection, async (val) => {
             <Globe :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无提供商配置</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="p in providers" :key="p.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openProviderModal(p)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Globe :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p._displayName || p.id }}</h3>
@@ -4372,14 +4403,14 @@ watch(activeSubSection, async (val) => {
             <Search :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">没有匹配的模型</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="m in filteredModels" :key="m.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openModelModal(m)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Boxes :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.modelName || '' }}</h3>
@@ -4424,14 +4455,14 @@ watch(activeSubSection, async (val) => {
             <Heart :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无 Soul 配置</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="s in souls" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openSoulModal(s)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Heart :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.soul_brief || s.id }}</h3>
@@ -4475,15 +4506,15 @@ watch(activeSubSection, async (val) => {
             <Search :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">没有匹配的 Skill</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="sk in filteredSkills" :key="sk.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden"
               :class="sk.system ? '' : 'cursor-pointer'"
               @click="openSkillModal(sk)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="sk.system ? 'bg-violet-500/10 text-violet-500' : 'bg-brian-blue/10 text-brian-blue'">
                     <ShieldCheck v-if="sk.system" :size="18" />
                     <Wand2 v-else :size="18" />
@@ -4560,10 +4591,10 @@ watch(activeSubSection, async (val) => {
                 <p class="text-sm mb-1" :class="mcpMarketMessage ? 'text-warning-orange' : 'text-apple-gray-500'" v-else>{{ mcpMarketMessage || '暂无可用工具' }}</p>
                 <p class="text-xs text-apple-gray-400" v-if="!mcpMarketSearchQuery && !mcpMarketMessage">请点击右上角刷新按钮从市场获取工具列表</p>
               </div>
-              <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+              <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
                 <div
                   v-for="tool in filteredMcpMarketTools" :key="tool.id"
-                  class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:border-brian-blue/30 hover:shadow-sm transition-all p-4 aspect-[3/2] flex flex-col overflow-hidden"
+                  class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:border-brian-blue/30 hover:shadow-md transition-shadow p-4 h-[176px] flex flex-col overflow-hidden"
                 >
                   <div class="mb-3 min-h-0 overflow-hidden">
                     <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 leading-snug truncate">{{ tool.title || tool.id }}</p>
@@ -4613,14 +4644,14 @@ watch(activeSubSection, async (val) => {
               <Globe :size="28" class="text-apple-gray-400 mb-3" />
               <p class="text-sm text-apple-gray-500">暂无 MCP 市场数据</p>
             </div>
-            <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+            <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
               <div
                 v-for="p in mcpProviders" :key="p.id"
-                class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-all cursor-pointer p-4 group aspect-[3/2] flex flex-col overflow-hidden"
+                class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow cursor-pointer p-4 group h-[176px] flex flex-col overflow-hidden"
                 @click="toggleMcpMarket(p.provider_code || p.id)"
               >
                 <div class="mb-3 min-h-0 overflow-hidden">
-                  <div class="flex items-center gap-2.5 mb-2">
+                  <div class="flex items-start gap-2.5 mb-2">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue group-hover:bg-brian-blue/20 transition-colors"><Globe :size="18" /></div>
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate flex-1 min-w-0">{{ p._displayName || p.id }}</h3>
                     <span class="text-4xs px-1.5 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 flex-shrink-0">内置</span>
@@ -4716,14 +4747,14 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500 mb-2">暂无已安装的 MCP 服务</p>
             <p class="text-xs text-apple-gray-400">请在"<span class="text-brian-blue">MCP 市场</span>"中浏览并安装 MCP 工具</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="item in mcps" :key="item.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
                 <div class="flex items-start justify-between gap-2 mb-2">
-                  <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="flex items-start gap-2.5 min-w-0">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="18" /></div>
                     <div class="min-w-0">
                       <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ item.displayName || item.name || item.id }}</h3>
@@ -4818,15 +4849,15 @@ watch(activeSubSection, async (val) => {
             <Bot :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无 Agent 实例</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="a in agents" :key="a.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 aspect-square overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openAgentModal(a)"
             >
-              <div class="flex flex-col h-full">
-                <div class="flex items-start justify-between mb-3">
-                  <div class="flex items-center gap-2.5 min-w-0">
+              <div class="mb-3 min-h-0 overflow-hidden">
+                <div class="flex items-start justify-between mb-2">
+                  <div class="flex items-start gap-2.5 min-w-0">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Bot :size="18" /></div>
                     <div class="min-w-0">
                       <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ a.agent_name || a.name || a.id }}</h3>
@@ -4838,35 +4869,35 @@ watch(activeSubSection, async (val) => {
                   </div>
                   <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(a.enable ?? a.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
                 </div>
-                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 min-h-[32px] line-clamp-2">{{ a.agent_purpose || a.description || a.task_signature || '暂无描述' }}</p>
-                <div class="flex flex-col gap-1.5 text-4xs mb-3 min-h-0 overflow-hidden">
-                  <div v-if="a.strategy_id" class="flex items-center gap-1.5 min-w-0">
+                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 line-clamp-2">{{ a.agent_purpose || a.description || a.task_signature || '暂无描述' }}</p>
+                <div class="flex flex-wrap gap-1 text-4xs min-h-0 overflow-hidden">
+                  <div v-if="a.strategy_id" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">策略</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getStrategyLabel(a.strategy_id) }}</span>
                   </div>
-                  <div v-if="a.llm_id" class="flex items-center gap-1.5 min-w-0">
+                  <div v-if="a.llm_id" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">模型</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getModelName(a.llm_id) }}</span>
                   </div>
-                  <div v-if="a.soul_id" class="flex items-center gap-1.5 min-w-0">
+                  <div v-if="a.soul_id" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">Soul</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getSoulName(a.soul_id) }}</span>
                   </div>
-                  <div v-if="a.eval_score !== undefined" class="flex items-center gap-1.5 min-w-0">
+                  <div v-if="a.eval_score !== undefined" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">评分</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.eval_score }}</span>
                   </div>
-                  <div v-if="a.usage_count !== undefined" class="flex items-center gap-1.5 min-w-0">
+                  <div v-if="a.usage_count !== undefined" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">使用</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.usage_count }}次</span>
                   </div>
                 </div>
-                <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                  <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(a.enable ?? a.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleAgent(a.id)">
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(a.enable ?? a.enabled ?? true) ? 'translate-x-4' : ''" />
-                  </button>
-                  <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
-                </div>
+              </div>
+              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
+                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(a.enable ?? a.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleAgent(a.id)">
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(a.enable ?? a.enabled ?? true) ? 'translate-x-4' : ''" />
+                </button>
+                <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
               </div>
             </div>
           </div>
@@ -4919,9 +4950,9 @@ watch(activeSubSection, async (val) => {
               </button>
             </div>
           </div>
-          <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <button
-              class="flex flex-col items-center justify-center p-4 border-2 border-dashed border-apple-gray-300 dark:border-apple-gray-600 rounded-xl text-apple-gray-400 hover:border-brian-blue hover:text-brian-blue transition-colors aspect-[3/2]"
+              class="flex flex-col items-center justify-center p-4 border-2 border-dashed border-apple-gray-300 dark:border-apple-gray-600 rounded-xl text-apple-gray-400 hover:border-brian-blue hover:text-brian-blue transition-colors h-[176px]"
               @click="openPromptModal()"
             >
               <Plus :size="24" class="mb-2" />
@@ -4929,12 +4960,12 @@ watch(activeSubSection, async (val) => {
             </button>
             <div
               v-for="p in filteredPrompts" :key="p.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               :class="selectedPrompts.has(p.id) ? 'border-brian-blue/40 bg-brian-blue/5' : ''"
               @click="openPromptModal(p)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><MessageSquare :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p.title }}</h3>
@@ -4971,14 +5002,14 @@ watch(activeSubSection, async (val) => {
             </p>
           </div>
           <div v-if="orchStrategiesLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="s in orchStrategies" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openOrchStrategyDetail(s)"
             >
               <div class="flex items-start justify-between mb-2 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 min-w-0">
+                <div class="flex items-start gap-2.5 min-w-0">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="s.label === 'SIMPLE' ? 'bg-success-green/10 text-success-green' : 'bg-brian-blue/10 text-brian-blue'">
                     <component :is="s.label === 'SIMPLE' ? Zap : Network" :size="18" />
                   </div>
@@ -4999,7 +5030,7 @@ watch(activeSubSection, async (val) => {
                 <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeOrchStrategyDetail" />
                 <div class="relative w-full max-w-3xl bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden max-h-[85vh] flex flex-col">
                   <div class="flex items-center justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
-                    <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="flex items-start gap-2.5 min-w-0">
                       <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" :class="selectedOrchStrategy?.label === 'SIMPLE' ? 'bg-success-green/10 text-success-green' : 'bg-brian-blue/10 text-brian-blue'">
                         <component :is="selectedOrchStrategy?.label === 'SIMPLE' ? Zap : Network" :size="18" />
                       </div>
@@ -5249,14 +5280,14 @@ watch(activeSubSection, async (val) => {
             <Layers :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无画像维度</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="d in profileDirections" :key="d.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 aspect-[3/2] flex flex-col overflow-hidden cursor-pointer"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openProfileDirModal(d)"
             >
               <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-center gap-2.5 mb-2">
+                <div class="flex items-start gap-2.5 mb-2">
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Layers :size="18" /></div>
                   <div class="min-w-0 flex-1">
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ d.direction_name }}</h3>
@@ -5353,13 +5384,24 @@ watch(activeSubSection, async (val) => {
 
         <div v-if="isEntityView && currentEntityType === 'strategy'" class="px-5 pb-6">
           <div class="mb-5 rounded-xl border border-brian-blue/20 bg-brian-blue/[0.02] dark:bg-brian-blue/5 p-4">
-            <h4 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 mb-2 flex items-center gap-1.5">
-              <GitBranch :size="15" class="text-brian-blue" />
-              执行策略说明
-            </h4>
-            <p class="text-xs text-apple-gray-600 dark:text-apple-gray-300 leading-relaxed">
-              执行策略定义了 Agent 的<strong>思考推理模式</strong>（CoT / ReAct / Plan-and-Solve）。系统根据任务复杂度与领域自动匹配最合适的策略，每个策略包含适用复杂度区间、适用领域与执行规则（steps / phases 执行流）。
-            </p>
+            <button class="w-full flex items-center justify-between text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50 cursor-pointer" @click="strategyHelpCollapsed = !strategyHelpCollapsed">
+              <span class="flex items-center gap-1.5">
+                <GitBranch :size="15" class="text-brian-blue" />
+                执行策略说明
+              </span>
+              <ChevronRight :size="16" class="text-apple-gray-400 transition-transform" :class="{ 'rotate-90': !strategyHelpCollapsed }" />
+            </button>
+            <div v-show="!strategyHelpCollapsed" class="text-xs text-apple-gray-600 dark:text-apple-gray-300 space-y-1.5 leading-relaxed mt-2">
+              <p>执行策略定义了 Agent 的<strong>思考推理模式</strong>（CoT / ReAct / Plan-and-Solve），系统根据任务复杂度与领域自动匹配最合适的策略。</p>
+              <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mt-2">
+                <dt class="font-medium text-apple-gray-500">复杂度区间：</dt>
+                <dd>策略适用的任务复杂度范围，与领域共同参与自动匹配。</dd>
+                <dt class="font-medium text-apple-gray-500">适用领域：</dt>
+                <dd>策略擅长的任务领域，<code class="text-4xs px-1 bg-apple-gray-100 dark:bg-apple-gray-700 rounded">* </code>表示通用。</dd>
+                <dt class="font-medium text-apple-gray-500">执行规则：</dt>
+                <dd>steps / phases 定义的具体执行流，点击下方卡片可查看完整流程详情。</dd>
+              </dl>
+            </div>
           </div>
 
           <div v-if="agentStrategiesLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
@@ -5367,15 +5409,15 @@ watch(activeSubSection, async (val) => {
             <GitBranch :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">暂无执行策略</p>
           </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <div
               v-for="s in agentStrategies" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md transition-shadow p-4 cursor-pointer aspect-[3/2]"
+              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
               @click="openStrategyDetail(s)"
             >
               <div class="flex flex-col h-full">
                 <div class="flex items-start justify-between mb-2 min-h-0 overflow-hidden">
-                  <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="flex items-start gap-2.5 min-w-0">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue">
                       <GitBranch :size="18" />
                     </div>
@@ -5940,13 +5982,6 @@ watch(activeSubSection, async (val) => {
                 <select v-model="agentForm.strategyId" :class="inputClass">
                   <option value="">无</option>
                   <option v-for="s in agentStrategies" :key="s.strategy_id" :value="s.strategy_id">{{ s.strategy_label }}（复杂度 {{ s.suitable_complexity_min }}-{{ s.suitable_complexity_max }}）</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">LLM 模型</label>
-                <select v-model="agentForm.llmId" :class="inputClass">
-                  <option value="">无</option>
-                  <option v-for="m in models" :key="m.id" :value="m.id">{{ m.modelName || m.id }}</option>
                 </select>
               </div>
               <div>
