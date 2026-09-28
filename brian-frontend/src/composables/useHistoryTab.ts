@@ -51,7 +51,9 @@ async function loadHistory(reset = true) {
     }
     hasMoreHistory.value = data.sessions.length >= HISTORY_PAGE_SIZE
   }
-  catch {  }
+  catch (err) {
+    console.error('[HistoryTab] 加载会话历史失败', err)
+  }
   finally {
     if (reset) loadingHistory.value = false
     else loadingMoreHistory.value = false
@@ -71,13 +73,18 @@ watch([historySearch, historyStartTime, historyEndTime], () => {
 })
 
 const filteredHistory = computed(() => {
-  return [...chatList.value].sort((a, b) => b.lastTime - a.lastTime)
+  return [...chatList.value].sort((a, b) => {
+    const timeA = a.createdTime || a.created || a.lastTime
+    const timeB = b.createdTime || b.created || b.lastTime
+    return timeB - timeA
+  })
 })
 
 const historyTimeline = computed(() => {
   const groups: { dateKey: string; label: string; items: ChatSession[] }[] = []
   for (const session of filteredHistory.value) {
-    const d = new Date(session.lastTime)
+    const sessionTime = session.createdTime || session.created || session.lastTime
+    const d = new Date(sessionTime)
     const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
     let group = groups.find(g => g.dateKey === dateKey)
     if (!group) {
@@ -144,7 +151,9 @@ async function loadHistoryDateCounts() {
         }
       }
     }
-  } catch {  }
+  } catch (err) {
+    console.error('[HistoryTab] 加载日期统计失败', err)
+  }
 }
 
 function ensureDateCounts() {

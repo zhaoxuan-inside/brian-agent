@@ -24,6 +24,16 @@ const {
   deleteConfirm, requestDeleteSession, requestBatchDelete, confirmDelete,
   openSession,
 } = inject(INFO_TABS_KEY)!.history
+
+function formatSessionTitle(title?: string): string {
+  if (!title) return '新会话'
+  const trimmed = title.trim()
+  if (!trimmed) return '新会话'
+  if (trimmed.length > 12) {
+    return `${trimmed.slice(0, 12)}...`
+  }
+  return trimmed
+}
 </script>
 
 <template>
@@ -95,43 +105,64 @@ const {
             <div
               v-for="item in group.items"
               :key="item.sessionId"
-              class="block-card rounded-xl p-3 cursor-pointer flex flex-col gap-1.5 h-44"
+              class="block-card rounded-xl p-3 cursor-pointer flex flex-col justify-between min-h-[188px] h-auto transition-all"
               :class="selectedSessions.has(item.sessionId) ? 'border-brian-blue/40 bg-brian-blue/5' : 'hover:border-brian-blue/30'"
               @click="openSession(item.sessionId)"
             >
               <div class="flex items-start justify-between gap-1">
-                <p class="text-sm font-semibold truncate min-w-0 flex-1">{{ item.sessionTitle || '新会话' }}</p>
-                <div class="flex items-center gap-0.5 flex-shrink-0">
-                  <button class="text-apple-gray-300 hover:text-brian-blue" title="选择" @click.stop="toggleHistorySelect(item.sessionId)">
+                <p class="text-sm font-semibold truncate min-w-0 flex-1 text-apple-gray-900 dark:text-white" :title="item.sessionTitle || '新会话'">
+                  {{ formatSessionTitle(item.sessionTitle) }}
+                </p>
+                <div class="flex items-center gap-1 flex-shrink-0">
+                  <button class="text-apple-gray-300 hover:text-brian-blue p-0.5 rounded transition-colors" title="选择" @click.stop="toggleHistorySelect(item.sessionId)">
                     <component :is="selectedSessions.has(item.sessionId) ? CheckSquare : Square" :size="14" />
                   </button>
-                  <button class="text-apple-gray-400 hover:text-error-red" title="删除" @click.stop="requestDeleteSession(item.sessionId)">
+                  <button class="text-apple-gray-400 hover:text-error-red p-0.5 rounded transition-colors" title="删除会话" @click.stop="requestDeleteSession(item.sessionId)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
               </div>
-              <span class="text-xs text-apple-gray-400">{{ formatTime(item.lastTime) }}</span>
+              <span class="text-xs text-apple-gray-400" :title="`创建时间：${formatTime(item.createdTime || item.created || item.lastTime)}`">
+                创建于 {{ formatTime(item.createdTime || item.created || item.lastTime) }}
+              </span>
               <div class="grid grid-cols-3 gap-1.5 text-2xs">
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" title="输入 / 输出 Token">
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`Token 消耗：总计 ${((item.inputTokens ?? 0) + (item.outputTokens ?? 0)).toLocaleString()} (输入 ${item.inputTokens ?? 0} / 输出 ${item.outputTokens ?? 0})`">
                   <p class="text-apple-gray-400">Tokens</p>
-                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">{{ formatTokens(item.inputTokens) }} / {{ formatTokens(item.outputTokens) }}</p>
+                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">
+                    {{ formatTokens((item.inputTokens ?? 0) + (item.outputTokens ?? 0)) }}
+                  </p>
                 </div>
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" title="问答次数">
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`成对完整问答轮数：${item.qaCount ?? 0} 轮`">
                   <p class="text-apple-gray-400">问答</p>
-                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200">{{ item.qaCount ?? 0 }}</p>
+                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200">{{ item.qaCount ?? 0 }} 轮</p>
                 </div>
-                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" title="问题 / 回答字符数">
-                  <p class="text-apple-gray-400">字数</p>
-                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">{{ formatTokens(item.questionChars) }} / {{ formatTokens(item.answerChars) }}</p>
+                <div class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-800 px-1.5 py-1" :title="`会话总字符数：总计 ${((item.questionChars ?? 0) + (item.answerChars ?? 0)).toLocaleString()} (提问 ${item.questionChars ?? 0} / 回答 ${item.answerChars ?? 0})`">
+                  <p class="text-apple-gray-400">字符数</p>
+                  <p class="font-medium text-apple-gray-700 dark:text-apple-gray-200 truncate">
+                    {{ formatTokens((item.questionChars ?? 0) + (item.answerChars ?? 0)) }}
+                  </p>
                 </div>
               </div>
-              <div class="flex flex-wrap gap-1 overflow-hidden flex-1 min-h-0 items-end">
-                <button
-                  class="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-brian-blue bg-brian-blue/5 hover:bg-brian-blue/10 transition-colors"
-                  @click.stop="openViewTags(item)"
-                >
-                  <Tag :size="12" /> 查看标签
-                </button>
+              <div class="flex flex-wrap items-center gap-1 pt-1 border-t border-apple-gray-100 dark:border-apple-gray-800/60 min-h-[26px]">
+                <template v-if="item.tags && item.tags.length > 0">
+                  <span
+                    v-for="tag in item.tags.slice(0, 4)"
+                    :key="tag"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-2xs bg-brian-blue/10 text-brian-blue max-w-[80px] truncate"
+                    :title="tag"
+                  >
+                    #{{ tag }}
+                  </span>
+                  <button
+                    v-if="item.tags.length > 4"
+                    class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-2xs font-medium bg-apple-gray-100 hover:bg-apple-gray-200 dark:bg-apple-gray-800 dark:hover:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 transition-colors"
+                    title="查看全部标签"
+                    @click.stop="openViewTags(item)"
+                  >
+                    +{{ item.tags.length - 4 }} 更多
+                  </button>
+                </template>
+                <span v-else class="text-2xs text-apple-gray-400">无标签</span>
               </div>
             </div>
           </div>
