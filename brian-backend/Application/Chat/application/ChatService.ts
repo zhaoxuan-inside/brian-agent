@@ -347,6 +347,8 @@ export class ChatService {
       ]);
       await this.deleteWriterProfileForSession(sessionId);
       await this.deleteRuntimeDataForSession(sessionId);
+      await this.deleteTokenLogsForSession(sessionId);
+      await this.deleteOrchestrationForSession(sessionId);
       return affected;
     } catch (err: unknown) {
       this.logger?.error?.('deleteSession: failed to delete session', {
@@ -354,6 +356,52 @@ export class ChatService {
         error: err instanceof Error ? err.message : String(err),
       });
       return 0;
+    }
+  }
+
+  private async deleteTokenLogsForSession(sessionId: string): Promise<void> {
+    try {
+      await this.relationDb.delete('llm_call_log', [
+        { field: 'session_id', operator: Operator.EQ, value: sessionId },
+      ]);
+    } catch (err: unknown) {
+      this.logger?.warn?.('deleteSession: llm_call_log 清理失败（已跳过）', {
+        session_id: sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async deleteOrchestrationForSession(sessionId: string): Promise<void> {
+    try {
+      const works = await this.relationDb.select('orchestration_work', {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+        fields: ['work_id'],
+      });
+      const workIds = (works ?? []).map((w) => String(w.work_id ?? '')).filter(Boolean);
+      if (workIds.length > 0) {
+        const execs = await this.relationDb.select('orchestration_agent_execution', {
+          conditions: [{ field: 'work_id', operator: Operator.IN, value: workIds }],
+          fields: ['trace_id'],
+        });
+        const traceIds = (execs ?? []).map((e) => String(e.trace_id ?? '')).filter(Boolean);
+        if (traceIds.length > 0) {
+          await this.relationDb.delete('agent_execution_trace', [
+            { field: 'trace_id', operator: Operator.IN, value: traceIds },
+          ]);
+        }
+        await this.relationDb.delete('orchestration_agent_execution', [
+          { field: 'work_id', operator: Operator.IN, value: workIds },
+        ]);
+        await this.relationDb.delete('orchestration_work', [
+          { field: 'session_id', operator: Operator.EQ, value: sessionId },
+        ]);
+      }
+    } catch (err: unknown) {
+      this.logger?.warn?.('deleteSession: orchestration 数据清理失败（已跳过）', {
+        session_id: sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

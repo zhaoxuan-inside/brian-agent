@@ -381,6 +381,140 @@ describe('ChatService', () => {
       )[0]?.c;
       expect(Number(after)).toBe(0);
     });
+
+    it('TC-CHAT-054c: Delete session cascades llm_call_log and orchestration_work, but preserves shared graph Tag nodes', async () => {
+      ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "orchestration_work" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "work_id" TEXT, "session_id" TEXT, "status" TEXT)`);
+      ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "orchestration_agent_execution" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "work_id" TEXT, "trace_id" TEXT, "agent_name" TEXT, "status" TEXT)`);
+      ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "agent_execution_trace" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "trace_id" TEXT, "agent_id" TEXT, "agent_name" TEXT, "iterations_json" TEXT, "total_token_usage" INTEGER)`);
+
+      const createOutA = new CreateSessionOutput();
+      await service.createSession(new CreateSessionInput(), createOutA, new ChatContext());
+      const sidA = createOutA.session_id;
+
+      // 1. Insert llm_call_log for sidA
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'llm_call_log',
+          data: [
+            { field: 'id', value: 'log-a-1' },
+            { field: 'created', value: 1700000000000 },
+            { field: 'updated', value: 1700000000000 },
+            { field: 'llm_available_id', value: 'mock-llm' },
+            { field: 'session_id', value: sidA },
+            { field: 'caller', value: 'AgentLoop' },
+            { field: 'input_tokens', value: 100 },
+            { field: 'output_tokens', value: 50 },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      // 2. Insert orchestration_work & agent_execution_trace for sidA
+      const workId = `work-${sidA}`;
+      const traceId = `trace-${sidA}`;
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'orchestration_work',
+          data: [
+            { field: 'id', value: 'ow-1' },
+            { field: 'created', value: 1700000000000 },
+            { field: 'updated', value: 1700000000000 },
+            { field: 'work_id', value: workId },
+            { field: 'session_id', value: sidA },
+            { field: 'status', value: 'COMPLETED' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'orchestration_agent_execution',
+          data: [
+            { field: 'id', value: 'oae-1' },
+            { field: 'created', value: 1700000000000 },
+            { field: 'updated', value: 1700000000000 },
+            { field: 'work_id', value: workId },
+            { field: 'trace_id', value: traceId },
+            { field: 'agent_name', value: 'Planner' },
+            { field: 'status', value: 'COMPLETED' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+      await ctx.db.insertDB(
+        Object.assign(new InsertDBInput(), {
+          table: 'agent_execution_trace',
+          data: [
+            { field: 'id', value: 'aet-1' },
+            { field: 'created', value: 1700000000000 },
+            { field: 'updated', value: 1700000000000 },
+            { field: 'trace_id', value: traceId },
+            { field: 'agent_id', value: 'planner' },
+            { field: 'start_time', value: 1700000000000 },
+            { field: 'end_time', value: 1700000001000 },
+            { field: 'iterations_json', value: '[]' },
+            { field: 'total_token_usage', value: 150 },
+            { field: 'answer', value: 'done' },
+          ],
+        }),
+        Object.assign(new InsertDBOutput(), {}),
+        new DBContext(),
+      );
+
+      // 3. Insert shared Tag node in graphDb
+      const { AddGraphNodeInput, AddGraphNodeOutput, GraphContext } = await import('@brian-agent/base');
+      const addNodeOut = new AddGraphNodeOutput();
+      await ctx.graphDBAccess.addGraphNode(
+        Object.assign(new AddGraphNodeInput(), {
+          data: {
+            node_type: 'Tag',
+            content: { tag_name: 'TypeScript', freq: 2 },
+          },
+        }),
+        addNodeOut,
+        new GraphContext(),
+      );
+      const tagNodeId = addNodeOut.id;
+
+      // Now delete session A
+      const delInput = Object.assign(new DeleteSessionInput(), { session_ids: [sidA] });
+      const delOutput = new DeleteSessionOutput();
+      await service.deleteSession(delInput, delOutput, new ChatContext());
+
+      expect(delOutput.deleted_count).toBe(1);
+
+      // Verify llm_call_log for sidA is deleted
+      const logRows = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM llm_call_log WHERE session_id = ?', [sidA],
+      );
+      expect(Number(logRows[0]?.c ?? 0)).toBe(0);
+
+      // Verify orchestration_work for sidA is deleted
+      const workRows = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM orchestration_work WHERE session_id = ?', [sidA],
+      );
+      expect(Number(workRows[0]?.c ?? 0)).toBe(0);
+
+      // Verify agent_execution_trace is deleted
+      const traceRows = ctx.db.queryRaw<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM agent_execution_trace WHERE trace_id = ?', [traceId],
+      );
+      expect(Number(traceRows[0]?.c ?? 0)).toBe(0);
+
+      // Verify shared Tag node in graphDb is PRESERVED (NOT deleted)
+      const { SelectGraphOutput, GraphTarget } = await import('@brian-agent/base');
+      const selNodeOut = new SelectGraphOutput();
+      await ctx.graphDBAccess.selectGraph(
+        { target: GraphTarget.NODE, node_type: 'Tag' } as any,
+        selNodeOut,
+        new GraphContext(),
+      );
+      const tagStillExists = (selNodeOut.list as any[]).some((n) => n.id === tagNodeId);
+      expect(tagStillExists).toBe(true);
+    });
   });
 
   describe('soSession', () => {
