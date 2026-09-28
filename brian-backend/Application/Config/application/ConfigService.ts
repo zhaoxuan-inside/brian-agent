@@ -1530,6 +1530,11 @@ export class ConfigService {
       else if (prefix.startsWith('agent_library.similarity_threshold')) input.similarity_threshold = value as number;
       else if (prefix.startsWith(PROMPT_SLOTS.AGENT_MATCH)) input.prompt_template_id = value as string;
       else if (prefix.startsWith('agent_library.max_agent_count')) input.max_agent_count = value as number;
+      else if (prefix.startsWith('agent_library.match_score_threshold')) input.match_score_threshold = value as number;
+      else if (prefix.startsWith('agent_library.match_bm25_threshold')) input.match_bm25_threshold = value as number;
+      else if (prefix.startsWith('agent_library.match_vector_threshold')) input.match_vector_threshold = value as number;
+      else if (prefix.startsWith('agent_library.match_max_tokens')) input.match_max_tokens = value as number;
+      else if (prefix.startsWith('agent_library.match_enable_thinking')) input.match_enable_thinking = value as boolean;
       const output = {} as AgentLibraryContext;
       await this.agentLibrary.configAgentLibrary(input, {} as ConfigAgentLibraryOutput, output);
       return;

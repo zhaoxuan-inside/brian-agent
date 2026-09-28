@@ -65,8 +65,11 @@ export interface AgentLibraryConfigRecord {
   similarity_threshold: number;
   regen_rate: number;
   max_agent_count: number;
-  
   match_score_threshold: number;
+  match_bm25_threshold: number;
+  match_vector_threshold: number;
+  match_max_tokens: number;
+  match_enable_thinking: boolean;
 }
 
 export class AddAgentInput extends Input {
@@ -225,8 +228,11 @@ export class ConfigAgentLibraryInput extends Input {
   similarity_threshold?: number;
   regen_rate?: number;
   max_agent_count?: number;
-  
   match_score_threshold?: number;
+  match_bm25_threshold?: number;
+  match_vector_threshold?: number;
+  match_max_tokens?: number;
+  match_enable_thinking?: boolean;
 }
 
 export class ConfigAgentLibraryOutput extends Output {
@@ -234,8 +240,11 @@ export class ConfigAgentLibraryOutput extends Output {
   similarity_threshold = 0.7;
   regen_rate = 75;
   max_agent_count = 100;
-  
   match_score_threshold = 70;
+  match_bm25_threshold = 50;
+  match_vector_threshold = 50;
+  match_max_tokens = 512;
+  match_enable_thinking = false;
 }
 
 export const AGENT_TABLE = 'agent';

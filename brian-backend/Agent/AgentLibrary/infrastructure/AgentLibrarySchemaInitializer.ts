@@ -86,11 +86,27 @@ export class AgentLibrarySchemaInitializer {
         prompt_template_id TEXT NOT NULL, similarity_threshold REAL NOT NULL DEFAULT 0.7,
         regen_rate INTEGER NOT NULL DEFAULT 75,
         match_score_threshold INTEGER NOT NULL DEFAULT 70,
-        max_agent_count INTEGER NOT NULL DEFAULT 100
+        max_agent_count INTEGER NOT NULL DEFAULT 100,
+        match_bm25_threshold INTEGER NOT NULL DEFAULT 50,
+        match_vector_threshold INTEGER NOT NULL DEFAULT 50,
+        match_max_tokens INTEGER NOT NULL DEFAULT 512,
+        match_enable_thinking INTEGER NOT NULL DEFAULT 0
       )`,
     );
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_bm25_threshold INTEGER NOT NULL DEFAULT 50`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_vector_threshold INTEGER NOT NULL DEFAULT 50`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_max_tokens INTEGER NOT NULL DEFAULT 512`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_LIBRARY_CONFIG_TABLE} ADD COLUMN match_enable_thinking INTEGER NOT NULL DEFAULT 0`);
     } catch {  }
 
     await this.insertDefaultConfig();

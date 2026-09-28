@@ -683,6 +683,27 @@ export class AgentLibraryService {
       }
       data.push({ field: 'match_score_threshold', value: input.match_score_threshold });
     }
+    if (input.match_bm25_threshold !== undefined) {
+      if (input.match_bm25_threshold < 0 || input.match_bm25_threshold > 100) {
+        throw new ValidationError('match_bm25_threshold 必须在 0-100');
+      }
+      data.push({ field: 'match_bm25_threshold', value: input.match_bm25_threshold });
+    }
+    if (input.match_vector_threshold !== undefined) {
+      if (input.match_vector_threshold < 0 || input.match_vector_threshold > 100) {
+        throw new ValidationError('match_vector_threshold 必须在 0-100');
+      }
+      data.push({ field: 'match_vector_threshold', value: input.match_vector_threshold });
+    }
+    if (input.match_max_tokens !== undefined) {
+      if (!Number.isInteger(input.match_max_tokens) || input.match_max_tokens <= 0) {
+        throw new ValidationError('match_max_tokens 必须为正整数');
+      }
+      data.push({ field: 'match_max_tokens', value: input.match_max_tokens });
+    }
+    if (input.match_enable_thinking !== undefined) {
+      data.push({ field: 'match_enable_thinking', value: input.match_enable_thinking ? 1 : 0 });
+    }
 
     if (data.length > 0) {
       data.push({ field: 'updated', value: IdGenerator.now() });
@@ -699,6 +720,10 @@ export class AgentLibraryService {
     output.regen_rate = latest?.regen_rate ?? 75;
     output.max_agent_count = latest?.max_agent_count ?? 100;
     output.match_score_threshold = latest?.match_score_threshold ?? 70;
+    output.match_bm25_threshold = latest?.match_bm25_threshold ?? 50;
+    output.match_vector_threshold = latest?.match_vector_threshold ?? 50;
+    output.match_max_tokens = latest?.match_max_tokens ?? 512;
+    output.match_enable_thinking = latest?.match_enable_thinking ?? false;
 
     if (input.max_agent_count !== undefined && latest) {
       const count = await this.relationDb.count(AGENT_TABLE, [
@@ -723,6 +748,10 @@ export class AgentLibraryService {
       regen_rate: Number(row.regen_rate ?? 75),
       max_agent_count: Number(row.max_agent_count ?? 100),
       match_score_threshold: Number(row.match_score_threshold ?? 70),
+      match_bm25_threshold: Number(row.match_bm25_threshold ?? 50),
+      match_vector_threshold: Number(row.match_vector_threshold ?? 50),
+      match_max_tokens: Number(row.match_max_tokens ?? 512),
+      match_enable_thinking: row.match_enable_thinking === 1 || row.match_enable_thinking === true,
     };
   }
 
