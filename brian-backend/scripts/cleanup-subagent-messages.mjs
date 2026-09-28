@@ -41,12 +41,17 @@ for (const run of subRuns) {
     }
   }
   
-  const infoRows = db.prepare(
-    `SELECT COUNT(*) AS n FROM "info_raw" WHERE "work_id" = ?`,
+  const dialogRows = db.prepare(
+    `SELECT COUNT(*) AS n FROM "dialog" WHERE "work_id" = ?`,
   ).get(run.id);
-  infoCount += Number(infoRows?.n ?? 0);
+  const execRows = db.prepare(
+    `SELECT COUNT(*) AS n FROM "execute" WHERE "work_id" = ?`,
+  ).get(run.id);
+  infoCount += Number(dialogRows?.n ?? 0) + Number(execRows?.n ?? 0);
   if (commit) {
-    db.prepare(`DELETE FROM "info_raw" WHERE "work_id" = ?`).run(run.id);
+    db.prepare(`DELETE FROM "dialog" WHERE "work_id" = ?`).run(run.id);
+    db.prepare(`DELETE FROM "execute" WHERE "work_id" = ?`).run(run.id);
+    db.prepare(`DELETE FROM "context" WHERE "work_id" = ?`).run(run.id);
   }
 }
 
@@ -55,7 +60,7 @@ if (commit) {
 }
 
 console.log(`subagent run 总数：${subRuns.length}`);
-console.log(`清理消息：${msgCount} 条（关联 Part：${partCount} 个，info_raw 残留：${infoCount} 行）`);
+console.log(`清理消息：${msgCount} 条（关联 Part：${partCount} 个，dialog/execute 残留：${infoCount} 行）`);
 console.log(commit ? '已执行删除（--commit）' : 'dry-run：未删除（加 --commit 执行）');
 for (const row of detail.slice(0, 20)) {
   console.log(`  [${row.role}] ${row.preview}…（run=${row.run_id}）`);

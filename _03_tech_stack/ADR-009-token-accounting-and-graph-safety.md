@@ -7,7 +7,7 @@
 
 ## 决策
 1. **全量 Token 记账**：会话 Token 聚合数据源从局部 `agent_execution_trace` 切换为以 `llm_call_log` 为基准。利用 `LLMService` 作为唯一物理门面的特性，按 `session_id` 统一对 `input_tokens` 与 `output_tokens` 求和，实现 100% 场景覆盖。
-2. **会话删除弱关联解绑**：删除会话时，只删除 `chat_session`、`info_raw`、`info_tag`、`info_keyword` 关系记录，以及该消息的 `info` 节点与引用边；严禁在会话删除时直接删除 `Tag` 和 `keyword` 实体图节点。
+2. **会话删除弱关联解绑**：删除会话时，只删除 `chat_session`、`dialog`、`execute`、`context`、`info_tag`、`info_keyword` 关系记录，以及该消息的 `info` 节点与引用边；严禁在会话删除时直接删除 `Tag` 和 `keyword` 实体图节点。
 3. **图修复学习孤儿清理**：在图谱修复学习/维护逻辑（`cleanOrphanGraphNodes` / `rebuildCooccurGraph`）中，引入 0 消息关联检测，自动安全清理引用计数为 0 的孤立 Tag 与 keyword 节点及游离边。
 4. **会话标题源头控制**：在 `autoGenerateSessionTitleIfEmpty` 和 `updateSessionTitle` 中从源头统一截取/约束为 8~12 个字符，禁止过长标题进入存储。
 

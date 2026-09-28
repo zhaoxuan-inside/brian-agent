@@ -103,7 +103,6 @@ export class GraphVisualizationConfigOutput extends Output {
 }
 
 export const VISUALIZATION_CONFIG_TABLE = 'visualization_config';
-export const INFO_RAW_TABLE = 'info_raw';
 
 export const QUESTION_ANSWER_EDGE_TYPE = 'QUESTION_ANSWER';
 export const CITATION_EDGE_TYPE = 'CITATION';

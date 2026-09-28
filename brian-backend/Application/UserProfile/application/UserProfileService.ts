@@ -5,6 +5,7 @@ import type { InfoCoreAccess, LLMCoreAccess } from '@brian-agent/core';
 import {
   LastNInfoInput, LastNInfoOutput, RelationKInfoInput, RelationKInfoOutput, InfoCoreContext,
   SoCitationEdgesInput, SoCitationEdgesOutput,
+  DIALOG_TABLE,
 } from '@brian-agent/core';
 import { MatchLLMInput, MatchLLMOutput, RecordLLMUsageInput, RecordLLMUsageOutput, LLMCoreContext } from '@brian-agent/core';
 import type { WriterAgentAccess } from '@brian-agent/agent';
@@ -962,8 +963,8 @@ export class UserProfileService {
     try {
       const tagRows = this.relationDb.queryRaw(
         `SELECT it.tag, COUNT(*) as cnt FROM info_tag it
-         INNER JOIN info_raw ir ON it.info_id = ir.info_id
-         ${sessionId ? "WHERE ir.session_id = ?" : ""}
+         INNER JOIN "${DIALOG_TABLE}" d ON it.info_id = d.id
+         ${sessionId ? 'WHERE d.session_id = ?' : ''}
          GROUP BY it.tag ORDER BY cnt DESC LIMIT 10`,
         sessionId ? [sessionId] : [],
       );
@@ -989,14 +990,14 @@ export class UserProfileService {
     if (sessionId) {
       try {
         const countRows = this.relationDb.queryRaw(
-          `SELECT COUNT(*) as cnt, AVG(info_length) as avg_len FROM info_raw
-           WHERE session_id = ? AND info_type = 'REQUEST'`,
+          `SELECT COUNT(*) as cnt, AVG(dialog_length) as avg_len FROM "${DIALOG_TABLE}"
+           WHERE session_id = ? AND type = 'REQUEST'`,
           [sessionId],
         );
         if (countRows.length > 0) {
           messageCount = Number(countRows[0]?.cnt ?? 0);
           avgLength = Math.round(Number(countRows[0]?.avg_len ?? 0));
-          evidence.push({ source: 'info_raw', message_count: messageCount, avg_message_length: avgLength });
+          evidence.push({ source: 'dialog', message_count: messageCount, avg_message_length: avgLength });
         }
       } catch {  }
 

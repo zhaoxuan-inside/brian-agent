@@ -113,7 +113,7 @@ WHEN 用户点击卡片空白或主体区域 THE SYSTEM SHALL 路由跳转至 /c
 R6 三表重构与复选框上下文增强验收(EARS):
 
 ```text
-WHEN 系统初始化存储层 THE SYSTEM SHALL 创建 dialog、execute、context 三张物理表并建立索引，同时通过 info_raw 视图保证旧调用兼容。
+WHEN 系统初始化存储层 THE SYSTEM SHALL 创建 dialog、execute、context 三张物理表并建立索引，彻底收敛为三表原生存储且不保留兼容性代码。
 WHEN 智能体产生问答消息（REQUEST/RESPONSE）THE SYSTEM SHALL 持久化至 dialog 表，不含执行过程字段。
 WHEN 智能体产生中间执行日志（组件调用、思考反思等）THE SYSTEM SHALL 结构化记录至 execute 表（含组件类型、执行序号、输入、输出及耗时 gap）。
 WHEN 触发上下文构建且用户勾选了历史消息 THE SYSTEM SHALL 将选中消息存入 citing 候选，并从 context 表反查被选消息当时使用的上下文消息回填至 timeline 候选。

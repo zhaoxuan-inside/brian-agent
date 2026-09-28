@@ -22,6 +22,7 @@ import {
   SaveInfoInput, SaveInfoOutput,
   InfoCoreContext,
   DIALOG_TABLE,
+  CONTEXT_TABLE,
 } from '@brian-agent/core';
 import {
   ChatContext,
@@ -217,12 +218,12 @@ export class ChatService {
       if (!rows || rows.length === 0) return;
       rows.reverse();
 
-      const existingRows = this.relationDb.queryRaw<{ work_id: string; info_type: string; info: string }>(
-        `SELECT "work_id", "info_type", "info" FROM "info_raw" WHERE "session_id" = ?`,
+      const existingRows = this.relationDb.queryRaw<{ work_id: string; type: string; dialog: string }>(
+        `SELECT "work_id", "type", "dialog" FROM "${DIALOG_TABLE}" WHERE "session_id" = ?`,
         [chatSessionId],
       );
       const existingKeys = new Set<string>(
-        (existingRows ?? []).map((r) => `${r.work_id || ''}\u0001${r.info_type || ''}\u0001${r.info || ''}`),
+        (existingRows ?? []).map((r) => `${r.work_id || ''}\u0001${r.type || ''}\u0001${r.dialog || ''}`),
       );
 
       const runIds = Array.from(new Set(rows.map((r) => r.run_id).filter(Boolean)));
@@ -424,7 +425,7 @@ export class ChatService {
         fields: ['id'],
       });
       const fbRunIds = fbRunRows.map(r => String(r.id ?? '')).filter(Boolean);
-      const fbWorkRows = await this.relationDb.select('info_raw', {
+      const fbWorkRows = await this.relationDb.select(DIALOG_TABLE, {
         conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
         fields: ['work_id'],
       });
@@ -512,7 +513,7 @@ export class ChatService {
     );
 
     const rawRows = this.relationDb.queryRaw<{ session_id: string }>(
-      `SELECT DISTINCT "session_id" FROM "info_raw"`,
+      `SELECT DISTINCT "session_id" FROM "${DIALOG_TABLE}"`,
     );
     const orphanSessions = Array.from(new Set(
       (rawRows ?? []).map((r) => String(r.session_id ?? '')).filter(Boolean),
@@ -560,7 +561,7 @@ export class ChatService {
   private soSessionIdsByKeyword(keyword: string): string[] {
     const kw = `%${keyword}%`;
     const matchedRows = this.relationDb.queryRaw<{ session_id: string }>(
-      `SELECT "session_id" FROM "chat_session" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "info_raw" WHERE "info" LIKE ?`,
+      `SELECT "session_id" FROM "chat_session" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "${DIALOG_TABLE}" WHERE "dialog" LIKE ?`,
       [kw, kw],
     );
     return matchedRows.map((r) => r.session_id).filter(Boolean);
@@ -578,7 +579,7 @@ export class ChatService {
       timeArgs.push(endTime);
     }
     const timeRows = this.relationDb.queryRaw<{ session_id: string }>(
-      `SELECT DISTINCT "session_id" FROM "info_raw" WHERE ${timeConds.join(' AND ')}`,
+      `SELECT DISTINCT "session_id" FROM "${DIALOG_TABLE}" WHERE ${timeConds.join(' AND ')}`,
       timeArgs,
     );
     return timeRows.map((r) => r.session_id).filter(Boolean);
@@ -640,42 +641,7 @@ export class ChatService {
       }
     } catch { }
 
-    const missingIds = sessionIds.filter((id) => !statMap.has(id));
-    if (missingIds.length > 0) this.fallbackInfoRawQaStats(missingIds, statMap, metrics);
     return statMap;
-  }
-
-  private fallbackInfoRawQaStats(
-    missingIds: string[],
-    statMap: Map<string, { qa_count: number; question_chars: number; answer_chars: number }>,
-    metrics?: Metrics,
-  ): void {
-    const placeholders = missingIds.map(() => '?').join(',');
-    try {
-      const statRows = this.relationDb.queryRaw<{ session_id: string; qa_count: number; question_chars: number; answer_chars: number }>(
-        `SELECT "session_id",
-           MIN(
-             SUM(CASE WHEN "info_type" = 'REQUEST' THEN 1 ELSE 0 END),
-             SUM(CASE WHEN "info_type" = 'RESPONSE' THEN 1 ELSE 0 END)
-           ) AS qa_count,
-           SUM(CASE WHEN "info_type" = 'REQUEST' THEN "info_length" ELSE 0 END) AS question_chars,
-           SUM(CASE WHEN "info_type" = 'RESPONSE' THEN "info_length" ELSE 0 END) AS answer_chars
-         FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
-        missingIds,
-      );
-      for (const r of statRows ?? []) {
-        statMap.set(String(r.session_id), {
-          qa_count: Math.max(0, Number(r.qa_count ?? 0) || 0),
-          question_chars: Number(r.question_chars ?? 0) || 0,
-          answer_chars: Number(r.answer_chars ?? 0) || 0,
-        });
-      }
-    } catch (err) {
-      metrics?.warn('ChatService.soSession 会话统计聚合失败（该批会话统计降级为 0）', {
-        error: err instanceof Error ? err.message : String(err),
-        session_ids: missingIds,
-      });
-    }
   }
 
   private soSessionTags(sessionIds: string[], metrics?: Metrics): Map<string, string[]> {
@@ -683,11 +649,11 @@ export class ChatService {
     const placeholders = sessionIds.map(() => '?').join(',');
     try {
       const tagRows = this.relationDb.queryRaw<{ session_id: string; tag: string }>(
-        `SELECT ir."session_id", t."tag"
+        `SELECT d."session_id", t."tag"
          FROM "info_tag" t
-         INNER JOIN "info_raw" ir ON t."info_id" = ir."info_id"
-         WHERE ir."session_id" IN (${placeholders})
-         GROUP BY ir."session_id", t."tag"`,
+         INNER JOIN "${DIALOG_TABLE}" d ON t."info_id" = d."id"
+         WHERE d."session_id" IN (${placeholders})
+         GROUP BY d."session_id", t."tag"`,
         sessionIds,
       );
       for (const r of tagRows) {
@@ -800,21 +766,10 @@ export class ChatService {
       for (const r of cntRows ?? []) countMap.set(String(r.session_id), Number(r.cnt));
     } catch { }
 
-    const missingIds = sessionIds.filter((id) => !countMap.has(id));
-    if (missingIds.length > 0) {
-      try {
-        const missingPlaceholders = missingIds.map(() => '?').join(',');
-        const rawCntRows = this.relationDb.queryRaw<{ session_id: string; cnt: number }>(
-          `SELECT "session_id", COUNT(*) AS cnt FROM "info_raw" WHERE "session_id" IN (${missingPlaceholders}) GROUP BY "session_id"`,
-          missingIds,
-        );
-        for (const r of rawCntRows ?? []) countMap.set(String(r.session_id), Number(r.cnt));
-      } catch { }
-    }
     return countMap;
   }
 
-  private soSessionLastMessage(sessionIds: string[], metrics?: Metrics): Map<string, { time: number; msg: string }> {
+  private soSessionLastMessage(sessionIds: string[], _metrics?: Metrics): Map<string, { time: number; msg: string }> {
     const lastMsgMap = new Map<string, { time: number; msg: string }>();
     if (sessionIds.length === 0) return lastMsgMap;
     const placeholders = sessionIds.map(() => '?').join(',');
@@ -833,34 +788,7 @@ export class ChatService {
       }
     } catch { }
 
-    const missingIds = sessionIds.filter((id) => !lastMsgMap.has(id));
-    if (missingIds.length > 0) {
-      this.fallbackInfoRawLastMessage(missingIds, lastMsgMap, metrics);
-    }
     return lastMsgMap;
-  }
-
-  private fallbackInfoRawLastMessage(missingIds: string[], lastMsgMap: Map<string, { time: number; msg: string }>, metrics?: Metrics): void {
-    const placeholders = missingIds.map(() => '?').join(',');
-    try {
-      const lastRows = this.relationDb.queryRaw<{ session_id: string; created: number; info: string }>(
-        `SELECT ir."session_id", ir."created", ir."info"
-         FROM "info_raw" ir
-         INNER JOIN (
-           SELECT "session_id", MAX("created") AS max_created
-           FROM "info_raw" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"
-         ) latest ON ir."session_id" = latest."session_id" AND ir."created" = latest.max_created`,
-        missingIds,
-      );
-      for (const r of lastRows ?? []) {
-        lastMsgMap.set(String(r.session_id), { time: Number(r.created), msg: String(r.info ?? '') });
-      }
-    } catch (err) {
-      metrics?.warn('ChatService.soSession 最后消息批量查询失败（最后消息降级为空）', {
-        error: err instanceof Error ? err.message : String(err),
-        session_ids: missingIds,
-      });
-    }
   }
 
   private async countSessionTotal(conditions: Condition[], metrics?: Metrics): Promise<number> {
@@ -901,7 +829,7 @@ export class ChatService {
     let messageCount = 0;
     try {
       const cntInput = Object.assign(new CountDBInput(), {
-        table: 'info_raw',
+        table: DIALOG_TABLE,
         conditions: [
           { field: 'session_id', operator: Operator.EQ, value: input.session_id },
         ] as Condition[],
@@ -980,7 +908,7 @@ export class ChatService {
     let messageCount = 0;
     try {
       const cntInput = Object.assign(new CountDBInput(), {
-        table: 'info_raw',
+        table: DIALOG_TABLE,
         conditions: [
           { field: 'session_id', operator: Operator.EQ, value: input.session_id },
         ] as Condition[],
@@ -1183,45 +1111,27 @@ export class ChatService {
       throw new ValidationError('info_id is required');
     }
 
-    let currentPin = false;
-    try {
-      const selInput = Object.assign(new SelectOneDBInput(), {
-        query_param: {
-          table: 'info_raw',
-          conditions: [
-            { field: 'info_id', operator: Operator.EQ, value: input.info_id },
-          ] as Condition[],
-        },
-      });
-      const selOutput = Object.assign(new SelectOneDBOutput(), {});
-      await this.relationDb.selectOneDB(selInput, selOutput, new DBContext());
-      if (selOutput.row) {
-        currentPin = (selOutput.row.pin as number) === 1;
-      }
-    } catch (err) {
-
-      metrics?.warn('ChatService.pinMessage 读取当前 pin 状态失败（按未置顶处理）', {
-        error: err instanceof Error ? err.message : String(err),
-        info_id: input.info_id,
-      });
-    }
-
     try {
       const pinInput = Object.assign(new PinInfoInput(), {
         info_id: input.info_id,
       });
+      const pinOut = new PinInfoOutput();
       await this.infoCore.pinInfo(
         pinInput,
-        new PinInfoOutput(),
+        pinOut,
         new InfoCoreContext(),
       );
-      output.pin = !currentPin;
+      output.pin = pinOut.pin === 1;
     } catch (err: unknown) {
       this.logger?.error?.('pinMessage: failed to pin info', {
         info_id: input.info_id,
         error: err instanceof Error ? err.message : String(err),
       });
-      output.pin = currentPin;
+      metrics?.warn('ChatService.pinMessage 置顶切换失败', {
+        error: err instanceof Error ? err.message : String(err),
+        info_id: input.info_id,
+      });
+      output.pin = false;
       return false;
     }
 

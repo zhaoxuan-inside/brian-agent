@@ -119,8 +119,9 @@ function mapRandomFactorField(mode: string): string {
 // 记忆视图只展示用户输入与系统产出；THINK/REFLECT/ACT/SKILL/MCP/CDT 等执行中间过程仅入库供上下文/回放使用，不对外展示
 const MEMORY_VISIBLE_INFO_TYPES: string[] = [InfoType.REQUEST, InfoType.RESPONSE];
 
-function memoryVisibleTypeCond(): string {
-  return `"info_type" IN (${MEMORY_VISIBLE_INFO_TYPES.map(() => '?').join(',')})`;
+function memoryVisibleTypeCond(colPrefix = ''): string {
+  const col = colPrefix ? `${colPrefix}"type"` : '"type"';
+  return `${col} IN (${MEMORY_VISIBLE_INFO_TYPES.map(() => '?').join(',')})`;
 }
 
 function mapInfoToMemory(row: any, tags: string[] = []): any {
@@ -1710,15 +1711,33 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         if (!workId && (infoId || runId)) {
           try {
-            const conds: string[] = [];
-            const args: string[] = [];
-            if (infoId) { conds.push('"info_id" = ?'); args.push(infoId); }
-            if (runId) { conds.push('"run_id" = ?'); args.push(runId); }
-            const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
-              `SELECT "work_id" FROM "info_raw" WHERE ${conds.join(' AND ')} LIMIT 1`,
-              args,
-            );
-            if (rows.length > 0) workId = String(rows[0].work_id ?? '');
+            if (infoId) {
+              const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
+                `SELECT "work_id" FROM "dialog" WHERE "id" = ? LIMIT 1`,
+                [infoId],
+              );
+              if (rows.length > 0) workId = String(rows[0].work_id ?? '');
+              if (!workId) {
+                const execRows = ctx.relationDb.queryRaw<{ work_id: string }>(
+                  `SELECT "work_id" FROM "execute" WHERE "id" = ? LIMIT 1`,
+                  [infoId],
+                );
+                if (execRows.length > 0) workId = String(execRows[0].work_id ?? '');
+              }
+            } else if (runId) {
+              const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
+                `SELECT "work_id" FROM "dialog" WHERE "work_id" = ? LIMIT 1`,
+                [runId],
+              );
+              if (rows.length > 0) workId = String(rows[0].work_id ?? '');
+              if (!workId) {
+                const execRows = ctx.relationDb.queryRaw<{ work_id: string }>(
+                  `SELECT "work_id" FROM "execute" WHERE "work_id" = ? OR "run_id" = ? LIMIT 1`,
+                  [runId, runId],
+                );
+                if (execRows.length > 0) workId = String(execRows[0].work_id ?? '');
+              }
+            }
           } catch (err) {
             fileLogger.warn('[dev-server] GET /api/chat/thinking work_id 反查失败（容忍：按未找到处理）', err instanceof Error ? err.message : String(err));
           }
@@ -1753,14 +1772,24 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         if ((!workId && !runId) && infoId) {
           try {
-            const rows = ctx.relationDb.queryRaw<{ work_id: string; run_id: string; trace_id: string }>(
-              `SELECT "work_id", "run_id", "trace_id" FROM "info_raw" WHERE "info_id" = ? LIMIT 1`,
+            const rows = ctx.relationDb.queryRaw<{ work_id: string; trace_id: string }>(
+              `SELECT "work_id", "trace_id" FROM "dialog" WHERE "id" = ? LIMIT 1`,
               [infoId],
             );
             if (rows.length > 0) {
               workId = String(rows[0].work_id ?? '');
-              runId = runId || String(rows[0].run_id ?? '') || String(rows[0].work_id ?? '');
+              runId = runId || String(rows[0].work_id ?? '');
               traceId = traceId || String(rows[0].trace_id ?? '');
+            } else {
+              const execRows = ctx.relationDb.queryRaw<{ work_id: string; run_id: string; trace_id: string }>(
+                `SELECT "work_id", "run_id", "trace_id" FROM "execute" WHERE "id" = ? LIMIT 1`,
+                [infoId],
+              );
+              if (execRows.length > 0) {
+                workId = String(execRows[0].work_id ?? '');
+                runId = runId || String(execRows[0].run_id ?? '') || String(execRows[0].work_id ?? '');
+                traceId = traceId || String(execRows[0].trace_id ?? '');
+              }
             }
           } catch (err) {
             fileLogger.warn('[dev-server] GET /api/chat/eval-result info_id 反查失败（容忍：按未找到处理）', err instanceof Error ? err.message : String(err));
@@ -2070,20 +2099,20 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/memory/list') {
         const limit = Math.min(Math.max(parseInt(params.get('limit') || '50', 10) || 50, 1), 200);
         const cursor = (params.get('cursor') || '').trim();
-        const conds: string[] = [memoryVisibleTypeCond()];
+        const conds: string[] = [memoryVisibleTypeCond('d.')];
         const args: any[] = [...MEMORY_VISIBLE_INFO_TYPES];
         if (cursor) {
           const idx = cursor.indexOf(':');
           const cCreated = idx > 0 ? Number(cursor.slice(0, idx)) : NaN;
           const cId = idx > 0 ? cursor.slice(idx + 1) : '';
           if (!isNaN(cCreated)) {
-            conds.push('("created" < ? OR ("created" = ? AND "id" < ?))');
+            conds.push('(d."created" < ? OR (d."created" = ? AND d."id" < ?))');
             args.push(cCreated, cCreated, cId);
           }
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "session_id", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;
@@ -2100,7 +2129,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const parts = pathname.split('/');
         const tag = decodeURIComponent(parts[parts.length - 1] || '');
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."session_id", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond()} ORDER BY r."created" DESC LIMIT 200`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d INNER JOIN "info_tag" t ON t."info_id" = d."id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond('d.')} ORDER BY d."created" DESC LIMIT 200`,
           [tag, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, rows.map((r: any) => r.info_id));
@@ -2117,38 +2146,38 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const conds: string[] = [];
         const args: any[] = [];
         if (kw) {
-          conds.push('("info" LIKE ? OR "info_id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" LIKE ?))');
+          conds.push('(d."dialog" LIKE ? OR d."id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" LIKE ?))');
           args.push(`%${kw}%`, `%${kw}%`);
         }
         if (type) {
           const typeToInfo: Record<string, string[]> = {
             semantic: ['RESPONSE'],
             episodic: ['REQUEST'],
-            procedural: ['THINK', 'REFLECT', 'SKILL', 'MCP'],
-            working: ['ACT'],
+            procedural: [],
+            working: [],
           };
-          const infoTypes = typeToInfo[type] || [];
+          const infoTypes = (typeToInfo[type] || []).filter(t => MEMORY_VISIBLE_INFO_TYPES.includes(t));
           if (infoTypes.length > 0) {
-            conds.push(`"info_type" IN (${infoTypes.map(() => '?').join(',')})`);
+            conds.push(`d."type" IN (${infoTypes.map(() => '?').join(',')})`);
             args.push(...infoTypes);
           } else {
-            conds.push(memoryVisibleTypeCond());
+            conds.push(memoryVisibleTypeCond('d.'));
             args.push(...MEMORY_VISIBLE_INFO_TYPES);
           }
         } else {
-          conds.push(memoryVisibleTypeCond());
+          conds.push(memoryVisibleTypeCond('d.'));
           args.push(...MEMORY_VISIBLE_INFO_TYPES);
         }
         if (tag) {
-          conds.push('"info_id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" = ?)');
+          conds.push('d."id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" = ?)');
           args.push(tag);
         }
         if (startTime !== undefined) {
-          conds.push('"created" >= ?');
+          conds.push('d."created" >= ?');
           args.push(startTime);
         }
         if (endTime !== undefined) {
-          conds.push('"created" < ?');
+          conds.push('d."created" < ?');
           args.push(endTime);
         }
         if (cursor) {
@@ -2156,13 +2185,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           const cCreated = idx > 0 ? Number(cursor.slice(0, idx)) : NaN;
           const cId = idx > 0 ? cursor.slice(idx + 1) : '';
           if (!isNaN(cCreated)) {
-            conds.push('("created" < ? OR ("created" = ? AND "id" < ?))');
+            conds.push('(d."created" < ? OR (d."created" = ? AND d."id" < ?))');
             args.push(cCreated, cCreated, cId);
           }
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT "id", "info_id", "info_type", "info_creator_role", "info", "pin", "session_id", "created", "updated" FROM "info_raw"${where} ORDER BY "created" DESC, "id" DESC LIMIT ${limit + 1}`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;
@@ -2190,7 +2219,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.relationDb.delete('info_keyword', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
         await ctx.relationDb.delete('info_vector', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
         await ctx.infoCore.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), new InfoCoreContext());
-        const affected = await ctx.relationDb.delete('info_raw', [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
+        const affectedDialog = await ctx.relationDb.delete('dialog', [{ field: 'id', operator: Operator.IN, value: infoIds }]);
+        const affectedExecute = await ctx.relationDb.delete('execute', [{ field: 'id', operator: Operator.IN, value: infoIds }]);
+        await ctx.relationDb.delete('context', [{ field: 'dialog_id', operator: Operator.IN, value: infoIds }]);
+        sendJson(res, 200, { deleted_count: affectedDialog + affectedExecute });
         sendJson(res, 200, { deleted_count: affected });
 
       } else if (method === 'GET' && pathname === '/api/memory/tags') {
@@ -2325,10 +2357,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
       } else if (method === 'GET' && /\/api\/memory\/stats\//.test(pathname)) {
         const totalRows = ctx.relationDb.queryRaw<{ cnt: number }>(
-          'SELECT COUNT(*) AS "cnt" FROM "info_raw"',
+          'SELECT COUNT(*) AS "cnt" FROM "dialog"',
         );
         const typeRows = ctx.relationDb.queryRaw<{ info_type: string; cnt: number }>(
-          'SELECT "info_type", COUNT(*) AS "cnt" FROM "info_raw" GROUP BY "info_type"',
+          'SELECT "type" AS "info_type", COUNT(*) AS "cnt" FROM "dialog" GROUP BY "type"',
         );
         const byType: Record<string, number> = {};
         for (const r of typeRows) { byType[r.info_type || 'unknown'] = r.cnt; }
@@ -2345,7 +2377,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const start = new Date(year, month - 1, 1).getTime();
         const end = new Date(year, month, 1).getTime();
         const rows = ctx.relationDb.queryRaw<{ created: number }>(
-          'SELECT "created" FROM "info_raw" WHERE "created" >= ? AND "created" < ?',
+          'SELECT "created" FROM "dialog" WHERE "created" >= ? AND "created" < ?',
           [start, end],
         );
         const days: Record<string, number> = {};
@@ -2359,7 +2391,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ day_num: number; cnt: number }>(
-          `SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "info_raw" WHERE "created" IS NOT NULL AND ${memoryVisibleTypeCond()} GROUP BY day_num`,
+          `SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "dialog" WHERE "created" IS NOT NULL AND ${memoryVisibleTypeCond('')} GROUP BY day_num`,
           [tzMs, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const dates: Record<string, number> = {};
@@ -2375,7 +2407,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ last_ts: number }>(
-          'SELECT MAX(ir."created") AS "last_ts" FROM "info_raw" ir INNER JOIN "chat_session" cs ON ir."session_id" = cs."session_id" WHERE ir."session_id" IS NOT NULL AND ir."session_id" != \'\' AND ir."created" IS NOT NULL GROUP BY ir."session_id"',
+          'SELECT MAX(d."created") AS "last_ts" FROM "dialog" d INNER JOIN "chat_session" cs ON d."session_id" = cs."session_id" WHERE d."session_id" IS NOT NULL AND d."session_id" != \'\' AND d."created" IS NOT NULL GROUP BY d."session_id"',
           [],
         );
         const dates: Record<string, number> = {};

@@ -12,8 +12,8 @@
    - **`dialog` 表**：专职记录真实问答，字段包含 `id`, `session_id`, `work_id`, `type` (REQUEST/RESPONSE), `dialog`, `dialog_length`, `dialog_brief`, `trace_id`, `created`, `updated`。彻底去掉 `info_id`, `info_type`, `info_creator_role`, `pin`, `handle_result_type`, `run_id`。
    - **`execute` 表**：记录 Agent 执行过程中的组件级轨迹，字段包含 `id`, `session_id`, `work_id`, `run_id`, `trace_id`, `agent_id`, `exec_no` (从0递增), `component_id`, `component_type` (LLM, Skill, MCP等), `input`, `input_length`, `output`, `output_length`, `gap` (耗时 ms), `created`, `updated`。
    - **`context` 表**：仅关联 `dialog` 表，记录每次问答使用的上下文映射与快照，字段包含 `id`, `session_id`, `work_id`, `dialog_id`, `type` (pin, timeline, citing等), `created`, `updated`。
-2. **兼容性视图**：
-   - 在 SQLite 中保留 `info_raw` 兼容视图（`SELECT ... FROM dialog UNION ALL SELECT ... FROM execute`），保证老接口与 DAG 模块无感兼容。
+2. **彻底剔除兼容性代码（Zero Legacy Code）**：
+   - 全面废弃并清理 `info_raw` 与 `info_context_source`，不保留任何兼容视图或降级回退逻辑；所有接口、服务及测试均直接收敛于 `dialog`、`execute`、`context` 三张原生物理表。
 3. **复选框上下文时序回溯（Timeline Backfill）**：
    - 当用户勾选消息时，选中消息记为 `citing`；同时根据选中消息的 `work_id` 查询 `context` 表，提取当时作为上下文使用的历史 `dialog_id`，回填为 `timelineCandidates` 并按 `created ASC` 排序。
 4. **Pin 与复选前端生命周期统一**：

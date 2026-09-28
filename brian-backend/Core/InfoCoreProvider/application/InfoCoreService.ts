@@ -11,7 +11,7 @@ import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, DIALOG_TABLE, EXECUTE_TABLE, CONTEXT_TABLE, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, DIALOG_TABLE, EXECUTE_TABLE, CONTEXT_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
 import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, DelVectorByFilterInput, DelVectorByFilterOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
@@ -137,85 +137,93 @@ export class InfoCoreService {
     await this.ensureDefaultConfigs();
   }
 
-  async saveInfo(input: SaveInfoInput, output: SaveInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
-  ): Promise<boolean> {
-    if (!input.info || !input.session_id) {
-      throw new ValidationError('saveInfo 需要提供 info 和 session_id');
-    }
-    if (!input.work_id) {
-      throw new ValidationError('saveInfo 需要提供 work_id');
-    }
+  private async persistDialogRecord(
+    infoId: string,
+    input: SaveInfoInput,
+    rawType: string,
+    createdAt: number,
+    rowTraceId: string,
+  ): Promise<void> {
+    const finalTraceId = rowTraceId || input.info_creator_id || '';
 
-    const handleResultType = input.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE;
-    const isCorrect = handleResultType === HandleResultType.CORRECT;
+    await this.relationDb.insert(DIALOG_TABLE, [
+      { field: 'id', value: infoId },
+      { field: 'created', value: createdAt },
+      { field: 'updated', value: createdAt },
+      { field: 'session_id', value: input.session_id },
+      { field: 'work_id', value: input.work_id },
+      { field: 'type', value: rawType },
+      { field: 'dialog', value: input.info },
+      { field: 'dialog_length', value: input.info.length },
+      { field: 'dialog_brief', value: input.summary || '' },
+      { field: 'trace_id', value: finalTraceId },
+    ]);
+  }
 
-    const now = IdGenerator.now();
+  private async persistExecuteRecord(
+    infoId: string,
+    input: SaveInfoInput,
+    createdAt: number,
+    rowTraceId: string,
+    handleResultType?: string,
+  ): Promise<void> {
+    const compType = handleResultType && handleResultType !== HandleResultType.CORRECT
+      ? handleResultType
+      : (input.info_type || 'Execution');
+    const compId = handleResultType && handleResultType !== HandleResultType.CORRECT
+      ? `error:${handleResultType}`
+      : (input.info_type || '');
 
-    const createdAt = input.created && input.created > 0 ? input.created : now;
-    const id = IdGenerator.generate();
-    const infoId = IdGenerator.generate();
-
-    await this.relationDb.insert(INFO_RAW_TABLE, [
-      { field: 'id', value: id },
+    await this.relationDb.insert(EXECUTE_TABLE, [
+      { field: 'id', value: infoId },
       { field: 'created', value: createdAt },
       { field: 'updated', value: createdAt },
       { field: 'session_id', value: input.session_id },
       { field: 'work_id', value: input.work_id },
       { field: 'run_id', value: input.run_id || '' },
-      { field: 'info_id', value: infoId },
-      { field: 'info_type', value: input.info_type || '' },
-      { field: 'info_creator_role', value: input.info_creator_role || '' },
-      { field: 'info_creator_id', value: input.info_creator_id || '' },
-      { field: 'info', value: input.info },
-      { field: 'info_length', value: input.info.length },
-      { field: 'pin', value: 0 },
-
-      { field: 'trace_id', value: input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '') },
-      { field: 'handle_result_type', value: handleResultType },
+      { field: 'trace_id', value: rowTraceId },
+      { field: 'agent_id', value: input.info_creator_id || '' },
+      { field: 'exec_no', value: 0 },
+      { field: 'component_id', value: compId },
+      { field: 'component_type', value: compType },
+      { field: 'input', value: '' },
+      { field: 'input_length', value: 0 },
+      { field: 'output', value: input.info },
+      { field: 'output_length', value: input.info.length },
+      { field: 'gap', value: 0 },
     ]);
+  }
 
-    const rowTraceId = input.trace_id !== undefined ? input.trace_id : (metrics?.trace_id || '');
-    if (input.info_type === 'REQUEST' || input.info_type === 'RESPONSE') {
-      try {
-        await this.relationDb.insert(DIALOG_TABLE, [
-          { field: 'id', value: infoId },
-          { field: 'created', value: createdAt },
-          { field: 'updated', value: createdAt },
-          { field: 'session_id', value: input.session_id },
-          { field: 'work_id', value: input.work_id },
-          { field: 'type', value: input.info_type },
-          { field: 'dialog', value: input.info },
-          { field: 'dialog_length', value: input.info.length },
-          { field: 'dialog_brief', value: input.summary || '' },
-          { field: 'trace_id', value: rowTraceId },
-        ]);
-      } catch (err) {
-        metrics?.warn('InfoCoreService.saveInfo 写入 dialog 失败已容忍', { error: String(err) });
-      }
+  private async persistInfoRecord(
+    infoId: string,
+    input: SaveInfoInput,
+    createdAt: number,
+    rowTraceId: string,
+  ): Promise<void> {
+    const rawType = (input.info_type || (input.info_creator_role?.toLowerCase() === 'assistant' ? 'RESPONSE' : 'REQUEST')).toUpperCase();
+    const handleResultType = input.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE;
+    const isError = handleResultType !== HandleResultType.CORRECT;
+
+    if (!isError && (rawType === 'REQUEST' || rawType === 'RESPONSE')) {
+      await this.persistDialogRecord(infoId, input, rawType, createdAt, rowTraceId);
     } else {
-      try {
-        await this.relationDb.insert(EXECUTE_TABLE, [
-          { field: 'id', value: id },
-          { field: 'created', value: createdAt },
-          { field: 'updated', value: createdAt },
-          { field: 'session_id', value: input.session_id },
-          { field: 'work_id', value: input.work_id },
-          { field: 'run_id', value: input.run_id || '' },
-          { field: 'trace_id', value: rowTraceId },
-          { field: 'agent_id', value: input.info_creator_id || '' },
-          { field: 'exec_no', value: 0 },
-          { field: 'component_id', value: input.info_type || '' },
-          { field: 'component_type', value: input.info_type || 'Execution' },
-          { field: 'input', value: '' },
-          { field: 'input_length', value: 0 },
-          { field: 'output', value: input.info },
-          { field: 'output_length', value: input.info.length },
-          { field: 'gap', value: 0 },
-        ]);
-      } catch (err) {
-        metrics?.warn('InfoCoreService.saveInfo 写入 execute 失败已容忍', { error: String(err) });
-      }
+      await this.persistExecuteRecord(infoId, input, createdAt, rowTraceId, handleResultType);
     }
+  }
+
+  async saveInfo(input: SaveInfoInput, output: SaveInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    if (!input.info || !input.session_id) throw new ValidationError('saveInfo 需要提供 info 和 session_id');
+    if (!input.work_id) throw new ValidationError('saveInfo 需要提供 work_id');
+
+    const handleResultType = input.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE;
+    const isCorrect = handleResultType === HandleResultType.CORRECT;
+    const now = IdGenerator.now();
+    const createdAt = input.created && input.created > 0 ? input.created : now;
+    const infoId = IdGenerator.generate();
+    const rowTraceId = input.trace_id !== undefined ? input.trace_id : (input.info_creator_id || metrics?.trace_id || '');
+
+    await this.persistInfoRecord(infoId, input, createdAt, rowTraceId);
 
     if (input.parent_info_ids && input.parent_info_ids.length > 0) {
       await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids, metrics);
@@ -259,27 +267,37 @@ export class InfoCoreService {
     return true;
   }
 
-  async pinInfo(input: PinInfoInput, _output: PinInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  async pinInfo(input: PinInfoInput, output: PinInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
-    if (!input.info_id) {
-      throw new ValidationError('pinInfo 需要提供 info_id');
-    }
-
+    if (!input.info_id) throw new ValidationError('pinInfo 需要提供 info_id');
     const row = await this.getInfoByInfoId(input.info_id);
-    if (!row) {
-      throw new NotFoundError('信息', input.info_id);
-    }
+    if (!row) throw new NotFoundError('信息', input.info_id);
 
-    const newPin = row.pin === 1 ? 0 : 1;
-    await this.relationDb.update(
-      INFO_RAW_TABLE,
-      [
-        { field: 'pin', value: newPin },
-        { field: 'updated', value: IdGenerator.now() },
+    const pinRows = await this.relationDb.select(CONTEXT_TABLE, {
+      conditions: [
+        { field: 'dialog_id', operator: Operator.EQ, value: input.info_id },
+        { field: 'type', operator: Operator.EQ, value: 'pin' },
       ],
-      [{ field: 'id', operator: Operator.EQ, value: row.id }],
-    );
-
+    });
+    if (pinRows.length > 0) {
+      await this.relationDb.delete(CONTEXT_TABLE, [
+        { field: 'dialog_id', operator: Operator.EQ, value: input.info_id },
+        { field: 'type', operator: Operator.EQ, value: 'pin' },
+      ]);
+      output.pin = 0;
+    } else {
+      const now = IdGenerator.now();
+      await this.relationDb.insert(CONTEXT_TABLE, [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'session_id', value: row.session_id },
+        { field: 'work_id', value: row.work_id || '' },
+        { field: 'dialog_id', value: input.info_id },
+        { field: 'type', value: 'pin' },
+      ]);
+      output.pin = 1;
+    }
     return true;
   }
 
@@ -545,8 +563,7 @@ export class InfoCoreService {
     try {
       return this.relationDb.executeRaw(
         `DELETE FROM "${INFO_TAG_TABLE}" WHERE "info_id" NOT IN (
-           SELECT "info_id" FROM "${INFO_RAW_TABLE}"
-           WHERE COALESCE("handle_result_type", 'correct') = 'correct'
+           SELECT "id" FROM "${DIALOG_TABLE}"
          )`,
       );
     } catch (err) {
@@ -582,8 +599,7 @@ export class InfoCoreService {
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
       `SELECT t."info_id" AS "info_id", t."${field}" AS "${field}"
          FROM "${table}" t
-         INNER JOIN "${INFO_RAW_TABLE}" r ON r."info_id" = t."info_id"
-        WHERE COALESCE(r."handle_result_type", 'correct') = 'correct'
+         INNER JOIN "${DIALOG_TABLE}" r ON r."id" = t."info_id"
         ORDER BY t."info_id" ASC`,
     );
     const freqMap = new Map<string, number>();
@@ -636,59 +652,85 @@ export class InfoCoreService {
     return { deleted: nodeIds.length, rebuilt };
   }
 
+  private buildLastNDialogConditions(input: LastNInfoInput): Condition[] {
+    const conditions: Condition[] = [];
+    if (input.session_id) conditions.push({ field: 'session_id', operator: Operator.EQ, value: input.session_id });
+    if (input.work_id) {
+      conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
+    } else if (input.run_id) {
+      conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.run_id });
+    }
+    if (input.info_type) {
+      conditions.push({ field: 'type', operator: Operator.EQ, value: input.info_type });
+    } else if (input.info_creator_role) {
+      const mapped = input.info_creator_role.toLowerCase() === 'assistant' ? 'RESPONSE' : 'REQUEST';
+      conditions.push({ field: 'type', operator: Operator.EQ, value: mapped });
+    }
+    if (input.info_id) conditions.push({ field: 'id', operator: Operator.EQ, value: input.info_id });
+    if (input.info_creator_id) conditions.push({ field: 'trace_id', operator: Operator.EQ, value: input.info_creator_id });
+    return conditions;
+  }
+
+  private async enrichDialogSummaries(records: InfoRawRecord[]): Promise<InfoRawRecord[]> {
+    const result: InfoRawRecord[] = [];
+    for (const record of records) {
+      if (!record.info || record.info === '') {
+        const summary = await this.getInfoSummaryRow(record.info_id);
+        if (summary) record.info = `[摘要] ${summary.summary}`;
+        else continue;
+      }
+      result.push(record);
+    }
+    return result;
+  }
+
+  private async resolvePins(records: InfoRawRecord[]): Promise<void> {
+    if (records.length === 0) return;
+    try {
+      const pinRows = await this.relationDb.select(CONTEXT_TABLE, {
+        conditions: [
+          { field: 'dialog_id', operator: Operator.IN, value: records.map((r) => r.info_id) },
+          { field: 'type', operator: Operator.EQ, value: 'pin' },
+        ],
+      });
+      const pinSet = new Set((pinRows ?? []).map((p) => String(p.dialog_id)));
+      for (const r of records) {
+        r.pin = pinSet.has(r.info_id) ? 1 : 0;
+      }
+    } catch { }
+  }
+
   async lastNInfo(input: LastNInfoInput, output: LastNInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     if (!input.lastN || input.lastN <= 0) {
       throw new ValidationError('lastNInfo 需要提供 lastN > 0');
     }
 
-    const conditions: Condition[] = [];
-    if (input.session_id) {
-      conditions.push({ field: 'session_id', operator: Operator.EQ, value: input.session_id });
-    }
-    if (input.work_id) {
-      conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
-    }
-    if (input.run_id) {
-      conditions.push({ field: 'run_id', operator: Operator.EQ, value: input.run_id });
-    }
-    if (input.info_creator_id) {
-      conditions.push({ field: 'info_creator_id', operator: Operator.EQ, value: input.info_creator_id });
-    }
-    if (input.info_creator_role) {
-      conditions.push({ field: 'info_creator_role', operator: Operator.EQ, value: input.info_creator_role });
-    }
-    if (input.info_type) {
-      conditions.push({ field: 'info_type', operator: Operator.EQ, value: input.info_type });
-    }
-    if (input.info_id) {
-      conditions.push({ field: 'info_id', operator: Operator.EQ, value: input.info_id });
-    }
-    if (input.handle_result_type) {
-      conditions.push({ field: 'handle_result_type', operator: Operator.EQ, value: input.handle_result_type });
+    if (input.handle_result_type && input.handle_result_type !== HandleResultType.CORRECT) {
+      const conditions: Condition[] = [];
+      if (input.session_id) conditions.push({ field: 'session_id', operator: Operator.EQ, value: input.session_id });
+      if (input.work_id) conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
+      conditions.push({ field: 'component_type', operator: Operator.EQ, value: input.handle_result_type });
+
+      const eRows = await this.relationDb.select(EXECUTE_TABLE, {
+        conditions,
+        order_by: [{ field: 'created', direction: 'DESC' }],
+        page: { current: 1, size: input.lastN },
+      });
+      output.list = eRows.map((r) => this.toExecuteAsInfoRawRecord(r));
+      return true;
     }
 
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const conditions = this.buildLastNDialogConditions(input);
+    const rows = await this.relationDb.select(DIALOG_TABLE, {
       conditions,
       order_by: [{ field: 'created', direction: 'DESC' }],
       page: { current: 1, size: input.lastN },
     });
 
-    const result: InfoRawRecord[] = [];
-    for (const row of rows) {
-      const record = this.toInfoRawRecord(row);
-      if (!record.info || record.info === '') {
-        const summary = await this.getInfoSummaryRow(record.info_id);
-        if (summary) {
-          record.info = `[摘要] ${summary.summary}`;
-        } else {
-          continue;
-        }
-      }
-      result.push(record);
-    }
-
-    output.list = result;
+    const records = rows.map((r) => this.toDialogAsInfoRawRecord(r));
+    await this.resolvePins(records);
+    output.list = await this.enrichDialogSummaries(records);
     return true;
   }
 
@@ -726,17 +768,14 @@ export class InfoCoreService {
       return true;
     }
 
-    const graphConditions: Condition[] = [{ field: 'info_id', operator: Operator.IN, value: infoIds }];
-    if (input.handle_result_type) {
-      graphConditions.push({ field: 'handle_result_type', operator: Operator.EQ, value: input.handle_result_type });
-    }
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const graphConditions: Condition[] = [{ field: 'id', operator: Operator.IN, value: infoIds }];
+    const rows = await this.relationDb.select(DIALOG_TABLE, {
       conditions: graphConditions,
       order_by: [{ field: 'created', direction: 'DESC' }],
       page: { current: 1, size: input.lastN },
     });
 
-    output.list = rows.map((r) => this.toInfoRawRecord(r));
+    output.list = rows.map((r) => this.toDialogAsInfoRawRecord(r));
     return true;
   }
 
@@ -949,70 +988,96 @@ export class InfoCoreService {
     return results;
   }
 
-  async graphInfo(input: GraphInfoInput, output: GraphInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
-  ): Promise<boolean> {
-    if (!input.session_id) {
-      throw new ValidationError('graphInfo 需要提供 session_id');
-    }
-
-    const graphInfoConditions: Condition[] = [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }];
-    if (input.handle_result_type) {
-      graphInfoConditions.push({ field: 'handle_result_type', operator: Operator.EQ, value: input.handle_result_type });
-    }
-    const infoRows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: graphInfoConditions,
-    });
-
-    const infoIds = new Set(infoRows.map((r) => r['info_id'] as string));
-
-    const citeEdgesOut = new SoCitationEdgesOutput();
-    await this.soCitationEdges(Object.assign(new SoCitationEdgesInput(), { session_id: input.session_id }), citeEdgesOut, _context);
-
-    const nodes = infoRows.map((r) => ({
-      id: r['info_id'] as string,
-      label: (r['info'] as string).slice(0, 80),
-      info_id: r['info_id'] as string,
-      info_type: r['info_type'] as string,
-      info_creator_role: r['info_creator_role'] as string,
-      handle_result_type: (r['handle_result_type'] as string) || DEFAULT_HANDLE_RESULT_TYPE,
+  private buildGraphNodes(infoRows: Array<Record<string, unknown>>) {
+    return infoRows.map((r) => ({
+      id: r['id'] as string,
+      label: String(r['dialog'] ?? '').slice(0, 80),
+      info_id: r['id'] as string,
+      info_type: r['type'] as string,
+      info_creator_role: r['type'] === 'REQUEST' ? 'USER' : 'ASSISTANT',
+      handle_result_type: DEFAULT_HANDLE_RESULT_TYPE,
     }));
+  }
 
-    const citationEdges = citeEdgesOut.edges
-      .filter((e) => infoIds.has(e.citing_info_id) && infoIds.has(e.cited_info_id))
-      .map((e) => ({
-        id: e.id,
-        from: e.citing_info_id,
-        to: e.cited_info_id,
-        citing_info_id: e.citing_info_id,
-        cited_info_id: e.cited_info_id,
-        edge_type: 'CITATION',
-      }));
+  private buildGraphExecNodes(execRows: Array<Record<string, unknown>>) {
+    return execRows.map((r) => {
+      const compType = String(r['component_type'] ?? '');
+      const isErr = compType === HandleResultType.CALL_ERROR || compType === HandleResultType.INTERNAL_ERROR;
+      return {
+        id: r['id'] as string,
+        label: String(r['output'] ?? r['input'] ?? '').slice(0, 80),
+        info_id: r['id'] as string,
+        info_type: compType || 'EXECUTION',
+        info_creator_role: 'SYSTEM',
+        handle_result_type: isErr ? compType : DEFAULT_HANDLE_RESULT_TYPE,
+      };
+    });
+  }
 
+  private buildGraphReplyEdges(infoRows: Array<Record<string, unknown>>) {
     const byInteract = new Map<string, { request?: string; response?: string }>();
     for (const r of infoRows) {
-      const runId = r['run_id'] as string;
-      const infoId = r['info_id'] as string;
-      const infoType = (r['info_type'] as string) || '';
-      if (!runId) continue;
-      if (!byInteract.has(runId)) byInteract.set(runId, {});
-      const g = byInteract.get(runId)!;
+      const workId = r['work_id'] as string;
+      const infoId = r['id'] as string;
+      const infoType = (r['type'] as string) || '';
+      if (!workId) continue;
+      if (!byInteract.has(workId)) byInteract.set(workId, {});
+      const g = byInteract.get(workId)!;
       if (infoType === 'REQUEST') g.request = infoId;
       else if (infoType === 'RESPONSE') g.response = infoId;
     }
-    const replyEdges: Array<{ id: string; from: string; to: string; citing_info_id: string; cited_info_id: string; edge_type: string }> = [];
-    for (const [runId, g] of byInteract) {
+    const replyEdges: Array<{ id: string; from: string; to: string; source: string; target: string; citing_info_id: string; cited_info_id: string; edge_type: string }> = [];
+    for (const [workId, g] of byInteract) {
       if (g.request && g.response) {
         replyEdges.push({
-          id: `reply-${runId}`,
+          id: `reply-${workId}`,
           from: g.request,
           to: g.response,
+          source: g.request,
+          target: g.response,
           citing_info_id: g.request,
           cited_info_id: g.response,
           edge_type: 'REPLY',
         });
       }
     }
+    return replyEdges;
+  }
 
+  async graphInfo(input: GraphInfoInput, output: GraphInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.session_id) {
+      throw new ValidationError('graphInfo 需要提供 session_id');
+    }
+
+    const [infoRows, execRows] = await Promise.all([
+      this.relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
+      }),
+      this.relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
+      }),
+    ]);
+    const infoIds = new Set([...infoRows, ...execRows].map((r) => r['id'] as string));
+
+    const citeEdgesOut = new SoCitationEdgesOutput();
+    await this.soCitationEdges(Object.assign(new SoCitationEdgesInput(), { session_id: input.session_id }), citeEdgesOut, _context);
+
+    const nodes = [...this.buildGraphNodes(infoRows), ...this.buildGraphExecNodes(execRows)];
+    const citationEdges = citeEdgesOut.edges
+      .filter((e) => infoIds.has(e.citing_info_id) && infoIds.has(e.cited_info_id))
+      .map((e) => ({
+        id: e.id,
+        from: e.citing_info_id,
+        to: e.cited_info_id,
+        source: e.citing_info_id,
+        target: e.cited_info_id,
+        citing_info_id: e.citing_info_id,
+        cited_info_id: e.cited_info_id,
+        edge_type: 'CITATION',
+      }));
+
+    const replyEdges = this.buildGraphReplyEdges(infoRows);
     output.graph = { nodes, edges: [...replyEdges, ...citationEdges] };
     return true;
   }
@@ -1054,19 +1119,18 @@ export class InfoCoreService {
 
   private async loadContextCitationEdges(sessionId?: string): Promise<Array<{ id: string; citing_info_id: string; cited_info_id: string; session_id: string }>> {
     try {
-      const conds: string[] = [`("type" IN ('citing', 'selected') OR "source" IN ('CITING', 'SELECTED'))`];
+      const conds: string[] = [`c."type" IN ('citing', 'selected')`];
       const args: unknown[] = [];
       if (sessionId) {
-        conds.push(`("session_id" = ? OR "session_id" = '')`);
+        conds.push(`(c."session_id" = ? OR c."session_id" = '')`);
         args.push(sessionId);
       }
       const sql = `
-        SELECT c."id", c."session_id", c."work_id", COALESCE(NULLIF(c."dialog_id", ''), c."info_id") AS cited_id,
-               COALESCE(d."id", r."info_id") AS req_dialog_id,
-               COALESCE(d."session_id", r."session_id") AS resolved_session_id
+        SELECT c."id", c."session_id", c."work_id", c."dialog_id" AS cited_id,
+               d."id" AS req_dialog_id,
+               COALESCE(NULLIF(c."session_id", ''), d."session_id") AS resolved_session_id
         FROM "${CONTEXT_TABLE}" c
         LEFT JOIN "${DIALOG_TABLE}" d ON d."work_id" = c."work_id" AND d."type" = 'REQUEST'
-        LEFT JOIN "${INFO_RAW_TABLE}" r ON r."work_id" = c."work_id" AND r."info_type" = 'REQUEST'
         WHERE ${conds.join(' AND ')}
       `;
       const rows = await this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
@@ -1211,15 +1275,15 @@ export class InfoCoreService {
       throw new ValidationError('soContextByWork 需要提供 work_id');
     }
 
-    const rows = await this.relationDb.select(INFO_CONTEXT_SOURCE_TABLE, {
+    const rows = await this.relationDb.select(CONTEXT_TABLE, {
       conditions: [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }],
       order_by: [{ field: 'created', direction: 'ASC' }],
     });
 
     const sourceIdsMap: ContextSourceIdMap = {};
     for (const row of rows) {
-      const source = String(row['source'] ?? '') as CollectionSource;
-      const infoId = String(row['info_id'] ?? '');
+      const source = (String(row['type'] ?? 'timeline')).toUpperCase() as CollectionSource;
+      const infoId = String(row['dialog_id'] ?? '');
       if (!source || !infoId) continue;
       if (!sourceIdsMap[source]) sourceIdsMap[source] = [];
       sourceIdsMap[source]!.push(infoId);
@@ -1468,15 +1532,19 @@ export class InfoCoreService {
     const now = IdGenerator.now();
     const threshold = now - aliveMaxDays * 24 * 60 * 60 * 1000;
 
-    const expiredRows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: [
-        { field: 'created', operator: Operator.LT, value: threshold },
-        { field: 'pin', operator: Operator.EQ, value: 0 },
-      ],
-      fields: ['id', 'info_id', 'info'],
+    const pinRows = await this.relationDb.select(CONTEXT_TABLE, {
+      conditions: [{ field: 'type', operator: Operator.EQ, value: 'pin' }],
+    });
+    const pinnedSet = new Set(pinRows.map((r) => String(r.dialog_id)));
+
+    const dRows = await this.relationDb.select(DIALOG_TABLE, {
+      conditions: [{ field: 'created', operator: Operator.LT, value: threshold }],
+      fields: ['id', 'dialog'],
     });
 
-    const toClear = expiredRows.filter((r) => (r['info'] as string) !== '');
+    const toClear = dRows
+      .filter((r) => !pinnedSet.has(String(r['id'] ?? '')) && String(r['dialog'] ?? '') !== '')
+      .map((r) => ({ id: String(r['id']), info_id: String(r['id']), info: String(r['dialog']) }));
 
     if (toClear.length === 0) {
       output.deleted_count = 0;
@@ -1532,9 +1600,9 @@ export class InfoCoreService {
 
     for (const row of clearable) {
       await this.relationDb.update(
-        INFO_RAW_TABLE,
+        DIALOG_TABLE,
         [
-          { field: 'info', value: '' },
+          { field: 'dialog', value: '' },
           { field: 'updated', value: now2 },
         ],
         [{ field: 'id', operator: Operator.EQ, value: row.id }],
@@ -1563,11 +1631,10 @@ export class InfoCoreService {
       }
       const threshold = summaryConfig.threshold ?? 100;
       const candidates = this.relationDb.queryRaw<{ info_id: string }>(
-        `SELECT r."info_id" FROM "${INFO_RAW_TABLE}" r
-          LEFT JOIN "${INFO_SUMMARY_TABLE}" s ON s."info_id" = r."info_id"
+        `SELECT d."id" AS "info_id" FROM "${DIALOG_TABLE}" d
+          LEFT JOIN "${INFO_SUMMARY_TABLE}" s ON s."info_id" = d."id"
          WHERE s."info_id" IS NULL
-           AND length(r."info") > ?
-           AND COALESCE(r."handle_result_type", 'correct') = 'correct'`,
+           AND length(d."dialog") > ?`,
         [threshold],
       );
       let backfilled = 0;
@@ -1590,18 +1657,29 @@ export class InfoCoreService {
     if (!input.work_id || !input.info) {
       throw new ValidationError('updateInfo 需要提供 work_id 和 info');
     }
-    const affected = await this.relationDb.update(
-      INFO_RAW_TABLE,
+    let affected = await this.relationDb.update(
+      DIALOG_TABLE,
       [
-        { field: 'info', value: input.info },
-        { field: 'info_length', value: input.info.length },
+        { field: 'dialog', value: input.info },
+        { field: 'dialog_length', value: input.info.length },
         { field: 'updated', value: IdGenerator.now() },
       ],
       [
         { field: 'work_id', operator: Operator.EQ, value: input.work_id },
-        { field: 'info_type', operator: Operator.EQ, value: input.info_type },
+        { field: 'type', operator: Operator.EQ, value: input.info_type },
       ],
     );
+    if (affected === 0) {
+      affected = await this.relationDb.update(
+        EXECUTE_TABLE,
+        [
+          { field: 'output', value: input.info },
+          { field: 'output_length', value: input.info.length },
+          { field: 'updated', value: IdGenerator.now() },
+        ],
+        [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }],
+      );
+    }
     output.updated_count = affected;
     return true;
   }
@@ -1611,14 +1689,20 @@ export class InfoCoreService {
     if (!input.work_id) {
       throw new ValidationError('delInfoByWork 需要提供 work_id');
     }
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const dRows = await this.relationDb.select(DIALOG_TABLE, {
       conditions: [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }],
-      fields: ['info_id'],
+      fields: ['id'],
     });
-    const infoIds = rows.map((r) => String(r['info_id'] ?? '')).filter(Boolean);
+    const eRows = await this.relationDb.select(EXECUTE_TABLE, {
+      conditions: [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }],
+      fields: ['id'],
+    });
+    const infoIds = [...dRows.map((r) => String(r['id'] ?? '')), ...eRows.map((r) => String(r['id'] ?? ''))].filter(Boolean);
     await this.deleteAuxiliaryTablesByWork(input.work_id, infoIds, _context, metrics);
 
-    const affected = await this.relationDb.delete(INFO_RAW_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
+    const affected = await this.relationDb.delete(DIALOG_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
+    await this.relationDb.delete(EXECUTE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
+    await this.relationDb.delete(CONTEXT_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: input.work_id }]);
     output.deleted_count = affected;
     return true;
   }
@@ -1632,10 +1716,6 @@ export class InfoCoreService {
       await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
       await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), context);
     }
-    await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]);
-    try { await this.relationDb.delete(CONTEXT_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
-    try { await this.relationDb.delete(DIALOG_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
-    try { await this.relationDb.delete(EXECUTE_TABLE, [{ field: 'work_id', operator: Operator.EQ, value: workId }]); } catch { }
   }
 
   async delInfoBySession(input: DelInfoBySessionInput, output: DelInfoBySessionOutput, _context: InfoCoreContext, metrics?: Metrics, _report?: Report,
@@ -1643,15 +1723,25 @@ export class InfoCoreService {
     if (!input.session_id) {
       throw new ValidationError('delInfoBySession 需要提供 session_id');
     }
-    const rawRows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const dRows = await this.relationDb.select(DIALOG_TABLE, {
       conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
-      fields: ['info_id', 'work_id'],
+      fields: ['id', 'work_id'],
     });
-    const infoIds = rawRows.map((r) => String(r['info_id'] ?? '')).filter(Boolean);
-    const workIds = Array.from(new Set(rawRows.map((r) => String(r['work_id'] ?? '')).filter(Boolean)));
+    const eRows = await this.relationDb.select(EXECUTE_TABLE, {
+      conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
+      fields: ['id', 'work_id'],
+    });
+    const infoIds = [...dRows.map((r) => String(r['id'] ?? '')), ...eRows.map((r) => String(r['id'] ?? ''))].filter(Boolean);
+    const workIds = Array.from(new Set([...dRows.map((r) => String(r['work_id'] ?? '')), ...eRows.map((r) => String(r['work_id'] ?? ''))].filter(Boolean)));
     await this.deleteAuxiliaryTablesBySession(input.session_id, infoIds, workIds, _context, metrics);
 
-    const affected = await this.relationDb.delete(INFO_RAW_TABLE, [
+    const affected = await this.relationDb.delete(DIALOG_TABLE, [
+      { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+    ]);
+    await this.relationDb.delete(EXECUTE_TABLE, [
+      { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+    ]);
+    await this.relationDb.delete(CONTEXT_TABLE, [
       { field: 'session_id', operator: Operator.EQ, value: input.session_id },
     ]);
     output.deleted_count = affected;
@@ -1674,12 +1764,6 @@ export class InfoCoreService {
       await this.relationDb.delete(INFO_VECTOR_TABLE, [{ field: 'info_id', operator: Operator.IN, value: infoIds }]);
       await this.delInfoGraph(Object.assign(new DelInfoGraphInput(), { info_ids: infoIds }), new DelInfoGraphOutput(), context);
     }
-    if (workIds.length > 0) {
-      await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [{ field: 'work_id', operator: Operator.IN, value: workIds }]);
-    }
-    try { await this.relationDb.delete(CONTEXT_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
-    try { await this.relationDb.delete(DIALOG_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
-    try { await this.relationDb.delete(EXECUTE_TABLE, [{ field: 'session_id', operator: Operator.EQ, value: sessionId }]); } catch { }
   }
 
   async existVectorInfo(input: ExistInfoInput, output: ExistInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
@@ -1837,16 +1921,45 @@ export class InfoCoreService {
       updated: Number(r['updated'] ?? 0),
       session_id: String(r['session_id'] ?? ''),
       work_id: String(r['work_id'] ?? ''),
-      run_id: '',
+      run_id: String(r['work_id'] ?? ''),
       info_id: String(r['id'] ?? ''),
       info_type: String(r['type'] ?? 'REQUEST') as InfoType,
       info_creator_role: isUser ? 'USER' : 'ASSISTANT',
-      info_creator_id: '',
+      info_creator_id: String(r['trace_id'] ?? ''),
       info: String(r['dialog'] ?? ''),
       info_length: Number(r['dialog_length'] ?? 0),
       pin: 0,
       trace_id: String(r['trace_id'] ?? ''),
       handle_result_type: HandleResultType.CORRECT,
+    };
+  }
+
+  private toExecuteAsInfoRawRecord(r: Record<string, unknown>): InfoRawRecord {
+    const compType = String(r['component_type'] ?? '');
+    const compId = String(r['component_id'] ?? '');
+    let handleResultType: string = HandleResultType.CORRECT;
+    if (compType === HandleResultType.CALL_ERROR || compType === HandleResultType.INTERNAL_ERROR) {
+      handleResultType = compType;
+    } else if (compId.startsWith('error:')) {
+      handleResultType = compId.slice(6);
+    }
+
+    return {
+      id: String(r['id'] ?? ''),
+      created: Number(r['created'] ?? 0),
+      updated: Number(r['updated'] ?? 0),
+      session_id: String(r['session_id'] ?? ''),
+      work_id: String(r['work_id'] ?? ''),
+      run_id: String(r['run_id'] ?? r['work_id'] ?? ''),
+      info_id: String(r['id'] ?? ''),
+      info_type: String(r['component_type'] ?? 'EXECUTION') as InfoType,
+      info_creator_role: 'SYSTEM',
+      info_creator_id: String(r['agent_id'] ?? ''),
+      info: String(r['output'] ?? r['input'] ?? ''),
+      info_length: Number(r['output_length'] ?? 0),
+      pin: 0,
+      trace_id: String(r['trace_id'] ?? ''),
+      handle_result_type: handleResultType,
     };
   }
 
@@ -1859,11 +1972,14 @@ export class InfoCoreService {
       if (dRows && dRows.length > 0) return this.toDialogAsInfoRawRecord(dRows[0]);
     } catch { }
 
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
-      conditions: [{ field: 'info_id', operator: Operator.EQ, value: infoId }],
-      page: { current: 1, size: 1 },
-    });
-    return rows.length > 0 ? this.toInfoRawRecord(rows[0]) : null;
+    try {
+      const eRows = await this.relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: infoId }],
+        page: { current: 1, size: 1 },
+      });
+      if (eRows && eRows.length > 0) return this.toExecuteAsInfoRawRecord(eRows[0]);
+    } catch { }
+    return null;
   }
 
   private async getInfoBatchByInfoIds(infoIds: string[]): Promise<Map<string, InfoRawRecord>> {
@@ -1881,13 +1997,15 @@ export class InfoCoreService {
       }
     } catch { }
     if (remaining.size > 0) {
-      const rows = await this.relationDb.select(INFO_RAW_TABLE, {
-        conditions: [{ field: 'info_id', operator: Operator.IN, value: Array.from(remaining) }],
-      });
-      for (const row of rows) {
-        const record = this.toInfoRawRecord(row);
-        result.set(record.info_id, record);
-      }
+      try {
+        const eRows = await this.relationDb.select(EXECUTE_TABLE, {
+          conditions: [{ field: 'id', operator: Operator.IN, value: Array.from(remaining) }],
+        });
+        for (const row of eRows ?? []) {
+          const record = this.toExecuteAsInfoRawRecord(row);
+          result.set(record.info_id, record);
+        }
+      } catch { }
     }
     return result;
   }
@@ -2086,8 +2204,9 @@ export class InfoCoreService {
 
     const result = { info_vectors: 0, tag_vectors: 0 };
 
-    const aliveInfoRows = await this.relationDb.select(INFO_RAW_TABLE, { fields: ['info_id'] });
-    const aliveInfoIds = [...new Set(aliveInfoRows.map((r) => String(r['info_id'] ?? '')).filter(Boolean))];
+    const aliveDialogRows = await this.relationDb.select(DIALOG_TABLE, { fields: ['id'] });
+    const aliveExecRows = await this.relationDb.select(EXECUTE_TABLE, { fields: ['id'] });
+    const aliveInfoIds = [...new Set([...aliveDialogRows.map((r) => String(r['id'] ?? '')), ...aliveExecRows.map((r) => String(r['id'] ?? ''))].filter(Boolean))];
     result.info_vectors = await this.deleteVectorsByFilter([
       { field: 'kind', operator: Operator.EQ, value: 'info' },
       { field: 'info_id', operator: Operator.IS_NOT_NULL },
@@ -2531,24 +2650,23 @@ export class InfoCoreService {
   }
 
   private async collectPinnedCandidates(sessionId: string, explicitPinnedIds?: string[]): Promise<InfoRawRecord[]> {
-    const pinnedRows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const pinRows = await this.relationDb.select(CONTEXT_TABLE, {
       conditions: [
         { field: 'session_id', operator: Operator.EQ, value: sessionId },
-        { field: 'pin', operator: Operator.EQ, value: 1 },
+        { field: 'type', operator: Operator.EQ, value: 'pin' },
       ],
       order_by: [{ field: 'created', direction: 'DESC' }],
     });
-    const result = pinnedRows.map((r) => this.toInfoRawRecord(r));
-    const seen = new Set(result.map((r) => r.info_id));
+    const pinnedDialogIds = pinRows.map((r) => String(r.dialog_id)).filter(Boolean);
+    const result: InfoRawRecord[] = [];
+    const seen = new Set<string>();
 
-    if (explicitPinnedIds && explicitPinnedIds.length > 0) {
-      for (const pid of explicitPinnedIds) {
-        if (!seen.has(pid)) {
-          const rec = await this.getInfoByInfoId(pid);
-          if (rec && rec.session_id === sessionId) {
-            seen.add(pid);
-            result.push(rec);
-          }
+    for (const did of [...pinnedDialogIds, ...(explicitPinnedIds || [])]) {
+      if (!seen.has(did)) {
+        const rec = await this.getInfoByInfoId(did);
+        if (rec && rec.session_id === sessionId) {
+          seen.add(did);
+          result.push(rec);
         }
       }
     }
@@ -2578,18 +2696,10 @@ export class InfoCoreService {
     if (workIds.length === 0) return [];
     const placeholders = workIds.map(() => '?').join(',');
     try {
-      let rows = await this.relationDb.queryRaw<Record<string, unknown>>(
-        `SELECT DISTINCT COALESCE("dialog_id", "info_id") AS cid FROM "${CONTEXT_TABLE}" WHERE "work_id" IN (${placeholders})`,
+      const rows = await this.relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT DISTINCT "dialog_id" AS cid FROM "${CONTEXT_TABLE}" WHERE "work_id" IN (${placeholders})`,
         workIds,
       );
-      if (!rows || rows.length === 0) {
-        try {
-          rows = await this.relationDb.queryRaw<Record<string, unknown>>(
-            `SELECT DISTINCT "info_id" AS cid FROM "${INFO_CONTEXT_SOURCE_TABLE}" WHERE "work_id" IN (${placeholders})`,
-            workIds,
-          );
-        } catch { }
-      }
       return Array.from(new Set((rows ?? []).map((r) => String((r as any).cid ?? '')).filter((id) => Boolean(id) && !citingIdSet.has(id))));
     } catch {
       return [];
@@ -2624,16 +2734,15 @@ export class InfoCoreService {
   }
 
   private async extractCurrentCandidate(
-    sessionId: string,
+    _sessionId: string,
     selectedIds: string[],
     timelineCandidates: InfoRawRecord[],
   ): Promise<InfoRawRecord | null> {
+    if (selectedIds.length > 0) {
+      return null;
+    }
     if (timelineCandidates.length > 0) {
       return timelineCandidates.shift() ?? null;
-    }
-    if (selectedIds.length > 0) {
-      const latest = await this.lastNInfoTimeline(sessionId, 1);
-      return latest[0] ?? null;
     }
     return null;
   }
@@ -2846,30 +2955,28 @@ export class InfoCoreService {
     existingIds: Set<string>,
     curExcludeId: string,
   ): Promise<InfoRawRecord[]> {
-    const count = await this.relationDb.count(INFO_RAW_TABLE, [
+    const count = await this.relationDb.count(DIALOG_TABLE, [
       { field: 'session_id', operator: Operator.EQ, value: sessionId },
     ]);
     if (count <= 0) return [];
     const randomRows = this.relationDb.queryRaw<Record<string, unknown>>(
-      `SELECT * FROM "${INFO_RAW_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
+      `SELECT * FROM "${DIALOG_TABLE}" WHERE "session_id" = ? ORDER BY RANDOM() LIMIT ?`,
       [sessionId, Math.min((randLimit + 1) * 3, count)],
     );
     return randomRows
-      .map((r) => this.toInfoRawRecord(r))
+      .map((r) => this.toDialogAsInfoRawRecord(r))
       .filter((c) => !existingIds.has(c.info_id) && c.info_id !== curExcludeId)
-      .filter((c) => this.isCorrectInfo(c))
       .slice(0, randLimit);
   }
 
   private sampleGlobalRandomCandidates(remaining: number, filledIds: Set<string>): InfoRawRecord[] {
     const globalRows = this.relationDb.queryRaw<Record<string, unknown>>(
-      `SELECT * FROM "${INFO_RAW_TABLE}" ORDER BY RANDOM() LIMIT ?`,
+      `SELECT * FROM "${DIALOG_TABLE}" ORDER BY RANDOM() LIMIT ?`,
       [Math.min(remaining * 3, 100)],
     );
     return globalRows
-      .map((r) => this.toInfoRawRecord(r))
-      .filter((c) => !filledIds.has(c.info_id))
-      .filter((c) => this.isCorrectInfo(c));
+      .map((r) => this.toDialogAsInfoRawRecord(r))
+      .filter((c) => !filledIds.has(c.info_id));
   }
 
   private excludeCurrentFromWeakDimensions(currentCandidate: InfoRawRecord | null, weakLists: InfoRawRecord[][]): void {
@@ -3082,7 +3189,7 @@ export class InfoCoreService {
   ): Promise<void> {
     if (!workId) return;
     try {
-      await this.relationDb.delete(INFO_CONTEXT_SOURCE_TABLE, [
+      await this.relationDb.delete(CONTEXT_TABLE, [
         { field: 'work_id', operator: Operator.EQ, value: workId },
       ]);
     } catch {  }
@@ -3111,8 +3218,6 @@ export class InfoCoreService {
             { field: 'work_id', value: workId },
             { field: 'dialog_id', value: infoId },
             { field: 'type', value: source.toLowerCase() },
-            { field: 'source', value: source },
-            { field: 'info_id', value: infoId },
           ]);
         } catch (err) {
           metrics?.warn('InfoCoreService.persistContextSourceMap 来源关系落盘失败已容忍', {
@@ -3130,39 +3235,12 @@ export class InfoCoreService {
     sessionId: string,
     count: number,
   ): Promise<InfoRawRecord[]> {
-    try {
-      const dRows = await this.relationDb.select(DIALOG_TABLE, {
-        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
-        order_by: [{ field: 'created', direction: 'DESC' }],
-        page: { current: 1, size: count },
-      });
-      if (dRows && dRows.length > 0) {
-        return dRows.map((r) => ({
-          id: String(r['id'] ?? ''),
-          created: Number(r['created'] ?? 0),
-          updated: Number(r['updated'] ?? 0),
-          session_id: String(r['session_id'] ?? ''),
-          work_id: String(r['work_id'] ?? ''),
-          run_id: '',
-          info_id: String(r['id'] ?? ''),
-          info_type: String(r['type'] ?? 'REQUEST') as InfoType,
-          info_creator_role: String(r['type'] ?? '') === 'REQUEST' ? 'USER' : 'ASSISTANT',
-          info_creator_id: '',
-          info: String(r['dialog'] ?? ''),
-          info_length: Number(r['dialog_length'] ?? 0),
-          pin: 0,
-          trace_id: String(r['trace_id'] ?? ''),
-          handle_result_type: HandleResultType.CORRECT,
-        }));
-      }
-    } catch { }
-
-    const rows = await this.relationDb.select(INFO_RAW_TABLE, {
+    const dRows = await this.relationDb.select(DIALOG_TABLE, {
       conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
       order_by: [{ field: 'created', direction: 'DESC' }],
       page: { current: 1, size: count },
     });
-    return rows.map((r) => this.toInfoRawRecord(r));
+    return (dRows ?? []).map((r) => this.toDialogAsInfoRawRecord(r));
   }
 
   private async maintainTagVector(

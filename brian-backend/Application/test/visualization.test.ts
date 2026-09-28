@@ -42,17 +42,38 @@ function now() { return IdGenerator.now(); }
 interface InsField { field: string; value: unknown }
 
 function insInfoRaw(db: RelationDBAccess, o: Record<string, unknown>) {
-  const fields: InsField[] = [];
-  const defaults: Record<string, unknown> = {
-    id: genId(), created: now(), updated: now(),
-    session_id: 'sess-1', work_id: 'work-1', run_id: 'inter-1',
-    info_id: genId(), info_type: 'REQUEST', info_creator_role: 'USER', info_creator_id: 'creator-1',
-    info: 'Hello world', info_length: 11, pin: 0,
-  };
-  for (const [k, dv] of Object.entries(defaults)) {
-    fields.push({ field: k, value: o[k] !== undefined ? o[k] : dv });
+  const id = String(o.info_id ?? o.id ?? genId());
+  const type = String(o.info_type ?? o.type ?? 'REQUEST');
+  const dialog = String(o.info ?? o.dialog ?? 'Hello world');
+  const created = o.created !== undefined ? Number(o.created) : now();
+  const updated = o.updated !== undefined ? Number(o.updated) : now();
+  const sessionId = String(o.session_id ?? 'sess-1');
+  const workId = String(o.work_id ?? o.run_id ?? 'work-1');
+  const traceId = String(o.trace_id ?? '');
+
+  db.insert('dialog', [
+    { field: 'id', value: id },
+    { field: 'created', value: created },
+    { field: 'updated', value: updated },
+    { field: 'session_id', value: sessionId },
+    { field: 'work_id', value: workId },
+    { field: 'type', value: type },
+    { field: 'dialog', value: dialog },
+    { field: 'dialog_length', value: o.info_length !== undefined ? Number(o.info_length) : dialog.length },
+    { field: 'dialog_brief', value: '' },
+    { field: 'trace_id', value: traceId },
+  ]);
+  if (Number(o.pin) === 1) {
+    db.insert('context', [
+      { field: 'id', value: genId() },
+      { field: 'created', value: created },
+      { field: 'updated', value: updated },
+      { field: 'session_id', value: sessionId },
+      { field: 'work_id', value: workId },
+      { field: 'dialog_id', value: id },
+      { field: 'type', value: 'pin' },
+    ]);
   }
-  db.insert('info_raw', fields);
 }
 
 async function ensureInfoGraphNode(graphDb: GraphDBAccess, infoId: string, sessionId: string): Promise<string> {
@@ -1072,7 +1093,7 @@ describe('VisualizationService', () => {
     });
 
     it('TC-VIS-106: Nodes have all properties', async () => {
-      insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1', run_id: 'inter-1',
+      insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1',
         info_id: 'info-1', info_type: 'REQUEST', info: 'Hello', info_length: 5 });
 
       const input = new GetVisualizedMessageDAGInput();
@@ -1084,7 +1105,7 @@ describe('VisualizationService', () => {
       expect(node).toHaveProperty('label');
       expect(node).toHaveProperty('info_id', 'info-1');
       expect(node).toHaveProperty('work_id', 'work-1');
-      expect(node).toHaveProperty('run_id', 'inter-1');
+      expect(node).toHaveProperty('run_id');
       expect(node).toHaveProperty('info_type', 'REQUEST');
       expect(node).toHaveProperty('info_summary');
     });

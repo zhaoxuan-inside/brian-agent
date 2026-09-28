@@ -35,7 +35,7 @@ WHEN 用户打开「信息 > 历史」页面 THE SYSTEM SHALL 呈现会话卡片
 WHEN 用户点击会话卡片主体 THE SYSTEM SHALL 直接跳转至对应会话页面（/chat?session={sessionId}）。
 WHEN 用户点击会话删除按钮并确认 THE SYSTEM SHALL 彻底删除会话主表、消息、运行时数据、llm_call_log全量Token流水、编排执行与轨迹，并解除图谱中消息与标签/关键词的关联，严禁删除共享图节点。
 WHEN 执行图节点修复学习 THE SYSTEM SHALL 扫描清理完全没有消息关联的孤立图节点与游离边。
-WHEN 启动系统并执行消息持久化 THE SYSTEM SHALL 自动将问答写入 dialog 表、中间执行步骤写入 execute 表、上下文关系写入 context 表，并提供 info_raw 视图保障兼容。
+WHEN 启动系统并执行消息持久化 THE SYSTEM SHALL 自动将问答写入 dialog 表、中间执行步骤写入 execute 表、上下文关系写入 context 表，彻底剔除 info_raw 兼容性代码。
 WHEN 用户复选消息并发送提问 THE SYSTEM SHALL 将选中消息作为 citing，同时回溯选中消息当时使用的上下文填入 timelineCandidates。
 WHEN 用户刷新页面 THE SYSTEM SHALL 自动失效并重置复选与 Pin 置顶的前端内存状态。
 WHEN 运行 npm test THE SYSTEM SHALL 全部测试通过。

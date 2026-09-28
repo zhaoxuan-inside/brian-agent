@@ -70,7 +70,7 @@ async function buildRuntimeWorkContext(
   try {
     const rows = relationDb.queryRaw<{ work_id: string }>(
       `SELECT DISTINCT "l"."work_id" AS "work_id" FROM "llm_call_log" "l"
-       JOIN "info_context_source" "s" ON "s"."work_id" = "l"."work_id"
+       JOIN "context" "s" ON "s"."work_id" = "l"."work_id"
        WHERE "l"."run_id" = ?`,
       [runId],
     );
@@ -748,13 +748,13 @@ async function buildThinkingBlocksFromRuntime(
 
   let permissions: any[] = [];
   try {
-    const permRows = relationDb.queryRaw<{ info: string; created: number; updated: number }>(
-      `SELECT info, created, updated FROM info_raw WHERE info_type = ? AND info LIKE ? ORDER BY created ASC LIMIT 100`,
-      ['PERMISSION', `%${runId}%`],
+    const permRows = relationDb.queryRaw<{ input: string; output: string; created: number; updated: number }>(
+      `SELECT "input", "output", "created", "updated" FROM "execute" WHERE "component_type" = ? AND "work_id" = ? ORDER BY "created" ASC LIMIT 100`,
+      ['PERMISSION', runId],
     );
     permissions = permRows
       .map((r) => {
-        try { return JSON.parse(String(r.info ?? '{}')); } catch {  return null; }
+        try { return JSON.parse(String(r.input ?? '{}')); } catch {  return null; }
       })
       .filter((p) => p && String((p as any).run_id ?? '') === runId)
       .map((p: any, idx: number) => {

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T11:44:42.441Z",
+  "updated_at": "2026-09-28T12:36:55.243Z",
   "source": "docs/method.idx.json (scripts/generate-method-index.mjs)",
   "id_rule": "m-<module-slug>-<seq>(分片内自增)",
   "signature_note": "项目五参签名 (input, output, context, metrics?, report?) 经 ADR-007 映射 SOP 五段;登记时统一加 boolean 前缀表示执行成败契约",

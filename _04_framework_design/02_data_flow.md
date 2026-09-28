@@ -94,7 +94,7 @@ sequenceDiagram
     DS->>CS: soSession(input, output, context)
     CS->>RD: 分页查询 chat_session (获取 session_id, session_title, created)
     CS->>RD: 查询 llm_call_log: SUM(input_tokens), SUM(output_tokens) WHERE session_id IN (...)
-    CS->>RD: 查询 info_raw: 统计同时具有 REQUEST 与 RESPONSE 的完整轮数及字符总数
+    CS->>RD: 查询 dialog: 统计同时具有 REQUEST 与 RESPONSE 的完整轮数及字符总数
     CS->>RD: 查询 info_tag: 聚合每个 session_id 的 tags
     CS-->>DS: output.sessions (含 created, token, qaCount, chars, tags)
     DS-->>FE: JSON (含 createdTime, inputTokens, outputTokens, qaCount, questionChars, answerChars, tags)
@@ -117,7 +117,7 @@ sequenceDiagram
     CS->>IC: delInfoBySession(sessionId)
     IC->>RD: 删除 info_tag, info_keyword, info_summary, info_vector 关联
     IC->>GD: 删除 info 消息节点及 CITATION 引用边 (弱关联解绑，保留 Tag / keyword 实体节点)
-    IC->>RD: 删除 info_raw 消息记录
+    IC->>RD: 删除 dialog / execute / context 消息与执行记录
     CS->>RD: 删除 chat_session 会话主记录
     CS-->>FE: 200 OK (会话及全量数据已彻底清除，图谱共享节点保持完好)
 ```

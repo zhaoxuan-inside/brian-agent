@@ -30,7 +30,7 @@ import {
   PromptContext,
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
-import { InfoCoreContext, LastNInfoInput, LastNInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput } from '@brian-agent/core';
+import { InfoCoreContext, LastNInfoInput, LastNInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DIALOG_TABLE, CONTEXT_TABLE } from '@brian-agent/core';
 import type {
   AgentExecutionAccess,
   AgentLibraryAccess,
@@ -70,7 +70,6 @@ import {
   ConfigVisualizationInput,
   ConfigVisualizationOutput,
   VISUALIZATION_CONFIG_TABLE,
-  INFO_RAW_TABLE,
   DEFAULT_MAX_NODES_PER_GRAPH,
   DEFAULT_MESSAGE_SUMMARY_LENGTH,
   DEFAULT_RESOLVE_CONTENT_BY_DEFAULT,
@@ -188,7 +187,7 @@ export class VisualizationService {
         }
       }
 
-      if (includeContextSource && infoId && msg.info_creator_role === 'AGENT') {
+      if (includeContextSource && infoId && (msg.info_creator_role === 'AGENT' || msg.info_creator_role === 'ASSISTANT' || msg.info_type === 'RESPONSE')) {
         enhanced.context_source_info = await this.resolveContextSourceInfo(infoId);
       }
 
@@ -399,7 +398,7 @@ export class VisualizationService {
     if (rawRows === null) {
       output.session_id = input.session_id;
       output.graph = { nodes: [], edges: [] };
-      output.metadata = { error: 'query info_raw failed' };
+      output.metadata = { error: 'query dialog failed' };
       return true;
     }
 
@@ -415,21 +414,38 @@ export class VisualizationService {
   private async queryMessageRows(
     input: GetVisualizedMessageDAGInput,
   ): Promise<Array<Record<string, unknown>> | null> {
-    let rawRows: Array<Record<string, unknown>> = [];
+    let dialogRows: Array<Record<string, unknown>> = [];
     try {
-      rawRows = await this.relationDb.select(INFO_RAW_TABLE, {
+      dialogRows = await this.relationDb.select(DIALOG_TABLE, {
         conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
         order_by: [{ field: 'created', direction: 'DESC' as const }],
-        fields: ['id', 'created', 'session_id', 'work_id', 'run_id', 'info_id', 'info_type', 'info_creator_id', 'info_creator_role', 'info', 'info_length', 'pin', 'trace_id', 'handle_result_type'],
       });
     } catch (err) {
-      this.logWarn('query info_raw failed', err);
+      this.logWarn('query dialog failed', err);
       return null;
     }
     if (input.work_id) {
-      rawRows = rawRows.filter((r) => String(r.work_id ?? '') === input.work_id);
+      dialogRows = dialogRows.filter((r) => String(r.work_id ?? '') === input.work_id);
     }
-    return rawRows;
+    const pinRows = await this.relationDb.select(CONTEXT_TABLE, {
+      conditions: [
+        { field: 'session_id', operator: Operator.EQ, value: input.session_id },
+        { field: 'type', operator: Operator.EQ, value: 'pin' },
+      ],
+      fields: ['dialog_id'],
+    }).catch(() => []);
+    const pinSet = new Set((pinRows ?? []).map((r) => String(r.dialog_id ?? '')));
+    return dialogRows.map((r) => ({
+      ...r,
+      info_id: r.id,
+      info_type: r.type,
+      info_creator_role: r.type === 'REQUEST' ? 'USER' : 'ASSISTANT',
+      info: r.dialog,
+      info_length: r.dialog_length,
+      pin: pinSet.has(String(r.id)) ? 1 : 0,
+      run_id: r.work_id,
+      handle_result_type: '',
+    }));
   }
 
   private async buildMessageNodes(

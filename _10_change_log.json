@@ -501,6 +501,57 @@
       ],
       "author": "Agent",
       "verified": true
+    },
+    {
+      "id": "chg-018",
+      "date": "2026-09-28",
+      "requirement": "refactor: 完全剔除 info_raw 与 info_context_source 兼容性代码，收敛为 dialog/execute/context 三表原生存储架构",
+      "changed_files": [
+        "brian-backend/Core/InfoCoreProvider/domain/types.ts",
+        "brian-backend/Core/InfoCoreProvider/infrastructure/InfoCoreSchemaInitializer.ts",
+        "brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts",
+        "brian-backend/Core/InfoCoreProvider/index.ts",
+        "brian-backend/Core/test/InfoCoreProvider.test.ts",
+        "brian-backend/Application/Chat/application/ChatService.ts",
+        "brian-backend/Application/test/chat.test.ts",
+        "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+        "brian-backend/Application/SelfLearning/application/SelfLearningService.ts",
+        "brian-backend/Application/test/self-learning.test.ts",
+        "brian-backend/Application/Visualization/domain/types.ts",
+        "brian-backend/Application/Visualization/application/VisualizationService.ts",
+        "brian-backend/Application/test/visualization.test.ts",
+        "brian-backend/Base/FeedbackHandler/application/FeedbackService.ts",
+        "brian-backend/server/context.ts",
+        "brian-backend/server/thinkingBlocks.ts",
+        "brian-backend/dev-server.ts",
+        "brian-backend/scripts/cleanup-subagent-messages.mjs",
+        "_01_business/00_p0_clarification.md",
+        "_01_business/01_requirements.md",
+        "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md",
+        "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md",
+        "_04_framework_design/02_data_flow.md",
+        "_05_function_design/01_function_matrix.md",
+        "_10_change_log.json"
+      ],
+      "commits": [
+        "c8a68c9"
+      ],
+      "changed_methods": [
+        "ChatService.pinMessage",
+        "ChatService.syncRuntimeMessagesToInfoRaw",
+        "ChatService.soSessionMessageCount",
+        "ChatService.soSessionLastMessage",
+        "ChatService.soSessionDetail",
+        "ChatService.checkSessionOverflow",
+        "VisualizationService.queryMessageRows",
+        "FeedbackService.getProcessLogDetail",
+        "FeedbackService.purgeOrphanFeedback",
+        "SelfLearningService.checkUserRecentActivity",
+        "UserProfileService.aggregateKnowledgeInterest",
+        "UserProfileService.aggregateInteractionHabit"
+      ],
+      "author": "Agent",
+      "verified": true
     }
   ]
 }

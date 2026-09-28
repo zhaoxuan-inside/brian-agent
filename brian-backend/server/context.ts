@@ -36,7 +36,7 @@ import { ExecRequestInput, ExecRequestOutput, HttpContext } from '../Base/ToolPr
 import { VectorDBAccess } from '../Base/VectorDBProvider';
 import { Report } from '../Base/shared/base/Report';
 import { CDTCoreAccess } from '../Core/CDTCoreProvider';
-import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput } from '../Core/InfoCoreProvider';
+import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, EXECUTE_TABLE } from '../Core/InfoCoreProvider';
 import { LLMCoreAccess } from '../Core/LLMCoreProvider';
 import { MCPCoreAccess } from '../Core/MCPCoreProvider';
 import { MQCoreAccess } from '../Core/MQCoreProvider';
@@ -385,12 +385,11 @@ export async function buildContext() {
     return err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? '');
   }
 
-  const INFO_RAW_TABLE = 'info_raw';
   const permissionAuditMap = new Map<string, string>();
   const permissionAuditBridge: import('@brian-agent/runtime').PermissionAudit = {
     asked: async (input) => {
       try {
-        const infoId = IdGenerator.generate();
+        const execId = IdGenerator.generate();
         const payload = {
           permission_id: input.permission_id,
           session_key: input.session_key,
@@ -400,46 +399,52 @@ export async function buildContext() {
           status: 'pending',
           asked_at: input.asked_at,
         };
-        await relationDb.insert(INFO_RAW_TABLE, [
-          { field: 'id', value: infoId },
+        const payloadInput = JSON.stringify(payload);
+        await relationDb.insert(EXECUTE_TABLE, [
+          { field: 'id', value: execId },
           { field: 'created', value: input.asked_at },
           { field: 'updated', value: input.asked_at },
-
-        { field: 'session_id', value: input.session_key || input.session_id },
-          { field: 'work_id', value: '' },
-          { field: 'run_id', value: '' },
-          { field: 'info_id', value: infoId },
-          { field: 'info_creator_id', value: '' },
-          { field: 'info_creator_role', value: 'SYSTEM' },
-          { field: 'info', value: JSON.stringify(payload) },
-          { field: 'info_length', value: JSON.stringify(payload).length },
-          { field: 'pin', value: 0 },
-          { field: 'info_type', value: InfoType.PERMISSION },
+          { field: 'session_id', value: input.session_key || input.session_id || '' },
+          { field: 'work_id', value: input.run_id || '' },
+          { field: 'run_id', value: input.run_id || '' },
           { field: 'trace_id', value: '' },
-          { field: 'handle_result_type', value: 'correct' },
+          { field: 'agent_id', value: '' },
+          { field: 'exec_no', value: 0 },
+          { field: 'component_id', value: input.tool_id || '' },
+          { field: 'component_type', value: 'PERMISSION' },
+          { field: 'input', value: payloadInput },
+          { field: 'input_length', value: payloadInput.length },
+          { field: 'output', value: '' },
+          { field: 'output_length', value: 0 },
+          { field: 'gap', value: 0 },
         ]);
-        permissionAuditMap.set(input.permission_id, infoId);
+        permissionAuditMap.set(input.permission_id, execId);
       } catch (err) {
         logger.info('[permission-audit] asked 落库失败（不影响 run）', rawText(err));
       }
     },
     answered: async (input) => {
       try {
-        const infoId = permissionAuditMap.get(input.permission_id);
-        if (!infoId) return;
-        const row = relationDb.queryRaw<{ info: string; created: number; session_id: string }>(
-          `SELECT info, created, session_id FROM info_raw WHERE id = ? LIMIT 1`,
-          [infoId],
+        const execId = permissionAuditMap.get(input.permission_id);
+        if (!execId) return;
+        const row = relationDb.queryRaw<{ input: string; created: number; session_id: string }>(
+          `SELECT "input", "created", "session_id" FROM "${EXECUTE_TABLE}" WHERE "id" = ? LIMIT 1`,
+          [execId],
         )[0];
         if (row) {
-          const payload = JSON.parse(String(row.info ?? '{}'));
+          const payload = JSON.parse(String(row.input ?? '{}'));
           payload.status = input.approved ? 'allowed' : 'denied';
           payload.answered_at = input.answered_at;
-          await relationDb.update(INFO_RAW_TABLE, [
-            { field: 'info', value: JSON.stringify(payload) },
-            { field: 'info_length', value: JSON.stringify(payload).length },
+          const outputPayload = JSON.stringify({ status: payload.status, answered_at: input.answered_at });
+          const gap = input.answered_at - Number(row.created);
+          await relationDb.update(EXECUTE_TABLE, [
+            { field: 'input', value: JSON.stringify(payload) },
+            { field: 'input_length', value: JSON.stringify(payload).length },
+            { field: 'output', value: outputPayload },
+            { field: 'output_length', value: outputPayload.length },
+            { field: 'gap', value: Math.max(0, gap) },
             { field: 'updated', value: input.answered_at },
-          ], [{ field: 'id', operator: Operator.EQ, value: infoId }]);
+          ], [{ field: 'id', operator: Operator.EQ, value: execId }]);
         }
         permissionAuditMap.delete(input.permission_id);
       } catch (err) {

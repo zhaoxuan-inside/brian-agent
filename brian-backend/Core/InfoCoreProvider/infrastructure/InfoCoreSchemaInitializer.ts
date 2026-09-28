@@ -3,8 +3,6 @@ import {
   DIALOG_TABLE,
   EXECUTE_TABLE,
   CONTEXT_TABLE,
-  INFO_RAW_TABLE,
-  INFO_CONTEXT_SOURCE_TABLE,
   INFO_VECTOR_TABLE,
   INFO_TAG_TABLE,
   INFO_TAG_VECTOR_TABLE,
@@ -86,53 +84,6 @@ export class InfoCoreSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_dialog_id"    ON "${CONTEXT_TABLE}" ("dialog_id")`,
     `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_sess_type"    ON "${CONTEXT_TABLE}" ("session_id", "type")`,
     `CREATE INDEX IF NOT EXISTS "idx_${CONTEXT_TABLE}_work_type"    ON "${CONTEXT_TABLE}" ("work_id", "type")`,
-    { sql: `ALTER TABLE "${CONTEXT_TABLE}" ADD COLUMN "source" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
-    { sql: `ALTER TABLE "${CONTEXT_TABLE}" ADD COLUMN "info_id" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
-
-    `
-      CREATE TABLE IF NOT EXISTS "${INFO_RAW_TABLE}" (
-        "id"                TEXT    NOT NULL PRIMARY KEY,
-        "created"           INTEGER NOT NULL,
-        "updated"           INTEGER NOT NULL,
-        "session_id"        TEXT    NOT NULL,
-        "work_id"           TEXT    NOT NULL,
-        "run_id"       TEXT    NOT NULL,
-        "info_id"           TEXT    NOT NULL,
-        "info_type"         TEXT    NOT NULL,
-        "info_creator_role" TEXT    NOT NULL DEFAULT '',
-        "info_creator_id"   TEXT    NOT NULL DEFAULT '',
-        "info"              TEXT    NOT NULL,
-        "info_length"       INTEGER NOT NULL DEFAULT 0,
-        "pin"               INTEGER NOT NULL DEFAULT 0,
-        "trace_id"          TEXT    NOT NULL DEFAULT '',
-        "handle_result_type" TEXT   NOT NULL DEFAULT 'correct'
-      )
-    `,
-    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`, ignoreReason: '字段已存在' },
-    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" ADD COLUMN "handle_result_type" TEXT NOT NULL DEFAULT 'correct'`, ignoreReason: '字段已存在' },
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_trace_id" ON "${INFO_RAW_TABLE}" ("trace_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_session_id" ON "${INFO_RAW_TABLE}" ("session_id")`,
-
-    { sql: `ALTER TABLE "${INFO_RAW_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`, ignoreReason: '已重命名或原列不存在' },
-    { sql: `DROP INDEX IF EXISTS "idx_${INFO_RAW_TABLE}_interact_id"`, ignoreReason: '旧索引可能不存在' },
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_run_id" ON "${INFO_RAW_TABLE}" ("run_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_type" ON "${INFO_RAW_TABLE}" ("info_type")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_info_creator_id" ON "${INFO_RAW_TABLE}" ("info_creator_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_created" ON "${INFO_RAW_TABLE}" ("created")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_RAW_TABLE}_handle_result_type" ON "${INFO_RAW_TABLE}" ("handle_result_type")`,
-
-    `
-      CREATE TABLE IF NOT EXISTS "${INFO_CONTEXT_SOURCE_TABLE}" (
-        "id"        TEXT    NOT NULL PRIMARY KEY,
-        "created"   INTEGER NOT NULL,
-        "updated"   INTEGER NOT NULL,
-        "work_id"   TEXT    NOT NULL,
-        "source"    TEXT    NOT NULL,
-        "info_id"   TEXT    NOT NULL
-      )
-    `,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_id" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${INFO_CONTEXT_SOURCE_TABLE}_work_source" ON "${INFO_CONTEXT_SOURCE_TABLE}" ("work_id", "source")`,
 
     `
       CREATE TABLE IF NOT EXISTS "${INFO_VECTOR_TABLE}" (
@@ -273,35 +224,15 @@ export class InfoCoreSchemaInitializer {
       }
       try {
         this.relationDb.executeRaw(ddl.sql);
-      } catch {  }
+      } catch { }
     }
+    this.dropLegacyTablesIfPresent();
+  }
 
+  private dropLegacyTablesIfPresent(): void {
     try {
-      this.relationDb.executeRaw(`
-        INSERT OR IGNORE INTO "${DIALOG_TABLE}" ("id", "created", "updated", "session_id", "work_id", "type", "dialog", "dialog_length", "dialog_brief", "trace_id")
-        SELECT "info_id", "created", "updated", "session_id", "work_id", "info_type", "info", "info_length", '', "trace_id"
-        FROM "${INFO_RAW_TABLE}"
-        WHERE "info_type" IN ('REQUEST', 'RESPONSE')
-      `);
-    } catch { }
-
-    try {
-      this.relationDb.executeRaw(`
-        INSERT OR IGNORE INTO "${EXECUTE_TABLE}" ("id", "created", "updated", "session_id", "work_id", "run_id", "trace_id", "agent_id", "exec_no", "component_id", "component_type", "input", "input_length", "output", "output_length", "gap")
-        SELECT "info_id", "created", "updated", "session_id", "work_id", "run_id", "trace_id", "info_creator_id", 0, "info_type", "info_type", '', 0, "info", "info_length", 0
-        FROM "${INFO_RAW_TABLE}"
-        WHERE "info_type" NOT IN ('REQUEST', 'RESPONSE')
-      `);
-    } catch { }
-
-    try {
-      this.relationDb.executeRaw(`
-        INSERT OR IGNORE INTO "${CONTEXT_TABLE}" ("id", "created", "updated", "session_id", "work_id", "dialog_id", "type", "source", "info_id")
-        SELECT s."id", s."created", s."updated", COALESCE(d."session_id", r."session_id", ''), s."work_id", s."info_id", lower(s."source"), s."source", s."info_id"
-        FROM "info_context_source" s
-        LEFT JOIN "${DIALOG_TABLE}" d ON d."work_id" = s."work_id"
-        LEFT JOIN "${INFO_RAW_TABLE}" r ON r."work_id" = s."work_id"
-      `);
+      this.relationDb.executeRaw(`DROP TABLE IF EXISTS "info_context_source"`);
+      this.relationDb.executeRaw(`DROP TABLE IF EXISTS "info_raw"`);
     } catch { }
   }
 }

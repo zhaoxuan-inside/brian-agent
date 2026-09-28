@@ -122,7 +122,7 @@ describe('InfoCoreProvider', () => {
   function makeSaveInput(overrides?: Partial<SaveInfoInput>): SaveInfoInput {
     const input = new SaveInfoInput();
     input.session_id = overrides?.session_id ?? `session-${IdGenerator.generate()}`;
-    input.work_id = overrides?.work_id ?? `work-${IdGenerator.generate()}`;
+    input.work_id = overrides?.work_id ?? (overrides?.run_id ? overrides.run_id : `work-${IdGenerator.generate()}`);
     input.run_id = overrides?.run_id ?? `interact-${IdGenerator.generate()}`;
     input.info_creator_id = overrides?.info_creator_id ?? 'user-1';
     input.info_creator_role = overrides?.info_creator_role ?? 'user';
@@ -394,7 +394,7 @@ describe('InfoCoreProvider', () => {
       const errOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ info: '执行失败：参数非法', handle_result_type: HandleResultType.CALL_ERROR }), errOut, new InfoCoreContext());
 
-      await relationDb.executeRaw('UPDATE "info_raw" SET "info" = \'\' WHERE "info_id" = ?', [longOut.info_id]);
+      await relationDb.executeRaw(`UPDATE "${DIALOG_TABLE}" SET "dialog" = '' WHERE "id" = ?`, [longOut.info_id]);
 
       await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\'', []);
       const calls: Array<{ id: string }> = [];
@@ -475,11 +475,10 @@ describe('InfoCoreProvider', () => {
       const output = new SaveInfoOutput();
       await infoCore.saveInfo(input, output, new InfoCoreContext());
 
-      const rows = await relationDb.select('info_raw', {
-        conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
+      const rows = await relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: output.info_id }],
       });
       expect(rows.length).toBe(1);
-      expect(rows[0].handle_result_type).toBe(HandleResultType.CALL_ERROR);
 
       const summaryRows = await relationDb.select('info_summary', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
@@ -1004,11 +1003,11 @@ describe('InfoCoreProvider', () => {
           expect(allCollectedIds).not.toContain(otherId);
         }
 
-        const currentRows = await relationDb.queryRaw<{ info_id: string }>(
-          `SELECT info_id FROM info_raw WHERE session_id = ? ORDER BY created DESC LIMIT 1`,
+        const currentRows = await relationDb.queryRaw<{ id: string }>(
+          `SELECT id FROM "${DIALOG_TABLE}" WHERE session_id = ? ORDER BY created DESC LIMIT 1`,
           [sessionId],
         );
-        const currentId = currentRows?.[0]?.info_id ?? '';
+        const currentId = currentRows?.[0]?.id ?? '';
         if (currentId) {
           expect(randomIds).not.toContain(currentId);
         }
@@ -1433,7 +1432,7 @@ describe('InfoCoreProvider', () => {
       );
 
       // 3. In SQLite: only ActiveTag and ActiveKeyword are referenced by info-1
-      relationDb.executeRaw(`INSERT INTO "info_raw" ("id", "created", "updated", "info_id", "session_id", "work_id", "run_id", "info_type", "info_creator_role", "info", "info_length") VALUES ('raw-1', 1700000000000, 1700000000000, 'info-1', 's-1', 'w-1', 'r-1', 'REQUEST', 'USER', 'hello', 5)`);
+      relationDb.executeRaw(`INSERT INTO "${DIALOG_TABLE}" ("id", "created", "updated", "session_id", "work_id", "type", "dialog", "dialog_length", "dialog_brief", "trace_id") VALUES ('info-1', 1700000000000, 1700000000000, 's-1', 'w-1', 'REQUEST', 'hello', 5, '', '')`);
       relationDb.executeRaw(`INSERT INTO "info_tag" ("id", "created", "updated", "info_id", "tag") VALUES ('it-1', 1700000000000, 1700000000000, 'info-1', 'ActiveTag')`);
       relationDb.executeRaw(`INSERT INTO "info_keyword" ("info_id", "word") VALUES ('info-1', 'ActiveKeyword')`);
 

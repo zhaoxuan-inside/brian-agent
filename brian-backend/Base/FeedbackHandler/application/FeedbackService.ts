@@ -185,16 +185,16 @@ export class FeedbackService {
       const runIds = [...new Set(logs.map(l => l.run_id).filter(Boolean))];
       const questionMap = new Map<string, string>();
       if (runIds.length > 0) {
-        const questionRows = await this.relationDb.select('info_raw', {
+        const questionRows = await this.relationDb.select('dialog', {
           conditions: [
-            { field: 'run_id', operator: Operator.IN, value: runIds },
-            { field: 'info_creator_role', operator: Operator.EQ, value: 'user' },
+            { field: 'work_id', operator: Operator.IN, value: runIds },
+            { field: 'type', operator: Operator.EQ, value: 'REQUEST' },
           ],
           order_by: [{ field: 'created', direction: 'ASC' }],
         });
         for (const row of questionRows) {
-          const runId = String(row.run_id ?? '');
-          if (runId && !questionMap.has(runId)) questionMap.set(runId, String(row.info ?? ''));
+          const runId = String(row.work_id ?? '');
+          if (runId && !questionMap.has(runId)) questionMap.set(runId, String(row.dialog ?? ''));
         }
       }
 
@@ -239,28 +239,28 @@ export class FeedbackService {
     }
 
     if (log.run_id) {
-      const questions = await this.relationDb.select('info_raw', {
+      const questions = await this.relationDb.select('dialog', {
         conditions: [
-          { field: 'run_id', operator: Operator.EQ, value: log.run_id },
-          { field: 'info_creator_role', operator: Operator.EQ, value: 'user' },
+          { field: 'work_id', operator: Operator.EQ, value: log.run_id },
+          { field: 'type', operator: Operator.EQ, value: 'REQUEST' },
         ],
         order_by: [{ field: 'created', direction: 'ASC' }],
         page: { current: 1, size: 1 },
       });
       if (questions.length > 0) {
-        output.user_question = String(questions[0].info || '');
+        output.user_question = String(questions[0].dialog || '');
       }
 
-      const answers = await this.relationDb.select('info_raw', {
+      const answers = await this.relationDb.select('dialog', {
         conditions: [
-          { field: 'run_id', operator: Operator.EQ, value: log.run_id },
-          { field: 'info_creator_role', operator: Operator.EQ, value: 'assistant' },
+          { field: 'work_id', operator: Operator.EQ, value: log.run_id },
+          { field: 'type', operator: Operator.EQ, value: 'RESPONSE' },
         ],
         order_by: [{ field: 'created', direction: 'ASC' }],
         page: { current: 1, size: 1 },
       });
       if (answers.length > 0) {
-        output.system_answer = String(answers[0].info || '');
+        output.system_answer = String(answers[0].dialog || '');
       }
     }
 
@@ -294,7 +294,7 @@ export class FeedbackService {
     try {
       const orphanPredicate =
         `(run_id = '' OR run_id NOT IN (SELECT id FROM runtime_run))` +
-        ` AND (work_id = '' OR work_id NOT IN (SELECT work_id FROM info_raw WHERE work_id IS NOT NULL))`;
+        ` AND (work_id = '' OR work_id NOT IN (SELECT work_id FROM dialog WHERE work_id IS NOT NULL))`;
       let purged = 0;
       for (const table of [FEEDBACK_RECORD_TABLE, FEEDBACK_PROCESS_LOG_TABLE]) {
         const orphanRows = await this.relationDb.queryRaw<{ id: string }>(

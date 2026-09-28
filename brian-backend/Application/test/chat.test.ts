@@ -43,25 +43,40 @@ async function insertInfoRawRow(db: RelationDBAccess, sessionId: string, infoId:
   const now = IdGenerator.now();
   const info = 'test message';
   const data: DataObject[] = [
-    { field: 'id', value: IdGenerator.generate() },
+    { field: 'id', value: infoId },
     { field: 'created', value: now },
     { field: 'updated', value: now },
     { field: 'session_id', value: sessionId },
     { field: 'work_id', value: 'test-work-id' },
-    { field: 'run_id', value: 'test-interact-id' },
-    { field: 'info_id', value: infoId },
-    { field: 'info_type', value: 'REQUEST' },
-    { field: 'info_creator_role', value: 'USER' },
-    { field: 'info_creator_id', value: '' },
-    { field: 'info', value: info },
-    { field: 'info_length', value: info.length },
-    { field: 'pin', value: pinVal },
+    { field: 'type', value: 'REQUEST' },
+    { field: 'dialog', value: info },
+    { field: 'dialog_length', value: info.length },
+    { field: 'dialog_brief', value: '' },
+    { field: 'trace_id', value: '' },
   ];
   await db.insertDB(
-    Object.assign(new InsertDBInput(), { table: 'info_raw', data }),
+    Object.assign(new InsertDBInput(), { table: 'dialog', data }),
     Object.assign(new InsertDBOutput(), {}),
     new DBContext(),
   );
+  if (pinVal === 1) {
+    await db.insertDB(
+      Object.assign(new InsertDBInput(), {
+        table: 'context',
+        data: [
+          { field: 'id', value: IdGenerator.generate() },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'session_id', value: sessionId },
+          { field: 'work_id', value: 'test-work-id' },
+          { field: 'dialog_id', value: infoId },
+          { field: 'type', value: 'pin' },
+        ],
+      }),
+      Object.assign(new InsertDBOutput(), {}),
+      new DBContext(),
+    );
+  }
 }
 
 async function insertChatConfig(db: RelationDBAccess, config: Record<string, unknown>) {
@@ -661,20 +676,18 @@ describe('ChatService', () => {
       // Only REQUEST inserted, no RESPONSE yet
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'info_raw',
+          table: 'dialog',
           data: [
-            { field: 'id', value: IdGenerator.generate() },
+            { field: 'id', value: 'info-req-1' },
             { field: 'created', value: 1700000000001 },
             { field: 'updated', value: 1700000000001 },
             { field: 'session_id', value: sid },
             { field: 'work_id', value: 'work-1' },
-            { field: 'run_id', value: 'run-1' },
-            { field: 'info_id', value: 'info-req-1' },
-            { field: 'info_type', value: 'REQUEST' },
-            { field: 'info_creator_role', value: 'USER' },
-            { field: 'info', value: 'Question 1' },
-            { field: 'info_length', value: 10 },
-            { field: 'pin', value: 0 },
+            { field: 'type', value: 'REQUEST' },
+            { field: 'dialog', value: 'Question 1' },
+            { field: 'dialog_length', value: 10 },
+            { field: 'dialog_brief', value: '' },
+            { field: 'trace_id', value: '' },
           ],
         }),
         Object.assign(new InsertDBOutput(), {}),
@@ -693,20 +706,18 @@ describe('ChatService', () => {
       // Now insert the matching RESPONSE
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'info_raw',
+          table: 'dialog',
           data: [
-            { field: 'id', value: IdGenerator.generate() },
+            { field: 'id', value: 'info-resp-1' },
             { field: 'created', value: 1700000000002 },
             { field: 'updated', value: 1700000000002 },
             { field: 'session_id', value: sid },
             { field: 'work_id', value: 'work-1' },
-            { field: 'run_id', value: 'run-1' },
-            { field: 'info_id', value: 'info-resp-1' },
-            { field: 'info_type', value: 'RESPONSE' },
-            { field: 'info_creator_role', value: 'ASSISTANT' },
-            { field: 'info', value: 'Answer 1' },
-            { field: 'info_length', value: 8 },
-            { field: 'pin', value: 0 },
+            { field: 'type', value: 'RESPONSE' },
+            { field: 'dialog', value: 'Answer 1' },
+            { field: 'dialog_length', value: 8 },
+            { field: 'dialog_brief', value: '' },
+            { field: 'trace_id', value: '' },
           ],
         }),
         Object.assign(new InsertDBOutput(), {}),
@@ -1091,16 +1102,6 @@ describe('ChatService', () => {
       expect(r1).toBe(true);
       expect(out1.pin).toBe(true);
 
-      await ctx.db.updateDB(
-        Object.assign(new UpdateDBInput(), {
-          table: 'info_raw',
-          data: [{ field: 'pin', value: 1 }],
-          conditions: [{ field: 'info_id', operator: 'EQ' as any, value: 'pin-info-2' }],
-        }),
-        Object.assign(new UpdateDBOutput(), {}),
-        new DBContext(),
-      );
-
       const out2 = new PinMessageOutput();
       const r2 = await service.pinMessage(input, out2, new ChatContext());
       expect(r2).toBe(true);
@@ -1304,7 +1305,7 @@ describe('ChatService', () => {
   });
 
   describe('deleteSession - extended', () => {
-    it('TC-CHAT-055: cascade delete removes session and associated info_raw rows', async () => {
+    it('TC-CHAT-055: cascade delete removes session and associated dialog rows', async () => {
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
       const sid = createOut.session_id;
@@ -1332,7 +1333,7 @@ describe('ChatService', () => {
 
   
   describe('purgeOrphanSessions', () => {
-    it('TC-CHAT-057: purges info_raw rows whose session no longer exists, keeps live session memory', async () => {
+    it('TC-CHAT-057: purges dialog rows whose session no longer exists, keeps live session memory', async () => {
       
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
@@ -1353,12 +1354,12 @@ describe('ChatService', () => {
       expect(output.purged_session_ids).toEqual([orphanSid]);
 
       const orphanLeft = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', [orphanSid],
+        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', [orphanSid],
       )[0]?.c;
       expect(Number(orphanLeft)).toBe(0);
 
       const liveLeft = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', [liveSid],
+        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', [liveSid],
       )[0]?.c;
       expect(Number(liveLeft)).toBe(1);
     });
@@ -1372,7 +1373,7 @@ describe('ChatService', () => {
 
       expect(output.purged_count).toBe(1);
       const left = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM info_raw WHERE session_id = ?', ['orphan-dry-run'],
+        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', ['orphan-dry-run'],
       )[0]?.c;
       expect(Number(left)).toBe(1);
     });

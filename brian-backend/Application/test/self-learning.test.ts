@@ -134,11 +134,11 @@ describe('SelfLearningService', () => {
       )
     `);
     db.executeRaw(`
-      CREATE TABLE IF NOT EXISTS info_raw (
+      CREATE TABLE IF NOT EXISTS dialog (
         id TEXT PRIMARY KEY NOT NULL,
         created INTEGER NOT NULL,
         updated INTEGER NOT NULL,
-        info_creator_role TEXT NOT NULL
+        type TEXT NOT NULL
       )
     `);
   }

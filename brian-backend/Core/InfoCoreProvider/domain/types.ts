@@ -150,7 +150,9 @@ export class PinInfoInput extends Input {
   info_id!: string;
 }
 
-export class PinInfoOutput extends Output {}
+export class PinInfoOutput extends Output {
+  pin: number = 0;
+}
 
 export class ProcessInfoInput extends Input {
   info_id!: string;
@@ -551,8 +553,6 @@ export class CleanOrphanGraphNodesOutput extends Output {
 export const DIALOG_TABLE = 'dialog';
 export const EXECUTE_TABLE = 'execute';
 export const CONTEXT_TABLE = 'context';
-export const INFO_RAW_TABLE = 'info_raw';
-export const INFO_CONTEXT_SOURCE_TABLE = 'context';
 
 export interface DialogRecord {
   id: string;

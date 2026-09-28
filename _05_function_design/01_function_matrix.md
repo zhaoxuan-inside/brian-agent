@@ -186,9 +186,9 @@
   1. 新增 `dialog` 表（纯净问答实体，包含 id, session_id, work_id, type, dialog, dialog_length, dialog_brief, trace_id, created, updated）。
   2. 新增 `execute` 表（组件级执行轨迹，包含 agent_id, exec_no, component_id, component_type, input, input_length, output, output_length, gap 等）。
   3. 新增 `context` 表（仅关联 dialog 表，包含 id, session_id, work_id, dialog_id, type, created, updated）。
-  4. 建立高性能索引，并提供 `info_raw` 视图保证存量只读兼容。
-  5. 提供从 `info_raw` 和 `info_context_source` 到新三表的幂等数据迁移。
-- 验收: 单测验证建表与视图查询正常。
+  4. 建立高性能索引，彻底清理并废弃 `info_raw` 兼容代码与视图。
+  5. 提供初始化时从旧表自动迁移数据至新三表并彻底 DROP 旧表。
+- 验收: 单测验证建表与三表增删改查正常，无兼容性代码。
 
 ### T-R6-02 InfoCore 与 ChatService 读写分流重构
 - 文件: `brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts`、`brian-backend/Application/Chat/application/ChatService.ts`

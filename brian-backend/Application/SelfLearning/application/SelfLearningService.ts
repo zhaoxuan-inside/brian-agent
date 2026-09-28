@@ -28,6 +28,7 @@ import {
   LastNInfoInput, LastNInfoOutput,
   CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput,
   InfoCoreContext,
+  DIALOG_TABLE,
 } from '@brian-agent/core';
 import {
   EvolutorAgentContext,
@@ -949,9 +950,9 @@ export class SelfLearningService {
     try {
       const threshold = Date.now() - thresholdMs;
       const countInput = Object.assign(new CountDBInput(), {
-        table: 'info_raw',
+        table: DIALOG_TABLE,
         conditions: [
-          { field: 'info_type', operator: Operator.EQ, value: InfoType.REQUEST },
+          { field: 'type', operator: Operator.EQ, value: InfoType.REQUEST },
           { field: 'created', operator: Operator.GE, value: threshold },
         ] as Condition[],
       });
