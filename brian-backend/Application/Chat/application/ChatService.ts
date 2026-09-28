@@ -776,8 +776,10 @@ export class ChatService {
       throw new ValidationError('session_title cannot be empty');
     }
 
+    const title = input.session_title.trim().slice(0, 12);
+
     const data: DataObject[] = [
-      { field: 'session_title', value: input.session_title.trim() },
+      { field: 'session_title', value: title },
       { field: 'updated', value: IdGenerator.now() },
     ];
 
@@ -1162,7 +1164,7 @@ export class ChatService {
       if (selOutput.row) {
         const currentTitle = (selOutput.row.session_title as string) ?? '';
         if (!currentTitle || currentTitle.trim() === '' || currentTitle.trim() === '新会话') {
-          const autoTitle = msgContent.trim().slice(0, 50);
+          const autoTitle = msgContent.trim().slice(0, 12);
           if (autoTitle) {
             const updInput = Object.assign(new UpdateSessionTitleInput(), {
               session_id: sessionId,

@@ -59,6 +59,35 @@
 
 - start/stop/status/navigate/click/dblclick/rightclick/mouse/key/key-batch/insert-text/evaluate/frame/cookies/screencast/start/spoof-env。
 
+### API-006 GET /api/chat/list(会话历史查询)
+
+- **入参**: `userId`, `keyword?`, `start_time?`, `end_time?`, `page_current?`, `page_size?`
+- **响应**:
+  ```json
+  {
+    "sessions": [
+      {
+        "sessionId": "string",
+        "sessionTitle": "string (源头限制 8~12 字以内)",
+        "lastMessage": "string",
+        "lastTime": 1720000000000,
+        "created": 1720000000000,
+        "createdTime": 1720000000000,
+        "messageCount": 10,
+        "qaCount": 5,
+        "questionChars": 120,
+        "answerChars": 850,
+        "inputTokens": 2048,
+        "outputTokens": 1024,
+        "tags": ["Tag1", "Tag2"]
+      }
+    ],
+    "total": 1
+  }
+  ```
+- **契约约束**: `created` / `createdTime` 为 R5 补齐字段；`inputTokens` / `outputTokens` 覆盖会话所有 LLM 调用；`qaCount` 仅计完整问答轮数。
+
+
 ## 4. 错误码表
 
 | 错误码 | HTTP 状态 | 含义 | 调用方应对 |

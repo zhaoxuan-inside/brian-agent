@@ -1,6 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
@@ -59,6 +61,38 @@ const _seq = 0;
 const DATA_DIR = process.env.BRIAN_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// —— 认证状态：密码存 data/auth.json（scrypt 加盐哈希），token 仅存内存（重启后需重新登录）
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+const AUTH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+interface AuthFileState { salt: string; hash: string }
+let authState: AuthFileState | null = (() => {
+  try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthFileState; } catch { return null; }
+})();
+const authTokens = new Map<string, number>();
+
+function hashPassword(password: string, salt: string): string {
+  return crypto.scryptSync(password, salt, 32).toString('hex');
+}
+
+function issueAuthToken(): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  authTokens.set(token, Date.now() + AUTH_TOKEN_TTL_MS);
+  return token;
+}
+
+function bearerToken(req: http.IncomingMessage): string {
+  const m = /^Bearer\s+(.+)$/.exec(String(req.headers['authorization'] || ''));
+  return m ? m[1].trim() : '';
+}
+
+function isRequestAuthenticated(req: http.IncomingMessage): boolean {
+  const token = bearerToken(req);
+  if (!token) return false;
+  const expiresAt = authTokens.get(token);
+  if (!expiresAt || expiresAt < Date.now()) { authTokens.delete(token); return false; }
+  return true;
+}
+
 
 function mapLearningMode(mode: string): string {
   const m = (mode || '').toLowerCase();
@@ -80,6 +114,13 @@ function mapRandomFactorField(mode: string): string {
   if (mode === 'CONVERSATION') return 'conversation_random_factor';
   if (mode === 'TAG_MAINTENANCE') return 'tag_random_factor';
   return '';
+}
+
+// 记忆视图只展示用户输入与系统产出；THINK/REFLECT/ACT/SKILL/MCP/CDT 等执行中间过程仅入库供上下文/回放使用，不对外展示
+const MEMORY_VISIBLE_INFO_TYPES: string[] = [InfoType.REQUEST, InfoType.RESPONSE];
+
+function memoryVisibleTypeCond(): string {
+  return `"info_type" IN (${MEMORY_VISIBLE_INFO_TYPES.map(() => '?').join(',')})`;
 }
 
 function mapInfoToMemory(row: any, tags: string[] = []): any {
@@ -308,6 +349,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       const params = u.searchParams;
       const body = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? await jsonBody(req) : {};
 
+      // —— 鉴权闸门：已设置密码时，除 auth 与 health 外的所有 /api 请求必须携带有效 Bearer token
+      if (pathname.startsWith('/api/') && authState && !pathname.startsWith('/api/auth/') && pathname !== '/api/health') {
+        if (!isRequestAuthenticated(req)) {
+          sendJson(res, 401, { error: '未登录或登录已过期，请重新登录' });
+          return;
+        }
+      }
+
       if (method === 'GET' && pathname === '/api/health') {
         let db = 'healthy';
         try {
@@ -324,6 +373,32 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           db,
         });
         return;
+
+      } else if (method === 'GET' && pathname === '/api/auth/status') {
+        sendJson(res, 200, { has_password: !!authState, authenticated: isRequestAuthenticated(req) });
+
+      } else if (method === 'POST' && pathname === '/api/auth/setup') {
+        if (authState) { sendJson(res, 409, { error: '密码已设置，请直接登录' }); return; }
+        const pw = String((body as Record<string, unknown>).password || '');
+        if (pw.length < 4) { sendJson(res, 400, { error: '密码至少 4 位' }); return; }
+        const salt = crypto.randomBytes(16).toString('hex');
+        authState = { salt, hash: hashPassword(pw, salt) };
+        fs.writeFileSync(AUTH_FILE, JSON.stringify(authState, null, 2));
+        sendJson(res, 200, { token: issueAuthToken() });
+
+      } else if (method === 'POST' && pathname === '/api/auth/login') {
+        if (!authState) { sendJson(res, 400, { error: '尚未设置密码' }); return; }
+        const pw = String((body as Record<string, unknown>).password || '');
+        if (hashPassword(pw, authState.salt) !== authState.hash) {
+          sendJson(res, 401, { error: '密码错误' });
+          return;
+        }
+        sendJson(res, 200, { token: issueAuthToken() });
+
+      } else if (method === 'POST' && pathname === '/api/auth/logout') {
+        const token = bearerToken(req);
+        if (token) authTokens.delete(token);
+        sendJson(res, 200, { success: true });
 
       } else if (method === 'GET' && pathname === '/api/config') {
         const input: GetConfigDetailInput = Object.assign(new GetConfigDetailInput(), {});
@@ -478,7 +553,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         return;
 
       } else if (method === 'POST' && pathname === '/api/config/snapshot') {
-        const { v4: uuidv4 } = await import('uuid');
         const now = Date.now();
         const name = (body as Record<string, unknown>).name as string || '';
         const snapshotName = name || new Date(now).toLocaleString('zh-CN', { hour12: false });
@@ -493,7 +567,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             snapshotData[row.name] = data || [];
           } catch {  }
         }
-        const id = uuidv4();
+        const id = IdGenerator.generate();
         ctx.relationDb.executeRaw(
           'INSERT INTO config_snapshot (id, created, updated, name, snapshot_data) VALUES (?, ?, ?, ?, ?)',
           [id, now, now, snapshotName, JSON.stringify(snapshotData)],
@@ -510,6 +584,19 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const snapshotId = pathname.split('/api/config/snapshot/')[1];
         ctx.relationDb.executeRaw('DELETE FROM config_snapshot WHERE id = ?', [snapshotId]);
         sendJson(res, 200, { success: true });
+
+      } else if (method === 'PUT' && /^\/api\/config\/snapshot\/[^/]+\/name$/.test(pathname)) {
+        const snapshotId = pathname.split('/api/config/snapshot/')[1].split('/name')[0];
+        const newName = String((body as Record<string, unknown>).name || '').trim();
+        if (!newName) { sendJson(res, 400, { error: '快照名称不能为空' }); return; }
+        const result = ctx.relationDb.executeRaw(
+          'UPDATE config_snapshot SET "name" = ?, "updated" = ? WHERE "id" = ?', [newName, Date.now(), snapshotId],
+        );
+        const affected = typeof result === 'object' && result !== null && 'changes' in (result as Record<string, unknown>)
+          ? Number((result as Record<string, unknown>).changes)
+          : 1;
+        if (!affected) { sendJson(res, 404, { error: '快照不存在' }); return; }
+        sendJson(res, 200, { success: true, id: snapshotId, name: newName });
 
       } else if (method === 'POST' && /\/api\/config\/snapshot\/[^/]+\/restore$/.test(pathname)) {
         const snapshotId = pathname.split('/api/config/snapshot/')[1].split('/restore')[0];
@@ -537,6 +624,27 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           }
         }
         sendJson(res, 200, { success: true });
+
+      } else if (method === 'POST' && pathname === '/api/config/model') {
+        const d = (body || {}) as Record<string, unknown>;
+        const title = String(d.llm_title || '').trim();
+        const providerId = String(d.provider_id || d.llm_provider_id || '').trim();
+        if (!title) { sendJson(res, 400, { error: '模型名称不能为空' }); return; }
+        if (!providerId) { sendJson(res, 400, { error: '所属 Provider 不能为空' }); return; }
+        const dup = ctx.relationDb.queryRaw<{ id: string }>(
+          'SELECT "id" FROM "llm_available" WHERE "llm_provider_id" = ? AND "llm_title" = ? LIMIT 1', [providerId, title],
+        );
+        if (dup && dup.length > 0) { sendJson(res, 409, { error: `模型已存在: ${title}` }); return; }
+        const now = IdGenerator.now();
+        try {
+          ctx.relationDb.executeRaw(
+            'INSERT INTO "llm_available" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "llm_brief", "model_usage", "max_tokens", "enable", "is_default") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+            [IdGenerator.generate(), now, now, providerId, title, String(d.llm_type || 'text'), String(d.llm_brief || ''), String(d.model_usage || ''), Number(d.maxTokens ?? d.max_tokens) || 0, d.enable === false ? 0 : 1],
+          );
+          sendJson(res, 200, { success: true });
+        } catch (e: unknown) {
+          sendJson(res, 400, { error: (e as Error).message || '创建模型失败' });
+        }
 
       } else if (method === 'GET' && pathname === '/api/config/model') {
         const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_type: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(
@@ -663,19 +771,23 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const id = pathname.split('/api/config/model/')[1];
-        const data = (body as Record<string, unknown>).data || body;
+        const data = ((body as Record<string, unknown>).data || body) as Record<string, unknown>;
 
-        const hasEnable = data.enable !== undefined || data.enabled !== undefined;
-        const enableVal = (data.enable ?? data.enabled) ? 1 : 0;
-        try {
-          if (hasEnable) {
-            ctx.relationDb.executeRaw('UPDATE "llm_available" SET "llm_brief" = ?, "enable" = ?, "model_usage" = ?, "max_tokens" = ? WHERE "id" = ?',
-              [data.llm_brief || '', enableVal, (data.model_usage || ''), (data.maxTokens || 0), id]);
-          } else {
-            ctx.relationDb.executeRaw('UPDATE "llm_available" SET "llm_brief" = ?, "model_usage" = ?, "max_tokens" = ? WHERE "id" = ?',
-              [data.llm_brief || '', (data.model_usage || ''), (data.maxTokens || 0), id]);
-          }
-        } catch {}
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        const push = (col: string, v: unknown) => { sets.push(`"${col}" = ?`); vals.push(v); };
+        if (data.llm_title !== undefined) push('llm_title', String(data.llm_title));
+        if (data.llm_type !== undefined) push('llm_type', String(data.llm_type));
+        if (data.llm_brief !== undefined) push('llm_brief', String(data.llm_brief));
+        if (data.model_usage !== undefined) push('model_usage', String(data.model_usage));
+        if (data.maxTokens !== undefined || data.max_tokens !== undefined) push('max_tokens', Number(data.maxTokens ?? data.max_tokens) || 0);
+        if (data.provider_id !== undefined) push('llm_provider_id', String(data.provider_id));
+        if (data.enable !== undefined || data.enabled !== undefined) push('enable', (data.enable ?? data.enabled) ? 1 : 0);
+        if (sets.length > 0) {
+          try {
+            ctx.relationDb.executeRaw(`UPDATE "llm_available" SET ${sets.join(', ')} WHERE "id" = ?`, [...vals, id]);
+          } catch {}
+        }
         sendJson(res, 200, { success: true, id });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
@@ -736,19 +848,29 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
         const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null; llm_param: string | null }>(
-          'SELECT "llm_title", "llm_brief", "features" FROM "llm_cache" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
+          'SELECT "llm_title", "llm_brief", "features", "llm_param" FROM "llm_cache" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
         );
         const enabledRows = ctx.relationDb.queryRaw<{ llm_title: string }>(
           'SELECT "llm_title" FROM "llm_available" WHERE "llm_provider_id" = ?', [id],
         );
         const enabledSet = new Set((enabledRows || []).map(r => r.llm_title));
-        const models = (rows || []).map(r => ({
-          id: r.llm_title,
-          name: r.llm_title,
-          brief: r.llm_brief || '',
-          features: r.llm_param ? (() => { try { return JSON.parse(r.llm_param); } catch { return {}; } })() : {},
-          enabled: enabledSet.has(r.llm_title),
-        }));
+        const models = (rows || []).map(r => {
+          const featureSrc = r.features || r.llm_param || '';
+          let parsed: unknown = {};
+          try { parsed = featureSrc ? JSON.parse(featureSrc) : {}; } catch { parsed = {}; }
+          const featureObj = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+            ? ((parsed as Record<string, unknown>).features && typeof (parsed as Record<string, unknown>).features === 'object'
+                ? (parsed as Record<string, unknown>).features
+                : parsed)
+            : {};
+          return {
+            id: r.llm_title,
+            name: r.llm_title,
+            brief: r.llm_brief || '',
+            features: featureObj,
+            enabled: enabledSet.has(r.llm_title),
+          };
+        });
         sendJson(res, 200, { models });
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/models\/add$/.test(pathname)) {
@@ -899,7 +1021,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/soul/')) {
         const id = pathname.split('/api/config/soul/')[1];
-        const input = Object.assign(new UpdateSoulInput(), { ...body, soul_id: id });
+        const input = Object.assign(new UpdateSoulInput(), { id, data: body });
         const output = new UpdateSoulOutput();
         const context = new SoulContext();
         await ctx.configAccess.updateSoul(input, output, context);
@@ -907,7 +1029,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/soul/')) {
         const id = pathname.split('/api/config/soul/')[1];
-        const input = Object.assign(new DelSoulInput(), { soul_ids: [id] });
+        const input = Object.assign(new DelSoulInput(), { ids: [id] });
         const output = new DelSoulOutput();
         const context = new SoulContext();
         await ctx.configAccess.delSoul(input, output, context);
@@ -1079,7 +1201,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             const startCmd = `npx ${toolId}`;
             const stopCmd = `pkill -f ${toolId}`;
             const uninstallCmd = `npm uninstall -g ${toolId}`;
-            try { execSync(installCmd, { timeout: 120000, stdio: 'pipe' }); } catch {  }
+            let installError = '';
+            try {
+              execSync(installCmd, { timeout: 120000, stdio: 'pipe' });
+            } catch (e: unknown) {
+              const msg = e instanceof Error ? e.message : String(e);
+              installError = msg.split('\n').slice(-3).join(' ').trim() || 'npm install 执行失败';
+            }
+            if (installError) {
+              sendJson(res, 500, { error: `npm 安装失败: ${installError}` });
+              return;
+            }
             const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const now = Date.now();
             ctx.relationDb.executeRaw(
@@ -1102,7 +1234,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               `INSERT INTO "mcp_install" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
               [id, now, now, provId, toolId, 'Smithery MCP server', 'smithery connect', 'smithery start', 'smithery stop', 'smithery disconnect', 'stopped', 1],
             );
-            sendJson(res, 200, { success: true, id });
+            sendJson(res, 200, { success: true, id, warning: 'Smithery MCP 已注册为连接模式（未执行本地安装），需本机具备 smithery CLI 方可启动' });
 
           } else {
 
@@ -1137,6 +1269,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const context = new AgentLibraryContext();
         await ctx.agentLibrary.soAgent(input, output, context);
         sendJson(res, 200, { agents: output.agents || [] });
+
+      } else if (method === 'GET' && pathname.startsWith('/api/agent/') && !pathname.startsWith('/api/agent/strategy') && !/\/toggle$/.test(pathname)) {
+        const id = decodeURIComponent(pathname.split('/api/agent/')[1]);
+        const getOut = new GetAgentOutput();
+        await ctx.agentLibrary.soAgent(
+          Object.assign(new GetAgentInput(), { conditions: [{ field: 'id', operator: Operator.EQ, value: id }] }),
+          getOut, new AgentLibraryContext(),
+        );
+        const agent = (getOut.agents || [])[0];
+        if (!agent) { sendJson(res, 404, { error: `Agent 不存在: ${id}` }); return; }
+        sendJson(res, 200, agent);
 
       } else if (method === 'GET' && pathname === '/api/agent/strategy') {
         const input = Object.assign(new SoStrategyInput(), {});
@@ -1264,7 +1407,36 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         sendJson(res, 200, { result: output.result });
 
       } else if (method === 'POST' && /\/api\/skill\/[^/]+\/toggle$/.test(pathname)) {
-        sendJson(res, 200, { success: true });
+        const id = pathname.split('/api/skill/')[1].split('/toggle')[0];
+        const currentRows = ctx.relationDb.queryRaw<{ enable: number }>(
+          'SELECT "enable" FROM "skill" WHERE "id" = ? LIMIT 1', [id],
+        );
+        if (!currentRows || currentRows.length === 0) {
+          sendJson(res, 404, { error: `Skill 不存在: ${id}` });
+          return;
+        }
+        const nextEnable = Number(currentRows[0].enable ?? 1) === 0;
+        const updIn = Object.assign(new UpdateSkillInput(), { id, data: { enable: nextEnable } });
+        const updOut = new UpdateSkillOutput();
+        const context = new SkillContext();
+        try {
+          await ctx.configAccess.updateSkill(updIn, updOut, context);
+        } catch (e: unknown) {
+          sendJson(res, 403, { error: (e as Error).message || 'Skill 不允许修改' });
+          return;
+        }
+        sendJson(res, 200, { success: true, enable: nextEnable });
+
+      } else if (method === 'GET' && /\/api\/skill\/[^/]+$/.test(pathname)) {
+        const id = pathname.split('/api/skill/')[1];
+        const soOut = new SoSkillOutput();
+        await ctx.configAccess.soSkill(Object.assign(new SoSkillInput(), {}), soOut, new SkillContext());
+        const skill = (soOut.list || []).find((s: { id?: string }) => String(s?.id) === id);
+        if (!skill) {
+          sendJson(res, 404, { error: `Skill 不存在: ${id}` });
+          return;
+        }
+        sendJson(res, 200, skill);
 
       } else if (method === 'PUT' && /\/api\/skill\/[^/]+$/.test(pathname)) {
         const id = pathname.split('/api/skill/')[1];
@@ -1422,6 +1594,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             session_id: s.session_id,
             sessionTitle: s.session_title || '',
             session_title: s.session_title || '',
+            created: s.created ?? 0,
+            createdTime: s.created ?? 0,
             lastMessage: s.last_message || s.session_title || '',
             lastTime: s.last_message_time,
             messageCount: s.message_count,
@@ -1604,17 +1778,21 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         let answerJson = '';
         let created = 0;
+        let evalAgentId = '';
+        let evalUpdatedAt = 0;
 
         try {
-          const evalRows = ctx.relationDb.queryRaw<{ run_id: string; work_id: string; scores: string; suggestions: string; need_optimize: number; created: number; updated: number }>(
-            `SELECT "run_id", "work_id", "scores", "suggestions", "need_optimize", "created", "updated"
-             FROM "agent_evaluation" WHERE "run_id" = ? OR "work_id" = ? ORDER BY "created" DESC LIMIT 1`,
+          const evalRows = ctx.relationDb.queryRaw<{ run_id: string; work_id: string; scores: string; suggestions: string; need_optimize: number; created: number; updated: number; agent_id: string }>(
+            `SELECT e."run_id", e."work_id", e."scores", e."suggestions", e."need_optimize", e."created", e."updated", e."agent_id"
+             FROM "agent_evaluation" e WHERE e."run_id" = ? OR e."work_id" = ? ORDER BY e."created" DESC LIMIT 1`,
             [runId || workId, runId || workId],
           );
 
           if (evalRows.length > 0) {
             const row = evalRows[0];
             created = Number(row.created ?? 0);
+            evalAgentId = String(row.agent_id ?? '');
+            evalUpdatedAt = Number(row.updated ?? 0);
 
             answerJson = JSON.stringify({
               ...(() => {
@@ -1641,6 +1819,17 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           return;
         }
 
+        let agentName = '进化 Agent (Evolutor)';
+        if (evalAgentId) {
+          try {
+            const agentRows = ctx.relationDb.queryRaw<{ agent_name: string }>(
+              'SELECT "agent_name" FROM "agent" WHERE "agent_id" = ? OR "id" = ? LIMIT 1', [evalAgentId, evalAgentId],
+            );
+            if (agentRows && agentRows.length > 0 && agentRows[0].agent_name) agentName = agentRows[0].agent_name;
+          } catch {  }
+        }
+        const elapsedMs = evalUpdatedAt > created ? evalUpdatedAt - created : 0;
+
         sendJson(res, 200, {
           work_id: workId,
           trace_id: traceId,
@@ -1648,8 +1837,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           evaluation: {
             answer: answerJson,
             created,
-            elapsed_ms: 0,
-            agent_name: '进化 Agent (Evolutor)',
+            elapsed_ms: elapsedMs,
+            agent_name: agentName,
           },
         });
 
@@ -1865,17 +2054,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.chatAccess.updateSessionTitle(input, output, context);
         sendJson(res, 200, { success: true, session_id: sid, session_title: newTitle });
 
-      } else if (method === 'GET' && pathname.startsWith('/api/chat/dag')) {
-
-        sendJson(res, 200, { nodes: [], edges: [] });
-      } else if (method === 'GET' && pathname.startsWith('/api/chat/agent-chain/')) {
-        sendJson(res, 200, { nodes: [] });
-
       } else if (method === 'GET' && pathname === '/api/memory/list') {
         const limit = Math.min(Math.max(parseInt(params.get('limit') || '50', 10) || 50, 1), 200);
         const cursor = (params.get('cursor') || '').trim();
-        const conds: string[] = [];
-        const args: any[] = [];
+        const conds: string[] = [memoryVisibleTypeCond()];
+        const args: any[] = [...MEMORY_VISIBLE_INFO_TYPES];
         if (cursor) {
           const idx = cursor.indexOf(':');
           const cCreated = idx > 0 ? Number(cursor.slice(0, idx)) : NaN;
@@ -1904,8 +2087,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const parts = pathname.split('/');
         const tag = decodeURIComponent(parts[parts.length - 1] || '');
         const rows = ctx.relationDb.queryRaw<any>(
-          'SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? ORDER BY r."created" DESC LIMIT 200',
-          [tag],
+          `SELECT r."id", r."info_id", r."info_type", r."info_creator_role", r."info", r."pin", r."created", r."updated" FROM "info_raw" r INNER JOIN "info_tag" t ON t."info_id" = r."info_id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond()} ORDER BY r."created" DESC LIMIT 200`,
+          [tag, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, rows.map((r: any) => r.info_id));
         sendJson(res, 200, rows.map((r: any) => mapInfoToMemory(r, tagMap.get(r.info_id) || [])));
@@ -1935,7 +2118,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           if (infoTypes.length > 0) {
             conds.push(`"info_type" IN (${infoTypes.map(() => '?').join(',')})`);
             args.push(...infoTypes);
+          } else {
+            conds.push(memoryVisibleTypeCond());
+            args.push(...MEMORY_VISIBLE_INFO_TYPES);
           }
+        } else {
+          conds.push(memoryVisibleTypeCond());
+          args.push(...MEMORY_VISIBLE_INFO_TYPES);
         }
         if (tag) {
           conds.push('"info_id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" = ?)');
@@ -2157,8 +2346,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ day_num: number; cnt: number }>(
-          'SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "info_raw" WHERE "created" IS NOT NULL GROUP BY day_num',
-          [tzMs],
+          `SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "info_raw" WHERE "created" IS NOT NULL AND ${memoryVisibleTypeCond()} GROUP BY day_num`,
+          [tzMs, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const dates: Record<string, number> = {};
         for (const r of rows) {
@@ -2290,12 +2479,23 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const cfgOut = new ConfigSelfLearningOutput();
         await ctx.selfLearningAccess.configSelfLearning(new ConfigSelfLearningInput(), cfgOut, new SelfLearningContext());
         const cfg = cfgOut.config || {};
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        let completedToday = 0;
+        try {
+          const cntRows = ctx.relationDb.queryRaw<{ c: number }>(
+            'SELECT COUNT(*) AS "c" FROM "self_learning_result" WHERE "learned_at" >= ?', [todayStart.getTime()],
+          );
+          completedToday = Number(cntRows?.[0]?.c) || 0;
+        } catch {
+          completedToday = 0;
+        }
         sendJson(res, 200, {
           mode: String(cfg.learning_mode || 'from-conversation'),
           running: !!progressOut.running,
           randomFactor: Number(cfg.random_factor) || 0,
           queueSize: (progressOut.task_queue || []).length,
-          completedToday: 0,
+          completedToday,
           modes: {
             'from-document': { auto: Number(cfg.document_auto_enable) !== 0, randomFactor: Number(cfg.document_random_factor) || 0 },
             'from-conversation': { auto: Number(cfg.conversation_auto_enable) !== 0, randomFactor: Number(cfg.conversation_random_factor) || 0 },
@@ -2400,8 +2600,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           id: String(l.library_id || ''),
           name: String(l.library_name || ''),
           path: String(l.library_path || ''),
-          category: '',
-          description: '',
+          category: String((l as Record<string, unknown>).category || ''),
+          description: String((l as Record<string, unknown>).description || ''),
           createdAt: Number(l.created) || 0,
           totalFiles: Number(l.total_files) || 0,
           learnedFiles: Number(l.learned_files) || 0,
@@ -2416,6 +2616,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           Object.assign(new AddLibraryInput(), {
             library_path: pathVal,
             library_name: nameVal || undefined,
+            category: String((body as Record<string, unknown>).category || ''),
+            description: String((body as Record<string, unknown>).description || ''),
             enable_self_learning: true,
           }),
           addOut,
@@ -2444,6 +2646,30 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           } catch {  }
         }
         sendJson(res, 200, { exists, isReadable, isWritable });
+
+      } else if (method === 'GET' && pathname === '/api/library/browse-dir') {
+        // 资料库目录选择器:由后端直接读取本机文件系统。path 缺省从用户主目录起步;
+        // Windows 盘符根(如 C:\)额外返回全部可用盘符,便于跨盘选择。
+        const target = params.get('path') || os.homedir();
+        try {
+          if (!fs.statSync(target).isDirectory()) { sendJson(res, 400, { error: '路径不是目录' }); return; }
+          const entries = fs.readdirSync(target, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => ({ name: d.name, path: path.join(target, d.name) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          const parent = path.dirname(target);
+          let drives: string[] | undefined;
+          if (process.platform === 'win32' && /^[a-zA-Z]:\\?$/.test(target)) {
+            drives = [];
+            for (let i = 65; i <= 90; i++) {
+              const drive = `${String.fromCharCode(i)}:\\`;
+              try { if (fs.statSync(drive).isDirectory()) drives.push(drive); } catch {  }
+            }
+          }
+          sendJson(res, 200, { path: target, parent: parent !== target ? parent : null, drives, entries });
+        } catch {
+          sendJson(res, 400, { error: '目录不存在或不可读' });
+        }
 
       } else if (method === 'PUT' && /\/api\/library\/paths\/[^/]+\/enabled$/.test(pathname)) {
         const id = pathname.split('/api/library/paths/')[1].split('/')[0];
@@ -3056,9 +3282,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.logAccess.delLog(Object.assign(new DelLogInput(), { before_time: Date.now() + 86400000 }), output, new LogContext());
         sendJson(res, 200, { deleted_count: output.affected_rows });
 
-      } else if (method === 'GET' && pathname === '/api/config/work') {
-        sendJson(res, 200, []);
-
       } else if (method === 'GET' && pathname === '/api/orchestration/strategies') {
         const rows = ctx.relationDb.queryRaw<{ id: string; strategy_id: string; strategy_label: string; strategy_description: string; enable: number; jsonnode_definition: string }>(
           'SELECT "id", "strategy_id", "strategy_label", "strategy_description", "enable", "jsonnode_definition" FROM "orchestration_strategy" ORDER BY "created" ASC',
@@ -3476,9 +3699,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname.startsWith('/api/cron/tasks/')) {
         const parts = pathname.split('/').filter(Boolean);
         const name = parts[parts.length - 1];
-        if (parts.length >= 5 && parts[parts.length - 1] === 'runs') {
+        if (parts.length === 5 && parts[parts.length - 1] === 'runs') {
           const input = Object.assign(new ListCronTaskRunsInput(), {
-            name: parts.length === 5 ? parts[3] : undefined,
+            name: parts[3],
             limit: params.get('limit') ? parseInt(params.get('limit')!, 10) : 50,
           });
           const output = new ListCronTaskRunsOutput();

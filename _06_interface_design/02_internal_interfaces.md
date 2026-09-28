@@ -24,6 +24,9 @@
 | I-008 | `execAgent / runPhases`(AgentExecution v1) | orchestration | Agent | 保留兼容 |
 | I-009 | `evalWorkAgent / runEvaluationCycle` | orchestration | Agent/EvolutorAgent | 进化闭环 |
 | I-010 | `execWrite / saveUserProfile` | orchestration | Agent/WriterAgent | 定稿与画像 |
+| I-011 | `cleanOrphanGraphNodes(input, output, context)` | data | Core/InfoCore | 图修复学习:安全清理 0 消息关联孤立节点与边 |
+| I-012 | `soSession(input, output, context)` | orchestration | Application/Chat | 会话检索与全量 Token/完整问答聚合 |
+
 
 ## 3. 数据模型 Schema
 

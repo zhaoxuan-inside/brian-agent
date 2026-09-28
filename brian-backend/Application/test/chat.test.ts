@@ -518,7 +518,7 @@ describe('ChatService', () => {
       return new ChatService(ctx.db, ctx.infoCore, ctx.logger, undefined, { gateway, session: new SessionAccess(ctx.db) });
     }
 
-    it('TC-CHAT-078: First message automatically sets session_title with max 50 chars truncation', async () => {
+    it('TC-CHAT-078: First message automatically sets session_title with max 12 chars truncation (8~12 chars)', async () => {
       const createOut = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOut, new ChatContext());
 
@@ -530,8 +530,8 @@ describe('ChatService', () => {
       const detailOut = new GetSessionDetailOutput();
       await service.soSessionDetail(detailIn, detailOut, new ChatContext());
 
-      expect(detailOut.session.session_title).toBe(longMsg.slice(0, 50));
-      expect(detailOut.session.session_title.length).toBe(50);
+      expect(detailOut.session.session_title).toBe(longMsg.slice(0, 12));
+      expect(detailOut.session.session_title.length).toBe(12);
     });
 
     it('TC-CHAT-079: Subsequent messages do not overwrite existing session_title', async () => {

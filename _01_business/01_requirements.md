@@ -99,6 +99,17 @@ WHEN 运行 npm test THE SYSTEM SHALL 5/5 工作区全部通过。
 
 本次需求(R1~R4)验收见 `00_p0_clarification.md` 第 3 节。
 
+R5 历史会话卡片与图谱治理验收(EARS):
+
+```text
+WHEN 用户进入「信息 > 历史」页面 THE SYSTEM SHALL 展示会话卡片，包含8~12字标题、创建时间、全量Token消耗、成对问答轮数、总字符数（问+答）、默认前4个标签及超出时的“更多标签”按钮。
+WHEN 会话标题生成或更新时 THE SYSTEM SHALL 从源头控制标题长度在8~12字以内。
+WHEN 用户点击标签更多按钮 THE SYSTEM SHALL 弹出模态框展示该会话全部关联标签。
+WHEN 用户删除会话 THE SYSTEM SHALL 级联删除会话表、消息、运行时表、llm_call_log全量Token记录及编排轨迹，同时仅解除图谱消息关联，保留共享Tag/keyword图节点。
+WHEN 执行图节点修复学习 THE SYSTEM SHALL 检测并物理删除完全无消息关联的孤立图节点与游离边。
+WHEN 用户点击卡片空白或主体区域 THE SYSTEM SHALL 路由跳转至 /?session={sessionId}。
+```
+
 ## 8. 未决问题
 
 | 问题 | 影响 | 状态 |
@@ -106,3 +117,5 @@ WHEN 运行 npm test THE SYSTEM SHALL 5/5 工作区全部通过。
 | IntentAgent.understandRequirement 无生产调用方 | 潜在死代码,留任务卡核查 | open |
 | /ws WebSocket 仅 echo 占位 | 文档中标注为占位通道 | resolved(记录现状) |
 | AgentExecution v1 与 Runtime Loop v2 并存 | 新代码一律走 v2;v1 保留兼容 | resolved(记录现状) |
+| R5 会话卡片改造与图数据治理 | 经 P0 澄清完成确认 | confirmed |
+

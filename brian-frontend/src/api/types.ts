@@ -194,6 +194,9 @@ export interface FeedbackBlock extends BlockBase {
   rating?: number
   liked?: boolean
   traceId?: string
+  runId?: string
+  workId?: string
+  sessionId?: string
 }
 
 export interface FeedbackProcessLogRecord {
@@ -452,6 +455,8 @@ export interface ChatSession {
   sessionTitle?: string
   lastMessage: string
   lastTime: number
+  created?: number
+  createdTime?: number
   messageCount: number
   qaCount?: number
   questionChars?: number
@@ -535,6 +540,14 @@ export interface LibraryPath {
   totalFiles?: number
   learnedFiles?: number
   enableSelfLearning?: boolean
+}
+
+/** 后端 browse-dir 返回的本机目录列表(仅子目录);drives 仅 Windows 盘符根层级返回 */
+export interface DirListing {
+  path: string
+  parent: string | null
+  drives?: string[]
+  entries: { name: string; path: string }[]
 }
 
 export interface LibraryFileEntry {

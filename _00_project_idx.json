@@ -136,6 +136,11 @@
           "file": "ADR-008-frontend-design-tokens.md",
           "summary": "前端设计令牌体系(R2)",
           "status": "accepted"
+        },
+        {
+          "file": "ADR-009-token-accounting-and-graph-safety.md",
+          "summary": "全量 Token 计量与图数据弱关联治理(R5)",
+          "status": "accepted"
         }
       ]
     },
@@ -149,7 +154,7 @@
         },
         {
           "file": "02_data_flow.md",
-          "summary": "对话 SSE 全链路时序/主调用链/数据模型概览",
+          "summary": "对话 SSE 全链路时序/主调用链/R5 会话聚合与图治理数据流",
           "status": "reviewed"
         }
       ]
@@ -159,7 +164,7 @@
       "files": [
         {
           "file": "01_function_matrix.md",
-          "summary": "R2/R3 任务卡(T-F01~F08,T-B01~B03)与里程碑",
+          "summary": "R2/R3/R5 任务卡(T-F01~F09,T-B01~B08)与里程碑",
           "status": "confirmed"
         }
       ]

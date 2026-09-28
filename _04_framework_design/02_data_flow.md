@@ -81,3 +81,66 @@ POST /api/chat/stream(dev-server,入口豁免)
 - 预期:单用户本地使用,记忆条目十万级、消息百万级内流畅;SQLite WAL 单写者满足单人交互负载。
 - 边界:多用户并发/跨机部署超出现有假设(非目标);向量库换型或检索量大时迁移专门引擎(见 _02 A1)。
 - 观测开销:AOP 切面仅 Access 层,spans 环形缓冲,日志老化由 LogProvider 承担。
+
+## 5. R5 历史会话聚合与全量 Token 数据流
+
+```mermaid
+sequenceDiagram
+    participant FE as 前端 (HistoryTab)
+    participant DS as dev-server (/api/chat/list)
+    participant CS as ChatService
+    participant RD as SQLite (brian.db)
+    FE->>DS: GET /api/chat/list?page_current=1&page_size=20
+    DS->>CS: soSession(input, output, context)
+    CS->>RD: 分页查询 chat_session (获取 session_id, session_title, created)
+    CS->>RD: 查询 llm_call_log: SUM(input_tokens), SUM(output_tokens) WHERE session_id IN (...)
+    CS->>RD: 查询 info_raw: 统计同时具有 REQUEST 与 RESPONSE 的完整轮数及字符总数
+    CS->>RD: 查询 info_tag: 聚合每个 session_id 的 tags
+    CS-->>DS: output.sessions (含 created, token, qaCount, chars, tags)
+    DS-->>FE: JSON (含 createdTime, inputTokens, outputTokens, qaCount, questionChars, answerChars, tags)
+    FE->>FE: 渲染卡片 (8~12字标题、创建时间、总Token、完整问答数、总字符数、前4标签+更多按钮)
+```
+
+## 6. R5 会话彻底删除与图数据弱关联解除数据流
+
+```mermaid
+sequenceDiagram
+    participant FE as 前端 (HistoryTab)
+    participant CS as ChatService
+    participant IC as InfoCoreService
+    participant RD as SQLite (brian.db)
+    participant GD as GraphDB (graph.db)
+    FE->>CS: DELETE /api/chat/session/:sessionId
+    CS->>RD: 删除 llm_call_log (session_id = ?) 全量 Token 流水
+    CS->>RD: 删除 orchestration_work / agent_execution_trace
+    CS->>RD: 删除 runtime_run, runtime_session, runtime_message, stream_event
+    CS->>IC: delInfoBySession(sessionId)
+    IC->>RD: 删除 info_tag, info_keyword, info_summary, info_vector 关联
+    IC->>GD: 删除 info 消息节点及 CITATION 引用边 (弱关联解绑，保留 Tag / keyword 实体节点)
+    IC->>RD: 删除 info_raw 消息记录
+    CS->>RD: 删除 chat_session 会话主记录
+    CS-->>FE: 200 OK (会话及全量数据已彻底清除，图谱共享节点保持完好)
+```
+
+## 7. R5 图节点修复学习孤儿清理数据流
+
+```mermaid
+sequenceDiagram
+    participant SCH as 调度/修复学习
+    participant IC as InfoCoreService
+    participant RD as SQLite (brian.db)
+    participant GD as GraphDB (graph.db)
+    SCH->>IC: cleanOrphanGraphNodes() / rebuildCooccurGraph()
+    IC->>GD: 查询所有 Tag 节点 (node_type='Tag')
+    IC->>RD: 检查每个 tag 是否在 info_tag 中存在
+    opt 若在 info_tag 中引用数为 0
+        IC->>GD: 删除该孤立 Tag 节点及相连 cooccur 边
+    end
+    IC->>GD: 查询所有 keyword 节点 (node_type='keyword')
+    IC->>RD: 检查每个 keyword 是否在 info_keyword 中存在
+    opt 若在 info_keyword 中引用数为 0
+        IC->>GD: 删除该孤立 keyword 节点及相连 keywordCooccur 边
+    end
+    IC-->>SCH: 返回清理孤立节点与孤立边数量
+```
+

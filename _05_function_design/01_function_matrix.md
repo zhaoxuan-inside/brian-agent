@@ -98,12 +98,66 @@
 - P3(后续):ConfigView 20+ 子区块、Learning/Monitor/UserProfile 面板内部、HomeView 营销文案
 - 验收(P1):浏览器双语往返实测(EN:lang 属性/标题/导航/侧栏/芯片/Info tabs;ZH 无损还原);vue-tsc 0 错;前端 vitest 无新增失败
 
-## 4. 里程碑
+## 4. 任务卡 — R5 历史会话卡片与图谱治理
+
+### T-B05 会话标题源头控制与创建时间暴露
+- 文件: `brian-backend/Application/Chat/application/ChatService.ts`、`brian-backend/dev-server.ts`、`brian-frontend/src/api/types.ts`
+- 产出:
+  1. `autoGenerateSessionTitleIfEmpty`: 标题从源头截取并约束在 8~12 个字以内；
+  2. `updateSessionTitle`: 限制手动更新标题长度不超过 12 个字；
+  3. `soSession` / `dev-server.ts`: `/api/chat/list` 响应增加 `created` 与 `createdTime`；
+  4. 前端 `ChatSession` 接口补充 `created?: number; createdTime?: number`。
+- 验收: 单测验证标题生成与截断、`/api/chat/list` 返回正确时间戳；typecheck 0 错。
+- 预估: 15 分钟
+
+### T-B06 全量 Token 消耗聚合与严格成对问答统计
+- 文件: `brian-backend/Application/Chat/application/ChatService.ts`
+- 产出:
+  1. `soSessionTokenStats`: 从 `llm_call_log` 按 `session_id` 聚合 `input_tokens` 与 `output_tokens`，全面覆盖 Agent 调用及 skill/soul/mcp/prompt/agent 等辅助匹配消耗；
+  2. `soSessionQaStats`: 严格按“一次完整用户请求 + 一次系统回答”计算完整问答轮数（匹配 `work_id` 同时包含 REQUEST 与 RESPONSE）；
+  3. 字符数保持返回 `question_chars` 与 `answer_chars` 供上层求和。
+- 验收: 单测验证含辅助LLM调用的Token汇总计算、未完成请求不计入问答轮次。
+- 预估: 20 分钟
+
+### T-B07 会话彻底删除与图数据安全解绑
+- 文件: `brian-backend/Application/Chat/application/ChatService.ts`、`brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts`
+- 产出:
+  1. `ChatService.deleteSingleSession`: 级联清理 `llm_call_log`（清除该会话全部 Token 流水）、`orchestration_work`、`orchestration_agent_execution`、`agent_execution_trace`、运行时各表与反馈表；
+  2. 保护图数据：会话删除时仅清理 `info_tag`、`info_keyword` 关系记录及 info 消息节点与 CITATION 边，严禁直接删除共享的 Tag/keyword 图节点。
+- 验收: 单测验证删除会话后 Token 记录被清除，且同名 Tag/keyword 节点在图数据库中完好保留。
+- 预估: 25 分钟
+
+### T-B08 图节点修复学习——孤立节点安全清理
+- 文件: `brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts`
+- 产出:
+  1. 新增/扩展图修复方法（如 `cleanOrphanGraphNodes` / `rebuildCooccurGraph` 增强）：
+  2. 扫描 `graph_node` 中 `node_type='Tag'` 与 `node_type='keyword'` 的节点，对比 `info_tag` 与 `info_keyword`；
+  3. 当且仅当某节点完全没有关联任何消息（引用计数为 0）时，安全删除该孤立节点及其相连共现边。
+- 验收: 单测验证孤立节点被准确清理，仍有消息引用的节点未被误删。
+- 预估: 20 分钟
+
+### T-F09 历史会话卡片改版
+- 文件: `brian-frontend/src/components/info/HistoryTab.vue`、`brian-frontend/src/composables/useHistoryTab.ts`
+- 产出:
+  1. 标题展示：严格展示 8~12 字以内标题（超出做省略处理）；
+  2. 创建时间：展示 `formatTime(item.createdTime || item.created)`；
+  3. Token 消耗：展示总 Token（`formatTokens(inputTokens + outputTokens)`），带输入/输出 tooltip；
+  4. 问答轮数：展示严格成对的 `item.qaCount ?? 0`；
+  5. 总字符数：展示提问与回答总字符数 `formatTokens(item.questionChars + item.answerChars)`；
+  6. 标签展示：默认渲染前 4 个标签徽章；超出 4 个时渲染 `+N 更多` 按钮，点击弹出标签浮层；
+  7. 删除按钮：确认后级联删除；
+  8. 点击跳转：点击卡片主体进入 `/?session=${sessionId}`，各操作按钮使用 `@click.stop` 阻断冒泡。
+- 验收: `npm run build` 通过；Vue 模板类型检查 0 错。
+- 预估: 30 分钟
+
+## 5. 里程碑
 
 | 里程碑 | 包含任务 | 完成标志 |
 |---|---|---|
 | M1 文档完备 | chg-001(SOP 十一件套) | _00~_10 齐全且 _00 索引一致 |
 | M2 令牌与共享件 | T-F01~F03 | build 绿;公共组件可用 |
-| M3 页面人性化 | T-F04~F08 | build 绿;视觉验收(visual-judge)通过 |
+| M3 页面人性化 | T-F04~F08 | build 绿;视觉验收通过 |
 | M4 后端治理 | T-B01~B03 | typecheck+test 绿;offender 下降 |
 | M5 收敛验收 | P8 清单 | 证据留存;_10 置 verified;提示人工测试 |
+| M6 历史卡片与图谱治理 | T-B05~B08, T-F09 | 后端单测全绿、前端构建全绿、图安全与全量Token验证通过 |
+

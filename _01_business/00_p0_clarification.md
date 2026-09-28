@@ -12,22 +12,28 @@
 | R3 | 后端重构 | SOP 违规项治理:超长方法拆分(≤30 行红线,`analyze:methods` 为据;重点 dev-server.ts 巨型函数)、外部组件封装核查 | refactor |
 | R4 | 全部文档 | 十一件套全套 + 修复根 README 失效文档链接与过时架构描述 | docs |
 
+| R4 | 全部文档 | 十一件套全套 + 修复根 README 失效文档链接与过时架构描述 | docs |
+| R5 | 历史卡片与图谱级联治理 | 信息>历史页面卡片重构（8~12字标题源头控制、创建时间、全量Token、成对问答、总字数、前4标签+更多标签模态、卡片点击跳转）、会话彻底删除（含llm_call_log与编排轨迹）、图数据删除安全解关联（不删共享节点）以及图节点修复学习（清理无消息关联的孤立节点） | feat |
+
 ## 2. 关键裁决(自主裁决依据 SOP)
 
 1. **方法签名** — 项目已有统一五参签名 `(input, output, context, metrics?, report?)`(基类 `brian-backend/Base/shared/base/` 的 Input/Output/Context/Metrics/Report,AOP 经 `AopProxy.wrap` 统一拦截)。与 SOP 五段 `boolean m(input, output, context, metrics, evolution)` 同构:evolution 职责由 `Output.error/error_code` + Report 承担。按"既有项目接入不强制改写存量"规则,登记为项目签名约定(映射写 _06),不物理改写 11.9 万行存量签名。
 2. **规模分级** — 代码 >10 万行 → 启用分片索引(_07/_09/_10 分片目录);并行开发者 = 个人,owner/PR 评审条目登记为个人级豁免。
-3. **范围红线** — 保留当前 621 个未提交 WIP 改动(分支 feat/20260926-recreate,基线 typecheck+test 已全绿);Agent 禁止 git push;逐任务卡 Conventional Commits 提交。
-4. **快速通道判定** — R2 前端样式为纯 style 改动(不改契约),R3 后端为结构重构(不改契约):两者均可免 P1~P6 增量评审,但十一件套反向补建本身即本次交付物,全部落盘。
+3. **范围红线** — 保留当前未提交 WIP 改动;Agent 禁止 git push;逐任务卡 Conventional Commits 提交。
+4. **快速通道判定** — R2 前端样式为纯 style 改动(不改契约),R3 后端为结构重构(不改契约):两者均可免 P1~P6 增量评审。本次 R5 为新增功能与数据契约扩展，走标准 P0~P8 门禁流程。
+5. **R5 会话标题源头控制** — 必须在会话标题生成/更新逻辑（`autoGenerateSessionTitleIfEmpty` 与 `updateSessionTitle`）从源头将标题控制在 8~12 个字以内，前端卡片仅负责对存量异常长标题做兜底防护。
+6. **R5 图数据删除与修复学习** — ① 对话删除时：标签/关键词节点可能被其他对话复用，严禁直接删除图中的 Tag/keyword 节点，仅解除消息与节点之间的关系（删除关系表记录及 info 节点与引用边）；② 图节点修复学习时：必须对完全没有消息关联的孤立节点及其游离边进行彻底清理。
 
 ## 3. 验收标准(EARS)
 
 ```text
 WHEN 十一件套创建完成 THE SYSTEM SHALL _00~_06 与代码现状一致,_00/_07/_09/_10 可被 JSON 解析器解析且 stats 一致。
 WHEN 用户打开任一前端页面 THE SYSTEM SHALL 呈现统一设计令牌驱动的界面(颜色/字号/间距/圆角/阴影/过渡一致),并具备空态/加载态/错误态。
-WHEN 运行 npm run typecheck && npm test THE SYSTEM SHALL 全部通过(基线:5/5 工作区通过,2026-09-26 11:00)。
-WHEN 运行前端 npm run build THE SYSTEM SHALL vue-tsc 类型检查与构建通过。
-WHEN 运行 npm run analyze:methods -- 30 THE SYSTEM SHALL 超长方法数量较基线下降,dev-server.ts 巨型函数完成拆分。
-WHILE 任何改动 THE SYSTEM SHALL 不改变既有 API 对外契约(以 _06 登记为准)。
+WHEN 用户打开「信息 > 历史」页面 THE SYSTEM SHALL 呈现会话卡片，内容包含：8~12字标题、创建时间、全量Token消耗（涵盖Agent调用及skill/soul/mcp/prompt/agent等全部辅助LLM调用）、问答轮数（成对请求与回答）、总字符数（提问与回答总和）、默认前4个标签与更多标签按钮（点击弹出完整标签浮层）。
+WHEN 用户点击会话卡片主体 THE SYSTEM SHALL 直接跳转至对应会话页面（/?session={sessionId}）。
+WHEN 用户点击会话删除按钮并确认 THE SYSTEM SHALL 彻底删除会话主表、消息、运行时数据、llm_call_log全量Token流水、编排执行与轨迹，并解除图谱中消息与标签/关键词的关联，严禁删除共享图节点。
+WHEN 执行图节点修复学习 THE SYSTEM SHALL 扫描清理完全没有消息关联的孤立图节点与游离边。
+WHEN 运行 npm test THE SYSTEM SHALL 全部测试通过。
 WHEN 全部完成 THE SYSTEM SHALL 提示用户人工测试,git push 由人工执行。
 ```
 
@@ -35,4 +41,5 @@ WHEN 全部完成 THE SYSTEM SHALL 提示用户人工测试,git push 由人工�
 
 | 问题 | 影响 | 状态 |
 |---|---|---|
-| 无(用户会话指令明确,自主推进) | — | resolved |
+| R5 需求澄清与技术路线确认 | 用户已明确两大核心细节（源头控制标题、图数据删除只解关联/修复学习删孤立节点） | resolved(已确认) |
+
