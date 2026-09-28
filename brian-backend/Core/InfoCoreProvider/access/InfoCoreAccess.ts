@@ -78,6 +78,8 @@ import {
   DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
+  CleanOrphanGraphNodesInput,
+  CleanOrphanGraphNodesOutput,
   BackfillMissingSummariesInput,
   BackfillMissingSummariesOutput,
 } from '../domain/types';
@@ -362,5 +364,10 @@ export class InfoCoreAccess {
   async existSummaryInfo(input: ExistInfoInput, output: ExistInfoOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.existSummaryInfo(input, output, context, metrics, report);
+  }
+
+  async cleanOrphanGraphNodes(input: CleanOrphanGraphNodesInput, output: CleanOrphanGraphNodesOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.cleanOrphanGraphNodes(input, output, context, metrics, report);
   }
 }

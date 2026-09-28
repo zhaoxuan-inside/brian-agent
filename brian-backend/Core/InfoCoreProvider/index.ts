@@ -72,6 +72,8 @@ export {
   DelInfoBySessionOutput,
   ExistInfoInput,
   ExistInfoOutput,
+  CleanOrphanGraphNodesInput,
+  CleanOrphanGraphNodesOutput,
   BackfillMissingSummariesInput,
   BackfillMissingSummariesOutput,
   INFO_RAW_TABLE,

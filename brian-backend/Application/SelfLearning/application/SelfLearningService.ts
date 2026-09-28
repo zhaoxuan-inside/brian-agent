@@ -26,6 +26,7 @@ import {
 import {
   GraphTagInput, GraphTagOutput,
   LastNInfoInput, LastNInfoOutput,
+  CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput,
   InfoCoreContext,
 } from '@brian-agent/core';
 import {
@@ -158,6 +159,8 @@ export class SelfLearningService {
       { field: 'library_id', value: libraryId },
       { field: 'library_name', value: libraryName },
       { field: 'library_path', value: libraryPath },
+      { field: 'category', value: input.category ?? '' },
+      { field: 'description', value: input.description ?? '' },
       { field: 'enable_self_learning', value: input.enable_self_learning !== false ? 1 : 0 },
       { field: 'learning_rate', value: input.learning_rate ?? 5 },
     ]);
@@ -690,24 +693,20 @@ export class SelfLearningService {
     temperature: number | undefined,
     output: QueryDocumentOutput,
   ): Promise<void> {
-    try {
-      const llmOut = new ExecLLMOutput();
-      await this.llmAccess.execLLM(
-        Object.assign(new ExecLLMInput(), {
-          id: llmId,
-          prompt,
-          ...(system ? { system } : {}),
-          temperature: temperature ?? 0.3,
-          max_tokens: 1024,
-          caller: 'SelfLearningService.readDocument',
-        }),
-        llmOut,
-        new LLMContext(),
-      );
-      output.result = llmOut.result || '';
-    } catch (err: unknown) {
-      output.result = `解释失败：${err instanceof Error ? err.message : String(err)}`;
-    }
+    const llmOut = new ExecLLMOutput();
+    await this.llmAccess.execLLM(
+      Object.assign(new ExecLLMInput(), {
+        id: llmId,
+        prompt,
+        ...(system ? { system } : {}),
+        temperature: temperature ?? 0.3,
+        max_tokens: 1024,
+        caller: 'SelfLearningService.readDocument',
+      }),
+      llmOut,
+      new LLMContext(),
+    );
+    output.result = llmOut.result || '';
   }
 
   private async renderPrompt(
@@ -1444,6 +1443,10 @@ export class SelfLearningService {
 
   async startOrphanTagCheck(): Promise<void> {
     try {
+      const cleanIn = new CleanOrphanGraphNodesInput();
+      const cleanOut = new CleanOrphanGraphNodesOutput();
+      await this.infoCore.cleanOrphanGraphNodes(cleanIn, cleanOut, new InfoCoreContext());
+
       const graphSelOutput = Object.assign(new SelectGraphOutput(), {});
       await this.graphDBAccess.selectGraph(
         Object.assign(new SelectGraphInput(), {

@@ -11,7 +11,7 @@ import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, INFO_RAW_TABLE, INFO_CONTEXT_SOURCE_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
 import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
@@ -1598,6 +1598,101 @@ export class InfoCoreService {
       { field: 'info_id', operator: Operator.EQ, value: infoId },
     ]);
     return count > 0;
+  }
+
+  async cleanOrphanGraphNodes(
+    input: CleanOrphanGraphNodesInput,
+    output: CleanOrphanGraphNodesOutput,
+    _context: InfoCoreContext,
+    metrics?: Metrics,
+    _report?: Report,
+  ): Promise<boolean> {
+    const types = (input.node_types && input.node_types.length > 0) ? input.node_types : ['Tag', 'keyword'];
+    const allToDeleteIds: string[] = [];
+    const allDeletedNames: string[] = [];
+
+    for (const t of types) {
+      const orphans = await this.findOrphanNodesForType(t, metrics);
+      allToDeleteIds.push(...orphans.nodeIds);
+      allDeletedNames.push(...orphans.nodeNames);
+    }
+
+    if (allToDeleteIds.length > 0) {
+      const delOut = new DelGraphNodeOutput();
+      await this.graphDb.delGraphNode(
+        { ids: allToDeleteIds } as DelGraphNodeInput,
+        delOut,
+        new GraphContext(),
+      );
+      output.deleted_node_count = delOut.affected_rows || allToDeleteIds.length;
+    } else {
+      output.deleted_node_count = 0;
+    }
+    output.deleted_nodes = allDeletedNames;
+    return true;
+  }
+
+  private async findOrphanNodesForType(
+    nodeType: string,
+    metrics?: Metrics,
+  ): Promise<{ nodeIds: string[]; nodeNames: string[] }> {
+    const nodeIds: string[] = [];
+    const nodeNames: string[] = [];
+    try {
+      const selOut = new SelectGraphOutput();
+      await this.graphDb.selectGraph(
+        { target: GraphTarget.NODE, node_type: nodeType } as SelectGraphInput,
+        selOut,
+        new GraphContext(),
+      );
+      for (const node of selOut.list as GraphNodeRecord[]) {
+        const name = this.extractGraphNodeName(node, nodeType);
+        if (!name) continue;
+        const refCount = this.countMessageRefsForGraphNode(nodeType, name);
+        if (refCount === 0) {
+          nodeIds.push(node.id);
+          nodeNames.push(name);
+        }
+      }
+    } catch (err) {
+      metrics?.warn(`[InfoCoreProvider] findOrphanNodesForType(${nodeType}) 失败`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return { nodeIds, nodeNames };
+  }
+
+  private extractGraphNodeName(node: GraphNodeRecord, nodeType: string): string {
+    const content = (node.content ?? {}) as Record<string, unknown>;
+    if (nodeType === 'Tag') {
+      return String(content.tag_name || content.tag || '').trim();
+    }
+    if (nodeType === 'keyword') {
+      return String(content.keyword || content.word || '').trim();
+    }
+    return String(content.name || content.id || '').trim();
+  }
+
+  private countMessageRefsForGraphNode(nodeType: string, name: string): number {
+    try {
+      if (nodeType === 'Tag') {
+        const rows = this.relationDb.queryRaw<{ c: number }>(
+          `SELECT COUNT(*) AS c FROM "${INFO_TAG_TABLE}" WHERE "tag" = ?`,
+          [name],
+        );
+        return Number(rows[0]?.c ?? 0);
+      }
+      if (nodeType === 'keyword') {
+        const rows = this.relationDb.queryRaw<{ c: number }>(
+          `SELECT COUNT(*) AS c FROM "${INFO_KEYWORD_TABLE}" WHERE "word" = ?`,
+          [name],
+        );
+        return Number(rows[0]?.c ?? 0);
+      }
+    } catch {
+      return 1;
+    }
+    return 1;
   }
 
   private async getInfoByInfoId(infoId: string): Promise<InfoRawRecord | null> {

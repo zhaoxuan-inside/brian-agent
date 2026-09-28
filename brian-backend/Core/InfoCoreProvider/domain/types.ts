@@ -536,6 +536,15 @@ export class ExistInfoOutput extends Output {
   exists = false;
 }
 
+export class CleanOrphanGraphNodesInput extends Input {
+  node_types?: string[];
+}
+
+export class CleanOrphanGraphNodesOutput extends Output {
+  deleted_node_count = 0;
+  deleted_nodes: string[] = [];
+}
+
 export const INFO_RAW_TABLE = 'info_raw';
 export const INFO_CONTEXT_SOURCE_TABLE = 'info_context_source';
 export const INFO_VECTOR_TABLE = 'info_vector';

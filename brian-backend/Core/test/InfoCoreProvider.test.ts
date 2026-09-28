@@ -15,6 +15,8 @@ import {
   HandleResultType,
   SelectGraphInput,
   SelectGraphOutput,
+  AddGraphNodeInput,
+  AddGraphNodeOutput,
   GraphTarget,
   GraphContext,
 } from '@brian-agent/base';
@@ -74,6 +76,8 @@ import {
   BackfillMissingSummariesOutput,
   RebuildCooccurGraphInput,
   RebuildCooccurGraphOutput,
+  CleanOrphanGraphNodesInput,
+  CleanOrphanGraphNodesOutput,
 } from '../InfoCoreProvider';
 import { ValidationError, NotFoundError } from '../shared/errors';
 
@@ -1310,6 +1314,74 @@ describe('InfoCoreProvider', () => {
       const output = new SoInfoConfigOutput();
       await infoCore.soInfoConfig(new SoInfoConfigInput(), output, new InfoCoreContext());
       expect(output.elapsed_ms).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('cleanOrphanGraphNodes', () => {
+    it('TC-INFO-ORPHAN-001: removes orphan Tag and keyword nodes having 0 message references, but keeps nodes with active references', async () => {
+      // 1. Add Tag nodes to GraphDB
+      const tagActiveOut = new AddGraphNodeOutput();
+      await graphDb.addGraphNode(
+        Object.assign(new AddGraphNodeInput(), {
+          data: { node_type: 'Tag', content: { tag_name: 'ActiveTag', freq: 1 } },
+        }),
+        tagActiveOut,
+        new GraphContext(),
+      );
+      const tagOrphanOut = new AddGraphNodeOutput();
+      await graphDb.addGraphNode(
+        Object.assign(new AddGraphNodeInput(), {
+          data: { node_type: 'Tag', content: { tag_name: 'OrphanTag', freq: 1 } },
+        }),
+        tagOrphanOut,
+        new GraphContext(),
+      );
+
+      // 2. Add keyword nodes to GraphDB
+      const kwActiveOut = new AddGraphNodeOutput();
+      await graphDb.addGraphNode(
+        Object.assign(new AddGraphNodeInput(), {
+          data: { node_type: 'keyword', content: { keyword: 'ActiveKeyword', freq: 1 } },
+        }),
+        kwActiveOut,
+        new GraphContext(),
+      );
+      const kwOrphanOut = new AddGraphNodeOutput();
+      await graphDb.addGraphNode(
+        Object.assign(new AddGraphNodeInput(), {
+          data: { node_type: 'keyword', content: { keyword: 'OrphanKeyword', freq: 1 } },
+        }),
+        kwOrphanOut,
+        new GraphContext(),
+      );
+
+      // 3. In SQLite: only ActiveTag and ActiveKeyword are referenced by info-1
+      relationDb.executeRaw(`INSERT INTO "info_raw" ("id", "created", "updated", "info_id", "session_id", "work_id", "run_id", "info_type", "info_creator_role", "info", "info_length") VALUES ('raw-1', 1700000000000, 1700000000000, 'info-1', 's-1', 'w-1', 'r-1', 'REQUEST', 'USER', 'hello', 5)`);
+      relationDb.executeRaw(`INSERT INTO "info_tag" ("id", "created", "updated", "info_id", "tag") VALUES ('it-1', 1700000000000, 1700000000000, 'info-1', 'ActiveTag')`);
+      relationDb.executeRaw(`INSERT INTO "info_keyword" ("info_id", "word") VALUES ('info-1', 'ActiveKeyword')`);
+
+      // 4. Trigger cleanOrphanGraphNodes
+      const cleanIn = new CleanOrphanGraphNodesInput();
+      const cleanOut = new CleanOrphanGraphNodesOutput();
+      const res = await (infoCore as any).cleanOrphanGraphNodes(cleanIn, cleanOut, new InfoCoreContext());
+
+      expect(res).toBe(true);
+      expect(cleanOut.deleted_node_count).toBe(2);
+      expect(cleanOut.deleted_nodes).toContain('OrphanTag');
+      expect(cleanOut.deleted_nodes).toContain('OrphanKeyword');
+
+      // 5. Verify graph DB state
+      const selTags = new SelectGraphOutput();
+      await graphDb.selectGraph({ target: GraphTarget.NODE, node_type: 'Tag' } as any, selTags, new GraphContext());
+      const tagNames = (selTags.list as any[]).map((n) => n.content?.tag_name || n.content?.tag);
+      expect(tagNames).toContain('ActiveTag');
+      expect(tagNames).not.toContain('OrphanTag');
+
+      const selKeywords = new SelectGraphOutput();
+      await graphDb.selectGraph({ target: GraphTarget.NODE, node_type: 'keyword' } as any, selKeywords, new GraphContext());
+      const kwNames = (selKeywords.list as any[]).map((n) => n.content?.keyword || n.content?.word);
+      expect(kwNames).toContain('ActiveKeyword');
+      expect(kwNames).not.toContain('OrphanKeyword');
     });
   });
 });
