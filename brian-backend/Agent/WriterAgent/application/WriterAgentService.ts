@@ -70,11 +70,11 @@ export class WriterAgentService {
     this.traceStore = new TraceStore(relationDb);
   }
 
-  async execWrite(input: WriteInput, output: WriteOutput, ctx: WriterAgentContext, metrics?: Metrics, _report?: Report): Promise<boolean> {
+  async execWrite(input: WriteInput, output: WriteOutput, ctx: WriterAgentContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     const startedAt = IdGenerator.now();
     const prepared = await this.prepareWriterAgent(input, ctx);
     const { preferences, config } = await this.resolveWritePreferences(input, ctx);
-    const contextExtra = await this.buildSessionContext(input, ctx, metrics);
+    const contextExtra = await this.buildSessionContext(input, ctx, metrics, report);
     const resultsCtx = buildWriterResultsContext(input.agent_results ?? []);
     if (resultsCtx.errorResults.length > 0 && resultsCtx.results === '') {
       await this.emitErrorFallback(input, output, prepared, preferences, config, resultsCtx, startedAt, metrics);
@@ -87,7 +87,7 @@ export class WriterAgentService {
     }
     const system = await this.loadSoulContent(prepared.agent, metrics);
     const prompt = await this.renderWritePrompt(input, preferences, contextExtra, resultsCtx, system, config, metrics);
-    const llm = await this.execWriterLlm(input, ctx, llmId, system, prompt, metrics, _report);
+    const llm = await this.execWriterLlm(input, ctx, llmId, system, prompt, metrics, report);
     const { response, tokens } = this.applyWriteResult(output, llm, resultsCtx.results, input.user_query);
     output.agent_id = prepared.agentId;
     output.response = response;
@@ -156,15 +156,15 @@ export class WriterAgentService {
 
   
 
-  private async buildSessionContext(input: WriteInput, ctx: WriterAgentContext, metrics?: Metrics): Promise<string> {
+  private async buildSessionContext(input: WriteInput, ctx: WriterAgentContext, metrics?: Metrics, report?: Report): Promise<string> {
     if (!ctx.session_id) return '';
     try {
       const ctxOut = new ContextInfoOutput();
-      
-      
-      
-      
-      
+
+
+
+
+
       await this.infoCore.context(
         Object.assign(new ContextInfoInput(), {
           session_id: ctx.session_id, work_id: ctx.work_id || '',
@@ -173,7 +173,15 @@ export class WriterAgentService {
         ctxOut,
         new InfoCoreContext(),
       );
-      return formatContextCategories(ctxOut);
+      const staticMemory = formatContextCategories(ctxOut);
+      // 写作阶段上下文构建透出（stage=writer，与主循环轮次区分；全文随 llm_call_detail 落库）
+      if (staticMemory && report) {
+        report.emit(BusinessEvent.ContextBuilt, {
+          round: 0, stage: 'writer', message_count: 0,
+          system: staticMemory.slice(0, 4000),
+        });
+      }
+      return staticMemory;
     } catch (err) {
       
       metrics?.warn('WriterAgentService.execWrite 构建会话上下文失败，降级为空上下文', {

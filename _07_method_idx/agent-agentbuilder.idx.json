@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-01T15:41:06.217Z",
+  "updated_at": "2026-10-02T15:09:32",
   "shard": "agent-agentbuilder",
   "layer": "Agent",
   "module": "AgentBuilder",
@@ -654,14 +654,25 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "name": "llmBuildReason",
+      "signature": "string llmBuildReason(llmOut: MatchLLMOutput)",
+      "category": "algorithm",
+      "layer": "Agent",
+      "module": "AgentBuilder",
+      "location": "brian-backend/Agent/AgentBuilder/application/AgentBuilderService.ts",
+      "description": "build 路径 LLM 选举原因：detail 标识映射为时间线可读文案",
+      "reusable": false,
+      "id": "m-agent-agentbuilder-0051",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
     }
   ],
   "stats": {
-    "total": 50,
-    "by_category": {
-      "algorithm": 16,
-      "orchestration": 25,
-      "data": 9
-    }
+    "total": 51,
+    "added_by": "chg-060"
   }
 }

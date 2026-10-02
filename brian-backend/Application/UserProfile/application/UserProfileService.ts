@@ -799,15 +799,14 @@ export class UserProfileService {
       rows.push(...result);
     } catch {
 
-      const { Operator: Op, Direction: Dir } = await import('@brian-agent/base');
       const mappedConditions = conditions.map((c) => ({
         field: c.field,
-        operator: c.operator as typeof Op.EQ,
+        operator: c.operator as typeof Operator.EQ,
         value: c.value,
       }));
       const mappedOrderBy = orderBy?.map((o) => ({
         field: o.field,
-        direction: o.direction as typeof Dir.ASC,
+        direction: o.direction as typeof Direction.ASC,
       }));
       const results = await this.relationDb.select(table, {
         conditions: mappedConditions,

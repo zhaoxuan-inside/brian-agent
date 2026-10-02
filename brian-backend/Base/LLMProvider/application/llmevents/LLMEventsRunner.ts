@@ -40,6 +40,15 @@ export interface LLMEventsRunResult {
   
 
   stream_ms: number;
+
+  /** 首个正文 delta 距开始（含连接+思考；无正文时为 0） */
+  first_text_ms: number;
+
+  /** 思考阶段耗时：首事件（含 reasoning delta）→ 首个正文 delta */
+  thinking_ms: number;
+
+  /** 正文响应耗时：首个正文 delta → 结束 */
+  response_ms: number;
 }
 
 export interface LLMEventsRunnerOptions {
@@ -70,6 +79,8 @@ export class LLMEventsRunner {
   private connectedAt = 0;
 
   private firstEventAt = 0;
+
+  private firstTextAt = 0;
 
   constructor(options: LLMEventsRunnerOptions) {
     this.opts = options;
@@ -218,16 +229,23 @@ export class LLMEventsRunner {
     if (!this.firstEventAt) {
       this.firstEventAt = Date.now();
     }
+    // 首个正文事件打点：reasoning（思考流）之后的 text_delta 才算响应开始
+    if (!this.firstTextAt && event.type === 'text_delta') {
+      this.firstTextAt = Date.now();
+    }
     this.emittedCount += 1;
     this.opts.on_event?.(event);
   }
 
-  private phaseTimings(): { connect_ms: number; ttft_ms: number; stream_ms: number } {
+  private phaseTimings(): { connect_ms: number; ttft_ms: number; stream_ms: number; first_text_ms: number; thinking_ms: number; response_ms: number } {
     const end = Date.now();
     return {
       connect_ms: this.connectedAt ? Math.max(0, this.connectedAt - this.startedAt) : 0,
       ttft_ms: this.firstEventAt ? Math.max(0, this.firstEventAt - this.startedAt) : 0,
       stream_ms: this.firstEventAt ? Math.max(0, end - this.firstEventAt) : 0,
+      first_text_ms: this.firstTextAt ? Math.max(0, this.firstTextAt - this.startedAt) : 0,
+      thinking_ms: this.firstTextAt && this.firstEventAt ? Math.max(0, this.firstTextAt - this.firstEventAt) : 0,
+      response_ms: this.firstTextAt ? Math.max(0, end - this.firstTextAt) : 0,
     };
   }
 

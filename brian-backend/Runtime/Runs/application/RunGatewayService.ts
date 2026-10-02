@@ -11,12 +11,16 @@ import {
   formatContextCategories,
   analyzeTaskComplexity,
   isContinuationRequest,
+  matchLayerLabel,
+  soAgentDisplayName,
+  createComponentTitleLookup,
   type TaskComplexityResult,
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
 import {
   ContextInfoInput,
   ContextInfoOutput,
+  ContextInfoItem,
   InfoCoreContext,
   SaveDialogEmbeddingInput,
   SaveDialogEmbeddingOutput,
@@ -128,6 +132,10 @@ const CONTEXT_SOURCE_LABELS: Record<string, string> = {
   CUSTOM: '自定义来源',
 };
 
+/** 记忆维度条目透出限额（时间线第 0 轮 tab 展示用） */
+const MEMORY_ITEMS_PER_CATEGORY = 10;
+const MEMORY_ITEM_MAX_CHARS = 500;
+
 /** 显式要求切换 Agent 的语式（命中即跳过会话亲和，重新选举） */
 const EXPLICIT_SWITCH_AGENT_PATTERN = /^(切换|换一个|重置|转交|改为|使用).*(角色|专家|代理|助手|agent)/i;
 
@@ -204,6 +212,7 @@ export class RunGatewayService {
         message_count: 0,
         memory_categories: categories,
         sources: this.soContextSources(ctxOut),
+        items: this.soContextItems(ctxOut),
       });
       return { memory: staticMemory, categories };
     } catch (err) {
@@ -225,6 +234,23 @@ export class RunGatewayService {
         count: Number(summary[String(source)] ?? (ids as string[]).length) || (ids as string[]).length,
         message_ids: (ids as string[]).slice(0, 50),
       }));
+  }
+
+  /** 记忆召回条目（按维度分组，供时间线第 0 轮 tab 展示；每维度限量截断） */
+  private soContextItems(ctxOut: ContextInfoOutput): Array<{ source: string; label: string; entries: Array<{ id?: string; text: string }> }> {
+    const cat = (ctxOut.categories ?? {}) as Record<string, ContextInfoItem[]>;
+    return Object.entries(cat)
+      .map(([source, items]) => ({
+        source: String(source),
+        label: CONTEXT_SOURCE_LABELS[String(source)] ?? String(source),
+        entries: (Array.isArray(items) ? items : []).slice(0, MEMORY_ITEMS_PER_CATEGORY)
+          .map((i) => ({
+            id: i?.info_id ? String(i.info_id) : undefined,
+            text: String(i?.info || i?.content || i?.summary || '').slice(0, MEMORY_ITEM_MAX_CHARS),
+          }))
+          .filter((e) => e.text),
+      }))
+      .filter((c) => c.entries.length > 0);
   }
 
   /** ADR-013：子任务汇聚结果发 run.merge（委派收口可观测化） */
@@ -455,12 +481,6 @@ export class RunGatewayService {
       const sessionId = await this.soRunSessionId(runId, input, runtimeSessionId);
       const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
       matchOut = await this.matchAgent(runId, input, runtimeSessionId, parent?.metrics, parent?.report);
-      parent?.report?.emit(BusinessEvent.AgentSelected, {
-        agent_id: matchOut.def_id,
-        agent_name: matchOut.def.name,
-        matched_by: matchOut.matched_by,
-        mechanisms: matchOut.mechanisms,
-      });
       const snapshot = await this.soSnapshot(matchOut.def_id, runId, input, parent?.metrics, parent?.report);
       const { systemSkillCount, boundSkillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
 
@@ -700,57 +720,81 @@ export class RunGatewayService {
     snapshot: SoAgentSnapshotOutput['snapshot'],
     report?: Report,
   ): { systemSkillCount: number; boundSkillCount: number; mcpCount: number } {
-    const soulId = matchOut.def.soul_id ?? '';
-    const promptId = matchOut.def.prompt_template_id ?? '';
-    const llmId = snapshot.llm_id ?? '';
     const skillEntries = (snapshot.tools ?? [])
       .filter((t) => t.kind === 'skill')
-      .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id), system: t.system === true }));
+      .map((t) => ({ id: t.id, name: this.soSkillName(t.id) || t.brief, system: t.system === true }));
     const mcpEntries = (snapshot.tools ?? [])
       .filter((t) => t.kind === 'mcp')
-      .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install_record', 'mcp_title') }));
-    report?.emit(BusinessEvent.AgentComponents, {
-      agent_name: snapshot.name,
-      soul_id: soulId,
-      soul_name: this.soComponentName(soulId, 'soul_record', 'brief'),
-      prompt_template_id: promptId,
-      prompt_name: this.soComponentName(promptId, 'prompt_template_record', 'title'),
-      llm_id: llmId,
-      llm_name: this.soComponentName(llmId, 'llm_available_record', 'llm_title'),
-      skills: skillEntries,
-      mcps: mcpEntries,
-    });
+      .map((t) => ({ id: t.id, name: this.soComponentName(t.id, 'mcp_install_record', 'mcp_title') }));
 
+    // 发射顺序：先五类组件选举明细，后装配汇总 —— 保证时间线上"组件装配完成"收尾
     if (matchOut.matched_by !== AgentMatchLayer.Built) {
-      report?.emit(BusinessEvent.SkillSelected, {
-        source: 'match',
-        skills: skillEntries,
-        reason: `命中既有 Agent（${matchOut.matched_by}），Skill 选举结果=绑定事实源：系统级恒选中 ${skillEntries.filter((s) => s.system).length} 项 + 沉淀绑定 ${skillEntries.filter((s) => !s.system).length} 项`,
-        skills_count: skillEntries.length,
-        system_skills_count: skillEntries.filter((s) => s.system).length,
-      });
-      report?.emit(BusinessEvent.McpSelected, {
-        source: 'match',
-        mcps: mcpEntries,
-        reason: mcpEntries.length > 0
-          ? `命中既有 Agent（${matchOut.matched_by}），MCP 选举结果=绑定事实源：${mcpEntries.length} 个`
-          : `命中既有 Agent（${matchOut.matched_by}），MCP 选举结果=无绑定`,
-        mcps_count: mcpEntries.length,
-      });
-      if (soulId) {
-        report?.emit(BusinessEvent.SoulSelected, {
-          soul_id: soulId,
-          brief: this.soComponentName(soulId, 'soul_record', 'brief'),
-          stage: 'match',
-          reason: `命中既有 Agent（${matchOut.matched_by}），人格选举结果=绑定事实源（命中复用）`,
-        });
-      }
+      this.emitSelectionEvents(matchOut, skillEntries, mcpEntries, report);
     }
+    this.emitComponentsSnapshot(matchOut, snapshot, skillEntries, mcpEntries, report);
     return {
       systemSkillCount: skillEntries.filter((s) => s.system).length,
       boundSkillCount: skillEntries.filter((s) => !s.system).length,
       mcpCount: mcpEntries.length,
     };
+  }
+
+  /** 命中既有 Agent 路径：Skill/MCP/Soul 三类选举明细事件（reason 附命中方式中文标签） */
+  private emitSelectionEvents(
+    matchOut: MatchAgentDefOutput,
+    skillEntries: Array<{ id: string; name: string; system: boolean }>,
+    mcpEntries: Array<{ id: string; name: string }>,
+    report?: Report,
+  ): void {
+    const layerLabel = matchLayerLabel(matchOut.matched_by);
+    const soulId = matchOut.def.soul_id ?? '';
+    const systemCount = skillEntries.filter((s) => s.system).length;
+    report?.emit(BusinessEvent.SkillSelected, {
+      source: 'match',
+      skills: skillEntries,
+      reason: `命中既有 Agent（${layerLabel}），Skill 选举结果=绑定事实源：系统级恒选中 ${systemCount} 项 + 沉淀绑定 ${skillEntries.length - systemCount} 项`,
+      skills_count: skillEntries.length,
+      system_skills_count: systemCount,
+    });
+    report?.emit(BusinessEvent.McpSelected, {
+      source: 'match',
+      mcps: mcpEntries,
+      reason: mcpEntries.length > 0
+        ? `命中既有 Agent（${layerLabel}），MCP 选举结果=绑定事实源：${mcpEntries.length} 个`
+        : `命中既有 Agent（${layerLabel}），MCP 选举结果=无绑定`,
+      mcps_count: mcpEntries.length,
+    });
+    if (soulId) {
+      report?.emit(BusinessEvent.SoulSelected, {
+        soul_id: soulId,
+        soul_name: this.soComponentName(soulId, 'soul_record', 'soul_title'),
+        stage: 'match',
+        reason: `命中既有 Agent（${layerLabel}），人格选举结果=绑定事实源（命中复用）`,
+      });
+    }
+  }
+
+  /** 装配汇总事件（agent.components，五类组件全量，ID 为锚 + 展示名） */
+  private emitComponentsSnapshot(
+    matchOut: MatchAgentDefOutput,
+    snapshot: SoAgentSnapshotOutput['snapshot'],
+    skillEntries: Array<{ id: string; name: string; system: boolean }>,
+    mcpEntries: Array<{ id: string; name: string }>,
+    report?: Report,
+  ): void {
+    const soulId = matchOut.def.soul_id ?? '';
+    report?.emit(BusinessEvent.AgentComponents, {
+      agent_id: matchOut.def_id,
+      agent_name: soAgentDisplayName(snapshot.name),
+      soul_id: soulId,
+      soul_name: this.soComponentName(soulId, 'soul_record', 'soul_title'),
+      prompt_template_id: matchOut.def.prompt_template_id ?? '',
+      prompt_name: this.soComponentName(matchOut.def.prompt_template_id ?? '', 'prompt_template_record', 'title'),
+      llm_id: snapshot.llm_id ?? '',
+      llm_name: this.soComponentName(snapshot.llm_id ?? '', 'llm_available_record', 'llm_title'),
+      skills: skillEntries,
+      mcps: mcpEntries,
+    });
   }
 
   private publishThoughtModeSelected(
@@ -1040,7 +1084,7 @@ export class RunGatewayService {
           }];
           report?.emit(BusinessEvent.AgentSelected, {
             agent_id: sessionActiveDef.id,
-            agent_name: sessionActiveDef.name,
+            agent_name: soAgentDisplayName(sessionActiveDef.name),
             matched_by: 'session_affinity',
             reason: affinity.reason,
             mechanisms: matchOutput.mechanisms,
@@ -1665,17 +1709,7 @@ export class RunGatewayService {
   }
 
   private soComponentName(id: string, table: string, nameCol: string): string {
-    if (!id) return '';
-    try {
-      const rows = this.relationDb.queryRaw<Record<string, unknown>>(
-        `SELECT "${nameCol}" AS "n" FROM "${table}" WHERE "id" = ? LIMIT 1`,
-        [id],
-      );
-      const raw = rows?.[0]?.n;
-      return raw != null ? String(raw).trim() : '';
-    } catch {
-      return '';
-    }
+    return createComponentTitleLookup(this.relationDb)(id, table, nameCol);
   }
 
   private soSkillName(id: string): string {

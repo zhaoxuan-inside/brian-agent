@@ -77,6 +77,32 @@ const isParamsView = computed(() => currentSub.value?.type === 'params')
 const isSnapshotView = computed(() => currentSub.value?.type === 'snapshot')
 const currentEntityType = computed(() => currentSub.value?.entityType)
 
+// ── 时间线实例跳转定位：?id= 高亮滚动（观察弹窗点实例名跳入） ──
+const ENTITY_HIGHLIGHT_CLASS = 'entity-highlight-flash'
+
+function tryHighlightEntity(retries = 10): void {
+  const id = String(route.query.id ?? '')
+  if (!id) return
+  const el = document.querySelector(`[data-entity-id="${CSS.escape(id)}"]`)
+  if (el instanceof HTMLElement) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add(ENTITY_HIGHLIGHT_CLASS)
+    setTimeout(() => el.classList.remove(ENTITY_HIGHLIGHT_CLASS), 2400)
+    router.replace({ query: { ...route.query, id: undefined } })
+    return
+  }
+  // 实体列表异步加载，未渲染则稍后重试
+  if (retries > 0) setTimeout(() => tryHighlightEntity(retries - 1), 400)
+}
+
+watch(
+  () => route.query.id,
+  (id) => {
+    if (id) nextTick(() => tryHighlightEntity())
+  },
+  { immediate: true },
+)
+
 // ===== 原始 breadcrumb（保留作为参考）=====
 // const breadcrumb = computed(() => {
 //   const items: { label: string }[] = []
@@ -4753,6 +4779,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <UniversalConfigCard
               v-for="m in filteredModels" :key="m.id"
+              :data-entity-id="m.id"
               :title="m.modelName || ''"
               :subtitle="m.providerName || m.providerId || ''"
               :brief="m.llm_brief || ''"
@@ -4806,6 +4833,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <UniversalConfigCard
               v-for="s in souls" :key="s.id"
+              :data-entity-id="s.id"
               :title="s.title || s.soul_brief || s.id"
               :subtitle="s.soul_usage || ''"
               :brief="s.soul_brief || ''"
@@ -4850,6 +4878,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <UniversalConfigCard
               v-for="sk in filteredSkills" :key="sk.id"
+              :data-entity-id="sk.id"
               :title="sk.name || sk.id"
               :brief="sk.skill_brief || sk.name || ''"
               :positive-examples="sk.positive_examples || []"
@@ -5148,6 +5177,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <UniversalConfigCard
               v-for="item in filteredMcps" :key="item.id"
+              :data-entity-id="item.id"
               :title="item.displayName || item.name || item.id"
               :subtitle="item.provider_title || getMcpProviderTitle(item)"
               :brief="item.description || ''"
@@ -5193,6 +5223,7 @@ watch(activeSubSection, async (val) => {
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
             <UniversalConfigCard
               v-for="a in agents" :key="a.id"
+              :data-entity-id="a.id"
               :title="a.agent_name || a.name || a.id"
               :brief="a.agent_purpose || a.description || a.task_signature || ''"
               :positive-examples="a.positive_examples || []"
@@ -5303,6 +5334,7 @@ watch(activeSubSection, async (val) => {
             </button>
             <UniversalConfigCard
               v-for="p in filteredPrompts" :key="p.id"
+              :data-entity-id="p.id"
               :title="p.title"
               :brief="p.brief || ''"
               :positive-examples="p.positive_examples || []"
@@ -6724,4 +6756,17 @@ watch(activeSubSection, async (val) => {
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* 时间线实例跳转高亮（?id= 定位） */
+:deep(.entity-highlight-flash) {
+  animation: entity-highlight-flash 2.4s ease-out;
+  outline: 2px solid rgba(59, 130, 246, 0.65);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+@keyframes entity-highlight-flash {
+  0% { background-color: rgba(59, 130, 246, 0.14); }
+  70% { background-color: rgba(59, 130, 246, 0.10); }
+  100% { background-color: transparent; }
+}
 </style>

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-01T15:41:06.219Z",
+  "updated_at": "2026-10-02T15:09:32",
   "shard": "agent-evolutoragent",
   "layer": "Agent",
   "module": "EvolutorAgent",
@@ -537,14 +537,25 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "name": "emitEvalContextBuilt",
+      "signature": "void emitEvalContextBuilt(ctx, input, prompt, report?)",
+      "category": "orchestration",
+      "layer": "Agent",
+      "module": "EvolutorAgent",
+      "location": "brian-backend/Agent/EvolutorAgent/application/EvolutorAgentService.ts",
+      "description": "评估阶段上下文构建事件透出（context.built stage=eval）",
+      "reusable": false,
+      "id": "m-agent-evolutoragent-0042",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
     }
   ],
   "stats": {
-    "total": 41,
-    "by_category": {
-      "algorithm": 4,
-      "orchestration": 21,
-      "data": 16
-    }
+    "total": 42,
+    "added_by": "chg-060"
   }
 }

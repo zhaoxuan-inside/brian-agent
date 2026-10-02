@@ -361,26 +361,32 @@ export class ExecLLMInput extends Input {
 }
 
 export class ExecLLMOutput extends Output {
-  
+
   result = '';
-  
+
   input_prompt = '';
-  
+
   input_tokens = 0;
-  
+
   output_tokens = 0;
-  
+
   duration_ms = 0;
-  
+
   raw_response = '';
 
-  
-  
+
+
   connect_ms = 0;
-  
+
   ttft_ms = 0;
-  
+
   stream_ms = 0;
+
+  /** 思考阶段耗时（流式路径：首事件→首个正文 delta） */
+  thinking_ms = 0;
+
+  /** 正文响应耗时（流式路径：首个正文 delta→结束） */
+  response_ms = 0;
 }
 
 export class ExecLLMEventsInput extends Input {
@@ -421,33 +427,39 @@ export class ExecLLMEventsInput extends Input {
 }
 
 export class ExecLLMEventsOutput extends Output {
-  
+
   result = '';
-  
+
   /** 本次调用的 llm_call_record 行 id(ADR-012 轮次组织用) */
   call_id = '';
-  
+
   reasoning = '';
-  
+
   tool_calls: ParsedToolCall[] = [];
-  
+
   finish_reason = '';
-  
+
   input_tokens = 0;
-  
+
   output_tokens = 0;
-  
+
   duration_ms = 0;
-  
+
   wire_messages: LLMMessage[] = [];
 
-  
-  
+
+
   connect_ms = 0;
-  
+
   ttft_ms = 0;
-  
+
   stream_ms = 0;
+
+  /** 思考阶段耗时（首事件→首个正文 delta） */
+  thinking_ms = 0;
+
+  /** 正文响应耗时（首个正文 delta→结束） */
+  response_ms = 0;
 }
 
 export class EmbedLLMInput extends Input {

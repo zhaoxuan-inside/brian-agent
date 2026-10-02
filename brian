@@ -17,7 +17,7 @@
 #   dev                             前台启动全栈开发模式（后端+前端，Ctrl+C 一键停止）
 #   open                            在默认浏览器打开前端页面
 #   doctor                          环境与依赖自检
-#   clean                           清理日志文件与 PID 残留
+#   clean [--all]                   清理日志文件与 PID 残留；--all 深度清理依赖与构建产物（回到未安装状态）
 #
 # 全局参数:
 #   -h, --help                      显示帮助
@@ -332,6 +332,9 @@ doctor() {
   banner
   log "环境与依赖自检"
 
+  local expected
+  expected="$(expected_node)"
+
   echo ""
   echo -e "  ${BOLD}基础环境${NC}"
   for c in node npm npx; do
@@ -341,6 +344,25 @@ doctor() {
       fail "$c 未安装"
     fi
   done
+  if command -v node >/dev/null 2>&1; then
+    local abi
+    abi="$(node -p "process.versions.modules" 2>/dev/null)"
+    if node_ok; then
+      ok "Node 版本: $(node -v)（符合要求 Node ${expected}）"
+    else
+      fail "Node 版本不符: $(node -v)（ABI ${abi}），项目要求 Node ${expected}（.nvmrc）"
+      echo -e "       ${YELLOW}→ nvm use ${expected} / mise use node@${expected} / fnm use，然后 npm install${NC}"
+      # mise 用户常见坑：sudo mise 把工具装进 root 目录，用户身份实际未安装
+      if command -v mise >/dev/null 2>&1 && [ -f "$ROOT/mise.toml" ]; then
+        if [ ! -d "$HOME/.local/share/mise/installs/node/${expected}" ]; then
+          warn "mise.toml 要求 Node ${expected}，但用户身份的 mise 未安装该版本（可能曾用 sudo 安装）"
+          echo -e "       ${YELLOW}→ 修复: sudo chown $USER:$USER mise.toml 2>/dev/null; mise install; exec zsh${NC}"
+        elif [ ! -w "$ROOT/mise.toml" ]; then
+          warn "mise.toml 归 root 所有（曾用 sudo 创建）→ sudo chown $USER:$USER mise.toml"
+        fi
+      fi
+    fi
+  fi
 
   echo ""
   echo -e "  ${BOLD}项目目录${NC}"
@@ -365,20 +387,115 @@ doctor() {
       prebuilt_ok=1
     fi
   done
-  [ "$prebuilt_ok" -eq 0 ] && ok "原生依赖就绪" || warn "请运行 npm install 触发 postinstall 拷贝 prebuilt"
+  if command -v node >/dev/null 2>&1; then
+    local abi avail platform_dir
+    abi="$(node -p "process.versions.modules" 2>/dev/null)"
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64)  platform_dir="linux-x64" ;;
+      Linux-aarch64) platform_dir="linux-arm64" ;;
+      Darwin-arm64)  platform_dir="darwin-arm64" ;;
+      Darwin-x86_64) platform_dir="darwin-x64" ;;
+      *)             platform_dir="unknown" ;;
+    esac
+    avail="$(ls "$ROOT/brian-backend/prebuilt/better-sqlite3/$platform_dir" 2>/dev/null || true)"
+    # 真实加载验证：require('better-sqlite3') 同时校验解析位置、绑定存在与 ABI 匹配
+    if (cd "$BACKEND_DIR" && node -e "require('better-sqlite3')" >/dev/null 2>&1); then
+      ok "better-sqlite3 绑定已就位且可加载（ABI ${abi}）"
+    elif echo "$avail" | grep -q "node${abi}"; then
+      warn "prebuilt 含当前 ABI 但绑定未拷贝 → 运行 npm install（postinstall 自动拷贝）"
+      prebuilt_ok=1
+    else
+      fail "better-sqlite3 缺少 ABI ${abi} 的预编译件（可用: $(echo "$avail" | tr '\n' ' ')) → 切换 Node ${expected} 后 npm install"
+      prebuilt_ok=1
+    fi
+  fi
+  [ "$prebuilt_ok" -eq 0 ] && ok "原生依赖就绪" || warn "环境未就绪，按上方提示处理后重试"
   echo ""
+}
+
+# ---------------------------------------------------------------------------
+# 环境前置守卫 — Node 版本/依赖/原生绑定，不满足时给出引导并退出
+# （.nvmrc 锁定 Node 22；prebuilt 原生件按 ABI 预编译，版本不符会在启动时 Fatal）
+# ---------------------------------------------------------------------------
+expected_node() {
+  [ -f "$ROOT/.nvmrc" ] && tr -d '[:space:]' < "$ROOT/.nvmrc" || echo "22.x"
+}
+
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local want got
+  want="$(expected_node | cut -d. -f1)"
+  got="$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null)"
+  [ "$got" = "$want" ]
+}
+
+env_preflight() {
+  local expected
+  expected="$(expected_node)"
+
+  if ! command -v node >/dev/null 2>&1; then
+    fail "未检测到 Node.js —— 请先安装 Node ${expected}（nvm/mise/fnm 均可）"
+    exit 1
+  fi
+
+  if ! node_ok; then
+    fail "Node 版本不符: 当前 $(node -v)，项目要求 Node ${expected}（.nvmrc，prebuilt 仅含对应 ABI 的原生模块）"
+    echo -e "       ${YELLOW}→ 切换后重新安装依赖:${NC} nvm install ${expected} && nvm use ${expected} && npm install"
+    echo -e "       ${YELLOW}→ 或:${NC} mise use node@${expected} / fnm use"
+    exit 1
+  fi
+
+  if [ ! -d "$ROOT/node_modules" ]; then
+    fail "依赖未安装: 根 node_modules 不存在 —— 请先运行 npm install"
+    exit 1
+  fi
+
+  if ! (cd "$BACKEND_DIR" && node -e "require('better-sqlite3')" >/dev/null 2>&1); then
+    fail "原生绑定不可用: better-sqlite3 加载失败（通常是绑定缺失/位置不对/Node 版本不符）"
+    echo -e "       ${YELLOW}→ 切换到 Node ${expected} 后重装:${NC} rm -rf node_modules && npm install"
+    echo -e "       ${YELLOW}→ 自检:${NC} $0 doctor"
+    exit 1
+  fi
+
+  if ! (cd "$BACKEND_DIR" && npx --no-install tsx --version >/dev/null 2>&1); then
+    warn "tsx 不可用（启动时会尝试 npx 在线临时安装）；如离线环境请先: npm install"
+  fi
 }
 
 # ---------------------------------------------------------------------------
 # clean — 清理日志与 PID 残留
 # ---------------------------------------------------------------------------
 clean() {
-  log "清理日志文件与 PID 残留"
+  # clean        清理日志与 PID 残留
+  # clean --all  深度清理：依赖与构建产物全部移除，回到"未安装"状态（数据目录与配置不动）
   local n=0
   for f in "$BACKEND_LOG" "$FRONTEND_LOG" "$BACKEND_PID_FILE" "$FRONTEND_PID_FILE"; do
     if [ -f "$f" ]; then rm -f "$f"; n=$((n+1)); fi
   done
-  ok "已清理 $n 个文件"
+  ok "已清理 $n 个日志/PID 文件"
+
+  if [ "${1:-}" != "--all" ]; then
+    return
+  fi
+
+  log "深度清理（--all）：node_modules / 构建产物 / 就位的原生绑定"
+  local rm_targets=(
+    "$ROOT/node_modules"
+    "$ROOT/shared/node_modules" "$ROOT/shared/dist"
+    "$ROOT/brian-frontend/node_modules" "$ROOT/brian-frontend/dist"
+    "$ROOT/brian-backend/Base/node_modules" "$ROOT/brian-backend/Base/dist"
+    "$ROOT/brian-backend/Core/node_modules" "$ROOT/brian-backend/Core/dist"
+    "$ROOT/brian-backend/Agent/node_modules" "$ROOT/brian-backend/Agent/dist"
+    "$ROOT/brian-backend/Runtime/node_modules" "$ROOT/brian-backend/Runtime/dist"
+    "$ROOT/brian-backend/Application/node_modules" "$ROOT/brian-backend/Application/dist"
+    "$ROOT/brian-backend/Base/SkillProvider/infrastructure/sandbox/vendor/isolated-vm/out"
+  )
+  local t
+  for t in "${rm_targets[@]}"; do
+    if [ -e "$t" ]; then rm -rf "$t"; ok "已移除 ${t#$ROOT/}"; fi
+  done
+  warn "数据目录未动（brian-backend/data，含对话与配置）；如需彻底重置请手动删除"
+  ok "深度清理完成 → 从头验证: npm install && ./brian doctor && ./brian start"
 }
 
 # ---------------------------------------------------------------------------
@@ -431,9 +548,9 @@ SVC="${2:-all}"
 case "$CMD" in
   start)
     case "$SVC" in
-      backend)  banner; start_backend ;;
+      backend)  banner; env_preflight; start_backend ;;
       frontend) banner; start_frontend ;;
-      all)      banner; start_backend; echo ""; start_frontend ;;
+      all)      banner; env_preflight; start_backend; echo ""; start_frontend ;;
       *) usage ;;
     esac
     ;;
@@ -447,10 +564,10 @@ case "$CMD" in
     ;;
   restart)
     case "$SVC" in
-      backend)  stop_backend; sleep 1; start_backend ;;
+      backend)  stop_backend; sleep 1; env_preflight; start_backend ;;
       frontend) stop_frontend; sleep 1; start_frontend ;;
       all)      stop_backend; stop_frontend; sleep 1
-                banner; start_backend; echo ""; start_frontend ;;
+                banner; env_preflight; start_backend; echo ""; start_frontend ;;
       *) usage ;;
     esac
     ;;
@@ -461,9 +578,11 @@ case "$CMD" in
     show_logs "$SVC"
     ;;
   serve)
+    env_preflight
     serve_backend
     ;;
   dev)
+    env_preflight
     dev_all
     ;;
   open)
@@ -473,7 +592,7 @@ case "$CMD" in
     doctor
     ;;
   clean)
-    clean
+    clean "$SVC"
     ;;
   *)
     usage

@@ -14,9 +14,14 @@ export function pushPointOf(
   obs: RunObservationLike, ev: TaskEvent,
   point: Omit<TimelinePoint, 'seq' | 'ts' | 'spanDepth'>,
 ): void {
+  const prev = obs.timeline[obs.timeline.length - 1]
+  const gapMs = prev ? Math.max(0, ev.ts - prev.ts) : undefined
+  const { elapsedMs: explicitMs, ...rest } = point
   obs.timeline.push({
     seq: ev.seq, ts: ev.ts, spanDepth: ev.span?.depth ?? 0,
-    elapsedMs: ev.span?.total_ms, ...point,
+    ...rest,
+    // 耗时口径：显式指定 > span 快照 > 与上一步的 ts 间隔（兜底，供无 span 事件展示）
+    elapsedMs: explicitMs ?? ev.span?.total_ms ?? gapMs,
   })
 }
 

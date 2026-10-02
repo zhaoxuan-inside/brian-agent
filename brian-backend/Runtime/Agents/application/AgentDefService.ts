@@ -5,7 +5,7 @@ import type {
   Report,
   LLMAccess,
 } from '@brian-agent/base';
-import { PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
+import { PROMPT_TEMPLATE_TABLE, soAgentDisplayName } from '@brian-agent/base';
 import {
   LLMCoreAccess,
   SoulCoreAccess,
@@ -276,8 +276,9 @@ export class AgentDefService {
       output.mechanisms = [{ mechanism: 'direct', adopted: true, candidates: [{ id: referred.id, name: referred.name }] }];
       report?.emit(BusinessEvent.AgentSelected, {
         agent_id: referred.id,
-        agent_name: referred.name,
+        agent_name: soAgentDisplayName(referred.name),
         matched_by: 'ref',
+        reason: '请求显式指定 agent_ref，精准直连会话目标 Agent',
         mechanisms: output.mechanisms,
       });
       return true;
@@ -319,7 +320,7 @@ export class AgentDefService {
         }];
         report?.emit(BusinessEvent.AgentSelected, {
           agent_id: def.agent_ref || def.id,
-          agent_name: def.name,
+          agent_name: soAgentDisplayName(def.name),
           matched_by: 'election',
           reason: `统一选举 ${tier.label} 命中（综合得分 ${Math.round(picked[0].vectorScore)}）`,
           mechanisms: output.mechanisms,
@@ -646,9 +647,16 @@ export class AgentDefService {
       report?.emit(BusinessEvent.AgentBuilt, {
         agent_id: buildOutput.agent_id,
         def_id: def.id,
-        name: def.name,
+        name: soAgentDisplayName(def.name),
         purpose: String(def.agent_purpose ?? '').slice(0, 500),
         task_signature: def.task_signature,
+      });
+      report?.emit(BusinessEvent.AgentSelected, {
+        agent_id: def.id,
+        agent_name: soAgentDisplayName(def.name),
+        matched_by: 'built',
+        reason: '选举阶梯耗尽，终端构建全新 Agent（按任务动态生成并沉淀）',
+        mechanisms: [{ mechanism: 'direct', adopted: true, candidates: [{ id: def.id, name: def.name }] }],
       });
       return def;
     } catch (err) {
@@ -754,7 +762,14 @@ export class AgentDefService {
       return false;
     }
 
-    report?.emit(BusinessEvent.LlmSelected, { llm_id: def.model_id, llm_name: this.soComponentName(def.model_id, 'llm_available_record', 'llm_title') });
+    report?.emit(BusinessEvent.LlmSelected, {
+      llm_id: def.model_id,
+      llm_name: this.soComponentName(def.model_id, 'llm_available_record', 'llm_title'),
+      stage: 'match',
+      reason: def.model_id
+        ? '命中既有 Agent，模型选举结果=绑定事实源（Agent 绑定）'
+        : 'Agent 未绑定模型，运行时按默认模型解析',
+    });
     const soulId = def.soul_id || (def.agent_ref ? (await this.soAgentBinding(def.agent_ref))?.soul_id : '') || '';
     const soulContent = soulId ? await this.soSoulContentById(soulId) : '';
     const tools = await this.soSnapshotTools(def, report);
@@ -789,7 +804,10 @@ export class AgentDefService {
     report?.emit(BusinessEvent.PromptSelected, {
       template_id: templateId,
       prompt_name: this.soComponentName(templateId, 'prompt_template_record', 'title'),
-      system: system.slice(0, 4000),
+      stage: 'match',
+      reason: def.prompt_template_id
+        ? '命中既有 Agent，Prompt 选举结果=绑定事实源（Agent 绑定）'
+        : 'Agent 未绑定 Prompt，回退执行侧内置身份模板（Brian 身份声明）',
       soul_selected: Boolean(soulId && soulContent),
       tools_count: tools.length,
     });

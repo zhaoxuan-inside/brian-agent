@@ -1854,5 +1854,96 @@
     "author": "agent",
     "verified": true,
     "notes": "证据:npm run typecheck 6 工作区全过;npm test 5/5 工作区全绿(Core InfoCoreProvider 94/94 含新增 dialog embedding 7 用例;Runtime SessionAffinity 2/2 端到端:强信号 0 选举沿用/话题漂移重选举/向量模型禁用回退沿用/显式切换跳过亲和);lint:backend 0 error(54 warning 均既有遗留不在本次文件)。"
+  },
+  {
+    "id": "chg-060",
+    "date": "2026-10-02",
+    "requirement": "思考弹窗时间线增强:①每步时间戳(HH:mm:ss.SSS)+耗时(自带时长>span>相邻间隔三级口径);②Agent/LLM/Prompt/Soul/Skill/MCP 选举补命中原因+实例名+跳转;③payload 规范收敛(ID为锚、禁发内容文本,移除 prompt.selected.system 4000字正文与 brief 错位);④修复 agent.selected 双发射与组件装配/选举发射顺序;⑤llm.invoked 增思考/响应耗时拆分+原始输出(截2000);⑥round0 记忆召回按维度透出计数与条目;⑦写作/评估补发 context.built(stage=writer/eval);⑧前端时间线明细展开(维度tab/组件tab/模型明细/上下文消息)+ConfigView ?id= 实例定位",
+    "changed_files": [
+      "shared/src/contracts/task-event-payloads.ts",
+      "shared/src/contracts/task-reducer.ts",
+      "shared/src/contracts/task-reduce-util.ts",
+      "shared/src/contracts/task-reduce-kind2.ts",
+      "brian-backend/Base/shared/base/AgentNaming.ts",
+      "brian-backend/Base/shared/base/ComponentTitle.ts",
+      "brian-backend/Base/shared/base/index.ts",
+      "brian-backend/Base/shared/index.ts",
+      "brian-backend/Base/LLMProvider/application/LLMService.ts",
+      "brian-backend/Base/LLMProvider/application/llmevents/LLMEventsRunner.ts",
+      "brian-backend/Base/LLMProvider/domain/types.ts",
+      "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "brian-backend/Runtime/Agents/application/AgentDefService.ts",
+      "brian-backend/Agent/AgentBuilder/application/AgentBuilderService.ts",
+      "brian-backend/Agent/WriterAgent/application/WriterAgentService.ts",
+      "brian-backend/Agent/EvolutorAgent/application/EvolutorAgentService.ts",
+      "brian-frontend/src/components/chat/ObservationView.vue",
+      "brian-frontend/src/views/ConfigView.vue",
+      "brian-frontend/src/utils/format.ts",
+      "brian-frontend/src/utils/instanceRoute.ts"
+    ],
+    "commits": [],
+    "changed_methods": [
+      "soAgentDisplayName",
+      "matchLayerLabel",
+      "createComponentTitleLookup",
+      "soContextItems",
+      "llmBuildReason",
+      "emitEvalContextBuilt",
+      "emitSelectionEvents",
+      "emitComponentsSnapshot"
+    ],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "验证:shared/base/core/runtime/agent/application tsc 全绿;前端 vue-tsc+vite build 通过;backend eslint 0 error;reducer 冒烟(19步事件重放)断言全过。存量:依赖已 npm install;Base dist 曾过期致误报已重建。写作/评估的 context.built 仅在 defer_final_reply/评估未跳过时出现(本次示例请求未触发属正常)。"
+  },
+  {
+    "id": "chg-061",
+    "date": "2026-10-02",
+    "requirement": "安装部署脚本环境守卫:①copy-prebuilt.js 在当前 Node ABI 无对应 prebuilt 时立即 exit 1 并给切换引导(原先仅 WARNING 退出码 0,问题推迟到启动 Fatal);②package.json 加 engines(node >=22 <23)+根 .npmrc engine-strict=true,Node 版本不符在 npm install 阶段即报 EBADENGINE;③brian 脚本新增 env_preflight(start/restart/serve/dev 前置:Node 版本/node_modules/better-sqlite3 绑定/tsx 可用性)与 doctor 增强(Node 版本对照 .nvmrc+ABI 对照 prebuilt 可用列表+绑定就位检查);④README 开发模式段补 Node 22 要求与切换命令;补:copy-prebuilt.js 扫描全部实际安装位置(根+workspace 子包 node_modules,修复 npm workspace 将 better-sqlite3 实体安装到 Base/node_modules 导致绑定只落根而 require 解析到子包的失配),doctor/preflight 绑定检查升级为 require 实际加载验证",
+    "changed_files": [
+      "brian-backend/scripts/copy-prebuilt.js",
+      "package.json",
+      ".npmrc",
+      "brian",
+      "README.md"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "验证:bash -n 通过;实测 start 被 preflight 拦截(exit 1)、copy-prebuilt exit 1、npm install --dry-run 报 EBADENGINE(exit 1);doctor 在当前环境(Node26)正确输出两条 fail 与切换引导。根因:.nvmrc=22.22.1 而 shell 实际 Node v26.10.0(ABI147),prebuilt 仅含 node127。;端到端实测:Node22 下 npm install→doctor 全绿(含 require 加载验证)→./brian start 后端:8000 就绪(db:healthy)+前端:5173 就绪→stop 释放端口"
+  },
+  {
+    "id": "chg-062",
+    "date": "2026-10-02",
+    "requirement": "npm install 告警清理:7 条 deprecated 中 6 条来自 eslint 8 传递依赖(@humanwhocodes/*、rimraf3→glob7→inflight)。前端 eslint 8→9 迁移:eslint ^9.39 + @eslint/js + globals + @typescript-eslint ^8.46 + eslint-plugin-vue ^10.1 + vue-eslint-parser ^10,.eslintrc.json 等价迁移为 eslint.config.mjs(flat config,.vue 用 vue-eslint-parser 主解析 script 内回退 TS 解析器,TS 项目关闭 no-undef/no-redeclare);根 package.json 显式声明 eslint ^9(原蹭 frontend hoist,peer 解析出双版本 eslint8+9 并存),npm dedupe 后单版本 eslint 9。prebuild-install@7.1.3 告警保留:better-sqlite3/isolated-vm 上游安装器已弃维护,better-sqlite3@13 虽已移除但升级大版本需重做 prebuilt 绑定,风险大于收益。顺修 eslint9 收紧暴露的 3 处 unused:UserProfileService 冗余动态 import 改静态枚举引用、InfoCoreService 空 catch(err) 改 catch{}",
+    "changed_files": [
+      "brian-frontend/package.json",
+      "brian-frontend/eslint.config.mjs",
+      "package.json",
+      "package-lock.json",
+      "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "brian-backend/Core/InfoCoreProvider/application/InfoCoreService.ts"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "验证:npm install 0 deprecated 告警;npm ls eslint 单版本 9.39.4;backend lint 0 error(63 存量 any warning)、frontend lint 0 error(16 warning);前端 vue-tsc+vite build 通过;./brian start 后端:8000(db:healthy)+前端:5173 就绪后 stop"
+  },
+  {
+    "id": "chg-063",
+    "date": "2026-10-02",
+    "requirement": "安装流程可重复性:①brian 脚本新增 clean --all 深度清理(根+各workspace node_modules/全部 dist/isolated-vm vendor 绑定,数据目录保留),暴露隐藏缺口——运行时依赖 workspace 包 dist 构建产物而 npm install 不构建;②postinstall 追加 npm run build:backend(全链 tsc 15.6s/0 error),npm install 一步到位;③README/usage 同步",
+    "changed_files": [
+      "brian",
+      "package.json",
+      "README.md"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "从零验证通过:clean --all → npm install(454包,1条prebuild-install上游deprecated,postinstall自动构建) → doctor 14项全绿 → start 后端8000+前端5173 → health db:healthy → stop。注意 dev-server 对 Core/Runtime 等走相对路径 tsx 源码编译,仅 workspace 包名依赖(@brian-agent/base等)需要 dist。"
   }
 ]

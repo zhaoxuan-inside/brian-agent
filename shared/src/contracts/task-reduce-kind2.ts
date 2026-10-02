@@ -3,7 +3,7 @@
  */
 import type { TaskEvent } from './task-event'
 import { TaskEventType as T } from './task-event'
-import type { ComponentSpec, ContextRound, ToolTrace } from './task-reducer'
+import type { ComponentSpec, ContextRound, MemoryCategoryItems, TimelinePoint, ToolTrace } from './task-reducer'
 import type { RunObservation } from './task-reducer'
 import { arr, bool, num, pl, pushPointOf as pushPoint, str, type P } from './task-reduce-util'
 
@@ -26,7 +26,7 @@ export function reduceAssembly(obs: RunObservation, ev: TaskEvent): void {
       pushPoint(obs, ev, { type: ev.type, kind: 'think', title: `选定思维模型：${obs.summary.thoughtMode}`, detail: str(p(ev).reason), target: 'agent-0' })
       break
     case T.SoulSelected:
-      pushPoint(obs, ev, { type: ev.type, kind: 'agent', title: str(p(ev).soul_id) ? `Soul 选定：${str(p(ev).brief) || str(p(ev).soul_id)}` : 'Soul 未绑定', detail: '', target: 'agent-0' })
+      reduceSoulSelected(obs, ev)
       break
     case T.PromptSelected:
     case T.LlmSelected:
@@ -45,14 +45,30 @@ export function reduceAssembly(obs: RunObservation, ev: TaskEvent): void {
 
 function reduceAgentSelected(obs: RunObservation, ev: TaskEvent): void {
   obs.phase = 'assembling'
+  // 兼容历史数据：title 可能存有「名称|描述」长串，时间线只展示名称段
+  const agentName = shortName(str(p(ev).agent_name) || str(p(ev).agent_id))
   obs.summary.agentId = str(p(ev).agent_id) || obs.summary.agentId
-  obs.summary.agentName = str(p(ev).agent_name) || obs.summary.agentName
-  obs.agentMatch = (arr(p(ev).mechanisms) as never) || null
+  obs.summary.agentName = agentName || obs.summary.agentName
+  obs.agentMatch = (arr(p(ev).mechanisms) as never) || obs.agentMatch
+  const reason = str(p(ev).reason)
+  // 历史双发射兼容：外层兜底事件（无 reason）合并进首条明细点，不重复入时间线
+  if (obs.timeline.some((t) => t.type === ev.type) && !reason) return
   pushPoint(obs, ev, {
     type: ev.type, kind: 'agent', target: 'agent-0',
-    title: `选中 Agent：${str(p(ev).agent_name) || str(p(ev).agent_id)}`,
+    title: `选中 Agent：${agentName}`,
     detail: str(p(ev).matched_by) ? `匹配方式：${str(p(ev).matched_by)}` : '',
+    reason: reason || undefined,
+    matchedBy: str(p(ev).matched_by) || undefined,
+    agentId: str(p(ev).agent_id) || undefined,
+    agentName: agentName || undefined,
   })
+}
+
+/** 取「名称|描述」长串中的名称段 */
+function shortName(name: string): string {
+  const raw = name.trim()
+  const cut = raw.split(/[|｜]/)[0].trim()
+  return cut || raw
 }
 
 function toComponents(pl: P): ComponentSpec {
@@ -60,8 +76,8 @@ function toComponents(pl: P): ComponentSpec {
     soul: pl.soul_id ? { id: str(pl.soul_id), name: str(pl.soul_name) || str(pl.soul_id) } : undefined,
     prompt: pl.prompt_template_id ? { id: str(pl.prompt_template_id), name: str(pl.prompt_name) || str(pl.prompt_template_id) } : undefined,
     llm: pl.llm_id ? { id: str(pl.llm_id), name: str(pl.llm_name) || str(pl.llm_id) } : undefined,
-    skills: arr(pl.skills).map((s) => ({ id: str(s.id), name: str(s.brief) || str(s.id), system: s.system === true })),
-    mcps: arr(pl.mcps).map((m) => ({ id: str(m.id), name: str(m.brief) || str(m.id) })),
+    skills: arr(pl.skills).map((s) => ({ id: str(s.id), name: str(s.name) || str(s.brief) || str(s.id), system: s.system === true })),
+    mcps: arr(pl.mcps).map((m) => ({ id: str(m.id), name: str(m.name) || str(m.brief) || str(m.id) })),
   }
 }
 
@@ -74,7 +90,16 @@ function reduceComponents(obs: RunObservation, ev: TaskEvent): void {
   if (c.mcps.length) bits.push(`MCP×${c.mcps.length}`)
   if (c.llm) bits.push(`LLM ${c.llm.name}`)
   if (c.prompt) bits.push(`Prompt ${c.prompt.name}`)
-  pushPoint(obs, ev, { type: ev.type, kind: 'agent', title: '组件装配完成', detail: bits.join(' · ') || '无显式绑定', target: 'agent-0' })
+  pushPoint(obs, ev, {
+    type: ev.type, kind: 'agent', target: 'agent-0',
+    title: '组件装配完成', detail: bits.join(' · ') || '无显式绑定',
+    agentId: str(p(ev).agent_id) || undefined,
+    llmId: c.llm?.id, llmName: c.llm?.name,
+    promptId: c.prompt?.id, promptName: c.prompt?.name,
+    soulId: c.soul?.id, soulName: c.soul?.name,
+    skills: c.skills.length ? c.skills : undefined,
+    mcps: c.mcps.length ? c.mcps : undefined,
+  })
 }
 
 function reduceComponentPicked(obs: RunObservation, ev: TaskEvent): void {
@@ -82,16 +107,38 @@ function reduceComponentPicked(obs: RunObservation, ev: TaskEvent): void {
   const id = isLlm ? str(p(ev).llm_id) : str(p(ev).template_id)
   const name = isLlm ? str(p(ev).llm_name) : str(p(ev).prompt_name)
   if (isLlm && id) obs.summary.llmId = id
-  pushPoint(obs, ev, { type: ev.type, kind: isLlm ? 'model' : 'agent', title: `${isLlm ? 'LLM' : 'Prompt'} 选定：${name || id}`, detail: '', target: 'agent-0' })
+  pushPoint(obs, ev, {
+    type: ev.type, kind: isLlm ? 'model' : 'agent',
+    title: `${isLlm ? 'LLM' : 'Prompt'} 选定：${name || id}`, detail: '', target: 'agent-0',
+    reason: str(p(ev).reason) || undefined,
+    llmId: isLlm ? id || undefined : undefined, llmName: isLlm ? name || undefined : undefined,
+    promptId: !isLlm ? id || undefined : undefined, promptName: !isLlm ? name || undefined : undefined,
+  })
 }
 
 function reduceComponentListPicked(obs: RunObservation, ev: TaskEvent): void {
   const isSkill = ev.type === T.SkillSelected
   const list = arr(p(ev).skills)
+  const entries = list.map((x) => ({ id: str(x.id), name: str(x.name) || str(x.brief) || str(x.id), system: x.system === true || undefined }))
   pushPoint(obs, ev, {
     type: ev.type, kind: 'agent', target: 'agent-0',
     title: isSkill ? `Skill 选举：${list.length} 项` : `MCP 选举：${list.length} 个`,
-    detail: list.slice(0, 3).map((x) => str(x.brief) || str(x.id)).filter(Boolean).join('、'),
+    detail: entries.slice(0, 3).map((x) => x.name).filter(Boolean).join('、'),
+    reason: str(p(ev).reason) || undefined,
+    skills: isSkill && entries.length ? entries : undefined,
+    mcps: !isSkill && entries.length ? entries.map((x) => ({ id: x.id, name: x.name })) : undefined,
+  })
+}
+
+function reduceSoulSelected(obs: RunObservation, ev: TaskEvent): void {
+  const pl = p(ev)
+  const soulId = str(pl.soul_id)
+  const name = str(pl.soul_name) || str(pl.brief).slice(0, 30) || soulId
+  pushPoint(obs, ev, {
+    type: ev.type, kind: 'agent', target: 'agent-0',
+    title: soulId ? `Soul 选定：${name}` : 'Soul 未绑定', detail: '',
+    reason: str(pl.reason) || undefined,
+    soulId: soulId || undefined, soulName: name,
   })
 }
 
@@ -104,22 +151,47 @@ export function reduceContext(obs: RunObservation, ev: TaskEvent): void {
     return
   }
   if (ev.type !== T.ContextBuilt) return
+  const roundItem = toContextRound(obs, ev)
+  const idx = obs.contextRounds.findIndex((r) => r.round === roundItem.round && r.stage === roundItem.stage)
+  if (idx >= 0) obs.contextRounds[idx] = roundItem
+  else obs.contextRounds.push(roundItem)
+  pushPoint(obs, ev, toContextPoint(ev, roundItem))
+}
+
+function toContextRound(obs: RunObservation, ev: TaskEvent): ContextRound {
   const pl = p(ev)
-  const round = num(pl.round, obs.round + 1)
-  const roundItem: ContextRound = {
-    round, messageCount: num(pl.message_count, arr(pl.messages).length),
+  const stage = str(pl.stage)
+  return {
+    round: num(pl.round, obs.round + 1),
+    stage: stage === 'writer' || stage === 'eval' ? stage : undefined,
+    messageCount: num(pl.message_count, arr(pl.messages).length),
     thoughtMode: str(pl.thought_mode) || undefined, system: str(pl.system) || undefined,
     messages: arr(pl.messages).map((m) => ({ role: str(m.role), content: str(m.content), tool_calls: Array.isArray(m.tool_calls) ? m.tool_calls.map(String) : undefined })),
     sources: arr(pl.sources).map((s) => ({ source: str(s.source), label: str(s.label) || str(s.source), count: num(s.count), messageIds: arr(s.message_ids).map((x) => String(x)) })),
   }
-  const idx = obs.contextRounds.findIndex((r) => r.round === round)
-  if (idx >= 0) obs.contextRounds[idx] = roundItem
-  else obs.contextRounds.push(roundItem)
-  pushPoint(obs, ev, {
-    type: ev.type, kind: 'context', target: `ctx-${round}`,
-    title: `构建上下文：第 ${round} 轮 · ${roundItem.messageCount} 条消息`,
-    detail: pl.system ? '含 system 提示词（模型输入侧）' : '',
-  })
+}
+
+const CONTEXT_STAGE_TITLE: Record<string, string> = { writer: '构建写作上下文', eval: '构建评估上下文' }
+
+function toContextPoint(ev: TaskEvent, roundItem: ContextRound): Omit<TimelinePoint, 'seq' | 'ts' | 'spanDepth'> {
+  const pl = p(ev)
+  const isBase = roundItem.round === 0 && !roundItem.stage && bool(pl.base)
+  const title = CONTEXT_STAGE_TITLE[roundItem.stage ?? '']
+    ?? (isBase ? '构建上下文：静态记忆召回' : `构建上下文：第 ${roundItem.round} 轮 · ${roundItem.messageCount} 条消息`)
+  return {
+    type: ev.type, kind: 'context', target: `ctx-${roundItem.stage ?? 'main'}-${roundItem.round}`,
+    title, detail: pl.system ? '含 system 提示词（模型输入侧）' : '',
+    stage: roundItem.stage,
+    memorySources: isBase && roundItem.sources?.length ? roundItem.sources : undefined,
+    memoryItems: isBase && arr(pl.items).length ? toMemoryItems(pl) : undefined,
+  }
+}
+
+function toMemoryItems(pl: P): MemoryCategoryItems[] {
+  return arr(pl.items).map((s) => ({
+    source: str(s.source), label: str(s.label) || str(s.source),
+    entries: arr(s.entries).map((e) => ({ id: str(e.id) || undefined, text: str(e.text) })),
+  }))
 }
 
 // ── reasoning / reply ──────────────────────────────────────
@@ -182,6 +254,8 @@ export function reduceTool(obs: RunObservation, ev: TaskEvent): void {
     type: ev.type, kind: ok ? 'tool-ok' : 'tool-fail', target: `tool-${partId}`,
     title: `技能返回：${str(p(ev).tool_id) || str(p(ev).skill_id)}（${ok ? 'ok' : 'error'}）`,
     detail: typeof p(ev).output === 'string' ? (p(ev).output as string).slice(0, 200) : '',
+    // 技能返回步骤耗时 = 技能执行自身时长（elapsed_ms）
+    elapsedMs: num(p(ev).elapsed_ms) || undefined,
   })
 }
 
@@ -195,8 +269,29 @@ export function reduceLlm(obs: RunObservation, ev: TaskEvent): void {
   pushPoint(obs, ev, {
     type: ev.type, kind: failed ? 'lifecycle-fail' : 'model', target: 'agent-0',
     title: failed ? '模型调用失败' : `模型调用 ${num(pl.duration_ms)}ms`,
-    detail: `首字 ${num(pl.ttft_ms)}ms · 生成 ${num(pl.stream_ms)}ms · ${num(pl.input_tokens)}→${num(pl.output_tokens)} tokens${str(pl.caller) ? ` · ${str(pl.caller).split('.').pop()}` : ''}`,
+    detail: llmDetailText(pl),
+    llmDetail: toLlmDetail(pl),
+    // 模型调用步骤耗时 = 调用自身时长（duration_ms），而非与上一步的间隔
+    elapsedMs: num(pl.duration_ms) || undefined,
   })
+}
+
+function toLlmDetail(pl: P): TimelinePoint['llmDetail'] {
+  const thinkingMs = num(pl.thinking_ms) || undefined
+  const responseMs = num(pl.response_ms) || undefined
+  return {
+    llmId: str(pl.llm_id), ttftMs: num(pl.ttft_ms), thinkingMs, responseMs,
+    tokensIn: num(pl.input_tokens), tokensOut: num(pl.output_tokens),
+    caller: str(pl.caller), output: str(pl.output) || undefined,
+  }
+}
+
+function llmDetailText(pl: P): string {
+  const caller = str(pl.caller) ? ` · ${str(pl.caller).split('.').pop()}` : ''
+  const thinking = num(pl.thinking_ms)
+    ? ` · 思考 ${num(pl.thinking_ms)}ms · 响应 ${num(pl.response_ms)}ms`
+    : ` · 生成 ${num(pl.stream_ms)}ms`
+  return `首Token ${num(pl.ttft_ms)}ms${thinking} · ${num(pl.input_tokens)}→${num(pl.output_tokens)} tokens${caller}`
 }
 
 // ── 阶段用量（llm.invoked 按 caller 归组，顺序稳定供分布条渲染） ──

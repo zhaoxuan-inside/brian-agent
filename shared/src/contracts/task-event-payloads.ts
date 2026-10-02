@@ -72,20 +72,21 @@ export const PayloadSchemas = {
   [T.AgentBuilt]: z.object({ agent_id: z.string().optional(), name: z.string().optional(), purpose: z.string().optional() }).passthrough(),
   [T.AgentDisbanded]: z.object({ agent_id: z.string().optional(), reason: z.string().optional() }).passthrough(),
   [T.AgentComponents]: z.object({
+    agent_id: z.string().optional(),
     soul_id: z.string().optional(),
     soul_name: z.string().optional(),
     prompt_template_id: z.string().optional(),
     prompt_name: z.string().optional(),
     llm_id: z.string().optional(),
     llm_name: z.string().optional(),
-    skills: z.array(z.object({ id: z.string(), brief: z.string().optional(), system: z.boolean().optional() })).optional(),
-    mcps: z.array(z.object({ id: z.string(), brief: z.string().optional() })).optional(),
+    skills: z.array(z.object({ id: z.string(), name: z.string().optional(), brief: z.string().optional(), system: z.boolean().optional() })).optional(),
+    mcps: z.array(z.object({ id: z.string(), name: z.string().optional(), brief: z.string().optional() })).optional(),
   }).passthrough(),
   [T.ThoughtSelected]: z.object({ thought_mode: z.string().default('CoT'), reason: z.string().optional(), skills_count: z.number().optional(), mcps_count: z.number().optional() }).passthrough(),
-  [T.SoulSelected]: z.object({ soul_id: z.string().optional(), brief: z.string().optional() }).passthrough(),
+  [T.SoulSelected]: z.object({ soul_id: z.string().optional(), soul_name: z.string().optional(), brief: z.string().optional() }).passthrough(),
   [T.PromptSelected]: z.object({ template_id: z.string().optional(), prompt_name: z.string().optional(), system: z.string().optional() }).passthrough(),
-  [T.SkillSelected]: z.object({ skills: z.array(z.object({ id: z.string(), brief: z.string().optional(), system: z.boolean().optional() })).optional(), reason: z.string().optional() }).passthrough(),
-  [T.McpSelected]: z.object({ mcps: z.array(z.object({ id: z.string(), brief: z.string().optional() })).optional(), reason: z.string().optional() }).passthrough(),
+  [T.SkillSelected]: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string().optional(), brief: z.string().optional(), system: z.boolean().optional() })).optional(), reason: z.string().optional() }).passthrough(),
+  [T.McpSelected]: z.object({ mcps: z.array(z.object({ id: z.string(), name: z.string().optional(), brief: z.string().optional() })).optional(), reason: z.string().optional() }).passthrough(),
   [T.LlmSelected]: z.object({ llm_id: z.string().default(''), llm_name: z.string().optional() }).passthrough(),
   [T.ComponentFunnel]: z.object({
     component: z.string(),
@@ -96,6 +97,7 @@ export const PayloadSchemas = {
 
   [T.ContextBuilt]: z.object({
     round: z.number().default(0),
+    stage: z.string().optional(),
     thought_mode: z.string().optional(),
     message_count: z.number().optional(),
     system: z.string().optional(),
@@ -105,6 +107,11 @@ export const PayloadSchemas = {
       label: z.string().optional(),
       count: z.number().default(0),
       message_ids: z.array(z.string()).default([]),
+    })).optional(),
+    items: z.array(z.object({
+      source: z.string(),
+      label: z.string().optional(),
+      entries: z.array(z.object({ id: z.string().optional(), text: z.string() })).default([]),
     })).optional(),
   }).passthrough(),
   [T.ProfileSnapshot]: z.object({
@@ -146,6 +153,9 @@ export const PayloadSchemas = {
     connect_ms: z.number().default(0),
     ttft_ms: z.number().default(0),
     stream_ms: z.number().default(0),
+    thinking_ms: z.number().optional(),
+    response_ms: z.number().optional(),
+    output: z.string().optional(),
     error: z.string().optional(),
   }).passthrough(),
 

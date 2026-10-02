@@ -22,6 +22,47 @@ export interface TimelinePoint {
   target: string
   elapsedMs?: number
   spanDepth: number
+  /** 选中/命中原因（agent、llm、prompt、soul、skill、mcp、thought 等选举类步骤） */
+  reason?: string
+  /** Agent 匹配方式（session_affinity / exact / ref / election / built） */
+  matchedBy?: string
+  /** 组件实例锚点（跳转配置中心用；ID 为唯一关联键，名称仅展示） */
+  agentId?: string
+  agentName?: string
+  llmId?: string
+  llmName?: string
+  promptId?: string
+  promptName?: string
+  soulId?: string
+  soulName?: string
+  skills?: Array<{ id: string; name?: string; system?: boolean }>
+  mcps?: Array<{ id: string; name?: string }>
+  /** 第 0 轮记忆召回：各维度计数与召回条目（tab 切换展示） */
+  memorySources?: ContextSourceCount[]
+  memoryItems?: MemoryCategoryItems[]
+  /** 模型调用明细（首Token/思考/响应拆分 + token + 原始输出） */
+  llmDetail?: LlmInvokeDetail
+  /** 上下文构建阶段来源（主循环缺省 / writer / eval） */
+  stage?: 'writer' | 'eval'
+}
+
+/** 记忆召回：单个维度的条目内容（每条已由服务端截断） */
+export interface MemoryCategoryItems {
+  source: string
+  label: string
+  entries: Array<{ id?: string; text: string }>
+}
+
+/** llm.invoked 阶段拆分明细 */
+export interface LlmInvokeDetail {
+  llmId: string
+  ttftMs: number
+  thinkingMs?: number
+  responseMs?: number
+  tokensIn: number
+  tokensOut: number
+  caller: string
+  output?: string
 }
 
 export interface ThinkingRound {
@@ -48,6 +89,8 @@ export interface ContextRound {
   system?: string
   messages: Array<{ role: string; content: string; tool_calls?: string[] }>
   sources?: ContextSourceCount[]
+  /** 构建阶段（缺省=主循环轮次；writer/eval 为对应子阶段的上下文） */
+  stage?: 'writer' | 'eval'
 }
 
 export interface ToolTrace {

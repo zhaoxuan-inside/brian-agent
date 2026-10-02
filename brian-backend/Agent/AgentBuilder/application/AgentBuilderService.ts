@@ -27,6 +27,7 @@ import {
 } from '@brian-agent/base';
 import type { ComponentSemantics } from '@brian-agent/base';
 import { createComponentFunnelTrace, pushComponentFunnel, FUNNEL_MECHANISM_LABELS, type ComponentFunnelTrace } from '@brian-agent/base';
+import { createComponentTitleLookup, type ComponentTitleLookup } from '@brian-agent/base';
 import { EmbedLLMInput, EmbedLLMOutput } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess, StreamAccess, Logger } from '@brian-agent/base';
 import {
@@ -171,6 +172,9 @@ export class AgentBuilderService {
     output.optimized = output.changes.length > 0;
     return true;
   }
+
+  /** 组件实例名称查询（惰性创建，事件 payload 展示名） */
+  private titleLookup: ComponentTitleLookup | null = null;
 
   private static readonly SYSTEM_AGENT_CONFIG: Record<string, { strategyLabel: string; signatureKey: string; defaultName: string }> = {
     WRITER: { strategyLabel: 'CoT', signatureKey: 'writer', defaultName: '写作汇总' },
@@ -364,13 +368,24 @@ export class AgentBuilderService {
       report,
     );
     const llmId = llmOut.llm_id || fallbackLlmId || '';
+    const llmTitle = String((llmOut.llm as Record<string, unknown> | null)?.llm_title ?? '');
 
     report?.emit(BusinessEvent.LlmSelected, {
       llm_id: llmId,
+      llm_name: llmTitle,
       stage: 'build',
-      reason: 'Core 按任务/配额选型（matchLLM 选定并写入 agent_llm 绑定，供任务分析与本 Agent 执行复用）',
+      reason: this.llmBuildReason(llmOut),
     });
     return llmId;
+  }
+
+  /** build 路径 LLM 选举原因：detail 标识映射为时间线可读文案 */
+  private llmBuildReason(llmOut: MatchLLMOutput): string {
+    const detail = llmOut.detail ?? '';
+    if (llmOut.from_cache || detail.includes('cache')) return 'Agent 绑定（绑定事实源）';
+    if (detail === 'election_llm_default') return 'LLM 选举阶梯耗尽，默认模型兜底';
+    if (detail.startsWith('election_llm_')) return `LLM 统一选举命中（${detail}）`;
+    return detail ? `LLM 选举判定（${detail}）` : 'Core 按任务/配额选型';
   }
 
   private async matchSkillForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<MatchSkillOutput> {
@@ -391,26 +406,36 @@ export class AgentBuilderService {
     report?.emit(BusinessEvent.SkillSelected, {
       source: 'build',
       skills: selected,
-      system_skills: (skillOut.system_skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
-      reason: `skillCore.matchSkill 判定终态=match_detail=${skillOut.detail ?? 'unknown'}（选中技能数 ${selected.length}，其中系统级 ${(skillOut.system_skills ?? []).length} 个恒选中、沉淀命中 ${(skillOut.skills ?? []).length} 个）`,
+      system_skills: (skillOut.system_skills ?? []).map((s) => ({ id: s.skill_id, name: this.soSkillTitle(s.skill_id), brief: s.skill_brief })),
+      reason: `skillCore.matchSkill 判定终态=${skillOut.detail ?? 'unknown'}（选中技能数 ${selected.length}，其中系统级 ${(skillOut.system_skills ?? []).length} 个恒选中、沉淀命中 ${(skillOut.skills ?? []).length} 个）`,
       skills_count: selected.length,
       system_skills_count: (skillOut.system_skills ?? []).length,
     });
     return skillOut;
   }
 
-  private soSelectedSkillEntries(skillOut: MatchSkillOutput): Array<{ id: string; brief: string; system?: boolean }> {
-    const merged = new Map<string, { id: string; brief: string; system?: boolean }>();
+  private soSelectedSkillEntries(skillOut: MatchSkillOutput): Array<{ id: string; name: string; system?: boolean }> {
+    const merged = new Map<string, { id: string; name: string; system?: boolean }>();
     for (const s of skillOut.system_skills ?? []) {
-      merged.set(s.skill_id, { id: s.skill_id, brief: s.skill_brief, system: true });
+      merged.set(s.skill_id, { id: s.skill_id, name: this.soSkillTitle(s.skill_id) || s.skill_brief, system: true });
     }
     for (const s of skillOut.skills ?? []) {
       const isSystem = s.skill_id.startsWith('skill_builtin-');
       if (!merged.has(s.skill_id)) {
-        merged.set(s.skill_id, { id: s.skill_id, brief: s.skill_brief, system: isSystem || undefined });
+        merged.set(s.skill_id, { id: s.skill_id, name: this.soSkillTitle(s.skill_id) || s.skill_brief, system: isSystem || undefined });
       }
     }
     return [...merged.values()];
+  }
+
+  /** skill_record.title 查询（组件实例展示名） */
+  private soSkillTitle(id: string): string {
+    return this.componentTitle(id, 'skill_record', 'title');
+  }
+
+  private componentTitle(id: string, table: string, titleCol: string): string {
+    if (!this.titleLookup) this.titleLookup = createComponentTitleLookup(this.relationDb);
+    return this.titleLookup(id, table, titleCol);
   }
 
   private async matchMcpForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, metrics?: Metrics, report?: Report): Promise<MatchMcpOutput> {
@@ -429,7 +454,7 @@ export class AgentBuilderService {
 
     report?.emit(BusinessEvent.McpSelected, {
       stage: 'build',
-      mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, brief: '' })),
+      mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, name: this.componentTitle(id, 'mcp_install_record', 'mcp_title') })),
       reason: `mcpCore.matchMCP 判定终态=match_detail=${mcpOut.detail ?? 'unknown'}（MCP 数 ${(mcpOut.mcp_ids ?? []).length}）`,
       mcps_count: (mcpOut.mcp_ids ?? []).length,
     });
@@ -454,7 +479,7 @@ export class AgentBuilderService {
 
     report?.emit(BusinessEvent.SoulSelected, {
       soul_id: soulOut.soul_id || '',
-      brief: String(soulOut.soul?.soul_brief ?? '').slice(0, 200),
+      soul_name: this.componentTitle(soulOut.soul_id || '', 'soul_record', 'soul_title'),
       stage: 'build',
       reason: soulOut.soul_id
         ? 'soulCore.matchSoul 按任务领域选择/生成人格（soul 入 soul 表并落 agent 绑定）'
@@ -468,6 +493,7 @@ export class AgentBuilderService {
 
     report?.emit(BusinessEvent.PromptSelected, {
       template_id: promptTemplateId,
+      prompt_name: this.componentTitle(promptTemplateId, 'prompt_template_record', 'title'),
       stage: 'build',
       reason: promptTemplateId
         ? 'matchPromptForAgent LLM 语义评分命中特定模板（score≥75），绑定落 agent 表 prompt_template_id'

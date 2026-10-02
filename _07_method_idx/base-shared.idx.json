@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-02T00:00:00+08:00",
+  "updated_at": "2026-10-02T15:09:32",
   "shard": "base-shared",
   "layer": "Base",
   "module": "shared",
@@ -1317,14 +1317,55 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "name": "soAgentDisplayName",
+      "signature": "string soAgentDisplayName(name: string | undefined | null)",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "shared.base",
+      "location": "brian-backend/Base/shared/base/AgentNaming.ts",
+      "description": "Agent 展示名截短：取「名称|描述」长串的名称段（观测事件 payload 规范）",
+      "reusable": true,
+      "id": "m-shared-0102",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
+    },
+    {
+      "name": "matchLayerLabel",
+      "signature": "string matchLayerLabel(layer: string | undefined | null)",
+      "category": "algorithm",
+      "layer": "Base",
+      "module": "shared.base",
+      "location": "brian-backend/Base/shared/base/AgentNaming.ts",
+      "description": "AgentMatchLayer 枚举 → 中文标签（时间线 reason 展示）",
+      "reusable": true,
+      "id": "m-shared-0103",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
+    },
+    {
+      "name": "createComponentTitleLookup",
+      "signature": "ComponentTitleLookup createComponentTitleLookup(relationDb: RelationDBAccess)",
+      "category": "data",
+      "layer": "Base",
+      "module": "shared.base",
+      "location": "brian-backend/Base/shared/base/ComponentTitle.ts",
+      "description": "组件实例名称查询工厂：按 id+表+字段查展示名（防各发射点重复实现）",
+      "reusable": true,
+      "id": "m-shared-0104",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
     }
   ],
   "stats": {
-    "total": 101,
-    "by_category": {
-      "data": 32,
-      "orchestration": 36,
-      "algorithm": 33
-    }
+    "total": 104,
+    "added_by": "chg-060"
   }
 }

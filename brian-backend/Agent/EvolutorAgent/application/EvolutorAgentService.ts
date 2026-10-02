@@ -111,6 +111,7 @@ export class EvolutorAgentService {
       task_content: input.task_content, agent_output: input.agent_output,
       trace: traceData ? JSON.stringify(traceData) : '',
     }, metrics);
+    this.emitEvalContextBuilt(ctx, input, prompt, report);
     const raw = await this.execEvalLlm(ctx, input, evalCtx.targetLlmId, prompt, metrics, report);
     const { scores, suggestions } = parseWorkAgentScores(raw);
     applyTraceEfficiency(scores, traceData);
@@ -174,6 +175,20 @@ export class EvolutorAgentService {
       });
       return null;
     }
+  }
+
+  /** 评估阶段上下文构建透出（stage=eval，与主循环轮次区分；正文随 llm_call_detail 落库） */
+  private emitEvalContextBuilt(
+    ctx: EvolutorAgentContext, input: { work_id: string; run_id: string }, prompt: string, report?: Report,
+  ): void {
+    if (!report || !prompt) return;
+    report.emit(BusinessEvent.ContextBuilt, {
+      round: 0, stage: 'eval', message_count: 0,
+      system: prompt.slice(0, 4000),
+      session_id: ctx.session_id || '',
+      work_id: input.work_id || ctx.work_id || '',
+      run_id: input.run_id || ctx.run_id || '',
+    });
   }
 
   private async execEvalLlm(ctx: EvolutorAgentContext, input: EvalWorkAgentInput, targetLlmId: string, prompt: string, metrics?: Metrics, report?: Report): Promise<string> {
@@ -328,6 +343,7 @@ export class EvolutorAgentService {
       },
       metrics,
     );
+    this.emitEvalContextBuilt(ctx, input, prompt, report);
     const llmResult = await this.execWriterEvalLlm(input, ctx, evalCtx.targetLlmId, prompt, metrics, report);
     const parsedScores = this.parseWriterEvalScores(llmResult.rawResponse);
     if (parsedScores) {

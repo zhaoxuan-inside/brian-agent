@@ -335,13 +335,13 @@
   "method_index": {
     "path": "_07_method_idx/_index.json",
     "stats": {
-      "total": 2606,
+      "total": 2614,
       "by_category": {
-        "algorithm": 403,
-        "orchestration": 1157,
-        "data": 1046
+        "algorithm": 406,
+        "orchestration": 1160,
+        "data": 1048
       },
-      "source": "chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)"
+      "source": "chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)；chg-060: +时间线观测增强 6 方法(AgentNaming×2/ComponentTitle/soContextItems/llmBuildReason/emitEvalContextBuilt)"
     }
   },
   "dictionary": {

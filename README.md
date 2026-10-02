@@ -133,8 +133,13 @@ sudo systemctl enable --now brian-agent
 
 # 开发模式（源码运行）
 git clone https://github.com/zhaoxuan-inside/brian-agent.git && cd brian-agent
-npm install            # postinstall 自动就位原生模块
+# 1) 要求 Node 22（.nvmrc 锁定，prebuilt 原生模块按 Node 22 ABI 预编译）
+nvm install 22.22.1 && nvm use 22.22.1     # 或 mise use node@22.22.1 / fnm use
+# 2) 安装依赖（Node 版本不符会在安装阶段直接报错；postinstall 自动就位原生模块并完成后端构建，约 20-40s）
+npm install
+# 3) 启动（环境有问题时会先给出自检引导）
 ./brian start          # 后端 :8000 + 前端 :5173
+./brian doctor         # 环境自检
 ./brian dev            # 前台全栈，Ctrl+C 一键停止
 ```
 

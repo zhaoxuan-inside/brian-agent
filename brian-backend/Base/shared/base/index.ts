@@ -16,3 +16,5 @@ export {
   classifyHandleResult,
 } from './InfoEnums';
 export type { HandleErrorSource } from './InfoEnums';
+export { matchLayerLabel, soAgentDisplayName, MATCH_LAYER_LABELS } from './AgentNaming';
+export { createComponentTitleLookup, type ComponentTitleLookup } from './ComponentTitle';

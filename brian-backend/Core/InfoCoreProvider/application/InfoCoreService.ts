@@ -336,8 +336,8 @@ export class InfoCoreService {
         await this.ensureTextNode('Tag', 'tag', tag, true);
         await this.maintainTagVector(tag, tagConfig, metrics);
         await this.graphTag(Object.assign(new GraphTagInput(), { tag_id: tagId }), new GraphTagOutput(), new InfoCoreContext(), metrics);
-      } catch (err) {
-
+      } catch {
+        // 标签向量/图维护失败不影响入库主流程
       }
     }
 

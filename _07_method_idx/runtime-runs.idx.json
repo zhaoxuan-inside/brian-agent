@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-02T03:58:53.575468+00:00",
+  "updated_at": "2026-10-02T15:09:32",
   "shard": "runtime-runs",
   "layer": "Runtime",
   "module": "Runs",
@@ -1213,14 +1213,55 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "name": "soContextItems",
+      "signature": "Array<MemoryCategoryItems> soContextItems(ctxOut: ContextInfoOutput)",
+      "category": "data",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "记忆召回条目按维度分组透出（round0 context.built items，每维度限量截断）",
+      "reusable": false,
+      "id": "m-runs-0094",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
+    },
+    {
+      "name": "emitSelectionEvents",
+      "signature": "void emitSelectionEvents(matchOut, skillEntries, mcpEntries, report?)",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "命中既有 Agent 路径发射 Skill/MCP/Soul 三类选举明细事件（reason 附命中方式中文标签）",
+      "reusable": false,
+      "id": "m-runs-0095",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
+    },
+    {
+      "name": "emitComponentsSnapshot",
+      "signature": "void emitComponentsSnapshot(matchOut, snapshot, skillEntries, mcpEntries, report?)",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "装配汇总事件 agent.components（五类组件全量，ID 为锚 + 展示名）",
+      "reusable": false,
+      "id": "m-runs-0096",
+      "tests": null,
+      "deprecated": false,
+      "replaced_by": null,
+      "dependencies": []
     }
   ],
   "stats": {
-    "total": 93,
-    "by_category": {
-      "algorithm": 6,
-      "orchestration": 50,
-      "data": 37
-    }
+    "total": 94,
+    "added_by": "chg-060"
   }
 }

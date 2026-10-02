@@ -45,3 +45,17 @@ export function formatDateTime(ts: number | undefined | null): string {
   const d = new Date(ts)
   return `${formatDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
+
+/** 时间线步骤时间戳：HH:mm:ss.SSS */
+export function formatClock(ts: number | undefined | null): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
+}
+
+/** 时间线步骤耗时：毫秒级直显（如 100ms），秒级以上交给 formatDuration */
+export function formatStepDuration(ms?: number): string {
+  if (ms === undefined || ms === null) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return formatDuration(ms)
+}

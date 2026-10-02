@@ -58,11 +58,20 @@ interface EventsSingleResult {
   ttft_ms?: number;
 
   stream_ms?: number;
+
+  first_text_ms?: number;
+
+  thinking_ms?: number;
+
+  response_ms?: number;
 }
 
 const LIST_TIMEOUT_MS = 30000;
 
 const EXEC_TIMEOUT_DEFAULT_MS = 120000;
+
+/** llm.invoked 事件携带的原始输出截断上限（全文在 llm_call_detail_record） */
+const LLM_INVOKED_OUTPUT_MAX_CHARS = 2000;
 
 const EMBED_TIMEOUT_DEFAULT_MS = 15000;
 
@@ -853,7 +862,8 @@ export class LLMService {
   private reportLlmInvoked(report: Report | undefined, payload: {
     caller?: string; llm_id: string; attempt?: number; status: 'ok' | 'error';
     input_tokens?: number; output_tokens?: number; duration_ms?: number;
-    connect_ms?: number; ttft_ms?: number; stream_ms?: number; error?: string;
+    connect_ms?: number; ttft_ms?: number; stream_ms?: number;
+    thinking_ms?: number; response_ms?: number; output?: string; error?: string;
   }): void {
     if (!report) return;
     report.emit(BusinessEvent.LlmInvoked, {
@@ -867,6 +877,9 @@ export class LLMService {
       connect_ms: payload.connect_ms ?? 0,
       ttft_ms: payload.ttft_ms ?? 0,
       stream_ms: payload.stream_ms ?? 0,
+      thinking_ms: payload.thinking_ms ?? 0,
+      response_ms: payload.response_ms ?? 0,
+      output: payload.output,
       error: payload.error,
     });
   }
@@ -916,6 +929,8 @@ export class LLMService {
           input_tokens: output.input_tokens, output_tokens: output.output_tokens,
           duration_ms: output.duration_ms, connect_ms: output.connect_ms,
           ttft_ms: output.ttft_ms, stream_ms: output.stream_ms,
+          thinking_ms: output.thinking_ms, response_ms: output.response_ms,
+          output: output.result.slice(0, LLM_INVOKED_OUTPUT_MAX_CHARS),
         });
         if (i > 0) {
           this.logger?.debug(
@@ -998,6 +1013,8 @@ export class LLMService {
           input_tokens: output.input_tokens, output_tokens: output.output_tokens,
           duration_ms: output.duration_ms, connect_ms: output.connect_ms,
           ttft_ms: output.ttft_ms, stream_ms: output.stream_ms,
+          thinking_ms: output.thinking_ms, response_ms: output.response_ms,
+          output: output.result.slice(0, LLM_INVOKED_OUTPUT_MAX_CHARS),
         });
         return true;
       }
@@ -1128,6 +1145,9 @@ export class LLMService {
       connect_ms: result.connect_ms,
       ttft_ms: result.ttft_ms,
       stream_ms: result.stream_ms,
+      first_text_ms: result.first_text_ms,
+      thinking_ms: result.thinking_ms,
+      response_ms: result.response_ms,
     };
   }
 
@@ -1214,6 +1234,8 @@ export class LLMService {
     output.connect_ms = single.connect_ms ?? 0;
     output.ttft_ms = single.ttft_ms ?? 0;
     output.stream_ms = single.stream_ms ?? 0;
+    output.thinking_ms = single.thinking_ms ?? 0;
+    output.response_ms = single.response_ms ?? 0;
     output.wire_messages = input ? this.prepareWireMessages(input) : [];
   }
 
@@ -1370,6 +1392,8 @@ export class LLMService {
     output.connect_ms = single.connect_ms ?? 0;
     output.ttft_ms = single.ttft_ms ?? 0;
     output.stream_ms = single.stream_ms ?? 0;
+    output.thinking_ms = single.thinking_ms ?? 0;
+    output.response_ms = single.response_ms ?? 0;
     return true;
   }
 
