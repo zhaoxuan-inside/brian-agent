@@ -141,6 +141,9 @@ npm install
 ./brian start          # 后端 :8000 + 前端 :5173
 ./brian doctor         # 环境自检
 ./brian dev            # 前台全栈，Ctrl+C 一键停止
+
+# Windows 原生（无需 WSL）: brian.cmd start / doctor / stop ...（与 bash 版同一实现）
+# 重装/重置: ./brian clean --all → npm install（Linux/macOS/Windows 全平台一致）
 ```
 
 ### 环境变量
@@ -161,7 +164,9 @@ npm install
 | `brian restart [svc]` | 重启 | `brian status` | 运行状态 |
 | `brian logs [svc]` | 跟踪日志 | `brian open` | 浏览器打开前端 |
 | `brian dev` | 前台全栈 | `brian serve` | 前台 headless 后端 |
-| `brian doctor` | 环境自检 | `brian clean` | 清理日志与 PID |
+| `brian doctor` | 环境自检 | `brian clean [--all]` | 清理日志与 PID；--all 深度清理 |
+
+> Windows 使用 `brian.cmd`（与 bash 版同一套 Node 实现，命令与行为完全一致）。
 
 ## 架构
 

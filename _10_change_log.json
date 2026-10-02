@@ -1945,5 +1945,21 @@
     "author": "hardstone+agent",
     "verified": true,
     "notes": "从零验证通过:clean --all → npm install(454包,1条prebuild-install上游deprecated,postinstall自动构建) → doctor 14项全绿 → start 后端8000+前端5173 → health db:healthy → stop。注意 dev-server 对 Core/Runtime 等走相对路径 tsx 源码编译,仅 workspace 包名依赖(@brian-agent/base等)需要 dist。"
+  },
+  {
+    "id": "chg-064",
+    "date": "2026-10-02",
+    "requirement": "brian CLI 跨平台统一:新增 scripts/brian-cli.mjs(Node 内置模块实现 start/stop/restart/status/logs/serve/dev/open/doctor/clean(--all) 与 envPreflight,mise 假安装检测一并移植;后台启动 spawn detached+PID 文件+端口兜底杀进程(lsof/netstat),Windows 用 taskkill/netstat/where);brian(bash) 收敛为薄壳 exec node,新增 brian.cmd(Windows 原生入口)。消除原 bash 版平台硬伤:setsid/fuser(Linux 独有)在 macOS 缺失、Windows 无 bash。README 同步 Windows 用法",
+    "changed_files": [
+      "scripts/brian-cli.mjs",
+      "brian",
+      "brian.cmd",
+      "README.md"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "Linux 端全命令冒烟通过:version/help/doctor(14项)/start/status/health(db:healthy)/logs/restart/stop(含残留服务兜底清理)/status;期间修掉 requireNode22 残留未定义变量 exit。事实修正:better-sqlite3@11 预编译件实为 N-API 类,node127 目录命名不限定 ABI,但守卫仍按 ADR 锁 Node 22。macOS/Windows 为代码级适配未真机验证(本机无该系统),Windows 用 taskkill /T /F + netstat + where,需首跑验证。"
   }
 ]
