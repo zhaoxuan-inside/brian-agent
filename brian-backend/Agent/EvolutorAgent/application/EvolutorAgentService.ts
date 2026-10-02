@@ -291,7 +291,8 @@ export class EvolutorAgentService {
 
   private async disbandBadAgent(agentBizId: string, report?: Report, metrics?: Metrics): Promise<boolean> {
     const rows = this.relationDb.queryRaw<{ id: string; created_by: string }>(
-      `SELECT "id", "created_by" FROM "agent_record" WHERE "agent_id" = ? LIMIT 1`,
+      // ADR-012：agent_record 业务键并入 id，无 agent_id 列
+      `SELECT "id", "created_by" FROM "agent_record" WHERE "id" = ? LIMIT 1`,
       [agentBizId],
     );
     const row = rows?.[0];
@@ -309,13 +310,13 @@ export class EvolutorAgentService {
 
   private async disableRuntimeDefs(agentBizId: string, metrics?: Metrics): Promise<void> {
     try {
-      await this.relationDb.update('runtime_agent_def', [
+      await this.relationDb.update('runtime_agent_def_record', [
         { field: 'status', value: 'disabled' },
         { field: 'updated', value: IdGenerator.now() },
       ], [{ field: 'agent_ref', operator: Operator.EQ, value: agentBizId }]);
     } catch (err) {
 
-      metrics?.warn('EvolutorAgentService.disableRuntimeDefs 禁用 runtime_agent_def 失败已容忍', {
+      metrics?.warn('EvolutorAgentService.disableRuntimeDefs 禁用 runtime_agent_def_record 失败已容忍', {
         error: err instanceof Error ? err.message : String(err),
         agent_id: agentBizId,
       });

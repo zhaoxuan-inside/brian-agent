@@ -128,6 +128,10 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
     buildAgentMock = vi.fn(async (_i: unknown, output: { agent_id: string }) => {
       output.agent_id = 'agent-1';
+      // 对齐生产契约：persistBuiltAgent 构建后落 agent_record（否则 def.agent_ref 成孤儿被健康守卫停用）
+      relationDb.executeRaw(`INSERT OR REPLACE INTO agent_record (id, created, updated, title, type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, prompt_template_id, llm_id, task_signature, eval_score, enable, brief) VALUES (
+        'agent-1', 1, 1, '通用问答', 'WORKER', 'strat-1', '', '[]', '[]', '', '', '', 0, 1, '通用问答'
+      )`);
       return true;
     });
 

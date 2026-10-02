@@ -192,6 +192,28 @@ export class KillErroredAgentInput extends Input {
 
 export class KillErroredAgentOutput extends Output {}
 
+export class SweepDefHealthInput extends Input {
+
+  /** 仅巡检 primary 模式 def（subagent 由归属子系统自理），缺省 true */
+  primary_only?: boolean;
+}
+
+export class SweepDefHealthOutput extends Output {
+
+  scanned = 0;
+
+  repaired = 0;
+
+  disabled = 0;
+}
+
+export interface DefHealthReport {
+
+  healthy: boolean;
+
+  issues: string[];
+}
+
 export const RUNTIME_AGENT_DEF_TABLE = 'runtime_agent_def_record';
 export const AGENT_EXAMPLE_EMBEDDING_TABLE = 'agent_example_embedding_record';
 export const RUNTIME_AGENTS_CONFIG_TABLE = 'runtime_agents_config_record';

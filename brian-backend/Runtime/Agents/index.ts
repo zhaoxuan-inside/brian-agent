@@ -16,6 +16,8 @@ export {
   ConfigAgentDefOutput,
   KillErroredAgentInput,
   KillErroredAgentOutput,
+  SweepDefHealthInput,
+  SweepDefHealthOutput,
   AgentMode,
   AgentDefStatus,
   AgentMatchLayer,
@@ -26,6 +28,7 @@ export type {
   AgentDefRecord,
   AgentSnapshot,
   SnapshotToolEntry,
+  DefHealthReport,
 } from './domain/types';
 
 export type { AgentDefComponents } from './application/AgentDefService';

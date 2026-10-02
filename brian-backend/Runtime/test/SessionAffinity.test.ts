@@ -131,6 +131,10 @@ describe('会话话题连续性与轮次向量（chg-059）', () => {
     buildAgentMock = vi.fn(async (_i: unknown, output: { agent_id: string }) => {
       builtAgentSeq += 1;
       output.agent_id = `agent-${builtAgentSeq}`;
+      // 对齐生产契约：persistBuiltAgent 构建后落 agent_record（否则 def.agent_ref 成孤儿被健康守卫停用）
+      relationDb.executeRaw(`INSERT OR REPLACE INTO agent_record (id, created, updated, title, type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, prompt_template_id, llm_id, task_signature, eval_score, enable, brief) VALUES (
+        '${output.agent_id}', 1, 1, '通用问答', 'WORKER', 'strat-1', '', '[]', '[]', '', '', '', 0, 1, '通用问答'
+      )`);
       return true;
     });
 
@@ -248,6 +252,29 @@ describe('会话话题连续性与轮次向量（chg-059）', () => {
     expect(matchAgentDefSpy.mock.calls.length).toBe(round3Elections);
     expect(buildAgentMock).toHaveBeenCalledTimes(2);
     expect(dialogEmbeddingCount()).toBe(3);
+  });
+
+  it('组件失效检测：会话专家源 Agent 被删后不再复用，落重建并更新会话关联', async () => {
+    const run1 = await submitAndWait('周末帮我推荐几个适合出行的城市散步路线');
+    void run1;
+    const def1 = sessionActiveDefId();
+    expect(def1).not.toBe('');
+    const refRows = relationDb.queryRaw<{ agent_ref: string }>(
+      'SELECT "agent_ref" FROM "runtime_agent_def_record" WHERE "id" = ?', [def1],
+    ) ?? [];
+    // 模拟脏数据：源 Agent 行被删而 runtime def 残留（chg-067 前的历史缺陷形态）
+    relationDb.executeRaw('DELETE FROM agent_record WHERE id = ?', [String(refRows[0]?.agent_ref ?? '')]);
+
+    const buildsBefore = buildAgentMock.mock.calls.length;
+    await submitAndWait('继续');
+    // 健康守卫拦截亲和复用 → 全量选举重建（buildAgent 触发）→ 新 def 落会话关联
+    expect(buildAgentMock.mock.calls.length).toBe(buildsBefore + 1);
+    const def2 = sessionActiveDefId();
+    expect(def2).not.toBe(def1);
+    const statusRows = relationDb.queryRaw<{ status: string }>(
+      'SELECT "status" FROM "runtime_agent_def_record" WHERE "id" = ?', [def1],
+    ) ?? [];
+    expect(String(statusRows[0]?.status ?? '')).toBe('disabled');
   });
 
   it('显式切换 Agent：命中切换语式直接跳过会话亲和并重新选举', async () => {

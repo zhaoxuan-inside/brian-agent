@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-02T03:59:23.186710+00:00",
+  "updated_at": "2026-10-02T08:39:57.162Z",
   "terms": [
     {
       "term": "记忆",
@@ -641,6 +641,22 @@
         "组件向量记录"
       ],
       "source": "_10 chg-059;_12 dialog_embedding_record"
+    },
+    {
+      "term": "系统管理 CLI",
+      "code_name": "BrianCLI",
+      "definition": "跨平台服务管理命令入口(chg-064):实现统一收敛于 scripts/brian-cli.mjs(Node 内置模块,单文件跨 Linux/macOS/Windows),仓库根 brian(bash)与 brian.cmd 均为其薄壳;发行包内 brian.sh/brian.cmd 由 packaging/pack.mjs 模板独立生成,命令面一致但实现独立",
+      "aliases": [
+        "启动脚本(禁用:仅指壳,实现指 BrianCLI)",
+        "brian.sh(仅发行包内存在;仓库根为无后缀 brian)"
+      ],
+      "domain": "基建",
+      "related_terms": [
+        "envPreflight",
+        "ADR-001-node22-runtime",
+        "BrianAgent(发行形态)"
+      ],
+      "source": "scripts/brian-cli.mjs"
     }
   ],
   "terms_count": 42

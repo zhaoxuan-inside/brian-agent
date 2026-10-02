@@ -5,7 +5,7 @@ import type { TaskEvent } from './task-event'
 import { TaskEventType as T } from './task-event'
 import type { ComponentSpec, ContextRound, MemoryCategoryItems, TimelinePoint, ToolTrace } from './task-reducer'
 import type { RunObservation } from './task-reducer'
-import { arr, bool, num, pl, pushPointOf as pushPoint, str, type P } from './task-reduce-util'
+import { arr, bool, evalScoreEntries, evalSuggestionList, num, pl, pushPointOf as pushPoint, str, type P } from './task-reduce-util'
 
 const p = pl
 
@@ -353,11 +353,15 @@ export function reduceEvalWriter(obs: RunObservation, ev: TaskEvent): void {
     return
   }
   if (ev.type === T.EvaluationCompleted) {
+    // 异步评估晚于 run.finished 到达：收敛回 settled，避免 phase 卡在 evaluating 令前端永远转圈
+    obs.phase = 'settled'
     const scores = (p(ev).scores && typeof p(ev).scores === 'object' ? p(ev).scores : {}) as P
     pushPoint(obs, ev, {
       type: ev.type, kind: 'eval', target: 'agent-0',
       title: `评估完成：overall=${num(scores.overall)}${bool(p(ev).need_optimize) ? '（需优化）' : ''}`,
       detail: str(p(ev).eval_type),
+      evalScores: evalScoreEntries(scores),
+      evalSuggestions: evalSuggestionList(p(ev).suggestions),
     })
     return
   }

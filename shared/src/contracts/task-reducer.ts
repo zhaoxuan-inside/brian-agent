@@ -44,6 +44,10 @@ export interface TimelinePoint {
   llmDetail?: LlmInvokeDetail
   /** 上下文构建阶段来源（主循环缺省 / writer / eval） */
   stage?: 'writer' | 'eval'
+  /** 评估完成点：各维度数值评分（overall/correctness 等） */
+  evalScores?: Record<string, number>
+  /** 评估完成点：优化建议列表（评估 Agent 的回复正文） */
+  evalSuggestions?: string[]
 }
 
 /** 记忆召回：单个维度的条目内容（每条已由服务端截断） */

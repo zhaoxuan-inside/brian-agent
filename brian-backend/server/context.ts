@@ -46,7 +46,7 @@ import { SoulCoreAccess, SoulCoreContext, AgeSoulInput, AgeSoulOutput } from '..
 import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, Metrics, MetricsLogger, TraceSchemaInitializer, ensureElectionConfigTable, createEmbedTaskFn, createSemanticsTaskFn } from '@brian-agent/base';
 import { ExecuteEventProcessor } from '../Base/ExecuteEventProvider/application/ExecuteEventProcessor';
 import { EXECUTE_COMPONENT_TYPES, type ExecuteEvent } from '../Base/shared/base/ExecuteEvent';
-import { SessionAccess, SkillRuntimeAccess, RegisterBuiltinSkillsInput, RegisterBuiltinSkillsOutput, LoopAccess, AgentDefAccess, RunGatewayAccess } from '@brian-agent/runtime';
+import { SessionAccess, SkillRuntimeAccess, RegisterBuiltinSkillsInput, RegisterBuiltinSkillsOutput, LoopAccess, AgentDefAccess, RunGatewayAccess, AgentDefContext, SweepDefHealthInput, SweepDefHealthOutput } from '@brian-agent/runtime';
 import path from 'node:path';
 
 /** 组合根:构造全部 Access 依赖并手动注入(自 dev-server.ts 平移,行为不变)。 */
@@ -782,6 +782,33 @@ export async function buildContext() {
     }, msUntilMidnight);
   }
   scheduleDailyAging();
+
+  /** def 组件健康巡检（chg-067）：失效 def 由系统发起重建并更新组件关联，重建失败才停用出池 */
+  async function sweepDefHealthOnce(trace: Metrics): Promise<void> {
+    const out = new SweepDefHealthOutput();
+    await runtimeAgentDefAccess.sweepDefHealth(new SweepDefHealthInput(), out, new AgentDefContext(), trace);
+    if (out.repaired > 0 || out.disabled > 0) {
+      logger.info('[cron] Def health sweep', { detail: `巡检 ${out.scanned} 个 def：修复重建 ${out.repaired} 个，停用 ${out.disabled} 个`, trace_id: trace.trace_id, source: 'cron.defhealth' });
+    }
+  }
+  try {
+    await sweepDefHealthOnce(cronTrace('cron.defhealth.startup'));
+  } catch (e) {
+    logger.warn('[startup] Def health sweep failed', String(e));
+  }
+  function scheduleDailyDefHealthSweep() {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+    setTimeout(() => {
+      try {
+        sweepDefHealthOnce(cronTrace('cron.defhealth.midnight')).catch(() => {});
+      } catch {  }
+      scheduleDailyDefHealthSweep();
+    }, msUntilMidnight);
+  }
+  scheduleDailyDefHealthSweep();
 
   return {
     relationDb, llmAccess, mcpAccess, soulAccess, skillAccess, promptsAccess,

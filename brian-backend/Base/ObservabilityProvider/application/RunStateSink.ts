@@ -26,6 +26,8 @@ export class RunStateSink {
       case T.SkillStarted: return { phase: 'acting' };
       case T.WriterStarted: return { phase: 'writing' };
       case T.EvaluationStarted: return { phase: 'evaluating' };
+      // 同步评估先于 RunFinished；异步评估晚于 RunFinished 到达——此处收敛回 settled，防止 phase 永久卡在 evaluating
+      case T.EvaluationCompleted: return { phase: 'settled' };
       case T.RunFinished: return { phase: 'settled', settled_ts: ev.ts, stop_reason: String(payload.stop_reason ?? 'stop') };
       case T.RunFailed: return { phase: 'failed', settled_ts: ev.ts, error: String(payload.error ?? '') };
       case T.ErrorOccurred: return { error: String(payload.error ?? '') };

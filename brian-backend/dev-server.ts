@@ -2253,7 +2253,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         let answerJson = '';
         let created = 0;
-        let evalAgentId = '';
         let evalUpdatedAt = 0;
 
         try {
@@ -2266,7 +2265,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           if (evalRows.length > 0) {
             const row = evalRows[0];
             created = Number(row.created ?? 0);
-            evalAgentId = String(row.agent_id ?? '');
             evalUpdatedAt = Number(row.updated ?? 0);
 
             answerJson = JSON.stringify({
@@ -2294,15 +2292,15 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           return;
         }
 
+        // agent_evaluation_record.agent_id 存被评估 Agent；评估者为系统 EVOLUTOR，按 type 解析其真实 title
+        // （agent_record 无 agent_id/agent_name 列——旧查询恒抛错静默回退默认名）
         let agentName = '进化 Agent (Evolutor)';
-        if (evalAgentId) {
-          try {
-            const agentRows = ctx.relationDb.queryRaw<{ agent_name: string }>(
-              'SELECT "agent_name" FROM "agent_record" WHERE "agent_id" = ? OR "id" = ? LIMIT 1', [evalAgentId, evalAgentId],
-            );
-            if (agentRows && agentRows.length > 0 && agentRows[0].agent_name) agentName = agentRows[0].agent_name;
-          } catch {  }
-        }
+        try {
+          const evolutorRows = ctx.relationDb.queryRaw<{ title: string }>(
+            `SELECT "title" FROM "agent_record" WHERE "type" = 'EVOLUTOR' ORDER BY "created" DESC LIMIT 1`,
+          );
+          if (evolutorRows && evolutorRows.length > 0 && evolutorRows[0].title) agentName = String(evolutorRows[0].title);
+        } catch {  }
         const elapsedMs = evalUpdatedAt > created ? evalUpdatedAt - created : 0;
 
         sendJson(res, 200, {

@@ -1066,30 +1066,38 @@ export class RunGatewayService {
     }
 
     // 2. 会话亲和裁决（chg-059）：显式切换 → 落全量选举；强信号续写 → 直接沿用；
-    //    话题连续性匹配（dialog_embedding_record）在强信号之后、BM25/Embedding 相似度信号提取之前裁决
+    //    话题连续性匹配（dialog_embedding_record）在强信号之后、BM25/Embedding 相似度信号提取之前裁决。
+    //    复用前先做组件健康校验：失效（源 Agent 孤儿/绑定悬挂）→ 停用 def，落全量选举重建并更新会话关联
     if (!input.force_new) {
       const sessionActiveDef = await this.soSessionActiveAgentDef(runtimeSessionId);
       if (sessionActiveDef && sessionActiveDef.status === 'active') {
-        const affinity = await this.decideSessionAffinity(input.user_message, input.session_key, metrics, report);
-        if (affinity.reuse) {
-          const matchOutput = new MatchAgentDefOutput();
-          matchOutput.def_id = sessionActiveDef.id;
-          matchOutput.matched_by = AgentMatchLayer.Exact;
-          matchOutput.def = sessionActiveDef;
-          matchOutput.mechanisms = [{
-            mechanism: affinity.mechanism,
-            adopted: true,
-            label: affinity.label,
-            candidates: [{ id: sessionActiveDef.id, name: sessionActiveDef.name }],
-          }];
-          report?.emit(BusinessEvent.AgentSelected, {
-            agent_id: sessionActiveDef.id,
-            agent_name: soAgentDisplayName(sessionActiveDef.name),
-            matched_by: 'session_affinity',
-            reason: affinity.reason,
-            mechanisms: matchOutput.mechanisms,
-          });
-          return matchOutput;
+        const health = await this.agents.validateDefHealth(sessionActiveDef, metrics);
+        if (!health.healthy) {
+          await this.agents.invalidateDefById(
+            sessionActiveDef.id, health.issues.join('；'), new AgentDefContext(), metrics, report,
+          );
+        } else {
+          const affinity = await this.decideSessionAffinity(input.user_message, input.session_key, metrics, report);
+          if (affinity.reuse) {
+            const matchOutput = new MatchAgentDefOutput();
+            matchOutput.def_id = sessionActiveDef.id;
+            matchOutput.matched_by = AgentMatchLayer.Exact;
+            matchOutput.def = sessionActiveDef;
+            matchOutput.mechanisms = [{
+              mechanism: affinity.mechanism,
+              adopted: true,
+              label: affinity.label,
+              candidates: [{ id: sessionActiveDef.id, name: sessionActiveDef.name }],
+            }];
+            report?.emit(BusinessEvent.AgentSelected, {
+              agent_id: sessionActiveDef.id,
+              agent_name: soAgentDisplayName(sessionActiveDef.name),
+              matched_by: 'session_affinity',
+              reason: affinity.reason,
+              mechanisms: matchOutput.mechanisms,
+            });
+            return matchOutput;
+          }
         }
       }
     }

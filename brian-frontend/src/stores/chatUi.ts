@@ -20,6 +20,9 @@ export const useChatUiStore = defineStore('chatUi', () => {
   const thinkingOrigin = ref<{ left: number; top: number; width: number; height: number } | null>(null)
   const thinkingOpenedAt = ref(0)
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
+  const EVAL_POLL_INTERVAL_MS = 3000
+  const EVAL_POLL_MAX_ATTEMPTS = 10
+  let evalPollEpoch = 0
 
   const planning = ref<PlanningData>({ status: 'idle' })
   const runActive = ref(false)
@@ -125,28 +128,50 @@ export const useChatUiStore = defineStore('chatUi', () => {
     }, remaining)
   }
 
+  /** 评估结果轮询：async 评估晚于 SSE 关流完成，found=false 时有限自动重试覆盖评估窗口 */
+  async function pollEvalResult(infoId: string, epoch: number): Promise<void> {
+    for (let attempt = 0; attempt <= EVAL_POLL_MAX_ATTEMPTS; attempt++) {
+      if (epoch !== evalPollEpoch || !evalResultVisible.value) return
+      try {
+        const res = await chatApi.evalResult(infoId)
+        if (epoch !== evalPollEpoch || !evalResultVisible.value) return
+        evalTraceId.value = res.trace_id || ''
+        if (res.found && res.evaluation) {
+          evalResult.value = res.evaluation
+          evalResultError.value = ''
+          return
+        }
+        if (attempt === EVAL_POLL_MAX_ATTEMPTS) {
+          evalResultError.value = '暂无评估结果（评估可能未触发或已失败）'
+          return
+        }
+      } catch (e) {
+        if (attempt === EVAL_POLL_MAX_ATTEMPTS) {
+          evalResultError.value = e instanceof Error ? e.message : '加载评估结果失败'
+          return
+        }
+      }
+      evalResultError.value = `评估进行中，自动刷新中（${attempt + 1}/${EVAL_POLL_MAX_ATTEMPTS}）…`
+      await new Promise((resolve) => setTimeout(resolve, EVAL_POLL_INTERVAL_MS))
+    }
+  }
+
   async function openEvalResult(infoId: string) {
     evalResultVisible.value = true
     evalResultLoading.value = true
     evalResult.value = null
     evalResultError.value = ''
     evalTraceId.value = ''
+    const epoch = ++evalPollEpoch
     try {
-      const res = await chatApi.evalResult(infoId)
-      evalTraceId.value = res.trace_id || ''
-      if (res.found && res.evaluation) {
-        evalResult.value = res.evaluation
-      } else {
-        evalResultError.value = '暂无评估结果（评估可能尚未完成，稍后重试）'
-      }
-    } catch (e) {
-      evalResultError.value = e instanceof Error ? e.message : '加载评估结果失败'
+      await pollEvalResult(infoId, epoch)
     } finally {
-      evalResultLoading.value = false
+      if (epoch === evalPollEpoch) evalResultLoading.value = false
     }
   }
 
   function closeEvalResult() {
+    evalPollEpoch++
     evalResultVisible.value = false
     evalResult.value = null
     evalResultLoading.value = false

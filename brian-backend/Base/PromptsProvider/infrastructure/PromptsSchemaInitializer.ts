@@ -152,7 +152,9 @@ export class PromptsSchemaInitializer {
 
   private rebindPromptId(oldId: string, newId: string): void {
     // prompt_template_usage_org 为 TraceBase 日聚合表(ADR-012 改名),新旧名都尝试以覆盖迁移中间态
-    const tables = ['agent', 'runtime_agent_def', 'prompt_template_usage', 'prompt_template_usage_org', 'user_profile_direction_record'];
+    // ADR-012 后 agent/runtime_agent_def 已改名 agent_record/runtime_agent_def_record——旧名 UPDATE 恒抛错被吞，
+    // 导致 PromptCatalog 换 id 后 agent_record/runtime_agent_def_record 上的绑定全部悬挂（脏数据源头，chg-067 修复）
+    const tables = ['agent_record', 'runtime_agent_def_record', 'prompt_template_usage', 'prompt_template_usage_org', 'user_profile_direction_record'];
     for (const table of tables) {
       try {
         this.relationDb.executeRaw(`UPDATE "${table}" SET "prompt_template_id" = ? WHERE "prompt_template_id" = ?`, [newId, oldId]);

@@ -69,6 +69,10 @@ export {
   SoAgentDefsOutput,
   ConfigAgentDefInput,
   ConfigAgentDefOutput,
+  KillErroredAgentInput,
+  KillErroredAgentOutput,
+  SweepDefHealthInput,
+  SweepDefHealthOutput,
   RUNTIME_AGENT_DEF_TABLE,
   RUNTIME_AGENTS_CONFIG_TABLE,
 } from './Agents';
@@ -77,6 +81,7 @@ export type {
   AgentSnapshot,
   SnapshotToolEntry,
   AgentDefComponents,
+  DefHealthReport,
 } from './Agents';
 
 export { RunGatewayAccess, RunsSchemaInitializer } from './Runs';

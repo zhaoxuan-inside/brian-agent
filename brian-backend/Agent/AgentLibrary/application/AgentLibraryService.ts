@@ -516,6 +516,11 @@ export class AgentLibraryService {
     const n = await this.relationDb.delete(AGENT_TABLE, [
       { field: 'id', operator: Operator.EQ, value: id },
     ]);
+    // ADR-012：级联清理 runtime def（Runtime 域表 runtime_agent_def_record；源 Agent 已删，残留 def 是孤儿脏数据，
+    // 会被会话亲和持续复用并回退内置身份模板）。Agent 工作区不反向依赖 Runtime，此处按表名字面量操作。
+    await this.relationDb.delete('runtime_agent_def_record', [
+      { field: 'agent_ref', operator: Operator.EQ, value: agentId },
+    ]);
     await deleteComponentEmbedding({
       relationDb: this.relationDb,
       table: AGENT_EMBEDDING_TABLE,

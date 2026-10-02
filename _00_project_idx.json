@@ -273,7 +273,8 @@
     "layout": "npm workspaces;后端每模块 DDD 四层 access/application/domain/infrastructure;前端 src/{views,components,composables,stores,api,utils,styles}",
     "entry_points": [
       "brian-backend/dev-server.ts (main/createServer/buildContext)",
-      "brian-frontend/src/main.ts"
+      "brian-frontend/src/main.ts",
+      "scripts/brian-cli.mjs (跨平台 brian CLI:根目录 brian(bash)/brian.cmd 均为其薄壳)"
     ],
     "modules": [
       {
@@ -319,6 +320,12 @@
         "owner": ""
       },
       {
+        "name": "BrianCLI",
+        "path": "scripts/brian-cli.mjs + brian + brian.cmd",
+        "summary": "跨平台系统管理 CLI(chg-064):start/stop/restart/status/logs/serve/dev/open/doctor/clean(--all) 与 envPreflight,仅 Node 内置模块;bash 与 cmd 为薄壳,发行包内 brian.sh/brian.cmd 由 packaging/pack.mjs 模板独立生成",
+        "owner": ""
+      },
+      {
         "name": "frontend",
         "path": "brian-frontend",
         "summary": "Vue3 SPA(8 页面/42 组件/15 composables/5 stores);UI 组件目录按 frontend-spec 不入 _07_method_idx",
@@ -341,7 +348,7 @@
         "orchestration": 1160,
         "data": 1048
       },
-      "source": "chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)；chg-060: +时间线观测增强 6 方法(AgentNaming×2/ComponentTitle/soContextItems/llmBuildReason/emitEvalContextBuilt)"
+      "source": "chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)；chg-060: +时间线观测增强 6 方法(AgentNaming×2/ComponentTitle/soContextItems/llmBuildReason/emitEvalContextBuilt)；chg-061~064: 安装部署脚本迭代(brian CLI 跨平台统一收敛 scripts/brian-cli.mjs),脚本类无新增登记方法"
     }
   },
   "dictionary": {
@@ -350,7 +357,7 @@
   },
   "change_log": {
     "path": "_10_change_log.json",
-    "latest": "chg-059"
+    "latest": "chg-067"
   },
   "quality_gates": {
     "lint": "npm run lint:backend(后端 flat config);npm run lint(前端)",
@@ -375,7 +382,7 @@
       "各 SchemaInitializer 基建",
       "UI 组件与 Vue 组合式函数签名(frontend-spec)",
       "测试函数",
-      "scripts/*.mjs 工具脚本"
+      "scripts/*.mjs 工具脚本(含根 scripts/brian-cli.mjs 与 packaging/)"
     ],
     "frontend_token_contract": "语义色/z-index/字号/遮罩/圆角以 tailwind.config.js + globals.css 为单一事实源;组件禁用裸 tailwind 原生色表达语义;弹层经 ModalShell(_06/02 第 4 节);样式查阅入口 brian-frontend/STYLE.md。全站主题=Claude 暖色双模式(ADR-016):apple 语义令牌值已全局暖化(brian-blue 即品牌 coral,CSS 变量驱动),圆角几何 xl=8/2xl=12/3xl=16;对话页另有 chat 令牌族(.theme-chat 作用域,ADR-015);共享组件 variant='chat';注意 tailwind.config.js 变更必须重启前端 dev server",
     "embedding_model": null,

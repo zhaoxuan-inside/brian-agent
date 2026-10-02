@@ -96,7 +96,7 @@ function scoreColor(score: number): string {
         <div class="px-5 py-4 flex-1 overflow-y-auto space-y-3">
           <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-chat-warning space-y-3">
             <Loader2 :size="28" class="animate-spin" />
-            <p class="text-sm">正在加载评估结果...</p>
+            <p class="text-sm">{{ error || '正在加载评估结果...' }}</p>
           </div>
 
           <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-chat-ink-subtle space-y-2">

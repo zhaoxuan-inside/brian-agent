@@ -1439,6 +1439,9 @@ export class LLMService {
         return false;
       }
       this.fillChatResponse(res.bodyText, strategy, String(input.prompt ?? ''), startTime, output);
+      // 非流式调用：全量响应一次性到达，TTFT 即 HTTP 往返，response_ms 为解析耗时（否则恒为 0 造成假象）
+      output.ttft_ms = output.connect_ms;
+      output.response_ms = Math.max(0, output.duration_ms - output.connect_ms);
     } catch (err) {
       output.error = err instanceof Error ? err.message : String(err);
       output.error_code = 'CONNECT_ERROR';

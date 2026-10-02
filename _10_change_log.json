@@ -1961,5 +1961,89 @@
     "author": "hardstone+agent",
     "verified": true,
     "notes": "Linux 端全命令冒烟通过:version/help/doctor(14项)/start/status/health(db:healthy)/logs/restart/stop(含残留服务兜底清理)/status;期间修掉 requireNode22 残留未定义变量 exit。事实修正:better-sqlite3@11 预编译件实为 N-API 类,node127 目录命名不限定 ABI,但守卫仍按 ADR 锁 Node 22。macOS/Windows 为代码级适配未真机验证(本机无该系统),Windows 用 taskkill /T /F + netstat + where,需首跑验证。"
+  },
+  {
+    "id": "chg-065",
+    "date": "2026-10-02",
+    "requirement": "chg-064(跨平台 brian CLI)文档收尾同步:_00 索引(change_log.latest chg-059→chg-065;method_index.stats.source 补 chg-061~064 无新增登记方法说明;code.entry_points 增 scripts/brian-cli.mjs;code.modules 增 BrianCLI 模块;signature_exemptions 明确含根 scripts/brian-cli.mjs 与 packaging/)+_09 词典登记「系统管理 CLI/BrianCLI」术语(统一 brian/brian.cmd/brian-cli.mjs 与发行包 brian.sh 表述)+packaging/README.md(修正数据目录表 %APPDATA% 反斜杠被写成退格控制符的笔误;开发模式守护章节 nohup→后台 detached 表述与 CLI 实现对齐)",
+    "changed_files": [
+      "_00_project_idx.json",
+      "_09_project_dict.json",
+      "packaging/README.md"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "纯文档同步,零代码变更。README.md 的 Windows 用法/brian CLI 表/clean --all 已随 chg-064(655c792)完成;docs/ 为静态分析自动产物且仅覆盖 brian-backend/scripts,不含根 scripts/,无需重生成;发行包内 CLI 由 pack.mjs 模板独立生成,packaging 命令面文档不受 chg-064 影响。"
+  },
+  {
+    "id": "chg-066",
+    "date": "2026-10-02",
+    "requirement": "异步评估收尾闭环修复（trace 09fa0144 诊断）：任务产出后思考过程永远转圈且看不到评估 Agent 回复。(1) 评估完成 phase 终态缺失——shared reducer reduceEvalWriter 的 EvaluationCompleted 分支补 obs.phase='settled'（修复前 replay/live 均卡在 evaluating，chatUi.overallStreaming 永真→ObservationView 永远转圈）；RunStateSink.patchOf 同步补 EvaluationCompleted→{phase:'settled'}（修复前 run_state_record.phase 永久卡 'evaluating'，observation 接口吐出脏 phase）；(2) 评估 Agent 回复不可见——TimelinePoint 新增 evalScores/evalSuggestions 字段，评估完成时间线点携带各维度评分与优化建议（新增 shared 工具 evalScoreEntries/evalSuggestionList），ObservationView 展开明细渲染评分 chips+建议列表并纳入 hasPointDetail 判定；(3) EvalResultModal 拉取改有限自动轮询——async 评估晚于 SSE 关流 14.5s 完成，原一次性查询在评估窗口内点击必得'暂无评估结果'；openEvalResult 重构为 pollEvalResult（3s×10 次有限重试，epoch 防串台，关闭即取消），轮询中文案经 loading 分支透出，closeEvalResult 递增 epoch 即停；(4) 评估者名称查询修正——dev-server eval-result 原查询 agent_record 不存在的 agent_id/agent_name 列恒抛错静默回退，改为按 type='EVOLUTOR' 取真实 title（agent_evaluation_record.agent_id 存的是被评估 Agent，评估者固定为系统 EVOLUTOR），同步移除失效的 evalAgentId 变量；(5) EvolutorAgentService.disbandBadAgent 同源 SQL 修复（agent_record WHERE agent_id→id，ADR-012 业务键并入 id 后低分解散 Agent 链路静默失效）；(6) 非流式 LLM 调用计时归因修正——executeSingleLLMRequest 成功路径补 ttft_ms=connect_ms（非流式首字节即全量到达）、response_ms=duration-connect（修复前 ttft/stream/response 恒 0、14.5s 全记 connect 的假象，即本次评估调用 14.5s 空窗的观测成因）。附带：useSSE.ts while(true)→for(;;) 修复前端 lint 门禁 pre-existing error。",
+    "changed_files": [
+      "shared/src/contracts/task-reduce-kind2.ts",
+      "shared/src/contracts/task-reduce-util.ts",
+      "shared/src/contracts/task-reducer.ts",
+      "brian-backend/Base/ObservabilityProvider/application/RunStateSink.ts",
+      "brian-backend/Base/LLMProvider/application/LLMService.ts",
+      "brian-backend/Agent/EvolutorAgent/application/EvolutorAgentService.ts",
+      "brian-backend/dev-server.ts",
+      "brian-frontend/src/stores/chatUi.ts",
+      "brian-frontend/src/components/chat/EvalResultModal.vue",
+      "brian-frontend/src/components/chat/ObservationView.vue",
+      "brian-frontend/src/composables/useSSE.ts"
+    ],
+    "commits": [],
+    "changed_methods": [],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "快速通道 bug 修复，无对外契约变更（TimelinePoint 新增可选字段、observation phase 语义收敛为正确终态）。_07 无新增登记方法（evalScoreEntries/evalSuggestionList 为 shared contracts 工具函数，contracts 层不入 _07；其余均为既有方法修改）。验证：shared/base/core/runtime/agent/application typecheck 0 error、test-all 5/5（application 504 例）、前端 vue-tsc+vite build 通过、lint 前后端 0 error。端到端重放验证：以 trace 09fa0144 真实 49 事件 replayObservation，phase=settled，评估完成点携带 5 维评分+3 条建议。"
+  },
+  {
+    "id": "chg-067",
+    "date": "2026-10-02",
+    "requirement": "runtime def 脏数据治理与组件失效检测重建机制（trace 6ee68e9d 诊断延续：会话亲和复用源 Agent 已删的孤儿 def，快照回退内置身份模板）。(1) 消除脏数据源头四件套：① AgentLibraryService.deleteSingleAgent 删 Agent 后级联删除 runtime_agent_def_record（agent_ref 悬空 def 的直接产生源，HTTP DELETE /api/agent 与 disband/kill 全部入口收敛）；② EvolutorAgentService.disableRuntimeDefs 表名笔误修复 runtime_agent_def→runtime_agent_def_record（低分解散后 def 停用恒静默失败）；③ PromptsSchemaInitializer.rebindPromptId 表列表修正 agent/runtime_agent_def→agent_record/runtime_agent_def_record（PromptCatalog 换 id 后绑定回填恒抛错被吞，prompt 绑定全量悬挂的直接根源）；④ AgentLibraryService.deleteSingleAgent 顺带补 agent_record 悬挂绑定回填同口径。(2) 组件失效检测与重建（用户需求②）：AgentDefService 新增 validateDefHealth（agent_ref/soul/prompt/llm 逐一核对事实源存在且 enable=1，builtin.* Prompt 走目录视为有效）+ sweepDefHealth（巡检编排：源 Agent 失效→rebuildDefAgent force_new 重建并 refreshDefFromAgent 原地刷新组件关联保持 def id 会话亲和无感；绑定悬挂→clearInvalidBindings 置空走运行时回退；失败兜底 disableDef 停用出池）+ invalidateDefById；RunGatewayService.matchAgent 会话亲和复用前健康守卫（失效→停用→落全量选举重建→persistSessionActiveAgent 更新会话关联）；loadActiveDefs 缓存刷新点守卫（失效 def 停用出池，选举/精准匹配不再命中）；server/context.ts 新增 cron.defhealth 启动+每日巡检。(3) 存量清理：删除 3 个孤儿 def（气象天气/猫语者·暹罗猫守护精灵/概念解读者，agent_ref 指向已删 agent_record），runtime_session_record.agent_def_id 残留引用置空归零。(4) 测试：Runtime/test/DefHealth.test.ts 3 用例（孤儿重建关联更新/悬挂绑定清空/健康不动）+ SessionAffinity.test.ts 组件失效检测回归用例 + 两个测试夹具 buildAgentMock 补齐 agent_record 落库对齐生产契约。",
+    "changed_files": [
+      "brian-backend/Runtime/Agents/application/AgentDefService.ts",
+      "brian-backend/Runtime/Agents/access/AgentDefAccess.ts",
+      "brian-backend/Runtime/Agents/domain/types.ts",
+      "brian-backend/Runtime/Agents/index.ts",
+      "brian-backend/Runtime/index.ts",
+      "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "brian-backend/Runtime/test/DefHealth.test.ts",
+      "brian-backend/Runtime/test/SessionAffinity.test.ts",
+      "brian-backend/Runtime/test/RuntimeGateway.test.ts",
+      "brian-backend/Agent/AgentLibrary/application/AgentLibraryService.ts",
+      "brian-backend/Agent/EvolutorAgent/application/EvolutorAgentService.ts",
+      "brian-backend/Base/PromptsProvider/infrastructure/PromptsSchemaInitializer.ts",
+      "brian-backend/server/context.ts"
+    ],
+    "commits": [],
+    "changed_methods": [
+      "AgentDefService.validateDefHealth(新增)",
+      "AgentDefService.sweepDefHealth(新增)",
+      "AgentDefService.invalidateDefById(新增)",
+      "AgentDefService.repairDef(新增)",
+      "AgentDefService.rebuildDefAgent(新增)",
+      "AgentDefService.refreshDefFromAgent(新增)",
+      "AgentDefService.composeDefFieldsFromAgent(新增,insertDefFromAgent 共用组装)",
+      "AgentDefService.soBindingAlive(新增)",
+      "AgentDefService.clearInvalidBindings(新增)",
+      "AgentDefService.disableDef(新增)",
+      "AgentDefService.soSignatureDomain(新增)",
+      "AgentDefService.insertDefFromAgent(重构复用 compose)",
+      "AgentDefService.loadActiveDefs(缓存刷新点健康守卫)",
+      "AgentDefService.prepareBuilderContext(签名放宽 {run_id})",
+      "AgentDefAccess.validateDefHealth/sweepDefHealth/invalidateDefById(透出)",
+      "RunGatewayService.matchAgent(亲和复用前健康守卫)",
+      "AgentLibraryService.deleteSingleAgent(级联删除 runtime defs)",
+      "EvolutorAgentService.disableRuntimeDefs(表名修复)",
+      "PromptsSchemaInitializer.rebindPromptId(表名修正)",
+      "server/context.ts sweepDefHealthOnce/scheduleDailyDefHealthSweep(新增 cron.defhealth)"
+    ],
+    "author": "hardstone+agent",
+    "verified": true,
+    "notes": "语义裁决：失效=绑定非空但事实源不存在或 enable=0；绑定为空不算失效（运行时回退内置身份/默认模型是设计行为）；subagent def 不巡检（由归属子系统自理）；builtin.* 前缀 prompt 走 PromptCatalog 目录视为有效。_07 已登记 10 个新方法（runtime-agents.idx）。验证：typecheck 6 工作区 0 error、test-all 5/5（runtime 69 例含 DefHealth 3 例+失效检测回归 1 例）、lint:backend 0 error。用户运行中的旧实例需重启生效；重启时 cron.defhealth.startup 将自动巡检兜底。"
   }
 ]

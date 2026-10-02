@@ -25,4 +25,19 @@ export function pushPointOf(
   })
 }
 
+/** 评估分数（仅数值项；空返回 undefined 供时间线省略空态块） */
+export function evalScoreEntries(scores: P): Record<string, number> | undefined {
+  const entries: Array<[string, number]> = []
+  for (const [k, v] of Object.entries(scores)) {
+    if (typeof v === 'number' && Number.isFinite(v)) entries.push([k, v])
+  }
+  return entries.length ? Object.fromEntries(entries) : undefined
+}
+
+/** 评估建议列表（评估 Agent 回复正文；空列表归一为 undefined） */
+export function evalSuggestionList(raw: unknown): string[] | undefined {
+  const list = arr(raw).map((s) => str(s)).filter(Boolean)
+  return list.length ? list : undefined
+}
+
 type RunObservationLike = { timeline: TimelinePoint[] }

@@ -116,7 +116,7 @@ npm 包由 `pack.mjs` 自动生成（`dist-pack/npm/`，已注入版本号与仓
 | 环境 | 默认数据目录 |
 |------|-------------|
 | Linux/macOS | `~/.brian-agent` |
-| Windows | `%APPDATA%rian-agent` |
+| Windows | `%APPDATA%\brian-agent` |
 | systemd（.deb / `--systemd`） | `/var/lib/brian-agent` |
 | 便携模式（可选） | `BRIAN_DATA_DIR=$PWD/data`（数据跟包走，U 盘场景） |
 
@@ -124,7 +124,7 @@ npm 包由 `pack.mjs` 自动生成（`dist-pack/npm/`，已注入版本号与仓
 
 ## 开发模式后端守护（systemd user service）
 
-dev 后端若以 `./brian start backend`（nohup）方式启动，会随终端/IDE 环境变化、
+dev 后端若以 `./brian start backend`（后台 detached 进程，PID 与日志落系统临时目录）方式启动，会随终端/IDE 环境变化、
 被 oomd 或其他进程误伤后**静默消失且无法自愈**。改为 systemd user service 托管：
 
 ```bash
@@ -132,7 +132,7 @@ mkdir -p ~/.config/systemd/user
 cp packaging/brian-backend-dev.service ~/.config/systemd/user/
 # 确认 unit 内 PATH= 指向你本机的 node bin 目录（nvm 用户：dirname $(which node)）
 systemctl --user daemon-reload
-./brian stop backend          # 停掉 nohup 旧实例
+./brian stop backend          # 停掉后台旧实例（detached）
 systemctl --user enable --now brian-backend-dev
 loginctl enable-linger        # 可选：服务不随登录会话结束
 ```

@@ -16,6 +16,10 @@ import {
   ConfigAgentDefOutput,
   KillErroredAgentInput,
   KillErroredAgentOutput,
+  SweepDefHealthInput,
+  SweepDefHealthOutput,
+  type AgentDefRecord,
+  type DefHealthReport,
 } from '../domain/types';
 
 export class AgentDefAccess {
@@ -67,7 +71,21 @@ export class AgentDefAccess {
   ): Promise<boolean> {
     return this.service.killErroredAgent(input, output, context, metrics, report);
   }
-  
+
+  async validateDefHealth(def: AgentDefRecord, metrics?: Metrics): Promise<DefHealthReport> {
+    return this.service.validateDefHealth(def, metrics);
+  }
+
+  async sweepDefHealth(input: SweepDefHealthInput, output: SweepDefHealthOutput, context: AgentDefContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.sweepDefHealth(input, output, context, metrics, report);
+  }
+
+  async invalidateDefById(defId: string, reason: string, context: AgentDefContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.invalidateDefById(defId, reason, context, metrics, report);
+  }
+
   invalidateAgentBindingCache(): void {
     this.service.invalidateAgentBindingCache();
   }

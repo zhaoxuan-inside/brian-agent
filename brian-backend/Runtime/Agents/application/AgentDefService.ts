@@ -74,6 +74,9 @@ import {
   ConfigAgentDefOutput,
   KillErroredAgentInput,
   KillErroredAgentOutput,
+  SweepDefHealthInput,
+  SweepDefHealthOutput,
+  type DefHealthReport,
   AgentDefRecord,
   AgentMode,
   AgentDefStatus,
@@ -241,7 +244,18 @@ export class AgentDefService {
     const rows = await this.relationDb.select(RUNTIME_AGENT_DEF_TABLE, {
       conditions: [{ field: 'status', operator: Operator.EQ, value: 'active' }],
     });
-    return rows.map((row) => this.toDefRecord(row));
+    const healthy: AgentDefRecord[] = [];
+    for (const row of rows) {
+      const def = this.toDefRecord(row);
+      const health = await this.validateDefHealth(def);
+      if (health.healthy) {
+        healthy.push(def);
+        continue;
+      }
+      // 缓存刷新点守卫：组件失效的 def 停用出池，选举/精准匹配不再命中（孤儿/悬挂绑定自动出清）
+      await this.disableDef(def, health.issues.join('；'));
+    }
+    return healthy;
   }
 
   private async soActiveDefsCached(): Promise<AgentDefRecord[]> {
@@ -665,7 +679,7 @@ export class AgentDefService {
     }
   }
 
-  private prepareBuilderContext(input: MatchAgentDefInput): AgentBuilderContext {
+  private prepareBuilderContext(input: { run_id?: string }): AgentBuilderContext {
     const ctx = new AgentBuilderContext();
     ctx.session_id = '';
     ctx.work_id = '';
@@ -674,30 +688,16 @@ export class AgentDefService {
   }
 
   private async insertDefFromAgent(agentId: string, input: MatchAgentDefInput): Promise<AgentDefRecord | null> {
-    const asset = await this.soAgentAsset(agentId);
-    const binding = await this.soAgentBinding(agentId);
-    const name = asset?.agent_name || '通用问答';
-    const purpose = String(asset?.agent_purpose ?? '') || this.buildSignature(input.task_content, input.task_domain);
-    const soulId = asset?.soul_id || binding?.soul_id || '';
-    const promptTemplateId = asset?.prompt_template_id || binding?.prompt_template_id || '';
-    const skillIds = asset?.skill_ids || (binding ? this.soJsonIdArray(binding.skill_ids_json) : []);
-    const mcpIds = asset?.mcp_ids || (binding ? this.soJsonIdArray(binding.mcp_ids_json) : []);
-    const toolsJson = (skillIds.length > 0 || mcpIds.length > 0) ? JSON.stringify({ skills: skillIds, mcps: mcpIds }) : '';
-
+    const fields = await this.composeDefFieldsFromAgent(agentId, this.buildSignature(input.task_content, input.task_domain));
     const existing = await this.relationDb.selectOne(RUNTIME_AGENT_DEF_TABLE, [
       { field: 'agent_ref', operator: Operator.EQ, value: agentId },
     ]);
     if (existing) {
-      await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, [
-        { field: 'title', value: name },
-        { field: 'agent_purpose', value: purpose },
-        { field: 'prompt_template_id', value: promptTemplateId },
-        { field: 'model_id', value: asset?.model_id || '' },
-        { field: 'soul_id', value: soulId },
-        { field: 'tools_json', value: toolsJson },
-        { field: 'status', value: AgentDefStatus.Active },
-        { field: 'updated', value: IdGenerator.now() },
-      ], [
+      await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, newPatch({
+        ...fields,
+        status: AgentDefStatus.Active,
+        updated: IdGenerator.now(),
+      }), [
         { field: 'id', operator: Operator.EQ, value: existing.id },
       ]);
       this.activeDefsCacheUpdatedAt = 0;
@@ -706,15 +706,10 @@ export class AgentDefService {
     }
 
     const record = newRecord({
-      title: name,
+      ...fields,
       mode: AgentMode.Primary,
       agent_ref: agentId,
       task_signature: this.buildSignature(input.task_content, input.task_domain),
-      agent_purpose: purpose,
-      prompt_template_id: promptTemplateId,
-      model_id: asset?.model_id || '',
-      soul_id: soulId,
-      tools_json: toolsJson,
       budget_total: DEFAULT_BUDGET_TOTAL,
       status: AgentDefStatus.Active,
     });
@@ -724,6 +719,23 @@ export class AgentDefService {
     const defId = String(record[0].value);
     const row = await this.soDefRowById(defId);
     return row ? this.toDefRecord(row) : null;
+  }
+
+  /** 从源 Agent 资产组装 def 组件字段（data）：新建 def 与重建刷新共用，保证口径一致 */
+  private async composeDefFieldsFromAgent(agentId: string, fallbackPurpose: string): Promise<Record<string, unknown>> {
+    const asset = await this.soAgentAsset(agentId);
+    const binding = await this.soAgentBinding(agentId);
+    const skillIds = asset?.skill_ids || (binding ? this.soJsonIdArray(binding.skill_ids_json) : []);
+    const mcpIds = asset?.mcp_ids || (binding ? this.soJsonIdArray(binding.mcp_ids_json) : []);
+    const toolsJson = (skillIds.length > 0 || mcpIds.length > 0) ? JSON.stringify({ skills: skillIds, mcps: mcpIds }) : '';
+    return {
+      title: asset?.agent_name || '通用问答',
+      agent_purpose: String(asset?.agent_purpose ?? '') || fallbackPurpose,
+      prompt_template_id: asset?.prompt_template_id || binding?.prompt_template_id || '',
+      model_id: asset?.model_id || '',
+      soul_id: asset?.soul_id || binding?.soul_id || '',
+      tools_json: toolsJson,
+    };
   }
 
   private async soAgentAsset(agentId: string): Promise<AgentRecordLike | null> {
@@ -1131,6 +1143,170 @@ export class AgentDefService {
         agent_id: agentBizId,
       });
     }
+  }
+
+  /** 绑定事实源存活校验（data）：存在且未停用；builtin.* 前缀 Prompt 走内置目录视为有效 */
+  private async soBindingAlive(table: string, id: string): Promise<boolean> {
+    try {
+      const row = await this.relationDb.selectOne(table, [{ field: 'id', operator: Operator.EQ, value: id }]);
+      return !!row && Number(row.enable ?? 1) !== 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** def 组件健康校验（data）：agent_ref/soul/prompt/llm 绑定逐一核对事实源 */
+  async validateDefHealth(def: AgentDefRecord, _metrics?: Metrics): Promise<DefHealthReport> {
+    const issues: string[] = [];
+    if (def.agent_ref && !(await this.soBindingAlive('agent_record', def.agent_ref))) {
+      issues.push(`agent_ref 失效：源 Agent ${def.agent_ref} 不存在或已停用`);
+    }
+    if (def.soul_id && !(await this.soBindingAlive('soul_record', def.soul_id))) {
+      issues.push(`soul_id 失效：${def.soul_id}`);
+    }
+    if (def.prompt_template_id && !def.prompt_template_id.startsWith('builtin.')
+      && !(await this.soBindingAlive(PROMPT_TEMPLATE_TABLE, def.prompt_template_id))) {
+      issues.push(`prompt_template_id 失效：${def.prompt_template_id}`);
+    }
+    if (def.model_id && !(await this.soBindingAlive('llm_available_record', def.model_id))) {
+      issues.push(`model_id 失效：${def.model_id}`);
+    }
+    return { healthy: issues.length === 0, issues };
+  }
+
+  /** 定时巡检（orchestration）：失效 def 由系统发起重建并更新组件关联，重建失败才停用出池 */
+  async sweepDefHealth(input: SweepDefHealthInput, output: SweepDefHealthOutput, _context: AgentDefContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    const primaryOnly = input.primary_only !== false;
+    const rows = await this.relationDb.select(RUNTIME_AGENT_DEF_TABLE, {
+      conditions: [{ field: 'status', operator: Operator.EQ, value: 'active' }],
+    });
+    for (const row of rows) {
+      const def = this.toDefRecord(row);
+      if (primaryOnly && def.mode !== AgentMode.Primary) continue;
+      output.scanned += 1;
+      const health = await this.validateDefHealth(def, metrics);
+      if (health.healthy) continue;
+      const repaired = await this.repairDef(def, metrics, report);
+      if (repaired) output.repaired += 1; else output.disabled += 1;
+    }
+    this.activeDefsCacheUpdatedAt = 0;
+    metrics?.info?.('AgentDefService.sweepDefHealth 巡检完成', {
+      scanned: output.scanned, repaired: output.repaired, disabled: output.disabled,
+    });
+    return true;
+  }
+
+  /** 失效 def 修复（orchestration）：源 Agent 存活→清悬挂绑定走运行时回退；源 Agent 失效→重建并原地刷新组件关联 */
+  private async repairDef(def: AgentDefRecord, metrics?: Metrics, report?: Report): Promise<boolean> {
+    try {
+      const agentAlive = !def.agent_ref || await this.soBindingAlive('agent_record', def.agent_ref);
+      if (agentAlive) {
+        await this.clearInvalidBindings(def);
+        this.logger?.warn?.('AgentDefService.repairDef 悬挂绑定已清理（运行时回退默认解析）', {
+          def_id: def.id, name: def.name,
+        });
+        return true;
+      }
+      return await this.rebuildDefAgent(def, metrics, report);
+    } catch (err) {
+      metrics?.warn?.('AgentDefService.repairDef 修复失败，停用 def', {
+        def_id: def.id, error: err instanceof Error ? err.message : String(err),
+      });
+      await this.disableDef(def, '巡检修复失败');
+      return false;
+    }
+  }
+
+  /** 悬挂绑定清空（data）：逐项复核后置空失效字段，健康字段保持不动 */
+  private async clearInvalidBindings(def: AgentDefRecord): Promise<void> {
+    const patch: Record<string, unknown> = { updated: IdGenerator.now() };
+    if (def.soul_id && !(await this.soBindingAlive('soul_record', def.soul_id))) patch.soul_id = '';
+    if (def.prompt_template_id && !def.prompt_template_id.startsWith('builtin.')
+      && !(await this.soBindingAlive(PROMPT_TEMPLATE_TABLE, def.prompt_template_id))) {
+      patch.prompt_template_id = '';
+    }
+    if (def.model_id && !(await this.soBindingAlive('llm_available_record', def.model_id))) patch.model_id = '';
+    await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, newPatch(patch), [{ field: 'id', operator: Operator.EQ, value: def.id }]);
+    this.activeDefsCacheUpdatedAt = 0;
+  }
+
+  /** 源 Agent 失效的重建（orchestration）：force_new 构建新 Agent，保持 def id 原地刷新组件关联（会话亲和无感） */
+  private async rebuildDefAgent(def: AgentDefRecord, metrics?: Metrics, report?: Report): Promise<boolean> {
+    const buildInput = new BuildAgentInput();
+    buildInput.run_id = `defhealth-${IdGenerator.now()}`;
+    buildInput.task_content = def.task_signature || def.agent_purpose || def.name;
+    buildInput.task_domain = this.soSignatureDomain(def.task_signature);
+    buildInput.force_new = true;
+    const buildOutput = new BuildAgentOutput();
+    const ok = await this.components.agentBuilder?.buildAgent(
+      buildInput, buildOutput, this.prepareBuilderContext(buildInput), metrics, report,
+    );
+    if (!ok || !buildOutput.agent_id) {
+      await this.disableDef(def, '重建失败：buildAgent 未产出新 Agent');
+      return false;
+    }
+    await this.refreshDefFromAgent(def.id, buildOutput.agent_id, def.task_signature);
+    report?.emit(BusinessEvent.AgentBuilt, {
+      agent_id: buildOutput.agent_id,
+      def_id: def.id,
+      name: def.name,
+      purpose: def.agent_purpose || '',
+      reason: `组件失效重建：源 Agent ${def.agent_ref} 已失效，重建并更新 def 组件关联`,
+    });
+    this.logger?.warn?.('AgentDefService.rebuildDefAgent 重建完成，def 组件关联已更新', {
+      def_id: def.id, old_agent_ref: def.agent_ref, new_agent_ref: buildOutput.agent_id,
+    });
+    return true;
+  }
+
+  /** 重建后刷新 def 组件关联（data）：保持 def id，agent_ref 与组件字段整体换新 */
+  private async refreshDefFromAgent(defId: string, agentId: string, fallbackSignature: string): Promise<void> {
+    const fields = await this.composeDefFieldsFromAgent(agentId, fallbackSignature);
+    await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, newPatch({
+      ...fields,
+      agent_ref: agentId,
+      status: AgentDefStatus.Active,
+      updated: IdGenerator.now(),
+    }), [{ field: 'id', operator: Operator.EQ, value: defId }]);
+    this.activeDefsCacheUpdatedAt = 0;
+  }
+
+  /** 停用出池（data）：失效 def 置 disabled 并清缓存，供守卫与巡检共用 */
+  private async disableDef(def: AgentDefRecord, reason: string): Promise<void> {
+    try {
+      await this.relationDb.update(RUNTIME_AGENT_DEF_TABLE, newPatch({
+        status: AgentDefStatus.Disabled,
+        updated: IdGenerator.now(),
+      }), [{ field: 'id', operator: Operator.EQ, value: def.id }]);
+    } catch { /* 尽力而为 */ }
+    this.activeDefsCacheUpdatedAt = 0;
+    this.logger?.warn?.('AgentDefService.disableDef 组件失效，def 已停用出池', {
+      def_id: def.id, name: def.name, reason,
+    });
+  }
+
+  /** 亲和守卫出口：RunGateway 复用会话专职专家前检测到失效时调用，停用后落全量选举重建 */
+  async invalidateDefById(defId: string, reason: string, _context: AgentDefContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    const row = await this.soDefRowById(defId);
+    if (!row) return true;
+    const def = this.toDefRecord(row);
+    await this.disableDef(def, reason);
+    report?.emit(BusinessEvent.AgentDisbanded, {
+      agent_id: def.agent_ref || def.id,
+      reason: `component_invalid：${reason}`,
+    });
+    metrics?.warn?.('AgentDefService.invalidateDefById 会话专职专家组件失效，已停用待重建', {
+      def_id: def.id, name: def.name, reason,
+    });
+    return true;
+  }
+
+  /** 任务签名领域段解析（data）：'[document_reading] xxx' → 'document_reading' */
+  private soSignatureDomain(signature: string): string {
+    const m = /^\[([^\]]+)\]/.exec(signature || '');
+    return m ? m[1] : '';
   }
 
   private async soAgentOwner(agentBizId: string): Promise<{ id: string; created_by: string }> {

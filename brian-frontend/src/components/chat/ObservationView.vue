@@ -183,7 +183,8 @@ function hasPointDetail(point: TimelinePoint): boolean {
   return Boolean(
     point.memorySources?.length || point.memoryItems?.length || point.llmDetail
     || chipsOf(point).length > 0 || (point.kind === 'context' && !!pointContextRound(point))
-    || (point.type === 'context.built' && point.target === 'ctx-main-0'),
+    || (point.type === 'context.built' && point.target === 'ctx-main-0')
+    || point.evalScores || point.evalSuggestions?.length,
   )
 }
 </script>
@@ -358,6 +359,22 @@ function hasPointDetail(point: TimelinePoint): boolean {
                     <span class="obs-kv-row">输入Token <b>{{ formatTokens(point.llmDetail.tokensIn) }}</b></span>
                     <span class="obs-kv-row">输出Token <b>{{ formatTokens(point.llmDetail.tokensOut) }}</b></span>
                     <pre v-if="point.llmDetail.output" class="obs-pre obs-pre--output">{{ point.llmDetail.output }}</pre>
+                  </div>
+
+                  <!-- 评估 Agent 回复：维度评分 + 优化建议 -->
+                  <div v-if="point.evalScores || point.evalSuggestions?.length" class="obs-sub space-y-1.5">
+                    <div v-if="point.evalScores" class="flex flex-wrap gap-1">
+                      <span
+                        v-for="(val, key) in point.evalScores" :key="key"
+                        class="obs-chip obs-chip--muted font-mono"
+                      >{{ key }} {{ val }}</span>
+                    </div>
+                    <ul v-if="point.evalSuggestions?.length" class="space-y-1">
+                      <li v-for="(s, i) in point.evalSuggestions" :key="i" class="obs-msg">
+                        <span class="obs-msg-role">{{ i + 1 }}</span>
+                        <span class="obs-msg-content">{{ s }}</span>
+                      </li>
+                    </ul>
                   </div>
 
                   <!-- 上下文构建：消息列表 -->
