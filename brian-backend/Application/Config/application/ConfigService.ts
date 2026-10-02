@@ -104,6 +104,7 @@ import type {
   TestMcpProviderInput, TestMcpProviderOutput, ListMcpInput, ListMcpOutput,
   InstallMcpInput, InstallMcpOutput, StartMcpInput, StartMcpOutput,
   StopMcpInput, StopMcpOutput, UninstallMcpInput, UninstallMcpOutput,
+  UninstallMcpsInput, UninstallMcpsOutput,
   UpdateMcpInput, UpdateMcpOutput, GetMcpInput, GetMcpOutput, SoMcpInput, SoMcpOutput,
   McpContext,
 } from '@brian-agent/base';
@@ -1329,6 +1330,10 @@ export class ConfigService {
       const input = {} as ConfigMcpCoreInput;
       if (prefix.startsWith('mcp_core.regen_rate')) input.regen_rate = value as number;
       if (prefix.startsWith(PROMPT_SLOTS.MCP_MATCH)) input.prompt_template_id = value as string;
+      if (prefix.startsWith('mcp_core.score_threshold')) input.score_threshold = value as number;
+      if (prefix.startsWith('mcp_core.vector_similarity_threshold')) input.vector_similarity_threshold = value as number;
+      if (prefix.startsWith('mcp_core.match_cache_ttl_ms')) input.match_cache_ttl_ms = value as number;
+      if (prefix.startsWith('mcp_core.match_cache_capacity')) input.match_cache_capacity = value as number;
       if (prefix.startsWith('mcp_core.market_install_enabled')) input.market_install_enabled = value as boolean;
       const output = {} as McpCoreContext;
       await this.mcpCore.configMCPCore(input, {} as ConfigMcpCoreOutput, output);
@@ -1462,6 +1467,10 @@ export class ConfigService {
       else if (prefix.startsWith('info_core.context_config.base_keyword_count')) input.base_keyword_count = Number(value);
       else if (prefix.startsWith('info_core.context_config.base_random_count')) input.base_random_count = Number(value);
       else if (prefix.startsWith('info_core.context_config.random_max_percent')) input.random_max_percent = Number(value);
+      else if (prefix.startsWith('info_core.context_config.tag_relative_max_percent')) input.tag_relative_max_percent = Number(value);
+      else if (prefix.startsWith('info_core.context_config.similarity_max_percent')) input.similarity_max_percent = Number(value);
+      else if (prefix.startsWith('info_core.context_config.keyword_max_percent')) input.keyword_max_percent = Number(value);
+      else if (prefix.startsWith('info_core.context_config.keyword_score_threshold')) input.keyword_score_threshold = Number(value);
       else if (prefix.startsWith('info_core.context_config.total')) input.total = Number(value);
       else if (prefix.startsWith('info_core.context_config.enable_snapshot_persistence')) input.enable_snapshot_persistence = value ? 1 : 0;
       else if (prefix.startsWith('info_core.context_config.priority_order')) input.priority_order = String(value);
@@ -1506,6 +1515,7 @@ export class ConfigService {
       else if (prefix.startsWith('evolutor_agent.eval_schedule_interval_ms')) input.eval_schedule_interval_ms = value as number;
       else if (prefix.startsWith('evolutor_agent.eval_batch_size')) input.eval_batch_size = value as number;
       else if (prefix.startsWith('evolutor_agent.llm_id')) input.llm_id = value as string;
+      else if (prefix.startsWith('evolutor_agent.critical_disband_score')) input.critical_disband_score = value as number;
       const output = {} as EvolutorAgentContext;
       await this.evolutorAgent.configEvolutorAgent(input, {} as ConfigEvolutorAgentOutput, output);
       return;
@@ -1808,6 +1818,10 @@ export class ConfigService {
 
   async uninstallMcpProxy(input: UninstallMcpInput, output: UninstallMcpOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.mcpAccess.uninstallMcp(input, output, context, metrics, report);
+  }
+
+  async uninstallMcpsProxy(input: UninstallMcpsInput, output: UninstallMcpsOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
+    return this.mcpAccess.uninstallMcps(input, output, context, metrics, report);
   }
 
   async updateMcpProxy(input: UpdateMcpInput, output: UpdateMcpOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {

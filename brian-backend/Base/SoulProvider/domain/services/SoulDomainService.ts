@@ -34,8 +34,8 @@ export function resolveTargetConditions(params: {
 
 export function buildKeywordConditions(keyword: string): Condition[] {
   return [
-    { field: 'soul_content', operator: Operator.LIKE, value: `%${keyword}%` },
-    { field: 'soul_brief', operator: Operator.LIKE, value: `%${keyword}%`, logic: Logic.OR },
+    { field: 'content', operator: Operator.LIKE, value: `%${keyword}%` },
+    { field: 'brief', operator: Operator.LIKE, value: `%${keyword}%`, logic: Logic.OR },
   ];
 }
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.213Z",
+  "updated_at": "2026-10-01T15:41:06.224Z",
   "shard": "application-userprofile",
   "layer": "Application",
   "module": "UserProfile",
@@ -280,19 +280,6 @@
     },
     {
       "id": "m-userprofile-0022",
-      "signature": "boolean saveProfileRecord(sessionId: string | undefined, newVersion: number, summary: string, recordId: string, now: number): Promise<void>",
-      "name": "saveProfileRecord",
-      "category": "data",
-      "layer": "Application",
-      "module": "UserProfile",
-      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
-      "description": "写入/新增：画像 / record（操作关系数据库）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-userprofile-0023",
       "signature": "boolean saveDimensionData(recordId: string, dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }>, now: number): Promise<void>",
       "name": "saveDimensionData",
       "category": "data",
@@ -305,7 +292,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-userprofile-0024",
+      "id": "m-userprofile-0023",
       "signature": "boolean saveWriterProfile(sessionId: string, metrics?: Metrics): Promise<void>",
       "name": "saveWriterProfile",
       "category": "data",
@@ -313,6 +300,19 @@
       "module": "UserProfile",
       "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
       "description": "写入/新增：写作 / 画像",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-userprofile-0024",
+      "signature": "boolean saveProfileRecord(sessionId: string | undefined, newVersion: number, summary: string, changeSummary: string, recordId: string, now: number): Promise<void>",
+      "name": "saveProfileRecord",
+      "category": "data",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "写入/新增：画像 / record / change_summary（操作关系数据库）",
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
@@ -631,19 +631,6 @@
     },
     {
       "id": "m-userprofile-0049",
-      "signature": "boolean buildFallbackSummary(dimensions: Record<string, unknown>, writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string; } | null): string",
-      "name": "buildFallbackSummary",
-      "category": "data",
-      "layer": "Application",
-      "module": "UserProfile",
-      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
-      "description": "构建/初始化：fallback / 摘要（序列化输出）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-userprofile-0050",
       "signature": "boolean analyzeDimensionWithLLM(directionKey: string, directionName: string, conversationText: string, dirConfig: Record<string, unknown>, config: Record<string, unknown>, metrics?: Metrics): Promise<{ value: unknown; confidence: number; evidence: unknown[] }>",
       "name": "analyzeDimensionWithLLM",
       "category": "algorithm",
@@ -651,6 +638,19 @@
       "module": "UserProfile",
       "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
       "description": "处理 analyze / dimension / 大模型（纯计算，无外部 IO）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-userprofile-0050",
+      "signature": "boolean buildFallbackSummary(dimensions: Record<string, unknown>, writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string; } | null): string",
+      "name": "buildFallbackSummary",
+      "category": "data",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "构建/初始化：fallback 摘要（维度值可读 digest，无截断拼接）",
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
@@ -696,19 +696,6 @@
     },
     {
       "id": "m-userprofile-0054",
-      "signature": "boolean buildSummaryFromDimensions(dimData: Array<{ direction_key: string; value: string; confidence: number }>, enabledDirs: Array<Record<string, unknown>>): string",
-      "name": "buildSummaryFromDimensions",
-      "category": "data",
-      "layer": "Application",
-      "module": "UserProfile",
-      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
-      "description": "构建/初始化：摘要 / dimensions（序列化输出，反序列化）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-userprofile-0055",
       "signature": "boolean cleanupOldVersions(retentionVersions: number, sessionId?: string, metrics?: Metrics): Promise<void>",
       "name": "cleanupOldVersions",
       "category": "data",
@@ -721,7 +708,59 @@
       "replaced_by": null
     },
     {
+      "id": "m-userprofile-0055",
+      "signature": "boolean buildSummaryFromDimensions(dimData: Array<{ direction_key: string; value: string; confidence: number }>, enabledDirs: Array<Record<string, unknown>>): string",
+      "name": "buildSummaryFromDimensions",
+      "category": "data",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "构建/初始化：画像摘要（维度值可读 digest，超长以省略号收尾）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
       "id": "m-userprofile-0056",
+      "signature": "boolean buildChangeSummary(newVersion: number, dimensionData: Array<{ direction_key: string; value: string }>, prevDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>, enabledDirs: Array<Record<string, unknown>>): string",
+      "name": "buildChangeSummary",
+      "category": "data",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "构建/初始化：change_summary（与上一版维度值 JSON 比对得出更新维度清单）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-userprofile-0057",
+      "signature": "boolean formatValueDigest(val: unknown, maxChars = 80, depth = 0): string",
+      "name": "formatValueDigest",
+      "category": "algorithm",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "格式化：维度值为可读 digest（对象展开为 key：value，超长省略号收尾）",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-userprofile-0058",
+      "signature": "boolean truncateWithEllipsis(text: string, maxChars: number): string",
+      "name": "truncateWithEllipsis",
+      "category": "algorithm",
+      "layer": "Application",
+      "module": "UserProfile",
+      "location": "brian-backend/Application/UserProfile/application/UserProfileService.ts",
+      "description": "格式化：文本超长截断并以省略号收尾",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-userprofile-0059",
       "signature": "boolean init(): Promise<void>",
       "name": "init",
       "category": "data",
@@ -735,11 +774,11 @@
     }
   ],
   "stats": {
-    "total": 56,
+    "total": 59,
     "by_category": {
-      "algorithm": 7,
+      "algorithm": 9,
       "orchestration": 20,
-      "data": 29
+      "data": 30
     }
   }
 }

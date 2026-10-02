@@ -8,7 +8,7 @@ export type {
   TokenUsage,
 } from '@brian-agent/base';
 
-export { BusinessEvent, TimelineItemKind } from '@brian-agent/base';
+export { BusinessEvent } from '@brian-agent/base';
 
 export { AbortedError } from '@brian-agent/base';
 

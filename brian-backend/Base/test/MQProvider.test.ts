@@ -68,7 +68,7 @@ describe('MQProvider', () => {
     mq = new MQAccess(relationDb);
     await mq.initialize();
 
-    await relationDb.update('mq_config', [
+    await relationDb.update('mq_config_record', [
       { field: 'config_value', value: '0' },
       { field: 'updated', value: Date.now() },
     ], [{ field: 'config_key', operator: Operator.EQ, value: 'retry_base_delay' }]);
@@ -158,7 +158,7 @@ describe('MQProvider', () => {
         output, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: output.id }],
       });
       expect(rows.length).toBe(1);
@@ -172,7 +172,7 @@ describe('MQProvider', () => {
         output, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: output.id }],
       });
       expect(rows[0].retry_count).toBe(0);
@@ -185,7 +185,7 @@ describe('MQProvider', () => {
         output, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: output.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_PENDING);
@@ -198,7 +198,7 @@ describe('MQProvider', () => {
         output, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: output.id }],
       });
       expect(typeof rows[0].created).toBe('number');
@@ -215,7 +215,7 @@ describe('MQProvider', () => {
         output, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: output.id }],
       });
       expect(rows[0].payload).toBe(JSON.stringify(payload));
@@ -233,7 +233,7 @@ describe('MQProvider', () => {
         out2, new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message');
+      const rows = await relationDb.select('queue_message_record');
       expect(rows.length).toBe(2);
       const queues = rows.map((r) => r.queue);
       expect(queues).toContain('queue-a');
@@ -357,7 +357,7 @@ describe('MQProvider', () => {
 
       await mq.consumeMQ({ queue: 'task' } as ConsumeMQInput, new ConsumeMQOutput(), new MQContext());
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_PROCESSING);
@@ -550,7 +550,7 @@ describe('MQProvider', () => {
       expect(ok).toBe(true);
       expect(output.affected_rows).toBe(1);
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: consumeOut.message!.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_COMPLETED);
@@ -565,7 +565,7 @@ describe('MQProvider', () => {
         sendOut, new MQContext(),
       );
 
-      const rowsBefore = await relationDb.select('queue_message', {
+      const rowsBefore = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       const updatedBefore = rowsBefore[0].updated as number;
@@ -579,7 +579,7 @@ describe('MQProvider', () => {
         new AckMQOutput(), new MQContext(),
       );
 
-      const rowsAfter = await relationDb.select('queue_message', {
+      const rowsAfter = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rowsAfter[0].updated).toBeGreaterThan(updatedBefore);
@@ -658,7 +658,7 @@ describe('MQProvider', () => {
       expect(output.status).toBe(MESSAGE_STATUS_PENDING);
       expect(output.retry_count).toBe(1);
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: consumeOut.message!.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_PENDING);
@@ -705,7 +705,7 @@ describe('MQProvider', () => {
       expect(nackFinal.status).toBe(MESSAGE_STATUS_FAILED);
       expect(nackFinal.retry_count).toBe(3);
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_FAILED);
@@ -737,7 +737,7 @@ describe('MQProvider', () => {
         new AckMQOutput(), new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_COMPLETED);
@@ -777,7 +777,7 @@ describe('MQProvider', () => {
 
       const id = 'test-zero-retries';
       const now = Date.now();
-      await relationDb.insert('queue_message', [
+      await relationDb.insert('queue_message_record', [
         { field: 'id', value: id },
         { field: 'created', value: now },
         { field: 'updated', value: now },
@@ -953,7 +953,7 @@ describe('MQProvider', () => {
     it('enabled 状态应持久化到 mq_config 表', async () => {
       await mq.enableMQ({ enable: false } as EnableMQInput, new EnableMQOutput(), new MQContext());
 
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'enabled' },
         ],
@@ -1091,7 +1091,7 @@ describe('MQProvider', () => {
         new AckMQOutput(), new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_COMPLETED);
@@ -1115,7 +1115,7 @@ describe('MQProvider', () => {
         );
         if (!consumeOut.message) {
 
-          const rows = await relationDb.select('queue_message', {
+          const rows = await relationDb.select('queue_message_record', {
             conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
           });
           expect(String(rows[0].status)).toBe(MESSAGE_STATUS_FAILED);
@@ -1132,7 +1132,7 @@ describe('MQProvider', () => {
 
       expect(status).toBe(MESSAGE_STATUS_FAILED);
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_FAILED);
@@ -1162,7 +1162,7 @@ describe('MQProvider', () => {
         new AckMQOutput(), new MQContext(),
       );
 
-      const rows = await relationDb.select('queue_message', {
+      const rows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(rows[0].status).toBe(MESSAGE_STATUS_COMPLETED);
@@ -1251,7 +1251,7 @@ describe('MQProvider', () => {
 
   describe('配置持久化', () => {
     it('initialize 后应写入默认配置到 mq_config 表', async () => {
-      const rows = await relationDb.select('mq_config');
+      const rows = await relationDb.select('mq_config_record');
       expect(rows.length).toBeGreaterThanOrEqual(4);
       const keys = rows.map((r) => r.config_key);
       expect(keys).toContain('enabled');
@@ -1261,7 +1261,7 @@ describe('MQProvider', () => {
     });
 
     it('默认配置的 enabled 应为 true', async () => {
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'enabled' },
         ],
@@ -1270,7 +1270,7 @@ describe('MQProvider', () => {
     });
 
     it('默认配置的 default_priority 应为 5', async () => {
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'default_priority' },
         ],
@@ -1279,7 +1279,7 @@ describe('MQProvider', () => {
     });
 
     it('默认配置的 default_max_retries 应为 3', async () => {
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'default_max_retries' },
         ],
@@ -1288,7 +1288,7 @@ describe('MQProvider', () => {
     });
 
     it('默认配置的 message_ttl 应为 86400', async () => {
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'message_ttl' },
         ],
@@ -1302,7 +1302,7 @@ describe('MQProvider', () => {
 
       await mq.initialize();
 
-      const rows = await relationDb.select('mq_config', {
+      const rows = await relationDb.select('mq_config_record', {
         conditions: [
           { field: 'config_key', operator: Operator.EQ, value: 'enabled' },
         ],
@@ -1314,7 +1314,7 @@ describe('MQProvider', () => {
   describe('表结构', () => {
     it('应为 queue_message 表创建必要的索引', async () => {
       const indexes = relationDb.queryRaw<{ name: string }>(
-        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='queue_message'`,
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='queue_message_record'`,
       );
       const indexNames = indexes.map((i) => i.name);
       expect(indexNames.some((n) => n.includes('created'))).toBe(true);
@@ -1325,7 +1325,7 @@ describe('MQProvider', () => {
 
     it('mq_config 表的 config_key 应为主键', async () => {
       const tableInfo = relationDb.queryRaw<{ cid: number; name: string; pk: number }>(
-        `PRAGMA table_info("mq_config")`,
+        `PRAGMA table_info("mq_config_record")`,
       );
       const pkColumn = tableInfo.find((c) => c.pk > 0);
       expect(pkColumn).toBeDefined();
@@ -1334,7 +1334,7 @@ describe('MQProvider', () => {
 
     it('queue_message 表的 id 应为主键', async () => {
       const tableInfo = relationDb.queryRaw<{ cid: number; name: string; pk: number }>(
-        `PRAGMA table_info("queue_message")`,
+        `PRAGMA table_info("queue_message_record")`,
       );
       const pkColumn = tableInfo.find((c) => c.pk > 0);
       expect(pkColumn).toBeDefined();
@@ -1441,7 +1441,7 @@ describe('MQProvider', () => {
         sendOut, new MQContext(),
       );
 
-      const beforeRows = await relationDb.select('queue_message', {
+      const beforeRows = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       const initialUpdated = beforeRows[0].updated as number;
@@ -1451,7 +1451,7 @@ describe('MQProvider', () => {
       const consumeOut = new ConsumeMQOutput();
       await mq.consumeMQ({ queue: 'task' } as ConsumeMQInput, consumeOut, new MQContext());
 
-      const afterConsume = await relationDb.select('queue_message', {
+      const afterConsume = await relationDb.select('queue_message_record', {
         conditions: [{ field: 'id', operator: Operator.EQ, value: sendOut.id }],
       });
       expect(afterConsume[0].updated).toBeGreaterThan(initialUpdated);

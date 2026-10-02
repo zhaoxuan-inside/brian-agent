@@ -8,6 +8,7 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
+| `setEmbedFn` | `fn: (text: string, context?: any) => Promise<number[]>` | `void` | — |
 | `initialize` | `` | `Promise<void>` | — |
 | `addAgent` | `i: AddAgentInput, o: AddAgentOutput, c: AgentLibraryContext, metrics?: Metrics, report?...` | `Promise<boolean>` | — |
 | `matchAgent` | `i: MatchAgentInput, o: MatchAgentOutput, c: AgentLibraryContext, metrics?: Metrics, rep...` | `Promise<boolean>` | — |

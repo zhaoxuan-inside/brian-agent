@@ -164,10 +164,9 @@ export class ConfigSkillCoreOutput extends Output {
   auto_generate_enabled = true;
 }
 
-export const SKILL_CORE_CONFIG_TABLE = 'skill_core_config';
+export const SKILL_CORE_CONFIG_TABLE = 'skill_core_config_record';
 
-export const AGENT_SKILL_TABLE = 'agent_skill';
+export const AGENT_SKILL_TABLE = 'agent_skill_org';
 
-export const SKILL_OPT_RULE_TABLE = 'skill_opt_rule';
+export const SKILL_OPT_RULE_TABLE = 'skill_opt_rule_record';
 
-export const SKILL_USAGE_TABLE = 'skill_core_usage';

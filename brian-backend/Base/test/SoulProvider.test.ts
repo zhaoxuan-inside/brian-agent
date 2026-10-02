@@ -268,7 +268,7 @@ describe('SoulProvider', () => {
 
       const delInput = new DelSoulInput();
       delInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: 'DeleteByCondition' },
+        { field: 'brief', operator: Operator.EQ, value: 'DeleteByCondition' },
       ];
       const delOutput = new DelSoulOutput();
       await soulAccess.delSoul(delInput, delOutput, new SoulContext());
@@ -416,7 +416,7 @@ describe('SoulProvider', () => {
 
       const updateInput = new UpdateSoulInput();
       updateInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: 'CondUpdate' },
+        { field: 'brief', operator: Operator.EQ, value: 'CondUpdate' },
       ];
       updateInput.data = { soul_brief: 'UpdatedByCond' };
       const updateOutput = new UpdateSoulOutput();
@@ -555,7 +555,7 @@ describe('SoulProvider', () => {
 
       const getInput = new GetSoulInput();
       getInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: 'CondGetTarget' },
+        { field: 'brief', operator: Operator.EQ, value: 'CondGetTarget' },
       ];
       const getOut = new GetSoulOutput();
       await soulAccess.soSoulById(getInput, getOut, new SoulContext());
@@ -585,8 +585,8 @@ describe('SoulProvider', () => {
       expect(getOut.soul).toHaveProperty('id');
       expect(getOut.soul).toHaveProperty('created');
       expect(getOut.soul).toHaveProperty('updated');
-      expect(getOut.soul).toHaveProperty('soul_content');
-      expect(getOut.soul).toHaveProperty('soul_brief');
+      expect(getOut.soul).toHaveProperty('content');
+      expect(getOut.soul).toHaveProperty('brief');
       expect(getOut.soul).toHaveProperty('soul_usage');
       expect(getOut.soul).toHaveProperty('enable');
     });
@@ -668,7 +668,7 @@ describe('SoulProvider', () => {
 
       const soInput = new SoSoulInput();
       soInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: 'EnabledSoul' },
+        { field: 'brief', operator: Operator.EQ, value: 'EnabledSoul' },
       ];
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
@@ -706,7 +706,7 @@ describe('SoulProvider', () => {
       const soInput = new SoSoulInput();
       soInput.keyword = '翻译';
       soInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: 'Target' },
+        { field: 'brief', operator: Operator.EQ, value: 'Target' },
       ];
       const soOut = new SoSoulOutput();
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
@@ -1402,7 +1402,7 @@ describe('SoulProvider', () => {
       const soOut = new SoSoulOutput();
       const soInput = new SoSoulInput();
       soInput.conditions = [
-        { field: 'soul_brief', operator: Operator.EQ, value: uniqueId },
+        { field: 'brief', operator: Operator.EQ, value: uniqueId },
       ];
       await soulAccess.soSoul(soInput, soOut, new SoulContext());
       expect(soOut.total).toBe(1);

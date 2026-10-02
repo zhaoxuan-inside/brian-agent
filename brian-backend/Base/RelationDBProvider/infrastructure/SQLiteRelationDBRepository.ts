@@ -39,7 +39,7 @@ export class SQLiteRelationDBRepository
 
   private ensureConfigTable(): void {
     this.exec(`
-      CREATE TABLE IF NOT EXISTS "relationdb_config" (
+      CREATE TABLE IF NOT EXISTS "relationdb_config_record" (
         "config_key"   TEXT    NOT NULL PRIMARY KEY,
         "config_value" TEXT    NOT NULL,
         "value_type"   TEXT    NOT NULL,

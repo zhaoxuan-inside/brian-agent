@@ -2,7 +2,6 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import {
   SKILL_CORE_CONFIG_TABLE,
     SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
 } from '../domain/types';
 
 export class SkillCoreSchemaInitializer {
@@ -10,6 +9,8 @@ export class SkillCoreSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   init(): void {
+    // ADR-012:老化规则表改名(幂等)
+    try { this.relationDb.executeRaw(`ALTER TABLE "skill_opt_rule" RENAME TO "${SKILL_OPT_RULE_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_CORE_CONFIG_TABLE}" (
@@ -37,6 +38,9 @@ export class SkillCoreSchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "similarity_threshold" REAL NOT NULL DEFAULT 0.7`);
+    } catch { /* 列已存在 */ }
 
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${SKILL_CORE_CONFIG_TABLE}" ADD COLUMN "github_token" TEXT NOT NULL DEFAULT ''`);
@@ -58,19 +62,6 @@ export class SkillCoreSchemaInitializer {
       )
     `);
 
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id"          TEXT    NOT NULL PRIMARY KEY,
-        "created"     INTEGER NOT NULL,
-        "updated"     INTEGER NOT NULL,
-        "agent_id"    TEXT    NOT NULL,
-        "skill_id"    TEXT    NOT NULL,
-        "usage_date"  TEXT    NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${SKILL_USAGE_TABLE}_agent_skill" ON "${SKILL_USAGE_TABLE}" ("agent_id", "skill_id")`,
-    );
+    // ADR-012:skill_core_usage 已退役,用量统一入 TraceBase(usage_event_record / skill_usage_org)
   }
 }

@@ -69,18 +69,18 @@ describe.skipIf(!LIVE)('SkillCore 全真瀑布：磁盘使用分析（BRIAN_LIVE
     });
     skillCore = new SkillCoreAccess(relationDb, skillAccess, tracedLlm as unknown as LLMAccess, promptsAccess);
 
-    const tplRows = await relationDb.select('prompt_template', [
+    const tplRows = await relationDb.select('prompt_template_record', [
       { field: 'prompt_template_title', operator: 'LIKE', value: '%Skill 匹配%' },
     ]);
     console.log('[模板诊断]', JSON.stringify(tplRows.map((r) => ({
       id: String(r['id']).slice(0, 8),
       title: r['prompt_template_title'],
       sys: r['is_system'],
-      len: String(r['prompt_template'] ?? '').length,
+      len: String(r['prompt_template_record'] ?? '').length,
       seed: String(r['seed_hash'] ?? '').slice(0, 8),
     }))));
 
-    await relationDb.update('skill_core_config', [
+    await relationDb.update('skill_core_config_record', [
       { field: 'prompt_template_id', value: '' },
       { field: 'updated', value: Date.now() },
     ], []);

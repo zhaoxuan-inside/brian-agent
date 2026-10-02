@@ -21,7 +21,6 @@ export {
   SOUL_CORE_CONFIG_TABLE,
   AGENT_SOUL_TABLE,
   SOUL_OPT_RULE_TABLE,
-  SOUL_CORE_USAGE_TABLE,
 } from './domain/types';
 
 export type {

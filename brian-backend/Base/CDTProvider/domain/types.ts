@@ -2,7 +2,7 @@ import { Input, Context, Output } from '../../shared/base';
 
 export class CDTContext extends Context {}
 
-export const CDT_CONFIG_TABLE = 'cdt_config';
+export const CDT_CONFIG_TABLE = 'cdt_config_record';
 
 export const CDT_DEFAULT_PORT = 9222;
 

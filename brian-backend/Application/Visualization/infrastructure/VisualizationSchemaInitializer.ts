@@ -30,6 +30,17 @@ export class VisualizationSchemaInitializer {
       )`,
     );
 
+    for (const [col, ddl] of [
+      ['tag_graph_repulsion', `INTEGER DEFAULT ${DEFAULT_GRAPH_REPULSION}`],
+      ['tag_graph_spring_strength', `REAL DEFAULT ${DEFAULT_GRAPH_SPRING_STRENGTH}`],
+      ['tag_graph_show_labels', 'INTEGER DEFAULT 1'],
+      ['keyword_graph_repulsion', `INTEGER DEFAULT ${DEFAULT_GRAPH_REPULSION}`],
+      ['keyword_graph_spring_strength', `REAL DEFAULT ${DEFAULT_GRAPH_SPRING_STRENGTH}`],
+      ['keyword_graph_show_labels', 'INTEGER DEFAULT 1'],
+    ] as const) {
+      try { this.relationDb.executeRaw(`ALTER TABLE ${VISUALIZATION_CONFIG_TABLE} ADD COLUMN ${col} ${ddl}`); } catch { /* 列已存在 */ }
+    }
+
     await this.insertDefaultConfig();
   }
 

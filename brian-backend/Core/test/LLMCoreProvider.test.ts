@@ -10,6 +10,7 @@ import {
   Operator,
   IdGenerator,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   LLMCoreAccess,
   LLMCoreContext,
@@ -24,9 +25,8 @@ import {
   RecordLLMUsageInput,
   RecordLLMUsageOutput,
   LLM_PROVIDER_QUOTA_TABLE,
-  LLM_CORE_USAGE_TABLE,
   LLM_CORE_CONFIG_TABLE,
-  AGENT_LLM_TABLE,
+  AGENT_RECORD_TABLE,
 } from '../LLMCoreProvider';
 import { ValidationError, NotFoundError } from '../shared/errors';
 
@@ -43,6 +43,18 @@ describe('LLMCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
+    // ADR-012:LLM 绑定归 agent_record,测试库补建该表
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS "agent_record" (
+      "id" TEXT PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
+      "title" TEXT NOT NULL DEFAULT '', "brief" TEXT DEFAULT '', "type" TEXT NOT NULL DEFAULT 'WORKER',
+      "strategy_id" TEXT NOT NULL DEFAULT '', "soul_id" TEXT NOT NULL DEFAULT '',
+      "llm_id" TEXT NOT NULL DEFAULT '',
+      "skill_ids_json" TEXT NOT NULL DEFAULT '[]', "mcp_ids_json" TEXT NOT NULL DEFAULT '[]',
+      "prompt_template_id" TEXT NOT NULL DEFAULT '', "task_signature" TEXT NOT NULL DEFAULT '',
+      "eval_score" INTEGER NOT NULL DEFAULT 50, "enable" INTEGER NOT NULL DEFAULT 1,
+      "created_by" TEXT NOT NULL DEFAULT 'user'
+    )`);
     llmAccess = new LLMAccess(relationDb);
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
@@ -70,7 +82,7 @@ describe('LLMCoreProvider', () => {
 
     it('should return from cache when available and regen allows', async () => {
       const now = IdGenerator.now();
-      await relationDb.insert('llm_available', [
+      await relationDb.insert('llm_available_record', [
         { field: 'id', value: 'llm-1' },
         { field: 'created', value: now },
         { field: 'updated', value: now },
@@ -80,11 +92,10 @@ describe('LLMCoreProvider', () => {
         { field: 'llm_type', value: 'CHAT' },
         { field: 'enable', value: 1 },
       ]);
-      await relationDb.insert(AGENT_LLM_TABLE, [
-        { field: 'id', value: 'cache-1' },
+      await relationDb.insert(AGENT_RECORD_TABLE, [
+        { field: 'id', value: 'agent-cached' },
         { field: 'created', value: now },
         { field: 'updated', value: now },
-        { field: 'agent_id', value: 'agent-cached' },
         { field: 'llm_id', value: 'llm-1' },
       ]);
       await relationDb.delete(LLM_CORE_CONFIG_TABLE, []);
@@ -109,11 +120,10 @@ describe('LLMCoreProvider', () => {
     it('绑定失效（LLM 已从 DB 删除）时清除缓存重新匹配，无可用模型返回 false', async () => {
       const now = IdGenerator.now();
 
-      await relationDb.insert(AGENT_LLM_TABLE, [
-        { field: 'id', value: 'cache-stale' },
+      await relationDb.insert(AGENT_RECORD_TABLE, [
+        { field: 'id', value: 'agent-stale' },
         { field: 'created', value: now },
         { field: 'updated', value: now },
-        { field: 'agent_id', value: 'agent-stale' },
         { field: 'llm_id', value: 'llm-gone' },
       ]);
       await relationDb.delete(LLM_CORE_CONFIG_TABLE, []);
@@ -135,10 +145,12 @@ describe('LLMCoreProvider', () => {
       expect(ok).toBe(false);
       expect(output.error).toContain('未找到可用的');
 
-      const rows = await relationDb.select(AGENT_LLM_TABLE, {
-        conditions: [{ field: 'agent_id', operator: Operator.EQ, value: 'agent-stale' }],
+      // ADR-012:绑定失效后 agent_record.llm_id 清空(行保留)
+      const rows = await relationDb.select(AGENT_RECORD_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: 'agent-stale' }],
       });
-      expect(rows.length).toBe(0);
+      expect(rows.length).toBe(1);
+      expect(String(rows[0].llm_id ?? '')).toBe('');
     });
 
     it('should return false and error when no LLMs available and not cached', async () => {
@@ -155,7 +167,7 @@ describe('LLMCoreProvider', () => {
 
     it('根据 llm_type 精确隔离文本模型与向量模型', async () => {
       const now = IdGenerator.now();
-      await relationDb.insert('llm_available', [
+      await relationDb.insert('llm_available_record', [
         { field: 'id', value: 'llm-embed-only' },
         { field: 'created', value: now },
         { field: 'updated', value: now },

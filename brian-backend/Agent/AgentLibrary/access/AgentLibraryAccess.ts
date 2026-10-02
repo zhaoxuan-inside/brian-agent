@@ -37,6 +37,10 @@ export class AgentLibraryAccess {
     this.service = AopProxy.wrap(raw, { logger });
   }
 
+  setEmbedFn(fn: (text: string, context?: any) => Promise<number[]>): void {
+    this.service.setEmbedFn(fn);
+  }
+
   async initialize(): Promise<void> {
     await this.initPromise;
   }

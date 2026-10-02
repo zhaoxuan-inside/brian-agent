@@ -46,7 +46,7 @@ export function useChatStream() {
     chatUi.beginRunScope(opts.botMsgId)
     sessionStore.setStreaming(true)
     chatUi.resetPlanning()
-    chatUi.resetAgentStatus()
+    chatUi.resetObservation()
     try {
       const abortCtrl = new AbortController()
       sessionStore.setCancelController(abortCtrl)

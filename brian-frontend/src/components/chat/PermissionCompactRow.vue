@@ -23,9 +23,9 @@ function formatTime(ts?: number) {
 <template>
   <div class="flex justify-end">
     <button
-      class="group flex items-center gap-2 max-w-[85%] pl-2.5 pr-1.5 py-1 rounded-full border text-xs transition-all
-        bg-apple-gray-50 dark:bg-apple-gray-800/60 border-apple-gray-200 dark:border-apple-gray-700
-        hover:border-brian-blue/40 hover:bg-brian-blue/5"
+      class="group flex items-center gap-2 max-w-[85%] pl-2.5 pr-1.5 py-1 rounded-chat-pill border text-xs transition-all
+        bg-chat-surface-2 border-chat-hairline
+        hover:border-chat-primary/40 hover:bg-chat-primary/10"
       title="点击查看思考过程"
       @click="emit('view')"
     >
@@ -33,23 +33,23 @@ function formatTime(ts?: number) {
         :is="isAllowed ? ShieldCheck : ShieldX"
         :size="13"
         class="flex-shrink-0"
-        :class="isAllowed ? 'text-success-green' : 'text-error-red'"
+        :class="isAllowed ? 'text-chat-success' : 'text-chat-error'"
       />
-      <span class="text-apple-gray-500 dark:text-apple-gray-400 truncate">
+      <span class="text-chat-ink-subtle truncate">
         {{ permission.toolId }}
       </span>
       <span
-        class="flex-shrink-0 px-1.5 py-0.5 rounded-full text-4xs font-medium"
+        class="flex-shrink-0 px-1.5 py-0.5 rounded-chat-pill text-4xs font-medium"
         :class="isAllowed
-          ? 'bg-success-green/10 text-success-green'
-          : 'bg-error-red/10 text-error-red'"
+          ? 'bg-chat-success/10 text-chat-success'
+          : 'bg-chat-error/10 text-chat-error'"
       >
         {{ isAllowed ? '已允许' : '已拒绝' }}
       </span>
-      <span v-if="formatTime(permission.answeredAt || permission.askedAt)" class="flex-shrink-0 text-4xs text-apple-gray-300 hidden sm:inline">
+      <span v-if="formatTime(permission.answeredAt || permission.askedAt)" class="flex-shrink-0 text-4xs text-chat-ink-tertiary hidden sm:inline">
         {{ formatTime(permission.answeredAt || permission.askedAt) }}
       </span>
-      <span class="flex-shrink-0 flex items-center gap-0.5 text-4xs text-brian-blue opacity-70 group-hover:opacity-100">
+      <span class="flex-shrink-0 flex items-center gap-0.5 text-4xs text-chat-primary-hover opacity-70 group-hover:opacity-100">
         思考过程
         <ChevronRight :size="11" />
       </span>

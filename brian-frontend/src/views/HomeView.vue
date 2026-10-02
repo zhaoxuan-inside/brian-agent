@@ -343,9 +343,9 @@ onUnmounted(() => {
               </g>
             </svg>
             <div class="flex flex-wrap items-center justify-center gap-x-7 gap-y-1 px-4 py-3 border-t border-apple-gray-200/60 dark:border-apple-gray-700/60 text-2xs text-apple-gray-500 dark:text-apple-gray-400">
-              <span><i class="home-legend-dot" style="border-color:#007AFF"></i>提问 / 回答</span>
-              <span><i class="home-legend-dot" style="border-color:#AF52DE"></i>引用关系（可勾选）</span>
-              <span><i class="home-legend-dot" style="border-color:#FF9500"></i>Pin（永久生效）</span>
+              <span><i class="home-legend-dot" style="border-color:#cc785c"></i>提问 / 回答</span>
+              <span><i class="home-legend-dot" style="border-color:#5db8a6"></i>引用关系（可勾选）</span>
+              <span><i class="home-legend-dot" style="border-color:#d4a017"></i>Pin（永久生效）</span>
             </div>
           </div>
 
@@ -382,7 +382,7 @@ onUnmounted(() => {
         </p>
 
         <div v-reveal class="home-shot mt-10 motion-safe:home-floaty">
-          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-violet-500/10 text-violet-500 border border-violet-500/30">涌现图 · Tag Graph</span>
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-success-green/10 text-success-green border border-success-green/30">涌现图 · Tag Graph</span>
           <GraphShot
             class="pt-11" :nodes="TAG_GRAPH.nodes" :edges="TAG_GRAPH.edges"
             breadcrumb="涌现" active-tab="涌现"
@@ -395,7 +395,7 @@ onUnmounted(() => {
         </p>
 
         <div v-reveal class="home-shot mt-9 motion-safe:home-floaty" style="animation-delay:1.5s">
-          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">关键词图 · Keyword Graph</span>
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-2xs bg-warning-orange/10 text-warning-orange border border-warning-orange/30">关键词图 · Keyword Graph</span>
           <GraphShot
             class="pt-11" :nodes="KEYWORD_GRAPH.nodes" :edges="KEYWORD_GRAPH.edges"
             breadcrumb="关键词图" active-tab="关键词图"
@@ -644,65 +644,65 @@ onUnmounted(() => {
 <style scoped>
 .home-wrap { max-width: 1140px; margin-left: auto; margin-right: auto; padding-left: 24px; padding-right: 24px; }
 
-.home-grad { background: linear-gradient(90deg, #007AFF, #AF52DE, #32ADE6); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.home-eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.18em; color: #007AFF; }
+.home-grad { background: linear-gradient(90deg, #cc785c, #5db8a6, #e8a55a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.home-eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.18em; color: #cc785c; }
 .home-h2 { margin-top: 10px; font-size: clamp(24px, 3.2vw, 36px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
-.home-em { font-style: normal; color: #007AFF; }
-.home-sub { margin-top: 14px; color: #8E8E93; font-size: 15.5px; line-height: 1.85; }
-.dark .home-sub { color: #98989D; }
-.dark .home-eyebrow, .dark .home-em { color: #4DA3FF; }
+.home-em { font-style: normal; color: #cc785c; }
+.home-sub { margin-top: 14px; color: #8e8b82; font-size: 15.5px; line-height: 1.85; }
+.dark .home-sub { color: #a09d96; }
+.dark .home-eyebrow, .dark .home-em { color: #d98b70; }
 
-.home-shot { border: 1px solid rgba(209, 209, 214, 0.8); border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.08); }
-.dark .home-shot { border-color: rgba(58, 58, 60, 0.9); background: #1C1C1E; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); }
+.home-shot { border: 1px solid rgba(214, 206, 192, 0.9); border-radius: 16px; overflow: hidden; background: #faf9f5; box-shadow: 0 24px 60px rgba(28, 25, 23, 0.08); }
+.dark .home-shot { border-color: rgba(58, 56, 51, 0.9); background: #181715; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); }
 
 .home-bubble { display: inline-block; max-width: 88%; padding: 11px 16px; border-radius: 14px; font-size: 15px; line-height: 1.6; }
-.home-bubble-me { background: rgba(0, 122, 255, 0.12); border: 1px solid rgba(0, 122, 255, 0.3); }
+.home-bubble-me { background: rgba(204, 120, 92, 0.12); border: 1px solid rgba(204, 120, 92, 0.3); }
 .home-bubble-ai { background: rgba(0, 0, 0, 0.04); border: 1px solid rgba(209, 209, 214, 0.6); }
-.dark .home-bubble-ai { background: rgba(255, 255, 255, 0.06); border-color: rgba(58, 58, 60, 0.9); }
+.dark .home-bubble-ai { background: rgba(255, 255, 255, 0.06); border-color: rgba(58, 56, 51, 0.9); }
 
-.home-check { position: relative; padding-left: 26px; line-height: 1.8; color: #8E8E93; font-size: 15px; }
-.dark .home-check { color: #98989D; }
+.home-check { position: relative; padding-left: 26px; line-height: 1.8; color: #8e8b82; font-size: 15px; }
+.dark .home-check { color: #a09d96; }
 .home-check b { color: inherit; }
-.dark .home-check b { color: #E5E5EA; }
-.home-check::before { content: '✓'; position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(0, 122, 255, 0.12); color: #007AFF; font-size: 11px; display: grid; place-items: center; margin-top: 5px; }
+.dark .home-check b { color: #d6cec0; }
+.home-check::before { content: '✓'; position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(204, 120, 92, 0.12); color: #cc785c; font-size: 11px; display: grid; place-items: center; margin-top: 5px; }
 
-.home-mline { fill: none; stroke: rgba(0, 122, 255, 0.42); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; transition: 0.3s; }
-.home-mline.solid { stroke: rgba(0, 122, 255, 0.62); stroke-dasharray: none; }
+.home-mline { fill: none; stroke: rgba(204, 120, 92, 0.42); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; transition: 0.3s; }
+.home-mline.solid { stroke: rgba(204, 120, 92, 0.62); stroke-dasharray: none; }
 .home-map-drawn .home-mline:not(.solid) { opacity: 1; transition: opacity 0.8s ease; animation: home-flow 1.8s linear infinite; }
 .home-map-drawn .home-mline.solid { opacity: 1; stroke-dasharray: 600; stroke-dashoffset: 600; animation: home-draw 1.4s ease forwards; }
-.home-pulse { fill: #4DA3FF; }
-.home-mnode { fill: #F5F5F7; stroke: #D1D1D6; stroke-width: 1.2; transition: 0.3s; }
-.dark .home-mnode { fill: #2C2C2E; stroke: #3A3A3C; }
-.home-mnode.hot { stroke: #007AFF; fill: rgba(0, 122, 255, 0.08); filter: drop-shadow(0 0 10px rgba(0, 122, 255, 0.45)); }
-.home-mtime { fill: #8E8E93; font-size: 9.5px; font-family: inherit; pointer-events: none; }
-.dark .home-mtime { fill: #98989D; }
-.home-mchip.blue { fill: rgba(0, 122, 255, 0.14); }
+.home-pulse { fill: #d98b70; }
+.home-mnode { fill: #f5f0e8; stroke: #e6dfd8; stroke-width: 1.2; transition: 0.3s; }
+.dark .home-mnode { fill: #1f1e1b; stroke: #3a3833; }
+.home-mnode.hot { stroke: #cc785c; fill: rgba(204, 120, 92, 0.08); filter: drop-shadow(0 0 10px rgba(204, 120, 92, 0.45)); }
+.home-mtime { fill: #8e8b82; font-size: 9.5px; font-family: inherit; pointer-events: none; }
+.dark .home-mtime { fill: #a09d96; }
+.home-mchip.blue { fill: rgba(204, 120, 92, 0.14); }
 .home-mchip.gray { fill: rgba(120, 120, 128, 0.16); }
 .home-mchip.eval { fill: rgba(255, 149, 0, 0.16); }
 .home-mchip-txt { font-size: 8.5px; text-anchor: middle; font-family: inherit; pointer-events: none; }
-.home-mchip-txt.blue { fill: #007AFF; }
-.home-mchip-txt.gray { fill: #8E8E93; }
-.home-mchip-txt.eval { fill: #FF9500; }
-.home-mchars { fill: #8E8E93; font-size: 8.5px; pointer-events: none; }
+.home-mchip-txt.blue { fill: #cc785c; }
+.home-mchip-txt.gray { fill: #8e8b82; }
+.home-mchip-txt.eval { fill: #d4a017; }
+.home-mchars { fill: #8e8b82; font-size: 8.5px; pointer-events: none; }
 .dark .home-mchars { fill: #6E6E73; }
 .dark .home-mchip.gray { fill: rgba(255, 255, 255, 0.08); }
-.dark .home-mchip-txt.blue { fill: #4DA3FF; }
-.dark .home-mchip-txt.gray { fill: #98989D; }
+.dark .home-mchip-txt.blue { fill: #d98b70; }
+.dark .home-mchip-txt.gray { fill: #a09d96; }
 .dark .home-mchip-txt.eval { fill: #FF9F0A; }
-.home-mline.hot { stroke: #AF52DE; stroke-width: 2.2; stroke-dasharray: none; filter: drop-shadow(0 0 5px rgba(175, 82, 222, 0.7)); }
-.home-mtxt { fill: #3A3A3C; font-size: 12.5px; font-family: inherit; pointer-events: none; }
-.dark .home-mtxt { fill: #C7C7CC; }
-.home-mtxt.dim { fill: #8E8E93; font-size: 11px; }
-.home-pin { fill: #FF9500; animation: home-pulse 2s infinite; }
+.home-mline.hot { stroke: #5db8a6; stroke-width: 2.2; stroke-dasharray: none; filter: drop-shadow(0 0 5px rgba(175, 82, 222, 0.7)); }
+.home-mtxt { fill: #3a3833; font-size: 12.5px; font-family: inherit; pointer-events: none; }
+.dark .home-mtxt { fill: #c7bdae; }
+.home-mtxt.dim { fill: #8e8b82; font-size: 11px; }
+.home-pin { fill: #d4a017; animation: home-pulse 2s infinite; }
 .home-legend-dot { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
 
 .home-step { display: flex; align-items: center; padding: 10px 14px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; opacity: 0.35; transition: 0.4s; }
-.home-step.on { opacity: 1; border-color: rgba(0, 122, 255, 0.35); background: rgba(0, 122, 255, 0.06); }
+.home-step.on { opacity: 1; border-color: rgba(204, 120, 92, 0.35); background: rgba(204, 120, 92, 0.06); }
 
-.home-term { border-radius: 16px; overflow: hidden; border: 1px solid #3A3A3C; background: #060910; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
+.home-term { border-radius: 16px; overflow: hidden; border: 1px solid #3a3833; background: #060910; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
 .home-term pre { margin: 0; color: #CFE0FF; }
 .home-term :deep(.cmd) { color: #34C759; }
-.home-term :deep(.cur) { display: inline-block; width: 8px; height: 15px; background: #32ADE6; vertical-align: -3px; animation: home-blink 1s steps(1) infinite; }
+.home-term :deep(.cur) { display: inline-block; width: 8px; height: 15px; background: #e8a55a; vertical-align: -3px; animation: home-blink 1s steps(1) infinite; }
 
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
 .reveal.is-visible { opacity: 1; transform: none; }

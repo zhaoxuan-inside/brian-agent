@@ -218,13 +218,13 @@ async function handleSaveToLibrary() {
   <div
     class="message-card transition-all duration-200 cursor-pointer select-text"
     :class="[
-      mode === 'map' ? 'rounded-lg border bg-white/95 dark:bg-apple-gray-800/95 shadow-sm text-xs' : 'rounded-2xl px-3 py-2.5',
+      mode === 'map' ? 'rounded-chat-md border bg-chat-surface-2/95 border-chat-hairline text-xs' : 'chat-card px-3 py-2.5',
       mode === 'map'
         ? (isError
-            ? 'border-error-red/50 bg-error-red/10 dark:bg-error-red/30'
-            : (isUser ? 'border-brian-blue/40' : 'border-apple-gray-200 dark:border-apple-gray-700'))
-        : (isError ? 'block-card border-error-red/40 bg-error-red/5 text-error-red' : 'block-card'),
-      active ? 'ring-2 ring-brian-blue shadow-lg border-brian-blue' : (mode === 'map' ? 'hover:border-brian-blue/60' : '')
+            ? 'border-chat-error/50 bg-chat-error/10'
+            : (isUser ? 'border-chat-primary/40' : 'border-chat-hairline'))
+        : (isError ? 'chat-card border-chat-error/40 bg-chat-error/5 text-chat-error' : 'chat-card'),
+      active ? 'ring-2 ring-chat-primary border-chat-primary' : (mode === 'map' ? 'hover:border-chat-primary/60' : '')
     ]"
     @click="handleCardClick"
   >
@@ -232,20 +232,20 @@ async function handleSaveToLibrary() {
       class="flex items-center justify-between mb-1 text-4xs"
       :class="mode === 'map' ? 'px-2 pt-1.5' : ''"
     >
-      <span class="text-apple-gray-400">
+      <span class="text-chat-ink-tertiary">
         {{ formatTime(timestamp) }}
       </span>
 
       <div class="flex items-center gap-1.5">
-        <AlertCircle v-if="isError" :size="12" class="text-error-red flex-shrink-0" title="执行出错" />
+        <AlertCircle v-if="isError" :size="12" class="text-chat-error flex-shrink-0" title="执行出错" />
 
         <button
-          class="p-0.5 rounded transition-colors flex-shrink-0"
+          class="p-0.5 rounded-chat-sm transition-colors flex-shrink-0"
           :class="saveState === 'saved'
-            ? 'text-success-green'
+            ? 'text-chat-success'
             : saveState === 'failed'
-              ? 'text-error-red'
-              : 'text-apple-gray-400 hover:text-brian-blue'"
+              ? 'text-chat-error'
+              : 'text-chat-ink-tertiary hover:text-chat-primary-hover'"
           :title="i18nStore.t('chat.saveToLibrary')"
           :disabled="saveState === 'saving'"
           @click.stop="handleSaveToLibrary"
@@ -259,15 +259,15 @@ async function handleSaveToLibrary() {
         <label class="flex items-center cursor-pointer" title="勾选以指定本次问答上下文" @click.stop>
           <input
             type="checkbox"
-            class="rounded cursor-pointer h-3.5 w-3.5 accent-brian-blue"
+            class="rounded-chat-xs cursor-pointer h-3.5 w-3.5 accent-chat-primary"
             :checked="selected"
             @change="handleSelect"
           />
         </label>
 
         <button
-          class="p-0.5 rounded transition-colors text-apple-gray-400 hover:text-brian-blue"
-          :class="pin ? 'text-warning-orange' : ''"
+          class="p-0.5 rounded-chat-sm transition-colors text-chat-ink-tertiary hover:text-chat-warning"
+          :class="pin ? 'text-chat-warning' : ''"
           :title="pin ? '取消钉住' : '钉住'"
           @click.stop="handlePin"
         >
@@ -279,7 +279,7 @@ async function handleSaveToLibrary() {
     <div class="space-y-0.5">
       <details
         class="px-2 py-0.5"
-        :class="isError ? 'text-error-red' : 'text-apple-gray-500 dark:text-apple-gray-400'"
+        :class="isError ? 'text-chat-error' : 'text-chat-ink-subtle'"
         :open="summaryOpen"
         @toggle="onSummaryToggle"
         @click.stop
@@ -291,8 +291,8 @@ async function handleSaveToLibrary() {
         <div
           class="markdown-body break-words max-h-[120px] overflow-y-auto"
           :class="mode === 'map'
-            ? 'text-xs text-apple-gray-700 dark:text-apple-gray-200'
-            : 'text-2xs text-apple-gray-600 dark:text-apple-gray-300'"
+            ? 'text-xs text-chat-ink-muted'
+            : 'text-2xs text-chat-ink-subtle'"
           v-html="renderedSummary"
         />
       </details>
@@ -320,7 +320,7 @@ async function handleSaveToLibrary() {
       :class="mode === 'map' ? 'px-2 pb-1.5' : ''"
     >
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-chat-pill text-4xs transition-colors bg-chat-primary/10 text-chat-primary-hover hover:bg-chat-primary/20"
         @click.stop="expandedCited = !expandedCited; if (expandedCited) expandedCiting = false"
       >
         {{ i18nStore.t('msg.citing', { n: effectiveCitedCount }) }}
@@ -328,7 +328,7 @@ async function handleSaveToLibrary() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 hover:bg-apple-gray-200"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-chat-pill text-4xs transition-colors bg-chat-surface-3 text-chat-ink-muted hover:bg-chat-hairline-tertiary"
         @click.stop="expandedCiting = !expandedCiting; if (expandedCiting) expandedCited = false"
       >
         {{ i18nStore.t('msg.cited', { n: effectiveCitingCount }) }}
@@ -336,7 +336,7 @@ async function handleSaveToLibrary() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-chat-pill text-4xs transition-colors bg-chat-primary/10 text-chat-primary-hover hover:bg-chat-primary/20"
         title="查看思考过程"
         :data-thinking-id="targetId"
         @click.stop="handleShowThinking"
@@ -346,7 +346,7 @@ async function handleSaveToLibrary() {
       </button>
 
       <button
-        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-4xs transition-colors bg-warning-orange/10 dark:bg-warning-orange/40 text-warning-orange dark:text-warning-orange/80 hover:bg-warning-orange/15 dark:hover:bg-warning-orange/60"
+        class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-chat-pill text-4xs transition-colors bg-chat-warning/10 text-chat-warning hover:bg-chat-warning/20"
         title="查看评估结果"
         @click.stop="handleShowEval"
       >
@@ -359,7 +359,7 @@ async function handleSaveToLibrary() {
           <span
             v-for="i in 5"
             :key="i"
-            :class="feedbackRating >= i ? 'text-warning-orange' : 'text-apple-gray-300'"
+            :class="feedbackRating >= i ? 'text-chat-warning' : 'text-chat-ink-tertiary'"
           >
             <Star :size="11" :fill="feedbackRating >= i ? 'currentColor' : 'none'" />
           </span>
@@ -369,7 +369,7 @@ async function handleSaveToLibrary() {
             v-for="i in 5"
             :key="i"
             class="p-0 transition-colors"
-            :class="(feedbackHovered || feedbackRating) >= i ? 'text-warning-orange' : 'text-apple-gray-300'"
+            :class="(feedbackHovered || feedbackRating) >= i ? 'text-chat-warning' : 'text-chat-ink-tertiary'"
             :title="`${i} 星`"
             @click.stop="submitRating(i)"
             @mouseenter="feedbackHovered = i"
@@ -381,15 +381,18 @@ async function handleSaveToLibrary() {
       </template>
 
       <button
-        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-4xs transition-colors text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700"
+        class="flex items-center gap-1 px-1.5 py-0.5 rounded-chat-sm text-4xs transition-colors text-chat-ink-tertiary hover:text-chat-primary-hover hover:bg-chat-surface-3"
         :title="effectiveTraceId ? `${i18nStore.t('msg.copyTrace')}: ${effectiveTraceId}` : i18nStore.t('msg.copyTrace')"
         @click.stop="copyTraceId"
       >
         <component :is="copied ? Check : Copy" :size="10" />
-        {{ copied ? (i18nStore.locale === 'zh-CN' ? '已复制' : 'Copied') : i18nStore.t('msg.copyTrace') }}
+        <span class="grid">
+          <span class="col-start-1 row-start-1 whitespace-nowrap" :class="copied ? 'invisible' : ''">{{ i18nStore.t('msg.copyTrace') }}</span>
+          <span class="col-start-1 row-start-1 whitespace-nowrap" :class="copied ? '' : 'invisible'">{{ i18nStore.t('msg.copied') }}</span>
+        </span>
       </button>
 
-      <span class="ml-auto text-4xs text-apple-gray-300">
+      <span class="ml-auto text-4xs text-chat-ink-tertiary">
         {{ textLength }}字
       </span>
     </div>
@@ -398,15 +401,15 @@ async function handleSaveToLibrary() {
       v-if="expandedCited"
       class="mt-1.5 space-y-0.5 border-t pt-1"
       :class="[
-        mode === 'map' ? 'px-2 pb-1.5 border-apple-gray-100 dark:border-apple-gray-700' : 'border-current/10',
+        mode === 'map' ? 'px-2 pb-1.5 border-chat-hairline' : 'border-chat-hairline',
       ]"
       @click.stop
     >
-      <p class="text-4xs font-medium text-apple-gray-400">引用以下消息：</p>
+      <p class="text-4xs font-medium text-chat-ink-tertiary">引用以下消息：</p>
       <button
         v-for="cid in citedInfoIds"
         :key="cid"
-        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
+        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded-chat-sm px-1 hover:bg-chat-primary/10 text-chat-primary-hover"
         @click.stop="handleJump(cid)"
       >
         <CornerUpRight :size="10" class="flex-shrink-0" />
@@ -419,15 +422,15 @@ async function handleSaveToLibrary() {
       v-if="expandedCiting"
       class="mt-1.5 space-y-0.5 border-t pt-1"
       :class="[
-        mode === 'map' ? 'px-2 pb-1.5 border-apple-gray-100 dark:border-apple-gray-700' : 'border-current/10',
+        mode === 'map' ? 'px-2 pb-1.5 border-chat-hairline' : 'border-chat-hairline',
       ]"
       @click.stop
     >
-      <p class="text-4xs font-medium text-apple-gray-400">被以下消息引用：</p>
+      <p class="text-4xs font-medium text-chat-ink-tertiary">被以下消息引用：</p>
       <button
         v-for="cid in citingInfoIds"
         :key="cid"
-        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded px-1 hover:bg-brian-blue/5 text-brian-blue"
+        class="flex items-center gap-1 w-full text-left text-2xs truncate py-0.5 rounded-chat-sm px-1 hover:bg-chat-primary/10 text-chat-primary-hover"
         @click.stop="handleJump(cid)"
       >
         <CornerUpRight :size="10" class="flex-shrink-0" />

@@ -14,10 +14,10 @@ afterEach(() => {
 function makeRelationDbStub(): RelationDBAccess {
   return {
     selectOne: vi.fn(async (table: string, _conditions: unknown) => {
-      if (table === 'llm_available') {
+      if (table === 'llm_available_record') {
         return { id: 'stub-llm', llm_title: 'm1', enable: 1, llm_type: 'text', llm_provider_id: 'p1', max_tokens: 0 };
       }
-      if (table === 'llm_provider') {
+      if (table === 'llm_provider_record') {
         return { id: 'p1', llm_provider_url: 'https://example.com', api_key: 'k', enable: 1 };
       }
       return null;

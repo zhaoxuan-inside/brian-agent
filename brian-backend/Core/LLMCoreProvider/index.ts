@@ -15,9 +15,8 @@ export {
   RecordLLMUsageInput,
   RecordLLMUsageOutput,
   LLM_CORE_CONFIG_TABLE,
-  AGENT_LLM_TABLE,
+  AGENT_RECORD_TABLE,
   LLM_PROVIDER_QUOTA_TABLE,
-  LLM_CORE_USAGE_TABLE,
 } from './domain/types';
 
 export type {

@@ -16,6 +16,7 @@ import {
   PromptContext,
   LLM_AVAILABLE_TABLE,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   SoulCoreAccess,
   SoulCoreContext,
@@ -33,7 +34,6 @@ import {
   ConfigSoulCoreOutput,
   SOUL_CORE_CONFIG_TABLE,
   SOUL_OPT_RULE_TABLE,
-  SOUL_CORE_USAGE_TABLE,
 } from '../SoulCoreProvider';
 import { ValidationError, NotFoundError } from '@brian-agent/base';
 
@@ -51,6 +51,7 @@ describe('SoulCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     soulAccess = new SoulAccess(relationDb);
     await soulAccess.initialize();
     llmAccess = new LLMAccess(relationDb);
@@ -151,12 +152,12 @@ describe('SoulCoreProvider', () => {
 
     it('should return from cache when binding exists', async () => {
       const now = IdGenerator.now();
-      await relationDb.insert('soul', [
+      await relationDb.insert('soul_record', [
         { field: 'id', value: 'soul-cached' },
         { field: 'created', value: now },
         { field: 'updated', value: now },
-        { field: 'soul_content', value: 'Soul content' },
-        { field: 'soul_brief', value: 'agent-sc' },
+        { field: 'content', value: 'Soul content' },
+        { field: 'brief', value: 'agent-sc' },
         { field: 'soul_usage', value: 'Soul usage' },
         { field: 'enable', value: 1 },
       ]);
@@ -376,8 +377,7 @@ describe('SoulCoreProvider', () => {
       const now = IdGenerator.now();
       const soulId = IdGenerator.generate();
 
-      await relationDb.insert(SOUL_CORE_USAGE_TABLE, []);
-
+      
       const input = new OptSoulInput();
       input.agent_id = agentId;
       input.soul_id = soulId;
@@ -387,7 +387,7 @@ describe('SoulCoreProvider', () => {
       expect(result).toBe(true);
       expect(output.current_soul_id).toBe(soulId);
       const usageRows = relationDb.queryRaw(
-        'SELECT * FROM "soul_core_usage" WHERE "agent_id" = ? AND "soul_id" = ?', [agentId, soulId],
+        'SELECT * FROM "usage_event_record" WHERE "agent_id" = ? AND "entity_id" = ?', [agentId, soulId],
       );
       expect((usageRows ?? []).length).toBeGreaterThan(0);
     });

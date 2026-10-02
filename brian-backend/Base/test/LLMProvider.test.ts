@@ -7,6 +7,7 @@ import os from 'os';
 import http from 'http';
 
 import { RelationDBAccess } from '../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../TraceBase/infrastructure/TraceSchemaInitializer';
 import { DBContext, CloseDBInput, CloseDBOutput } from '../RelationDBProvider';
 import {
   LLMAccess,
@@ -223,6 +224,7 @@ describe('LLMProvider', () => {
 
     relationDb = new RelationDBAccess({ dbPath: sqlitePath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     llmAccess = new LLMAccess(relationDb);
     await llmAccess.initialize();
@@ -343,7 +345,7 @@ describe('LLMProvider', () => {
     });
 
     it('新增时未指定配额应继承 llm_config 的默认配额', async () => {
-      await relationDb.insert('llm_config', [
+      await relationDb.insert('llm_config_record', [
         { field: 'config_key', value: 'default_quota_tokens_per_day' },
         { field: 'config_value', value: '100' },
         { field: 'value_type', value: 'INT' },
@@ -355,7 +357,7 @@ describe('LLMProvider', () => {
       const out = new AddLLMProviderOutput();
       await llmAccess.addLLMProvider(input, out, new LLMContext());
 
-      const row = await relationDb.selectOne('llm_provider', [
+      const row = await relationDb.selectOne('llm_provider_record', [
         { field: 'id', operator: Operator.EQ, value: out.id },
       ]);
       expect(Number(row?.quota_tokens_per_day)).toBe(100);
@@ -535,7 +537,7 @@ describe('LLMProvider', () => {
       const delOut = new DelLLMProviderOutput();
       await llmAccess.delLLMProvider(delInput, delOut, new LLMContext());
 
-      const modelRows = relationDb.select('llm_cache', {
+      const modelRows = relationDb.select('llm_cache_record', {
         conditions: [{ field: 'llm_provider_id', operator: Operator.EQ, value: addOut.id }],
       });
       await expect(modelRows).resolves.toHaveLength(0);
@@ -1180,14 +1182,14 @@ describe('LLMProvider', () => {
       expect(execOut.duration_ms).toBeGreaterThan(0);
     });
 
-    it('调用成功后应该更新 llm_usage 统计', async () => {
+    it('调用成功后应该更新 llm_usage_org 统计', async () => {
       const execInput = new ExecLLMInput();
       execInput.id = llmId;
       execInput.prompt = 'Test usage tracking';
       const execOut = new ExecLLMOutput();
       await llmAccess.execLLM(execInput, execOut, new LLMContext());
 
-      const usageRows = await relationDb.select('llm_usage', {
+      const usageRows = await relationDb.select('llm_usage_org', {
         conditions: [{ field: 'llm_available_id', operator: Operator.EQ, value: llmId }],
       });
       expect(usageRows.length).toBe(1);
@@ -1205,7 +1207,7 @@ describe('LLMProvider', () => {
         new ExecLLMOutput(), new LLMContext(),
       );
 
-      const usageRows = await relationDb.select('llm_usage', {
+      const usageRows = await relationDb.select('llm_usage_org', {
         conditions: [{ field: 'llm_available_id', operator: Operator.EQ, value: llmId }],
       });
       expect(usageRows.length).toBe(1);
@@ -1213,7 +1215,7 @@ describe('LLMProvider', () => {
     });
 
     it('缺少 id 且无可用模型时应该抛出 ValidationError', async () => {
-      await relationDb.delete('llm_available', []);
+      await relationDb.delete('llm_available_record', []);
       const execInput = new ExecLLMInput();
       execInput.id = '';
       execInput.prompt = 'test';
@@ -1317,7 +1319,7 @@ describe('LLMProvider', () => {
 
     it('所有可用模型均失败时返回 false 并记录错误', async () => {
 
-      const allRows = await relationDb.select('llm_available', {});
+      const allRows = await relationDb.select('llm_available_record', {});
       for (const row of allRows) {
         await llmAccess.updateLLM(
           Object.assign(new UpdateLLMInput(), {

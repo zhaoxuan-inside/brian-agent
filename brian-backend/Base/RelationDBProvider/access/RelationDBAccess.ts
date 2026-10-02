@@ -221,6 +221,51 @@ export class RelationDBAccess implements IConfigStorage {
     return this.repository.queryRaw<T>(sql, params);
   }
 
+  /**
+   * ADR-012:业务键列为 UNIQUE NOT NULL 时 SQLite 禁止 DROP COLUMN——整表重建去掉 legacyKey 列。
+   * 调用方需先 UPDATE "id"="legacyKey" 同步数据;普通索引由调用方后续 CREATE INDEX IF NOT EXISTS 重建。
+   * 返回 true=已重建,false=列不存在或重建失败(保留旧表)。
+   */
+  rebuildTableWithoutColumn(table: string, legacyKey: string): boolean {
+    const info = this.queryRaw<{ name: string; type: string; notnull: number; dflt_value: string | null; pk: number }>(`PRAGMA table_info("${table}")`);
+    if (!(info ?? []).some((c) => c.name === legacyKey)) return false;
+    const keep = info.filter((c) => c.name !== legacyKey);
+    const ddl = keep.map((c) => {
+      let s = `"${c.name}" ${c.type || 'TEXT'}`;
+      if (c.notnull) s += ' NOT NULL';
+      if (c.dflt_value !== null && c.dflt_value !== undefined) s += ` DEFAULT ${c.dflt_value}`;
+      if (c.pk) s += ' PRIMARY KEY';
+      return s;
+    }).join(', ');
+    try {
+      const uniques = this.legacySafeUniqueIndexes(table, legacyKey);
+      this.executeRaw(`CREATE TABLE "${table}_mig" (${ddl})`);
+      const names = keep.map((c) => `"${c.name}"`).join(', ');
+      this.executeRaw(`INSERT INTO "${table}_mig" (${names}) SELECT ${names} FROM "${table}"`);
+      this.executeRaw(`DROP TABLE "${table}"`);
+      this.executeRaw(`ALTER TABLE "${table}_mig" RENAME TO "${table}"`);
+      for (const sql of uniques) this.executeRaw(sql);
+      return true;
+    } catch {
+      try { this.executeRaw(`DROP TABLE IF EXISTS "${table}_mig"`); } catch { /* 忽略回滚失败 */ }
+      return false;
+    }
+  }
+
+  /** 收集旧表中不依赖 legacyKey 的 UNIQUE 约束重建语句(内联 UNIQUE 随 DROP TABLE 消失) */
+  private legacySafeUniqueIndexes(table: string, legacyKey: string): string[] {
+    try {
+      const out: string[] = [];
+      for (const idx of this.queryRaw<{ name: string; origin: string }>(`PRAGMA index_list("${table}")`)) {
+        if (idx.origin !== 'u') continue;
+        const cols = this.queryRaw<{ name: string }>(`PRAGMA index_info("${idx.name}")`).map((c) => c.name);
+        if (cols.includes(legacyKey)) continue;
+        out.push(`CREATE UNIQUE INDEX IF NOT EXISTS "${idx.name}" ON "${table}" (${cols.map((c) => `"${c}"`).join(', ')})`);
+      }
+      return out;
+    } catch { return []; }
+  }
+
   
 
   transactionRaw(operations: import('../../shared/query').Operation[]): boolean {

@@ -29,6 +29,7 @@ export {
   RunStatus,
   RUNTIME_RUN_TABLE,
   RUNTIME_RUNS_CONFIG_TABLE,
+  RUN_ROUND_ORG_TABLE,
 } from './domain/types';
 export type {
   RunRecord,

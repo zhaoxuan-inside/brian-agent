@@ -27,3 +27,4 @@
 | `visualizedLLM` | `input: VisualizedLLMInput, output: VisualizedLLMOutput, context: LLMContext, metrics?: ...` | `Promise<boolean>` | — |
 | `enableLLM` | `input: EnableLLMInput, output: EnableLLMOutput, context: LLMContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `soTokenUsage` | `input: SoTokenUsageInput, output: SoTokenUsageOutput, context: LLMContext` | `Promise<boolean>` | — |
+| `soModelTokenStats` | `input: SoModelTokenStatsInput, output: SoModelTokenStatsOutput, context: LLMContext` | `Promise<boolean>` | — |

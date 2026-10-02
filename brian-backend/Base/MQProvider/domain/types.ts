@@ -126,6 +126,6 @@ export class CloseMQInput extends Input {}
 
 export class CloseMQOutput extends Output {}
 
-export const QUEUE_MESSAGE_TABLE = 'queue_message';
+export const QUEUE_MESSAGE_TABLE = 'queue_message_record';
 
-export const MQ_CONFIG_TABLE = 'mq_config';
+export const MQ_CONFIG_TABLE = 'mq_config_record';

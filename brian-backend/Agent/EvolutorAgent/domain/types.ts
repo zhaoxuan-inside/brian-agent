@@ -170,5 +170,5 @@ export class RunEvalOnceOutput extends Output {
   skipped_count = 0;
 }
 
-export const AGENT_EVALUATION_TABLE = 'agent_evaluation';
-export const EVOLUTOR_AGENT_CONFIG_TABLE = 'evolutor_agent_config';
+export const AGENT_EVALUATION_TABLE = 'agent_evaluation_record';
+export const EVOLUTOR_AGENT_CONFIG_TABLE = 'evolutor_agent_config_record';

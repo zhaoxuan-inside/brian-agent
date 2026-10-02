@@ -73,6 +73,7 @@ const i18nMap: Record<string, Record<Locale, string>> = {
   'msg.thinking': { 'zh-CN': '思考过程', 'en-US': 'Thinking' },
   'msg.eval': { 'zh-CN': '评估结果', 'en-US': 'Evaluation' },
   'msg.copyTrace': { 'zh-CN': '复制 TraceId', 'en-US': 'Copy TraceId' },
+  'msg.copied': { 'zh-CN': '已复制', 'en-US': 'Copied' },
   'common.close': { 'zh-CN': '关闭', 'en-US': 'Close' },
   'common.emptyText': { 'zh-CN': '暂无内容', 'en-US': 'No content' },
   'common.loadFailed': { 'zh-CN': '加载失败', 'en-US': 'Failed to load' },

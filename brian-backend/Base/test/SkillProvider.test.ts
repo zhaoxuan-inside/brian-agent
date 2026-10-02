@@ -6,6 +6,7 @@ import path from 'path';
 import os from 'os';
 
 import { RelationDBAccess } from '../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../TraceBase/infrastructure/TraceSchemaInitializer';
 import { DBContext, CloseDBInput, CloseDBOutput } from '../RelationDBProvider';
 import {
   SkillAccess,
@@ -60,6 +61,7 @@ describe('SkillProvider', () => {
     relationDb = new RelationDBAccess({ dbPath: sqlitePath });
     await relationDb.initialize();
 
+    new TraceSchemaInitializer(relationDb).init();
     skillAccess = new SkillAccess(relationDb);
     await skillAccess.initialize();
   });
@@ -335,7 +337,7 @@ describe('SkillProvider', () => {
     it('应通过 conditions 获取 Skill', async () => {
       const getInput = new GetSkillInput();
       getInput.conditions = [
-        { field: 'skill_brief', operator: Operator.EQ, value: '待查询 Skill' },
+        { field: 'brief', operator: Operator.EQ, value: '待查询 Skill' },
       ];
       const getOut = new GetSkillOutput();
       const result = await skillAccess.soSkillById(
@@ -364,7 +366,7 @@ describe('SkillProvider', () => {
     it('conditions 不匹配时应返回 null', async () => {
       const getInput = new GetSkillInput();
       getInput.conditions = [
-        { field: 'skill_brief', operator: Operator.EQ, value: '不存在的 Skill' },
+        { field: 'brief', operator: Operator.EQ, value: '不存在的 Skill' },
       ];
       const getOut = new GetSkillOutput();
       const result = await skillAccess.soSkillById(
@@ -631,7 +633,7 @@ describe('SkillProvider', () => {
     it('应通过 conditions 更新', async () => {
       const updateInput = new UpdateSkillInput();
       updateInput.conditions = [
-        { field: 'skill_brief', operator: Operator.EQ, value: '原始 Skill' },
+        { field: 'brief', operator: Operator.EQ, value: '原始 Skill' },
       ];
       updateInput.data = { skill_md: 'result = "new skill_md"' };
       const updateOut = new UpdateSkillOutput();
@@ -1090,7 +1092,7 @@ describe('SkillProvider', () => {
     it('应通过 conditions 删除', async () => {
       const delInput = new DelSkillInput();
       delInput.conditions = [
-        { field: 'skill_brief', operator: Operator.LIKE, value: '%待删除%' },
+        { field: 'brief', operator: Operator.LIKE, value: '%待删除%' },
       ];
       const delOut = new DelSkillOutput();
       const result = await skillAccess.delSkill(

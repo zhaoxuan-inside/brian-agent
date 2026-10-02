@@ -109,35 +109,35 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <div
-      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4"
+      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 theme-chat"
       @click.self="emit('close')"
     >
-      <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-xl overflow-hidden flex flex-col max-h-[80vh]">
-        <div class="px-5 py-3.5 border-b border-apple-gray-200/80 dark:border-apple-gray-700/80 flex items-center justify-between flex-shrink-0">
+      <div class="bg-chat-surface-1 rounded-chat-lg shadow-[0_24px_64px_rgba(0,0,0,0.55)] border border-chat-hairline-strong w-full max-w-xl overflow-hidden flex flex-col max-h-[80vh]">
+        <div class="px-5 py-3.5 border-b border-chat-hairline flex items-center justify-between flex-shrink-0">
           <div class="flex items-center gap-2.5 min-w-0">
-            <span class="w-7 h-7 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center flex-shrink-0">
+            <span class="w-7 h-7 rounded-full bg-chat-primary/15 text-chat-primary-hover flex items-center justify-center flex-shrink-0">
               <component :is="meta.icon" :size="15" />
             </span>
             <div class="min-w-0">
-              <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">{{ meta.label }}</h3>
-              <p class="text-2xs text-apple-gray-400 font-mono truncate">{{ refId }}</p>
+              <h3 class="text-sm font-semibold tracking-tight text-chat-ink">{{ meta.label }}</h3>
+              <p class="text-2xs text-chat-ink-tertiary font-mono truncate">{{ refId }}</p>
             </div>
           </div>
-          <button class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0" @click="emit('close')">
+          <button class="p-1.5 rounded-chat-md text-chat-ink-tertiary hover:text-chat-ink hover:bg-chat-surface-2 transition-colors flex-shrink-0" @click="emit('close')">
             <X :size="18" />
           </button>
         </div>
 
         <div class="px-5 py-4 overflow-y-auto space-y-4">
           <div v-if="loading" class="flex flex-col items-center justify-center py-10 space-y-2">
-            <Loader2 :size="20" class="animate-spin text-brian-blue" />
-            <p class="text-xs text-apple-gray-400">正在加载组件信息…</p>
+            <Loader2 :size="20" class="animate-spin text-chat-primary-hover" />
+            <p class="text-xs text-chat-ink-tertiary">正在加载组件信息…</p>
           </div>
 
-          <div v-else-if="error" class="rounded-xl bg-error-red/10 text-error-red text-xs px-3 py-2.5">{{ error }}</div>
+          <div v-else-if="error" class="rounded-chat-md bg-chat-error/10 text-chat-error text-xs px-3 py-2.5">{{ error }}</div>
 
           <template v-else-if="record">
-            <div v-if="record.notFound" class="rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900 text-apple-gray-400 text-xs px-3 py-2.5">
+            <div v-if="record.notFound" class="rounded-chat-md bg-chat-surface-2 text-chat-ink-subtle text-xs px-3 py-2.5">
               未找到该组件（可能是已删除的内置/历史组件），以下为原始引用：
             </div>
 
@@ -145,16 +145,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <div
                 v-for="row in friendlyRows"
                 :key="row.key"
-                class="rounded-xl border border-apple-gray-200/70 dark:border-apple-gray-700/60 overflow-hidden"
+                class="rounded-chat-md border border-chat-hairline overflow-hidden"
               >
-                <p class="px-3 py-1.5 text-4xs font-medium text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-800/60 border-b border-apple-gray-100 dark:border-apple-gray-800 font-mono">{{ row.key }}</p>
-                <pre class="px-3 py-2 text-2xs leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-apple-gray-700 dark:text-apple-gray-200 bg-white dark:bg-apple-gray-900">{{ displayValue(row.value) }}</pre>
+                <p class="px-3 py-1.5 text-4xs font-medium text-chat-ink-tertiary bg-chat-surface-2 border-b border-chat-hairline font-mono">{{ row.key }}</p>
+                <pre class="px-3 py-2 text-2xs leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-chat-ink-muted bg-chat-canvas">{{ displayValue(row.value) }}</pre>
               </div>
             </div>
 
-            <details v-if="jsonText" class="text-2xs text-apple-gray-500">
-              <summary class="cursor-pointer hover:underline text-apple-gray-600 dark:text-apple-gray-300 font-medium">完整数据</summary>
-              <pre class="mt-1 p-2.5 rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900 overflow-x-auto text-4xs leading-relaxed max-h-56 overflow-y-auto">{{ jsonText }}</pre>
+            <details v-if="jsonText" class="text-2xs text-chat-ink-subtle">
+              <summary class="cursor-pointer hover:underline text-chat-ink-muted font-medium">完整数据</summary>
+              <pre class="mt-1 p-2.5 rounded-chat-sm bg-chat-canvas border border-chat-hairline overflow-x-auto text-4xs leading-relaxed max-h-56 overflow-y-auto">{{ jsonText }}</pre>
             </details>
           </template>
         </div>

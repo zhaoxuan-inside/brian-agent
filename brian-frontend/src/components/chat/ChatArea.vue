@@ -2,7 +2,6 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import {
   MessageCircle,
-  Loader2,
   Brain,
   UserRound,
 } from '@lucide/vue'
@@ -16,6 +15,7 @@ import InputBox from './InputBox.vue'
 import MessageCard from './MessageCard.vue'
 import BlockRenderer from '@/components/blocks/BlockRenderer.vue'
 import ThinkingModal from './ThinkingModal.vue'
+import ThinkingLivePill from './ThinkingLivePill.vue'
 import EvalResultModal from './EvalResultModal.vue'
 import AskUserCard from './AskUserCard.vue'
 import { useChatStream } from '@/composables/useChatStream'
@@ -181,19 +181,10 @@ function jumpTo(id: string) {
   scrollListTo(id)
 }
 
-async function showThinking(id: string) {
-  chatUi.startThinkingLoading(id)
-
-  try {
-    const res = await chatApi.thinking(id, 'blocks')
-    chatUi.setThinkingBlocks(res.blocks ?? [])
-    chatUi.setThinkingTrace((res as { trace?: import('@/api/types').ThinkingTrace | null }).trace ?? null)
-  } catch (err) {
-    console.error('[ChatArea] 加载思考过程失败', err)
-    chatUi.setThinkingBlocks([])
-    chatUi.setThinkingTrace(null)
+  /** 历史消息思考过程：经 /chat/observation 重放（ADR-013） */
+  function showThinking(id: string) {
+    chatUi.startThinkingLoading(id)
   }
-}
 
 type TimelineEntry =
   | { kind: 'message'; key: string; sort: number; message: ChatMessage }
@@ -251,7 +242,7 @@ function startResize(e: MouseEvent) {
     </div>
 
     <div
-      class="hidden md:block w-1.5 cursor-col-resize bg-apple-gray-100 dark:bg-apple-gray-800 hover:bg-brian-blue/50 transition-colors relative group flex-shrink-0"
+      class="hidden md:block w-1.5 cursor-col-resize bg-chat-hairline hover:bg-chat-primary/50 transition-colors relative group flex-shrink-0"
       role="separator"
       aria-orientation="vertical"
       aria-label="拖拽调整图谱与消息区分栏"
@@ -262,10 +253,10 @@ function startResize(e: MouseEvent) {
 
     <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden" :style="{ width: rightWidth }">
       <div ref="listRef" class="flex-1 overflow-y-auto px-4 py-3 space-y-3" @scroll="syncMapToVisibleMessage">
-        <div v-if="!sessionStore.currentSessionId && sessionStore.messages.length === 0" class="flex flex-col items-center justify-center h-full text-apple-gray-400">
-          <MessageCircle :size="48" class="mb-4 text-apple-gray-300" />
-          <p class="text-lg font-medium">Brian Agent</p>
-          <p class="text-sm mt-1">{{ i18nStore.t('chat.emptyHint') }}</p>
+        <div v-if="!sessionStore.currentSessionId && sessionStore.messages.length === 0" class="flex flex-col items-center justify-center h-full text-chat-ink-tertiary">
+          <MessageCircle :size="48" class="mb-4 text-chat-hairline-strong" />
+          <p class="text-lg font-chat-display tracking-tight text-chat-ink">Brian Agent</p>
+          <p class="text-sm mt-1 text-chat-ink-subtle">{{ i18nStore.t('chat.emptyHint') }}</p>
         </div>
 
         <template v-for="entry in timeline" :key="entry.key">
@@ -283,7 +274,7 @@ function startResize(e: MouseEvent) {
             :class="entry.message.role === 'user' ? 'justify-start' : 'justify-end'"
             :data-info-id="entry.message.id"
           >
-            <div v-if="entry.message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/15 text-brian-blue flex items-center justify-center mt-1">
+            <div v-if="entry.message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-chat-surface-2 border border-chat-hairline text-chat-ink-subtle flex items-center justify-center mt-1">
               <UserRound :size="16" />
             </div>
 
@@ -317,13 +308,13 @@ function startResize(e: MouseEvent) {
               />
             </div>
 
-            <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center mt-1">
+            <div v-if="entry.message.role !== 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-chat-primary/15 text-chat-primary-hover flex items-center justify-center mt-1">
               <Brain :size="16" />
             </div>
           </div>
 
           <div
-            v-else-if="entry.block.type !== 'ThinkingChain'"
+            v-else
             class="max-w-[85%]"
             :class="entry.block.role === 'user' ? 'mr-auto' : 'ml-auto'"
           >
@@ -331,14 +322,13 @@ function startResize(e: MouseEvent) {
           </div>
         </template>
 
-        <div v-if="sessionStore.isStreaming" class="flex items-center gap-2 text-apple-gray-400 text-sm">
-          <Loader2 :size="14" class="animate-spin" />
-          <span>{{ i18nStore.t('chat.thinking') }}</span>
+        <div v-if="sessionStore.isStreaming" class="streaming-hint flex items-center gap-2 text-chat-ink-subtle text-sm">
+          <ThinkingLivePill />
         </div>
 
       </div>
 
-      <div class="flex-shrink-0 border-t border-apple-gray-100 dark:border-apple-gray-800">
+      <div class="flex-shrink-0 border-t border-chat-hairline">
         <InputBox
           :disabled="sessionStore.isStreaming"
           :citing-mode="sessionStore.citingMode"
@@ -358,14 +348,14 @@ function startResize(e: MouseEvent) {
 </template>
 
 <style scoped>
-/* 定位跳转（记忆页/图谱跳转）时的目标消息高亮提示 */
+/* 定位跳转（记忆页/图谱跳转）时的目标消息高亮提示（Claude coral 主色,ADR-015） */
 .msg-flash {
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   animation: msg-flash-ring 2.4s ease-out;
 }
 @keyframes msg-flash-ring {
-  0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.45); background-color: rgba(0, 122, 255, 0.08); }
-  60% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); background-color: rgba(0, 122, 255, 0.05); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); background-color: transparent; }
+  0% { box-shadow: 0 0 0 0 rgba(204, 120, 92, 0.5); background-color: rgba(204, 120, 92, 0.1); }
+  60% { box-shadow: 0 0 0 10px rgba(204, 120, 92, 0); background-color: rgba(204, 120, 92, 0.05); }
+  100% { box-shadow: 0 0 0 0 rgba(204, 120, 92, 0); background-color: transparent; }
 }
 </style>

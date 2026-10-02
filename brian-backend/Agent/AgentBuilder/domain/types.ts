@@ -52,4 +52,4 @@ export class ConfigAgentBuilderOutput extends Output {
   config: AgentBuilderConfigRecord | null = null;
 }
 
-export const AGENT_BUILDER_CONFIG_TABLE = 'agent_builder_config';
+export const AGENT_BUILDER_CONFIG_TABLE = 'agent_builder_config_record';

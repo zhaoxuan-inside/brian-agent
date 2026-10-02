@@ -15,6 +15,7 @@ import {
   AddPromptOutput,
   PromptContext,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   SkillCoreAccess,
   SkillCoreContext,
@@ -32,11 +33,10 @@ import {
   ConfigSkillCoreOutput,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
 } from '../SkillCoreProvider';
-import { ValidationError } from '@brian-agent/base';
+import { ValidationError, USAGE_EVENT_TABLE } from '@brian-agent/base';
 
-const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, SKILL_OPT_RULE_TABLE, SKILL_USAGE_TABLE];
+const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, SKILL_OPT_RULE_TABLE];
 
 describe('SkillCoreProvider', () => {
   let tempDir: string;
@@ -67,17 +67,6 @@ describe('SkillCoreProvider', () => {
       )
     `);
 
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "skill_id" TEXT NOT NULL,
-        "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
   }
 
   beforeEach(async () => {
@@ -85,6 +74,7 @@ describe('SkillCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     await ensureCoreTables();
 
@@ -227,7 +217,7 @@ describe('SkillCoreProvider', () => {
       expect(output.binding!.agent_id).toBe('agent-opt-skill');
       expect(output.binding!.skill_id).toBe('skill-opt-1');
 
-      const count = await relationDb.count(SKILL_USAGE_TABLE);
+      const count = await relationDb.count(USAGE_EVENT_TABLE);
       expect(count).toBe(1);
     });
 
@@ -270,7 +260,7 @@ describe('SkillCoreProvider', () => {
       expect(out1.binding!.id).toBe('');
       expect(out2.binding!.id).toBe('');
 
-      const usageCount = await relationDb.count(SKILL_USAGE_TABLE);
+      const usageCount = await relationDb.count(USAGE_EVENT_TABLE);
       expect(usageCount).toBe(2);
     });
   });

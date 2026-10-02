@@ -55,7 +55,7 @@ function seedAgentStrategies(relationDb: RelationDBAccess): void {
   for (const label of ['Plan-and-Solve', 'CoT', 'ReAct']) {
     const sid = `strategy-${label.toLowerCase()}`;
     relationDb.executeRaw(
-      `INSERT OR IGNORE INTO "agent_strategy" ("id","created","updated","strategy_id","strategy_label","suitable_complexity_min","suitable_complexity_max","suitable_domains","execution_rule","enable") VALUES ('${sid}',${now},${now},'${sid}','${label}',0,100,'["*"]','${ruleJson}',1)`,
+      `INSERT OR IGNORE INTO "agent_strategy_record" ("id","created","updated","strategy_label","suitable_complexity_min","suitable_complexity_max","suitable_domains","execution_rule","enable") VALUES ('${sid}',${now},${now},'${label}',0,100,'["*"]','${ruleJson}',1)`,
     );
   }
 }
@@ -228,7 +228,7 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   ];
   const now = Date.now();
   for (const p of standardPrompts) {
-    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template_record (id, created, updated, title, brief, content, enable, is_system) VALUES (
       '${p.id}', ${now}, ${now}, '${p.title}', '${p.title}', '${p.template.replace(/'/g, "''")}', 1, 1
     )`);
   }
@@ -244,7 +244,7 @@ export async function setupRealTestEnvironment(): Promise<RealTestContext> {
   const logAccess = new LogAccess(logRelationDb, logger);
   await logAccess.initialize();
 
-  addColumnIfNotExists(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
+  
 
   const vectorDbAccess = createInMemoryVectorDBAccess();
 

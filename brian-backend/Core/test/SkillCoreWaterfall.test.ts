@@ -14,6 +14,7 @@ import {
   PromptContext,
   type LLMAccess as LLMAccessType,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   SkillCoreContext,
   MatchSkillInput,
@@ -22,13 +23,12 @@ import {
   ConfigSkillCoreOutput,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
   type GitHubSkillClient,
   type ParsedSkillMd,
 } from '../SkillCoreProvider';
 import { SkillCoreService } from '../SkillCoreProvider/application/SkillCoreService';
 
-const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, SKILL_OPT_RULE_TABLE, SKILL_USAGE_TABLE];
+const ALL_SKILL_CORE_TABLES = [SKILL_CORE_CONFIG_TABLE, SKILL_OPT_RULE_TABLE];
 
 function stubLlm(responses: string[]): LLMAccessType {
   let call = 0;
@@ -96,6 +96,7 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_CORE_CONFIG_TABLE}" (
@@ -116,17 +117,6 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
         "updated" INTEGER NOT NULL,
         "days" INTEGER NOT NULL,
         "min_usage_count" INTEGER NOT NULL
-      )
-    `);
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "skill_id" TEXT NOT NULL,
-        "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
     skillAccess = new SkillAccess(relationDb);
@@ -208,7 +198,7 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     expect(github.searchSkills).toHaveBeenCalledWith(['weather'], '');
 
     const soOut = new (await import('@brian-agent/base')).SoSkillOutput();
-    await skillAccess.soSkill({ conditions: [{ field: 'name', operator: '=', value: 'gh-skill' }] } as never, soOut, new (await import('@brian-agent/base')).SkillContext());
+    await skillAccess.soSkill({ conditions: [{ field: 'title', operator: '=', value: 'gh-skill' }] } as never, soOut, new (await import('@brian-agent/base')).SkillContext());
     expect(soOut.list).toHaveLength(1);
     expect(soOut.list[0].enable).toBe(true);
   });
@@ -226,7 +216,7 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
     expect(out.skills[0].skill_brief).toBe('generated');
 
     const soOut = new (await import('@brian-agent/base')).SoSkillOutput();
-    await skillAccess.soSkill({ conditions: [{ field: 'name', operator: '=', value: 'gen-skill' }] } as never, soOut, new (await import('@brian-agent/base')).SkillContext());
+    await skillAccess.soSkill({ conditions: [{ field: 'title', operator: '=', value: 'gen-skill' }] } as never, soOut, new (await import('@brian-agent/base')).SkillContext());
     expect(soOut.list).toHaveLength(1);
     expect(soOut.list[0].scripts?.[0]?.name).toBe('main.js');
     expect(soOut.list[0].references?.[0]?.name).toBe('notes.md');
@@ -290,7 +280,7 @@ describe('SkillCoreService 四层瀑布（need 判定合并 / 负缓存 / GitHub
 
     expect(out.skills).toHaveLength(1);
     expect(out.skills[0].skill_id).toBe(addOut.id);
-    expect(out.detail).toBe('local_hit');
+    expect(out.detail).toMatch(/^(funnel_|election_skill_)/);
   });
 
   it('need=true 但 keywords 空 → GitHub 检索以任务文本兜底（扩容层不再静默跳过）', async () => {

@@ -1,5 +1,5 @@
-import { Metrics, Report } from '@brian-agent/base';
-import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
+import { Metrics, Report, TraceService, RecordUsageInput, RecordUsageOutput } from '@brian-agent/base';
+import type { RelationDBAccess, LLMAccess, PromptsAccess, Context } from '@brian-agent/base';
 import {
   IdGenerator, Operator, OperationType, ValidationError, NotFoundError, newPatch,
   ExecLLMInput, ExecLLMOutput, LLMContext,
@@ -7,10 +7,23 @@ import {
   SoPromptInput, SoPromptOutput,
   SoLLMInput, SoLLMOutput,
   PROMPT_TEMPLATE_TABLE,
+  USAGE_EVENT_TABLE, AGENT_USAGE_ORG_TABLE,
+  syncComponentEmbedding,
+  deleteComponentEmbedding,
+  syncComponentExamples,
+  batchGetOrComputeEmbeddings,
+  batchGetDualExampleEmbeddings,
+  createEmbedTaskFn,
+  createSemanticsTaskFn,
+  resolveComponentSemantics,
+  funnelSemanticRouterRanking,
+  buildFunnelDocText,
+  AGENT_EMBEDDING_TABLE,
+  AGENT_EXAMPLE_EMBEDDING_TABLE,
   type DataObject, type Condition,
 } from '@brian-agent/base';
 import {
-  AGENT_TABLE, AGENT_USAGE_TABLE, AGENT_USAGE_DAILY_TABLE, AGENT_OPT_RULE_TABLE, AGENT_LIBRARY_CONFIG_TABLE,
+  AGENT_TABLE, AGENT_OPT_RULE_TABLE, AGENT_LIBRARY_CONFIG_TABLE,
   VALID_AGENT_TYPES, SYSTEM_AGENT_TYPES,
   type AgentRecord, type AgentLibraryConfigRecord, type AgentOptRuleRecord,
   AgentLibraryContext,
@@ -45,17 +58,17 @@ function mapAgent(row: Record<string, unknown>): AgentRecord {
     id: String(row.id),
     created: Number(row.created),
     updated: Number(row.updated),
-    agent_id: String(row.agent_id),
-    agent_name: String(row.agent_name),
-    agent_purpose: String(row.agent_purpose ?? ''),
-    agent_type: String(row.agent_type),
+    // ADR-012:agent_id 业务键由主键 id 统一承接;列规范化 title/brief/type;用量唯一归 TraceBase
+    agent_id: String(row.id),
+    agent_name: String(row.title ?? ''),
+    agent_purpose: String(row.brief ?? ''),
+    agent_type: String(row.type),
     strategy_id: String(row.strategy_id),
     soul_id: String(row.soul_id ?? ''),
     skill_ids: parseIdList(row.skill_ids_json),
     mcp_ids: parseIdList(row.mcp_ids_json),
     prompt_template_id: String(row.prompt_template_id ?? ''),
     task_signature: String(row.task_signature ?? ''),
-    usage_count: Number(row.usage_count ?? 0),
     eval_score: Number(row.eval_score ?? 50),
     enable: toBool(row.enable),
     created_by: String(row.created_by ?? 'user'),
@@ -73,11 +86,23 @@ function parseIdList(raw: unknown): string[] {
 }
 
 export class AgentLibraryService {
+  private readonly trace: TraceService;
+  private embedFn?: (text: string, context?: Context) => Promise<number[]>;
+  private readonly semanticsFn;
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
-  ) {}
+  ) {
+    this.trace = new TraceService(relationDb);
+    this.embedFn = createEmbedTaskFn(llmAccess);
+    this.semanticsFn = createSemanticsTaskFn(llmAccess);
+  }
+
+  setEmbedFn(fn: (text: string, context?: Context) => Promise<number[]>): void {
+    this.embedFn = fn;
+  }
 
   async addAgent(input: AddAgentInput, output: AddAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -87,161 +112,305 @@ export class AgentLibraryService {
     }
     if (!input.strategy_id) throw new ValidationError('strategy_id 为必填');
 
+    const sem = await resolveComponentSemantics({
+      kind: 'agent',
+      source: { kind: 'agent', title: input.agent_name, brief: input.agent_purpose, extra: input.task_signature },
+      provided: {
+        title: input.agent_name, brief: input.agent_purpose,
+        positive_examples: input.positive_examples, negative_examples: input.negative_examples,
+      },
+      semanticsFn: this.semanticsFn,
+      metrics: _metrics,
+    });
+
+    const insertFields = this.buildAgentInsertFields(input, sem);
+    try {
+      await this.relationDb.insert(AGENT_TABLE, insertFields);
+    } catch {
+      const fallbackFields = insertFields.filter((f) => f.field !== 'created_by');
+      await this.relationDb.insert(AGENT_TABLE, fallbackFields);
+    }
+    output.agent_id = input.agent_id;
+
+    await this.syncAgentVector(input.agent_id, sem, input.task_signature, _metrics);
+    if (sem.positive_examples.length > 0 || sem.negative_examples.length > 0) {
+      await this.syncAgentExamples(input.agent_id, sem, _metrics);
+    }
+    return true;
+  }
+
+  private buildAgentInsertFields(input: AddAgentInput, sem: { title: string; brief: string }): DataObject[] {
     const now = IdGenerator.now();
-    const insertFields: DataObject[] = [
-      { field: 'id', value: IdGenerator.generate() },
+    const fields: DataObject[] = [
+      { field: 'id', value: input.agent_id },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'agent_id', value: input.agent_id },
-      { field: 'agent_name', value: input.agent_name ?? `Agent-${input.agent_id.slice(0, 8)}` },
-      { field: 'agent_type', value: input.agent_type },
+      { field: 'title', value: sem.title || input.agent_name || `Agent-${input.agent_id.slice(0, 8)}` },
+      { field: 'type', value: input.agent_type },
       { field: 'strategy_id', value: input.strategy_id },
       { field: 'soul_id', value: input.soul_id ?? '' },
       { field: 'skill_ids_json', value: JSON.stringify(input.skill_ids ?? []) },
       { field: 'mcp_ids_json', value: JSON.stringify(input.mcp_ids ?? []) },
       { field: 'prompt_template_id', value: input.prompt_template_id ?? '' },
       { field: 'task_signature', value: input.task_signature ?? '' },
-      { field: 'usage_count', value: 0 },
       { field: 'eval_score', value: 50 },
       { field: 'created_by', value: input.created_by || 'user' },
       { field: 'enable', value: 1 },
     ];
-    if (input.agent_purpose !== undefined) {
-      insertFields.push({ field: 'agent_purpose', value: input.agent_purpose });
+    if (sem.brief || input.agent_purpose !== undefined) {
+      fields.push({ field: 'brief', value: sem.brief || input.agent_purpose || '' });
     }
+    return fields;
+  }
 
-    try {
-      await this.relationDb.insert(AGENT_TABLE, insertFields);
-    } catch {
+  private async syncAgentVector(agentId: string, sem: { title: string; brief: string }, taskSignature: string | undefined, metrics?: Metrics): Promise<void> {
+    const docText = buildFunnelDocText(sem.title, sem.brief || taskSignature || '');
+    await syncComponentEmbedding({
+      relationDb: this.relationDb,
+      table: AGENT_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      targetId: agentId,
+      text: docText,
+      embedFn: this.embedFn,
+      metrics,
+    });
+  }
 
-      const fallbackFields = insertFields.filter((f) => f.field !== 'created_by');
-      await this.relationDb.insert(AGENT_TABLE, fallbackFields);
-    }
-    output.agent_id = input.agent_id;
-    return true;
+  private async syncAgentExamples(agentId: string, sem: { positive_examples?: string[]; negative_examples?: string[] }, metrics?: Metrics): Promise<void> {
+    await syncComponentExamples({
+      relationDb: this.relationDb,
+      table: AGENT_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      targetId: agentId,
+      positiveExamples: sem.positive_examples,
+      negativeExamples: sem.negative_examples,
+      embedFn: this.embedFn,
+      metrics,
+    });
   }
 
   async matchAgent(input: MatchAgentInput, output: MatchAgentOutput, ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const config = await this.getConfig();
-
     const rawThreshold = input.similarity_threshold ?? config?.similarity_threshold ?? 70;
     const threshold = rawThreshold > 0 && rawThreshold <= 1 ? Math.round(rawThreshold * 100) : Math.round(rawThreshold);
 
-    const conditions: Condition[] = [
-      { field: 'enable', operator: Operator.EQ, value: 1 },
-    ];
-    if (input.agent_type) {
-      conditions.push({ field: 'agent_type', operator: Operator.EQ, value: input.agent_type });
-    }
-    const rows = await this.relationDb.select(AGENT_TABLE, { conditions });
-    const candidates = rows.map(mapAgent);
+    const candidates = await this.fetchActiveCandidates(input.agent_type);
     if (candidates.length === 0) {
-      output.agent_id = '';
-      output.similarity_score = 0;
-      output.matched_by = '';
+      this.fillMatchOutput(output, '', 0, '', false);
       return true;
     }
 
     const queryText = (input.task_content || input.task_signature || '').trim();
-    const domainA = input.task_signature.match(/^\[(.*?)\]/)?.[1] || '';
+    let { bestScore, bestId } = this.matchCandidatesByRule(candidates, input.task_signature, queryText);
+
+    if (bestScore < threshold && this.embedFn && queryText) {
+      const vecMatch = await this.matchCandidatesByVector(candidates, queryText, ctx, _metrics);
+      if (vecMatch.score > bestScore) {
+        bestScore = vecMatch.score;
+        bestId = vecMatch.agent_id;
+      }
+    }
+
+    if (bestScore >= threshold && bestId) {
+      return this.handleSimilarityMatchResult(bestScore, bestId, config?.regen_rate ?? 75, output);
+    }
+
+    return this.handleLlmMatchFallback(input, ctx, candidates, threshold, bestScore, config?.prompt_template_id, output);
+  }
+
+  private async fetchActiveCandidates(agentType?: string): Promise<AgentRecord[]> {
+    const conditions: Condition[] = [{ field: 'enable', operator: Operator.EQ, value: 1 }];
+    if (agentType) {
+      conditions.push({ field: 'type', operator: Operator.EQ, value: agentType });
+    }
+    const rows = await this.relationDb.select(AGENT_TABLE, { conditions });
+    return rows.map(mapAgent);
+  }
+
+  private fillMatchOutput(
+    output: MatchAgentOutput,
+    agentId: string,
+    score: number,
+    matchedBy: '' | 'SIMILARITY' | 'LLM',
+    matched: boolean,
+    regen = false,
+  ): void {
+    output.agent_id = agentId;
+    output.similarity_score = score;
+    output.matched_by = matchedBy;
+    output.matched = matched;
+    output.regenerate = regen;
+  }
+
+  private matchCandidatesByRule(candidates: AgentRecord[], taskSignature: string, queryText: string): { bestScore: number; bestId: string } {
+    const domainA = taskSignature.match(/^\[(.*?)\]/)?.[1] || '';
     let bestScore = 0;
     let bestId = '';
     for (const c of candidates) {
       const domainB = c.task_signature.match(/^\[(.*?)\]/)?.[1] || '';
       if (domainA && domainB && domainA.trim() !== domainB.trim()) continue;
-      if (c.task_signature === input.task_signature) {
-        bestScore = 100;
-        bestId = c.agent_id;
-        break;
+      if (c.task_signature === taskSignature) {
+        return { bestScore: 100, bestId: c.agent_id };
       }
-      const cleanA = input.task_signature.replace(/^\[.*?\]/, '').trim();
+      const cleanA = taskSignature.replace(/^\[.*?\]/, '').trim();
       const cleanB = c.task_signature.replace(/^\[.*?\]/, '').trim();
       if (cleanA && cleanB && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
-        bestScore = 100;
-        bestId = c.agent_id;
-        break;
+        return { bestScore: 100, bestId: c.agent_id };
       }
       if (c.agent_purpose && queryText && (queryText.includes(c.agent_purpose) || c.agent_purpose.includes(queryText))) {
         bestScore = 90;
         bestId = c.agent_id;
       }
     }
+    return { bestScore, bestId };
+  }
 
-    const regenRate = config?.regen_rate ?? 75;
-    if (bestScore >= threshold && bestId) {
-      if (shouldReuseByRegenRate(regenRate)) {
-        output.agent_id = bestId;
-        output.similarity_score = bestScore;
-        output.matched_by = 'SIMILARITY';
-        output.matched = true;
-        return true;
+  private async matchCandidatesByVector(
+    candidates: AgentRecord[],
+    queryText: string,
+    _ctx: AgentLibraryContext,
+    metrics?: Metrics,
+  ): Promise<{ score: number; agent_id: string }> {
+    let score = 0;
+    let agent_id = '';
+    try {
+      const queryVec = await this.embedFn!(queryText, _ctx as Context);
+      if (queryVec && queryVec.length > 0) {
+        const ranking = await this.rankCandidatesBySemantics(candidates, queryVec, metrics);
+        for (const entry of ranking) {
+          if (entry.rejected) continue;
+          if (entry.score > score) {
+            score = entry.score;
+            agent_id = entry.doc.doc.agent_id;
+          }
+        }
       }
-      output.matched = true;
-      output.regenerate = true;
-      output.similarity_score = bestScore;
-      output.agent_id = '';
+    } catch (err) {
+      metrics?.warn('AgentLibraryService.matchAgent 向量匹配降级', { error: String(err) });
+    }
+    return { score, agent_id };
+  }
+
+  /** R7 语义路由裁决:描述向量 + 正向范例 Max-Sim 提升 + 负向范例硬阻断/软惩罚 */
+  private async rankCandidatesBySemantics(candidates: AgentRecord[], queryVec: number[], metrics?: Metrics) {
+    const funnelDocs = candidates.map((c) => ({
+      doc: c,
+      id: c.agent_id,
+      name: c.agent_name,
+      brief: String(c.agent_purpose || c.task_signature || ''),
+    }));
+    const vectorMap = await batchGetOrComputeEmbeddings({
+      relationDb: this.relationDb,
+      table: AGENT_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      items: funnelDocs.map((d) => ({ id: d.id, text: buildFunnelDocText(d.name, d.brief) })),
+      embedFn: this.embedFn,
+      metrics,
+    });
+    const dual = await batchGetDualExampleEmbeddings({
+      relationDb: this.relationDb,
+      table: AGENT_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      targetIds: funnelDocs.map((d) => d.id),
+    });
+    return funnelSemanticRouterRanking(queryVec, funnelDocs, async () => [], vectorMap, dual.positiveMap, dual.negativeMap);
+  }
+
+  private handleSimilarityMatchResult(bestScore: number, bestId: string, regenRate: number, output: MatchAgentOutput): boolean {
+    if (shouldReuseByRegenRate(regenRate)) {
+      this.fillMatchOutput(output, bestId, bestScore, 'SIMILARITY', true);
       return true;
     }
+    this.fillMatchOutput(output, '', bestScore, '', true, true);
+    return true;
+  }
 
-    const promptTemplateId = config?.prompt_template_id ?? '';
+  private async handleLlmMatchFallback(
+    input: MatchAgentInput,
+    ctx: AgentLibraryContext,
+    candidates: AgentRecord[],
+    threshold: number,
+    bestScore: number,
+    promptTemplateId: string | undefined,
+    output: MatchAgentOutput,
+  ): Promise<boolean> {
     const llmMatched = await this.llmMatchAgent(
       input.task_content || input.task_signature,
       candidates,
-      promptTemplateId,
+      promptTemplateId ?? '',
       { session_id: ctx.session_id, run_id: input.run_id || ctx.run_id || '', work_id: input.work_id || ctx.work_id || '' },
     );
-
     const parsedScore = Number(llmMatched?.score ?? 0);
     const normalizedLlmScore = parsedScore > 0 && parsedScore <= 1 ? Math.round(parsedScore * 100) : Math.round(parsedScore);
 
     if (llmMatched && normalizedLlmScore >= threshold && llmMatched.agent_id) {
       const found = candidates.find((c) => c.agent_id === llmMatched.agent_id && toBool(c.enable));
       if (found) {
-        output.agent_id = found.agent_id;
-        output.similarity_score = normalizedLlmScore;
-        output.matched_by = 'LLM';
-        output.matched = true;
+        this.fillMatchOutput(output, found.agent_id, normalizedLlmScore, 'LLM', true);
         return true;
       }
     }
-
-    output.agent_id = '';
-    output.similarity_score = Math.max(bestScore, normalizedLlmScore);
-    output.matched_by = '';
-    output.matched = false;
+    this.fillMatchOutput(output, '', Math.max(bestScore, normalizedLlmScore), '', false);
     return true;
   }
 
   async updateAgent(input: UpdateAgentInput, _output: UpdateAgentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const existing = await this.relationDb.selectOne(AGENT_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+      { field: 'id', operator: Operator.EQ, value: input.agent_id },
     ]);
     if (!existing) throw new NotFoundError('Agent', input.agent_id);
 
-    if (input.eval_score !== undefined) {
-      if (input.eval_score < 0 || input.eval_score > 100) {
-        throw new ValidationError('eval_score 必须在 0-100 之间');
-      }
+    if (input.eval_score !== undefined && (input.eval_score < 0 || input.eval_score > 100)) {
+      throw new ValidationError('eval_score 必须在 0-100 之间');
     }
 
+    const data = this.buildAgentUpdateFields(input);
+    if (data.length > 1) {
+      await this.relationDb.update(AGENT_TABLE, data, [{ field: 'id', operator: Operator.EQ, value: input.agent_id }]);
+    }
+
+    if (input.agent_name !== undefined || input.agent_purpose !== undefined || input.task_signature !== undefined) {
+      await this.syncAgentEmbeddingOnUpdate(input.agent_id, _metrics);
+    }
+    if (input.positive_examples !== undefined || input.negative_examples !== undefined) {
+      await this.syncAgentExamples(input.agent_id, {
+        positive_examples: input.positive_examples,
+        negative_examples: input.negative_examples,
+      }, _metrics);
+    }
+    return true;
+  }
+
+  private buildAgentUpdateFields(input: UpdateAgentInput): DataObject[] {
     const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
-    if (input.agent_name !== undefined) data.push({ field: 'agent_name', value: input.agent_name });
-    if (input.agent_purpose !== undefined) data.push({ field: 'agent_purpose', value: input.agent_purpose });
+    if (input.agent_name !== undefined) data.push({ field: 'title', value: input.agent_name });
+    if (input.agent_purpose !== undefined) data.push({ field: 'brief', value: input.agent_purpose });
     if (input.task_signature !== undefined) data.push({ field: 'task_signature', value: input.task_signature });
     if (input.eval_score !== undefined) data.push({ field: 'eval_score', value: input.eval_score });
     if (input.enable !== undefined) data.push({ field: 'enable', value: input.enable ? 1 : 0 });
     if (input.strategy_id !== undefined) data.push({ field: 'strategy_id', value: input.strategy_id });
     if (input.soul_id !== undefined) data.push({ field: 'soul_id', value: input.soul_id });
+    return data;
+  }
 
-    if (data.length <= 1) return true;
-    await this.relationDb.update(
-      AGENT_TABLE,
-      data,
-      [{ field: 'agent_id', operator: Operator.EQ, value: input.agent_id }],
-    );
-    return true;
+  private async syncAgentEmbeddingOnUpdate(agentId: string, metrics?: Metrics): Promise<void> {
+    const row = await this.relationDb.selectOne(AGENT_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: agentId },
+    ]);
+    if (row) {
+      const docText = buildFunnelDocText(String(row.title ?? ''), String(row.brief || row.task_signature || ''));
+      await syncComponentEmbedding({
+        relationDb: this.relationDb,
+        table: AGENT_EMBEDDING_TABLE,
+        targetIdField: 'agent_id',
+        targetId: agentId,
+        text: docText,
+        embedFn: this.embedFn,
+        metrics,
+      });
+    }
   }
 
   async bindAgentComponent(input: BindAgentComponentInput, output: BindAgentComponentOutput, _ctx: AgentLibraryContext, _metrics?: Metrics, _report?: Report,
@@ -250,7 +419,7 @@ export class AgentLibraryService {
     const ids = (input.component_ids ?? []).map((v) => String(v).trim()).filter(Boolean);
     const patch = this.prepareBindingPatch(input.component_kind, ids, record);
     await this.relationDb.update(AGENT_TABLE, newPatch(patch), [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+      { field: 'id', operator: Operator.EQ, value: input.agent_id },
     ]);
     output.bound = ids;
     return true;
@@ -268,7 +437,7 @@ export class AgentLibraryService {
     }
     const patch = this.prepareBindingPatch(input.component_kind, remaining, record);
     await this.relationDb.update(AGENT_TABLE, newPatch(patch), [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+      { field: 'id', operator: Operator.EQ, value: input.agent_id },
     ]);
     output.unbound = true;
     return true;
@@ -279,7 +448,7 @@ export class AgentLibraryService {
       throw new ValidationError('agent_id 为必填');
     }
     const row = await this.relationDb.selectOne(AGENT_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: agentId },
+      { field: 'id', operator: Operator.EQ, value: agentId },
     ]);
     if (!row) {
       throw new NotFoundError('agent', agentId);
@@ -319,40 +488,47 @@ export class AgentLibraryService {
       return true;
     }
 
-    let deleted = 0;
-
     await this.assertNotUserOwned(input.ids);
+    let deleted = 0;
     for (const id of input.ids) {
       if (!id) continue;
-      const rows = await this.relationDb.select(AGENT_TABLE, {
-        conditions: [{ field: 'id', operator: Operator.EQ, value: id }],
-      });
-      if (rows.length === 0) continue;
-      const agentId = String(rows[0].agent_id);
-
-      await this.relationDb.delete(AGENT_USAGE_TABLE, [
-        { field: 'agent_id', operator: Operator.EQ, value: agentId },
-      ]);
-
-      try {
-        this.relationDb.executeRaw(`DELETE FROM "agent_llm" WHERE "agent_id" = ?`, [agentId]);
-      } catch {  }
-      for (const table of ['skill_usage', 'soul_core_usage', 'agent_mcp_usage']) {
-        try {
-          this.relationDb.executeRaw(`DELETE FROM "${table}" WHERE "agent_id" = ?`, [agentId]);
-        } catch (err) {
-
-          void err;
-        }
-      }
-
-      const n = await this.relationDb.delete(AGENT_TABLE, [
-        { field: 'id', operator: Operator.EQ, value: id },
-      ]);
-      deleted += n;
+      deleted += await this.deleteSingleAgent(id);
     }
     output.deleted_count = deleted;
     return true;
+  }
+
+  private async deleteSingleAgent(id: string): Promise<number> {
+    const rows = await this.relationDb.select(AGENT_TABLE, {
+      conditions: [{ field: 'id', operator: Operator.EQ, value: id }],
+    });
+    if (rows.length === 0) return 0;
+    const agentId = String(rows[0].id ?? rows[0].agent_id);
+
+    await this.relationDb.delete(USAGE_EVENT_TABLE, [
+      { field: 'entity_type', operator: Operator.EQ, value: 'agent' },
+      { field: 'entity_id', operator: Operator.EQ, value: agentId },
+    ]);
+    await this.relationDb.delete(AGENT_USAGE_ORG_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: agentId },
+    ]);
+
+    const n = await this.relationDb.delete(AGENT_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: id },
+    ]);
+    await deleteComponentEmbedding({
+      relationDb: this.relationDb,
+      table: AGENT_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      targetId: id,
+    });
+    await deleteComponentEmbedding({
+      relationDb: this.relationDb,
+      table: AGENT_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'agent_id',
+      targetId: id,
+    });
+    return n;
   }
 
   private async assertNotUserOwned(internalIds: string[]): Promise<void> {
@@ -395,61 +571,18 @@ export class AgentLibraryService {
   ): Promise<boolean> {
     if (!input.agent_id) throw new ValidationError('agent_id 为必填');
     const existing = await this.relationDb.selectOne(AGENT_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+      { field: 'id', operator: Operator.EQ, value: input.agent_id },
     ]);
     if (!existing) throw new NotFoundError('Agent', input.agent_id);
 
-    const now = IdGenerator.now();
-    const workId = input.work_id || ctx.work_id || '';
-    const runId = input.run_id || ctx.run_id || '';
-
-    await this.relationDb.insert(AGENT_USAGE_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
-      { field: 'created', value: now },
-      { field: 'updated', value: now },
-      { field: 'agent_id', value: input.agent_id },
-      { field: 'work_id', value: workId },
-      { field: 'run_id', value: runId },
-      { field: 'usage_context', value: input.usage_context ?? '' },
-    ]);
-
-    const usageDate = IdGenerator.today();
-    const daily = await this.relationDb.selectOne(AGENT_USAGE_DAILY_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
-      { field: 'usage_date', operator: Operator.EQ, value: usageDate },
-    ]);
-    if (daily) {
-      await this.relationDb.update(
-        AGENT_USAGE_DAILY_TABLE,
-        [
-          { field: 'usage_count', value: (Number(daily.usage_count) ?? 0) + 1 },
-          { field: 'updated', value: now },
-        ],
-        [
-          { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
-          { field: 'usage_date', operator: Operator.EQ, value: usageDate },
-        ],
-      );
-    } else {
-      await this.relationDb.insert(AGENT_USAGE_DAILY_TABLE, [
-        { field: 'id', value: IdGenerator.generate() },
-        { field: 'created', value: now },
-        { field: 'updated', value: now },
-        { field: 'agent_id', value: input.agent_id },
-        { field: 'usage_date', value: usageDate },
-        { field: 'usage_count', value: 1 },
-      ]);
-    }
-
-    const usageCount = Number(existing.usage_count ?? 0) + 1;
-    await this.relationDb.update(
-      AGENT_TABLE,
-      [
-        { field: 'usage_count', value: usageCount },
-        { field: 'updated', value: now },
-      ],
-      [{ field: 'agent_id', operator: Operator.EQ, value: input.agent_id }],
-    );
+    const usageInput = new RecordUsageInput();
+    usageInput.entity_type = 'agent';
+    usageInput.entity_id = input.agent_id;
+    usageInput.agent_id = input.agent_id;
+    usageInput.work_id = input.work_id || ctx.work_id || '';
+    usageInput.run_id = input.run_id || ctx.run_id || '';
+    usageInput.usage_context = input.usage_context ?? '';
+    await this.trace.recordUsage(usageInput, new RecordUsageOutput(), new AgentLibraryContext() as never);
     return true;
   }
 
@@ -457,7 +590,7 @@ export class AgentLibraryService {
   ): Promise<boolean> {
     if (input.agent_id) {
       const row = await this.relationDb.selectOne(AGENT_TABLE, [
-        { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
+        { field: 'id', operator: Operator.EQ, value: input.agent_id },
       ]);
       output.agents = row ? [mapAgent(row)] : [];
       return true;
@@ -465,7 +598,7 @@ export class AgentLibraryService {
 
     const conditions: Condition[] = [...(input.conditions ?? [])];
     if (input.agent_type) {
-      conditions.push({ field: 'agent_type', operator: Operator.EQ, value: input.agent_type });
+      conditions.push({ field: 'type', operator: Operator.EQ, value: input.agent_type });
     }
     const rows = await this.relationDb.select(AGENT_TABLE, {
       conditions,
@@ -505,7 +638,7 @@ export class AgentLibraryService {
 
         const cutoffDate = IdGenerator.dateOf(now - rule.days * 24 * 60 * 60 * 1000);
         const dailyRows = await this.relationDb.queryRaw<{ total: number }>(
-          `SELECT COALESCE(SUM("usage_count"), 0) AS "total" FROM "${AGENT_USAGE_DAILY_TABLE}" WHERE "agent_id" = ? AND "usage_date" >= ?`,
+          `SELECT COALESCE(SUM("usage_count"), 0) AS "total" FROM "${AGENT_USAGE_ORG_TABLE}" WHERE "agent_id" = ? AND "usage_date" >= ?`,
           [agent.agent_id, cutoffDate],
         );
         const usageCount = Number(dailyRows?.[0]?.total ?? 0);
@@ -527,7 +660,7 @@ export class AgentLibraryService {
           { field: 'enable', value: 0 },
           { field: 'updated', value: now },
         ],
-        [{ field: 'agent_id', operator: Operator.EQ, value: agentId }],
+        [{ field: 'id', operator: Operator.EQ, value: agentId }],
       );
     }
     output.aged_count = agedIds.length;
@@ -842,7 +975,7 @@ export class AgentLibraryService {
 
   private async soMatchPromptTemplateId(): Promise<string> {
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Agent 匹配%' },
+      { field: 'title', operator: Operator.LIKE, value: '%Agent 匹配%' },
     ]);
     if (row && row.id) return String(row.id);
     const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [

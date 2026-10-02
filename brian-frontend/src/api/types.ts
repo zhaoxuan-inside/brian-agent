@@ -8,14 +8,6 @@ export interface BlockMeta {
   updatedAt: number
 }
 
-export type AgentExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'ERROR'
-
-export interface AgentRuntimeInfo {
-  status: AgentExecutionStatus
-  agentName?: string
-  updatedAt: number
-}
-
 export interface BlockBase {
   id: string
   msgId: string
@@ -140,23 +132,7 @@ export interface DagEdgeItem {
   label?: string
 }
 
-export interface AgentDagData {
-  totalCount?: number
-  nodes: DagNodeItem[]
-  edges: DagEdgeItem[]
-}
-
-export interface DagExecutionStep {
-  node_id: string
-  node_type: string
-  status: 'RUNNING' | 'SUCCESS' | 'ERROR' | string
-  elapsed_ms?: number
-  error?: string
-}
-
 export interface PlanningData {
-  agentDag?: AgentDagData
-  executionSteps?: DagExecutionStep[]
   status: 'idle' | 'streaming' | 'done'
 }
 
@@ -282,7 +258,6 @@ export interface ChatMessage {
   content: string
   timestamp: number
   blocks?: Block[]
-  agentDag?: AgentDagData
   sessionId?: string
   workId?: string
   runId?: string
@@ -317,21 +292,6 @@ export interface PermissionCardData {
   answeredAt?: number
   
   runId?: string
-}
-
-export interface ThinkingTimelineItem {
-  seq: number
-  ts: number
-  event: string
-  title: string
-  detail?: string
-  kind: string
-  
-  target?: string
-  
-  tooltip?: string
-  
-  elapsedMs?: number
 }
 
 export interface ThinkingToolTrace {
@@ -410,14 +370,6 @@ export interface ThinkingRunTrace {
   }
 }
 
-export interface ThinkingContextRound {
-  round: number
-  
-  targetKey?: string
-  messageCount: number
-  messages: Array<{ role: string; content: string }>
-}
-
 export interface ThinkingNodeTrace {
   seq: number
   
@@ -429,14 +381,133 @@ export interface ThinkingNodeTrace {
   fields: Array<{ label: string; value: string; id?: string }>
 }
 
-export interface ThinkingTrace {
-  run: ThinkingRunTrace
-  timeline: ThinkingTimelineItem[]
-  tools: ThinkingToolTrace[]
-  permissions: ThinkingPermissionTrace[]
-  
-  nodes: ThinkingNodeTrace[]
-  contextRounds: ThinkingContextRound[]
+export interface ExecutionStage {
+  id: string
+  name: string
+  category: 'intent' | 'context' | 'tool' | 'reasoning' | 'writer' | 'eval'
+  status: 'ok' | 'fail' | 'running'
+  durationMs: number
+  tokens: { input: number; output: number; total: number }
+  decisionSummary: string
+  details: {
+    rationale?: string
+    agentMatch?: { candidateCount: number; selectedAgent: string; score: number; reason?: string }
+    toolCalls?: Array<{ toolName: string; input: unknown; output: unknown; durationMs: number; status: string }>
+    contextStats?: { round: number; messageCount: number; memorySources?: string[] }
+    thinkingContent?: string
+    replyContent?: string
+    promptContent?: string
+  }
+}
+
+export interface InfoSourceCount {
+  source: string
+  label: string
+  count: number
+}
+
+export interface AgentComponentSpec {
+  agentName?: string
+  agentType?: string
+  thinkingModel?: 'CoT' | 'ReACT' | 'Direct' | string
+  llm?: { id?: string; name: string }
+  prompt?: { id?: string; name: string; preview?: string }
+  soul?: { id?: string; name: string }
+  skills?: Array<{ id: string; name: string }>
+  mcps?: Array<{ id: string; name: string }>
+  extra?: Record<string, unknown>
+}
+
+export interface StepContentIO {
+  title: string
+  content?: unknown
+  preview?: string
+  tokens?: number
+  format?: 'markdown' | 'json' | 'text'
+  hasDetail?: boolean
+}
+
+export interface ReasoningTurnContextDetail {
+  round: number
+  thoughtMode: string
+  // 1. 基础记忆内容 (Base Context / Static Memory)
+  baseMemory: {
+    title: string
+    tokenEstimate: number
+    preview: string
+    memoryCategories: string[]
+    systemPromptSnippet?: string
+    memoryItems?: Array<{ label: string; content: string }>
+  }
+  // 2. Agent 多轮执行增量补充的 Context (Incremental Context)
+  incrementalContext: {
+    title: string
+    tokenEstimate: number
+    preview: string
+    thoughtModelGuidance?: string
+    historyMessagesCount: number
+    priorThoughtsCount: number
+    toolObservationsCount: number
+    items?: Array<{
+      type: 'user_prompt' | 'prior_thought' | 'tool_call' | 'tool_observation' | 'system_guidance'
+      title: string
+      content: string
+      toolName?: string
+    }>
+  }
+}
+
+export interface UserProfileDimensionItem {
+  key: string
+  label: string
+  value: string
+  confidence: number
+  evidence?: string[]
+}
+
+export interface UserProfileSnapshot {
+  id?: string
+  version: number
+  summary: string
+  updatedAt?: number
+  dimensions: UserProfileDimensionItem[]
+}
+
+export interface CandidateScoreItem {
+  id: string
+  name: string
+  score: number
+  reason?: string
+}
+
+export interface MatchMechanismDetail {
+  mechanism: 'bm25' | 'vector' | 'llm' | 'direct'
+  label: string
+  adopted?: boolean
+  candidates: CandidateScoreItem[]
+  prompt?: string
+  output?: string
+}
+
+export interface MemoryDimensionItem {
+  dimension: string
+  label: string
+  messages: Array<{
+    id: string
+    role: string
+    content: string
+    created: number
+    type?: string
+  }>
+}
+
+export interface ChildTaskOutputItem {
+  subRunId: string
+  agentName: string
+  task: string
+  output: string
+  status: string
+  durationMs?: number
 }
 
 export interface IntentConfirmation {
@@ -622,6 +693,16 @@ export interface ModelInfo {
   supportsTools: boolean
   isDefault: boolean
   enable: boolean
+  llm_type?: 'text' | 'embedding' | 'multimodal'
+  llm_brief?: string
+  model_usage?: string
+  providerId?: string
+  /** R7: llm_usage_org 按 llm_available_id 实时聚合的累计 tokens */
+  usage_tokens?: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
 }
 
 export interface LearningStats {
@@ -782,6 +863,12 @@ export interface ProfileVersionData {
   session_id: string
   dimensions: Record<string, ProfileDimension>
   profile_summary: string
+}
+
+/** 完整画像记录（信息 > 画像 页全量展示用） */
+export interface ProfileFullRecord extends ProfileVersionData {
+  id: string
+  change_summary: string
 }
 
 export interface VisualizedMessage {

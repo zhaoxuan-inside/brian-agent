@@ -1,23 +1,19 @@
 import { ref } from 'vue'
 import { userProfileApi } from '../api'
-import type { ProfileHistoryItem, ProfileVersionData, UserProfileData } from '../api/types'
+import type { ProfileFullRecord } from '../api/types'
 
 export function useProfileTab() {
 
-const profile = ref<UserProfileData | null>(null)
-const profileHistory = ref<ProfileHistoryItem[]>([])
+const profiles = ref<ProfileFullRecord[]>([])
 const loadingProfile = ref(false)
 const generatingProfile = ref(false)
 const resettingProfile = ref(false)
 const resetProfileConfirm = ref(false)
-const selectedVersion = ref<ProfileVersionData | null>(null)
-const loadingVersion = ref(false)
 
 async function loadProfile() {
   loadingProfile.value = true
   try {
-    profile.value = await userProfileApi.get()
-    profileHistory.value = await userProfileApi.history()
+    profiles.value = await userProfileApi.all()
   } catch (err) {
     console.error('[ProfileTab] 加载画像失败', err)
   } finally { loadingProfile.value = false }
@@ -42,33 +38,10 @@ async function confirmResetProfile() {
   resettingProfile.value = true
   try {
     await userProfileApi.reset()
-    selectedVersion.value = null
     await loadProfile()
   } catch (err) {
     console.error('[ProfileTab] 重置画像失败', err)
   } finally { resettingProfile.value = false }
-}
-
-async function openVersion(version: number) {
-  loadingVersion.value = true
-  selectedVersion.value = null
-  try {
-    selectedVersion.value = await userProfileApi.version(version)
-  } catch (err) {
-    console.error('[ProfileTab] 加载画像版本失败', err)
-  } finally { loadingVersion.value = false }
-}
-
-function dimensionDisplayValue(v: unknown): string {
-  if (v === null || v === undefined) return '—'
-  if (typeof v === 'string') return v
-  if (Array.isArray(v)) return v.join('、')
-  if (typeof v === 'object') {
-    return Object.entries(v as Record<string, unknown>)
-      .map(([k, val]) => `${k}: ${typeof val === 'object' ? JSON.stringify(val) : val}`)
-      .join(' · ')
-  }
-  return String(v)
 }
 
 function formatEvidence(ev: unknown): string {
@@ -100,20 +73,15 @@ function stabilityClass(s?: string): string {
 
   return {
     confirmResetProfile,
-    dimensionDisplayValue,
     formatEvidence,
     generatingProfile,
     handleGenerateProfile,
     handleResetProfile,
     loadProfile,
     loadingProfile,
-    loadingVersion,
-    openVersion,
-    profile,
-    profileHistory,
+    profiles,
     resetProfileConfirm,
     resettingProfile,
-    selectedVersion,
     stabilityClass,
     stabilityLabel,
   }

@@ -45,10 +45,13 @@ export {
   VisualizedLLMOutput,
   EnableLLMInput,
   EnableLLMOutput,
+  SoTokenUsageInput,
+  SoTokenUsageOutput,
+  SoModelTokenStatsInput,
+  SoModelTokenStatsOutput,
   LLM_PROVIDER_TABLE,
   LLM_CACHE_TABLE,
   LLM_AVAILABLE_TABLE,
-  LLM_USAGE_TABLE,
   LLM_CONFIG_TABLE,
 } from './domain/types';
 
@@ -59,4 +62,5 @@ export type {
   LLMCacheRecord,
   LLMAvailableRecord,
   LLMUsageRecord,
+  ModelTokenStat,
 } from './domain/types';

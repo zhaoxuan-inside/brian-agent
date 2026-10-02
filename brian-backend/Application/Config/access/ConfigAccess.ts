@@ -43,6 +43,7 @@ import type {
   TestMcpProviderInput, TestMcpProviderOutput, ListMcpInput, ListMcpOutput,
   InstallMcpInput, InstallMcpOutput, StartMcpInput, StartMcpOutput,
   StopMcpInput, StopMcpOutput, UninstallMcpInput, UninstallMcpOutput,
+  UninstallMcpsInput, UninstallMcpsOutput,
   UpdateMcpInput, UpdateMcpOutput, GetMcpInput, GetMcpOutput, SoMcpInput, SoMcpOutput,
   McpContext,
 } from '@brian-agent/base';
@@ -315,6 +316,10 @@ export class ConfigAccess {
 
   async uninstallMcp(input: UninstallMcpInput, output: UninstallMcpOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
     return this.service.uninstallMcpProxy(input, output, context, metrics, report);
+  }
+
+  async uninstallMcps(input: UninstallMcpsInput, output: UninstallMcpsOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
+    return this.service.uninstallMcpsProxy(input, output, context, metrics, report);
   }
 
   async updateMcp(input: UpdateMcpInput, output: UpdateMcpOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {

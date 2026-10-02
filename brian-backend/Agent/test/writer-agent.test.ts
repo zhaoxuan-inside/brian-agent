@@ -130,7 +130,7 @@ describe('WriterAgent', () => {
       }), out, new WriterAgentContext());
       expect(out.trace_id).toBeTruthy();
       const rows = db.queryRaw<{ trace_id: string; total_token_usage: number; answer: string }>(
-        'SELECT "trace_id", "total_token_usage", "answer" FROM "agent_execution_trace" WHERE "trace_id" = ?',
+        'SELECT "trace_id", "total_token_usage", "answer" FROM "agent_execution_trace_record" WHERE "trace_id" = ?',
         [out.trace_id],
       );
       expect(rows.length).toBe(1);

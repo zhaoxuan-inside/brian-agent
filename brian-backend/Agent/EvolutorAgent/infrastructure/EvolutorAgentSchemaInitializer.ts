@@ -6,6 +6,8 @@ export class EvolutorAgentSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   async init(): Promise<void> {
+    // ADR-012:组件定义表改名(幂等);eval_id 保留为 id 别名(可视化按 eval_id 查历史数据,INSERT 时写 id 同值)
+    try { this.relationDb.executeRaw(`ALTER TABLE "agent_evaluation" RENAME TO "${AGENT_EVALUATION_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${AGENT_EVALUATION_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,

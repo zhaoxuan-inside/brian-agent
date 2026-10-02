@@ -121,6 +121,90 @@ export interface InfoContextConfigRecord {
   priority_order: string;
 }
 
+export interface ContextPriorityStrategy {
+  id: string;
+  name: string;
+  description: string;
+  order: string;
+  sources: CollectionSource[];
+}
+
+export const CONTEXT_PRIORITY_STRATEGIES: Record<string, ContextPriorityStrategy> = {
+  DEFAULT: {
+    id: 'DEFAULT',
+    name: '默认策略',
+    description: '标准平衡模式：优先保留强上下文（钉住/引用/时间线），均衡兼顾标签聚类与语义相似度',
+    order: 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM',
+    sources: [
+      CollectionSource.PINNED,
+      CollectionSource.CITING,
+      CollectionSource.TIMELINE,
+      CollectionSource.TAG_RELATIVE,
+      CollectionSource.SIMILARITY,
+      CollectionSource.KEYWORD,
+      CollectionSource.RANDOM,
+    ],
+  },
+  TIMELINE_FIRST: {
+    id: 'TIMELINE_FIRST',
+    name: '时序优先策略',
+    description: '对话连续模式：突出本会话近期连续对话记录，防止时序消息被弱维度稀释',
+    order: 'PINNED,CITING,TIMELINE,SIMILARITY,TAG_RELATIVE,KEYWORD,RANDOM',
+    sources: [
+      CollectionSource.PINNED,
+      CollectionSource.CITING,
+      CollectionSource.TIMELINE,
+      CollectionSource.SIMILARITY,
+      CollectionSource.TAG_RELATIVE,
+      CollectionSource.KEYWORD,
+      CollectionSource.RANDOM,
+    ],
+  },
+  SEMANTIC_FIRST: {
+    id: 'SEMANTIC_FIRST',
+    name: '语义优先策略',
+    description: '知识检索模式：跨会话深度问答场景，优先保留语义向量高度相似的历史记忆',
+    order: 'PINNED,CITING,SIMILARITY,TAG_RELATIVE,KEYWORD,TIMELINE,RANDOM',
+    sources: [
+      CollectionSource.PINNED,
+      CollectionSource.CITING,
+      CollectionSource.SIMILARITY,
+      CollectionSource.TAG_RELATIVE,
+      CollectionSource.KEYWORD,
+      CollectionSource.TIMELINE,
+      CollectionSource.RANDOM,
+    ],
+  },
+  TAG_FIRST: {
+    id: 'TAG_FIRST',
+    name: '主题标签优先策略',
+    description: '主题聚焦模式：围绕同主题标签与知识图谱共现关系优先聚类历史消息',
+    order: 'PINNED,CITING,TAG_RELATIVE,SIMILARITY,KEYWORD,TIMELINE,RANDOM',
+    sources: [
+      CollectionSource.PINNED,
+      CollectionSource.CITING,
+      CollectionSource.TAG_RELATIVE,
+      CollectionSource.SIMILARITY,
+      CollectionSource.KEYWORD,
+      CollectionSource.TIMELINE,
+      CollectionSource.RANDOM,
+    ],
+  },
+  STRICT_FOCUS: {
+    id: 'STRICT_FOCUS',
+    name: '强约束聚焦策略',
+    description: '精准聚焦模式：仅保留用户明确钉住、选定引用与本会话时序记录，不引入弱维度发散',
+    order: 'PINNED,CITING,TIMELINE',
+    sources: [
+      CollectionSource.PINNED,
+      CollectionSource.CITING,
+      CollectionSource.TIMELINE,
+    ],
+  },
+};
+
+export const DEFAULT_CONTEXT_PRIORITY_STRATEGY = CONTEXT_PRIORITY_STRATEGIES.DEFAULT;
+
 export class SaveInfoInput extends Input {
   session_id!: string;
   work_id!: string;
@@ -381,6 +465,8 @@ export class ContextInfoInput extends Input {
   
 
   persist_snapshot?: boolean;
+
+  round?: number;
 }
 
 export class ContextInfoOutput extends Output {
@@ -550,9 +636,46 @@ export class CleanOrphanGraphNodesOutput extends Output {
   deleted_nodes: string[] = [];
 }
 
-export const DIALOG_TABLE = 'dialog';
-export const EXECUTE_TABLE = 'execute';
-export const CONTEXT_TABLE = 'context';
+export const DIALOG_TABLE = 'dialog_record';
+
+export const DIALOG_EMBEDDING_TABLE = 'dialog_embedding_record';
+
+/** 每轮话题匹配参与裁决的最近轮次向量上限 */
+export const DIALOG_TOPIC_RECENT_ROUNDS = 20;
+
+/** 话题连续性判定阈值(cosine×100):会话内轮次向量最大相似度≥该值视为同一话题 */
+export const DIALOG_TOPIC_MATCH_SIMILARITY = 70;
+
+export class SaveDialogEmbeddingInput extends Input {
+  session_id!: string;
+  work_id!: string;
+  /** 参与向量化的拼接文本(用户请求+系统回复) */
+  text!: string;
+}
+
+export class SaveDialogEmbeddingOutput extends Output {
+  saved = false;
+  dimension = 0;
+  /** saved=false 时的原因:no_vector_model(未配置向量模型)/empty_vector(生成失败) */
+  reason = '';
+}
+
+export class MatchDialogTopicInput extends Input {
+  session_id!: string;
+  query_text!: string;
+}
+
+export class MatchDialogTopicOutput extends Output {
+  /** false=未评估(无向量模型/无可比轮次),调用方应回退既有亲和逻辑 */
+  evaluated = false;
+  /** 0-100,会话内最近轮次向量的最大 cosine 相似度 */
+  best_similarity = 0;
+  matched_work_id = '';
+  compared_rounds = 0;
+}
+
+export { EXECUTE_TABLE } from '@brian-agent/base';
+export const CONTEXT_TABLE = 'context_org';
 
 export interface DialogRecord {
   id: string;
@@ -562,9 +685,17 @@ export interface DialogRecord {
   work_id: string;
   type: string;
   dialog: string;
-  dialog_length: number;
-  dialog_brief: string;
   trace_id: string;
+}
+
+export interface DialogEmbeddingRecord {
+  id: string;
+  created: number;
+  updated: number;
+  session_id: string;
+  work_id: string;
+  embedding: string;
+  dimension: number;
 }
 
 export interface ExecuteRecord {
@@ -584,6 +715,7 @@ export interface ExecuteRecord {
   output: string;
   output_length: number;
   gap: number;
+  status: string;
 }
 
 export interface ContextRecord {
@@ -592,19 +724,20 @@ export interface ContextRecord {
   updated: number;
   session_id: string;
   work_id: string;
+  round: number;
   dialog_id: string;
   type: string;
 }
-export const INFO_VECTOR_TABLE = 'info_vector';
-export const INFO_TAG_TABLE = 'info_tag';
-export const INFO_TAG_VECTOR_TABLE = 'info_tag_vector';
-export const INFO_SUMMARY_TABLE = 'info_summary';
-export const INFO_KEYWORD_TABLE = 'info_keyword';
-export const INFO_TAG_CONFIG_TABLE = 'info_tag_config';
-export const INFO_SUMMARY_CONFIG_TABLE = 'info_summary_config';
-export const INFO_CONFIG_TABLE = 'info_config';
-export const INFO_VECTOR_CONFIG_TABLE = 'info_vector_config';
-export const INFO_CONTEXT_CONFIG_TABLE = 'info_context_config';
+export const INFO_VECTOR_TABLE = 'info_vector_record';
+export const INFO_TAG_TABLE = 'info_tag_record';
+export const INFO_TAG_VECTOR_TABLE = 'info_tag_vector_record';
+export const INFO_SUMMARY_TABLE = 'info_summary_record';
+export const INFO_KEYWORD_TABLE = 'info_keyword_org';
+export const INFO_TAG_CONFIG_TABLE = 'info_tag_config_record';
+export const INFO_SUMMARY_CONFIG_TABLE = 'info_summary_config_record';
+export const INFO_CONFIG_TABLE = 'info_config_record';
+export const INFO_VECTOR_CONFIG_TABLE = 'info_vector_config_record';
+export const INFO_CONTEXT_CONFIG_TABLE = 'info_context_config_record';
 
 export const DEFAULT_TAG_TOP_K = 5;
 export const DEFAULT_ALIVE_MAX_DAYS = 30;

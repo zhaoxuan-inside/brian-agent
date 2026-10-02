@@ -1,5 +1,5 @@
 import { Metrics, Report } from '@brian-agent/base';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -15,6 +15,7 @@ import {
   AddPromptOutput,
   PromptContext,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   MCPCoreAccess,
   McpCoreContext,
@@ -41,6 +42,7 @@ describe('MCPCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     mcpAccess = new MCPAccess(relationDb);
     try { await (mcpAccess as any).initialize?.(); } catch {  }
     llmAccess = new LLMAccess(relationDb);
@@ -124,6 +126,44 @@ describe('MCPCoreProvider', () => {
       expect(output.config!.regen_rate).toBe(60);
     });
 
+    it('should update score_threshold, vector_similarity_threshold, match_cache_ttl_ms, match_cache_capacity, and market_install_enabled', async () => {
+      const input = new ConfigMcpCoreInput();
+      input.score_threshold = 85;
+      input.vector_similarity_threshold = 0.9;
+      input.match_cache_ttl_ms = 300000;
+      input.match_cache_capacity = 200;
+      input.market_install_enabled = false;
+      const output = new ConfigMcpCoreOutput();
+      await mcpCore.configMCPCore(input, output, new McpCoreContext());
+      expect(output.config!.score_threshold).toBe(85);
+      expect(output.config!.vector_similarity_threshold).toBe(0.9);
+      expect(output.config!.match_cache_ttl_ms).toBe(300000);
+      expect(output.config!.match_cache_capacity).toBe(200);
+      expect(output.config!.market_install_enabled).toBe(false);
+    });
+
+    it('should throw ValidationError for score_threshold out of range', async () => {
+      const input = new ConfigMcpCoreInput();
+      input.score_threshold = 101;
+      await expect(mcpCore.configMCPCore(input, new ConfigMcpCoreOutput(), new McpCoreContext())).rejects.toThrow(ValidationError);
+      input.score_threshold = -1;
+      await expect(mcpCore.configMCPCore(input, new ConfigMcpCoreOutput(), new McpCoreContext())).rejects.toThrow(ValidationError);
+    });
+
+    it('should throw ValidationError for vector_similarity_threshold out of range', async () => {
+      const input = new ConfigMcpCoreInput();
+      input.vector_similarity_threshold = 1.5;
+      await expect(mcpCore.configMCPCore(input, new ConfigMcpCoreOutput(), new McpCoreContext())).rejects.toThrow(ValidationError);
+      input.vector_similarity_threshold = -0.1;
+      await expect(mcpCore.configMCPCore(input, new ConfigMcpCoreOutput(), new McpCoreContext())).rejects.toThrow(ValidationError);
+    });
+
+    it('should throw ValidationError for match_cache_capacity <= 0', async () => {
+      const input = new ConfigMcpCoreInput();
+      input.match_cache_capacity = 0;
+      await expect(mcpCore.configMCPCore(input, new ConfigMcpCoreOutput(), new McpCoreContext())).rejects.toThrow(ValidationError);
+    });
+
     it('should set elapsed_ms on output', async () => {
       const output = new ConfigMcpCoreOutput();
       await mcpCore.configMCPCore(new ConfigMcpCoreInput(), output, new McpCoreContext());
@@ -144,7 +184,7 @@ describe('MCPCoreProvider', () => {
 
     it('should use cached binding when regen allows', async () => {
       const now = IdGenerator.now();
-      await relationDb.insert('mcp_install', [
+      await relationDb.insert('mcp_install_record', [
         { field: 'id', value: 'mcp-1' },
         { field: 'created', value: now },
         { field: 'updated', value: now },
@@ -174,6 +214,71 @@ describe('MCPCoreProvider', () => {
       const output = new MatchMcpOutput();
       await mcpCore.matchMCP(input, output, new McpCoreContext());
       expect(output.mcp_ids).toContain('mcp-1');
+    });
+
+    it('should respect regen_rate when task cache is hit', async () => {
+      const addInput = new AddPromptInput();
+      addInput.data = {
+        prompt_template_title: 'MCP 匹配',
+        prompt_template: 'task: {{task_content}} mcps: {{available_mcps}}',
+      };
+      await promptsAccess.addPrompt(addInput, new AddPromptOutput(), new PromptContext());
+
+      vi.spyOn(llmAccess, 'embedLLM').mockImplementation(async (i: any, out: any) => {
+        out.embedding = (i.input.includes('weather') || i.input === 'fetch weather') ? [1, 0, 0] : [0, 1, 0];
+        return true;
+      });
+      const execLlmSpy = vi.spyOn(llmAccess, 'execLLM').mockImplementation(async (_i: any, out: any) => {
+        out.result = '{"need": true, "confirmed": true, "keywords": [], "candidates": [{"id": "mcp-1", "score": 95}]}';
+        return true;
+      });
+      vi.spyOn(mcpAccess, 'soMcp').mockImplementation(async (_i: any, out: any) => {
+        out.list = [{ id: 'mcp-1', mcp_title: 'weather', mcp_brief: 'weather tool', enable: true, status: 'running' }];
+        return true;
+      });
+
+      await mcpCore.configMCPCore(
+        { regen_rate: 0, score_threshold: 20, vector_similarity_threshold: 0.8, market_install_enabled: false } as ConfigMcpCoreInput,
+        new ConfigMcpCoreOutput(),
+        new McpCoreContext(),
+      );
+
+      const out1 = new MatchMcpOutput();
+      await mcpCore.matchMCP(
+        Object.assign(new MatchMcpInput(), { agent_id: 'a1', task_content: 'fetch weather' }),
+        out1,
+        new McpCoreContext(),
+      );
+      expect(out1.detail).toBe('election_mcp_t1');
+      expect(out1.mcp_ids).toEqual(['mcp-1']);
+      expect(execLlmSpy).toHaveBeenCalledTimes(0);
+
+      // Now with regen_rate = 0, second call must hit cache without re-invoking funnel
+      const out2 = new MatchMcpOutput();
+      await mcpCore.matchMCP(
+        Object.assign(new MatchMcpInput(), { agent_id: 'a1', task_content: 'fetch weather' }),
+        out2,
+        new McpCoreContext(),
+      );
+      expect(out2.detail).toBe('election_mcp_reuse');
+      expect(out2.mcp_ids).toEqual(['mcp-1']);
+      expect(execLlmSpy).toHaveBeenCalledTimes(0);
+
+      // Now set regen_rate = 100 (never reuse cache)
+      await mcpCore.configMCPCore(
+        { regen_rate: 100, score_threshold: 20, vector_similarity_threshold: 0.8 } as ConfigMcpCoreInput,
+        new ConfigMcpCoreOutput(),
+        new McpCoreContext(),
+      );
+      const out3 = new MatchMcpOutput();
+      await mcpCore.matchMCP(
+        Object.assign(new MatchMcpInput(), { agent_id: 'a1', task_content: 'fetch weather' }),
+        out3,
+        new McpCoreContext(),
+      );
+      expect(out3.detail).toBe('election_mcp_t1');
+      expect(out3.mcp_ids).toEqual(['mcp-1']);
+      expect(execLlmSpy).toHaveBeenCalledTimes(0);
     });
   });
 

@@ -11,6 +11,7 @@ import {
   SendMQOutput,
   Operator,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   MQCoreAccess,
   MQCoreContext,
@@ -34,6 +35,7 @@ describe('MQCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     mqAccess = new MQAccess(relationDb);
     await mqAccess.initialize();
     mqCore = new MQCoreAccess(mqAccess);

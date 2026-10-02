@@ -9,9 +9,21 @@ import {
   ValidationError,
 
   formatContextCategories,
+  analyzeTaskComplexity,
+  isContinuationRequest,
+  type TaskComplexityResult,
 } from '@brian-agent/base';
 import type { InfoCoreAccess } from '@brian-agent/core';
-import { ContextInfoInput, ContextInfoOutput, InfoCoreContext } from '@brian-agent/core';
+import {
+  ContextInfoInput,
+  ContextInfoOutput,
+  InfoCoreContext,
+  SaveDialogEmbeddingInput,
+  SaveDialogEmbeddingOutput,
+  MatchDialogTopicInput,
+  MatchDialogTopicOutput,
+  DIALOG_TOPIC_MATCH_SIMILARITY,
+} from '@brian-agent/core';
 import { LaneSemaphore } from '../infrastructure/LaneSemaphore';
 import type { SessionAccess } from '../../Session';
 import type { LoopAccess } from '../../Loop';
@@ -32,9 +44,11 @@ import {
   AddMessageOutput,
   MessageRole,
   SessionContext,
+  RUNTIME_SESSION_TABLE,
   RUNTIME_MESSAGE_TABLE,
   RUNTIME_MESSAGE_PART_TABLE,
 } from '../../Session';
+import { EXECUTE_TABLE } from '@brian-agent/base';
 import {
   MatchAgentDefInput,
   MatchAgentDefOutput,
@@ -44,6 +58,8 @@ import {
   KillErroredAgentInput,
   KillErroredAgentOutput,
   AgentMatchLayer,
+  RUNTIME_AGENT_DEF_TABLE,
+  type AgentDefRecord,
 } from '../../Agents';
 import {
   RunGatewayContext,
@@ -97,6 +113,31 @@ export interface OutputWriter {
     agent_results: Array<{ agent_id: string; task_content?: string; result?: string; answer?: string }>;
   }, output: { response?: string; response_format?: string; blocks?: unknown[] }, ctx: unknown, metrics?: Metrics, report?: Report): Promise<boolean>;
 }
+
+/** 记忆来源 → 展示名（context.built.sources 用，ADR-013） */
+const CONTEXT_SOURCE_LABELS: Record<string, string> = {
+  TIMELINE: '时间线消息',
+  SIMILARITY: '相似记忆',
+  TAG_RELATIVE: '标签关联',
+  KEYWORD: '关键词记忆',
+  PINNED: '置顶消息',
+  CITING: '引用消息',
+  SELECTED: '勾选消息',
+  CURRENT: '当前上下文',
+  RANDOM: '随机召回',
+  CUSTOM: '自定义来源',
+};
+
+/** 显式要求切换 Agent 的语式（命中即跳过会话亲和，重新选举） */
+const EXPLICIT_SWITCH_AGENT_PATTERN = /^(切换|换一个|重置|转交|改为|使用).*(角色|专家|代理|助手|agent)/i;
+
+/**
+ * 会话亲和裁决结论（chg-059）判别联合：沿用路径 mechanism 必为非空事实源（可透传选举明细），
+ * 切换/漂移路径不透传（空串或 dialog_topic_drift 仅用于观测）。
+ */
+type SessionAffinityDecision =
+  | { reuse: true; mechanism: 'session_affinity' | 'dialog_topic_match'; label: string; reason: string }
+  | { reuse: false; mechanism: '' | 'dialog_topic_drift'; label: string; reason: string };
 
 export class RunGatewayService {
   private enabled = true;
@@ -157,17 +198,52 @@ export class RunGatewayService {
         .filter(([, v]) => Array.isArray(v) && v.length > 0)
         .map(([k]) => k);
       this.logger?.debug?.('主 Loop 静态记忆召回完成（前置构建）', { run_id: runId, categories });
-      report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
+      report?.emit(BusinessEvent.ContextBuilt, {
         round: 0,
         base: true,
         message_count: 0,
         memory_categories: categories,
+        sources: this.soContextSources(ctxOut),
       });
       return { memory: staticMemory, categories };
     } catch (err) {
       this.logger?.warn?.('主 Loop 静态记忆召回失败（回退空记忆，不阻塞执行）', { run_id: runId, error: err instanceof Error ? err.message : String(err) });
       return { memory: '', categories: [] };
     }
+  }
+
+
+  /** ADR-013：把 InfoCore 装配结果的记忆来源分布透传进 context.built（可信度链路直读，不再离线拼装） */
+  private soContextSources(ctxOut: ContextInfoOutput): Array<{ source: string; label: string; count: number; message_ids: string[] }> {
+    const idMap = ctxOut.source_ids_map ?? {};
+    const summary = ctxOut.sources_summary ?? {};
+    return Object.entries(idMap)
+      .filter(([, ids]) => Array.isArray(ids) && ids.length > 0)
+      .map(([source, ids]) => ({
+        source: String(source),
+        label: CONTEXT_SOURCE_LABELS[String(source)] ?? String(source),
+        count: Number(summary[String(source)] ?? (ids as string[]).length) || (ids as string[]).length,
+        message_ids: (ids as string[]).slice(0, 50),
+      }));
+  }
+
+  /** ADR-013：子任务汇聚结果发 run.merge（委派收口可观测化） */
+  private publishRunMerge(
+    runId: string,
+    collected: Map<string, { agent_id: string; task_content: string; result: string }>,
+    report?: Report,
+  ): void {
+    if (!report || collected.size === 0) return;
+    report.emit(BusinessEvent.RunMerge, {
+      run_id: runId,
+      children: [...collected.entries()].map(([subRunId, c]) => ({
+        sub_run_id: subRunId,
+        agent_name: c.agent_id,
+        task: c.task_content,
+        output: c.result,
+        status: 'ok',
+      })),
+    });
   }
 
   private composeSystemWithMemory(baseSystem: string, memory: string): string {
@@ -256,7 +332,11 @@ export class RunGatewayService {
   }
 
   private async publishRunAccepted(sessionKey: string, runId: string, report?: Report, _metrics?: Metrics): Promise<void> {
-    report?.pushBusinessEvent(BusinessEvent.RunAccepted, { run_id: runId });
+    if (report) {
+      if (!report.run_id) report.run_id = runId;
+      if (!report.work_id) report.work_id = runId;
+    }
+    report?.emit(BusinessEvent.RunAccepted, { run_id: runId });
   }
 
   private soLaneKey(input: SubmitRunInput): string {
@@ -364,25 +444,35 @@ export class RunGatewayService {
   }
 
   private async executeRun(runId: string, input: SubmitRunInput, runtimeSessionId: string, parent?: { metrics?: Metrics; report?: Report }): Promise<void> {
+    if (parent?.report) {
+      if (!parent.report.run_id) parent.report.run_id = runId;
+      if (!parent.report.work_id) parent.report.work_id = runId;
+    }
     let matchOut: MatchAgentDefOutput | undefined;
     const steerLane = this.soLane(`${input.lane_kind ?? LaneKind.Session}:${input.session_key}`);
     steerLane.acceptingSteer = true;
     try {
       const sessionId = await this.soRunSessionId(runId, input, runtimeSessionId);
       const baseCtx = await this.buildStaticMemory(runId, input, parent?.metrics, parent?.report);
-      matchOut = await this.matchAgent(runId, input, parent?.metrics, parent?.report);
-      parent?.report?.pushBusinessEvent(BusinessEvent.AgentSelected, {
-        def_id: matchOut.def_id,
+      matchOut = await this.matchAgent(runId, input, runtimeSessionId, parent?.metrics, parent?.report);
+      parent?.report?.emit(BusinessEvent.AgentSelected, {
+        agent_id: matchOut.def_id,
         agent_name: matchOut.def.name,
         matched_by: matchOut.matched_by,
+        mechanisms: matchOut.mechanisms,
       });
       const snapshot = await this.soSnapshot(matchOut.def_id, runId, input, parent?.metrics, parent?.report);
       const { systemSkillCount, boundSkillCount, mcpCount } = this.publishAgentComponents(matchOut, snapshot, parent?.report);
 
       const loopInput = this.prepareLoopInput(runId, input, sessionId, snapshot);
-      const thoughtMode = this.decideThoughtMode(loopInput.skills ?? [], boundSkillCount, mcpCount);
+      const complexity = analyzeTaskComplexity({
+        text: input.user_message ?? '',
+        skillCount: systemSkillCount + boundSkillCount,
+        mcpCount,
+      });
+      const thoughtMode = this.decideThoughtMode(loopInput.skills ?? [], boundSkillCount, mcpCount, complexity);
       this.publishThoughtModeSelected(thoughtMode, systemSkillCount + boundSkillCount, mcpCount, parent?.report);
-      this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode);
+      this.prepareLoopContext(loopInput, snapshot, baseCtx.memory, thoughtMode.mode, complexity.enableThinking, complexity.isComplex, input.user_message);
       const loopOutput = new ExecAgentLoopOutput();
       try {
         await this.loop.execAgentLoop(loopInput, loopOutput, new RunGatewayContext(), parent?.metrics, parent?.report);
@@ -390,6 +480,7 @@ export class RunGatewayService {
         steerLane.acceptingSteer = false;
       }
       await this.finishRunByLane(runId, input, runtimeSessionId, matchOut, loopInput, loopOutput, parent);
+      this.persistDialogEmbedding(runId, input, runtimeSessionId, loopOutput.stop_reason, parent?.metrics, parent?.report);
       await this.settleRun(runId, loopOutput.stop_reason, loopOutput.iterations, matchOut.def_id, matchOut.def.agent_ref, input.user_message, parent?.metrics, parent?.report, loopOutput.error);
       await this.recordRunOutcome(runId, input, matchOut, loopOutput, parent);
     } catch (err) {
@@ -403,6 +494,63 @@ export class RunGatewayService {
       return runtimeSessionId;
     }
     return this.soRuntimeSessionId(this.soSubSessionKey(input.session_key, runId));
+  }
+
+  /**
+   * 轮次话题向量固化（chg-059）：settle 前 fire-and-forget，不阻塞结算与 SSE。
+   * 仅主 session lane 且正常结束（stop/budget）的轮次固化，失败轮不污染话题向量。
+   */
+  private persistDialogEmbedding(
+    runId: string,
+    input: SubmitRunInput,
+    runtimeSessionId: string,
+    stopReason: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): void {
+    if (!this.infoCore) return;
+    if ((input.lane_kind ?? LaneKind.Session) !== LaneKind.Session) return;
+    if (stopReason !== LoopStopReason.Stop && stopReason !== LoopStopReason.Budget) return;
+    void this.soSaveDialogEmbedding(runId, input, runtimeSessionId, metrics, report);
+  }
+
+  private async soSaveDialogEmbedding(
+    runId: string,
+    input: SubmitRunInput,
+    runtimeSessionId: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<void> {
+    try {
+      const reply = this.soRunFinalReply(runId, runtimeSessionId);
+      if (!reply) return;
+      const embedIn = new SaveDialogEmbeddingInput();
+      embedIn.session_id = input.session_key;
+      embedIn.work_id = runId;
+      embedIn.text = `${(input.user_message ?? '').trim()}\n${reply.trim()}`.trim();
+      const embedOut = new SaveDialogEmbeddingOutput();
+      await this.infoCore!.saveDialogEmbedding(embedIn, embedOut, new InfoCoreContext(), metrics, report);
+      if (embedOut.saved) {
+        this.logger?.debug?.('轮次话题向量已固化', { session_id: input.session_key, work_id: runId, dimension: embedOut.dimension });
+      }
+    } catch (err) {
+      this.logger?.warn?.('轮次话题向量固化失败（不影响主链路）', {
+        run_id: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** 该 run 最后一条非空 assistant 消息（Writer 定稿后即为最终回复） */
+  private soRunFinalReply(runId: string, runtimeSessionId: string): string {
+    const rows = this.relationDb.queryRaw<{ role: string; content: string }>(
+      `SELECT "role", "content" FROM "runtime_message_record" WHERE "session_id" = ? AND "run_id" = ? ORDER BY "seq" DESC LIMIT 50`,
+      [runtimeSessionId, runId],
+    ) ?? [];
+    for (const row of rows) {
+      if (row.role === 'assistant' && row.content && row.content.trim()) return row.content;
+    }
+    return '';
   }
 
   private soSubSessionKey(sessionKey: string, runId: string): string {
@@ -426,12 +574,33 @@ export class RunGatewayService {
     }
     const childResults = await this.joinChildRuns(runId);
     const collected = await this.collectChildResults(runtimeSessionId, runId, childResults);
+    this.publishRunMerge(runId, collected, parent?.report);
     await this.updateDelegatePartOutputs(runId, collected);
     await this.executeRunEvaluation(runId, input, matchOut, loopOutput, parent);
-    await this.executeRunWriting(runId, input, matchOut, loopOutput, parent, collected);
-    if (loopInput.defer_final_reply) {
-      parent?.report?.pushBusinessEvent(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+    const shouldWrite = this.shouldExecuteWriter(input, loopInput, loopOutput, collected.size);
+    if (shouldWrite) {
+      await this.executeRunWriting(runId, input, matchOut, loopOutput, parent, collected);
+    } else {
+      this.logger?.debug?.('Writer 润色跳过（单轮/简单任务直出，无需二次重写）', { run_id: runId, iterations: loopOutput.iterations });
     }
+    if (loopInput.defer_final_reply) {
+      parent?.report?.emit(BusinessEvent.RunFinished, { stop_reason: loopOutput.stop_reason });
+    }
+  }
+
+  private shouldExecuteWriter(
+    input: SubmitRunInput,
+    loopInput: ExecAgentLoopInput,
+    loopOutput: ExecAgentLoopOutput,
+    childCount: number,
+  ): boolean {
+    if (!this.writer) return false;
+    if (childCount > 0) return true;
+    const explicitReq = /排版|润色|撰写|流程图|架构图|整理成表格|输出为JSON|输出为Markdown|生成报告/i.test(input.user_message || '');
+    if (explicitReq) return true;
+    if (loopInput.thought_mode === 'Direct') return false;
+    if (loopOutput.iterations > 1 && (loopInput.skills?.length || 0) > 0) return true;
+    return false;
   }
 
   private async joinChildRuns(runId: string): Promise<string[]> {
@@ -472,13 +641,13 @@ export class RunGatewayService {
     }
     const subSessionId = await this.soRuntimeSessionId(this.soSubSessionKey(String(row.session_key), childId));
     const messages = this.relationDb.queryRaw<{ role: string; content: string }>(
-      `SELECT "role", "content" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq"`,
+      `SELECT "role", "content" FROM "runtime_message_record" WHERE "session_id" = ? ORDER BY "seq"`,
       [subSessionId],
     ) ?? [];
     const task = messages.find((m) => m.role === 'user')?.content ?? '';
     const result = [...messages].reverse().find((m) => m.role === 'assistant' && m.content && m.content.trim())?.content ?? '';
     const settled = this.isSettledStatus(String(row.status));
-    const agentName = this.soComponentName(String(row.agent_def_id ?? ''), 'runtime_agent_def', 'name') || '子代理';
+    const agentName = this.soComponentName(String(row.agent_def_id ?? ''), 'runtime_agent_def_record', 'title') || '子代理';
     return {
       agent_id: agentName,
       task_content: task,
@@ -490,19 +659,34 @@ export class RunGatewayService {
     if (!collected.size) {
       return;
     }
-    const parts = this.relationDb.queryRaw<{ id: string; output_json: string }>(
-      `SELECT "id", "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "part_type" = 'tool' AND "tool_id" = 'skill_builtin-delegate'`,
+    // ADR-012:tool part 不再存 output_json,回执原文经 execute_id 从 execute_record 读取
+    const parts = this.relationDb.queryRaw<{ id: string; execute_id: string }>(
+      `SELECT "id", "execute_id" FROM "runtime_message_part_record" WHERE "run_id" = ? AND "part_type" = 'tool' AND "tool_id" = 'skill_builtin-delegate'`,
       [runId],
     ) ?? [];
     for (const part of parts) {
-      const childId = this.parseRunIdFromReceipt(part.output_json);
+      const io = await this.fetchExecuteIOById(part.execute_id);
+      const childId = this.parseRunIdFromReceipt(io?.output);
       const outcome = childId ? collected.get(childId) : undefined;
       if (!outcome) {
         continue;
       }
       await this.relationDb.update(RUNTIME_MESSAGE_PART_TABLE, newPatch({
-        output_json: `子任务完成（run_id=${childId}，Agent=${outcome.agent_id}）：${outcome.result.slice(0, 500)}`,
+        content: `子任务完成（run_id=${childId}，Agent=${outcome.agent_id}）：${outcome.result.slice(0, 500)}`,
       }), [{ field: 'id', operator: Operator.EQ, value: part.id }]);
+    }
+  }
+
+  private async fetchExecuteIOById(executeId: string): Promise<{ input: string; output: string } | null> {
+    if (!executeId) return null;
+    try {
+      const row = await this.relationDb.selectOne(EXECUTE_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: executeId },
+      ]);
+      if (!row) return null;
+      return { input: String(row.input ?? ''), output: String(row.output ?? '') };
+    } catch {
+      return null;
     }
   }
 
@@ -524,28 +708,28 @@ export class RunGatewayService {
       .map((t) => ({ id: t.id, brief: t.brief || this.soSkillName(t.id), system: t.system === true }));
     const mcpEntries = (snapshot.tools ?? [])
       .filter((t) => t.kind === 'mcp')
-      .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install', 'mcp_title') }));
-    report?.pushBusinessEvent(BusinessEvent.AgentComponents, {
+      .map((t) => ({ id: t.id, brief: t.brief || this.soComponentName(t.id, 'mcp_install_record', 'mcp_title') }));
+    report?.emit(BusinessEvent.AgentComponents, {
       agent_name: snapshot.name,
       soul_id: soulId,
-      soul_name: this.soComponentName(soulId, 'soul', 'soul_brief'),
+      soul_name: this.soComponentName(soulId, 'soul_record', 'brief'),
       prompt_template_id: promptId,
-      prompt_name: this.soComponentName(promptId, 'prompt_template', 'prompt_template_title'),
+      prompt_name: this.soComponentName(promptId, 'prompt_template_record', 'title'),
       llm_id: llmId,
-      llm_name: this.soComponentName(llmId, 'llm_available', 'llm_title'),
+      llm_name: this.soComponentName(llmId, 'llm_available_record', 'llm_title'),
       skills: skillEntries,
       mcps: mcpEntries,
     });
 
     if (matchOut.matched_by !== AgentMatchLayer.Built) {
-      report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
+      report?.emit(BusinessEvent.SkillSelected, {
         source: 'match',
         skills: skillEntries,
         reason: `命中既有 Agent（${matchOut.matched_by}），Skill 选举结果=绑定事实源：系统级恒选中 ${skillEntries.filter((s) => s.system).length} 项 + 沉淀绑定 ${skillEntries.filter((s) => !s.system).length} 项`,
         skills_count: skillEntries.length,
         system_skills_count: skillEntries.filter((s) => s.system).length,
       });
-      report?.pushBusinessEvent(BusinessEvent.McpSelected, {
+      report?.emit(BusinessEvent.McpSelected, {
         source: 'match',
         mcps: mcpEntries,
         reason: mcpEntries.length > 0
@@ -554,9 +738,9 @@ export class RunGatewayService {
         mcps_count: mcpEntries.length,
       });
       if (soulId) {
-        report?.pushBusinessEvent(BusinessEvent.SoulSelected, {
+        report?.emit(BusinessEvent.SoulSelected, {
           soul_id: soulId,
-          brief: this.soComponentName(soulId, 'soul', 'soul_brief'),
+          brief: this.soComponentName(soulId, 'soul_record', 'brief'),
           stage: 'match',
           reason: `命中既有 Agent（${matchOut.matched_by}），人格选举结果=绑定事实源（命中复用）`,
         });
@@ -570,12 +754,12 @@ export class RunGatewayService {
   }
 
   private publishThoughtModeSelected(
-    thoughtMode: { mode: 'CoT' | 'ReAct'; reason: string },
+    thoughtMode: { mode: 'Direct' | 'CoT' | 'ReAct'; reason: string },
     skillCount: number,
     mcpCount: number,
     report?: Report,
   ): void {
-    report?.pushBusinessEvent(BusinessEvent.ThoughtModeSelected, {
+    report?.emit(BusinessEvent.ThoughtSelected, {
       thought_mode: thoughtMode.mode,
       reason: thoughtMode.reason,
       skills_count: skillCount,
@@ -587,13 +771,25 @@ export class RunGatewayService {
     loopInput: ExecAgentLoopInput,
     snapshot: SoAgentSnapshotOutput['snapshot'],
     memory: string,
-    thoughtMode: 'CoT' | 'ReAct',
+    thoughtMode: string,
+    enableThinking?: boolean,
+    isComplex?: boolean,
+    userMessage?: string,
   ): void {
     loopInput.system = this.composeSystemWithMemory(snapshot.system ?? '', memory);
     loopInput.thought_mode = thoughtMode;
-    if (this.writer) {
+    loopInput.enable_thinking = enableThinking ?? (thoughtMode !== 'Direct');
+    const explicitReq = /排版|润色|撰写|流程图|架构图|整理成表格|输出为JSON|输出为Markdown|生成报告/i.test(userMessage || '');
+    if (this.shouldDeferFinalReply(thoughtMode, isComplex, explicitReq)) {
       loopInput.defer_final_reply = true;
     }
+  }
+
+  private shouldDeferFinalReply(thoughtMode: string, isComplex?: boolean, explicitFormatReq?: boolean): boolean {
+    if (!this.writer) return false;
+    if (explicitFormatReq) return true;
+    if (thoughtMode === 'Direct' || isComplex === false) return false;
+    return Boolean(isComplex);
   }
 
   private async executeRunEvaluation(
@@ -612,7 +808,7 @@ export class RunGatewayService {
       return;
     }
     const evalWorkId = IdGenerator.generate();
-    parent?.report?.pushBusinessEvent(BusinessEvent.EvaluationStarted, { work_id: evalWorkId, mode: evalAsync ? 'async' : 'sync' });
+    parent?.report?.emit(BusinessEvent.EvaluationStarted, { work_id: evalWorkId, mode: evalAsync ? 'async' : 'sync' });
 
     if (evalAsync) {
       this.scheduleCurator(runId, input, matchOut, loopOutput, evalWorkId, parent);
@@ -632,7 +828,7 @@ export class RunGatewayService {
     if (!this.writer) return;
     try {
       const writeWorkId = IdGenerator.generate();
-      parent?.report?.pushBusinessEvent(BusinessEvent.WriterStarted, { work_id: writeWorkId });
+      parent?.report?.emit(BusinessEvent.WriterStarted, { work_id: writeWorkId });
       const writeOut: { response?: string; response_format?: string; blocks?: unknown[] } = { response: '', blocks: [] };
       const writeCtx: Record<string, unknown> = { session_id: input.session_key, work_id: writeWorkId, run_id: runId };
       const agentResults = [
@@ -648,11 +844,11 @@ export class RunGatewayService {
       if (writeOk && writeOut.response) {
         await this.applyWriterResult(writeOut.response, writeOut, loopOutput, parent);
       } else {
-        parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+        parent?.report?.emit(BusinessEvent.ReplyDelta, { delta: loopOutput.result, replace: true });
       }
     } catch (err) {
       this.logger?.warn?.('写作 Agent 执行失败（降级为原始输出）', { error: err instanceof Error ? err.message : String(err) });
-      parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: loopOutput.result });
+      parent?.report?.emit(BusinessEvent.ReplyDelta, { delta: loopOutput.result, replace: true });
     }
   }
 
@@ -662,12 +858,11 @@ export class RunGatewayService {
     loopOutput: ExecAgentLoopOutput,
     parent?: { metrics?: Metrics; report?: Report },
   ): Promise<void> {
-    parent?.report?.pushBusinessEvent(BusinessEvent.WriterCompleted, {
+    parent?.report?.emit(BusinessEvent.WriterCompleted, {
       format: writeOut.response_format || 'MARKDOWN',
       length: finalResult.length,
       has_mermaid: finalResult.includes('```mermaid'),
     });
-    parent?.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: finalResult });
     if (loopOutput.msg_id) {
       await this.updateAssistantMessageContent(loopOutput.msg_id, finalResult);
     }
@@ -739,7 +934,7 @@ export class RunGatewayService {
         report,
       );
     } catch (err) {
-      report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, error: err instanceof Error ? err.message : String(err) });
+      report?.emit(BusinessEvent.ErrorOccurred, { run_id: runId, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -802,17 +997,190 @@ export class RunGatewayService {
     return addOut.session_id;
   }
 
-  private async matchAgent(runId: string, input: SubmitRunInput, metrics?: Metrics, report?: Report): Promise<MatchAgentDefOutput> {
+  private async matchAgent(
+    runId: string,
+    input: SubmitRunInput,
+    runtimeSessionId: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<MatchAgentDefOutput> {
+    // 1. 若请求显式指定了 agent_ref，直接走精准匹配
+    if (input.agent_ref) {
+      const matchInput = new MatchAgentDefInput();
+      matchInput.task_content = input.user_message;
+      matchInput.session_id = input.session_key;
+      matchInput.run_id = runId;
+      matchInput.work_id = IdGenerator.generate();
+      matchInput.context_id = input.context_id ?? '';
+      matchInput.agent_ref = input.agent_ref;
+      const matchOutput = new MatchAgentDefOutput();
+      await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), metrics, report);
+      if (matchOutput.def_id) {
+        await this.persistSessionActiveAgent(runtimeSessionId, matchOutput.def_id);
+      }
+      return matchOutput;
+    }
+
+    // 2. 会话亲和裁决（chg-059）：显式切换 → 落全量选举；强信号续写 → 直接沿用；
+    //    话题连续性匹配（dialog_embedding_record）在强信号之后、BM25/Embedding 相似度信号提取之前裁决
+    if (!input.force_new) {
+      const sessionActiveDef = await this.soSessionActiveAgentDef(runtimeSessionId);
+      if (sessionActiveDef && sessionActiveDef.status === 'active') {
+        const affinity = await this.decideSessionAffinity(input.user_message, input.session_key, metrics, report);
+        if (affinity.reuse) {
+          const matchOutput = new MatchAgentDefOutput();
+          matchOutput.def_id = sessionActiveDef.id;
+          matchOutput.matched_by = AgentMatchLayer.Exact;
+          matchOutput.def = sessionActiveDef;
+          matchOutput.mechanisms = [{
+            mechanism: affinity.mechanism,
+            adopted: true,
+            label: affinity.label,
+            candidates: [{ id: sessionActiveDef.id, name: sessionActiveDef.name }],
+          }];
+          report?.emit(BusinessEvent.AgentSelected, {
+            agent_id: sessionActiveDef.id,
+            agent_name: sessionActiveDef.name,
+            matched_by: 'session_affinity',
+            reason: affinity.reason,
+            mechanisms: matchOutput.mechanisms,
+          });
+          return matchOutput;
+        }
+      }
+    }
+
+    // 3. 全局路由与动态构建
     const matchInput = new MatchAgentDefInput();
     matchInput.task_content = input.user_message;
     matchInput.session_id = input.session_key;
     matchInput.run_id = runId;
     matchInput.work_id = IdGenerator.generate();
     matchInput.context_id = input.context_id ?? '';
-    matchInput.agent_ref = input.agent_ref ?? '';
+    matchInput.agent_ref = '';
     const matchOutput = new MatchAgentDefOutput();
     await this.agents.matchAgentDef(matchInput, matchOutput, new AgentDefContext(), metrics, report);
+    if (matchOutput.def_id) {
+      await this.persistSessionActiveAgent(runtimeSessionId, matchOutput.def_id);
+    }
     return matchOutput;
+  }
+
+  /**
+   * 会话亲和三段裁决（chg-059）：显式切换 → 不沿用；强信号续写 → 直接沿用（0 向量开销）；
+   * 其余 → 话题连续性匹配（向量模型不可用/未评估时回退沿用，保持既有会话亲和行为）。
+   */
+  private async decideSessionAffinity(
+    userMessage: string,
+    sessionKey: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<SessionAffinityDecision> {
+    const text = (userMessage || '').trim();
+    if (text && EXPLICIT_SWITCH_AGENT_PATTERN.test(text)) {
+      return { reuse: false, mechanism: '', label: '', reason: '显式要求切换 Agent，跳过会话亲和，重新选举' };
+    }
+    if (isContinuationRequest(text)) {
+      return {
+        reuse: true,
+        mechanism: 'session_affinity',
+        label: '强信号续写（Continuation）',
+        reason: '命中「继续」等强信号续写语式，直接沿用会话专职专家（0 向量开销）',
+      };
+    }
+    return this.soTopicAffinity(text, sessionKey, metrics, report);
+  }
+
+  /** 话题连续性裁决：best_similarity ≥ 阈值沿用；低于阈值判话题漂移，落全量选举 */
+  private async soTopicAffinity(
+    text: string,
+    sessionKey: string,
+    metrics?: Metrics,
+    report?: Report,
+  ): Promise<SessionAffinityDecision> {
+    const fallback: SessionAffinityDecision = {
+      reuse: true,
+      mechanism: 'session_affinity',
+      label: '会话继承（Session Affinity）',
+      reason: '会话任务延续会话专职专家职责范畴，直接沿用（0ms 开销）',
+    };
+    if (!this.infoCore || !text) return fallback;
+    const topicIn = new MatchDialogTopicInput();
+    topicIn.session_id = sessionKey;
+    topicIn.query_text = text;
+    const topicOut = new MatchDialogTopicOutput();
+    try {
+      await this.infoCore.matchDialogTopic(topicIn, topicOut, new InfoCoreContext(), metrics, report);
+    } catch {
+      return { ...fallback, reason: '话题匹配异常，回退沿用会话专职专家' };
+    }
+    if (!topicOut.evaluated) {
+      return { ...fallback, reason: '向量模型不可用或无轮次向量，回退沿用会话专职专家' };
+    }
+    if (topicOut.best_similarity >= DIALOG_TOPIC_MATCH_SIMILARITY) {
+      return {
+        reuse: true,
+        mechanism: 'dialog_topic_match',
+        label: '话题连续（Topic Match）',
+        reason: `本轮请求与会话轮次话题相似度 ${topicOut.best_similarity}≥${DIALOG_TOPIC_MATCH_SIMILARITY}，沿用会话专职专家`,
+      };
+    }
+    return {
+      reuse: false,
+      mechanism: 'dialog_topic_drift',
+      label: '话题漂移（Topic Drift）',
+      reason: `本轮请求与会话轮次话题相似度 ${topicOut.best_similarity}<${DIALOG_TOPIC_MATCH_SIMILARITY}，判定话题漂移，重新选举 Agent`,
+    };
+  }
+
+  private async soSessionActiveAgentDef(runtimeSessionId: string): Promise<AgentDefRecord | null> {
+    if (!runtimeSessionId) return null;
+    try {
+      const sessionRow = await this.relationDb.selectOne(RUNTIME_SESSION_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: runtimeSessionId },
+      ]);
+      const activeDefId = String(sessionRow?.agent_def_id ?? '').trim();
+      if (!activeDefId) return null;
+      const defRows = await this.relationDb.select(RUNTIME_AGENT_DEF_TABLE, {
+        conditions: [{ field: 'id', operator: Operator.EQ, value: activeDefId }],
+      });
+      if (defRows?.length) {
+        const row = defRows[0];
+        return {
+          id: String(row.id),
+          name: String(row.title ?? row.name ?? ''),
+          mode: String(row.mode ?? 'primary') as AgentDefRecord['mode'],
+          agent_ref: String(row.agent_ref ?? ''),
+          task_signature: String(row.task_signature ?? ''),
+          agent_purpose: String(row.agent_purpose ?? ''),
+          prompt_template_id: String(row.prompt_template_id ?? ''),
+          model_id: String(row.model_id ?? ''),
+          soul_id: String(row.soul_id ?? ''),
+          tools_json: String(row.tools_json ?? ''),
+          temperature: row.temperature === null || row.temperature === undefined ? undefined : Number(row.temperature),
+          budget_total: Number(row.budget_total ?? DEFAULT_BUDGET_TOTAL),
+          status: String(row.status ?? 'active') as AgentDefRecord['status'],
+          created: Number(row.created),
+          updated: Number(row.updated),
+        };
+      }
+    } catch {  }
+    return null;
+  }
+
+  private async persistSessionActiveAgent(runtimeSessionId: string, agentDefId: string): Promise<void> {
+    if (!runtimeSessionId || !agentDefId) return;
+    try {
+      await this.relationDb.update(RUNTIME_SESSION_TABLE, newPatch({
+        agent_def_id: agentDefId,
+      }), [{ field: 'id', operator: Operator.EQ, value: runtimeSessionId }]);
+    } catch (err) {
+      this.logger?.warn?.('更新 Session active_agent_def_id 失败', {
+        session_id: runtimeSessionId,
+        agent_def_id: agentDefId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async soSnapshot(
@@ -843,17 +1211,28 @@ export class RunGatewayService {
     return skillId.startsWith('skill_') && !RunGatewayService.ORCHESTRATION_SKILL_IDS.has(skillId);
   }
 
-  private decideThoughtMode(skillIds: string[], _skillCount: number, mcpCount: number): { mode: 'CoT' | 'ReAct'; reason: string } {
+  private decideThoughtMode(
+    skillIds: string[],
+    _skillCount: number,
+    mcpCount: number,
+    complexity?: TaskComplexityResult,
+  ): { mode: 'Direct' | 'CoT' | 'ReAct'; reason: string } {
+    if (complexity && !complexity.enableThinking) {
+      return {
+        mode: 'Direct',
+        reason: `${complexity.reason}，禁用 Thinking 直出正文`,
+      };
+    }
     const observableCount = skillIds.filter((id) => RunGatewayService.isObservableSkill(id)).length;
     if (observableCount > 0 || mcpCount > 0) {
       return {
         mode: 'ReAct',
-        reason: `执行需「行动→观察→再决策」的外部交互闭环：技能面含 ${observableCount} 个可执行/可观察技能（系统级 + 绑定沉淀）${mcpCount > 0 ? ` 与 MCP 通道 ${mcpCount} 个` : ''}，选用 ReAct`,
+        reason: `执行需「行动→观察→再决策」闭环（复杂度=${complexity?.complexity ?? 50}）：含 ${observableCount} 个可执行/可观察技能${mcpCount > 0 ? ` 与 MCP 通道 ${mcpCount} 个` : ''}，选用 ReAct`,
       };
     }
     return {
       mode: 'CoT',
-      reason: '技能面无外部观察/执行技能且无 MCP 通道（仅编排类技能或空），ReAct 的 Act 环节退化，选用 CoT 一步链式推理',
+      reason: `复杂链式推理任务（复杂度=${complexity?.complexity ?? 50}）：${complexity?.reason ?? '无外部观察技能'}，选用 CoT 深度思考推导`,
     };
   }
 
@@ -922,7 +1301,7 @@ export class RunGatewayService {
     this.waiters.delete(runId);
     waiter?.resolve({ status, stop_reason: stopReason });
     if (agentRef && errorMessage) {
-      report?.pushBusinessEvent(BusinessEvent.ErrorOccurred, { run_id: runId, agent_id: agentRef, error: errorMessage.slice(0, 300) });
+      report?.emit(BusinessEvent.ErrorOccurred, { run_id: runId, agent_id: agentRef, error: errorMessage.slice(0, 300) });
     }
     await this.drainFollowups(runId);
   }
@@ -1300,7 +1679,7 @@ export class RunGatewayService {
   }
 
   private soSkillName(id: string): string {
-    return this.soComponentName(id, 'skill', 'name') || this.soComponentName(id, 'skill', 'skill_brief');
+    return this.soComponentName(id, 'skill_record', 'title') || this.soComponentName(id, 'skill_record', 'brief');
   }
 
   drainSteeringFor(sessionKey: string): string[] {

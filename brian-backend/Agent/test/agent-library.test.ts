@@ -20,7 +20,7 @@ describe('AgentLibrary', () => {
     await setupAgentTestMocks();
     db = await createTestDb();
     try {
-      db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
+      db.executeRaw('ALTER TABLE agent_library_config_record ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
     } catch {}
     service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
   });
@@ -179,7 +179,7 @@ describe('AgentLibrary', () => {
       }), new AddAgentOutput(), new AgentLibraryContext());
       await service.updateAgent(Object.assign(new UpdateAgentInput(), { agent_id: id, eval_score: 85 }),
         new UpdateAgentOutput(), new AgentLibraryContext());
-      let o = new GetAgentOutput();
+      const o = new GetAgentOutput();
       await service.soAgent(Object.assign(new GetAgentInput(), { agent_id: id }), o, new AgentLibraryContext());
       expect(o.agents[0].eval_score).toBe(85);
       await expect(service.updateAgent(Object.assign(new UpdateAgentInput(), { agent_id: id, eval_score: -1 }),
@@ -195,7 +195,7 @@ describe('AgentLibrary', () => {
   });
 
   describe('recordAgentUsage', () => {
-    it('TC-AL-029: 正常记录并自增 usage_count', async () => {
+    it('TC-AL-029: 正常记录写入 usage_event_record 事件流水', async () => {
       const id = aid();
       await service.addAgent(Object.assign(new AddAgentInput(), {
         agent_id: id, agent_type: 'WORKER', strategy_id: 's-1',
@@ -203,12 +203,15 @@ describe('AgentLibrary', () => {
       await service.recordAgentUsage(Object.assign(new RecordAgentUsageInput(), {
         agent_id: id, work_id: 'w', run_id: 'i',
       }), new RecordAgentUsageOutput(), new AgentLibraryContext());
-      const o = new GetAgentOutput();
-      await service.soAgent(Object.assign(new GetAgentInput(), { agent_id: id }), o, new AgentLibraryContext());
-      expect(o.agents[0].usage_count).toBe(1);
+      // ADR-012:agent.usage_count 列退役,用量以 usage_event_record 事件流水为唯一事实源
+      const events = db.queryRaw<{ entity_id: string; entity_type: string }>(
+        'SELECT "entity_id", "entity_type" FROM "usage_event_record" WHERE "entity_id" = ?', [id],
+      );
+      expect(events.length).toBe(1);
+      expect(events[0].entity_type).toBe('agent');
     });
 
-    it('TC-AL-029b: 按日统计表 agent_usage_daily 当天计数自增', async () => {
+    it('TC-AL-029b: 按日统计表 agent_usage_org 当天计数自增', async () => {
       const id = aid();
       await service.addAgent(Object.assign(new AddAgentInput(), {
         agent_id: id, agent_type: 'WORKER', strategy_id: 's-1',
@@ -219,7 +222,7 @@ describe('AgentLibrary', () => {
         }), new RecordAgentUsageOutput(), new AgentLibraryContext());
       }
       const daily = db.queryRaw<{ usage_date: string; usage_count: number }>(
-        'SELECT "usage_date", "usage_count" FROM "agent_usage_daily" WHERE "agent_id" = ?', [id],
+        'SELECT "usage_date", "usage_count" FROM "agent_usage_org" WHERE "agent_id" = ?', [id],
       );
       expect(daily.length).toBe(1);
       expect(daily[0].usage_count).toBe(3);
@@ -304,7 +307,7 @@ describe('AgentLibrary.matchAgent 流程语义（匹配最佳 Agent / 失效概�
     await setupAgentTestMocks();
     const db = await createTestDb();
     try {
-      db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
+      db.executeRaw('ALTER TABLE agent_library_config_record ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
     } catch {  }
     service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
   });

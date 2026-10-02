@@ -4,15 +4,19 @@ import type { Condition, OrderBy, Page } from '../../shared/query';
 export class PromptContext extends Context {}
 
 export interface PromptTemplateData {
-  
+
   prompt_template_title: string;
-  
+
   prompt_template_brief?: string;
-  
+
   prompt_template: string;
-  
+
+  positive_examples?: string[];
+
+  negative_examples?: string[];
+
   is_system?: boolean;
-  
+
   enable?: boolean;
 }
 
@@ -121,8 +125,8 @@ export class ClosePromptInput extends Input {}
 
 export class ClosePromptOutput extends Output {}
 
-export const PROMPT_TEMPLATE_TABLE = 'prompt_template';
-
-export const PROMPT_TEMPLATE_USAGE_TABLE = 'prompt_template_usage';
-
-export const PROMPTS_CONFIG_TABLE = 'prompts_config';
+export const PROMPT_TEMPLATE_TABLE = 'prompt_template_record';
+export const PROMPT_TEMPLATE_EMBEDDING_TABLE = 'prompt_template_embedding_record';
+export const PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE = 'prompt_template_example_embedding_record';
+export const PROMPT_TEMPLATE_USAGE_TABLE = 'prompt_template_usage_org';
+export const PROMPTS_CONFIG_TABLE = 'prompts_config_record';

@@ -140,8 +140,8 @@ export class ConfigLogOutput extends Output {
   config: Record<string, unknown> = {};
 }
 
-export const LOG_RULE_TABLE = 'log_rule';
-export const LOG_CONFIG_TABLE = 'log_config';
+export const LOG_RULE_TABLE = 'log_rule_record';
+export const LOG_CONFIG_TABLE = 'log_config_record';
 export const LOG_RECORD_TABLE = 'log_record';
 
 export const DEFAULT_RETENTION_DAYS = 30;

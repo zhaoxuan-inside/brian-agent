@@ -1,0 +1,134 @@
+{
+ "schema_version": "1.0",
+ "updated_at": "2026-09-30T19:30:00.000Z",
+ "shard": "base-tracebase",
+ "layer": "Base",
+ "module": "TraceBase",
+ "methods": [
+  {
+   "id": "m-tracebase-0001",
+   "signature": "boolean init(): void",
+   "name": "init",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "TraceBase 建表入口:usage_event_record 与各 xxx_usage_org 日聚合表初始化",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0002",
+   "signature": "boolean ensureUsageOrg(table: string, idColumn: string): void",
+   "name": "ensureUsageOrg",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "按实体确保日聚合 usage_org 表存在(公共列+实体列+usage_date+唯一索引)",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0003",
+   "signature": "boolean ensureLlmUsageOrg(): void",
+   "name": "ensureLlmUsageOrg",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "确保 llm_provider_usage_org 供应商用量聚合表存在",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0004",
+   "signature": "boolean migrateLegacyLlmCoreUsage(): void",
+   "name": "migrateLegacyLlmCoreUsage",
+   "category": "orchestration",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "llm_core_usage 配额行迁 usage_event_record(usage_context=llm_core.quota),迁完才 DROP 保数据",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0005",
+   "signature": "boolean ensureUniqueUsageIndex(table: string, columns: string[]): void",
+   "name": "ensureUniqueUsageIndex",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "创建(实体,usage_date)唯一索引,历史重复行先按业务键去重再重试",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0006",
+   "signature": "boolean migrateLegacyAgentUsageEvents(): void",
+   "name": "migrateLegacyAgentUsageEvents",
+   "category": "orchestration",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/infrastructure/TraceSchemaInitializer.ts",
+   "description": "历史 agent_usage 行迁 usage_event_record 事件流水(幂等)",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0007",
+   "signature": "boolean upsertDailyOrg(input: RecordUsageInput): Promise<void>",
+   "name": "upsertDailyOrg",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/application/TraceService.ts",
+   "description": "usage_event 按日 UPSERT 聚合到 xxx_usage_org,冲突累加,失败降级 select-update-insert",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0008",
+   "signature": "boolean esc(value: string): string",
+   "name": "esc",
+   "category": "algorithm",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/application/TraceService.ts",
+   "description": "SQL LIKE 通配符(%/_)转义",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  },
+  {
+   "id": "m-tracebase-0009",
+   "signature": "boolean toEvent(r: Record<string, unknown>)",
+   "name": "toEvent",
+   "category": "data",
+   "layer": "Base",
+   "module": "TraceBase",
+   "location": "brian-backend/Base/TraceBase/application/TraceService.ts",
+   "description": "usage 统计行组装为事件输出结构",
+   "reusable": true,
+   "deprecated": false,
+   "replaced_by": null
+  }
+ ],
+ "stats": {
+  "total": 9,
+  "by_category": {
+   "algorithm": 1,
+   "orchestration": 2,
+   "data": 6
+  }
+ }
+}

@@ -27,5 +27,6 @@
 | `count` | `table: string, conditions?: Condition[]` | `Promise<number>` | — |
 | `executeRaw` | `sql: string, params?: unknown[]` | `number` | — |
 | `queryRaw` | `sql: string, params?: unknown[]` | `T[]` | — |
+| `rebuildTableWithoutColumn` | `table: string, legacyKey: string` | `boolean` | ADR-012:业务键列为 UNIQUE NOT NULL 时 SQLite 禁止 DROP COLUMN——整表重建去掉 legacyKey 列。 |
 | `transactionRaw` | `operations: import('../../shared/query').Operation[]` | `boolean` | — |
 | `walCheckpoint` | `mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE'` | `{ busy: boolean; log: number; checkpointed: number }` | — |

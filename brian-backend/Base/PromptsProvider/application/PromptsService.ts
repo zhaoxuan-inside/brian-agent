@@ -11,7 +11,31 @@ import {
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator, Logic } from '../../shared/query';
 import type { Condition, DataObject, OrderBy, Page } from '../../shared/query';
-import { PromptContext, PromptTemplateRecord, PromptTemplateData, AddPromptInput, AddPromptOutput, DelPromptInput, DelPromptOutput, UpdatePromptInput, UpdatePromptOutput, GetPromptInput, GetPromptOutput, SoPromptInput, SoPromptOutput, ExecPromptInput, ExecPromptOutput, EnablePromptsInput, EnablePromptsOutput, ClosePromptInput, ClosePromptOutput, PROMPT_TEMPLATE_TABLE, PROMPT_TEMPLATE_USAGE_TABLE, PROMPTS_CONFIG_TABLE } from '../domain/types';
+import { Context } from '../../shared/base/Context';
+import {
+  syncComponentEmbedding,
+  deleteComponentEmbedding,
+  syncComponentExamples,
+  buildFunnelDocText,
+} from '../../shared/match';
+import {
+  resolveComponentSemantics,
+  type SemanticsTaskFn,
+} from '../../shared/semantics';
+import {
+  PromptContext, PromptTemplateRecord, PromptTemplateData,
+  AddPromptInput, AddPromptOutput,
+  DelPromptInput, DelPromptOutput,
+  UpdatePromptInput, UpdatePromptOutput,
+  GetPromptInput, GetPromptOutput,
+  SoPromptInput, SoPromptOutput,
+  ExecPromptInput, ExecPromptOutput,
+  EnablePromptsInput, EnablePromptsOutput,
+  ClosePromptInput, ClosePromptOutput,
+  PROMPT_TEMPLATE_TABLE, PROMPT_TEMPLATE_EMBEDDING_TABLE,
+  PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE,
+  PROMPT_TEMPLATE_USAGE_TABLE, PROMPTS_CONFIG_TABLE,
+} from '../domain/types';
 import { renderPromptTemplate } from '../domain/services/PromptDomainService';
 
 export class PromptsService {
@@ -22,11 +46,21 @@ export class PromptsService {
   private closed = false;
 
   private readonly config: ConfigService;
+  private embedFn?: (text: string, context?: Context) => Promise<number[]>;
+  private semanticsFn?: SemanticsTaskFn;
 
-  
+
 
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, PROMPTS_CONFIG_TABLE);
+  }
+
+  setEmbedFn(fn: (text: string, context?: Context) => Promise<number[]>): void {
+    this.embedFn = fn;
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.semanticsFn = fn;
   }
 
   
@@ -71,6 +105,17 @@ export class PromptsService {
       throw new ValidationError('prompt_template 不能为空');
     }
 
+    const sem = await resolveComponentSemantics({
+      kind: 'prompt',
+      source: { kind: 'prompt', title: data.prompt_template_title, brief: data.prompt_template_brief, content: data.prompt_template },
+      provided: {
+        title: data.prompt_template_title, brief: data.prompt_template_brief,
+        positive_examples: data.positive_examples, negative_examples: data.negative_examples,
+      },
+      semanticsFn: this.semanticsFn,
+      metrics: _metrics,
+    });
+
     const id = IdGenerator.generate();
     const now = IdGenerator.now();
 
@@ -78,16 +123,46 @@ export class PromptsService {
       { field: 'id', value: id },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'prompt_template_title', value: data.prompt_template_title },
-      { field: 'prompt_template_brief', value: data.prompt_template_brief ?? null },
-      { field: 'prompt_template', value: data.prompt_template },
-      
+      { field: 'title', value: sem.title || data.prompt_template_title },
+      { field: 'brief', value: sem.brief || (data.prompt_template_brief ?? null) },
+      { field: 'content', value: data.prompt_template },
+
       { field: 'is_system', value: 0 },
       { field: 'enable', value: data.enable !== false ? 1 : 0 },
     ];
     await this.relationDb.insert(PROMPT_TEMPLATE_TABLE, dataObjects);
     output.id = id;
+
+    await this.syncPromptVector(id, sem.title || data.prompt_template_title, sem.brief || data.prompt_template_brief || data.prompt_template, _metrics);
+    await this.syncPromptExamples(id, sem.positive_examples, sem.negative_examples, _metrics);
     return true;
+  }
+
+  private async syncPromptVector(id: string, title: string, brief: string, metrics?: Metrics): Promise<void> {
+    const docText = buildFunnelDocText(title, brief);
+    await syncComponentEmbedding({
+      relationDb: this.relationDb,
+      table: PROMPT_TEMPLATE_EMBEDDING_TABLE,
+      targetIdField: 'prompt_template_id',
+      targetId: id,
+      text: docText,
+      embedFn: this.embedFn,
+      metrics,
+    });
+  }
+
+  private async syncPromptExamples(id: string, positive: string[] | undefined, negative: string[] | undefined, metrics?: Metrics): Promise<void> {
+    if (positive === undefined && negative === undefined) return;
+    await syncComponentExamples({
+      relationDb: this.relationDb,
+      table: PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'prompt_template_id',
+      targetId: id,
+      positiveExamples: positive,
+      negativeExamples: negative,
+      embedFn: this.embedFn,
+      metrics,
+    });
   }
 
   
@@ -112,6 +187,20 @@ export class PromptsService {
       await this.relationDb.delete(PROMPT_TEMPLATE_USAGE_TABLE, [
         { field: 'prompt_template_id', operator: Operator.IN, value: input.ids },
       ]);
+      for (const id of input.ids) {
+        await deleteComponentEmbedding({
+          relationDb: this.relationDb,
+          table: PROMPT_TEMPLATE_EMBEDDING_TABLE,
+          targetIdField: 'prompt_template_id',
+          targetId: id,
+        });
+        await deleteComponentEmbedding({
+          relationDb: this.relationDb,
+          table: PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE,
+          targetIdField: 'prompt_template_id',
+          targetId: id,
+        });
+      }
     }
 
     return true;
@@ -157,13 +246,13 @@ export class PromptsService {
     await this.assertNotUnmarkSystem(conditions, patch);
     const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
     if (patch.prompt_template_title !== undefined) {
-      data.push({ field: 'prompt_template_title', value: patch.prompt_template_title });
+      data.push({ field: 'title', value: patch.prompt_template_title });
     }
     if (patch.prompt_template_brief !== undefined) {
-      data.push({ field: 'prompt_template_brief', value: patch.prompt_template_brief });
+      data.push({ field: 'brief', value: patch.prompt_template_brief });
     }
     if (patch.prompt_template !== undefined) {
-      data.push({ field: 'prompt_template', value: patch.prompt_template });
+      data.push({ field: 'content', value: patch.prompt_template });
     }
     if (patch.enable !== undefined) {
       data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
@@ -174,6 +263,19 @@ export class PromptsService {
       data,
       conditions,
     );
+
+    if (patch.prompt_template_title !== undefined || patch.prompt_template_brief !== undefined || patch.prompt_template !== undefined) {
+      const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, { conditions, fields: ['id', 'title', 'brief', 'content'] });
+      for (const r of rows) {
+        await this.syncPromptVector(String(r.id), String(r.title ?? ''), String(r.brief || r.content || ''), _metrics);
+      }
+    }
+    if (patch.positive_examples !== undefined || patch.negative_examples !== undefined) {
+      const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, { conditions, fields: ['id'] });
+      for (const r of rows) {
+        await this.syncPromptExamples(String(r.id), patch.positive_examples, patch.negative_examples, _metrics);
+      }
+    }
     return true;
   }
 
@@ -191,7 +293,15 @@ export class PromptsService {
       : input.conditions!;
 
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, conditions);
-    output.prompt = row ? (row as unknown as PromptTemplateRecord) : null;
+    // ADR-012:列规范化后行记录映射回对外字段名
+    output.prompt = row
+      ? ({
+          ...(row as unknown as PromptTemplateRecord),
+          prompt_template_title: String((row as Record<string, unknown>).title ?? ''),
+          prompt_template_brief: ((row as Record<string, unknown>).brief ?? null) as string | null | undefined,
+          prompt_template: String((row as Record<string, unknown>).content ?? ''),
+        } as unknown as PromptTemplateRecord)
+      : null;
     return true;
   }
 
@@ -208,12 +318,12 @@ export class PromptsService {
     }
     if (input.keyword) {
       conditions.push({
-        field: 'prompt_template_title',
+        field: 'title',
         operator: Operator.LIKE,
         value: `%${input.keyword}%`,
       });
       conditions.push({
-        field: 'prompt_template_brief',
+        field: 'brief',
         operator: Operator.LIKE,
         value: `%${input.keyword}%`,
         logic: Logic.OR,
@@ -244,7 +354,13 @@ export class PromptsService {
       conditions.length > 0 ? conditions : undefined,
     );
 
-    output.list = rows as unknown as PromptTemplateRecord[];
+    // ADR-012:列规范化 title/brief/content 后,行记录映射回对外字段名
+    output.list = (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      ...(r as unknown as PromptTemplateRecord),
+      prompt_template_title: String(r.title ?? ''),
+      prompt_template_brief: (r.brief ?? null) as string | null | undefined,
+      prompt_template: String(r.content ?? ''),
+    })) as unknown as PromptTemplateRecord[];
     output.total = total;
     return true;
   }
@@ -293,7 +409,13 @@ export class PromptsService {
     const rows = await this.relationDb.select(PROMPT_TEMPLATE_TABLE, {
       conditions,
     });
-    return rows as unknown as PromptTemplateRecord[];
+    // ADR-012:列规范化后映射回对外字段名
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      ...(r as unknown as PromptTemplateRecord),
+      prompt_template_title: String(r.title ?? ''),
+      prompt_template_brief: (r.brief ?? null) as string | null | undefined,
+      prompt_template: String(r.content ?? ''),
+    })) as unknown as PromptTemplateRecord[];
   }
 
   private async buildUsageMap(
@@ -406,7 +528,8 @@ export class PromptsService {
     if (!row) {
       throw new NotFoundError('Prompt', input.id);
     }
-    const record = row as unknown as PromptTemplateRecord;
+    const rowObj = row as unknown as Record<string, unknown>;
+    const record = { ...row, prompt_template: String(rowObj.content ?? ''), prompt_template_title: String(rowObj.title ?? '') } as unknown as PromptTemplateRecord;
     if (!record.enable) {
       throw new ValidationError(`Prompt ${input.id} 已禁用`);
     }

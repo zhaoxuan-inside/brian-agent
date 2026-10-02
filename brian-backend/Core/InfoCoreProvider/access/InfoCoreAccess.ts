@@ -30,6 +30,10 @@ import {
   GraphNInfoOutput,
   SimilarKInfoInput,
   SimilarKInfoOutput,
+  SaveDialogEmbeddingInput,
+  SaveDialogEmbeddingOutput,
+  MatchDialogTopicInput,
+  MatchDialogTopicOutput,
   KeywordKInfoInput,
   KeywordKInfoOutput,
   RelationKInfoInput,
@@ -192,7 +196,19 @@ export class InfoCoreAccess {
     return this.service.similarKInfo(input, output, context, metrics, report);
   }
 
-  
+
+  async saveDialogEmbedding(input: SaveDialogEmbeddingInput, output: SaveDialogEmbeddingOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.saveDialogEmbedding(input, output, context, metrics, report);
+  }
+
+
+  async matchDialogTopic(input: MatchDialogTopicInput, output: MatchDialogTopicOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    return this.service.matchDialogTopic(input, output, context, metrics, report);
+  }
+
+
   async keywordKInfo(input: KeywordKInfoInput, output: KeywordKInfoOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     return this.service.keywordKInfo(input, output, context, metrics, report);

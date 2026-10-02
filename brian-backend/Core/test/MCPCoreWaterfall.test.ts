@@ -6,21 +6,10 @@ import {
   RelationDBAccess,
   PromptsAccess,
   IdGenerator,
-  AddPromptInput,
-  AddPromptOutput,
-  PromptContext,
-  SoMcpProviderInput,
-  SoMcpProviderOutput,
-  ListMcpInput,
-  ListMcpOutput,
-  InstallMcpInput,
-  InstallMcpOutput,
-  StartMcpInput,
-  StartMcpOutput,
   SoMcpInput,
   SoMcpOutput,
-  GetMcpDetailsInput,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import type { MCPAccess } from '@brian-agent/base';
 import {
   McpCoreContext,
@@ -29,49 +18,21 @@ import {
   ConfigMcpCoreInput,
   ConfigMcpCoreOutput,
   MCP_CORE_CONFIG_TABLE,
-  AGENT_MCP_USAGE_TABLE,
 } from '../MCPCoreProvider';
 import { MCPCoreService } from '../MCPCoreProvider/application/MCPCoreService';
 
-describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供商市场获取）', () => {
+describe('MCPCoreService 两级漏斗匹配（所有安装MCP候选 + BM25过滤 + 向量过滤，免 LLM）', () => {
   let tempDir: string;
   let relationDb: RelationDBAccess;
   let promptsAccess: PromptsAccess;
   let ctx: McpCoreContext;
 
-  function stubLlm(responses: string[]): any {
-    let call = 0;
-    return {
-      execLLM: async (_input: unknown, output: { result?: string }) => {
-        output.result = responses[Math.min(call++, responses.length - 1)];
-        return true;
-      },
-      embedLLM: async (_input: unknown, output: { embedding?: number[] }) => {
-        output.embedding = [0.1, 0.2, 0.3];
-        return true;
-      },
-    };
-  }
-
-  function stubMcpAccess(opts: { installId?: string; marketEmpty?: boolean } = {}): { access: MCPAccess; calls: Record<string, number> } {
-    const calls = { install: 0, start: 0 };
+  function stubMcpAccess(installedMcps: any[] = []): { access: MCPAccess } {
     const access = {
-      soMcp: async (_i: unknown, o: SoMcpOutput) => { o.list = []; return true; },
-      soMcpProvider: async (_i: SoMcpProviderInput, o: SoMcpProviderOutput) => {
-        o.list = opts.marketEmpty ? [] : [{ id: 'prov-1', provider_code: 'github', mcp_provider_url: 'https://market.example', enable: true } as any];
-        return true;
-      },
-      listMcp: async (_i: ListMcpInput, o: ListMcpOutput) => {
-        o.list = opts.marketEmpty ? [] : [
-          { id: 'cache-1', mcp_provider_id: 'prov-1', mcp_title: 'weather-mcp', mcp_brief: '天气查询工具' },
-        ] as any[];
-        return true;
-      },
-      installMcp: async (_i: InstallMcpInput, o: InstallMcpOutput) => { calls.install++; o.id = opts.installId ?? 'installed-1'; return true; },
-      startMcp: async (_i: StartMcpInput, _o: StartMcpOutput) => { calls.start++; return true; },
+      soMcp: async (_i: unknown, o: SoMcpOutput) => { o.list = installedMcps; return true; },
       getMcp: async (_i: unknown, o: { mcp: unknown }) => { o.mcp = null; return true; },
     } as unknown as MCPAccess;
-    return { access, calls };
+    return { access };
   }
 
   function matchInput(taskContent: string): MatchMcpInput {
@@ -87,6 +48,7 @@ describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供�
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-core-mcp-falls-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${MCP_CORE_CONFIG_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY,
@@ -95,22 +57,11 @@ describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供�
         "regen_rate" INTEGER NOT NULL DEFAULT 75,
         "similarity_threshold" REAL NOT NULL DEFAULT 0.7,
         "prompt_template_id" TEXT NOT NULL DEFAULT '',
-        "score_threshold" INTEGER NOT NULL DEFAULT 90,
-        "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8,
+        "score_threshold" INTEGER NOT NULL DEFAULT 20,
+        "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.6,
         "match_cache_ttl_ms" INTEGER NOT NULL DEFAULT 600000,
         "match_cache_capacity" INTEGER NOT NULL DEFAULT 500,
         "market_install_enabled" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_MCP_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "mcp_id" TEXT NOT NULL,
-        "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
     promptsAccess = new PromptsAccess(relationDb);
@@ -123,74 +74,74 @@ describe('MCPCoreService 四层瀑布（need 判定合并 / 负缓存 / 提供�
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
-  async function seedTemplate(): Promise<void> {
-    const addInput = new AddPromptInput();
-    addInput.data = {
-      prompt_template_title: 'Test 市场模板',
-      prompt_template: 'task: {{task_content}} mcps: {{available_mcps}}',
-    };
-    const addOutput = new AddPromptOutput();
-    await promptsAccess.addPrompt(addInput, addOutput, new PromptContext());
-    return;
-  }
-
-  it('need=false → 返回空 + 负缓存（第二次调用零 LLM）', async () => {
-    await seedTemplate();
-    const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => { o.result = '{"need": false, "keywords": [], "candidates": []}'; return true; });
-    const llm = { execLLM: execLlm, embedLLM: async (_i: unknown, o: { embedding?: number[] }) => { o.embedding = [0.1]; return true; } };
-    const { access: mcpAccess } = stubMcpAccess();
-    const service = new MCPCoreService(relationDb, mcpAccess, llm, promptsAccess);
+  it('候选集通过 BM25 与向量两级过滤成功匹配已安装 MCP（零 LLM 调用）', async () => {
+    const execLlm = vi.fn();
+    const embedLlm = vi.fn(async (i: any, o: { embedding?: number[] }) => {
+      o.embedding = i.input.includes('weather') ? [1, 0, 0] : [0, 1, 0];
+      return true;
+    });
+    const llm = { execLLM: execLlm, embedLLM: embedLlm };
+    const { access: mcpAccess } = stubMcpAccess([
+      { id: 'mcp-weather', mcp_title: 'weather', mcp_brief: '面向气象查询，接收城市名称，查询天气数据，输出天气报告。', enable: 1 },
+      { id: 'mcp-memory', mcp_title: 'memory', mcp_brief: '面向长期记忆管理，接收会话关键事实与实体关系，构建知识图谱，输出关联记忆。', enable: 1 },
+    ]);
+    const service = new MCPCoreService(relationDb, mcpAccess, llm as any, promptsAccess);
+    await service.configMCPCore(
+      { regen_rate: 0, score_threshold: 20, vector_similarity_threshold: 0.6 } as ConfigMcpCoreInput,
+      new ConfigMcpCoreOutput(),
+      ctx,
+    );
 
     const out1 = new MatchMcpOutput();
-    await service.matchMCP(matchInput('你好'), out1, ctx);
-    expect(out1.mcp_ids).toEqual([]);
+    await service.matchMCP(matchInput('weather query'), out1, ctx);
+    expect(out1.mcp_ids).toEqual(['mcp-weather']);
+    expect(out1.detail).toBe('election_mcp_t1');
+    expect(execLlm).toHaveBeenCalledTimes(0);
 
+    // 第二次调用直接命中正向缓存
     const out2 = new MatchMcpOutput();
-    await service.matchMCP(matchInput('你好'), out2, ctx);
+    await service.matchMCP(matchInput('weather query'), out2, ctx);
+    expect(out2.mcp_ids).toEqual(['mcp-weather']);
+    expect(out2.detail).toBe('election_mcp_reuse');
+    expect(execLlm).toHaveBeenCalledTimes(0);
+  });
+
+  it('语义路由器评分低于阈值剔除候选集 → 返回空并记录负缓存（零 LLM 调用）', async () => {
+    const execLlm = vi.fn();
+    const embedLlm = vi.fn(async (i: any, o: { embedding?: number[] }) => {
+      o.embedding = (i.input && i.input.includes('笑话')) ? [1, 0, 0] : [0, 1, 0];
+      return true;
+    });
+    const llm = { execLLM: execLlm, embedLLM: embedLlm };
+    const { access: mcpAccess } = stubMcpAccess([
+      { id: 'mcp-subway', mcp_title: 'SubwayInfo', mcp_brief: '面向城市交通查询，接收纽约地铁线路与车站名称，实时查询运行状态，输出到站提醒。', enable: 1 },
+    ]);
+    const service = new MCPCoreService(relationDb, mcpAccess, llm as any, promptsAccess);
+
+    const out1 = new MatchMcpOutput();
+    await service.matchMCP(matchInput('你好，讲个笑话'), out1, ctx);
+    expect(out1.mcp_ids).toEqual([]);
+    expect(out1.detail).toBe('mcp_exhausted');
+    expect(execLlm).toHaveBeenCalledTimes(0);
+
+    // 第二次调用直接命中负缓存
+    const out2 = new MatchMcpOutput();
+    await service.matchMCP(matchInput('你好，讲个笑话'), out2, ctx);
     expect(out2.mcp_ids).toEqual([]);
-    expect(execLlm).toHaveBeenCalledTimes(1);
+    expect(out2.detail).toBe('mcp_exhausted');
+    expect(execLlm).toHaveBeenCalledTimes(0);
   });
 
-  it('市场层：need=true 本地无命中 → listMcp 汇总候选 → LLM 选型 → installMcp + startMcp', async () => {
-    await seedTemplate();
-    const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => { o.result = '[{"id": "cache-1", "score": 95}]'; return true; });
-    const llm = { execLLM: execLlm, embedLLM: async (_i: unknown, o: { embedding?: number[] }) => { o.embedding = [0.1]; return true; } };
-    const { access: mcpAccess, calls } = stubMcpAccess();
-    const service = new MCPCoreService(relationDb, mcpAccess, llm, promptsAccess);
-
-    const out = new MatchMcpOutput();
-    await service.matchMCP(matchInput('需要查天气'), out, ctx);
-    expect(out.mcp_ids).toEqual(['installed-1']);
-    expect(calls.install).toBe(1);
-    expect(calls.start).toBe(1);
-  });
-
-  it('market_install_enabled=false → 市场层跳过，返回空', async () => {
-    await seedTemplate();
-    const configInput = new ConfigMcpCoreInput();
-    configInput.market_install_enabled = false;
-    const bootstrap = new MCPCoreService(relationDb, stubMcpAccess().access, stubLlm(['{"need": false, "keywords": [], "candidates": []}']), promptsAccess);
-    await bootstrap.configMCPCore(configInput, new ConfigMcpCoreOutput(), ctx);
-
-    const execLlm = vi.fn(async (_i: unknown, o: { result?: string }) => { o.result = '{"need": true, "keywords": [], "candidates": []}'; return true; });
-    const llm = { execLLM: execLlm, embedLLM: async (_i: unknown, o: { embedding?: number[] }) => { o.embedding = [0.1]; return true; } };
-    const { access: mcpAccess, calls } = stubMcpAccess();
-    const service = new MCPCoreService(relationDb, mcpAccess, llm, promptsAccess);
+  it('候选集为空时直接返回空并记录负缓存', async () => {
+    const execLlm = vi.fn();
+    const llm = { execLLM: execLlm, embedLLM: async (_i: any, o: any) => { o.embedding = [0.1]; return true; } };
+    const { access: mcpAccess } = stubMcpAccess([]);
+    const service = new MCPCoreService(relationDb, mcpAccess, llm as any, promptsAccess);
 
     const out = new MatchMcpOutput();
     await service.matchMCP(matchInput('需要查天气'), out, ctx);
     expect(out.mcp_ids).toEqual([]);
-    expect(calls.install).toBe(0);
-  });
-
-  it('市场清单为空 → 返回空（不抛错）', async () => {
-    await seedTemplate();
-    const llm = stubLlm(['{"need": true, "keywords": [], "candidates": []}']);
-    const { access: mcpAccess } = stubMcpAccess({ marketEmpty: true });
-    const service = new MCPCoreService(relationDb, mcpAccess, llm, promptsAccess);
-
-    const out = new MatchMcpOutput();
-    await service.matchMCP(matchInput('需要查天气'), out, ctx);
-    expect(out.mcp_ids).toEqual([]);
+    expect(out.detail).toBe('mcp_exhausted');
+    expect(execLlm).toHaveBeenCalledTimes(0);
   });
 });

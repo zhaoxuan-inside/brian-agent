@@ -6,6 +6,7 @@ import path from 'path';
 import os from 'os';
 
 import { RelationDBAccess } from '../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../TraceBase/infrastructure/TraceSchemaInitializer';
 import { DBContext, CloseDBInput, CloseDBOutput } from '../RelationDBProvider';
 import {
   PromptsAccess,
@@ -26,6 +27,7 @@ import {
   EnablePromptsOutput,
   ClosePromptInput,
   ClosePromptOutput,
+  PROMPT_TEMPLATE_USAGE_TABLE,
 } from '../PromptsProvider';
 import { Operator, Logic } from '../shared/query';
 import {
@@ -57,6 +59,7 @@ describe('PromptsProvider', () => {
 
     relationDb = new RelationDBAccess({ dbPath: sqlitePath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
@@ -264,7 +267,7 @@ describe('PromptsProvider', () => {
       const delInput = new DelPromptInput();
       delInput.conditions = [
         {
-          field: 'prompt_template_title',
+          field: 'title',
           operator: Operator.EQ,
           value: 'CondDeletePrompts',
         },
@@ -291,7 +294,7 @@ describe('PromptsProvider', () => {
       );
 
       const usageBefore = await relationDb.select(
-        'prompt_template_usage',
+        PROMPT_TEMPLATE_USAGE_TABLE,
         {
           conditions: [
             {
@@ -312,7 +315,7 @@ describe('PromptsProvider', () => {
       );
 
       const usageAfter = await relationDb.select(
-        'prompt_template_usage',
+        PROMPT_TEMPLATE_USAGE_TABLE,
         {
           conditions: [
             {
@@ -379,7 +382,7 @@ describe('PromptsProvider', () => {
       const input = new UpdatePromptInput();
       input.conditions = [
         {
-          field: 'prompt_template_title',
+          field: 'title',
           operator: Operator.EQ,
           value: 'ToUpdateTitle',
         },
@@ -508,7 +511,7 @@ describe('PromptsProvider', () => {
       const getInput = new GetPromptInput();
       getInput.conditions = [
         {
-          field: 'prompt_template_brief',
+          field: 'brief',
           operator: Operator.EQ,
           value: 'GetTargetBrief',
         },
@@ -592,7 +595,7 @@ describe('PromptsProvider', () => {
       const soInput = new SoPromptInput();
       soInput.conditions = [
         { field: 'enable', operator: Operator.EQ, value: 1 },
-        { field: 'prompt_template_title', operator: Operator.LIKE, value: 'SearchPrompt%' },
+        { field: 'title', operator: Operator.LIKE, value: 'SearchPrompt%' },
       ];
       const soOut = new SoPromptOutput();
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
@@ -616,7 +619,7 @@ describe('PromptsProvider', () => {
 
     it('应该支持按 prompt_template_title 升序排序', async () => {
       const soInput = new SoPromptInput();
-      soInput.order_by = [{ field: 'prompt_template_title', direction: 'ASC' }];
+      soInput.order_by = [{ field: 'title', direction: 'ASC' }];
       const soOut = new SoPromptOutput();
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
 
@@ -632,7 +635,7 @@ describe('PromptsProvider', () => {
       const soInput = new SoPromptInput();
       soInput.page = { current: 1, size: 2 };
       soInput.order_by = [
-        { field: 'prompt_template_title', direction: 'ASC' },
+        { field: 'title', direction: 'ASC' },
       ];
       const soOut = new SoPromptOutput();
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
@@ -645,7 +648,7 @@ describe('PromptsProvider', () => {
       const soInput = new SoPromptInput();
       soInput.page = { current: 2, size: 2 };
       soInput.order_by = [
-        { field: 'prompt_template_title', direction: 'ASC' },
+        { field: 'title', direction: 'ASC' },
       ];
       const soOut = new SoPromptOutput();
       await promptsAccess.soPrompt(soInput, soOut, new PromptContext());
@@ -769,7 +772,7 @@ describe('PromptsProvider', () => {
     it('无使用记录的模板在使用频率排序中值为 0', async () => {
       const soInput = new SoPromptInput();
       soInput.conditions = [
-        { field: 'prompt_template_title', operator: Operator.LIKE, value: 'UsageSort%' },
+        { field: 'title', operator: Operator.LIKE, value: 'UsageSort%' },
       ];
       soInput.order_by = [{ field: 'usage_total_count', direction: 'ASC' }];
       const soOut = new SoPromptOutput();
@@ -868,7 +871,7 @@ describe('PromptsProvider', () => {
         new ExecPromptOutput(), new PromptContext(),
       );
 
-      const usageRows = await relationDb.select('prompt_template_usage', {
+      const usageRows = await relationDb.select(PROMPT_TEMPLATE_USAGE_TABLE, {
         conditions: [
           {
             field: 'prompt_template_id',
@@ -903,7 +906,7 @@ describe('PromptsProvider', () => {
         new ExecPromptOutput(), new PromptContext(),
       );
 
-      const usageRows = await relationDb.select('prompt_template_usage', {
+      const usageRows = await relationDb.select(PROMPT_TEMPLATE_USAGE_TABLE, {
         conditions: [
           {
             field: 'prompt_template_id',
@@ -1039,7 +1042,7 @@ describe('PromptsProvider', () => {
         new EnablePromptsOutput(), new PromptContext(),
       );
 
-      const configRow = await relationDb.selectOne('prompts_config', [
+      const configRow = await relationDb.selectOne('prompts_config_record', [
         {
           field: 'config_key',
           operator: Operator.EQ,

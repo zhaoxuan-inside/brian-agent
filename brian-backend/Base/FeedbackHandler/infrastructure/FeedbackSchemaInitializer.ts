@@ -9,10 +9,10 @@ export class FeedbackSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   init(): void {
+    this.migrateLegacyKeys();
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${FEEDBACK_RECORD_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-        feedback_id TEXT NOT NULL UNIQUE,
         source TEXT NOT NULL DEFAULT 'user',
         agent_id TEXT NOT NULL DEFAULT '',
         work_id TEXT NOT NULL DEFAULT '',
@@ -39,7 +39,6 @@ export class FeedbackSchemaInitializer {
     this.relationDb.executeRaw(
       `CREATE TABLE IF NOT EXISTS ${FEEDBACK_PROCESS_LOG_TABLE} (
         id TEXT PRIMARY KEY, created INTEGER NOT NULL, updated INTEGER NOT NULL,
-        process_id TEXT NOT NULL UNIQUE,
         feedback_id TEXT NOT NULL DEFAULT '',
         action TEXT NOT NULL DEFAULT 'submitted',
         agent_id TEXT NOT NULL DEFAULT '',
@@ -74,5 +73,13 @@ export class FeedbackSchemaInitializer {
         [(Date.now() + Math.random()).toString(36), now, now],
       );
     }
+  }
+
+  /** ADR-012:去 feedback_id/process_id 冗余业务键,id 统一承接(幂等) */
+  private migrateLegacyKeys(): void {
+    try { this.relationDb.executeRaw(`UPDATE "${FEEDBACK_RECORD_TABLE}" SET "id" = "feedback_id" WHERE "id" != "feedback_id"`); } catch {  }
+    try { this.relationDb.executeRaw(`ALTER TABLE "${FEEDBACK_RECORD_TABLE}" DROP COLUMN "feedback_id"`); } catch {  }
+    try { this.relationDb.executeRaw(`UPDATE "${FEEDBACK_PROCESS_LOG_TABLE}" SET "id" = "process_id" WHERE "id" != "process_id"`); } catch {  }
+    try { this.relationDb.executeRaw(`ALTER TABLE "${FEEDBACK_PROCESS_LOG_TABLE}" DROP COLUMN "process_id"`); } catch {  }
   }
 }

@@ -1,15 +1,29 @@
 import { Metrics, Report } from '@brian-agent/base';
+import {
+  funnelBm25Ranking,
+  funnelSemanticRouterRanking,
+  buildFunnelDocText,
+  analyzeTaskComplexity,
+  runComponentElection,
+  fullTierLadder,
+  applySignalScores,
+  DEFAULT_ELECTION_THRESHOLDS,
+  type FunnelRankingEntry,
+  type ComponentElectionAdapter,
+  type ElectionCandidate,
+  type ElectionSignals,
+  type ElectionThresholds,
+  type ElectionTierExpr,
+} from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
 import { IdGenerator, Operator } from '@brian-agent/base';
 import {
   ValidationError,
   ProcessingError,
 } from '../../shared/errors';
-import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
 import { ScoreThreshold } from '../../shared/MatchConstants';
 import { ensureDefaultConfig } from '../../shared/ConfigHelper';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
-import { checkMatchCache, clearMatchCache, persistMatchBinding } from '../../shared';
 import type { LLMProviderQuotaRecord, LLMCoreConfigRecord } from '../domain/types';
 import {
   LLMCoreContext,
@@ -24,11 +38,11 @@ import {
   RecordLLMUsageInput,
   RecordLLMUsageOutput,
   LLM_CORE_CONFIG_TABLE,
-  AGENT_LLM_TABLE,
+  AGENT_RECORD_TABLE,
   LLM_PROVIDER_QUOTA_TABLE,
-  LLM_CORE_USAGE_TABLE,
 } from '../domain/types';
-import { SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, LLMContext, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
+import { SoLLMInput, SoLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PROMPT_TEMPLATE_TABLE, TraceService, RecordUsageInput, RecordUsageOutput, USAGE_EVENT_TABLE } from '@brian-agent/base';
+import { createComponentFunnelTrace, pushComponentFunnel, FUNNEL_MECHANISM_LABELS, type ComponentFunnelTrace } from '@brian-agent/base';
 import {
   GetPromptInput,
   GetPromptOutput,
@@ -40,6 +54,8 @@ import {
 export class LLMCoreService {
   
   private readonly configStore: SingleRowConfigStore<LLMCoreConfigRecord>;
+
+  private readonly trace: TraceService;
 
   
 
@@ -53,6 +69,7 @@ export class LLMCoreService {
       toRecord: (raw) => this.toCoreConfigRecord(raw),
       defaults: [],
     });
+    this.trace = new TraceService(relationDb);
   }
 
   
@@ -71,28 +88,140 @@ export class LLMCoreService {
 
   
 
-  async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchLLM(input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     if (!input.agent_id) {
       output.error = 'matchLLM 需要提供 agent_id';
       output.error_code = 'VALIDATION_ERROR';
       return false;
     }
+    const funnel = createComponentFunnelTrace('llm', input.agent_id);
+    const route = await this.soMatchLlmRoute(input, output, context, metrics, funnel);
+    pushComponentFunnel(report, funnel, route.detail);
+    return route.ok;
+  }
+
+  private async soMatchLlmRoute(
+    input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext,
+    metrics: Metrics | undefined, funnel: ComponentFunnelTrace,
+  ): Promise<{ ok: boolean; detail: string }> {
     const config = await this.getCoreConfig();
     const targetType = (input.llm_type || 'text').toLowerCase();
     const hit = await this.checkCachedLLM(input.agent_id, targetType, config?.regen_rate ?? 75, output);
-    if (hit) return true;
+    if (hit) {
+      funnel.addDirect('缓存绑定复用', [{ id: output.llm_id, name: this.soLlmTitle(output.llm, output.llm_id), score: 100 }]);
+      return { ok: true, detail: 'cache_hit' };
+    }
 
     const availableLLMs = await this.soAvailableLLMsByType(targetType);
     if (availableLLMs.length === 0) {
       output.error = `未找到可用的 ${targetType} 模型`;
       output.error_code = 'NOT_FOUND';
+      return { ok: false, detail: 'empty' };
+    }
+    const adapter = this.llmElectionAdapter(input, output, availableLLMs, config, context, funnel);
+    await runComponentElection(adapter, input, output);
+    return { ok: true, detail: output.detail || 'election_llm_done' };
+  }
+
+  /** LLM 选举适配器（规格 3.1：唯一候选直采 + 全量阶梯 + 默认模型终端） */
+  private llmElectionAdapter(
+    input: MatchLLMInput, output: MatchLLMOutput, availableLLMs: SoLLMOutput['list'],
+    config: LLMCoreConfigRecord | null, context: LLMCoreContext, funnel?: ComponentFunnelTrace,
+  ): ComponentElectionAdapter<SoLLMOutput['list'][number]> {
+    return {
+      component: 'llm',
+      multiSelect: false,
+      directAdoptSingle: true,
+      funnel,
+      findReusable: async () => null,
+      extractSignals: () => this.llmExtractSignals(input, availableLLMs, config, context, funnel),
+      tiers: () => fullTierLadder(),
+      select: (_i, _o, picked, tier) => this.llmSelect(input, output, picked[0], config, tier, funnel),
+      exhaust: () => this.llmDefaultTerminal(input, output, availableLLMs, funnel),
+    };
+  }
+
+  /** 信号提取（并行）：合法集（类型过滤）+ BM25（title+brief）+ 语义路由（描述向量，LLM 无范例表）；结构弃权 */
+  private async llmExtractSignals(
+    input: MatchLLMInput, availableLLMs: SoLLMOutput['list'],
+    config: LLMCoreConfigRecord | null, context: LLMCoreContext, funnel?: ComponentFunnelTrace,
+  ): Promise<ElectionSignals<SoLLMOutput['list'][number]>> {
+    const thresholds: ElectionThresholds = {
+      ...DEFAULT_ELECTION_THRESHOLDS,
+      bm25: config?.score_threshold ?? DEFAULT_ELECTION_THRESHOLDS.bm25,
+    };
+    const docs = availableLLMs.map((l) => ({ id: String(l.id ?? ''), name: String(l.llm_title ?? ''), brief: String(l.llm_brief ?? '') }));
+    const docOf = new Map(availableLLMs.map((l) => [String(l.id ?? ''), l]));
+    const taskText = input.task_content ?? '';
+    const queryEmbedding = taskText ? await this.embedTask(taskText, context).catch(() => []) : [];
+    const [bm25Ranking, vectorRanking] = await Promise.all([
+      Promise.resolve(funnelBm25Ranking(taskText, docs)),
+      this.llmVectorSignal(queryEmbedding, docs, context, funnel),
+    ]);
+    const candidates = docs.map((d) => ({
+      id: d.id, label: d.name || d.id, doc: docOf.get(d.id) as SoLLMOutput['list'][number],
+      bm25Score: 0, vectorScore: 0, exampleSim: 0, negativeSim: 0, rejectedByNegative: false,
+    }));
+    applySignalScores(candidates, bm25Ranking, vectorRanking);
+    return { candidates, complexity: analyzeTaskComplexity({ text: taskText }), structureIds: new Set<string>(), thresholds };
+  }
+
+  /** 向量信号（并行支路）：描述向量语义路由（LLM 无正/负范例表，S_pos=S_desc） */
+  private async llmVectorSignal(queryEmbedding: number[], docs: Array<{ id: string; name: string; brief: string }>, context: LLMCoreContext, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    if (!queryEmbedding || queryEmbedding.length === 0) return [];
+    const ranking = await funnelSemanticRouterRanking(
+      queryEmbedding, docs, (d) => this.embedTask(buildFunnelDocText(d.name, d.brief), context),
+      new Map(), new Map(), new Map(),
+    );
+    funnel?.addMechanism({
+      mechanism: 'vector', label: FUNNEL_MECHANISM_LABELS.vector, adopted: ranking.some((e) => !e.rejected && e.score >= 80),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.name || e.doc.brief.slice(0, 40), score: e.score })),
+    });
+    return ranking;
+  }
+
+  /** 阶梯命中采纳：写 agent_record.llm_id 绑定并填充输出（ADR-012） */
+  private async llmSelect(input: MatchLLMInput, output: MatchLLMOutput, picked: ElectionCandidate<SoLLMOutput['list'][number]>, config: LLMCoreConfigRecord | null, tier: ElectionTierExpr, funnel?: ComponentFunnelTrace): Promise<boolean> {
+    const selectedLLMId = picked.id;
+    try {
+      await this.relationDb.update(AGENT_RECORD_TABLE, [
+        { field: 'llm_id', value: selectedLLMId },
+        { field: 'updated', value: IdGenerator.now() },
+      ], [{ field: 'id', operator: Operator.EQ, value: input.agent_id }]);
+    } catch {  }
+    await this.fillSingleLLM(selectedLLMId, output);
+    output.detail = `election_llm_${tier.id}`;
+    funnel?.markAdopted(tier.id === 't6' ? 'bm25' : 'vector');
+    return true;
+  }
+
+  /** 阶梯耗尽终端：使用默认模型（规格 3.1.9） */
+  private async llmDefaultTerminal(input: MatchLLMInput, output: MatchLLMOutput, availableLLMs: SoLLMOutput['list'], funnel?: ComponentFunnelTrace): Promise<boolean> {
+    const fallback = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
+    if (!fallback) {
+      output.error = '未找到可用的模型';
+      output.error_code = 'NOT_FOUND';
       return false;
     }
-    if (availableLLMs.length === 1) {
-      return this.fillSingleLLM(availableLLMs[0].id, output);
-    }
-    return this.rankMultipleLLMs(input, output, context, availableLLMs, config);
+    funnel?.addDirect('默认模型兜底', [{ id: String(fallback.id ?? ''), name: String(fallback.llm_title ?? fallback.id ?? ''), score: 0 }]);
+    await this.llmSelect(input, output, {
+      id: String(fallback.id ?? ''), label: String(fallback.llm_title ?? ''), doc: fallback,
+      bm25Score: 0, vectorScore: 0, exampleSim: 0, negativeSim: 0, rejectedByNegative: false,
+    }, null, { id: 'default', label: '默认模型', union: ['all'], subtractNegative: false }, funnel);
+    output.detail = 'election_llm_default';
+    return true;
+  }
+
+  private async embedTask(task: string, context?: LLMCoreContext): Promise<number[]> {
+    const output = new EmbedLLMOutput();
+    const input = Object.assign(new EmbedLLMInput(), { id: '', input: task });
+    const ok = await this.llmAccess.embedLLM(input, output, context ?? new LLMContext());
+    return ok ? output.embedding ?? [] : [];
+  }
+
+  private soLlmTitle(record: Record<string, unknown> | null, fallbackId: string): string {
+    return String(record?.llm_title ?? fallbackId);
   }
 
   private async soAvailableLLMsByType(targetType: string): Promise<SoLLMOutput['list']> {
@@ -104,10 +233,10 @@ export class LLMCoreService {
     });
   }
 
-  private async checkCachedLLM(agentId: string, targetType: string, regenRate: number, output: MatchLLMOutput): Promise<boolean> {
-    const cacheResult = await checkMatchCache(this.relationDb, AGENT_LLM_TABLE, agentId, regenRate, 'random', 'llm_id');
-    if (!cacheResult.hit || !cacheResult.entries?.[0]) return false;
-    const boundId = cacheResult.entries[0].entity_id;
+  private async checkCachedLLM(agentId: string, targetType: string, _regenRate: number, output: MatchLLMOutput): Promise<boolean> {
+    // ADR-012:agent_llm 退役,绑定唯一归 agent_record.llm_id
+    const boundId = await this.soAgentBoundLlmId(agentId);
+    if (!boundId) return false;
     const llmRecord = await this.getLLMById(boundId);
     if (llmRecord && llmRecord.enable) {
       const cachedType = ((llmRecord.llm_type as string) || 'text').toLowerCase();
@@ -119,8 +248,28 @@ export class LLMCoreService {
         return true;
       }
     }
-    await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, agentId);
+    await this.clearAgentLlmBinding(agentId);
     return false;
+  }
+
+  private async soAgentBoundLlmId(agentId: string): Promise<string> {
+    try {
+      const row = await this.relationDb.selectOne(AGENT_RECORD_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: agentId },
+      ]);
+      return String((row as Record<string, unknown> | null)?.['llm_id'] ?? '');
+    } catch {
+      return '';
+    }
+  }
+
+  private async clearAgentLlmBinding(agentId: string): Promise<void> {
+    try {
+      await this.relationDb.update(AGENT_RECORD_TABLE, [
+        { field: 'llm_id', value: '' },
+        { field: 'updated', value: IdGenerator.now() },
+      ], [{ field: 'id', operator: Operator.EQ, value: agentId }]);
+    } catch {  }
   }
 
   private async fillSingleLLM(llmId: string, output: MatchLLMOutput): Promise<boolean> {
@@ -129,36 +278,6 @@ export class LLMCoreService {
     output.from_cache = false;
     return true;
   }
-
-  private async rankMultipleLLMs(
-    input: MatchLLMInput, output: MatchLLMOutput, context: LLMCoreContext,
-    availableLLMs: SoLLMOutput['list'], config: LLMCoreConfigRecord | null,
-  ): Promise<boolean> {
-    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
-    const prompt = await this.renderMatchPrompt(templateId, {
-      agent_id: input.agent_id, context_id: input.context_id, run_id: input.run_id,
-      available_llms: this.buildLlmList(availableLLMs),
-    });
-    const rankerLLM = availableLLMs.find((l) => l.is_default) ?? availableLLMs[0];
-    const execOut = new ExecLLMOutput();
-    const ok = await this.llmAccess.execLLM({
-      id: rankerLLM.id, prompt, temperature: 0.1, max_tokens: 256,
-      session_id: context.session_id || '', run_id: input.run_id || context.run_id || '',
-      work_id: context.work_id || input.work_id || '', caller: 'LLMCoreService.matchLLM',
-    } as ExecLLMInput, execOut, new LLMContext());
-    const ranked = ok ? filterByThreshold(parseRankingCandidates(execOut.result ?? ''), config?.score_threshold ?? ScoreThreshold.Default) : [];
-    const llmIds = new Set(availableLLMs.map((l) => l.id));
-    const selectedLLMId = ranked.map((c) => c.id).find((id) => llmIds.has(id)) || rankerLLM.id;
-    await clearMatchCache(this.relationDb, AGENT_LLM_TABLE, input.agent_id);
-    await persistMatchBinding(this.relationDb, AGENT_LLM_TABLE, input.agent_id, selectedLLMId, 'llm_id');
-    return this.fillSingleLLM(selectedLLMId, output);
-  }
-
-  
-  
-  
-
-  
 
   async limitLLM(input: LimitLLMInput, output: LimitLLMOutput, _context: LLMCoreContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
@@ -315,20 +434,15 @@ export class LLMCoreService {
       throw new ValidationError('recordLLMUsage 需要提供 llm_provider_id');
     }
 
-    const now = IdGenerator.now();
-    const id = IdGenerator.generate();
-    const count = input.call_count ?? 1;
-
-    await this.relationDb.insert(LLM_CORE_USAGE_TABLE, [
-      { field: 'id', value: id },
-      { field: 'created', value: now },
-      { field: 'llm_provider_id', value: input.llm_provider_id },
-      { field: 'timestamp', value: now },
-      { field: 'tokens_used', value: input.tokens_used },
-      { field: 'call_count', value: count },
-    ]);
-
-    output.id = id;
+    // ADR-012: 统一经 TraceService 记录供应商使用事件（usage_event_record + org 聚合）
+    const usageInput = new RecordUsageInput();
+    usageInput.entity_type = 'llm_provider';
+    usageInput.entity_id = input.llm_provider_id;
+    usageInput.input_tokens = input.tokens_used ?? 0;
+    usageInput.usage_context = `call_count=${input.call_count ?? 1}`;
+    const usageOut = new RecordUsageOutput();
+    await this.trace.recordUsage(usageInput, usageOut, new LLMCoreContext());
+    output.id = usageOut.event_id;
     return true;
   }
 
@@ -420,19 +534,20 @@ export class LLMCoreService {
     rangeStart: number,
     rangeEnd: number,
   ): Promise<{ tokens_used: number; call_count: number }> {
-    const rows = await this.relationDb.select(LLM_CORE_USAGE_TABLE, {
+    const rows = await this.relationDb.select(USAGE_EVENT_TABLE, {
       conditions: [
-        { field: 'llm_provider_id', operator: Operator.EQ, value: llmProviderId },
-        { field: 'timestamp', operator: 'GE', value: rangeStart },
-        { field: 'timestamp', operator: 'LE', value: rangeEnd },
+        { field: 'entity_type', operator: Operator.EQ, value: 'llm_provider' },
+        { field: 'entity_id', operator: Operator.EQ, value: llmProviderId },
+        { field: 'created', operator: 'GE', value: rangeStart },
+        { field: 'created', operator: 'LE', value: rangeEnd },
       ],
     });
 
     let tokensUsed = 0;
     let callCount = 0;
     for (const row of rows) {
-      tokensUsed += (row['tokens_used'] as number) || 0;
-      callCount += (row['call_count'] as number) || 0;
+      tokensUsed += (row['input_tokens'] as number) || 0;
+      callCount += 1;
     }
     return { tokens_used: tokensUsed, call_count: callCount };
   }
@@ -527,9 +642,10 @@ export class LLMCoreService {
   }
 
   
-  private async soMatchPromptTemplateId(): Promise<string> {
+
+private async soMatchPromptTemplateId(): Promise<string> {
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%LLM%匹配%' },
+      { field: 'title', operator: Operator.LIKE, value: '%LLM%匹配%' },
     ]);
     if (row && row.id) return String(row.id);
     const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [

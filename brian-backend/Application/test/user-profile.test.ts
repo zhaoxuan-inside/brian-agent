@@ -72,8 +72,8 @@ describe('UserProfileService', () => {
       const result = await service.configProfileDirection(input, output, ctx());
       expect(result).toBe(true);
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'test_dir' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'test_dir' },
       ]);
       expect(record).toBeTruthy();
       expect(record.direction_name).toBe('Test Direction');
@@ -94,14 +94,14 @@ describe('UserProfileService', () => {
       const result = await service.configProfileDirection(input, output, ctx());
       expect(result).toBe(true);
 
-      const record1 = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'dir_1' },
+      const record1 = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'dir_1' },
       ]);
-      const record2 = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'dir_2' },
+      const record2 = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'dir_2' },
       ]);
-      const record3 = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'dir_3' },
+      const record3 = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'dir_3' },
       ]);
       expect(record1).toBeTruthy();
       expect(record2).toBeTruthy();
@@ -124,8 +124,8 @@ describe('UserProfileService', () => {
       ];
       await service.configProfileDirection(input2, ctx(), new ConfigProfileDirectionOutput());
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'upsert_test' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'upsert_test' },
       ]);
       expect(record.direction_name).toBe('Updated Name');
       expect(record.weight).toBe(80);
@@ -143,10 +143,10 @@ describe('UserProfileService', () => {
       }];
       await service.configProfileDirection(input, ctx(), new ConfigProfileDirectionOutput());
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'full_dir' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'full_dir' },
       ]);
-      expect(record.direction_key).toBe('full_dir');
+      expect(record.id).toBe('full_dir');
       expect(record.direction_name).toBe('Full Direction');
       expect(record.direction_description).toBe('A complete description');
       expect(record.weight).toBe(75);
@@ -163,8 +163,8 @@ describe('UserProfileService', () => {
       ];
       await service.configProfileDirection(input, ctx(), new ConfigProfileDirectionOutput());
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'weight_zero' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'weight_zero' },
       ]);
       expect(record.weight).toBe(0);
     });
@@ -176,8 +176,8 @@ describe('UserProfileService', () => {
       ];
       await service.configProfileDirection(input, ctx(), new ConfigProfileDirectionOutput());
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'weight_100' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'weight_100' },
       ]);
       expect(record.weight).toBe(100);
     });
@@ -189,8 +189,8 @@ describe('UserProfileService', () => {
       ];
       await service.configProfileDirection(input, ctx(), new ConfigProfileDirectionOutput());
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'disabled_dir' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'disabled_dir' },
       ]);
       expect(record.enable).toBe(0);
     });
@@ -205,8 +205,8 @@ describe('UserProfileService', () => {
       const result = await service.configProfileDirection(input, output, ctx());
       expect(result).toBe(true);
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: '' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: '' },
       ]);
       expect(record).toBeTruthy();
     });
@@ -219,8 +219,8 @@ describe('UserProfileService', () => {
       const result = await service.configProfileDirection(input, ctx(), new ConfigProfileDirectionOutput());
       expect(result).toBe(true);
 
-      const record = await db.selectOne('user_profile_direction', [
-        { field: 'direction_key', operator: Operator.EQ, value: 'high_weight' },
+      const record = await db.selectOne('user_profile_direction_record', [
+        { field: 'id', operator: Operator.EQ, value: 'high_weight' },
       ]);
       expect(record.weight).toBe(150);
     });
@@ -233,7 +233,7 @@ describe('UserProfileService', () => {
       const result = await service.configProfileDirection(input, output, ctx());
       expect(result).toBe(true);
 
-      const builtinRecords = await db.select('user_profile_direction', { conditions: [] });
+      const builtinRecords = await db.select('user_profile_direction_record', { conditions: [] });
       expect(builtinRecords.length).toBe(5);
     });
 
@@ -504,7 +504,7 @@ describe('UserProfileService', () => {
       expect(records.length).toBeGreaterThanOrEqual(1);
       expect(Number(records[0].version)).toBe(1);
 
-      const dimRows = await db.select('user_profile_dimension_data', {
+      const dimRows = await db.select('user_profile_dim_record', {
         conditions: [{ field: 'profile_record_id', operator: Operator.EQ, value: records[0].id }],
       });
       expect(dimRows.length).toBeGreaterThanOrEqual(1);
@@ -608,6 +608,64 @@ describe('UserProfileService', () => {
       expect(typeof output.profile.profile_summary).toBe('string');
     });
 
+    it('TC-UP-058: profile_summary is readable digest (no raw JSON dump, ellipsis for long values)', async () => {
+      setupProfileLLM({ style: 'concise', tone: 'friendly', detail_level: 'high' }, 0.9);
+
+      const input = new GenerateProfileInput();
+      input.directions = ['reply_style'];
+      const output = new GenerateProfileOutput();
+      await service.generateProfile(input, output, ctx());
+
+      const summary = String(output.profile.profile_summary);
+      expect(summary).toContain('回复风格：');
+      expect(summary).toContain('style：concise');
+      expect(summary).not.toContain('{"');
+      expect(summary).not.toContain('; ');
+
+      setupProfileLLM('x'.repeat(200), 0.9);
+      const longOut = new GenerateProfileOutput();
+      await service.generateProfile(new GenerateProfileInput(), longOut, ctx());
+      const longSummary = String(longOut.profile.profile_summary);
+      expect(longSummary).toContain('…');
+      for (const seg of longSummary.split('；')) {
+        expect(seg.length).toBeLessThanOrEqual(100);
+      }
+    });
+
+    it('TC-UP-059: change_summary describes dimension diff across generations', async () => {
+      const sid = 'chg-summary-session';
+      setupProfileLLM('value-v1', 0.9);
+
+      const in1 = new GenerateProfileInput();
+      in1.session_id = sid;
+      await service.generateProfile(in1, new GenerateProfileOutput(), ctx());
+      const r1 = await db.selectOne('user_profile_record', [
+        { field: 'session_id', operator: Operator.EQ, value: sid },
+        { field: 'version', operator: Operator.EQ, value: 1 },
+      ]);
+      expect(String(r1.change_summary)).toBe('初始画像');
+
+      setupProfileLLM('value-v2', 0.9);
+      const in2 = new GenerateProfileInput();
+      in2.session_id = sid;
+      await service.generateProfile(in2, new GenerateProfileOutput(), ctx());
+      const r2 = await db.selectOne('user_profile_record', [
+        { field: 'session_id', operator: Operator.EQ, value: sid },
+        { field: 'version', operator: Operator.EQ, value: 2 },
+      ]);
+      expect(String(r2.change_summary)).toContain('更新维度：');
+      expect(String(r2.change_summary)).toContain('语言偏好');
+
+      const in3 = new GenerateProfileInput();
+      in3.session_id = sid;
+      await service.generateProfile(in3, new GenerateProfileOutput(), ctx());
+      const r3 = await db.selectOne('user_profile_record', [
+        { field: 'session_id', operator: Operator.EQ, value: sid },
+        { field: 'version', operator: Operator.EQ, value: 3 },
+      ]);
+      expect(String(r3.change_summary)).toBe('各维度与上一版基本一致');
+    });
+
     it('TC-UP-053: default profile_analysis_prompt_template_id empty → uses built-in prompt', async () => {
       setupProfileLLM('some-value', 0.7);
       const spy = vi.spyOn(promptsAccess, 'execPrompt').mockImplementation(async (_i, o) => {
@@ -643,16 +701,16 @@ describe('UserProfileService', () => {
       await service.generateProfile(input, output, ctx());
 
       expect(output.profile.version).toBe(1);
-      expect(output.profile.profile_summary).toBe('Profile generated');
+      expect(output.profile.profile_summary).toBe('画像已生成，暂无高置信维度');
 
       const records = await db.select('user_profile_record', {
         conditions: [],
         order_by: [{ field: 'version', direction: 'DESC' }],
       });
       expect(records.length).toBeGreaterThanOrEqual(1);
-      expect(String(records[0].profile_summary)).toBe('Profile generated');
+      expect(String(records[0].profile_summary)).toBe('画像已生成，暂无高置信维度');
 
-      const dimRows = await db.select('user_profile_dimension_data', {
+      const dimRows = await db.select('user_profile_dim_record', {
         conditions: [{ field: 'profile_record_id', operator: Operator.EQ, value: records[0].id }],
       });
       expect(dimRows.length).toBeGreaterThanOrEqual(1);
@@ -1064,7 +1122,7 @@ describe('UserProfileService', () => {
       expect(output.reset_count).toBeGreaterThan(0);
 
       const recsAfter = await db.select('user_profile_record', {});
-      const dimsAfter = await db.select('user_profile_dimension_data', {});
+      const dimsAfter = await db.select('user_profile_dim_record', {});
       expect(recsAfter.length).toBe(0);
       expect(dimsAfter.length).toBe(0);
 

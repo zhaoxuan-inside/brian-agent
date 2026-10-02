@@ -489,6 +489,30 @@ describe('ConfigService', () => {
       expect(infoCore.updateInfoContextConfig).toHaveBeenCalled();
     });
 
+    it('TC-CFG-085b: context_config percent and threshold INT updates route correctly', async () => {
+      const spy = vi.spyOn(infoCore, 'updateInfoContextConfig').mockResolvedValue(true);
+      const testCases = [
+        { key: 'info_core.context_config.tag_relative_max_percent', val: 25, expected: { tag_relative_max_percent: 25 } },
+        { key: 'info_core.context_config.similarity_max_percent', val: 30, expected: { similarity_max_percent: 30 } },
+        { key: 'info_core.context_config.keyword_max_percent', val: 15, expected: { keyword_max_percent: 15 } },
+        { key: 'info_core.context_config.keyword_score_threshold', val: 90, expected: { keyword_score_threshold: 90 } },
+      ];
+      for (const tc of testCases) {
+        spy.mockClear();
+        const input = new UpdateConfigInput();
+        input.config_key = tc.key;
+        input.value = tc.val;
+        const output = new UpdateConfigOutput();
+        const res = await service.updateConfig(input, output, ctx());
+        expect(res).toBe(true);
+        expect(spy).toHaveBeenCalledWith(
+          expect.objectContaining(tc.expected),
+          expect.anything(),
+          expect.anything(),
+        );
+      }
+    });
+
     it('TC-CFG-086: INT update succeeds', async () => {
       vi.spyOn(llmCore, 'configLLMCore').mockResolvedValue(true);
       const key = 'llm_core.regen_rate';
@@ -614,6 +638,32 @@ describe('ConfigService', () => {
       const result = await service.updateConfig(updInput, ctx(), new UpdateConfigOutput());
       expect(result).toBe(true);
       expect(llmAccess.enableLLM).toHaveBeenCalled();
+    });
+
+    it('TC-CFG-099-MCP: mcp_core.* parameters route to mcpCore.configMCPCore with correct payload', async () => {
+      const calls: any[] = [];
+      vi.spyOn(mcpCore, 'configMCPCore').mockImplementation(async (input: any) => {
+        calls.push({ ...input });
+        return true;
+      });
+
+      const keysAndValues: Array<[string, unknown, string, unknown]> = [
+        ['mcp_core.score_threshold', 80, 'score_threshold', 80],
+        ['mcp_core.vector_similarity_threshold', 0.85, 'vector_similarity_threshold', 0.85],
+        ['mcp_core.match_cache_ttl_ms', 120000, 'match_cache_ttl_ms', 120000],
+        ['mcp_core.match_cache_capacity', 300, 'match_cache_capacity', 300],
+        ['mcp_core.market_install_enabled', false, 'market_install_enabled', false],
+      ];
+
+      for (let i = 0; i < keysAndValues.length; i++) {
+        const [key, val, expectedField, expectedVal] = keysAndValues[i];
+        const updInput = new UpdateConfigInput();
+        updInput.config_key = key;
+        updInput.value = val;
+        const result = await service.updateConfig(updInput, ctx(), new UpdateConfigOutput());
+        expect(result).toBe(true);
+        expect(calls[calls.length - 1][expectedField]).toBe(expectedVal);
+      }
     });
   });
 

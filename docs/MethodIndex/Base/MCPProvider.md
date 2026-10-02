@@ -8,6 +8,9 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
+| `setEmbedFn` | `fn: (text: string, context?: any) => Promise<number[]>` | `void` | — |
+| `setSemanticsFn` | `fn: SemanticsTaskFn` | `void` | — |
+| `listMcpTools` | `input: ListMcpToolsInput, output: ListMcpToolsOutput, context: McpContext, metrics?: Me...` | `Promise<boolean>` | — |
 | `syncInstallStatus` | `` | `Promise<number>` | — |
 | `stopAllMcp` | `` | `Promise<number>` | — |
 | `addMcpProvider` | `i: AddMcpProviderInput, o: AddMcpProviderOutput, c: McpContext, metrics?: Metrics, repo...` | `void` | — |
@@ -22,6 +25,7 @@
 | `startMcps` | `i: StartMcpsInput, o: StartMcpsOutput, c: McpContext, metrics?: Metrics, report?: Report` | `void` | — |
 | `refreshMcpStatus` | `i: RefreshMcpStatusInput, o: RefreshMcpStatusOutput, c: McpContext, metrics?: Metrics, ...` | `void` | — |
 | `uninstallMcp` | `i: UninstallMcpInput, o: UninstallMcpOutput, c: McpContext, metrics?: Metrics, report?:...` | `void` | — |
+| `uninstallMcps` | `i: UninstallMcpsInput, o: UninstallMcpsOutput, c: McpContext, metrics?: Metrics, report...` | `void` | — |
 | `updateMcp` | `i: UpdateMcpInput, o: UpdateMcpOutput, c: McpContext, metrics?: Metrics, report?: Report` | `void` | — |
 | `upgradeMcp` | `i: UpgradeMcpInput, o: UpgradeMcpOutput, c: McpContext, metrics?: Metrics, report?: Report` | `void` | — |
 | `soMcpById` | `i: GetMcpInput, o: GetMcpOutput, c: McpContext, metrics?: Metrics, report?: Report` | `void` | — |

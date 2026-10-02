@@ -172,7 +172,7 @@ describe('EvolutorAgent', () => {
       }), out, new EvolutorAgentContext());
       expect(out.trace_id).toBeTruthy();
       const rows = db.queryRaw<{ trace_id: string; total_token_usage: number }>(
-        'SELECT "trace_id", "total_token_usage" FROM "agent_execution_trace" WHERE "trace_id" = ?',
+        'SELECT "trace_id", "total_token_usage" FROM "agent_execution_trace_record" WHERE "trace_id" = ?',
         [out.trace_id],
       );
       expect(rows.length).toBe(1);
@@ -209,7 +209,7 @@ describe('EvolutorAgent', () => {
       expect(out.evaluated_count).toBeGreaterThanOrEqual(6);
       expect(out.skipped_count).toBeGreaterThanOrEqual(25);
       const evaluated = db.queryRaw<{ work_id: string }>(
-        'SELECT "work_id" FROM "agent_evaluation" WHERE "agent_id" = ? AND "eval_type" = \'WORK_AGENT\'',
+        'SELECT "work_id" FROM "agent_evaluation_record" WHERE "agent_id" = ? AND "eval_type" = \'WORK_AGENT\'',
         [agentId],
       ).map((r) => r.work_id);
       expect(evaluated).toHaveLength(6);
@@ -232,18 +232,18 @@ describe('EvolutorAgent', () => {
         }), new RecordAgentUsageOutput(), new AgentLibraryContext());
       }
 
-      const before = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation"')[0].c;
+      const before = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation_record"')[0].c;
       const out = new RunEvalOnceOutput();
       await evolutor.runEvalOnce(
         Object.assign(new RunEvalOnceInput(), { eval_frequency_threshold: 5, eval_batch_size: 20 }),
         out, new EvolutorAgentContext(),
       );
-      const after = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation"')[0].c;
+      const after = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "agent_evaluation_record"')[0].c;
 
       
       expect(after - before).toBe(0);
       expect(db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM "agent_evaluation" WHERE "agent_id" = ?',
+        'SELECT COUNT(*) AS c FROM "agent_evaluation_record" WHERE "agent_id" = ?',
         [agentId],
       )[0].c).toBe(0);
     });

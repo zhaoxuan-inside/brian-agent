@@ -51,7 +51,7 @@ function insInfoRaw(db: RelationDBAccess, o: Record<string, unknown>) {
   const workId = String(o.work_id ?? o.run_id ?? 'work-1');
   const traceId = String(o.trace_id ?? '');
 
-  db.insert('dialog', [
+  db.insert('dialog_record', [
     { field: 'id', value: id },
     { field: 'created', value: created },
     { field: 'updated', value: updated },
@@ -59,12 +59,10 @@ function insInfoRaw(db: RelationDBAccess, o: Record<string, unknown>) {
     { field: 'work_id', value: workId },
     { field: 'type', value: type },
     { field: 'dialog', value: dialog },
-    { field: 'dialog_length', value: o.info_length !== undefined ? Number(o.info_length) : dialog.length },
-    { field: 'dialog_brief', value: '' },
     { field: 'trace_id', value: traceId },
   ]);
   if (Number(o.pin) === 1) {
-    db.insert('context', [
+    db.insert('context_org', [
       { field: 'id', value: genId() },
       { field: 'created', value: created },
       { field: 'updated', value: updated },
@@ -110,7 +108,7 @@ async function insInfoGraph(graphDb: GraphDBAccess, citingInfoId: string, citedI
 }
 
 function insInfoSummary(db: RelationDBAccess, infoId: string, summary: string) {
-  db.insert('info_summary', [
+  db.insert('info_summary_record', [
     { field: 'id', value: genId() },
     { field: 'created', value: now() },
     { field: 'updated', value: now() },
@@ -130,7 +128,7 @@ function insInfoContextConfig(db: RelationDBAccess, overrides: Record<string, un
   for (const [k, dv] of Object.entries(defaults)) {
     fields.push({ field: k, value: overrides[k] !== undefined ? overrides[k] : dv });
   }
-  db.insert('info_context_config', fields);
+  db.insert('info_context_config_record', fields);
 }
 
 function insTrace(db: RelationDBAccess, overrides: Record<string, unknown> = {}) {
@@ -144,7 +142,7 @@ function insTrace(db: RelationDBAccess, overrides: Record<string, unknown> = {})
   for (const [k, dv] of Object.entries(defaults)) {
     fields.push({ field: k, value: overrides[k] !== undefined ? overrides[k] : dv });
   }
-  db.insert('agent_execution_trace', fields);
+  db.insert('agent_execution_trace_record', fields);
 }
 
 describe('VisualizationService', () => {
@@ -173,7 +171,7 @@ describe('VisualizationService', () => {
   describe('soVisualizedMessages', () => {
     it('TC-VIS-001: by session_id returns messages with extended fields', async () => {
       insInfoRaw(ctxEnv.db, { session_id: 'sess-1', work_id: 'work-1',
-        info_id: 'info-1', info_type: 'REQUEST', info: 'Hello', info_length: 11 });
+        info_id: 'info-1', info_type: 'REQUEST', info: 'Hello' });
 
       const input = new GetVisualizedMessagesInput();
       input.session_id = 'sess-1';
@@ -188,7 +186,7 @@ describe('VisualizationService', () => {
       expect(m.info_id).toBe('info-1');
       expect(m.info_type).toBe('REQUEST');
       expect(m.info).toBe('Hello');
-      expect(m.info_length).toBe(11);
+      expect(m.info_length).toBe(5); // ADR-012:长度由内容实时推导
       expect(m).toHaveProperty('parent_info_ids');
     });
 

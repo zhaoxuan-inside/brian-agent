@@ -214,7 +214,99 @@
   2. 提问时同时附带 `selected_msg_ids` 与 `pinned_msg_ids`。
 - 验收: 前端构建通过，提问链路正常。
 
-## 6. 里程碑
+### T-B13 组件漏斗明细事件透传(component.funnel)
+- 文件: `brian-backend/Base/shared/match/FunnelSelector.ts`、`brian-backend/Base/shared/base/BusinessEvent.ts`、`brian-backend/Base/shared/match/ComponentFunnelTrace.ts`、`brian-backend/Core/{SkillCoreProvider,SoulCoreProvider,MCPCoreProvider,LLMCoreProvider}/application/*`、`brian-backend/Agent/AgentBuilder/application/AgentBuilderService.ts`
+- 背景: 思考全景「加载 Agent 快照」步骤的组件筛选明细(Prompt/Soul/Skill/MCP/LLM 的 BM25/向量/大模型三级结果)此前为硬编码假数据;真实漏斗存在于四处 Core 匹配服务与 Builder 的 Prompt 漏斗中,但仅打 metrics 日志未结构化透传。
+- 产出:
+  1. FunnelSelector 新增全量排序算法 `funnelBm25Ranking` / `funnelVectorRanking`(返回全部候选绝对置信度,既有 stage 函数复用重构,不复制打分逻辑)。
+  2. `BusinessEvent.ComponentFunnel = 'component.funnel'` 事件与 `ComponentFunnelTrace` 采集器(统一负载契约: component/mechanisms[]/candidates[]/prompt/output/detail,LLM 机制含原始评估 Prompt 与输出)。
+  3. SkillCore.matchSkill、SoulCore.matchSoul、MCPCore.matchMCP、LLMCore.matchLLM、AgentBuilderService.matchPromptForAgent 五处在匹配终态上报真实漏斗明细;绑定/缓存/单候选路径上报 `direct` 直接事实机制。
+  4. executionAnalyzer 聚合 helper `soComponentFunnelMatches`: 从 streamEvents 提取 `component.funnel` 组装 `snapshotDetails.componentMatches`;无事件的组件(复用既有 Agent 场景)从 selectedComponents 合成「绑定事实源」direct 条目;彻底移除硬编码假数据。
+- 验收: FunnelSelector 新算法与聚合 helper 单测通过;Core/Runtime/Agent 全量单测回归绿;后端 tsc 0 错误。
+
+### T-F10 思考全景组件筛选明细真实化(前端)
+- 文件: `brian-frontend/src/api/types.ts`、`brian-frontend/src/components/chat/ThinkingIntegratedPipelineView.vue`
+- 产出:
+  1. `MatchMechanismDetail.mechanism` 扩展 `'direct'` 联合类型。
+  2. `getSnapshotComponentMatches` 移除前端硬编码假数据兜底,仅渲染后端真实 `componentMatches`;空态显示「暂无筛选明细」。
+- 验收: vue-tsc + vite build 0 错误;点击各组件筛选 Tab 展示真实漏斗明细或绑定事实源。
+
+### T-OBS-01 事件契约与唯一投影(shared)
+- **内容**:task-event envelope + 32 事件 payload zod;RunObservation + reduceObservation(seq 幂等);R5 起增补:run.failed 保留 stop_reason(四态终态 成功/失败/中断/预算耗尽,前端 observationPhase 统一映射),llm.invoked 按 caller 归组聚合 usageStages(弹窗 Token/耗时分布条数据源)
+- **文件**:shared/src/contracts/*
+- **验收**:32 事件样例单测;重复 seq 不产生脏状态
+
+### T-OBS-02 观测总线三解耦(后端)
+- **内容**:EventDispatcher(seq 单点分配)→ SSE 纯传输帧 + task_event_record 批量落库(50ms/200条) + run_state_record 直更;StreamService 瘦身;Report.emit 换芯
+- **文件**:Base/ObservabilityProvider/*、StreamProvider/*、shared/base/Report.ts
+- **验收**:npm test 5/5 绿;settle 前 flush 可见;SSE 帧契约与 E2E 实测通过
+
+### T-OBS-03 发射点迁移与行为修正
+- **内容**:delta 分流(reasoning→think.delta/text→reply.delta)、删一次性整段 Reply、裸通道(text_chunk/agent_thinking/action/reflection)并入标准事件、agent.selected.mechanisms / context.built.sources / profile.snapshot / run.merge 增补
+- **文件**:Runtime/Loop、Runtime/Runs、Runtime/Agents、Agent/*、ChatService
+- **验收**:RuntimeGateway/AgentLoop 回归绿;E2E 实测思考流与正文流式正确、Writer replace 不叠加
+
+### T-OBS-04 观测读路径与删除清单
+- **内容**:GET /api/chat/observation(seq 重放+after_seq 增量);删 thinkingBlocks.ts/executionAnalyzer.ts//api/chat/thinking;stream_event_record drop(不迁移)
+- **文件**:dev-server.ts、server/*
+- **验收**:全仓无引用;同一 run 实时态=回放态
+
+### T-OBS-05 前端观测视图重构
+- **内容**:chatUi.observation 唯一状态源;chatStreamEvents 1006→170 行;ThinkingModal(genie 外壳)+ObservationView+ThinkingLivePill;逻辑/样式分离;删旧分析视图 6 个与旧累积状态
+- **文件**:stores/chatUi.ts、composables/chatStreamEvents.ts、composables/useObservation*、components/chat/*
+- **验收**:前端 vitest 161 用例绿;vue-tsc/lint 绿;E2E 弹窗实时可见、历史回放一致
+
+### T-EMB-01 组件 Embedding 预存与漏斗加速 (ADR-012/014)
+- **内容**:
+  1. 为 Agent, MCP, Skill, Soul, Prompt 落地 5 张 `xxx_embedding_record` 物理表。
+  2. 建立通用算法与生命周期辅助库 `ComponentEmbeddingHelper`（内容 SHA-256 Hash 校验、同步写入、失效安全删除、预存批量直读与 Cache-Aside 缺失自动兜底补算）。
+  3. 改造 `FunnelSelector` 与 5 大业务服务（`AgentLibraryService`, `MCPCoreService`, `SkillCoreService`, `SoulCoreService`, `PromptsService`），在初筛和匹配阶段直接复用预存向量进行内存余弦计算，消除重复模型调用。
+  4. 组件新增与描述修改时同步更新向量；模型不可用时安全删除旧向量防止语义漂移；组件删除时级联清理对应向量。
+- **文件**:Base/shared/match/*, Base/*Provider, Core/*CoreProvider, Agent/AgentLibrary/*, server/context.ts
+- **验收**:ComponentEmbeddingHelper 8 单元测试 100% 通过；Monorepo 5/5 全量测试回归绿（1700+ 用例）；build 与 typecheck 0 错误。
+
+## 6. 任务卡 — R7 配置中心卡片体系与语义路由全链路 (chg-057)
+
+> 目标:统一六大组件(Agent/MCP/Skill/Soul/Prompt/LLM)的「名称 5-10 字 / 描述 30-40 字(输入+输出+功能) / 正面范例 3-5 条 / 负面范例 3-5 条(每条 ≤15 字)」内容规范,打通「生成引擎 → 正负范例向量 → 语义路由双向裁决 → 统一 DTO → 统一卡片」全链路;不做临时兼容。
+
+### T-SEM-01 统一语义规范生成引擎
+- **内容**:
+  1. 新建 `Base/shared/semantics/ComponentSemanticsGenerator`:统一 Prompt 契约(生成 5-10 字名称 / 30-40 字输入输出功能描述 / 正负范例各 3-5 条)。
+  2. `clampComponentSemantics` 规则强制收敛(纯算法,单测覆盖);LLM 失败按规则回退,不阻塞创建。
+  3. `createSemanticsTaskFn(llmAccess)` 组合根注入式,同 `createEmbedTaskFn` 模式。
+- **文件**:Base/shared/semantics/*, server/context.ts
+- **验收**:ComponentSemanticsGenerator 单测绿;clamp 边界(超长/条数)全覆盖。
+
+### T-SEM-02 五组件生成接线与正负范例落库
+- **内容**:SoulService / SkillService / PromptsService / MCPService / AgentLibraryService 在 add/update 时调用语义生成,brief 收敛 30-40 字,正负范例经 `syncComponentExamples` 落 `xxx_example_embedding_record`(example_type 列已在 M11 落地);MCP 安装路径同步。
+- **文件**:Base/{SoulProvider,SkillProvider,PromptsProvider,MCPProvider}/application/*, Agent/AgentLibrary/application/AgentLibraryService.ts, Agent/AgentBuilder/application/AgentBuilderService.ts
+- **验收**:五组件创建后 example 表出现 positive/negative 两类记录;服务重启不重复生成(hash 幂等)。
+
+### T-SEM-03 MCP 工具清单与入参样例沉淀
+- **内容**:
+  1. `MCPService.listMcpTools`:对已安装 MCP 拉取工具清单(stdio/HTTP 双通道),`generateMockParamsFromSchema` 生成每工具 `test_params_sample` 并持久化到 `mcp_install_record.test_params_sample`。
+  2. 新增路由 `POST /api/mcp/:id/tools`;既有 `POST /api/mcp/:id/call` 作为执行测试通道。
+- **文件**:Base/MCPProvider/*, dev-server.ts, Base/MCPProvider/infrastructure/MCPSchemaInitializer.ts(DDL)
+- **验收**:tools 清单含 test_params_sample;重复拉取直接读缓存列。
+
+### T-SEM-04 统一组件 DTO 与 LLM Token 聚合
+- **内容**:
+  1. `shared/src/contracts/component-dto.ts`:UniversalComponentDTO + Agent/LLM/MCP/Skill/Soul/Prompt 六个专属 DTO。
+  2. `LLMService.soModelTokenStats`:按 llm_available_id 聚合 llm_usage_org 的 input/output tokens;模型列表路由响应附 `usage_tokens`。
+  3. llm_type 值域收敛为 `text|embedding|multimodal`(vision 历史值迁移)。
+- **文件**:shared/src/contracts/component-dto.ts, Base/LLMProvider/application/LLMService.ts, dev-server.ts, Base/LLMProvider/infrastructure/LLMSchemaInitializer.ts
+- **验收**:模型卡片可展示 In/Out tokens;vision 数据迁移后为 multimodal。
+
+### T-SEM-05 前端统一卡片与范例编辑
+- **内容**:
+  1. `UniversalConfigCard.vue`:统一 4 层卡片(标题行/描述/正负范例/特有插槽/操作行)。
+  2. 范例编辑器:字符计数合规指示(名称 5-10/描述 30-40/范例 ≤15 字且 3-5 条)。
+  3. 「AI 规范润色」按钮调 `POST /api/config/semantics/suggest`;MCP 测试弹窗工具选中自动预填 test_params_sample。
+  4. ConfigView 六大 section 卡片接入统一骨架。
+- **文件**:brian-frontend/src/components/config/*, brian-frontend/src/views/ConfigView.vue, brian-frontend/src/api/*
+- **验收**:前端 vitest 绿;六 section 卡片渲染一致;MCP 测试预填生效。
+
+## 7. 里程碑
 
 | 里程碑 | 包含任务 | 完成标志 | 状态 |
 |---|---|---|---|
@@ -225,7 +317,46 @@
 | M5 收敛验收 | P8 清单 | 证据留存;_10 置 verified;提示人工测试 | 已完成 |
 | M6 历史卡片与图谱治理 | T-B05~B08, T-F09 | 后端单测全绿、前端构建全绿、图安全与全量Token验证通过 | **已完成** |
 | M7 级联匹配与选型优化 | T-B10~B12 | Core/Runtime/Agent 全量单测与构建通过，零抛错与方法≤30行达标 | **已完成** |
-| M8 三表重构与上下文回溯 | T-R6-01~R6-04 | 消息三表重构完成、复选时序回溯生效、全量单测通过 | **进行中** |
+| M8 三表重构与上下文回溯 | T-R6-01~R6-04 | 消息三表重构完成、复选时序回溯生效、全量单测通过 | **已完成** |
+| M9 思考全景组件漏斗明细真实化 | T-B13, T-F10 | component.funnel 事件透传生效、假数据移除、全量单测与构建通过 | **已完成** |
+| M10 统一事件总线与可观测投影(OBS v2) | T-OBS-01~05, chg-045 | 后端 5/5 + 前端 161 用例全绿;E2E 实测思考过程实时可见且与回放同源(ADR-013) | **已完成** |
+| M11 组件 Embedding 持久化与向量匹配加速 | T-EMB-01, chg-056 | 五大组件 embedding_record 落地;内存余弦秒级匹配;缺失懒计算自愈;全量单测与类型检查绿 | **已完成** |
+| M12 卡片体系与语义路由全链路 | T-SEM-01~05, chg-057 | 正负范例生成落库、语义路由双向裁决+BM25 双向增强生效、统一卡片与测试弹窗接入(Agent 构成标签/LLM Token 仪表/MCP 样例预填测试)、Agent 弹窗语义编辑;后端 5/5+前端 18 文件 169 用例全绿,typecheck/lint/build 全绿 | **已完成** |
 
 
 
+
+
+## 7. 任务卡 — R8 统一选举引擎 (chg-058)
+
+> 目标:六组件(Agent/LLM/Prompt/Soul/Skill/MCP)选举统一到一套模板方法流程,组件只实现 ComponentElectionAdapter 钩子;阈值可配置;信号提取可扩展。规格:①复用判定(续写请求/绑定/缓存/签名事实源直命中)→②并行信号提取(合法/BM25/向量正例/向量反例/结构 五路候选集)→③分级候选集阶梯(T1=(结构∪向量正例)−反例→T2=(结构∪正例范例)−反例;LLM 另有 T3~T7)逐级综合得分择优(LLM/Agent/Prompt/Soul)或整集采纳(Skill/MCP)→④终端动作(创建新的组件/默认模型)。综合得分=0.7×向量+0.3×BM25(可配)。
+
+| 任务卡 | 内容 | 验证 |
+|---|---|---|
+| T-ELEC-01 | election/ 引擎四件套+续写识别+阈值配置存储;16 个引擎单测 | ✓ 单测 16/16 |
+| T-ELEC-02 | MCP 接线(multiSelect;拆除 LLM 裁判死链;终端=空集+负缓存) | ✓ Core 测试 |
+| T-ELEC-03 | Skill 接线(multiSelect;LLM 裁判/外部来源降级为终端) | ✓ Core 测试 |
+| T-ELEC-04 | Soul 接线(单选;终端=动态生成) | ✓ Core 测试 |
+| T-ELEC-05 | LLM 接线(directAdoptSingle+全量阶梯;终端=默认模型;MatchLLMInput.task_content) | ✓ Core 测试 |
+| T-ELEC-06 | Prompt 接线(终端=按任务生成新模板入库) | ✓ Agent 测试 |
+| T-ELEC-07 | Agent 接线(AgentDef 级:签名精确复用降为①事实源,拆除规则评分/[领域]过滤/LLM 裁判级;终端=构建新 AgentDef) | ✓ Runtime 测试 |
+| T-ELEC-08 | GET/PUT /api/config/election/:component;FunnelComponentKind+agent;exampleSim 信号 | ✓ build/typecheck |
+
+| 里程碑 | 任务卡 | 验证 | 状态 |
+|---|---|---|---|
+| M13 统一选举引擎 | T-ELEC-01~08, chg-058 | 六组件统一模板方法选举;5/5 工作区测试全绿;typecheck/lint/build 全绿 | **已完成** |
+
+## 8. 任务卡 — R9 会话话题连续性与轮次向量 (chg-059)
+
+> 目标:一个会话聊的大概率是同一话题——会话内沿用同一 Agent,避免每轮重新选举/构建 Agent 的耗时。存在向量模型时每轮固化"请求+回复"拼接 embedding 到 `dialog_embedding_record`;matchAgent 在"继续"等强信号之后、其他信号提取(BM25/Embedding 相似度)之前插入话题连续性匹配裁决是否沿用。
+
+| 任务卡 | 内容 | 验证 |
+|---|---|---|
+| T-TOPIC-01 | `dialog_embedding_record` DDL(id/created/updated/session_id/work_id UNIQUE/embedding/dimension)+InfoCoreSchemaInitializer 注册 | ✓ 建表幂等(_12 同步) |
+| T-TOPIC-02 | InfoCore `saveDialogEmbedding`(向量模型门控+按 work_id upsert)/`matchDialogTopic`(最近 20 轮维度过滤 cosine 取最大)两方法+Access 转发 | ✓ Core 测试 |
+| T-TOPIC-03 | RunGateway executeRun settle 前 fire-and-forget 固化轮次向量(仅主 lane、Finished 轮);matchAgent 升级 decideSessionAffinity:显式切换→强信号续写(isContinuationRequest)→话题连续性(≥70 沿用/<70 漂移重选举/未评估回退沿用) | ✓ Runtime 测试 |
+| T-TOPIC-04 | 文档与索引同步(_04/_05/_06/_12/_07/_09/_10/_00) | ✓ 文档评审 |
+
+| 里程碑 | 任务卡 | 验证 | 状态 |
+|---|---|---|---|
+| M14 会话话题连续性 | T-TOPIC-01~04, chg-059 | 强信号 0 向量开销沿用;话题漂移自动重选举;无向量模型优雅降级;typecheck/lint/test 全绿 | **已完成** |

@@ -14,7 +14,6 @@ import { ChatService, type ChatRuntimeV2Deps } from '../Chat/application/ChatSer
 import { StreamAccess } from '../../Base/StreamProvider/access/StreamAccess';
 import {
   RegisterStreamInput, RegisterStreamOutput, StreamContext,
-  PushEventToEndpointInput, PushEventToEndpointOutput,
 } from '../../Base/StreamProvider/domain/types';
 import { SessionAccess, RunGatewayAccess } from '@brian-agent/runtime';
 import {
@@ -50,19 +49,17 @@ async function insertInfoRawRow(db: RelationDBAccess, sessionId: string, infoId:
     { field: 'work_id', value: 'test-work-id' },
     { field: 'type', value: 'REQUEST' },
     { field: 'dialog', value: info },
-    { field: 'dialog_length', value: info.length },
-    { field: 'dialog_brief', value: '' },
     { field: 'trace_id', value: '' },
   ];
   await db.insertDB(
-    Object.assign(new InsertDBInput(), { table: 'dialog', data }),
+    Object.assign(new InsertDBInput(), { table: 'dialog_record', data }),
     Object.assign(new InsertDBOutput(), {}),
     new DBContext(),
   );
   if (pinVal === 1) {
     await db.insertDB(
       Object.assign(new InsertDBInput(), {
-        table: 'context',
+        table: 'context_org',
         data: [
           { field: 'id', value: IdGenerator.generate() },
           { field: 'created', value: now },
@@ -138,7 +135,7 @@ describe('ChatService', () => {
   async function ensureSession(sessionId: string, title: string = 'Test Session') {
     await ctx.db.insertDB(
       Object.assign(new InsertDBInput(), {
-        table: 'chat_session',
+        table: 'chat_session_record',
         data: [
           { field: 'id', value: `row-${sessionId}` },
           { field: 'created', value: 1700000000000 },
@@ -174,19 +171,19 @@ describe('ChatService', () => {
       );
       endpointId = regOut.endpoint_id;
       
-      Report.setEventStreamGateway({
-        pushToEndpoint: async (input) => {
-          await streamAccess.publishEvent(
-            Object.assign(new PushEventToEndpointInput(), input),
-            new PushEventToEndpointOutput(),
-            new StreamContext(),
-          );
+      const obsMod = await import('../../Base/ObservabilityProvider');
+      const observability = new obsMod.ObservabilityAccess(ctx.db);
+      observability.setFrameWriter((sessionId, endpointId, ev) => streamAccess.pushFrame(sessionId, endpointId, ev));
+      Report.setEventGateway({
+        emit: (meta, type, payload) => {
+          observability.emit(meta, type, payload);
         },
+        flush: () => observability.flush(),
       });
     });
 
     afterEach(() => {
-      Report.setEventStreamGateway(null);
+      Report.setEventGateway(null);
       vi.restoreAllMocks();
     });
 
@@ -194,10 +191,11 @@ describe('ChatService', () => {
       const gateway = {
         submitRun: async (_i: unknown, o: { run_id: string }, _c: unknown, _m: unknown, report?: Report) => {
           o.run_id = 'run-v2';
+          if (report) { report.run_id = 'run-v2'; report.work_id = 'run-v2'; }
           
-          report?.pushBusinessEvent('part.created' as never, { part_id: 'p1', part_type: 'text' });
-          report?.pushBusinessEvent('part.delta' as never, { field: 'text', delta: 'V2 你好' });
-          report?.pushBusinessEvent('run.status' as never, { phase: 'end', stop_reason: 'stop' });
+          report?.emit('reply.created' as never, { msg_id: 'm1', part_id: 'p1' });
+          report?.emit('reply.delta' as never, { delta: 'V2 你好' });
+          report?.emit('run.finished' as never, { stop_reason: 'stop' });
           return true;
         },
         waitRun: async (_i: unknown, o: { status: string; stop_reason?: string }) => {
@@ -227,11 +225,11 @@ describe('ChatService', () => {
       const input = Object.assign(new OpenChatStreamInput(), { session_id: 'test-session', msg_content: 'hello', stream_endpoint_id: endpointId });
       await makeV2Service().openChatStream(input, new OpenChatStreamOutput(), new ChatContext());
       await new Promise((r) => setTimeout(r, 80));
-      const deltaFrame = frames.find((f) => f.includes('"part.delta"'));
+      const deltaFrame = frames.find((f) => f.includes('"reply.delta"'));
       expect(deltaFrame).toBeTruthy();
       expect(deltaFrame).toContain('V2 你好');
-      
-      expect(frames.some((f) => f.includes('"run.status"'))).toBe(true);
+
+      expect(frames.some((f) => f.includes('"run.finished"'))).toBe(true);
     });
 
     it('TC-V2-003: done 传输帧收尾（paused=false）', async () => {
@@ -364,7 +362,7 @@ describe('ChatService', () => {
 
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'writer_agent_user_profile',
+          table: 'writer_agent_user_profile_record',
           data: [
             { field: 'id', value: 'wp-1' },
             { field: 'created', value: 1700000000000 },
@@ -382,7 +380,7 @@ describe('ChatService', () => {
       );
 
       const before = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM writer_agent_user_profile WHERE session_id = ?', [sid],
+        'SELECT COUNT(*) AS c FROM writer_agent_user_profile_record WHERE session_id = ?', [sid],
       )[0]?.c;
       expect(Number(before)).toBe(1);
 
@@ -392,24 +390,24 @@ describe('ChatService', () => {
 
       expect(output.deleted_count).toBe(1);
       const after = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM writer_agent_user_profile WHERE session_id = ?', [sid],
+        'SELECT COUNT(*) AS c FROM writer_agent_user_profile_record WHERE session_id = ?', [sid],
       )[0]?.c;
       expect(Number(after)).toBe(0);
     });
 
-    it('TC-CHAT-054c: Delete session cascades llm_call_log and orchestration_work, but preserves shared graph Tag nodes', async () => {
+    it('TC-CHAT-054c: Delete session cascades llm_call_record and orchestration_work, but preserves shared graph Tag nodes', async () => {
       ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "orchestration_work" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "work_id" TEXT, "session_id" TEXT, "status" TEXT)`);
       ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "orchestration_agent_execution" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "work_id" TEXT, "trace_id" TEXT, "agent_name" TEXT, "status" TEXT)`);
-      ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "agent_execution_trace" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "trace_id" TEXT, "agent_id" TEXT, "agent_name" TEXT, "iterations_json" TEXT, "total_token_usage" INTEGER)`);
+      ctx.db.executeRaw(`CREATE TABLE IF NOT EXISTS "agent_execution_trace_record" ("id" TEXT PRIMARY KEY, "created" INTEGER, "updated" INTEGER, "trace_id" TEXT, "agent_id" TEXT, "agent_name" TEXT, "iterations_json" TEXT, "total_token_usage" INTEGER)`);
 
       const createOutA = new CreateSessionOutput();
       await service.createSession(new CreateSessionInput(), createOutA, new ChatContext());
       const sidA = createOutA.session_id;
 
-      // 1. Insert llm_call_log for sidA
+      // 1. Insert llm_call_record for sidA
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'llm_call_log',
+          table: 'llm_call_record',
           data: [
             { field: 'id', value: 'log-a-1' },
             { field: 'created', value: 1700000000000 },
@@ -425,7 +423,7 @@ describe('ChatService', () => {
         new DBContext(),
       );
 
-      // 2. Insert orchestration_work & agent_execution_trace for sidA
+      // 2. Insert orchestration_work & agent_execution_trace_record for sidA
       const workId = `work-${sidA}`;
       const traceId = `trace-${sidA}`;
       await ctx.db.insertDB(
@@ -461,7 +459,7 @@ describe('ChatService', () => {
       );
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'agent_execution_trace',
+          table: 'agent_execution_trace_record',
           data: [
             { field: 'id', value: 'aet-1' },
             { field: 'created', value: 1700000000000 },
@@ -501,9 +499,9 @@ describe('ChatService', () => {
 
       expect(delOutput.deleted_count).toBe(1);
 
-      // Verify llm_call_log for sidA is deleted
+      // Verify llm_call_record for sidA is deleted
       const logRows = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM llm_call_log WHERE session_id = ?', [sidA],
+        'SELECT COUNT(*) AS c FROM llm_call_record WHERE session_id = ?', [sidA],
       );
       expect(Number(logRows[0]?.c ?? 0)).toBe(0);
 
@@ -513,9 +511,9 @@ describe('ChatService', () => {
       );
       expect(Number(workRows[0]?.c ?? 0)).toBe(0);
 
-      // Verify agent_execution_trace is deleted
+      // Verify agent_execution_trace_record is deleted
       const traceRows = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM agent_execution_trace WHERE trace_id = ?', [traceId],
+        'SELECT COUNT(*) AS c FROM agent_execution_trace_record WHERE trace_id = ?', [traceId],
       );
       expect(Number(traceRows[0]?.c ?? 0)).toBe(0);
 
@@ -590,7 +588,7 @@ describe('ChatService', () => {
       expect(output.total).toBe(3);
     });
 
-    it('TC-CHAT-069a: Full token aggregation from llm_call_log including agent turn and auxiliary matching calls', async () => {
+    it('TC-CHAT-069a: Full token aggregation from llm_call_record including agent turn and auxiliary matching calls', async () => {
       const createOut = new CreateSessionOutput();
       await service.createSession(
         Object.assign(new CreateSessionInput(), { session_title: 'Token Test' }),
@@ -601,7 +599,7 @@ describe('ChatService', () => {
       // 1. Agent main call
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'llm_call_log',
+          table: 'llm_call_record',
           data: [
             { field: 'id', value: IdGenerator.generate() },
             { field: 'created', value: IdGenerator.now() },
@@ -620,7 +618,7 @@ describe('ChatService', () => {
       // 2. Skill ranking auxiliary call
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'llm_call_log',
+          table: 'llm_call_record',
           data: [
             { field: 'id', value: IdGenerator.generate() },
             { field: 'created', value: IdGenerator.now() },
@@ -639,7 +637,7 @@ describe('ChatService', () => {
       // 3. Prompt template matching auxiliary call
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'llm_call_log',
+          table: 'llm_call_record',
           data: [
             { field: 'id', value: IdGenerator.generate() },
             { field: 'created', value: IdGenerator.now() },
@@ -676,7 +674,7 @@ describe('ChatService', () => {
       // Only REQUEST inserted, no RESPONSE yet
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'dialog',
+          table: 'dialog_record',
           data: [
             { field: 'id', value: 'info-req-1' },
             { field: 'created', value: 1700000000001 },
@@ -685,8 +683,6 @@ describe('ChatService', () => {
             { field: 'work_id', value: 'work-1' },
             { field: 'type', value: 'REQUEST' },
             { field: 'dialog', value: 'Question 1' },
-            { field: 'dialog_length', value: 10 },
-            { field: 'dialog_brief', value: '' },
             { field: 'trace_id', value: '' },
           ],
         }),
@@ -706,7 +702,7 @@ describe('ChatService', () => {
       // Now insert the matching RESPONSE
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'dialog',
+          table: 'dialog_record',
           data: [
             { field: 'id', value: 'info-resp-1' },
             { field: 'created', value: 1700000000002 },
@@ -715,8 +711,6 @@ describe('ChatService', () => {
             { field: 'work_id', value: 'work-1' },
             { field: 'type', value: 'RESPONSE' },
             { field: 'dialog', value: 'Answer 1' },
-            { field: 'dialog_length', value: 8 },
-            { field: 'dialog_brief', value: '' },
             { field: 'trace_id', value: '' },
           ],
         }),
@@ -741,7 +735,7 @@ describe('ChatService', () => {
 
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'dialog',
+          table: 'dialog_record',
           data: [
             { field: 'id', value: 'dlg-1' },
             { field: 'created', value: 1700000000010 },
@@ -750,8 +744,6 @@ describe('ChatService', () => {
             { field: 'work_id', value: 'work-dlg-1' },
             { field: 'type', value: 'REQUEST' },
             { field: 'dialog', value: 'Question from dialog table' },
-            { field: 'dialog_length', value: 26 },
-            { field: 'dialog_brief', value: '' },
             { field: 'trace_id', value: 't-1' },
           ],
         }),
@@ -761,7 +753,7 @@ describe('ChatService', () => {
 
       await ctx.db.insertDB(
         Object.assign(new InsertDBInput(), {
-          table: 'dialog',
+          table: 'dialog_record',
           data: [
             { field: 'id', value: 'dlg-2' },
             { field: 'created', value: 1700000000020 },
@@ -770,8 +762,6 @@ describe('ChatService', () => {
             { field: 'work_id', value: 'work-dlg-1' },
             { field: 'type', value: 'RESPONSE' },
             { field: 'dialog', value: 'Answer from dialog table' },
-            { field: 'dialog_length', value: 24 },
-            { field: 'dialog_brief', value: '' },
             { field: 'trace_id', value: 't-1' },
           ],
         }),
@@ -1220,19 +1210,19 @@ describe('ChatService', () => {
         new StreamContext(),
       );
       endpointId = regOut.endpoint_id;
-      Report.setEventStreamGateway({
-        pushToEndpoint: async (input) => {
-          await streamAccess.publishEvent(
-            Object.assign(new PushEventToEndpointInput(), input),
-            new PushEventToEndpointOutput(),
-            new StreamContext(),
-          );
+      const obsMod = await import('../../Base/ObservabilityProvider');
+      const observability = new obsMod.ObservabilityAccess(ctx.db);
+      observability.setFrameWriter((sessionId, endpointId, ev) => streamAccess.pushFrame(sessionId, endpointId, ev));
+      Report.setEventGateway({
+        emit: (meta, type, payload) => {
+          observability.emit(meta, type, payload);
         },
+        flush: () => observability.flush(),
       });
     });
 
     afterEach(() => {
-      Report.setEventStreamGateway(null);
+      Report.setEventGateway(null);
       vi.restoreAllMocks();
     });
 
@@ -1240,8 +1230,9 @@ describe('ChatService', () => {
       const gateway = {
         submitRun: async (_i: unknown, o: { run_id: string }, _c: unknown, _m: unknown, report?: Report) => {
           o.run_id = 'run-v2';
-          report?.pushBusinessEvent('part.delta' as never, { field: 'text', delta: '帧格式' });
-          report?.pushBusinessEvent('run.status' as never, { phase: 'end', stop_reason: 'stop' });
+          if (report) { report.run_id = 'run-v2'; report.work_id = 'run-v2'; }
+          report?.emit('reply.delta' as never, { delta: '帧格式' });
+          report?.emit('run.finished' as never, { stop_reason: 'stop' });
           return true;
         },
         waitRun: async (_i: unknown, o: { status: string }) => {
@@ -1260,10 +1251,10 @@ describe('ChatService', () => {
       const output = new OpenChatStreamOutput();
       await makeV2Service().openChatStream(input, output, new ChatContext());
       await new Promise((r) => setTimeout(r, 80));
-      const deltaFrame = frames.find((f) => f.includes('"part.delta"'));
+      const deltaFrame = frames.find((f) => f.includes('"reply.delta"'));
       expect(deltaFrame).toBeTruthy();
       const msg = JSON.parse((deltaFrame as string).replace(/^data: /, '').trim());
-      expect(msg).toMatchObject({ msg_id: expect.any(String), event: 'part.delta', timestamp: expect.any(Number) });
+      expect(msg).toMatchObject({ msg_id: expect.any(String), event: 'reply.delta', timestamp: expect.any(Number) });
     });
 
     it('TC-V2-011: done 传输帧含 elapsed_ms/token_usage/paused', async () => {
@@ -1286,7 +1277,7 @@ describe('ChatService', () => {
 
       const sel = Object.assign(new SelectOneDBInput(), {
         query_param: {
-          table: 'chat_session',
+          table: 'chat_session_record',
           conditions: [{ field: 'session_id', operator: 'EQ', value: output.session_id }],
         },
       });
@@ -1354,12 +1345,12 @@ describe('ChatService', () => {
       expect(output.purged_session_ids).toEqual([orphanSid]);
 
       const orphanLeft = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', [orphanSid],
+        'SELECT COUNT(*) AS c FROM dialog_record WHERE session_id = ?', [orphanSid],
       )[0]?.c;
       expect(Number(orphanLeft)).toBe(0);
 
       const liveLeft = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', [liveSid],
+        'SELECT COUNT(*) AS c FROM dialog_record WHERE session_id = ?', [liveSid],
       )[0]?.c;
       expect(Number(liveLeft)).toBe(1);
     });
@@ -1373,7 +1364,7 @@ describe('ChatService', () => {
 
       expect(output.purged_count).toBe(1);
       const left = ctx.db.queryRaw<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM dialog WHERE session_id = ?', ['orphan-dry-run'],
+        'SELECT COUNT(*) AS c FROM dialog_record WHERE session_id = ?', ['orphan-dry-run'],
       )[0]?.c;
       expect(Number(left)).toBe(1);
     });

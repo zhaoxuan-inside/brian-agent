@@ -6,10 +6,10 @@ import type {
   DocumentAnnotation, DirListing,
   ConfigTreeLayer,
   ConfigHistoryRecord,
-  UserProfileData, ProfileVersionData, ProfileHistoryItem,
+  UserProfileData, ProfileVersionData, ProfileHistoryItem, ProfileFullRecord,
   VisualizedMessage, MessageGraphNode, MessageGraphEdge, AgentDAG, AgentTrace,
   McpUsageRecord,
-  Block, AgentDagData,
+  Block,
   FeedbackProcessLogListItem, FeedbackProcessLogDetail,
 } from './types'
 import { newTraceId, TRACE_ID_HEADER } from '@/utils/trace'
@@ -88,15 +88,20 @@ export const chatApi = {
     request<{ pin: boolean }>(`/chat/message/${encodeURIComponent(infoId)}/pin`, { method: 'POST' }),
   
   
-  thinking: (infoId: string, module: 'all' | 'dag' | 'blocks' = 'all') =>
-    request<{ work_id: string; run_id: string; count: number; blocks: Block[]; dag: AgentDagData | null; trace?: import('./types').ThinkingTrace | null; module?: string }>(
-      `/chat/thinking?info_id=${encodeURIComponent(infoId)}&module=${module}`,
-    ).then(r => r),
+  observation: (opts: { infoId?: string; runId?: string; afterSeq?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.infoId) q.set('info_id', opts.infoId)
+    if (opts.runId) q.set('run_id', opts.runId)
+    if (opts.afterSeq !== undefined) q.set('after_seq', String(opts.afterSeq))
+    return request<{ run_id: string; session_id: string; phase: string; last_seq: number; events: Array<Record<string, unknown>> }>(
+      `/chat/observation?${q.toString()}`,
+    )
+  },
   evalResult: (infoId: string) =>
     request<{ work_id: string; trace_id: string; found: boolean; evaluation: { answer: string; created: number; elapsed_ms: number; agent_name: string } | null }>(
       `/chat/eval-result?info_id=${encodeURIComponent(infoId)}`,
     ),
-  cancelTask: (exchangeId: string) =>
+cancelTask: (exchangeId: string) =>
     request<void>(`/chat/cancel/${encodeURIComponent(exchangeId)}`, { method: 'POST' }),
 }
 
@@ -160,6 +165,10 @@ export const configApi = {
   getConfig: () => request<{ config: Record<string, unknown> }>('/config'),
   updateConfig: (data: Record<string, unknown>) =>
     request<void>('/config', { method: 'PUT', body: JSON.stringify(data) }),
+  /** R7: AI 规范润色 —— 组件意图 → 标准语义四元组(5-10字名称/30-40字描述/正负范例) */
+  semanticsSuggest: (data: { kind: string; title?: string; brief?: string; content?: string; extra?: string }) =>
+    request<{ semantics: { title: string; brief: string; positive_examples: string[]; negative_examples: string[] } }>(
+      '/config/semantics/suggest', { method: 'POST', body: JSON.stringify(data) }),
   configTree: () => request<{ config: { layers: ConfigTreeLayer[] } }>('/config'),
   entityList: (type: string) => {
     const map: Record<string, () => Promise<unknown[]>> = {
@@ -243,11 +252,11 @@ export const configApi = {
       request<void>(`/config/mcp/provider/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   prompts: {
-    list: () => request<{ prompts: { id: string; title: string; brief: string; enabled: boolean }[] }>('/prompts').then(r => r.prompts),
-    get: (id: string) => request<{ id: string; title: string; brief: string; template: string; enabled: boolean }>(`/prompts/${encodeURIComponent(id)}`),
-    create: (data: { title: string; brief?: string; template: string; enabled?: boolean }) =>
+    list: () => request<{ prompts: { id: string; title: string; brief: string; enabled: boolean; positive_examples?: string[]; negative_examples?: string[] }[] }>('/prompts').then(r => r.prompts),
+    get: (id: string) => request<{ id: string; title: string; brief: string; template: string; enabled: boolean; positive_examples?: string[]; negative_examples?: string[] }>(`/prompts/${encodeURIComponent(id)}`),
+    create: (data: { title: string; brief?: string; template: string; positive_examples?: string[]; negative_examples?: string[]; enabled?: boolean }) =>
       request<{ id: string }>('/prompts', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: { title?: string; brief?: string; template?: string; enabled?: boolean }) =>
+    update: (id: string, data: { title?: string; brief?: string; template?: string; positive_examples?: string[]; negative_examples?: string[]; enabled?: boolean }) =>
       request<void>(`/prompts/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<void>(`/prompts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -287,8 +296,23 @@ export const mcpApi = {
     request<void>(`/mcp/${encodeURIComponent(id)}/install`, { method: 'POST' }),
   uninstall: (id: string) =>
     request<void>(`/mcp/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  batchUninstall: (ids: string[]) =>
+    request<{ success: boolean; uninstalled_count?: number }>('/mcp/batch-uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
   toggle: (id: string) =>
     request<void>(`/mcp/${encodeURIComponent(id)}/toggle`, { method: 'POST' }),
+  /** R7: 执行 MCP 工具（测试通道） */
+  call: (id: string, toolName: string, params: Record<string, unknown>) =>
+    request<{ result: unknown; raw_response: string }>(`/mcp/${encodeURIComponent(id)}/call`, {
+      method: 'POST',
+      body: JSON.stringify({ tool_name: toolName, params }),
+    }),
+  /** R7: 工具清单 + 自动生成的 test_params_sample（MCP 测试弹窗预填） */
+  tools: (id: string) =>
+    request<{ status: 'running' | 'stopped'; tools: Array<{ name: string; description: string; test_params_sample: Record<string, unknown> }> }>(
+      `/mcp/${encodeURIComponent(id)}/tools`, { method: 'POST' }),
   usage: (query?: { mcp_install_id?: string; start_date?: string; end_date?: string }) =>
     request<{ list: McpUsageRecord[]; total: number }>(`/mcp/usage${query ? `?${new URLSearchParams(
       Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]),
@@ -425,6 +449,8 @@ export const userProfileApi = {
     }),
   history: (sessionId?: string, limit?: number) =>
     request<{ history: ProfileHistoryItem[] }>(`/profile/history${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}${limit ? `&limit=${limit}` : ''}`).then(r => r.history),
+  all: (limit?: number) =>
+    request<{ profiles: ProfileFullRecord[] }>(`/profile/all${limit ? `?limit=${limit}` : ''}`).then(r => r.profiles),
   version: (version: number, sessionId?: string) =>
     request<ProfileVersionData>(`/profile/version/${version}${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`),
   reset: (sessionId?: string) =>

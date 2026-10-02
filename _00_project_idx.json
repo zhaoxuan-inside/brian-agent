@@ -59,6 +59,16 @@
     },
     {
       "order": 10,
+      "path": "_11_dep_tree.md",
+      "purpose": "后端方法依赖树(全局/主链/分层/MQ穿透/矩阵)"
+    },
+    {
+      "order": 11,
+      "path": "_12_db_schema.md",
+      "purpose": "数据库全量架构与表结构规范手册(SQLite/LanceDB/LeanGraph)"
+    },
+    {
+      "order": 12,
       "path": "brian-backend/ 与 brian-frontend/",
       "purpose": "实际代码(最后阅读)"
     }
@@ -141,6 +151,31 @@
           "file": "ADR-009-token-accounting-and-graph-safety.md",
           "summary": "全量 Token 计量与图数据弱关联治理(R5)",
           "status": "accepted"
+        },
+        {
+          "file": "ADR-012-record-org-dichotomy-storage.md",
+          "summary": "记录/组织二分存储模型+公共字段规范+TraceBase+全量规范化(R6存储重构)",
+          "status": "accepted"
+        },
+        {
+          "file": "ADR-013-unified-event-bus-observability.md",
+          "summary": "统一事件总线与可观测投影(OBS v2,task_event/run_state 两表+32事件契约+唯一reducer)",
+          "status": "accepted"
+        },
+        {
+          "file": "ADR-014-linear-dark-theme-chat.md",
+          "summary": "对话页 Linear 暗色主题(已被 ADR-015 取代:纯黑刺眼+丢失明暗双模式)",
+          "status": "superseded"
+        },
+        {
+          "file": "ADR-015-claude-warm-dual-theme-chat.md",
+          "summary": "对话页 Claude 暖色双模式主题(chat 令牌族 CSS 变量化+.theme-chat 明暗双套变量,supersede ADR-014)",
+          "status": "accepted"
+        },
+        {
+          "file": "ADR-016-claude-tokens-site-wide-and-style-index.md",
+          "summary": "全站 Claude 暖色令牌化(apple 语义值整体暖化+圆角几何 iOS→Claude)+前端样式索引 STYLE.md",
+          "status": "accepted"
         }
       ]
     },
@@ -174,7 +209,7 @@
       "files": [
         {
           "file": "01_external_api.md",
-          "summary": "/api/* 152 条路径域清单 + SSE 契约 + 错误码",
+          "summary": "/api/* 151 条路径域清单 + SSE 契约(TaskEvent 帧) + 错误码",
           "status": "reviewed"
         },
         {
@@ -183,6 +218,16 @@
           "status": "reviewed"
         }
       ]
+    },
+    "_11_dep_tree": {
+      "path": "_11_dep_tree.md",
+      "summary": "后端方法依赖树(全局分层/主链时序/分层有向图/MQ穿透索引/全量跨模块依赖矩阵/关键循环说明)",
+      "status": "confirmed"
+    },
+    "_12_db_schema": {
+      "path": "_12_db_schema.md",
+      "summary": "数据库全量架构与表结构规范手册(SQLite/LanceDB/LeanGraph, 9 领域全量字段/索引/二分模型规范/Mermaid ER拓扑;含 ADR-013 task_event_record/run_state_record)",
+      "status": "confirmed"
     }
   },
   "tech_stack": {
@@ -278,29 +323,34 @@
         "path": "brian-frontend",
         "summary": "Vue3 SPA(8 页面/42 组件/15 composables/5 stores);UI 组件目录按 frontend-spec 不入 _07_method_idx",
         "owner": ""
+      },
+      {
+        "name": "frontend-style-index",
+        "path": "brian-frontend/STYLE.md",
+        "summary": "前端样式索引(ADR-016):全站令牌表/组件类目录/页面接入规则/复用示例,样式复用查此文件",
+        "owner": ""
       }
     ]
   },
   "method_index": {
     "path": "_07_method_idx/_index.json",
     "stats": {
-      "total": 2529,
+      "total": 2606,
       "by_category": {
-        "algorithm": 381,
-        "orchestration": 1135,
-        "data": 1013
+        "algorithm": 403,
+        "orchestration": 1157,
+        "data": 1046
       },
-      "shards": 59,
-      "source": "docs/method.idx.json(2942)排除 frontend-components/views 413(UI 组件不入 _07_method_idx)"
+      "source": "chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)"
     }
   },
   "dictionary": {
     "path": "_09_project_dict.json",
-    "terms": 19
+    "terms": 42
   },
   "change_log": {
     "path": "_10_change_log.json",
-    "latest": "chg-016"
+    "latest": "chg-059"
   },
   "quality_gates": {
     "lint": "npm run lint:backend(后端 flat config);npm run lint(前端)",
@@ -327,7 +377,7 @@
       "测试函数",
       "scripts/*.mjs 工具脚本"
     ],
-    "frontend_token_contract": "语义色/z-index/字号/遮罩/圆角以 tailwind.config.js + globals.css 为单一事实源;组件禁用裸 tailwind 原生色表达语义;弹层经 ModalShell(_06/02 第 4 节)",
+    "frontend_token_contract": "语义色/z-index/字号/遮罩/圆角以 tailwind.config.js + globals.css 为单一事实源;组件禁用裸 tailwind 原生色表达语义;弹层经 ModalShell(_06/02 第 4 节);样式查阅入口 brian-frontend/STYLE.md。全站主题=Claude 暖色双模式(ADR-016):apple 语义令牌值已全局暖化(brian-blue 即品牌 coral,CSS 变量驱动),圆角几何 xl=8/2xl=12/3xl=16;对话页另有 chat 令牌族(.theme-chat 作用域,ADR-015);共享组件 variant='chat';注意 tailwind.config.js 变更必须重启前端 dev server",
     "embedding_model": null,
     "standards": [
       "Google JavaScript Style Guide",

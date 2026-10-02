@@ -45,8 +45,7 @@ export interface PartRecord {
   part_order: number;
   content: string;
   tool_id?: string;
-  input_json?: string;
-  output_json?: string;
+  execute_id?: string;
   status: PartStatus;
   block_type?: string;
   block_meta?: string;
@@ -104,8 +103,6 @@ export class AddPartInput extends Input {
   
   tool_id?: string;
   
-  input_json?: string;
-  
   block_type?: string;
   
   block_meta?: string;
@@ -126,7 +123,7 @@ export class UpdatePartInput extends Input {
   
   content_patch?: string;
   
-  output_json?: string;
+  execute_id?: string;
   
   token_count?: number;
   
@@ -158,10 +155,10 @@ export class ConfigSessionInput extends Input {
 
 export class ConfigSessionOutput extends Output {}
 
-export const RUNTIME_SESSION_TABLE = 'runtime_session';
+export const RUNTIME_SESSION_TABLE = 'runtime_session_record';
 
-export const RUNTIME_MESSAGE_TABLE = 'runtime_message';
+export const RUNTIME_MESSAGE_TABLE = 'runtime_message_record';
 
-export const RUNTIME_MESSAGE_PART_TABLE = 'runtime_message_part';
+export const RUNTIME_MESSAGE_PART_TABLE = 'runtime_message_part_record';
 
-export const RUNTIME_SESSION_CONFIG_TABLE = 'runtime_session_config';
+export const RUNTIME_SESSION_CONFIG_TABLE = 'runtime_session_config_record';

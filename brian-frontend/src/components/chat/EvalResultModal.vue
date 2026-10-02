@@ -65,9 +65,10 @@ async function copyTraceId() {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 80) return 'text-success-green dark:text-success-green/80 bg-success-green/10 dark:bg-success-green/40'
-  if (score >= 60) return 'text-warning-orange dark:text-warning-orange/80 bg-warning-orange/10 dark:bg-warning-orange/40'
-  return 'text-error-red dark:text-error-red/80 bg-error-red/10 dark:bg-error-red/40'
+  // Linear 语义(ADR-014):优=success,中=primary,差=danger(无警示橙)
+  if (score >= 80) return 'text-chat-success bg-chat-success/10'
+  if (score >= 60) return 'text-chat-primary-hover bg-chat-primary/10'
+  return 'text-chat-error bg-chat-error/10'
 }
 
 
@@ -77,43 +78,43 @@ function scoreColor(score: number): string {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+      class="fixed inset-0 z-modal-top flex items-center justify-center bg-black/60 backdrop-blur-[2px] theme-chat"
       @click.self="close"
     >
-      <div class="bg-white dark:bg-apple-gray-800 rounded-2xl shadow-2xl border border-apple-gray-200 dark:border-apple-gray-700 w-full max-w-xl mx-4 overflow-hidden flex flex-col max-h-[80vh]">
-        <div class="px-5 py-3.5 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between flex-shrink-0">
+      <div class="bg-chat-surface-1 rounded-chat-lg shadow-[0_24px_64px_rgba(0,0,0,0.55)] border border-chat-hairline-strong w-full max-w-xl mx-4 overflow-hidden flex flex-col max-h-[80vh]">
+        <div class="px-5 py-3.5 border-b border-chat-hairline flex items-center justify-between flex-shrink-0">
           <div class="flex items-center gap-2">
-            <Gauge :size="16" class="text-warning-orange dark:text-warning-orange/80" />
-            <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">评估结果</h3>
-            <Loader2 v-if="loading" :size="13" class="animate-spin text-warning-orange" />
+            <Gauge :size="16" class="text-chat-warning" />
+            <h3 class="text-sm font-semibold tracking-tight text-chat-ink">评估结果</h3>
+            <Loader2 v-if="loading" :size="13" class="animate-spin text-chat-warning" />
           </div>
-          <button class="p-1 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="close">
+          <button class="p-1 rounded-chat-md text-chat-ink-tertiary hover:bg-chat-surface-2 transition-colors" @click="close">
             <X :size="18" />
           </button>
         </div>
 
         <div class="px-5 py-4 flex-1 overflow-y-auto space-y-3">
-          <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-warning-orange dark:text-warning-orange/80 space-y-3">
+          <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-chat-warning space-y-3">
             <Loader2 :size="28" class="animate-spin" />
             <p class="text-sm">正在加载评估结果...</p>
           </div>
 
-          <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-apple-gray-400 space-y-2">
-            <CircleAlert :size="28" class="text-apple-gray-300" />
+          <div v-else-if="error" class="flex flex-col items-center justify-center py-12 text-chat-ink-subtle space-y-2">
+            <CircleAlert :size="28" class="text-chat-hairline-strong" />
             <p class="text-sm">{{ error }}</p>
           </div>
 
           <template v-else-if="evaluation">
-            <div class="flex items-center gap-2 text-xs text-apple-gray-400">
+            <div class="flex items-center gap-2 text-xs text-chat-ink-tertiary">
               <span>{{ evaluation.agent_name || '进化 Agent (Evolutor)' }}</span>
               <span v-if="evaluation.elapsed_ms" class="font-mono">{{ evaluation.elapsed_ms }}ms</span>
               <span v-if="evaluation.created" class="ml-auto">{{ formatTime(evaluation.created) }}</span>
             </div>
-            <div v-if="traceId" class="flex items-center gap-1 text-2xs text-apple-gray-400 font-mono">
+            <div v-if="traceId" class="flex items-center gap-1 text-2xs text-chat-ink-tertiary font-mono">
               <span class="flex-shrink-0">TraceId:</span>
               <span class="truncate select-text">{{ traceId }}</span>
               <button
-                class="flex-shrink-0 flex items-center gap-0.5 px-1 py-0.5 rounded text-xs text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors"
+                class="flex-shrink-0 flex items-center gap-0.5 px-1 py-0.5 rounded-chat-sm text-xs text-chat-ink-tertiary hover:text-chat-primary-hover hover:bg-chat-surface-2 transition-colors"
                 title="复制 TraceId"
                 @click="copyTraceId"
               >
@@ -123,45 +124,45 @@ function scoreColor(score: number): string {
             </div>
 
             <template v-if="parsed">
-              <div v-if="scoreEntries.length > 0" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 overflow-hidden">
-                <div class="px-3 py-2 bg-apple-gray-50 dark:bg-apple-gray-900/40 text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300 border-b border-apple-gray-200 dark:border-apple-gray-700">
+              <div v-if="scoreEntries.length > 0" class="rounded-chat-md border border-chat-hairline overflow-hidden">
+                <div class="px-3 py-2 bg-chat-surface-2 text-xs font-semibold text-chat-ink-muted border-b border-chat-hairline">
                   评分维度
                 </div>
-                <div class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700/60">
+                <div class="divide-y divide-chat-hairline">
                   <div v-for="[key, val] in scoreEntries" :key="key" class="flex items-center justify-between px-3 py-2 text-xs">
-                    <span class="text-apple-gray-600 dark:text-apple-gray-300 capitalize">{{ key }}</span>
-                    <span class="px-2 py-0.5 rounded-md font-mono font-bold" :class="scoreColor(val)">{{ val }}</span>
+                    <span class="text-chat-ink-muted capitalize">{{ key }}</span>
+                    <span class="px-2 py-0.5 rounded-chat-sm font-mono font-bold" :class="scoreColor(val)">{{ val }}</span>
                   </div>
                 </div>
               </div>
 
-              <div v-if="suggestions.length > 0" class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 p-3 space-y-1.5">
-                <div class="flex items-center gap-1.5 text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300">
-                  <Lightbulb :size="13" class="text-warning-orange" />
+              <div v-if="suggestions.length > 0" class="rounded-chat-md border border-chat-hairline p-3 space-y-1.5">
+                <div class="flex items-center gap-1.5 text-xs font-semibold text-chat-ink-muted">
+                  <Lightbulb :size="13" class="text-chat-warning" />
                   <span>优化建议</span>
                 </div>
                 <ul class="space-y-1">
-                  <li v-for="(s, i) in suggestions" :key="i" class="flex gap-1.5 text-xs text-apple-gray-700 dark:text-apple-gray-200">
-                    <span class="text-apple-gray-300">{{ i + 1 }}.</span>
+                  <li v-for="(s, i) in suggestions" :key="i" class="flex gap-1.5 text-xs text-chat-ink-muted">
+                    <span class="text-chat-ink-tertiary">{{ i + 1 }}.</span>
                     <span>{{ s }}</span>
                   </li>
                 </ul>
               </div>
 
-              <div v-if="needOptimize !== null" class="flex items-center gap-1.5 text-xs font-medium" :class="needOptimize ? 'text-warning-orange dark:text-warning-orange/80' : 'text-success-green dark:text-success-green/80'">
+              <div v-if="needOptimize !== null" class="flex items-center gap-1.5 text-xs font-medium" :class="needOptimize ? 'text-chat-warning' : 'text-chat-success'">
                 <component :is="needOptimize ? CircleAlert : CircleCheck" :size="14" />
                 <span>{{ needOptimize ? '建议优化' : '无需优化' }}</span>
               </div>
             </template>
 
-            <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 p-3">
-              <div class="text-xs font-semibold text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">原始评估结果</div>
-              <pre class="text-2xs text-apple-gray-800 dark:text-apple-gray-200 font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto leading-relaxed bg-apple-gray-50 dark:bg-apple-gray-900/50 p-2.5 rounded-lg">{{ evaluation.answer }}</pre>
+            <div class="rounded-chat-md border border-chat-hairline p-3">
+              <div class="text-xs font-semibold text-chat-ink-muted mb-1.5">原始评估结果</div>
+              <pre class="text-2xs text-chat-ink-muted font-mono whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto leading-relaxed bg-chat-canvas border border-chat-hairline p-2.5 rounded-chat-sm">{{ evaluation.answer }}</pre>
             </div>
           </template>
 
-          <div v-else class="flex flex-col items-center justify-center py-12 text-apple-gray-400 space-y-2">
-            <Gauge :size="28" class="text-apple-gray-300" />
+          <div v-else class="flex flex-col items-center justify-center py-12 text-chat-ink-subtle space-y-2">
+            <Gauge :size="28" class="text-chat-hairline-strong" />
             <p class="text-sm">暂无评估结果</p>
           </div>
         </div>

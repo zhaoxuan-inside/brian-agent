@@ -49,6 +49,7 @@
 | `startMcp` | `input: StartMcpInput, output: StartMcpOutput, context: McpContext, metrics?: Metrics, r...` | `Promise<boolean>` | — |
 | `stopMcp` | `input: StopMcpInput, output: StopMcpOutput, context: McpContext, metrics?: Metrics, rep...` | `Promise<boolean>` | — |
 | `uninstallMcp` | `input: UninstallMcpInput, output: UninstallMcpOutput, context: McpContext, metrics?: Me...` | `Promise<boolean>` | — |
+| `uninstallMcps` | `input: UninstallMcpsInput, output: UninstallMcpsOutput, context: McpContext, metrics?: ...` | `Promise<boolean>` | — |
 | `updateMcp` | `input: UpdateMcpInput, output: UpdateMcpOutput, context: McpContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `soMcpById` | `input: GetMcpInput, output: GetMcpOutput, context: McpContext, metrics?: Metrics, repor...` | `Promise<boolean>` | — |
 | `soMcp` | `input: SoMcpInput, output: SoMcpOutput, context: McpContext, metrics?: Metrics, report?...` | `Promise<boolean>` | — |

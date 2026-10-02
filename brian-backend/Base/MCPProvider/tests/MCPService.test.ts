@@ -6,6 +6,7 @@ import path from 'path';
 import os from 'os';
 
 import { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../../TraceBase/infrastructure/TraceSchemaInitializer';
 import {
   DBContext,
   CloseDBInput,
@@ -65,6 +66,7 @@ describe('MCPProvider MCPService', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-test-mcp-'));
     dbAccess = new RelationDBAccess({ dbPath: path.join(tmpDir, 'test.db') });
     await dbAccess.initialize();
+    new TraceSchemaInitializer(dbAccess).init();
     mcpAccess = new MCPAccess(dbAccess);
   });
 
@@ -990,7 +992,7 @@ describe('MCPProvider MCPService', () => {
 
   describe('table schema (PRD 4)', () => {
     it('should have mcp_provider table with all required columns', async () => {
-      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_provider\')');
+      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_provider_record\')');
       const names = data.map((c) => c.name);
       expect(names).toContain('id');
       expect(names).toContain('created');
@@ -1002,7 +1004,7 @@ describe('MCPProvider MCPService', () => {
     });
 
     it('should have mcp_cache table with all required columns', async () => {
-      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_cache\')');
+      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_cache_record\')');
       const names = data.map((c) => c.name);
       expect(names).toContain('id');
       expect(names).toContain('created');
@@ -1014,7 +1016,7 @@ describe('MCPProvider MCPService', () => {
     });
 
     it('should have mcp_install table with all required columns', async () => {
-      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_install\')');
+      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_install_record\')');
       const names = data.map((c) => c.name);
       expect(names).toContain('id');
       expect(names).toContain('created');
@@ -1029,8 +1031,8 @@ describe('MCPProvider MCPService', () => {
       expect(names).toContain('enable');
     });
 
-    it('should have mcp_usage table with all required columns', async () => {
-      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_usage\')');
+    it('should have mcp_usage_org table with all required columns', async () => {
+      const data = dbAccess.queryRaw<{ name: string }>('PRAGMA table_info(\'mcp_usage_org\')');
       const names = data.map((c) => c.name);
       expect(names).toContain('id');
       expect(names).toContain('created');

@@ -3,8 +3,8 @@ import {
   LLM_PROVIDER_TABLE,
   LLM_CACHE_TABLE,
   LLM_AVAILABLE_TABLE,
-  LLM_USAGE_TABLE,
-  LLM_CALL_LOG_TABLE,
+  LLM_CALL_RECORD_TABLE,
+  LLM_CALL_DETAIL_TABLE,
   LLM_CONFIG_TABLE,
 } from '../domain/types';
 
@@ -17,6 +17,13 @@ export class LLMSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   private readonly ddlStatements: readonly DdlEntry[] = [
+    // ADR-012: 旧 llm_call_log 改名(全新库或已改名时忽略)
+    // ADR-012:组件定义表改名(幂等)
+    { sql: `ALTER TABLE "llm_provider" RENAME TO "${LLM_PROVIDER_TABLE}"`, ignoreReason: '旧表不存在或已改名' },
+    { sql: `ALTER TABLE "llm_available" RENAME TO "${LLM_AVAILABLE_TABLE}"`, ignoreReason: '旧表不存在或已改名' },
+
+    { sql: `ALTER TABLE "llm_call_log" RENAME TO "${LLM_CALL_RECORD_TABLE}"`, ignoreReason: '旧表不存在(全新库)或已改名' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
 
     `
       CREATE TABLE IF NOT EXISTS "${LLM_PROVIDER_TABLE}" (
@@ -87,30 +94,10 @@ export class LLMSchemaInitializer {
     { sql: `ALTER TABLE "${LLM_AVAILABLE_TABLE}" ADD COLUMN "is_default" INTEGER DEFAULT 0`, ignoreReason: 'column already exists' },
     { sql: `ALTER TABLE "${LLM_AVAILABLE_TABLE}" RENAME COLUMN "llm_usage" TO "llm_type"`, ignoreReason: 'already renamed' },
     { sql: `ALTER TABLE "${LLM_AVAILABLE_TABLE}" ADD COLUMN "model_usage" TEXT DEFAULT ''`, ignoreReason: 'column already exists' },
+    { sql: `UPDATE "${LLM_AVAILABLE_TABLE}" SET "llm_type" = 'multimodal' WHERE "llm_type" = 'vision'`, ignoreReason: '历史 vision 值迁移为 multimodal（R7 值域收敛）' },
 
     `
-      CREATE TABLE IF NOT EXISTS "${LLM_USAGE_TABLE}" (
-        "id"              TEXT    NOT NULL PRIMARY KEY,
-        "created"         INTEGER NOT NULL,
-        "updated"         INTEGER NOT NULL,
-        "llm_available_id" TEXT   NOT NULL,
-        "usage_date"      TEXT    NOT NULL,
-        "usage_count"     INTEGER NOT NULL DEFAULT 0,
-        "input_tokens"    INTEGER NOT NULL DEFAULT 0,
-        "output_tokens"   INTEGER NOT NULL DEFAULT 0
-      )
-    `,
-    { sql: `ALTER TABLE "${LLM_USAGE_TABLE}" RENAME COLUMN "llm_enable_id" TO "llm_available_id"`, ignoreReason: 'already renamed' },
-    { sql: `ALTER TABLE "${LLM_USAGE_TABLE}" ADD COLUMN "input_tokens" INTEGER NOT NULL DEFAULT 0`, ignoreReason: '已存在 input_tokens 列时忽略' },
-    { sql: `ALTER TABLE "${LLM_USAGE_TABLE}" ADD COLUMN "output_tokens" INTEGER NOT NULL DEFAULT 0`, ignoreReason: '已存在 output_tokens 列时忽略' },
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_created" ON "${LLM_USAGE_TABLE}" ("created")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_updated" ON "${LLM_USAGE_TABLE}" ("updated")`,
-    { sql: `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_llm_available_id" ON "${LLM_USAGE_TABLE}" ("llm_available_id")`, ignoreReason: 'column may not exist yet' },
-    { sql: `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_llm_enable_id" ON "${LLM_USAGE_TABLE}" ("llm_enable_id")`, ignoreReason: 'old column, may not exist' },
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_USAGE_TABLE}_usage_date" ON "${LLM_USAGE_TABLE}" ("usage_date")`,
-
-    `
-      CREATE TABLE IF NOT EXISTS "${LLM_CALL_LOG_TABLE}" (
+      CREATE TABLE IF NOT EXISTS "${LLM_CALL_RECORD_TABLE}" (
         "id"               TEXT    NOT NULL PRIMARY KEY,
         "created"          INTEGER NOT NULL,
         "updated"          INTEGER NOT NULL,
@@ -123,20 +110,40 @@ export class LLMSchemaInitializer {
         "duration_ms"      INTEGER NOT NULL DEFAULT 0
       )
     `,
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "updated" INTEGER NOT NULL DEFAULT 0`, ignoreReason: '已存在 updated 列时忽略（存量库迁移：CREATE TABLE IF NOT EXISTS 不会补列）' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "updated" INTEGER NOT NULL DEFAULT 0`, ignoreReason: '已存在 updated 列时忽略（存量库迁移：CREATE TABLE IF NOT EXISTS 不会补列）' },
 
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "caller" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "llm_title" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "llm_type" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "status" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" ADD COLUMN "error_code" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_session" ON "${LLM_CALL_LOG_TABLE}" ("session_id")`,
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "caller" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "llm_title" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "llm_type" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "status" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" ADD COLUMN "error_code" TEXT NOT NULL DEFAULT ''`, ignoreReason: '列已存在' },
+    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_RECORD_TABLE}_session" ON "${LLM_CALL_RECORD_TABLE}" ("session_id")`,
 
-    { sql: `ALTER TABLE "${LLM_CALL_LOG_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`, ignoreReason: '列已重命名或不存在' },
-    { sql: `DROP INDEX IF EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact"`, ignoreReason: '旧索引可能不存在' },
-    { sql: `DROP INDEX IF EXISTS "idx_${LLM_CALL_LOG_TABLE}_interact_id"`, ignoreReason: '旧索引可能不存在' },
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_run" ON "${LLM_CALL_LOG_TABLE}" ("run_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_LOG_TABLE}_work" ON "${LLM_CALL_LOG_TABLE}" ("work_id")`,
+    { sql: `ALTER TABLE "${LLM_CALL_RECORD_TABLE}" RENAME COLUMN "interact_id" TO "run_id"`, ignoreReason: '列已重命名或不存在' },
+    { sql: `DROP INDEX IF EXISTS "idx_${LLM_CALL_RECORD_TABLE}_interact"`, ignoreReason: '旧索引可能不存在' },
+    { sql: `DROP INDEX IF EXISTS "idx_${LLM_CALL_RECORD_TABLE}_interact_id"`, ignoreReason: '旧索引可能不存在' },
+    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_RECORD_TABLE}_run" ON "${LLM_CALL_RECORD_TABLE}" ("run_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_RECORD_TABLE}_work" ON "${LLM_CALL_RECORD_TABLE}" ("work_id")`,
+
+    `
+      CREATE TABLE IF NOT EXISTS "${LLM_CALL_DETAIL_TABLE}" (
+        "id"               TEXT    NOT NULL PRIMARY KEY,
+        "created"          INTEGER NOT NULL,
+        "updated"          INTEGER NOT NULL,
+        "trace_id"         TEXT    NOT NULL DEFAULT '',
+        "llm_call_id"      TEXT    NOT NULL,
+        "llm_available_id" TEXT    NOT NULL DEFAULT '',
+        "session_id"       TEXT    NOT NULL DEFAULT '',
+        "run_id"           TEXT    NOT NULL DEFAULT '',
+        "work_id"          TEXT    NOT NULL DEFAULT '',
+        "input"            TEXT    NOT NULL DEFAULT '',
+        "input_length"     INTEGER NOT NULL DEFAULT 0,
+        "output"           TEXT    NOT NULL DEFAULT '',
+        "output_length"    INTEGER NOT NULL DEFAULT 0
+      )
+    `,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_CALL_DETAIL_TABLE}_call" ON "${LLM_CALL_DETAIL_TABLE}" ("llm_call_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${LLM_CALL_DETAIL_TABLE}_run" ON "${LLM_CALL_DETAIL_TABLE}" ("run_id")`,
 
     `
       CREATE TABLE IF NOT EXISTS "${LLM_CONFIG_TABLE}" (

@@ -245,4 +245,4 @@ export const GRAPH_EDGE_TABLE = 'graph_edge';
 
 export const GRAPH_EDGE_DAILY_ACTIVATION_TABLE = 'graph_edge_daily_activation';
 
-export const GRAPHDB_CONFIG_TABLE = 'graphdb_config';
+export const GRAPHDB_CONFIG_TABLE = 'graphdb_config_record';

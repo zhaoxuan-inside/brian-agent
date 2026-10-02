@@ -88,8 +88,8 @@ export class ListCronTaskRunsOutput extends Output {
   runs: CronTaskRunRecord[] = [];
 }
 
-export const CRON_TASK_TABLE = 'cron_task';
-export const CRON_TASK_RUN_TABLE = 'cron_task_run';
+export const CRON_TASK_TABLE = 'cron_task_record';
+export const CRON_TASK_RUN_TABLE = 'cron_task_run_record';
 
 export const CRON_RUN_STATUS = {
   RUNNING: 'RUNNING',

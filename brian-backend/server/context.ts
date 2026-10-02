@@ -31,18 +31,21 @@ import { PromptsAccess } from '../Base/PromptsProvider';
 import { RelationDBAccess } from '../Base/RelationDBProvider';
 import { SkillAccess, SeedSystemSkillsInput, SeedSystemSkillsOutput } from '../Base/SkillProvider';
 import { SoulAccess } from '../Base/SoulProvider';
-import { StreamAccess, StreamContext, PushEventToEndpointInput, PushEventToEndpointOutput } from '../Base/StreamProvider';
+import { StreamAccess } from '../Base/StreamProvider';
+import { ObservabilityAccess } from '../Base/ObservabilityProvider';
 import { ExecRequestInput, ExecRequestOutput, HttpContext } from '../Base/ToolProvider/domain/HttpTypes';
 import { VectorDBAccess } from '../Base/VectorDBProvider';
 import { Report } from '../Base/shared/base/Report';
 import { CDTCoreAccess } from '../Core/CDTCoreProvider';
-import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, EXECUTE_TABLE } from '../Core/InfoCoreProvider';
+import { InfoCoreAccess, DelInfoInput, DelInfoOutput, InfoCoreContext, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput } from '../Core/InfoCoreProvider';
 import { LLMCoreAccess } from '../Core/LLMCoreProvider';
 import { MCPCoreAccess } from '../Core/MCPCoreProvider';
 import { MQCoreAccess } from '../Core/MQCoreProvider';
 import { SkillCoreAccess, SkillCoreContext, AgeSkillInput, AgeSkillOutput } from '../Core/SkillCoreProvider';
 import { SoulCoreAccess, SoulCoreContext, AgeSoulInput, AgeSoulOutput } from '../Core/SoulCoreProvider';
-import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, InfoType, Operator, Metrics, MetricsLogger } from '@brian-agent/base';
+import { IdGenerator, ToolAccess, HttpAccess, SystemMonitorAccess, ToolSchemaInitializer, ConfigService, TOOL_CONFIG_TABLE, Metrics, MetricsLogger, TraceSchemaInitializer, ensureElectionConfigTable, createEmbedTaskFn, createSemanticsTaskFn } from '@brian-agent/base';
+import { ExecuteEventProcessor } from '../Base/ExecuteEventProvider/application/ExecuteEventProcessor';
+import { EXECUTE_COMPONENT_TYPES, type ExecuteEvent } from '../Base/shared/base/ExecuteEvent';
 import { SessionAccess, SkillRuntimeAccess, RegisterBuiltinSkillsInput, RegisterBuiltinSkillsOutput, LoopAccess, AgentDefAccess, RunGatewayAccess } from '@brian-agent/runtime';
 import path from 'node:path';
 
@@ -72,15 +75,10 @@ export const httpReq = async (req: { url: string; method?: string; headers?: Rec
   return out.response;
 };
 
-function addColIfMissing(relationDb: import('../Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, table: string, column: string, type: string): void {
-
-  try { relationDb.executeRaw(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${type}`); } catch {  }
-}
-
 function readVectorDimension(relationDb: import('../Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess): number {
   try {
     const rows = relationDb.queryRaw<{ dimension: number }>(
-      'SELECT "dimension" FROM "info_vector_config" LIMIT 1', [],
+      'SELECT "dimension" FROM "info_vector_config_record" LIMIT 1', [],
     );
     if (rows.length > 0 && Number(rows[0].dimension) > 0) {
       return Number(rows[0].dimension);
@@ -101,11 +99,91 @@ export async function buildContext() {
   await logAccess.initialize();
   const logger = createLogger(logAccess);
 
+  const executeEventProcessor = new ExecuteEventProcessor(relationDb, logger);
+  Report.setExecuteEventSink(executeEventProcessor);
+
   try {
     relationDb.executeRaw('DROP TABLE IF EXISTS "agent_plan"');
     relationDb.executeRaw('DROP TABLE IF EXISTS "planner_agent_config"');
   } catch (e) {
     logger.warn('dropLegacyTables', 'failed to drop retired planner tables', String(e));
+  }
+
+  // TraceBase(ADR-012):统一统计域建表 + 旧 usage 表改名/退役,须先于一切统计写入方初始化
+  new TraceSchemaInitializer(relationDb).init();
+
+  // R8 统一选举阈值配置表(election_config_record,幂等)
+  ensureElectionConfigTable(relationDb);
+
+  // ADR-012 集中改名器:存量库旧表名 → 规范新表名(幂等,旧表不存在或已改名时忽略);
+  // 全新库由各 SchemaInitializer 直接建新名表,此处仅负责数据保全。
+  const LEGACY_TABLE_RENAMES: Array<[string, string]> = [
+    // 组件定义域
+    ['skill', 'skill_record'], ['soul', 'soul_record'], ['prompt_template', 'prompt_template_record'],
+    ['agent', 'agent_record'], ['agent_opt_rule', 'agent_opt_rule_record'],
+    ['agent_strategy', 'agent_strategy_record'], ['agent_evaluation', 'agent_evaluation_record'],
+    ['runtime_agent_def', 'runtime_agent_def_record'],
+    ['llm_provider', 'llm_provider_record'], ['llm_available', 'llm_available_record'],
+    ['mcp_provider', 'mcp_provider_record'], ['mcp_install', 'mcp_install_record'],
+    ['agent_embedding', 'agent_embedding_record'], ['mcp_embedding', 'mcp_embedding_record'],
+    ['skill_embedding', 'skill_embedding_record'], ['prompt_template_embedding', 'prompt_template_embedding_record'],
+    ['soul_embedding', 'soul_embedding_record'],
+    ['agent_example_embedding', 'agent_example_embedding_record'], ['mcp_example_embedding', 'mcp_example_embedding_record'],
+    ['skill_example_embedding', 'skill_example_embedding_record'], ['prompt_template_example_embedding', 'prompt_template_example_embedding_record'],
+    ['soul_example_embedding', 'soul_example_embedding_record'],
+    // 记忆对话域
+    ['dialog', 'dialog_record'], ['execute', 'execute_record'], ['context', 'context_org'],
+    ['info_vector', 'info_vector_record'], ['info_tag', 'info_tag_record'],
+    ['info_tag_vector', 'info_tag_vector_record'], ['info_summary', 'info_summary_record'],
+    ['info_keyword', 'info_keyword_org'],
+    // Runtime 域
+    ['runtime_session', 'runtime_session_record'], ['runtime_message', 'runtime_message_record'],
+    ['runtime_message_part', 'runtime_message_part_record'], ['runtime_run', 'runtime_run_record'],
+    ['stream_event', 'stream_event_record'],
+    // 应用与基建域
+    ['chat_session', 'chat_session_record'],
+    ['bookmark_folder', 'bookmark_folder_record'], ['bookmark_item', 'bookmark_item_record'],
+    ['cron_task', 'cron_task_record'], ['cron_task_run', 'cron_task_run_record'],
+    ['log_rule', 'log_rule_record'], ['queue_message', 'queue_message_record'],
+    ['feedback_process_log', 'feedback_process_log_record'],
+    ['cdt_login_credential', 'cdt_login_credential_record'], ['cdt_page_session', 'cdt_page_session_record'],
+    ['llm_cache', 'llm_cache_record'], ['mcp_cache', 'mcp_cache_record'],
+    ['user_profile_direction', 'user_profile_direction_record'],
+    ['user_profile_dimension_data', 'user_profile_dim_record'],
+    ['user_profile_dimension_data_record', 'user_profile_dim_record'],
+    ['writer_agent_user_profile', 'writer_agent_user_profile_record'],
+    ['agent_skill', 'agent_skill_org'], ['agent_soul', 'agent_soul_org'], ['agent_mcp', 'agent_mcp_org'],
+    // 全部 *_config → *_config_record
+    ['agent_builder_config', 'agent_builder_config_record'], ['agent_context_config', 'agent_context_config_record'],
+    ['agent_execution_trace', 'agent_execution_trace_record'],
+    ['agent_execution_config', 'agent_execution_config_record'], ['agent_library_config', 'agent_library_config_record'],
+    ['agent_strategy_config', 'agent_strategy_config_record'], ['cdt_config', 'cdt_config_record'],
+    ['evolutor_agent_config', 'evolutor_agent_config_record'], ['feedback_config', 'feedback_config_record'],
+    ['graphdb_config', 'graphdb_config_record'], ['info_config', 'info_config_record'],
+    ['info_context_config', 'info_context_config_record'], ['info_summary_config', 'info_summary_config_record'],
+    ['info_tag_config', 'info_tag_config_record'], ['info_vector_config', 'info_vector_config_record'],
+    ['llm_config', 'llm_config_record'], ['llm_core_config', 'llm_core_config_record'],
+    ['log_config', 'log_config_record'], ['mcp_config', 'mcp_config_record'],
+    ['mcp_core_config', 'mcp_core_config_record'], ['mq_config', 'mq_config_record'],
+    ['prompts_config', 'prompts_config_record'], ['relationdb_config', 'relationdb_config_record'],
+    ['runtime_agents_config', 'runtime_agents_config_record'], ['runtime_runs_config', 'runtime_runs_config_record'],
+    ['runtime_session_config', 'runtime_session_config_record'], ['skill_config', 'skill_config_record'],
+    ['skill_core_config', 'skill_core_config_record'], ['soul_config', 'soul_config_record'],
+    ['soul_core_config', 'soul_core_config_record'], ['stream_config', 'stream_config_record'],
+    ['tool_config', 'tool_config_record'], ['user_profile_config', 'user_profile_config_record'],
+    ['vectordb_config', 'vectordb_config_record'], ['visualization_config', 'visualization_config_record'],
+    ['writer_agent_config', 'writer_agent_config_record'], ['self_learning_config', 'self_learning_config_record'],
+    // 配额与 usage
+    ['llm_provider_quota', 'llm_provider_quota_record'],
+    // config 中心六表
+    ['config_registry', 'config_registry_record'], ['config_config', 'config_config_record'],
+    ['config_layer_privilege', 'config_layer_privilege_record'], ['config_module_privilege', 'config_module_privilege_record'],
+    ['config_snapshot', 'config_snapshot_record'], ['config_history', 'config_history_record'],
+  ];
+  for (const [legacy, modern] of LEGACY_TABLE_RENAMES) {
+    try { relationDb.executeRaw(`ALTER TABLE "${legacy}" RENAME TO "${modern}"`); } catch { /* 旧表不存在或已改名 */ }
+    // 公共 trace_id 列补齐(ADR-012 公共字段规范)
+    try { relationDb.executeRaw(`ALTER TABLE "${modern}" ADD COLUMN "trace_id" TEXT NOT NULL DEFAULT ''`); } catch { /* 列已存在 */ }
   }
 
   const promptsAccess = new PromptsAccess(relationDb, logger);
@@ -114,7 +192,14 @@ export async function buildContext() {
   const llmAccess = new LLMAccess(relationDb, logger, promptsAccess);
   await llmAccess.initialize();
 
+  const embedTaskFn = createEmbedTaskFn(llmAccess);
+  const semanticsTaskFn = createSemanticsTaskFn(llmAccess);
+  promptsAccess.setEmbedFn(embedTaskFn);
+  promptsAccess.setSemanticsFn(semanticsTaskFn);
+
   const mcpAccess = new MCPAccess(relationDb, logger);
+  mcpAccess.setEmbedFn(embedTaskFn);
+  mcpAccess.setSemanticsFn(semanticsTaskFn);
 
   try {
     const synced = await mcpAccess.syncInstallStatus();
@@ -126,9 +211,13 @@ export async function buildContext() {
   } catch {  }
 
   const soulAccess = new SoulAccess(relationDb, logger);
+  soulAccess.setEmbedFn(embedTaskFn);
+  soulAccess.setSemanticsFn(semanticsTaskFn);
   await soulAccess.initialize();
 
   const skillAccess = new SkillAccess(relationDb, logger);
+  skillAccess.setEmbedFn(embedTaskFn);
+  skillAccess.setSemanticsFn(semanticsTaskFn);
   await skillAccess.initialize();
 
   let systemSkillIds: string[] = [];
@@ -154,7 +243,7 @@ export async function buildContext() {
   if (systemSkillIds.length > 0) {
     try {
       const agentRows = relationDb.queryRaw<{ id: string; skill_ids_json: string }>(
-        `SELECT "id", "skill_ids_json" FROM "agent"`,
+        `SELECT "id", "skill_ids_json" FROM "agent_record"`,
       );
       let backfilled = 0;
       for (const row of agentRows) {
@@ -169,7 +258,7 @@ export async function buildContext() {
         }
         if (merged.length !== ids.length) {
           relationDb.executeRaw(
-            `UPDATE "agent" SET "skill_ids_json" = ?, "updated" = ? WHERE "id" = ?`,
+            `UPDATE "agent_record" SET "skill_ids_json" = ?, "updated" = ? WHERE "id" = ?`,
             [JSON.stringify(merged), IdGenerator.now(), row.id],
           );
           backfilled++;
@@ -195,9 +284,7 @@ export async function buildContext() {
     logger,
   });
 
-  addColIfMissing(relationDb, 'skill_usage', 'agent_skill_id', 'TEXT');
-  addColIfMissing(relationDb, 'skill_usage', 'timestamp', 'INTEGER');
-  addColIfMissing(relationDb, 'soul_usage', 'soul_usage_type', 'TEXT');
+  // ADR-012:旧 skill_usage/soul_usage 明细表已由 TraceBase 接管,历史补列逻辑退役
 
   const cdtAccess = new CDTAccess(relationDb, DATA_DIR, logger);
   await cdtAccess.initialize();
@@ -217,14 +304,14 @@ export async function buildContext() {
 
   const streamAccess = new StreamAccess(relationDb, logger);
 
-  Report.setEventStreamGateway({
-    pushToEndpoint: async (input) => {
-      await streamAccess.publishEvent(
-        Object.assign(new PushEventToEndpointInput(), input),
-        new PushEventToEndpointOutput(),
-        new StreamContext(),
-      );
+  // ADR-013：观测总线组合根 —— Report.emit → EventDispatcher →(SSE 帧 / 事件落库 / run 状态)
+  const observability = new ObservabilityAccess(relationDb, logger);
+  observability.setFrameWriter((sessionId, endpointId, ev) => streamAccess.pushFrame(sessionId, endpointId, ev));
+  Report.setEventGateway({
+    emit: (meta, type, payload) => {
+      observability.emit(meta, type, payload);
     },
+    flush: () => observability.flush(),
   });
   Report.setLogger(logger);
 
@@ -283,6 +370,7 @@ export async function buildContext() {
   await feedbackAccess.initialize();
 
   const agentLibrary = new AgentLibraryAccess(relationDb, llmAccess, promptsAccess, logger);
+  agentLibrary.setEmbedFn(embedTaskFn);
   await agentLibrary.initialize();
   const agentStrategy = new AgentStrategyAccess(relationDb, llmAccess, promptsAccess, logger);
   await agentStrategy.initialize();
@@ -385,70 +473,58 @@ export async function buildContext() {
     return err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? '');
   }
 
-  const permissionAuditMap = new Map<string, string>();
+  function permissionAskedEvent(input: { permission_id: string; session_id: string; session_key: string; run_id: string; tool_id: string; arguments_json: string; asked_at: number }): ExecuteEvent {
+    return {
+      component_id: input.tool_id || 'permission',
+      component_type: EXECUTE_COMPONENT_TYPES.PERMISSION,
+      session_id: input.session_key || input.session_id || '',
+      work_id: input.run_id || '',
+      run_id: input.run_id || '',
+      start: input.asked_at,
+      end: input.asked_at,
+      gap: 0,
+      input: {
+        permission_id: input.permission_id,
+        tool_id: input.tool_id,
+        arguments: safeJsonParse(input.arguments_json),
+        status: 'pending',
+      },
+      output: '',
+      status: 'ok',
+      permission_id: input.permission_id,
+    };
+  }
+
+  function permissionAnsweredEvent(input: { permission_id: string; approved: boolean; answered_at: number }): ExecuteEvent {
+    return {
+      component_id: 'permission',
+      component_type: EXECUTE_COMPONENT_TYPES.PERMISSION,
+      start: input.answered_at,
+      end: input.answered_at,
+      gap: 0,
+      input: '',
+      output: {
+        status: input.approved ? 'allowed' : 'denied',
+        answered_at: input.answered_at,
+      },
+      status: 'ok',
+      permission_id: input.permission_id,
+    };
+  }
+
   const permissionAuditBridge: import('@brian-agent/runtime').PermissionAudit = {
     asked: async (input) => {
       try {
-        const execId = IdGenerator.generate();
-        const payload = {
-          permission_id: input.permission_id,
-          session_key: input.session_key,
-          run_id: input.run_id,
-          tool_id: input.tool_id,
-          input: safeJsonParse(input.arguments_json),
-          status: 'pending',
-          asked_at: input.asked_at,
-        };
-        const payloadInput = JSON.stringify(payload);
-        await relationDb.insert(EXECUTE_TABLE, [
-          { field: 'id', value: execId },
-          { field: 'created', value: input.asked_at },
-          { field: 'updated', value: input.asked_at },
-          { field: 'session_id', value: input.session_key || input.session_id || '' },
-          { field: 'work_id', value: input.run_id || '' },
-          { field: 'run_id', value: input.run_id || '' },
-          { field: 'trace_id', value: '' },
-          { field: 'agent_id', value: '' },
-          { field: 'exec_no', value: 0 },
-          { field: 'component_id', value: input.tool_id || '' },
-          { field: 'component_type', value: 'PERMISSION' },
-          { field: 'input', value: payloadInput },
-          { field: 'input_length', value: payloadInput.length },
-          { field: 'output', value: '' },
-          { field: 'output_length', value: 0 },
-          { field: 'gap', value: 0 },
-        ]);
-        permissionAuditMap.set(input.permission_id, execId);
+        executeEventProcessor.push(permissionAskedEvent(input));
       } catch (err) {
-        logger.info('[permission-audit] asked 落库失败（不影响 run）', rawText(err));
+        logger.info('[permission-audit] asked 上报失败（不影响 run）', rawText(err));
       }
     },
     answered: async (input) => {
       try {
-        const execId = permissionAuditMap.get(input.permission_id);
-        if (!execId) return;
-        const row = relationDb.queryRaw<{ input: string; created: number; session_id: string }>(
-          `SELECT "input", "created", "session_id" FROM "${EXECUTE_TABLE}" WHERE "id" = ? LIMIT 1`,
-          [execId],
-        )[0];
-        if (row) {
-          const payload = JSON.parse(String(row.input ?? '{}'));
-          payload.status = input.approved ? 'allowed' : 'denied';
-          payload.answered_at = input.answered_at;
-          const outputPayload = JSON.stringify({ status: payload.status, answered_at: input.answered_at });
-          const gap = input.answered_at - Number(row.created);
-          await relationDb.update(EXECUTE_TABLE, [
-            { field: 'input', value: JSON.stringify(payload) },
-            { field: 'input_length', value: JSON.stringify(payload).length },
-            { field: 'output', value: outputPayload },
-            { field: 'output_length', value: outputPayload.length },
-            { field: 'gap', value: Math.max(0, gap) },
-            { field: 'updated', value: input.answered_at },
-          ], [{ field: 'id', operator: Operator.EQ, value: execId }]);
-        }
-        permissionAuditMap.delete(input.permission_id);
+        executeEventProcessor.push(permissionAnsweredEvent(input));
       } catch (err) {
-        logger.info('[permission-audit] answered 更新失败（不影响 run）', rawText(err));
+        logger.info('[permission-audit] answered 上报失败（不影响 run）', rawText(err));
       }
     },
   };
@@ -504,7 +580,7 @@ export async function buildContext() {
   let orphanTagCron = '0 0 3 * * *';
   try {
     const slCfg = relationDb.queryRaw<{ tag_aging_cron: string; orphan_tag_check_cron: string }>(
-      'SELECT "tag_aging_cron", "orphan_tag_check_cron" FROM "self_learning_config" LIMIT 1', [],
+      'SELECT "tag_aging_cron", "orphan_tag_check_cron" FROM "self_learning_config_record" LIMIT 1', [],
     );
     if (slCfg.length > 0) {
       if (slCfg[0].tag_aging_cron) tagAgingCron = slCfg[0].tag_aging_cron;
@@ -538,11 +614,11 @@ export async function buildContext() {
 
   try {
     const existingDefault = relationDb.queryRaw<{ id: string }>(
-      'SELECT "id" FROM "config_snapshot" WHERE "name" = ? LIMIT 1', ['默认快照'],
+      'SELECT "id" FROM "config_snapshot_record" WHERE "name" = ? LIMIT 1', ['默认快照'],
     );
     if (existingDefault.length === 0) {
       const configTables = relationDb.queryRaw<{ name: string }>(
-        "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config' OR name='orchestration_strategy' OR name='prompt_template')",
+        "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name LIKE '%_config_record' OR name LIKE '%_privilege' OR name LIKE '%_privilege_record' OR name='config_registry_record' OR name='config_config_record' OR name='orchestration_strategy' OR name='prompt_template_record')",
         [],
       );
       const snapshotData: Record<string, unknown[]> = {};
@@ -551,7 +627,7 @@ export async function buildContext() {
       }
       const now = Date.now();
       relationDb.executeRaw(
-        'INSERT INTO "config_snapshot" ("id", "created", "updated", "name", "snapshot_data") VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO "config_snapshot_record" ("id", "created", "updated", "name", "snapshot_data") VALUES (?, ?, ?, ?, ?)',
         [IdGenerator.generate(), now, now, '默认快照', JSON.stringify(snapshotData)],
       );
       logger.info('[startup] default snapshot created', '默认快照已创建');
@@ -716,6 +792,7 @@ export async function buildContext() {
     systemMonitorAccess,
     cronAccess,
     streamAccess,
+    observability,
     feedbackAccess,
     infoCore, llmCore, mcpCore, skillCore, soulCore, mqCore,
     cdtCore,

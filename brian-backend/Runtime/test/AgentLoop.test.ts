@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Report, ExecuteEventProcessor } from '@brian-agent/base';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -50,20 +51,19 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-loop-test-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db'), autoCreateConfigTable: true });
     await relationDb.initialize();
+    Report.setExecuteEventSink(new ExecuteEventProcessor(relationDb));
     sessionAccess = new SessionAccess(relationDb);
     await sessionAccess.initialize();
     const streamMod = await import('../../Base/StreamProvider/access/StreamAccess');
     streamAccess = new streamMod.StreamAccess(relationDb);
-    Report.setEventStreamGateway({
-      pushToEndpoint: async (input: { endpoint_id: string; session_key?: string; run_id?: string; type: string; payload: unknown }) => {
-        const mod = await import('../../Base/StreamProvider/access/StreamAccess');
-        const modTypes = await import('../../Base/StreamProvider/domain/types');
-        await streamAccess.publishEvent(
-          Object.assign(new modTypes.PushEventToEndpointInput(), input),
-          new modTypes.PushEventToEndpointOutput(),
-          new modTypes.StreamContext(),
-        );
+    const obsMod = await import('../../Base/ObservabilityProvider');
+    const observability = new obsMod.ObservabilityAccess(relationDb);
+    observability.setFrameWriter(() => true);
+    Report.setEventGateway({
+      emit: (meta, type, payload) => {
+        observability.emit(meta, type, payload);
       },
+      flush: () => observability.flush(),
     });
     mockSkill = {
       soSkillById: vi.fn(async (input: { id: string }, output: { skill: unknown }) => {
@@ -126,7 +126,7 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
   async function replayEvents(sessionKey: string): Promise<{ events: Array<{ type: string; payload: unknown }> }> {
     await new Promise((r) => setTimeout(r, 120));
     const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
-      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
+      'SELECT "event_type", "payload_json" FROM "task_event_record" WHERE "session_id" = ? ORDER BY "seq" ASC',
       [sessionKey],
     );
     return {
@@ -196,11 +196,15 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
     const toolPart = firstAssistant.parts.find((p) => p.part_type === 'tool');
     expect(toolPart).toBeDefined();
     expect(toolPart!.status).toBe('completed');
-    expect(toolPart!.output_json).toBe('北京天气：晴，22°C');
-    expect(JSON.parse(toolPart!.input_json!)).toEqual({
-      tool_call_id: 'call_1',
-      arguments: '{"skill_id":"weather","params":{"city":"北京"}}',
-    });
+    // ADR-012:part 不再存 I/O,经 execute_id 关联 execute_record;协议元数据存 block_meta
+    expect(toolPart!.execute_id).toBeTruthy();
+    expect(JSON.parse(toolPart!.block_meta!)).toEqual({ tool_call_id: 'call_1' });
+    const execRow = relationDb.queryRaw<{ input: string; output: string }>(
+      'SELECT "input", "output" FROM "execute_record" WHERE "id" = ?', [toolPart!.execute_id!],
+    );
+    expect(execRow.length).toBe(1);
+    expect(JSON.parse(execRow[0].output).result.output).toBe('北京天气：晴，22°C');
+    expect(JSON.parse(execRow[0].input).raw_args).toBe('{"skill_id":"weather","params":{"city":"北京"}}');
 
     const events = await replayEvents(input.session_key);
     const types = events.events.map((e) => e.type);
@@ -213,9 +217,9 @@ describe('AgentLoop（DIRECT 场景端到端）', () => {
       .filter((e) => e.type === 'think.delta')
       .map((e) => (e.payload as { delta: string }).delta)
       .join('');
-    expect(thinkText).toContain('我查一下天气');
-    expect(thinkText).toContain('北京今天');
-    expect(replyDeltas).toEqual(['北京今天晴，22°C。']);
+    // ADR-013：text_delta → reply.delta 流式（轮次草稿不再误入思考流）
+    expect(thinkText).toBe('');
+    expect(replyDeltas).toEqual(['我查一下天气', '北京今天']);
     expect(types).toContain('reply.created');
     expect(types).toContain('skill.started');
     expect(types).toContain('skill.result');

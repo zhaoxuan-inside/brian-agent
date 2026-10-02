@@ -29,6 +29,8 @@ import {
   RefreshMcpStatusOutput,
   UninstallMcpInput,
   UninstallMcpOutput,
+  UninstallMcpsInput,
+  UninstallMcpsOutput,
   UpdateMcpInput,
   UpdateMcpOutput,
   UpgradeMcpInput,
@@ -39,12 +41,15 @@ import {
   SoMcpOutput,
   ExecMcpInput,
   ExecMcpOutput,
+  ListMcpToolsInput,
+  ListMcpToolsOutput,
   EnableMCPInput,
   EnableMCPOutput,
   GetMcpUsageInput,
   GetMcpUsageOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
+import type { SemanticsTaskFn } from '../../shared/semantics';
 
 export class MCPAccess {
   private readonly service: MCPService;
@@ -53,6 +58,18 @@ export class MCPAccess {
     new MCPSchemaInitializer(relationDb).init();
     const rawService = new MCPService(relationDb);
     this.service = AopProxy.wrap(rawService, { logger });
+  }
+
+  setEmbedFn(fn: (text: string, context?: any) => Promise<number[]>): void {
+    this.service.setEmbedFn(fn);
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.service.setSemanticsFn(fn);
+  }
+
+  async listMcpTools(input: ListMcpToolsInput, output: ListMcpToolsOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean> {
+    return this.service.listMcpTools(input, output, context, metrics, report);
   }
 
   
@@ -103,6 +120,9 @@ export class MCPAccess {
   }
   async uninstallMcp(i: UninstallMcpInput, o: UninstallMcpOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.uninstallMcp(i, o, c, metrics, report);
+  }
+  async uninstallMcps(i: UninstallMcpsInput, o: UninstallMcpsOutput, c: McpContext, metrics?: Metrics, report?: Report) {
+    return this.service.uninstallMcps(i, o, c, metrics, report);
   }
   async updateMcp(i: UpdateMcpInput, o: UpdateMcpOutput, c: McpContext, metrics?: Metrics, report?: Report) {
     return this.service.updateMcp(i, o, c, metrics, report);

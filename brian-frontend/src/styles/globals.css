@@ -7,51 +7,158 @@
    Tailwind class 够不到的场景使用;与 tailwind.config 同源。
    ============================================================ */
 :root {
-  --brian-accent: #007AFF;
-  --brian-accent-ink: #0071e3;          /* 浅色下可读的强调色(链接/描边) */
-  --brian-accent-soft: rgba(0, 122, 255, 0.12);
-  --brian-success: #34C759;
-  --brian-warning: #FF9500;
-  --brian-error: #FF3B30;
-  --brian-line: #d1d1d6;                /* 分隔线/网格线 */
-  --brian-ink-2: #6e6e73;               /* 次级文字 */
-  --brian-tooltip-bg: rgba(0, 0, 0, 0.78);
-  --brian-tooltip-ink: #ffffff;
-  --brian-accent-ring: rgba(0, 122, 255, 0.55);
+  /* 全站语义值 = Claude 暖色体系(ADR-016,设计源 design-md/claude)。
+     brian-blue 保留历史命名,现承载品牌 coral;对话页另有 chat 令牌族。 */
+  --brian-blue: 204 120 92;            /* #cc785c coral */
+  --success-green: 93 184 114;         /* #5db872 */
+  --warning-orange: 212 160 23;        /* #d4a017 */
+  --error-red: 198 69 69;              /* #c64545 */
+  --brian-accent: #cc785c;
+  --brian-accent-ink: #a9583e;         /* 浅色下可读的强调色(链接/描边) */
+  --brian-accent-soft: rgba(204, 120, 92, 0.12);
+  --brian-success: #5db872;
+  --brian-warning: #d4a017;
+  --brian-error: #c64545;
+  --brian-line: #e6dfd8;               /* 分隔线/网格线 */
+  --brian-ink-2: #6c6a64;              /* 次级文字 */
+  --brian-tooltip-bg: rgba(24, 23, 21, 0.92);
+  --brian-tooltip-ink: #faf9f5;
+  --brian-accent-ring: rgba(204, 120, 92, 0.45);
   /* 关系图谱(涌现/关键词图):SVG 里 Tailwind class 够不到的图元配色 */
-  --brian-graph-edge: #6E6E73;          /* 连线基色 = 次级灰,透明度按 weight 叠加 */
-  --brian-graph-node-s: 72%;            /* 节点饱和度 */
-  --brian-graph-node-l: 50%;            /* 节点亮度 */
-  --brian-graph-node-ring: #FBFBFD;     /* 节点描边环 = 舞台底色,造"挖空"分离感 */
-  --brian-graph-label: #48484A;         /* 节点标签文字 */
-  --brian-graph-stage-bg: #FBFBFD;      /* 图舞台底色 */
-  --brian-graph-stage-hi: rgba(0, 122, 255, 0.04);  /* 舞台顶部强调微光 */
-  --brian-graph-dot: rgba(60, 60, 67, 0.08);        /* 舞台点阵 */
+  --brian-graph-edge: #a6a29a;         /* 连线基色 = 次级灰,透明度按 weight 叠加 */
+  --brian-graph-node-s: 55%;           /* 节点饱和度(暖色域) */
+  --brian-graph-node-l: 55%;           /* 节点亮度 */
+  --brian-graph-node-ring: #faf9f5;    /* 节点描边环 = 舞台底色,造"挖空"分离感 */
+  --brian-graph-label: #4a4842;        /* 节点标签文字 */
+  --brian-graph-stage-bg: #faf9f5;     /* 图舞台底色 */
+  --brian-graph-stage-hi: rgba(204, 120, 92, 0.045);  /* 舞台顶部强调微光 */
+  --brian-graph-dot: rgba(20, 20, 19, 0.07);        /* 舞台点阵 */
 }
 .dark {
-  --brian-accent: #4DA3FF;
-  --brian-accent-ink: #4DA3FF;
-  --brian-accent-soft: rgba(77, 163, 255, 0.2);
-  --brian-success: #30D158;
-  --brian-warning: #FFB340;
-  --brian-error: #FF6961;
-  --brian-line: #3A3A3C;
-  --brian-ink-2: #98989F;
-  --brian-tooltip-bg: rgba(58, 58, 60, 0.95);
-  --brian-accent-ring: rgba(77, 163, 255, 0.6);
-  --brian-graph-edge: #98989F;
-  --brian-graph-node-s: 64%;
-  --brian-graph-node-l: 60%;
-  --brian-graph-node-ring: #151517;
-  --brian-graph-label: #C7C7CC;
-  --brian-graph-stage-bg: #151517;
-  --brian-graph-stage-hi: rgba(77, 163, 255, 0.055);
-  --brian-graph-dot: rgba(255, 255, 255, 0.065);
+  --brian-blue: 217 139 112;           /* #d98b70 深色下提亮 coral */
+  --success-green: 111 199 131;
+  --warning-orange: 224 176 67;
+  --error-red: 214 106 106;
+  --brian-accent: #d98b70;
+  --brian-accent-ink: #e49a80;
+  --brian-accent-soft: rgba(217, 139, 112, 0.2);
+  --brian-success: #6fc783;
+  --brian-warning: #e0b043;
+  --brian-error: #d66a6a;
+  --brian-line: #3a3833;
+  --brian-ink-2: #a09d96;
+  --brian-tooltip-bg: rgba(31, 30, 27, 0.96);
+  --brian-accent-ring: rgba(217, 139, 112, 0.5);
+  --brian-graph-edge: #a09d96;
+  --brian-graph-node-s: 50%;
+  --brian-graph-node-l: 62%;
+  --brian-graph-node-ring: #181715;
+  --brian-graph-label: #d6cec0;
+  --brian-graph-stage-bg: #141312;
+  --brian-graph-stage-hi: rgba(217, 139, 112, 0.06);
+  --brian-graph-dot: rgba(250, 249, 245, 0.08);
 }
+
+/* ============================================================
+   Claude 主题作用域(ADR-015,设计源 design-md/claude/DESIGN.md,
+   supersede ADR-014 Linear):仅对话页 ChatView 根节点与对话弹层挂
+   .theme-chat。RGB 三元组变量供 tailwind chat 命名空间
+   (rgb(var(--chat-*) / <alpha-value>))与子树内全局样式取值;
+   浅色在 .theme-chat、深色在 :root.dark .theme-chat,随顶栏明暗开关切换。
+   ============================================================ */
+.theme-chat {
+  /* 浅色:Claude 暖米白画布 + 奶油表面阶梯 */
+  --chat-canvas: 250 249 245;          /* #faf9f5 canvas */
+  --chat-surface-1: 245 240 232;       /* #f5f0e8 surface-soft */
+  --chat-surface-2: 239 233 222;       /* #efe9de surface-card */
+  --chat-surface-3: 232 224 210;       /* #e8e0d2 surface-cream-strong */
+  --chat-hairline: 230 223 216;        /* #e6dfd8 hairline */
+  --chat-hairline-strong: 214 206 192; /* 派生:强描边 */
+  --chat-hairline-tertiary: 199 189 172;
+  --chat-ink: 20 20 19;                /* #141413 ink */
+  --chat-ink-muted: 61 61 58;          /* #3d3d3a body */
+  --chat-ink-subtle: 108 106 100;      /* #6c6a64 muted */
+  --chat-ink-tertiary: 142 139 130;    /* #8e8b82 muted-soft */
+  --chat-primary: 204 120 92;          /* #cc785c coral */
+  --chat-primary-hover: 169 88 62;     /* #a9583e primary-active */
+  --chat-on-primary: 255 255 255;
+  --chat-success: 93 184 114;          /* #5db872 */
+  --chat-warning: 212 160 23;          /* #d4a017 */
+  --chat-error: 198 69 69;             /* #c64545 */
+  /* 供子树内全局样式(SVG/滚动条/焦点环/markdown)取值的 --brian-* 切换 */
+  --brian-accent: #cc785c;
+  --brian-accent-ink: #a9583e;
+  --brian-accent-soft: rgba(204, 120, 92, 0.14);
+  --brian-success: #5db872;
+  --brian-warning: #d4a017;
+  --brian-error: #c64545;
+  --brian-line: #e6dfd8;
+  --brian-ink-2: #6c6a64;
+  --brian-tooltip-bg: rgba(24, 23, 21, 0.95);
+  --brian-accent-ring: rgba(204, 120, 92, 0.45);
+  --brian-graph-edge: #8e8b82;
+  --brian-graph-stage-bg: #faf9f5;
+  --brian-graph-stage-hi: rgba(204, 120, 92, 0.05);
+  --brian-graph-dot: rgba(20, 20, 19, 0.07);
+  color: rgb(var(--chat-ink));
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
+}
+:root.dark .theme-chat {
+  /* 深色:Claude 暖棕柔黑表面阶梯(源文件 surface-dark 系) */
+  --chat-canvas: 24 23 21;             /* #181715 surface-dark */
+  --chat-surface-1: 31 30 27;          /* #1f1e1b surface-dark-soft */
+  --chat-surface-2: 37 35 32;          /* #252320 surface-dark-elevated */
+  --chat-surface-3: 44 42 38;          /* 派生:再亮一档 */
+  --chat-hairline: 58 56 51;
+  --chat-hairline-strong: 74 71 63;
+  --chat-hairline-tertiary: 90 86 76;
+  --chat-ink: 250 249 245;             /* #faf9f5 on-dark */
+  --chat-ink-muted: 214 210 200;
+  --chat-ink-subtle: 160 157 150;      /* #a09d96 on-dark-soft */
+  --chat-ink-tertiary: 117 114 106;
+  --chat-primary: 217 139 112;         /* 派生:深色下提亮的 coral */
+  --chat-primary-hover: 228 154 128;
+  --chat-on-primary: 24 23 21;
+  --chat-success: 93 184 114;
+  --chat-warning: 224 176 67;
+  --chat-error: 214 106 106;
+  --brian-accent: #d98b70;
+  --brian-accent-ink: #e49a80;
+  --brian-accent-soft: rgba(217, 139, 112, 0.18);
+  --brian-success: #5db872;
+  --brian-warning: #e0b043;
+  --brian-error: #d66a6a;
+  --brian-line: #3a3833;
+  --brian-ink-2: #a09d96;
+  --brian-tooltip-bg: rgba(37, 35, 32, 0.96);
+  --brian-accent-ring: rgba(217, 139, 112, 0.5);
+  --brian-graph-edge: #a09d96;
+  --brian-graph-stage-bg: #181715;
+  --brian-graph-stage-hi: rgba(217, 139, 112, 0.06);
+  --brian-graph-dot: rgba(250, 249, 245, 0.08);
+}
+.theme-chat ::selection {
+  background: rgba(204, 120, 92, 0.3);
+}
+:root.dark .theme-chat ::selection {
+  background: rgba(217, 139, 112, 0.35);
+}
+.theme-chat ::-webkit-scrollbar-thumb { background: #d6cec0; }
+.theme-chat ::-webkit-scrollbar-thumb:hover { background: #c7bdae; }
+:root.dark .theme-chat ::-webkit-scrollbar-thumb { background: #4a473f; }
+:root.dark .theme-chat ::-webkit-scrollbar-thumb:hover { background: #5a564c; }
+/* markdown 正文:代码/表格底色随主题取 Claude 表面色 */
+.theme-chat .markdown-body code { background-color: rgba(20, 20, 19, 0.06); }
+.theme-chat .markdown-body pre { background-color: rgba(20, 20, 19, 0.05); }
+.theme-chat .markdown-body th, .theme-chat .markdown-body td { border-color: #e6dfd8; }
+:root.dark .theme-chat .markdown-body code { background-color: rgba(250, 249, 245, 0.09); }
+:root.dark .theme-chat .markdown-body pre { background-color: rgba(250, 249, 245, 0.07); }
+:root.dark .theme-chat .markdown-body th, :root.dark .theme-chat .markdown-body td { border-color: #3a3833; }
 
 @layer base {
   body {
-    @apply font-sans antialiased text-apple-gray-900 dark:text-apple-gray-50 bg-white dark:bg-apple-dark-bg;
+    /* Claude 画布:暖米白/暖棕深色,禁纯白(DESIGN.md "cream is the brand") */
+    @apply font-sans antialiased text-apple-gray-900 dark:text-apple-gray-50 bg-apple-gray-50 dark:bg-apple-dark-bg;
     margin: 0;
     padding: 0;
     /* 中文正文以系统 UI 字体渲染;数字统一等宽,统计/时间不跳宽 */
@@ -67,10 +174,10 @@
   }
 
   ::selection {
-    background: rgba(0, 122, 255, 0.22);
+    background: rgba(204, 120, 92, 0.24);
   }
   .dark ::selection {
-    background: rgba(77, 163, 255, 0.35);
+    background: rgba(217, 139, 112, 0.35);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -84,7 +191,7 @@
 
 @layer components {
   .glass-panel {
-    @apply bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md border border-apple-gray-200/50 dark:border-apple-gray-700/50;
+    @apply bg-apple-gray-50/85 dark:bg-apple-gray-800/85 backdrop-blur-md border border-apple-gray-200/60 dark:border-apple-gray-700/60;
   }
   .glass-input {
     @apply bg-apple-gray-50/80 dark:bg-apple-gray-800/80 backdrop-blur-sm border border-apple-gray-200 dark:border-apple-gray-700;
@@ -103,6 +210,11 @@
   }
   .block-card {
     @apply bg-white dark:bg-apple-gray-800 rounded-2xl shadow-sm border border-apple-gray-200 dark:border-apple-gray-700;
+  }
+  /* Claude 卡片(ADR-015):surface-1 面板 + 1px hairline + 12px 圆角,
+     层次靠表面阶梯与描边表达;明暗值经 chat 令牌变量切换 */
+  .chat-card {
+    @apply bg-chat-surface-1 border border-chat-hairline rounded-chat-lg;
   }
   /* 关系图谱舞台(Obsidian/Figma 式画布):主题感知底色 + 细点阵,
      把力导向图与页面动态粒子背景隔离开 */
@@ -134,8 +246,10 @@
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #C7C7CC; border-radius: 3px; }
-.dark ::-webkit-scrollbar-thumb { background: #48484A; }
+::-webkit-scrollbar-thumb { background: #d6cec0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #c7bdae; }
+.dark ::-webkit-scrollbar-thumb { background: #4a473f; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #5a564c; }
 
 /* ============================================================
    Markdown 正文排版（.markdown-body）：v-html 渲染的 Markdown 内容
@@ -208,8 +322,8 @@
 .doc-reading > :first-child { margin-top: 0; }
 
 .doc-annotation-mark {
-  background: rgba(0, 122, 255, 0.14);
-  border-bottom: 2px solid rgba(0, 122, 255, 0.55);
+  background: rgba(204, 120, 92, 0.14);
+  border-bottom: 2px solid rgba(204, 120, 92, 0.55);
   border-radius: 3px;
   padding: 0 1px;
   color: inherit;
@@ -225,12 +339,12 @@
   color: var(--brian-accent-ink);
 }
 .doc-annotation-mark.is-active {
-  background: rgba(255, 149, 0, 0.22);
-  border-bottom-color: #ff9500;
+  background: rgba(212, 160, 23, 0.2);
+  border-bottom-color: #d4a017;
 }
-.doc-annotation-mark.is-active::after { color: #ff9500; }
-.dark .doc-annotation-mark { background: rgba(0, 122, 255, 0.3); }
-.dark .doc-annotation-mark.is-active { background: rgba(255, 149, 0, 0.32); }
+.doc-annotation-mark.is-active::after { color: #d4a017; }
+.dark .doc-annotation-mark { background: rgba(217, 139, 112, 0.28); }
+.dark .doc-annotation-mark.is-active { background: rgba(224, 176, 67, 0.28); }
 
 /* ============================================================
    资料库阅读器 · 边注（marginalia）模式（≥1360px 启用）
@@ -263,11 +377,11 @@
   width: 16px;
   height: 2px;
   border-radius: 1px;
-  background: rgba(0, 122, 255, 0.35);
+  background: rgba(204, 120, 92, 0.35);
 }
-.doc-margin-note.is-active::before { background: #ff9500; }
-.dark .doc-margin-note::before { background: rgba(0, 122, 255, 0.5); }
-.dark .doc-margin-note.is-active::before { background: #ff9500; }
+.doc-margin-note.is-active::before { background: #d4a017; }
+.dark .doc-margin-note::before { background: rgba(217, 139, 112, 0.5); }
+.dark .doc-margin-note.is-active::before { background: #e0b043; }
 /* 边注回答区限高内滚：防止长回答把后续卡片推出很远 */
 .doc-margin-answer { overscroll-behavior: contain; }
 

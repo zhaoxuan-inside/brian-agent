@@ -4,8 +4,8 @@ export { Output } from './Output';
 export { Metrics } from './Metrics';
 export type { MetricsLogger } from './Metrics';
 export { Report } from './Report';
-export type { ReportChannel, ReportMeta, ReportEventStream } from './Report';
-export { BusinessEvent, businessEventMsgType, SseTransportEvent, TimelineItemKind } from './BusinessEvent';
+export type { ReportMeta, TaskEventGateway } from './Report';
+export { BusinessEvent, SseTransportEvent } from './BusinessEvent';
 export type { BusinessEventKind } from './BusinessEvent';
 export {
   InfoType,

@@ -120,12 +120,12 @@ export interface ConfigHistoryRecord {
   operator: string;
 }
 
-export const CONFIG_REGISTRY_TABLE = 'config_registry';
-export const CONFIG_LAYER_PRIVILEGE_TABLE = 'config_layer_privilege';
-export const CONFIG_MODULE_PRIVILEGE_TABLE = 'config_module_privilege';
-export const CONFIG_CONFIG_TABLE = 'config_config';
-export const CONFIG_SNAPSHOT_TABLE = 'config_snapshot';
-export const CONFIG_HISTORY_TABLE = 'config_history';
+export const CONFIG_REGISTRY_TABLE = 'config_registry_record';
+export const CONFIG_LAYER_PRIVILEGE_TABLE = 'config_layer_privilege_record';
+export const CONFIG_MODULE_PRIVILEGE_TABLE = 'config_module_privilege_record';
+export const CONFIG_CONFIG_TABLE = 'config_config_record';
+export const CONFIG_SNAPSHOT_TABLE = 'config_snapshot_record';
+export const CONFIG_HISTORY_TABLE = 'config_history_record';
 
 export const VALID_LAYERS = ['BASE', 'CORE', 'AGENT', 'ORCHESTRATION', 'APPLICATION'] as const;
 

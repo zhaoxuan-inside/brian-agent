@@ -95,5 +95,5 @@ export class ConfigWriterAgentOutput extends Output {
   config: WriterAgentConfigRecord | null = null;
 }
 
-export const WRITER_AGENT_CONFIG_TABLE = 'writer_agent_config';
-export const WRITER_AGENT_USER_PROFILE_TABLE = 'writer_agent_user_profile';
+export const WRITER_AGENT_CONFIG_TABLE = 'writer_agent_config_record';
+export const WRITER_AGENT_USER_PROFILE_TABLE = 'writer_agent_user_profile_record';

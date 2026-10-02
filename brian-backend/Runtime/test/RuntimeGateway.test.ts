@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { ExecuteEventProcessor } from '@brian-agent/base';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -15,9 +16,10 @@ import type { LLMAccess } from '@brian-agent/base';
 import { SoulSchemaInitializer } from '../../Base/SoulProvider/infrastructure/SoulSchemaInitializer';
 import { SessionAccess } from '../Session/access/SessionAccess';
 import { StreamAccess } from '../../Base/StreamProvider/access/StreamAccess';
-import { RegisterStreamInput, RegisterStreamOutput, PushEventToEndpointInput, PushEventToEndpointOutput } from '../../Base/StreamProvider/domain/types';
+import { RegisterStreamInput, RegisterStreamOutput } from '../../Base/StreamProvider/domain/types';
+import { ObservabilityAccess } from '../../Base/ObservabilityProvider';
 import { StreamContext } from '../../Base/StreamProvider/domain/types';
-import { Report } from '@brian-agent/base';
+import { Report, ExecuteEventProcessor } from '@brian-agent/base';
 import { SkillRuntimeAccess } from '../SkillRuntime/access/SkillRuntimeAccess';
 import { RegisterBuiltinSkillsInput, RegisterBuiltinSkillsOutput, SkillRuntimeContext } from '../SkillRuntime/domain/types';
 import { PromptsAccess } from '@brian-agent/base';
@@ -62,26 +64,26 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-gateway-test-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db'), autoCreateConfigTable: true });
     await relationDb.initialize();
+    Report.setExecuteEventSink(new ExecuteEventProcessor(relationDb));
     new SoulSchemaInitializer(relationDb).init();
-    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent (
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_record (
       id TEXT PRIMARY KEY, created INTEGER, updated INTEGER,
-      agent_id TEXT, agent_name TEXT, agent_type TEXT, strategy_id TEXT,
-      soul_id TEXT, skill_ids_json TEXT, mcp_ids_json TEXT, prompt_template_id TEXT,
-      task_signature TEXT, usage_count INTEGER DEFAULT 0,
-      eval_score INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, agent_purpose TEXT DEFAULT ''
+      title TEXT, type TEXT, strategy_id TEXT,
+      soul_id TEXT, skill_ids_json TEXT, mcp_ids_json TEXT, prompt_template_id TEXT, llm_id TEXT DEFAULT '',
+      task_signature TEXT,
+      eval_score INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, brief TEXT DEFAULT ''
     )`);
     sessionAccess = new SessionAccess(relationDb);
     await sessionAccess.initialize();
     streamAccess = new StreamAccess(relationDb);
 
-    Report.setEventStreamGateway({
-      pushToEndpoint: async (input) => {
-        await streamAccess.publishEvent(
-          Object.assign(new PushEventToEndpointInput(), input),
-          new PushEventToEndpointOutput(),
-          new StreamContext(),
-        );
+    const observability = new ObservabilityAccess(relationDb);
+    observability.setFrameWriter(() => true);
+    Report.setEventGateway({
+      emit: (meta, type, payload) => {
+        observability.emit(meta, type, payload);
       },
+      flush: () => observability.flush(),
     });
     const skillRuntimeAccess = new SkillRuntimeAccess(relationDb, {
 
@@ -104,11 +106,11 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const promptsAccessForSeed = new PromptsAccess(relationDb);
     await promptsAccessForSeed.initialize();
     const identityPromptId = '11111111-2222-3333-4444-555555555555';
-    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template_record (id, created, updated, title, brief, content, enable, is_system) VALUES (
       '${identityPromptId}', 1, 1, 'Brian 身份声明', '主代理身份声明',
       '# 身份\n\n你是 Brian，用户的智能个人助理。\n\n{{#if soul}}\n# 人格\n\n{{soul}}\n\n{{/if}}\n# 任务\n\n{{task_directive}}', 1, 1
     )`);
-    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template_record (id, created, updated, title, brief, content, enable, is_system) VALUES (
       '22222222-3333-4444-5555-666666666666', 1, 1, 'Agent 匹配评估', 'Agent 匹配评估提示词',
       '评估候选 Agent 与任务的匹配度，输出 JSON: {"score": 80, "reason": "匹配"}', 1, 1
     )`);
@@ -134,7 +136,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       output.soul = { soul_content: '你是 Brian 的通用人格：友好、简洁、以用户为中心。' };
       return true;
     });
-    relationDb.executeRaw(`INSERT INTO soul (id, created, updated, soul_content, soul_brief, soul_usage, enable) VALUES ('soul-general', 1, 1, '你是 Brian 的通用人格：友好、简洁、以用户为中心。', '通用人格', '', 1)`);
+    relationDb.executeRaw(`INSERT INTO soul_record (id, created, updated, content, brief, soul_usage, enable) VALUES ('soul-general', 1, 1, '你是 Brian 的通用人格：友好、简洁、以用户为中心。', '通用人格', '', 1)`);
 
     const soSoulContentMock = vi.fn(async (i: { soul_id: string }, output: { content: string }) => {
       if (i.soul_id === 'soul-general') {
@@ -220,8 +222,8 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
   });
 
   it('Soul 注入：当构建出的 Agent 绑定了 Soul 时，Soul 正确同步到 def 并注入到 system prompt 中', async () => {
-    relationDb.executeRaw(`INSERT OR REPLACE INTO agent (id, created, updated, agent_id, agent_name, agent_type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, usage_count, eval_score, enable, agent_purpose) VALUES (
-      'agent-math-row', 1, 1, 'agent-math', '数学专家', 'WORKER', 'strat-1', 'soul-general', '[]', '[]', 'sig-math', 0, 0, 1, '数学专家'
+    relationDb.executeRaw(`INSERT OR REPLACE INTO agent_record (id, created, updated, title, type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, eval_score, enable, brief) VALUES (
+      'agent-math', 1, 1, '数学专家', 'WORKER', 'strat-1', 'soul-general', '[]', '[]', 'sig-math', 0, 1, '数学专家'
     )`);
     buildAgentMock.mockImplementationOnce(async (_i: unknown, output: { agent_id: string }) => {
       output.agent_id = 'agent-math';
@@ -258,7 +260,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await gateway.waitRun(wait, out, new RunGatewayContext());
     expect(out.status).toBe('finished');
 
-    const runtimeSessionId = String(relationDb.queryRaw("SELECT id FROM runtime_session WHERE session_key='sess-a'")[0].id);
+    const runtimeSessionId = String(relationDb.queryRaw("SELECT id FROM runtime_session_record WHERE session_key='sess-a'")[0].id);
     const so = new SoMessagesInput();
     so.session_id = runtimeSessionId;
     const soOut = new SoMessagesOutput();
@@ -281,7 +283,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await new Promise((r) => setTimeout(r, 120));
 
     const rows = relationDb.queryRaw<{ event_type: string }>(
-      'SELECT "event_type" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
+      'SELECT "event_type" FROM "task_event_record" WHERE "session_id" = ? ORDER BY "seq" ASC',
       ['sess-a'],
     );
     const types = (rows ?? []).map((r) => r.event_type);
@@ -313,7 +315,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(out.status).toBe('finished');
 
     const rows = relationDb.queryRaw<{ id: string; status: string }>(
-      'SELECT "id", "status" FROM "runtime_run" ORDER BY "created" ASC',
+      'SELECT "id", "status" FROM "runtime_run_record" ORDER BY "created" ASC',
     );
     const queuedRow = rows.find((r) => r.id === queued.runId);
     expect(queuedRow).toBeTruthy();
@@ -361,14 +363,14 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await new Promise((r) => setTimeout(r, 60));
 
     const defRows = relationDb.queryRaw<{ status: string }>(
-      `SELECT "status" FROM "runtime_agent_def" WHERE "task_signature" LIKE '%天气怎么样%'`,
+      `SELECT "status" FROM "runtime_agent_def_record" WHERE "task_signature" LIKE '%天气怎么样%'`,
     );
     expect(defRows.length).toBeGreaterThan(0);
     expect(defRows.every((r) => r.status === 'disabled')).toBe(true);
 
     await new Promise((r) => setTimeout(r, 120));
     const events = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
-      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = ?',
+      'SELECT "event_type", "payload_json" FROM "task_event_record" WHERE "session_id" = ? AND "event_type" = ?',
       ['sess-a', 'agent.disbanded'],
     );
     expect(events?.length).toBeGreaterThan(0);
@@ -476,9 +478,11 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
       }),
     };
     const mockWriter = {
-      execWrite: vi.fn(async (_i: any, o: { response?: string; response_format?: string }) => {
+      execWrite: vi.fn(async (_i: any, o: { response?: string; response_format?: string }, _c: unknown, _m?: unknown, report?: { emit: (type: string, payload: unknown) => void }) => {
         writeCalled = true;
-        o.response = '## 美化标题\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n这是排版后的内容。';
+        const final = '## 美化标题\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n这是排版后的内容。';
+        report?.emit('reply.delta', { delta: final, replace: true });
+        o.response = final;
         o.response_format = 'MARKDOWN';
         return true;
       }),
@@ -532,7 +536,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(mockEvaluator.evalWorkAgent).toHaveBeenCalled();
 
     const rows = relationDb.queryRaw<{ event_type: string; payload_json: string }>(
-      'SELECT "event_type", "payload_json" FROM "stream_event" WHERE "session_key" = ? ORDER BY "seq" ASC',
+      'SELECT "event_type", "payload_json" FROM "task_event_record" WHERE "session_id" = ? ORDER BY "seq" ASC',
       ['sess-refine'],
     );
     const types = (rows ?? []).map((r) => r.event_type);
@@ -594,7 +598,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     const row = relationDb.queryRaw<{ payload_json: string }>(
-      `SELECT payload_json FROM stream_event WHERE session_key = ? AND event_type = 'thought.selected' ORDER BY seq DESC LIMIT 1`,
+      `SELECT payload_json FROM task_event_record WHERE session_id = ? AND event_type = 'thought.selected' ORDER BY seq DESC LIMIT 1`,
       [sessionKey2],
     );
     const thought = row?.[0]?.payload_json ?? '';
@@ -698,38 +702,37 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     const subRows = relationDb.queryRaw<{ id: string }>(
-      `SELECT "id" FROM "runtime_run" WHERE "session_key" = ? AND "lane" = 'subagent'`,
+      `SELECT "id" FROM "runtime_run_record" WHERE "session_key" = ? AND "lane" = 'subagent'`,
       [sessionKey],
     );
     expect(subRows?.length).toBe(1);
     const subRunId = String(subRows![0].id);
-    const receiptParts = relationDb.queryRaw<{ output_json: string }>(
-      `SELECT "output_json" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" = 'skill_builtin-delegate'`,
+    const receiptParts = relationDb.queryRaw<{ content: string; execute_id: string }>(
+      `SELECT "content", "execute_id" FROM "runtime_message_part_record" WHERE "run_id" = ? AND "tool_id" = 'skill_builtin-delegate'`,
       [submitOut.run_id],
     );
     expect(receiptParts?.length).toBe(1);
-    expect(receiptParts![0].output_json).toContain(`run_id=${subRunId}`);
-
-    expect(receiptParts![0].output_json).toContain('磁盘可用 128GB');
+    expect(receiptParts![0].content).toContain(`run_id=${subRunId}`);
+    expect(receiptParts![0].content).toContain('磁盘可用 128GB');
 
     const mainSessionRow = relationDb.queryRaw<{ id: string }>(
-      `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
+      `SELECT "id" FROM "runtime_session_record" WHERE "session_key" = ?`,
       [sessionKey],
     );
     const mainSessionId = String(mainSessionRow![0].id);
     const mainUserRows = relationDb.queryRaw<{ role: string }>(
-      `SELECT "role" FROM "runtime_message" WHERE "session_id" = ? AND "role" = 'user'`,
+      `SELECT "role" FROM "runtime_message_record" WHERE "session_id" = ? AND "role" = 'user'`,
       [mainSessionId],
     );
     expect(mainUserRows?.length).toBe(1);
 
     const subSessionRow = relationDb.queryRaw<{ id: string }>(
-      `SELECT "id" FROM "runtime_session" WHERE "session_key" = ?`,
+      `SELECT "id" FROM "runtime_session_record" WHERE "session_key" = ?`,
       [`${sessionKey}::sub:${subRunId}`],
     );
     expect(subSessionRow?.length).toBe(1);
     const subMessages = relationDb.queryRaw<{ role: string; content: string }>(
-      `SELECT "role", "content" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq"`,
+      `SELECT "role", "content" FROM "runtime_message_record" WHERE "session_id" = ? ORDER BY "seq"`,
       [String(subSessionRow![0].id)],
     );
     expect(subMessages?.filter((m) => m.role === 'user').length).toBe(1);
@@ -744,13 +747,13 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
 
   it('合并注入：绑定 Skill 的 run 工具清单含 skill_<id>（一等工具）且不再注入 skill_exec', async () => {
 
-    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, name TEXT, skill_brief TEXT, skill_md TEXT, scripts TEXT, enable INTEGER)`);
-    relationDb.executeRaw(`INSERT OR REPLACE INTO skill (id, created, updated, name, skill_brief, skill_md, scripts, enable) VALUES
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS skill_record (id TEXT PRIMARY KEY, created INTEGER, updated INTEGER, title TEXT, brief TEXT, content TEXT, scripts TEXT, enable INTEGER)`);
+    relationDb.executeRaw(`INSERT OR REPLACE INTO skill_record (id, created, updated, title, brief, content, scripts, enable) VALUES
       ('11111111-2222-3333-4444-555555555555', 1, 1, '磁盘巡检', '查询磁盘可用空间并汇总', '# 磁盘巡检\n\n当用户询问磁盘空间时使用', '', 1)`);
-    relationDb.executeRaw(`INSERT OR REPLACE INTO agent (id, created, updated, agent_id, agent_name, agent_type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, usage_count, eval_score, enable, agent_purpose) VALUES (
-      'agent-disk-row', 1, 1, 'agent-disk', '磁盘巡检员', 'WORKER', 'strat-1', '', '["11111111-2222-3333-4444-555555555555"]', '[]', 'sig-disk', 0, 0, 1, '磁盘巡检'
+    relationDb.executeRaw(`INSERT OR REPLACE INTO agent_record (id, created, updated, title, type, strategy_id, soul_id, skill_ids_json, mcp_ids_json, task_signature, eval_score, enable, brief) VALUES (
+      'agent-disk', 1, 1, '磁盘巡检员', 'WORKER', 'strat-1', '', '["11111111-2222-3333-4444-555555555555"]', '[]', 'sig-disk', 0, 1, '磁盘巡检'
     )`);
-    relationDb.executeRaw(`INSERT OR REPLACE INTO runtime_agent_def (id, created, updated, name, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
+    relationDb.executeRaw(`INSERT OR REPLACE INTO runtime_agent_def_record (id, created, updated, title, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
       ('def-disk', 1, 1, '磁盘巡检员', 'primary', 'agent-disk', '[general] 帮我巡检磁盘空间', '', '', '', '', NULL, 60, 'active', '磁盘巡检')`);
 
     execLLMEventsMock.mockImplementationOnce(async (_input: ExecLLMEventsInput, output: ExecLLMEventsOutput) => {
@@ -778,13 +781,17 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     const skillSpec = (llmInput.tools ?? []).find((t) => t.tool_id === 'skill_11111111-2222-3333-4444-555555555555');
     expect(skillSpec?.description).toContain('磁盘巡检');
 
-    const partRows = relationDb.queryRaw<{ tool_id: string; output_json: string; status: string }>(
-      `SELECT "tool_id", "output_json", "status" FROM "runtime_message_part" WHERE "run_id" = ? AND "tool_id" LIKE 'skill_%'`,
+    const partRows = relationDb.queryRaw<{ tool_id: string; execute_id: string; status: string }>(
+      `SELECT "tool_id", "execute_id", "status" FROM "runtime_message_part_record" WHERE "run_id" = ? AND "tool_id" LIKE 'skill_%'`,
       [merged.runId],
     );
     expect(partRows?.length).toBe(1);
     expect(partRows![0].status).toBe('completed');
-    expect(partRows![0].output_json).toContain('skill-exec:11111111-2222-3333-4444-555555555555');
+    expect(partRows![0].execute_id).toBeTruthy();
+    const execRow = relationDb.queryRaw<{ output: string }>(
+      'SELECT "output" FROM "execute_record" WHERE "id" = ?', [partRows![0].execute_id],
+    );
+    expect(String(execRow[0]?.output ?? '')).toContain('skill-exec:11111111-2222-3333-4444-555555555555');
   });
 
   it('subagent run 不执行评估/写作（子 run 结算即收敛，收口在父 run 的写作 Agent）', async () => {
@@ -816,7 +823,7 @@ describe('RunGateway + AgentDef（线上问题修复语义）', () => {
     expect(writeCalls).toBe(0);
 
     const mainRows = relationDb.queryRaw<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM "runtime_message" WHERE "run_id" = ? AND "session_id" IN (SELECT "id" FROM "runtime_session" WHERE "session_key" = 'sess-subagent-no-writer')`,
+      `SELECT COUNT(*) AS n FROM "runtime_message_record" WHERE "run_id" = ? AND "session_id" IN (SELECT "id" FROM "runtime_session_record" WHERE "session_key" = 'sess-subagent-no-writer')`,
       [subOut.run_id],
     );
     expect(Number(mainRows![0].n)).toBe(0);

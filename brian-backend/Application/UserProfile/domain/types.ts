@@ -28,6 +28,9 @@ export class SaveUserPreferenceOutput extends Output {}
 export class GetProfileHistoryInput extends Input { session_id?: string; limit?: number; }
 export class GetProfileHistoryOutput extends Output { history: Array<Record<string, unknown>> = []; }
 
+export class GetAllProfilesInput extends Input { limit?: number; }
+export class GetAllProfilesOutput extends Output { profiles: Array<Record<string, unknown>> = []; }
+
 export class GetProfileByVersionInput extends Input { version!: number; session_id?: string; }
 export class GetProfileByVersionOutput extends Output { profile: Record<string, unknown> = {}; }
 
@@ -37,7 +40,8 @@ export class ResetUserProfileOutput extends Output { reset_count = 0; }
 export class ConfigUserProfileInput extends Input { auto_generate_interval_ms?: number; profile_analysis_prompt_template_id?: string; max_conversation_sample_count?: number; profile_retention_versions?: number; min_confidence_threshold?: number; }
 export class ConfigUserProfileOutput extends Output { config: Record<string, unknown> = {}; }
 
-export const USER_PROFILE_DIRECTION_TABLE = 'user_profile_direction';
+export const USER_PROFILE_DIRECTION_TABLE = 'user_profile_direction_record';
 export const USER_PROFILE_RECORD_TABLE = 'user_profile_record';
-export const USER_PROFILE_DIMENSION_DATA_TABLE = 'user_profile_dimension_data';
-export const USER_PROFILE_CONFIG_TABLE = 'user_profile_config';
+export const USER_PROFILE_DIM_TABLE = 'user_profile_dim_record';
+export const USER_PROFILE_DIM_EVIDENCE_TABLE = 'user_profile_dim_evidence_record';
+export const USER_PROFILE_CONFIG_TABLE = 'user_profile_config_record';

@@ -28,6 +28,18 @@ export interface LLMEventsRunResult {
   last_frame: unknown;
 
   emitted_events: boolean;
+
+  
+
+  connect_ms: number;
+
+  
+
+  ttft_ms: number;
+
+  
+
+  stream_ms: number;
 }
 
 export interface LLMEventsRunnerOptions {
@@ -53,6 +65,12 @@ export class LLMEventsRunner {
   private emittedCount = 0;
   private resetIdle: () => void = () => {};
 
+  private startedAt = 0;
+
+  private connectedAt = 0;
+
+  private firstEventAt = 0;
+
   constructor(options: LLMEventsRunnerOptions) {
     this.opts = options;
     this.aborted = new Promise<never>((_, reject) => {
@@ -72,8 +90,10 @@ export class LLMEventsRunner {
 
   async run(): Promise<LLMEventsRunResult> {
     const cleanup = this.setupAbortWiring();
+    this.startedAt = Date.now();
     try {
       const res = await this.launchRequest();
+      this.connectedAt = Date.now();
       const reader = res.body?.getReader();
       if (!reader) {
         throw new ProviderError('LLM 流式响应无 body', 'CONNECT_ERROR');
@@ -195,8 +215,20 @@ export class LLMEventsRunner {
   }
 
   private emitToSubscriber(event: LLMEvent): void {
+    if (!this.firstEventAt) {
+      this.firstEventAt = Date.now();
+    }
     this.emittedCount += 1;
     this.opts.on_event?.(event);
+  }
+
+  private phaseTimings(): { connect_ms: number; ttft_ms: number; stream_ms: number } {
+    const end = Date.now();
+    return {
+      connect_ms: this.connectedAt ? Math.max(0, this.connectedAt - this.startedAt) : 0,
+      ttft_ms: this.firstEventAt ? Math.max(0, this.firstEventAt - this.startedAt) : 0,
+      stream_ms: this.firstEventAt ? Math.max(0, end - this.firstEventAt) : 0,
+    };
   }
 
   private buildResult(
@@ -208,6 +240,7 @@ export class LLMEventsRunner {
       LLMEvent,
       { type: 'finish' }
     >;
+    const phases = this.phaseTimings();
     this.emitToSubscriber(finish);
     return {
       text: this.parser.text,
@@ -218,6 +251,7 @@ export class LLMEventsRunner {
       output_tokens: finish.usage.output_tokens,
       last_frame: lastFrame,
       emitted_events: this.emittedCount > 0,
+      ...phases,
     };
   }
 

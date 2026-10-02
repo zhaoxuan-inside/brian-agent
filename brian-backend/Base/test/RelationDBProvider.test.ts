@@ -1272,7 +1272,7 @@ describe('RelationDBProvider', () => {
         await access.enableDB({ enable: false } as EnableDBInput, new EnableDBOutput(), new DBContext());
 
         const rows = access.queryRaw(
-          'SELECT "config_value" FROM "relationdb_config" WHERE "config_key" = ?',
+          'SELECT "config_value" FROM "relationdb_config_record" WHERE "config_key" = ?',
           ['enabled'],
         );
         expect(rows[0].config_value).toBe('false');
@@ -1465,7 +1465,7 @@ describe('RelationDBProvider', () => {
 
       it('queryRaw should return results', () => {
         const rows = access.queryRaw(
-          'SELECT "config_key", "config_value" FROM "relationdb_config"',
+          'SELECT "config_key", "config_value" FROM "relationdb_config_record"',
         );
         expect(rows.length).toBeGreaterThanOrEqual(1);
         expect(rows[0]).toHaveProperty('config_key');
@@ -1474,7 +1474,7 @@ describe('RelationDBProvider', () => {
 
       it('queryRaw with params', () => {
         const rows = access.queryRaw(
-          'SELECT * FROM "relationdb_config" WHERE "config_key" = ?',
+          'SELECT * FROM "relationdb_config_record" WHERE "config_key" = ?',
           ['enabled'],
         );
         expect(rows.length).toBe(1);

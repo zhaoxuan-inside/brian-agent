@@ -1,11 +1,23 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useSessionStore } from '../src/stores/session'
 import { useChatUiStore } from '../src/stores/chatUi'
 import { createChatStreamEventHandler } from '../src/composables/chatStreamEvents'
-import type { ThinkingBlock } from '../src/api/types'
+import { makeTaskEvent, type TaskEvent } from '@brian-agent/shared'
 
-describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
+/** ADR-013：SSE 结构化帧（data=完整 TaskEvent）→ reducer；本层只做 UI 副作用 */
+
+let seq = 0
+function evOf(type: string, payload: Record<string, unknown>): Record<string, unknown> {
+  seq += 1
+  const ev: TaskEvent = makeTaskEvent({
+    seq, ts: Date.now(), session_id: 'sess-test', run_id: 'run-test',
+    work_id: 'run-test', type, payload,
+  })
+  return { msg_id: `m-${seq}`, event: type, data: ev as unknown as Record<string, unknown> }
+}
+
+describe('chatStreamEvents - 观测总线（ADR-013）', () => {
   beforeEach(() => {
     if (typeof globalThis.localStorage === 'undefined') {
       const store: Record<string, string> = {}
@@ -18,226 +30,120 @@ describe('chatStreamEvents - 思考过程流式事件与时间线', () => {
         length: 0,
       } as Storage
     }
+    vi.restoreAllMocks()
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0)) as unknown as typeof requestAnimationFrame
+    globalThis.cancelAnimationFrame = ((id: number) => clearTimeout(id as unknown as ReturnType<typeof setTimeout>)) as unknown as typeof cancelAnimationFrame
   })
 
-  it('应当正确复用思考块，避免意图识别与选择阶段创建多个割裂的执行Agent块', () => {
+  it('业务事件统一喂 reducer：思考流累积、时间线推进、弹窗自动打开', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-123'
+    const botMsgId = 'msg-bot-1'
 
-    
-    handler.handle(
-      {
-        event: 'intent.analyzed',
-        score: 100,
-        adopted: true,
-        reason: '用户想出去溜达',
-        agent_id: 'w2-general-12345678',
-      },
-      botMsgId,
-    )
+    handler.handle(evOf('run.accepted', { run_id: 'run-test' }), botMsgId)
+    expect(ui.thinkingModalVisible).toBe(true)
+    expect(ui.observation?.phase).toBe('accepted')
 
-    expect(session.blocks.length).toBe(1)
-    const firstBlock = session.blocks[0] as ThinkingBlock
-    expect(firstBlock.type).toBe('ThinkingChain')
-    expect(firstBlock.content).toContain('[意图分析] 打分 100（采纳）')
+    handler.handle(evOf('intent.analyzed', { score: 100, adopted: true, agent_name: '天气专家' }), botMsgId)
+    handler.handle(evOf('agent.selected', { agent_id: 'a-1', agent_name: '天气专家', matched_by: 'llm' }), botMsgId)
+    handler.handle(evOf('think.delta', { delta: '第一段思考。' }), botMsgId)
+    handler.handle(evOf('think.delta', { delta: '第二段思考。' }), botMsgId)
 
-    
-    handler.handle(
-      {
-        event: 'agent.selected',
-        agent_name: 'w2-general-专业助手-fa0f8c2e',
-        matched_by: 'llm',
-      },
-      botMsgId,
-    )
-
-    
-    expect(session.blocks.length).toBe(1)
-    const updatedBlock = session.blocks[0] as ThinkingBlock
-    expect(updatedBlock.agentInfo?.name).toBe('w2-general-专业助手-fa0f8c2e')
-    expect(updatedBlock.content).toContain('[Agent 匹配]')
-
-    
-    handler.handle(
-      {
-        event: 'think.delta',
-        delta: '正在分析散步路线与场所...',
-      },
-      botMsgId,
-    )
-
-    expect(session.blocks.length).toBe(1)
-    expect(session.blocks[0].content).toContain('正在分析散步路线与场所...')
+    expect(ui.observation?.summary.agentName).toBe('天气专家')
+    expect(ui.observation?.thinking.rounds[0]?.text).toBe('第一段思考。第二段思考。')
+    const titles = ui.observation!.timeline.map((t) => t.title)
+    expect(titles.some((t) => t.includes('意图分析'))).toBe(true)
+    expect(titles.some((t) => t.includes('选中 Agent：天气专家'))).toBe(true)
   })
 
-  it('实时流式期间应当保持单 ThinkingBlock，且文字增量能正确累加', () => {
+  it('seq 幂等：历史重放与实时叠加合流不产生重复', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-456'
+    const botMsgId = 'msg-bot-2'
 
-    handler.handle({ event: 'intent.analyzed', score: 95, adopted: true }, botMsgId)
-    handler.handle({ event: 'agent.selected', agent_name: '研究助手' }, botMsgId)
-    handler.handle({ event: 'think.delta', delta: '第一段思考。' }, botMsgId)
-    handler.handle({ event: 'think.delta', delta: '第二段思考。' }, botMsgId)
+    handler.handle(evOf('run.accepted', { run_id: 'run-test' }), botMsgId)
+    const duplicated = evOf('agent.selected', { agent_name: 'A' })
+    handler.handle(duplicated, botMsgId)
+    handler.handle(duplicated, botMsgId)
 
-    expect(session.blocks.length).toBe(1)
-    const block = session.blocks[0] as ThinkingBlock
-    expect(block.agentInfo?.name).toBe('研究助手')
-    expect(block.content).toContain('第一段思考。第二段思考。')
+    expect(ui.observation!.timeline.filter((t) => t.type === 'agent.selected')).toHaveLength(1)
   })
 
-  it('实时流式时间线应当严格按照受理→意图→选择→装配→上下文→深度思考顺序推进', () => {
+  it('reply.delta 流式写入正文 block；replace 标记重置正文（Writer 接管）', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-789'
+    const botMsgId = 'msg-bot-3'
 
-    
-    handler.handle({ event: 'run.accepted', run_id: 'run-test-123' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(1)
-    expect(ui.liveTimeline[0].title).toBe('开始受理请求')
+    handler.handle(evOf('reply.delta', { delta: '原始草稿' }), botMsgId)
+    handler.handle(evOf('reply.delta', { delta: '排版后正文', replace: true }), botMsgId)
+    handler.handle(evOf('reply.delta', { delta: '。' }), botMsgId)
 
-    
-    handler.handle({ event: 'intent.analyzed', score: 100, adopted: true, reason: '用户想散步' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(2)
-    expect(ui.liveTimeline[1].title).toContain('需求确认 / 意图分析')
-
-    
-    handler.handle({ event: 'agent.selected', agent_name: '散步推荐专家', matched_by: 'llm' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(3)
-    expect(ui.liveTimeline[2].title).toBe('选中 Agent：散步推荐专家')
-
-    
-    handler.handle({ event: 'agent.components', soul_id: 'soul-123', llm_id: 'gpt-4' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(4)
-    expect(ui.liveTimeline[3].title).toBe('组件装配完成')
-
-    
-    handler.handle({
-      event: 'context.built',
-      round: 1,
-      message_count: 1,
-      system: '你是 Brian，一个专业助手。',
-      messages: [{ role: 'user', content: '推荐去哪散步？' }],
-    }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(5)
-    expect(ui.liveTimeline[4].title).toBe('构建上下文：第 1 轮 · 1 条消息')
-    
-    
-    expect(ui.liveTimeline[4].elapsedMs).toBeUndefined()
-    handler.handle({
-      event: 'context.built',
-      round: 2,
-      message_count: 2,
-      system: '你是 Brian，一个专业助手。',
-      elapsed_ms: 23,
-      messages: [{ role: 'user', content: '推荐去哪散步？' }, { role: 'assistant', content: '去公园' }],
-    }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(6)
-    expect(ui.liveTimeline[5].elapsedMs).toBe(23)
-    
-    
-    expect(ui.liveContextRounds.length).toBe(2)
-    expect(ui.liveContextRounds[0]).toMatchObject({
-      round: 1,
-      targetKey: 'ctx-1',
-      messageCount: 1,
-    })
-    expect(ui.liveContextRounds[0].messages[0]).toMatchObject({ role: 'user', content: '推荐去哪散步？' })
-
-    
-    handler.handle({ event: 'think.delta', delta: '推荐去奥林匹克森林公园散步。' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(7)
-    expect(ui.liveTimeline[6].title).toContain('Agent 深度推理思考')
-
-    
-    handler.handle({ event: 'run.finished', stop_reason: 'stop' }, botMsgId)
-    expect(ui.liveTimeline.length).toBe(8)
-    expect(ui.liveTimeline[7].title).toBe('执行完成')
+    expect(session.blocks).toHaveLength(1)
+    expect(session.blocks[0].type).toBe('TextParagraph')
+    expect(session.blocks[0].content).toBe('排版后正文。')
   })
 
-  it('intent.analyzed 命中 Agent 应展示名称、tooltip 携带原始 ID', () => {
+  it('permission.asked 生成待授权消息卡，answered 后落定状态', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-intent'
+    const botMsgId = 'msg-bot-4'
 
-    handler.handle({
-      event: 'intent.analyzed',
-      score: 100,
-      adopted: true,
-      reason: '任务明确询问天气，候选Agent中该Agent专门负责天气领域。',
-      agent_id: 'eb154464-c43a-4c22-b8f9-b7ffe74320b7',
-      agent_name: '天气查询专家',
-    }, botMsgId)
+    handler.handle(evOf('permission.asked', { permission_id: 'p-1', tool_id: 'skill_exec', input: { a: 1 } }), botMsgId)
+    const permMsg = session.messages.find((m) => m.id === 'perm-p-1')
+    expect(permMsg?.permission?.status).toBe('pending')
 
-    const item = ui.liveTimeline[ui.liveTimeline.length - 1]
-    expect(item.title).toContain('需求确认 / 意图分析')
-    
-    const block = session.blocks[0] as ThinkingBlock
-    expect(block.content).toContain('→ 天气查询专家')
-    expect(block.content).not.toContain('eb154464')
-    expect(item.tooltip).toContain('eb154464-c43a-4c22-b8f9-b7ffe74320b7')
+    handler.handle(evOf('permission.answered', { permission_id: 'p-1', approved: true }), botMsgId)
+    expect(session.messages.find((m) => m.id === 'perm-p-1')?.permission?.status).toBe('allowed')
   })
 
-  it('agent.components 时间线应展示组件名称（悬浮 tooltip 携带原始 ID）', () => {
+  it('run.finished 收尾：finalize blocks + 反馈卡；done 扁平帧幂等不重复', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-abc'
+    const botMsgId = 'msg-bot-5'
 
-    handler.handle({
-      event: 'agent.components',
-      soul_id: 'soul-123',
-      soul_name: '专业助手人格',
-      prompt_template_id: 'prompt-456',
-      prompt_name: 'Brian 身份模板',
-      llm_id: 'llm-789',
-      llm_name: 'doubao-pro',
-      skills: [{ id: 'skill-a', brief: '天气查询' }],
-      mcps: [{ id: 'mcp-a', brief: '股票行情' }],
-    }, botMsgId)
+    handler.handle(evOf('reply.delta', { delta: '正文' }), botMsgId)
+    handler.handle(evOf('run.finished', { stop_reason: 'stop' }), botMsgId)
+    handler.handle({ event: 'session.done', run_id: 'run-test', trace_id: 't-1', paused: false }, botMsgId)
 
-    const item = ui.liveTimeline[ui.liveTimeline.length - 1]
-    expect(item.title).toBe('组件装配完成')
-    expect(item.detail).toContain('Soul 专业助手人格')
-    expect(item.detail).toContain('LLM doubao-pro')
-    expect(item.detail).toContain('Prompt Brian 身份模板')
-    expect(item.detail).not.toContain('Soul soul-123')
-    expect(item.detail).not.toContain('LLM llm-789')
-    
-    expect(item.tooltip).toContain('soul-123')
-    expect(item.tooltip).toContain('llm-789')
-    expect(item.tooltip).toContain('skill-a')
+    expect(session.blocks.some((b) => b.type === 'Feedback')).toBe(true)
+    expect(ui.observation?.phase).toBe('settled')
   })
 
-  it('context.built 多轮上下文轮次应按 round 去重累积，reset 清空', () => {
+  it('error.occurred 扁平帧生成错误块并关闭运行态', () => {
     setActivePinia(createPinia())
     const session = useSessionStore()
     const ui = useChatUiStore()
     const handler = createChatStreamEventHandler(session, ui)
-    const botMsgId = 'msg-bot-rounds'
+    const botMsgId = 'msg-bot-6'
 
-    handler.handle({ event: 'context.built', round: 1, message_count: 2, messages: [{ role: 'user', content: '问A' }] }, botMsgId)
-    handler.handle({ event: 'context.built', round: 2, message_count: 3, messages: [{ role: 'assistant', content: '答B' }] }, botMsgId)
-    
-    handler.handle({ event: 'context.built', round: 1, message_count: 4, messages: [{ role: 'user', content: '问A（更新）' }] }, botMsgId)
+    handler.handle({ event: 'error.occurred', error_message: '模型超时', error_code: 'TIMEOUT' }, botMsgId)
+    const errBlock = session.blocks.find((b) => b.type === 'ErrorFallback')
+    expect(errBlock).toBeTruthy()
+    expect((errBlock as unknown as { message: string }).message).toBe('模型超时')
+  })
 
-    expect(ui.liveContextRounds.length).toBe(2)
-    expect(ui.liveContextRounds.map((r) => r.round)).toEqual([1, 2])
-    expect(ui.liveContextRounds[0].messageCount).toBe(4)
-    expect(ui.liveContextRounds[0].messages[0].content).toBe('问A（更新）')
-    expect(ui.liveContextRounds[1].targetKey).toBe('ctx-2')
+  it('reset() 清空 observation 与正文块游标', () => {
+    setActivePinia(createPinia())
+    const session = useSessionStore()
+    const ui = useChatUiStore()
+    const handler = createChatStreamEventHandler(session, ui)
+    const botMsgId = 'msg-bot-7'
 
+    handler.handle(evOf('reply.delta', { delta: 'x' }), botMsgId)
     handler.reset()
-    expect(ui.liveContextRounds.length).toBe(0)
+    expect(ui.observation).toBeNull()
+
+    handler.handle(evOf('reply.delta', { delta: '新正文' }), botMsgId)
+    expect(session.blocks.filter((b) => b.type === 'TextParagraph')).toHaveLength(1)
   })
 })

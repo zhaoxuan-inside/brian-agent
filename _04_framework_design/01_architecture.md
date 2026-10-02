@@ -1,6 +1,6 @@
 # 01 架构与模块职责(_04_framework_design)
 
-> 状态:reviewed　更新:2026-09-26
+> 状态:reviewed　更新:2026-09-30(chg-045 ADR-013)
 
 ## 1. 分层架构图
 
@@ -39,7 +39,7 @@ graph TB
     BASE --> COMP
 ```
 
-依赖方向(自上而下单向,禁止反向/循环):`application → runtime → agent → core → base`;frontend → application(HTTP 契约)。共用件:shared(Zod 契约)、各层 `shared/`(Base/base 类型与 AOP、Core 匹配引擎共用件、Runtime IterationBudget、Agent AgentKit)。
+依赖方向(自上而下单向,禁止反向/循环):`application → runtime → agent → core → base`;frontend → application(HTTP 契约)。共用件:shared(Zod 契约 + TaskEvent/RunObservation 观测契约与唯一 reducer,ADR-013)、各层 `shared/`(Base/base 类型与 AOP、Core 匹配引擎共用件、Runtime IterationBudget、Agent AgentKit)。
 
 ## 2. 模块职责表
 
@@ -60,7 +60,7 @@ graph TB
 | Core/InfoCore | domain | 记忆核心:save/vector/tag/summary、共现图与引文图 | US-1/5 | /api/memory/*(9) |
 | Core/LLMCore·SkillCore·MCPCore·SoulCore | domain | 匹配/配额/老化/优化 | US-1/4 | 内部接口 |
 | Core/MQCore·CDTCore | domain | 队列 worker、浏览器动作编排 | US-4 | /api/cdt/*(17) |
-| Base/*(18 Provider) | infra | 存储三库/LLM 策略族/MCP/沙箱/Soul/提示词/工具原语/CDT/MQ/Stream/Chunk/Cron/Bookmark/Log/Feedback | 全部 | /api/vectordb、/api/bookmark、/api/tool/*、/api/cron、/api/monitor、/api/analytics、/api/llm/token-usage、/api/feedback、/api/prompts |
+| Base/*(19 Provider) | infra | 存储三库/LLM 策略族/MCP/沙箱/Soul/提示词/工具原语/CDT/MQ/Observability(事件总线)/Stream(纯传输)/Chunk/Cron/Bookmark/Log/Feedback | 全部 | /api/vectordb、/api/bookmark、/api/tool/*、/api/cron、/api/monitor、/api/analytics、/api/llm/token-usage、/api/feedback、/api/prompts |
 | shared(workspace) | common | Zod schema + TS 类型契约 | — | npm 包 |
 | brian-frontend | UI | 全部页面与交互 | 全部 | 页面路由(见 _06 路由契约) |
 

@@ -25,7 +25,7 @@ function mapStrategy(row: Record<string, unknown>): AgentStrategyRecord {
     id: String(row.id),
     created: Number(row.created),
     updated: Number(row.updated),
-    strategy_id: String(row.strategy_id),
+    strategy_id: String(row.id),
     strategy_label: String(row.strategy_label),
     suitable_complexity_min: Number(row.suitable_complexity_min),
     suitable_complexity_max: Number(row.suitable_complexity_max),
@@ -142,7 +142,7 @@ export class AgentStrategyService {
   async soStrategyById(input: GetStrategyInput, output: GetStrategyOutput, _ctx: AgentStrategyContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const row = await this.relationDb.selectOne(AGENT_STRATEGY_TABLE, [
-      { field: 'strategy_id', operator: Operator.EQ, value: input.strategy_id },
+      { field: 'id', operator: Operator.EQ, value: input.strategy_id },
     ]);
     if (!row) throw new NotFoundError('Strategy', input.strategy_id);
     const s = mapStrategy(row);
@@ -176,13 +176,13 @@ export class AgentStrategyService {
     ]);
     if (dup > 0) throw new ValidationError(`label exists: ${input.strategy_label}`);
 
+    // ADR-012:去 strategy_id 冗余业务键,主键 id 即策略标识
     const strategyId = IdGenerator.generate();
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_STRATEGY_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
+      { field: 'id', value: strategyId },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'strategy_id', value: strategyId },
       { field: 'strategy_label', value: input.strategy_label },
       { field: 'suitable_complexity_min', value: input.suitable_complexity_min },
       { field: 'suitable_complexity_max', value: input.suitable_complexity_max },
@@ -197,7 +197,7 @@ export class AgentStrategyService {
   async updateStrategy(input: UpdateStrategyInput, _output: UpdateStrategyOutput, _ctx: AgentStrategyContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const row = await this.relationDb.selectOne(AGENT_STRATEGY_TABLE, [
-      { field: 'strategy_id', operator: Operator.EQ, value: input.strategy_id },
+      { field: 'id', operator: Operator.EQ, value: input.strategy_id },
     ]);
     if (!row) throw new NotFoundError('Strategy', input.strategy_id);
     const current = mapStrategy(row);
@@ -218,7 +218,7 @@ export class AgentStrategyService {
     await this.relationDb.update(
       AGENT_STRATEGY_TABLE,
       data,
-      [{ field: 'strategy_id', operator: Operator.EQ, value: input.strategy_id }],
+      [{ field: 'id', operator: Operator.EQ, value: input.strategy_id }],
     );
     return true;
   }
@@ -227,7 +227,7 @@ export class AgentStrategyService {
   ): Promise<boolean> {
     if (!input.strategy_id) throw new ValidationError('strategy_id 为必填');
     const row = await this.relationDb.selectOne(AGENT_STRATEGY_TABLE, [
-      { field: 'strategy_id', operator: Operator.EQ, value: input.strategy_id },
+      { field: 'id', operator: Operator.EQ, value: input.strategy_id },
     ]);
     if (!row) throw new NotFoundError('Strategy', input.strategy_id);
 
@@ -239,7 +239,7 @@ export class AgentStrategyService {
         { field: 'enable', value: newEnable ? 1 : 0 },
         { field: 'updated', value: IdGenerator.now() },
       ],
-      [{ field: 'strategy_id', operator: Operator.EQ, value: input.strategy_id }],
+      [{ field: 'id', operator: Operator.EQ, value: input.strategy_id }],
     );
     output.enable = newEnable;
     return true;
@@ -265,7 +265,7 @@ export class AgentStrategyService {
     if (input.default_strategy_id !== undefined) {
       if (input.default_strategy_id) {
         const n = await this.relationDb.count(AGENT_STRATEGY_TABLE, [
-          { field: 'strategy_id', operator: Operator.EQ, value: input.default_strategy_id },
+          { field: 'id', operator: Operator.EQ, value: input.default_strategy_id },
           { field: 'enable', operator: Operator.EQ, value: 1 },
         ]);
         if (n === 0) throw new ValidationError(`strategy not found: ${input.default_strategy_id}`);

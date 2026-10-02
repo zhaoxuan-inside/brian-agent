@@ -16,7 +16,7 @@ describe('AgentLibrary 绑定 API（绑定唯一事实源 = agent 表）', () =>
     await setupAgentTestMocks();
     const db = await createTestDb();
     try {
-      db.executeRaw('ALTER TABLE agent_library_config ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
+      db.executeRaw('ALTER TABLE agent_library_config_record ADD COLUMN regen_rate INTEGER NOT NULL DEFAULT 75');
     } catch {  }
     service = new AgentLibraryService(db, NOOP_LLM_ACCESS, NOOP_PROMPTS_ACCESS);
   });

@@ -1,4 +1,30 @@
 import { Metrics, Report } from '@brian-agent/base';
+import {
+  funnelBm25Ranking,
+  funnelSemanticRouterRanking,
+  buildFunnelDocText,
+  toFunnelBm25Options,
+  funnelNegativeReason,
+  batchGetOrComputeEmbeddings,
+  batchGetDualExampleEmbeddings,
+  batchGetComponentExamples,
+  analyzeTaskComplexity,
+  runComponentElection,
+  standardTierLadder,
+  loadElectionThresholdOverrides,
+  applySignalScores,
+  DEFAULT_ELECTION_THRESHOLDS,
+  type FunnelRankingEntry,
+  type ComponentElectionAdapter,
+  type ElectionCandidate,
+  type ElectionSignals,
+  type ElectionThresholds,
+  type ElectionTierExpr,
+  SKILL_EMBEDDING_TABLE,
+  SKILL_EXAMPLE_EMBEDDING_TABLE,
+} from '@brian-agent/base';
+import { createComponentFunnelTrace, pushComponentFunnel, clipFunnelText, FUNNEL_MECHANISM_LABELS, type ComponentFunnelTrace, type FunnelCandidateItem } from '@brian-agent/base';
+import { TraceService, RecordUsageInput, RecordUsageOutput, USAGE_EVENT_TABLE } from '@brian-agent/base';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
 import type { RelationDBAccess } from '@brian-agent/base';
 import type { SkillAccess } from '@brian-agent/base';
@@ -25,7 +51,6 @@ import {
   ConfigSkillCoreOutput,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
 import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
@@ -45,6 +70,8 @@ export class SkillCoreService {
 
   private readonly matchCache = new VectorMatchCache();
 
+  private readonly trace: TraceService;
+
   constructor(
     private readonly relationDb: RelationDBAccess,
     private readonly skillAccess: SkillAccess,
@@ -52,6 +79,7 @@ export class SkillCoreService {
     private readonly promptsAccess: PromptsAccess,
     private readonly githubClient?: GitHubSkillClient,
   ) {
+    this.trace = new TraceService(relationDb);
     this.configStore = new SingleRowConfigStore<SkillCoreConfigRecord>(relationDb, {
       table: SKILL_CORE_CONFIG_TABLE,
       toRecord: (raw) => this.toSkillCoreConfigRecord(raw),
@@ -59,43 +87,169 @@ export class SkillCoreService {
     });
   }
 
-  async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchSkill(input: MatchSkillInput, output: MatchSkillOutput, context: SkillCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
-    const { agent_id, context_id, run_id } = input;
-    if (!agent_id) {
+    if (!input.agent_id) {
       throw new ValidationError('agent_id 为必填');
     }
+    const funnel = createComponentFunnelTrace('skill', input.agent_id);
+    const ok = await this.soMatchSkillRoute(input, output, context, metrics, funnel);
+    pushComponentFunnel(report, funnel, output.detail ?? '');
+    return ok;
+  }
+
+  private async soMatchSkillRoute(
+    input: MatchSkillInput,
+    output: MatchSkillOutput,
+    context: SkillCoreContext,
+    metrics?: Metrics,
+    funnel?: ComponentFunnelTrace,
+  ): Promise<boolean> {
     output.system_skills = await this.soSystemSkills();
-    if (await this.tryMatchBoundSkills(input, output)) {
+    if (await this.tryMatchBoundSkills(input, output, funnel)) {
       return true;
     }
-    const cacheState = await this.tryMatchFromCache(input, output, context, _metrics);
+    const cacheState = await this.tryMatchFromCache(input, output, context, metrics);
     if (cacheState.handled) {
+      this.recordSkillDirectHit(funnel, '匹配缓存命中', output.skills ?? []);
       return true;
     }
     const config = await this.getConfig();
     const availableSkills = await this.soAvailableSkills();
-    const judged = await this.judgeSkillsOrReportFailure(input, output, agent_id, context_id, run_id, availableSkills, config, _metrics);
-    if (judged === null) {
-      return true;
-    }
-    if (await this.tryMatchRankedSkills(input, output, judged, config, availableSkills, cacheState.query, context)) {
-      return true;
-    }
-    if (!judged.need) {
-      await this.handleJudgedUnneeded(input, output, judged, cacheState.query, context, _metrics);
-      return true;
-    }
-    await this.matchFromExternalSources(input, output, agent_id, judged, config, context, _metrics);
+    const adapter = this.skillElectionAdapter(input, output, availableSkills, cacheState.query ?? [], config, context, metrics, funnel);
+    return runComponentElection(adapter, input, output);
+  }
+
+  /** Skill 选举适配器（multiSelect：阶梯命中整集采纳；终端=LLM 裁判与外部来源创建链） */
+  private skillElectionAdapter(
+    input: MatchSkillInput, output: MatchSkillOutput,
+    availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
+    queryEmbedding: number[], config: SkillCoreConfigRecord, context: SkillCoreContext,
+    metrics?: Metrics, funnel?: ComponentFunnelTrace,
+  ): ComponentElectionAdapter<{ id: string; skill_brief: string; skill_md?: string; name?: string }> {
+    return {
+      component: 'skill',
+      multiSelect: true,
+      directAdoptSingle: false,
+      funnel,
+      findReusable: async () => null,
+      extractSignals: () => this.skillExtractSignals(input, availableSkills, queryEmbedding, config, funnel, metrics),
+      tiers: () => standardTierLadder(),
+      select: (_i, _o, picked, tier) => this.skillSelect(output, picked, tier, metrics, funnel),
+      exhaust: async () => this.skillExhaustTerminal(input, output, availableSkills, config, queryEmbedding, context, metrics, funnel),
+    };
+  }
+
+  /** 信号提取（并行）：合法集 + BM25/向量双通道；结构信号弃权（Skill 无复杂度适配元数据） */
+  private async skillExtractSignals(
+    input: MatchSkillInput,
+    availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
+    queryEmbedding: number[], config: SkillCoreConfigRecord,
+    funnel?: ComponentFunnelTrace, metrics?: Metrics,
+  ): Promise<ElectionSignals<{ id: string; skill_brief: string; skill_md?: string; name?: string }>> {
+    const overrides = await loadElectionThresholdOverrides(this.relationDb, 'skill');
+    const thresholds: ElectionThresholds = { ...DEFAULT_ELECTION_THRESHOLDS, ...overrides };
+    const docs = availableSkills.map((s) => ({ id: s.id, name: s.name ?? '', brief: s.skill_brief ?? '' }));
+    const docOf = new Map(availableSkills.map((s) => [s.id, s]));
+    const embedding = queryEmbedding.length > 0 ? queryEmbedding : await this.embedTask(input.task_content ?? '').catch(() => []);
+    const [bm25Ranking, vectorRanking] = await Promise.all([
+      this.skillBm25Signal(input.task_content ?? '', docs, funnel),
+      this.skillVectorSignal(embedding, docs, funnel),
+    ]);
+    const candidates = docs.map((d) => ({
+      id: d.id, label: d.name || d.id, doc: docOf.get(d.id) as { id: string; skill_brief: string; skill_md?: string; name?: string },
+      bm25Score: 0, vectorScore: 0, exampleSim: 0, negativeSim: 0, rejectedByNegative: false,
+    }));
+    applySignalScores(candidates, bm25Ranking, vectorRanking);
+    metrics?.info('Skill 选举信号提取完成', { candidateCount: candidates.length, vectorPass: candidates.filter((c) => c.vectorScore >= thresholds.vectorOverall).length });
+    return { candidates, complexity: analyzeTaskComplexity({ text: input.task_content ?? '' }), structureIds: new Set<string>(), thresholds };
+  }
+
+  /** BM25 信号（并行支路）：正/负范例双向增强后全量排序，登记漏斗明细 */
+  private async skillBm25Signal(task: string, docs: Array<{ id: string; name: string; brief: string }>, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    const examples = await batchGetComponentExamples({
+      relationDb: this.relationDb, table: SKILL_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'skill_id', targetIds: docs.map((d) => d.id),
+    });
+    const ranking = funnelBm25Ranking(task, docs, toFunnelBm25Options(examples));
+    funnel?.addMechanism({
+      mechanism: 'bm25', label: FUNNEL_MECHANISM_LABELS.bm25, adopted: ranking.some((e) => e.score >= 90 && !e.rejected),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.name || e.doc.brief.slice(0, 40), score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 向量信号（并行支路）：语义路由器（描述向量+正/负范例向量）全量排序，登记漏斗明细 */
+  private async skillVectorSignal(queryEmbedding: number[], docs: Array<{ id: string; name: string; brief: string }>, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    if (!queryEmbedding || queryEmbedding.length === 0) return [];
+    const items = docs.map((d) => ({ id: d.id, text: buildFunnelDocText(d.name, d.brief) }));
+    const [precomputed, dualExamples] = await Promise.all([
+      batchGetOrComputeEmbeddings({
+        relationDb: this.relationDb, table: SKILL_EMBEDDING_TABLE, targetIdField: 'skill_id',
+        items, embedFn: (t) => this.embedTask(t),
+      }),
+      batchGetDualExampleEmbeddings({
+        relationDb: this.relationDb, table: SKILL_EXAMPLE_EMBEDDING_TABLE, targetIdField: 'skill_id',
+        targetIds: docs.map((d) => d.id),
+      }),
+    ]);
+    const ranking = await funnelSemanticRouterRanking(
+      queryEmbedding, docs, (d) => this.embedTask(buildFunnelDocText(d.name, d.brief)),
+      precomputed, dualExamples.positiveMap, dualExamples.negativeMap,
+    );
+    funnel?.addMechanism({
+      mechanism: 'vector', label: FUNNEL_MECHANISM_LABELS.vector, adopted: ranking.some((e) => !e.rejected && e.score >= 80),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.name || e.doc.brief.slice(0, 40), score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 阶梯命中采纳：整集富化写回输出 */
+  private async skillSelect(output: MatchSkillOutput, picked: ElectionCandidate<{ id: string; skill_brief: string; skill_md?: string; name?: string }>[], tier: ElectionTierExpr, metrics?: Metrics, funnel?: ComponentFunnelTrace): Promise<boolean> {
+    const ids = picked.map((p) => p.id);
+    output.skills = await this.enrichMatchedSkills(ids);
+    output.detail = `election_skill_${tier.id}`;
+    funnel?.markAdopted('vector');
+    metrics?.info('Skill 选举命中', { tier: tier.label, skillIds: ids });
     return true;
   }
 
-  private async tryMatchBoundSkills(input: MatchSkillInput, output: MatchSkillOutput): Promise<boolean> {
+  /** 阶梯耗尽终端：LLM 裁判与外部来源创建链（规格 3.4.3 创建新的 Skill） */
+  private async skillExhaustTerminal(
+    input: MatchSkillInput, output: MatchSkillOutput,
+    availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
+    config: SkillCoreConfigRecord, queryEmbedding: number[], context: SkillCoreContext,
+    metrics?: Metrics, funnel?: ComponentFunnelTrace,
+  ): Promise<boolean> {
+    const { agent_id, context_id, run_id } = input;
+    const judged = await this.judgeSkillsOrReportFailure(input, output, agent_id, context_id, run_id, availableSkills, config, metrics, funnel);
+    if (judged === null) return true;
+    if (await this.tryMatchRankedSkills(input, output, judged, config, availableSkills, queryEmbedding, context)) {
+      funnel?.markAdopted('llm');
+      return true;
+    }
+    if (!judged.need) {
+      await this.handleJudgedUnneeded(input, output, judged, queryEmbedding, context, metrics);
+      return true;
+    }
+    await this.matchFromExternalSources(input, output, agent_id, judged, config, context, metrics);
+    return true;
+  }
+
+  /** 缓存/绑定等非漏斗直接事实登记进漏斗明细 */
+  private recordSkillDirectHit(funnel: ComponentFunnelTrace | undefined, label: string, entries: MatchedSkillEntry[]): void {
+    if (!funnel) return;
+    const candidates: FunnelCandidateItem[] = entries.map((s) => ({ id: s.skill_id, name: s.skill_brief || s.skill_id, score: 100 }));
+    if (candidates.length > 0) funnel.addDirect(label, candidates);
+  }
+
+  private async tryMatchBoundSkills(input: MatchSkillInput, output: MatchSkillOutput, funnel?: ComponentFunnelTrace): Promise<boolean> {
     if (input.bound_skill_ids && input.bound_skill_ids.length > 0) {
       const precipitatedIds = input.bound_skill_ids.filter((id) => !id.startsWith('skill_builtin-'));
       if (precipitatedIds.length > 0) {
         output.skills = await this.enrichMatchedSkills(precipitatedIds);
         output.detail = 'local_hit';
+        this.recordSkillDirectHit(funnel, '绑定事实源', output.skills);
         return true;
       }
     }
@@ -155,7 +309,6 @@ export class SkillCoreService {
     );
     return skillOutput.list;
   }
-
   private async judgeSkillsOrReportFailure(
     input: MatchSkillInput,
     output: MatchSkillOutput,
@@ -165,13 +318,14 @@ export class SkillCoreService {
     availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
     config: SkillCoreConfigRecord,
     metrics?: Metrics,
+    funnel?: ComponentFunnelTrace,
   ): Promise<NeedRankingResult | null> {
     const judgeCtx = Object.assign(new SkillCoreContext(), {
       run_id: input.run_id ?? '',
       session_id: input.context_id ?? '',
       work_id: input.run_id ?? '',
     });
-    const judged = await this.rankSkillsByLLM(agentId, contextId, runId, availableSkills, config, input.task_content ?? '', judgeCtx);
+    const judged = await this.rankSkillsByLLM(agentId, contextId, runId, availableSkills, config, input.task_content ?? '', judgeCtx, funnel);
     if (judged !== null) {
       return judged;
     }
@@ -284,9 +438,10 @@ export class SkillCoreService {
       const days = Number(rule.days);
       const minUsage = Number(rule.min_usage_count);
       const since = IdGenerator.now() - days * 24 * 60 * 60 * 1000;
+      // ADR-012: stale 检测改查 usage_event_record 事件流水，窗口内无调用即低使用
       const rows = this.relationDb.queryRaw<{ agent_id: string; skill_id: string; total: number }>(
-        `SELECT "agent_id", "skill_id", SUM("usage_count") AS total FROM "${SKILL_USAGE_TABLE}"
-         WHERE "created" >= ? GROUP BY "agent_id", "skill_id" HAVING SUM("usage_count") < ?`,
+        `SELECT "agent_id", "entity_id" AS "skill_id", COUNT(*) AS total FROM "${USAGE_EVENT_TABLE}"
+         WHERE "entity_type" = 'skill' AND "created" >= ? GROUP BY "agent_id", "entity_id" HAVING COUNT(*) < ?`,
         [since, minUsage],
       );
       for (const row of rows ?? []) {
@@ -459,17 +614,13 @@ export class SkillCoreService {
     };
   }
 
+  /** ADR-012: 统一经 TraceService 记录 Skill 使用事件（事件流水 + skill_usage_org 日聚合） */
   private async recordSkillUsage(agentId: string, skillId: string): Promise<void> {
-    const now = IdGenerator.now();
-    await this.relationDb.insert(SKILL_USAGE_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
-      { field: 'created', value: now },
-      { field: 'updated', value: now },
-      { field: 'agent_id', value: agentId },
-      { field: 'skill_id', value: skillId },
-      { field: 'usage_date', value: new Date().toISOString().slice(0, 10) },
-      { field: 'usage_count', value: 1 },
-    ]);
+    const usageInput = new RecordUsageInput();
+    usageInput.entity_type = 'skill';
+    usageInput.entity_id = skillId;
+    usageInput.agent_id = agentId;
+    await this.trace.recordUsage(usageInput, new RecordUsageOutput(), new SkillCoreContext());
   }
 
   private async renderPrompt(
@@ -490,12 +641,12 @@ export class SkillCoreService {
 
   private async soMatchPromptTemplateId(): Promise<string> {
     const builtin = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
+      { field: 'title', operator: Operator.LIKE, value: '%Skill 匹配%' },
       { field: 'is_system', operator: Operator.EQ, value: 1 },
     ]);
     if (builtin && builtin.id) return String(builtin.id);
     const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Skill 匹配%' },
+      { field: 'title', operator: Operator.LIKE, value: '%Skill 匹配%' },
     ]);
     if (row && row.id) return String(row.id);
     const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
@@ -530,6 +681,7 @@ export class SkillCoreService {
     config: SkillCoreConfigRecord,
     taskContent: string,
     matchCtx?: Context,
+    funnel?: ComponentFunnelTrace,
   ): Promise<NeedRankingResult | null> {
 
     try {
@@ -552,10 +704,32 @@ export class SkillCoreService {
       if (!result) {
         return null;
       }
-      return parseNeedRankingResult(result);
+      const judged = parseNeedRankingResult(result);
+      this.recordSkillLlmFunnel(funnel, promptText, result, judged, availableSkills);
+      return judged;
     } catch {
       return null;
     }
+  }
+
+  /** LLM 评估级登记:原始评估 Prompt、原始输出与候选打分(名称经本地库补齐) */
+  private recordSkillLlmFunnel(
+    funnel: ComponentFunnelTrace | undefined,
+    promptText: string,
+    rawResult: string,
+    judged: NeedRankingResult,
+    availableSkills: Array<{ id: string; skill_brief: string; skill_md?: string; name?: string }>,
+  ): void {
+    if (!funnel) return;
+    const nameOf = new Map(availableSkills.map((s) => [s.id, s.name || s.skill_brief]));
+    funnel.addMechanism({
+      mechanism: 'llm',
+      label: FUNNEL_MECHANISM_LABELS.llm,
+      adopted: false,
+      prompt: clipFunnelText(promptText),
+      output: clipFunnelText(rawResult),
+      candidates: judged.candidates.map((c) => ({ id: c.id, name: nameOf.get(c.id) || c.id, score: c.score })),
+    });
   }
 
   private toSkillEntry(candidate: RankedCandidate, skills: Array<{ id: string; skill_brief: string }>): MatchedSkillEntry | null {

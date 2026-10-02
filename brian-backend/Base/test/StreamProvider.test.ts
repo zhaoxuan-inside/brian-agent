@@ -1,168 +1,109 @@
-import { Metrics } from '../shared/base/Metrics';
-import { Report } from '../shared/base/Report';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { RelationDBAccess } from '../RelationDBProvider/access/RelationDBAccess';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { RelationDBAccess } from '@brian-agent/base';
 import { StreamAccess } from '../StreamProvider/access/StreamAccess';
 import {
-  StreamContext,
   RegisterStreamInput,
   RegisterStreamOutput,
-  PushStreamInput,
-  PushStreamOutput,
   CloseStreamInput,
   CloseStreamOutput,
-  ConfigStreamInput,
-  ConfigStreamOutput,
-  BrianSSEMessage,
+  StreamContext,
 } from '../StreamProvider/domain/types';
+import { makeTaskEvent, type TaskEvent } from '@brian-agent/shared';
 
+/** ADR-013：StreamProvider 瘦身为纯传输 —— 注册/写帧/心跳/关闭 */
 describe('StreamProvider', () => {
-  let db: RelationDBAccess;
+  let tempDir: string;
+  let relationDb: RelationDBAccess;
   let streamAccess: StreamAccess;
 
   beforeEach(async () => {
-    db = new RelationDBAccess({ dbPath: ':memory:', wal: false });
-    await db.initialize();
-    streamAccess = new StreamAccess(db);
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-stream-'));
+    relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db'), autoCreateConfigTable: true });
+    await relationDb.initialize();
+    streamAccess = new StreamAccess(relationDb);
   });
 
-  it('注册与关闭 SSE 连接', async () => {
-    const received: string[] = [];
-    const regIn = Object.assign(new RegisterStreamInput(), {
-      session_id: 'session-1',
-      writer: (chunk: string) => { received.push(chunk); },
-    });
-    const regOut = new RegisterStreamOutput();
-    const ok = await streamAccess.registerStream(regIn, regOut, new StreamContext());
-
-    expect(ok).toBe(true);
-    expect(regOut.registered).toBe(true);
-    expect(regOut.client_id).toBe('session-1');
-
-    const closeIn = Object.assign(new CloseStreamInput(), { session_id: 'session-1' });
-    const closeOut = new CloseStreamOutput();
-    await streamAccess.closeStream(closeIn, closeOut, new StreamContext());
-    expect(closeOut.closed).toBe(true);
+  afterEach(async () => {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
-  it('推送结构化 BrianSSEMessage 消息', async () => {
-    const frames: BrianSSEMessage[] = [];
+  function frameOf(type: string, seq: number, payload: Record<string, unknown>): TaskEvent {
+    return makeTaskEvent({ seq, ts: Date.now(), session_id: 's-1', run_id: 'run-1', type, payload });
+  }
+
+  it('pushFrame 按端点定位会话并直写 TaskEvent 帧', async () => {
+    const frames: string[] = [];
+    const out = new RegisterStreamOutput();
     await streamAccess.registerStream(
       Object.assign(new RegisterStreamInput(), {
-        session_id: 's-100',
-        writer: (chunk: string) => {
-          if (chunk.startsWith('data: ')) {
-            frames.push(JSON.parse(chunk.slice(6).trim()));
-          }
-        },
+        session_id: 's-1',
+        writer: (chunk: string) => { frames.push(chunk); return true; },
       }),
-      new RegisterStreamOutput(), new StreamContext(),
+      out,
+      new StreamContext(),
     );
 
-    
-    await streamAccess.pushEvent('s-100', 'context_build', 'CONTEXT', {
-      recent_works_count: 3,
-      user_profile_matched: true,
-    }, {
-      run_id: 'interact-1',
-      work_id: 'work-1',
-    });
-
-    expect(frames.length).toBe(1);
-    const msg = frames[0];
-    expect(msg.session_id).toBe('s-100');
-    expect(msg.run_id).toBe('interact-1');
-    expect(msg.work_id).toBe('work-1');
-    expect(msg.event).toBe('context_build');
-    expect(msg.msg_type).toBe('CONTEXT');
-    expect(msg.seq).toBe(0);
-    expect(msg.data).toEqual({ recent_works_count: 3, user_profile_matched: true });
+    const delivered = streamAccess.pushFrame('s-1', out.endpoint_id, frameOf('run.accepted', 1, { run_id: 'run-1' }));
+    expect(delivered).toBe(true);
+    expect(frames).toHaveLength(1);
+    const parsed = JSON.parse(frames[0].replace(/^data: /, '').trim());
+    expect(parsed.event).toBe('run.accepted');
+    expect(parsed.data.seq).toBe(1);
   });
 
-  it('文本打字机 2-5 字符分片与 seq 严格递增', async () => {
-    const frames: BrianSSEMessage<{ chunk: string; is_last_chunk: boolean }>[] = [];
+  it('端点不存在或会话关闭时投递失败（不抛错）', async () => {
+    expect(streamAccess.pushFrame('s-x', 'no-endpoint', frameOf('run.accepted', 1, {}))).toBe(false);
+
+    const frames: string[] = [];
+    const out = new RegisterStreamOutput();
     await streamAccess.registerStream(
       Object.assign(new RegisterStreamInput(), {
-        session_id: 's-200',
-        writer: (chunk: string) => {
-          if (chunk.startsWith('data: ')) {
-            frames.push(JSON.parse(chunk.slice(6).trim()));
-          }
-        },
+        session_id: 's-closed',
+        writer: (chunk: string) => { frames.push(chunk); return true; },
       }),
-      new RegisterStreamOutput(), new StreamContext(),
+      out,
+      new StreamContext(),
     );
-
-    const testText = '通用人工智能（AGI）是指具有与人类相当或超越人类智力水平的机器智能。';
-    await streamAccess.pushText('s-200', 'text_chunk', testText, {
-      run_id: 'i-200',
-      work_id: 'w-200',
-      agent_id: 'writer-1',
-    });
-
-    expect(frames.length).toBeGreaterThan(1);
-
-    
-    const reconstructed = frames.map(f => f.data.chunk).join('');
-    expect(reconstructed).toBe(testText);
-
-    
-    for (let i = 0; i < frames.length - 1; i++) {
-      expect(frames[i].data.chunk.length).toBeGreaterThanOrEqual(2);
-      expect(frames[i].data.chunk.length).toBeLessThanOrEqual(5);
-    }
-
-    
-    for (let i = 0; i < frames.length; i++) {
-      expect(frames[i].seq).toBe(i);
-      expect(frames[i].agent_id).toBe('writer-1');
-    }
-
-    
-    expect(frames[frames.length - 1].data.is_last_chunk).toBe(true);
+    await streamAccess.closeStream(
+      Object.assign(new CloseStreamInput(), { session_id: 's-closed', reason: 'test' }),
+      new CloseStreamOutput(),
+      new StreamContext(),
+    );
+    expect(streamAccess.pushFrame('s-closed', out.endpoint_id, frameOf('run.accepted', 2, {}))).toBe(false);
+    expect(frames).toHaveLength(0);
   });
 
-  it('多 Agent 并发推送时通道与标识隔离', async () => {
-    const frames: BrianSSEMessage<{ chunk: string }>[] = [];
+  it('writer 返回 false 触发会话关闭', async () => {
+    const out = new RegisterStreamOutput();
     await streamAccess.registerStream(
-      Object.assign(new RegisterStreamInput(), {
-        session_id: 's-multi',
-        writer: (chunk: string) => {
-          if (chunk.startsWith('data: ')) {
-            frames.push(JSON.parse(chunk.slice(6).trim()));
-          }
-        },
-      }),
-      new RegisterStreamOutput(), new StreamContext(),
+      Object.assign(new RegisterStreamInput(), { session_id: 's-fail', writer: () => false }),
+      out,
+      new StreamContext(),
     );
-
-    
-    await Promise.all([
-      streamAccess.pushText('s-multi', 'agent_thinking', 'AgentA正在分析代码结构', {
-        work_id: 'w-dag',
-        agent_id: 'agent-A',
-      }),
-      streamAccess.pushText('s-multi', 'agent_thinking', 'AgentB正在执行单元测试', {
-        work_id: 'w-dag',
-        agent_id: 'agent-B',
-      }),
-    ]);
-
-    const agentAFrames = frames.filter(f => f.agent_id === 'agent-A');
-    const agentBFrames = frames.filter(f => f.agent_id === 'agent-B');
-
-    expect(agentAFrames.map(f => f.data.chunk).join('')).toBe('AgentA正在分析代码结构');
-    expect(agentBFrames.map(f => f.data.chunk).join('')).toBe('AgentB正在执行单元测试');
+    streamAccess.pushFrame('s-fail', out.endpoint_id, frameOf('run.accepted', 1, {}));
+    const stats = { active_sessions_count: 0, active_sessions: [] as string[] };
+    const statsOut = Object.assign(Object.create(Object.getPrototypeOf(stats)), stats);
+    await streamAccess.soStreamStats(statsOut as never, statsOut as never, new StreamContext());
+    expect(statsOut.active_sessions).toHaveLength(0);
   });
 
-  it('配置 StreamProvider', async () => {
-    const cfgIn = Object.assign(new ConfigStreamInput(), {
-      sse_heartbeat_interval_ms: 20000,
-      chunk_min_chars: 3,
-      chunk_max_chars: 6,
-    });
-    const cfgOut = new ConfigStreamOutput();
-    await streamAccess.configStream(cfgIn, cfgOut, new StreamContext());
-    expect(cfgOut.updated).toBe(true);
+  it('重复注册同会话会替换旧连接', async () => {
+    const out1 = new RegisterStreamOutput();
+    const out2 = new RegisterStreamOutput();
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: 's-replace', writer: () => true }),
+      out1,
+      new StreamContext(),
+    );
+    await streamAccess.registerStream(
+      Object.assign(new RegisterStreamInput(), { session_id: 's-replace', writer: () => true }),
+      out2,
+      new StreamContext(),
+    );
+    expect(streamAccess.pushFrame('s-replace', out1.endpoint_id, frameOf('run.accepted', 1, {}))).toBe(false);
+    expect(streamAccess.pushFrame('s-replace', out2.endpoint_id, frameOf('run.accepted', 1, {}))).toBe(true);
   });
 });

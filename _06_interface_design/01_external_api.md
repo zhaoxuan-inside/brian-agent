@@ -1,6 +1,6 @@
 # 01 对外 API 规范(_06_interface_design)
 
-> 状态:reviewed　更新:2026-09-26
+> 状态:reviewed　更新:2026-09-30(chg-045 ADR-013)
 > 路由权威源:`brian-backend/dev-server.ts` createServer()(R3 拆分后以各路由域模块为权威)。本文件为路径域级契约;R3 拆分路由时同步补全每条路由的 method 列。
 
 ## 1. 协议与风格
@@ -11,12 +11,12 @@
 - 响应包络:业务方法五参签名,输出统一 `XxxOutput`(含 `error`/`error_code`/`elapsed_ms`);HTTP 层 JSON 序列化。
 - WebSocket:`/ws` 当前为 echo 占位通道;全部实时推送走 SSE(StreamProvider)。
 
-## 2. API 域清单(152 条路径)
+## 2. API 域清单(151 条路径)
 
 | 域 | 路径前缀 | 条数 | 用途 | 主要模块 |
 |---|---|---|---|---|
 | 系统 | /api/health | 1 | 健康检查 | dev-server |
-| 对话 | /api/chat/* | 17 | 会话 CRUD、SSE 流、搜索、思考块、评估、权限/提问应答、取消 | Application/Chat |
+| 对话 | /api/chat/* | 16 | 会话 CRUD、SSE 流、搜索、observation 重放(chg-045)、评估、权限/提问应答、取消 | Application/Chat |
 | 配置 | /api/config* | 26 | 配置树/模型/供应商/Soul/MCP/队列/快照/历史 | Application/Config |
 | 记忆 | /api/memory* | 10 | 记忆列表/搜索/标签/图谱/热力/日期分布/删除 | Core/InfoCore |
 | 智能体 | /api/agent*、/api/orchestration/strategies | 5 | Agent 库 CRUD、策略 | Agent/Library·Strategy |
@@ -39,7 +39,8 @@
 ### API-001 POST /api/chat/stream(对话主通道,SSE)
 
 - **请求**:`{ session_id?, message, agent_id?, mode?, references? }`(字段以 ChatStreamInput 为准)
-- **响应**:SSE 结构化帧序列(BrianSSEMessage:`msg_id/event/data/timestamp`),事件含 thinking/工具状态/权限询问/内容增量/done
+- **响应**:SSE 结构化帧序列(BrianSSEMessage:`msg_id/event/data/timestamp`)。ADR-013 起业务帧 `data`=完整 TaskEvent(`shared/contracts/task-event.ts`:v/seq/ts/session_id/run_id/work_id/kind/type/payload/span/ref),共 32 契约事件;传输帧(session.connected/loading/done)仍为扁平 data
+- **事件流**:run.accepted → 装配(intent/选举/组件) → run.started → loop(turn/think.delta/reply.delta/llm.invoked/skill.*) → writer/eval → run.finished → session.done;正文流式=reply.delta(delta 累积,`replace:true` 表 Writer 接管替换),思考流=think.delta
 - **错误**:流内错误帧;HTTP 层异常 500
 - **约束**:TC-V2-010 锁定帧必备字段
 
@@ -58,6 +59,12 @@
 ### API-005 POST /api/cdt/*(浏览器自动化面)
 
 - start/stop/status/navigate/click/dblclick/rightclick/mouse/key/key-batch/insert-text/evaluate/frame/cookies/screencast/start/spoof-env。
+
+### API-005b GET /api/chat/observation(任务观测重放,ADR-013)
+
+- **参数**:`run_id` 或 `info_id`(dialog_record.work_id 反查),可选 `after_seq`(增量拉取)
+- **响应**:`{ run_id, session_id, phase, last_seq, events: TaskEvent[] }`,事件按 seq ASC;执行中=历史+实时叠加(seq 幂等),结束后=纯重放,与实时视图同一 reducer
+- **删除**:原 `GET /api/chat/thinking` 与 `/api/chat/thinking/step-content` 已随 thinkingBlocks/executionAnalyzer 删除(chg-045)
 
 ### API-006 GET /api/chat/list(会话历史查询)
 

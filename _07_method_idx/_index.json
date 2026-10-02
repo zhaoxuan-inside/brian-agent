@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.243Z",
-  "source": "docs/method.idx.json (scripts/generate-method-index.mjs)",
+  "updated_at": "2026-10-02T03:59:07.911872+00:00",
+  "source": "chg-058: +election 统一选举引擎 11 方法入 base-shared 分片;chg-057: +match/semantics/nlp 38 方法",
   "id_rule": "m-<module-slug>-<seq>(分片内自增)",
   "signature_note": "项目五参签名 (input, output, context, metrics?, report?) 经 ADR-007 映射 SOP 五段;登记时统一加 boolean 前缀表示执行成败契约",
   "category_mapping": {
@@ -104,7 +104,7 @@
       "shard": "application-userprofile",
       "layer": "Application",
       "module": "UserProfile",
-      "total": 56
+      "total": 59
     },
     {
       "shard": "application-visualization",
@@ -158,7 +158,7 @@
       "shard": "base-llmprovider",
       "layer": "Base",
       "module": "LLMProvider",
-      "total": 122
+      "total": 123
     },
     {
       "shard": "base-logprovider",
@@ -170,13 +170,19 @@
       "shard": "base-mcpprovider",
       "layer": "Base",
       "module": "MCPProvider",
-      "total": 70
+      "total": 71
     },
     {
       "shard": "base-mqprovider",
       "layer": "Base",
       "module": "MQProvider",
       "total": 28
+    },
+    {
+      "shard": "base-observabilityprovider",
+      "layer": "Base",
+      "module": "ObservabilityProvider",
+      "total": 20
     },
     {
       "shard": "base-promptcatalog",
@@ -200,7 +206,7 @@
       "shard": "base-shared",
       "layer": "Base",
       "module": "shared",
-      "total": 55
+      "total": 101
     },
     {
       "shard": "base-skillprovider",
@@ -248,7 +254,7 @@
       "shard": "core-infocoreprovider",
       "layer": "Core",
       "module": "InfoCoreProvider",
-      "total": 176
+      "total": 178
     },
     {
       "shard": "core-llmcoreprovider",
@@ -326,7 +332,7 @@
       "shard": "runtime-runs",
       "layer": "Runtime",
       "module": "Runs",
-      "total": 86
+      "total": 93
     },
     {
       "shard": "runtime-session",
@@ -356,7 +362,7 @@
       "shard": "server-dev-server",
       "layer": "Server",
       "module": "dev-server",
-      "total": 28
+      "total": 25
     },
     {
       "shard": "server-scripts",
@@ -366,11 +372,12 @@
     }
   ],
   "stats": {
-    "total": 2529,
+    "total": 2606,
     "by_category": {
-      "algorithm": 381,
-      "orchestration": 1135,
-      "data": 1013
-    }
+      "algorithm": 403,
+      "orchestration": 1157,
+      "data": 1046
+    },
+    "source": ";chg-059: +dialog embedding 会话话题连续性 9 方法(固化/匹配/会话亲和三段裁决)"
   }
 }

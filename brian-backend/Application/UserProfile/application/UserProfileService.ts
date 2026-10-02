@@ -19,7 +19,7 @@ import { GetEvaluationInput, GetEvaluationOutput } from '@brian-agent/agent';
 import { EvolutorAgentContext } from '@brian-agent/agent';
 import {
   USER_PROFILE_DIRECTION_TABLE, USER_PROFILE_RECORD_TABLE,
-  USER_PROFILE_DIMENSION_DATA_TABLE, USER_PROFILE_CONFIG_TABLE,
+  USER_PROFILE_DIM_TABLE, USER_PROFILE_DIM_EVIDENCE_TABLE, USER_PROFILE_CONFIG_TABLE,
   UserProfileContext,
   ConfigProfileDirectionInput, ConfigProfileDirectionOutput,
   DeleteProfileDirectionInput, DeleteProfileDirectionOutput,
@@ -27,8 +27,9 @@ import {
   GetUserProfileInput, GetUserProfileOutput,
   GenerateProfileInput, GenerateProfileOutput,
   SaveUserPreferenceInput, SaveUserPreferenceOutput,
-  GetProfileHistoryInput, GetProfileHistoryOutput,
-  GetProfileByVersionInput, GetProfileByVersionOutput,
+    GetProfileHistoryInput, GetProfileHistoryOutput,
+    GetProfileByVersionInput, GetProfileByVersionOutput,
+    GetAllProfilesInput, GetAllProfilesOutput,
   ResetUserProfileInput, ResetUserProfileOutput,
   ConfigUserProfileInput, ConfigUserProfileOutput,
 } from '../domain/types';
@@ -54,7 +55,7 @@ export class UserProfileService {
   ): Promise<boolean> {
     for (const dir of input.directions) {
       const existing = await this.relationDb.selectOne(USER_PROFILE_DIRECTION_TABLE, [
-        { field: 'direction_key', operator: Operator.EQ, value: dir.direction_key },
+        { field: 'id', operator: Operator.EQ, value: dir.direction_key },
       ]);
       const now = IdGenerator.now();
       if (existing) {
@@ -70,14 +71,13 @@ export class UserProfileService {
           { field: 'updated', value: now },
         ];
         await this.relationDb.update(USER_PROFILE_DIRECTION_TABLE, data, [
-          { field: 'direction_key', operator: Operator.EQ, value: dir.direction_key },
+          { field: 'id', operator: Operator.EQ, value: dir.direction_key },
         ]);
       } else {
         await this.relationDb.insert(USER_PROFILE_DIRECTION_TABLE, [
-          { field: 'id', value: IdGenerator.generate() },
+          { field: 'id', value: dir.direction_key },
           { field: 'created', value: now },
           { field: 'updated', value: now },
-          { field: 'direction_key', value: dir.direction_key },
           { field: 'direction_name', value: dir.direction_name },
           { field: 'direction_description', value: dir.direction_description ?? '' },
           { field: 'weight', value: dir.weight },
@@ -95,7 +95,7 @@ export class UserProfileService {
   async deleteProfileDirection(input: DeleteProfileDirectionInput, _output: DeleteProfileDirectionOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     await this.relationDb.delete(USER_PROFILE_DIRECTION_TABLE, [
-      { field: 'direction_key', operator: Operator.EQ, value: input.direction_key },
+      { field: 'id', operator: Operator.EQ, value: input.direction_key },
     ]);
     return true;
   }
@@ -105,7 +105,7 @@ export class UserProfileService {
     const rows = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [], [
       { field: 'weight', direction: Direction.DESC },
     ]);
-    output.directions = rows;
+    output.directions = rows.map((r) => ({ ...r, direction_key: String(r.id ?? '') }));
     return true;
   }
 
@@ -192,7 +192,7 @@ export class UserProfileService {
   ): Promise<Record<string, unknown>> {
     const dimensions: Record<string, unknown> = {};
     for (const dir of enabledDirs) {
-      const key = String(dir.direction_key);
+      const key = String(dir.id);
       try {
         const result = await this.loadDimensionResult(key, sessionId, storedDimensions, writerPreferences, latestRecord, metrics);
         if (result.confidence < minConfidence) continue;
@@ -260,19 +260,22 @@ export class UserProfileService {
     const sessionId = input.session_id;
     const config = await this.getConfig();
     const newVersion = await this.soNextProfileVersion();
+    const prevRecord = await this.loadLatestProfileRecord(sessionId);
     const conversationText = await this.soConversationText(sessionId, config);
     const enabledDirs = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, [
       { field: 'enable', operator: Operator.EQ, value: 1 },
     ], [{ field: 'weight', direction: Direction.DESC }]);
     const targetDirs = input.directions && input.directions.length > 0 ? input.directions : null;
     const filteredDirs = targetDirs
-      ? enabledDirs.filter((d) => targetDirs.includes(String(d.direction_key)))
+      ? enabledDirs.filter((d) => targetDirs.includes(String(d.id)))
       : enabledDirs;
     const dimensionData = await this.analyzeDimensions(filteredDirs, conversationText, config, metrics);
     const summary = this.buildSummaryFromDimensions(dimensionData, enabledDirs);
+    const prevDimensions = prevRecord ? await this.loadStoredDimensions(String(prevRecord.id)) : {};
+    const changeSummary = this.buildChangeSummary(newVersion, dimensionData, prevDimensions, enabledDirs);
     const now = IdGenerator.now();
     const recordId = IdGenerator.generate();
-    await this.saveProfileRecord(sessionId, newVersion, summary, recordId, now);
+    await this.saveProfileRecord(sessionId, newVersion, summary, changeSummary, recordId, now);
     await this.saveDimensionData(recordId, dimensionData, now);
     if (sessionId) {
       await this.saveWriterProfile(sessionId, metrics);
@@ -317,7 +320,7 @@ export class UserProfileService {
   ): Promise<Array<{ direction_key: string; value: string; evidence: string; confidence: number }>> {
     const dimensionData: Array<{ direction_key: string; value: string; evidence: string; confidence: number }> = [];
     for (const dir of filteredDirs) {
-      const key = String(dir.direction_key);
+      const key = String(dir.id);
       const name = String(dir.direction_name);
       try {
         const analysis = await this.analyzeDimensionWithLLM(key, name, conversationText, dir, config, metrics);
@@ -343,6 +346,7 @@ export class UserProfileService {
     sessionId: string | undefined,
     newVersion: number,
     summary: string,
+    changeSummary: string,
     recordId: string,
     now: number,
   ): Promise<void> {
@@ -354,7 +358,7 @@ export class UserProfileService {
       { field: 'version', value: newVersion },
       { field: 'profile_summary', value: summary },
       { field: 'generated_at', value: now },
-      { field: 'change_summary', value: newVersion === 1 ? 'Initial profile' : `Profile version ${newVersion}` },
+      { field: 'change_summary', value: changeSummary },
     ]);
   }
 
@@ -364,17 +368,72 @@ export class UserProfileService {
     now: number,
   ): Promise<void> {
     for (const d of dimensionData) {
-      await this.relationDb.insert(USER_PROFILE_DIMENSION_DATA_TABLE, [
-        { field: 'id', value: IdGenerator.generate() },
+      const dimId = IdGenerator.generate();
+      await this.relationDb.insert(USER_PROFILE_DIM_TABLE, [
+        { field: 'id', value: dimId },
         { field: 'created', value: now },
         { field: 'updated', value: now },
         { field: 'profile_record_id', value: recordId },
-        { field: 'direction_key', value: d.direction_key },
+        { field: 'direction_id', value: d.direction_key },
         { field: 'dimension_value', value: d.value },
-        { field: 'evidence', value: d.evidence },
         { field: 'confidence', value: d.confidence },
       ]);
+      await this.insertEvidenceRows(dimId, d.evidence, now);
     }
+  }
+
+  /** 依据 JSON 数组 → 逐条 evidence 行（ADR-012：一条依据 = 一条记录行） */
+  private async insertEvidenceRows(dimId: string, evidenceJson: string, now: number): Promise<void> {
+    let items: unknown[] = [];
+    try {
+      const parsed = JSON.parse(evidenceJson || '[]');
+      items = Array.isArray(parsed) ? parsed : [parsed];
+    } catch { items = []; }
+    for (const item of items) {
+      const obj = item !== null && typeof item === 'object' ? item as Record<string, unknown> : null;
+      await this.relationDb.insert(USER_PROFILE_DIM_EVIDENCE_TABLE, [
+        { field: 'id', value: IdGenerator.generate() },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'dim_id', value: dimId },
+        { field: 'source', value: obj ? String(obj.source ?? '') : '' },
+        { field: 'evidence_json', value: JSON.stringify(item) },
+      ]);
+    }
+  }
+
+  /** 读取画像记录下全部维度的依据行，按 dim_id 分组还原为数组 */
+  private async loadEvidenceByProfileRecord(
+    profileRecordId: string,
+  ): Promise<Record<string, Array<Record<string, unknown>>>> {
+    const map: Record<string, Array<Record<string, unknown>>> = {};
+    try {
+      const rows = this.relationDb.queryRaw<{ dim_id: string; evidence_json: string }>(
+        `SELECT e."dim_id", e."evidence_json" FROM "${USER_PROFILE_DIM_EVIDENCE_TABLE}" e
+         INNER JOIN "${USER_PROFILE_DIM_TABLE}" d ON e."dim_id" = d."id"
+         WHERE d."profile_record_id" = ?`,
+        [profileRecordId],
+      );
+      for (const r of rows ?? []) {
+        if (!map[r.dim_id]) map[r.dim_id] = [];
+        try { map[r.dim_id].push(JSON.parse(String(r.evidence_json))); } catch { /* 忽略脏行 */ }
+      }
+    } catch { /* 依据表缺失时降级为空 */ }
+    return map;
+  }
+
+  /** 删除某画像记录下的全部依据行与维度行（无 FK 级联，显式清理） */
+  private async deleteDimensionRowsByProfileRecord(profileRecordId: string): Promise<void> {
+    try {
+      this.relationDb.executeRaw(
+        `DELETE FROM "${USER_PROFILE_DIM_EVIDENCE_TABLE}" WHERE "dim_id" IN
+         (SELECT "id" FROM "${USER_PROFILE_DIM_TABLE}" WHERE "profile_record_id" = ?)`,
+        [profileRecordId],
+      );
+    } catch { /* 依据表缺失时忽略 */ }
+    await this.relationDb.delete(USER_PROFILE_DIM_TABLE, [
+      { field: 'profile_record_id', operator: Operator.EQ, value: profileRecordId },
+    ]);
   }
 
   private async saveWriterProfile(sessionId: string, metrics?: Metrics): Promise<void> {
@@ -483,6 +542,71 @@ export class UserProfileService {
     return true;
   }
 
+  /** 全量拉取所有用户画像记录（跨会话、含完整维度数据），按生成时间倒序 */
+  async soAllProfiles(input: GetAllProfilesInput, output: GetAllProfilesOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    const limit = input.limit ?? 50;
+    const records = await this.queryTable(
+      USER_PROFILE_RECORD_TABLE,
+      [],
+      [{ field: 'generated_at', direction: Direction.DESC }],
+      limit,
+    );
+    const { dirNameMap } = await this.profileRenderContext();
+    const profiles: Array<Record<string, unknown>> = [];
+    for (const record of records) {
+      const recordId = String(record.id);
+      profiles.push({
+        id: recordId,
+        version: Number(record.version),
+        session_id: String(record.session_id ?? ''),
+        generated_at: Number(record.generated_at),
+        profile_summary: String(record.profile_summary ?? ''),
+        change_summary: String(record.change_summary ?? ''),
+        dimensions: await this.buildProfileDimensions(recordId, dirNameMap),
+      });
+    }
+    output.profiles = profiles;
+    return true;
+  }
+
+  /** 画像渲染公共上下文：维度名映射 */
+  private async profileRenderContext(): Promise<{ dirNameMap: Record<string, string> }> {
+    const dirRows = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, []);
+    const dirNameMap: Record<string, string> = {};
+    for (const d of dirRows) {
+      dirNameMap[String(d.id)] = String(d.direction_name);
+    }
+    return { dirNameMap };
+  }
+
+  /** 构建单条画像记录的维度明细（展示层不过滤置信度，全部如实呈现，置信度由前端徽章标注） */
+  private async buildProfileDimensions(
+    recordId: string,
+    dirNameMap: Record<string, string>,
+  ): Promise<Record<string, unknown>> {
+    const dimRows = await this.queryTable(USER_PROFILE_DIM_TABLE, [
+      { field: 'profile_record_id', operator: Operator.EQ, value: recordId },
+    ]);
+    const evidenceMap = await this.loadEvidenceByProfileRecord(recordId);
+    const dimensions: Record<string, unknown> = {};
+    for (const d of dimRows) {
+      const key = String(d.direction_id);
+      const confidence = Number(d.confidence);
+      let value: unknown = null;
+      try { value = JSON.parse(String(d.dimension_value ?? 'null')); } catch { value = d.dimension_value; }
+      const evidence = evidenceMap[String(d.id)] ?? [];
+      dimensions[key] = {
+        value,
+        evidence,
+        confidence,
+        direction_key: key,
+        direction_name: dirNameMap[key] || key,
+      };
+    }
+    return dimensions;
+  }
+
   async soProfileByVersion(input: GetProfileByVersionInput, output: GetProfileByVersionOutput, _ctx: UserProfileContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const conditions = input.session_id
@@ -497,42 +621,13 @@ export class UserProfileService {
       throw Object.assign(new Error(`Profile version ${input.version} not found`), { error_code: 'NOT_FOUND' });
     }
 
-    const dimRows = await this.queryTable(USER_PROFILE_DIMENSION_DATA_TABLE, [
-      { field: 'profile_record_id', operator: Operator.EQ, value: record.id },
-    ]);
-
-    const config = await this.getConfig();
-    const minConfidence = Number(config.min_confidence_threshold ?? 0.5);
-
-    const dirRows = await this.queryTable(USER_PROFILE_DIRECTION_TABLE, []);
-    const dirNameMap: Record<string, string> = {};
-    for (const d of dirRows) {
-      dirNameMap[String(d.direction_key)] = String(d.direction_name);
-    }
-
-    const dimensions: Record<string, unknown> = {};
-    for (const d of dimRows) {
-      const key = String(d.direction_key);
-      const confidence = Number(d.confidence);
-      if (confidence < minConfidence) continue;
-      let value: unknown = null;
-      let evidence: unknown = [];
-      try { value = JSON.parse(String(d.dimension_value ?? 'null')); } catch { value = d.dimension_value; }
-      try { evidence = JSON.parse(String(d.evidence ?? '[]')); } catch { evidence = d.evidence; }
-      dimensions[key] = {
-        value,
-        evidence,
-        confidence,
-        direction_key: key,
-        direction_name: dirNameMap[key] || key,
-      };
-    }
+    const { dirNameMap } = await this.profileRenderContext();
 
     output.profile = {
       version: Number(record.version),
       generated_at: Number(record.generated_at),
       session_id: String(record.session_id ?? ''),
-      dimensions,
+      dimensions: await this.buildProfileDimensions(String(record.id), dirNameMap),
       profile_summary: String(record.profile_summary ?? ''),
     };
     return true;
@@ -549,9 +644,7 @@ export class UserProfileService {
 
     let deleted = 0;
     for (const recordId of recordIds) {
-      await this.relationDb.delete(USER_PROFILE_DIMENSION_DATA_TABLE, [
-        { field: 'profile_record_id', operator: Operator.EQ, value: recordId },
-      ]);
+      await this.deleteDimensionRowsByProfileRecord(recordId);
       deleted += 1;
     }
 
@@ -741,15 +834,15 @@ export class UserProfileService {
   ): Promise<Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>> {
     const map: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }> = {};
     try {
-      const dimRows = await this.queryTable(USER_PROFILE_DIMENSION_DATA_TABLE, [
+      const dimRows = await this.queryTable(USER_PROFILE_DIM_TABLE, [
         { field: 'profile_record_id', operator: Operator.EQ, value: profileRecordId },
       ]);
+      const evidenceMap = await this.loadEvidenceByProfileRecord(profileRecordId);
       for (const d of dimRows) {
-        const key = String(d.direction_key);
+        const key = String(d.direction_id);
         let value: unknown = null;
-        let evidence: Array<Record<string, unknown>> = [];
         try { value = JSON.parse(String(d.dimension_value ?? 'null')); } catch { value = d.dimension_value; }
-        try { evidence = JSON.parse(String(d.evidence ?? '[]')); } catch { evidence = d.evidence as Array<Record<string, unknown>>; }
+        const evidence = evidenceMap[String(d.id)] ?? [];
         map[key] = { value, confidence: Number(d.confidence), evidence };
       }
     } catch {  }
@@ -774,12 +867,12 @@ export class UserProfileService {
       const latestVersion = Number(latestRecord.version);
       const prevRecord = history.find((r) => Number(r.version) < latestVersion);
       if (!prevRecord) return null;
-      const dimRows = await this.queryTable(USER_PROFILE_DIMENSION_DATA_TABLE, [
+      const dimRows = await this.queryTable(USER_PROFILE_DIM_TABLE, [
         { field: 'profile_record_id', operator: Operator.EQ, value: prevRecord.id },
       ]);
       const map: Record<string, string> = {};
       for (const d of dimRows) {
-        map[String(d.direction_key)] = String(d.dimension_value);
+        map[String(d.direction_id)] = String(d.dimension_value);
       }
       return map;
     } catch {
@@ -836,9 +929,9 @@ export class UserProfileService {
     }
 
     try {
-      const dimRows = await this.queryTable(USER_PROFILE_DIMENSION_DATA_TABLE, [
+      const dimRows = await this.queryTable(USER_PROFILE_DIM_TABLE, [
         { field: 'profile_record_id', operator: Operator.EQ, value: latestRecord.id },
-        { field: 'direction_key', operator: Operator.EQ, value: key },
+        { field: 'direction_id', operator: Operator.EQ, value: key },
       ]);
       if (dimRows.length === 0) {
         return { value: null, confidence: 0, evidence: [{ source: 'no_generated_data' }] };
@@ -846,14 +939,12 @@ export class UserProfileService {
 
       const d = dimRows[0];
       let value: unknown = null;
-      let evidence: unknown = [];
       try { value = JSON.parse(String(d.dimension_value ?? 'null')); } catch { value = d.dimension_value; }
-      try { evidence = JSON.parse(String(d.evidence ?? '[]')); } catch { evidence = d.evidence; }
+      const evidenceMap = await this.loadEvidenceByProfileRecord(String(latestRecord.id));
+      const evidence = evidenceMap[String(d.id)] ?? [];
 
       const fallbackEvidence = [{ source: 'generated_profile', version: latestRecord.version }];
-      const evidenceList = Array.isArray(evidence) && evidence.length > 0
-        ? (evidence as Array<Record<string, unknown>>)
-        : fallbackEvidence;
+      const evidenceList = evidence.length > 0 ? evidence : fallbackEvidence;
       return {
         value,
         confidence: Number(d.confidence),
@@ -962,7 +1053,7 @@ export class UserProfileService {
 
     try {
       const tagRows = this.relationDb.queryRaw(
-        `SELECT it.tag, COUNT(*) as cnt FROM info_tag it
+        `SELECT it.tag, COUNT(*) as cnt FROM info_tag_record it
          INNER JOIN "${DIALOG_TABLE}" d ON it.info_id = d.id
          ${sessionId ? 'WHERE d.session_id = ?' : ''}
          GROUP BY it.tag ORDER BY cnt DESC LIMIT 10`,
@@ -990,7 +1081,7 @@ export class UserProfileService {
     if (sessionId) {
       try {
         const countRows = this.relationDb.queryRaw(
-          `SELECT COUNT(*) as cnt, AVG(dialog_length) as avg_len FROM "${DIALOG_TABLE}"
+          `SELECT COUNT(*) as cnt, AVG(LENGTH("dialog")) as avg_len FROM "${DIALOG_TABLE}"
            WHERE session_id = ? AND type = 'REQUEST'`,
           [sessionId],
         );
@@ -1080,15 +1171,16 @@ export class UserProfileService {
   ): string {
     const parts: string[] = [];
     if (writerPreferences) {
-      parts.push(`Language: ${writerPreferences.language}, Style: ${writerPreferences.style}`);
+      parts.push(`语言：${writerPreferences.language}，风格：${writerPreferences.style}`);
     }
     for (const [key, val] of Object.entries(dimensions)) {
-      const v = val as { value?: unknown; confidence?: number } | undefined;
+      const v = val as { value?: unknown; confidence?: number; direction_name?: string } | undefined;
       if (v?.confidence && v.confidence > 0.5 && v.value !== null) {
-        parts.push(`${key}: ${JSON.stringify(v.value).slice(0, 80)}`);
+        const digest = this.formatValueDigest(v.value);
+        if (digest) parts.push(`${v.direction_name || key}：${digest}`);
       }
     }
-    return parts.join('; ') || 'Profile building...';
+    return parts.join('；') || '画像构建中...';
   }
 
   private async analyzeDimensionWithLLM(
@@ -1244,22 +1336,69 @@ export class UserProfileService {
     dimData: Array<{ direction_key: string; value: string; confidence: number }>,
     enabledDirs: Array<Record<string, unknown>>,
   ): string {
-    const parts: string[] = [];
     const dirNameMap: Record<string, string> = {};
     for (const d of enabledDirs) {
-      dirNameMap[String(d.direction_key)] = String(d.direction_name);
+      dirNameMap[String(d.id)] = String(d.direction_name);
     }
-
+    const parts: string[] = [];
     for (const d of dimData) {
-      if (d.confidence >= 0.3) {
-        const name = dirNameMap[d.direction_key] || d.direction_key;
-        let val: unknown = d.value;
-        try { val = JSON.parse(d.value); } catch {  }
-        const display = typeof val === 'object' ? JSON.stringify(val).slice(0, 60) : String(val).slice(0, 60);
-        parts.push(`${name}: ${display}`);
+      if (d.confidence < 0.3) continue;
+      let val: unknown = d.value;
+      try { val = JSON.parse(d.value); } catch {  }
+      const digest = this.formatValueDigest(val);
+      if (!digest) continue;
+      parts.push(`${dirNameMap[d.direction_key] || d.direction_key}：${digest}`);
+    }
+    return parts.join('；') || '画像已生成，暂无高置信维度';
+  }
+
+  private buildChangeSummary(
+    newVersion: number,
+    dimensionData: Array<{ direction_key: string; value: string }>,
+    prevDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>,
+    enabledDirs: Array<Record<string, unknown>>,
+  ): string {
+    if (newVersion === 1 || Object.keys(prevDimensions).length === 0) return '初始画像';
+    const dirNameMap: Record<string, string> = {};
+    for (const d of enabledDirs) {
+      dirNameMap[String(d.id)] = String(d.direction_name);
+    }
+    const changed: string[] = [];
+    for (const d of dimensionData) {
+      let val: unknown = null;
+      try { val = JSON.parse(d.value); } catch { val = d.value; }
+      if (val === null || val === undefined) continue;
+      const prevVal = prevDimensions[d.direction_key]?.value ?? null;
+      if (JSON.stringify(prevVal) !== JSON.stringify(val)) {
+        changed.push(dirNameMap[d.direction_key] || d.direction_key);
       }
     }
-    return parts.join('; ') || 'Profile generated';
+    return changed.length > 0 ? `更新维度：${changed.join('、')}` : '各维度与上一版基本一致';
+  }
+
+  private formatValueDigest(val: unknown, maxChars = 80, depth = 0): string {
+    if (val === null || val === undefined || val === '') return '';
+    if (typeof val === 'string') return this.truncateWithEllipsis(val, maxChars);
+    if (depth >= 2) return this.truncateWithEllipsis(JSON.stringify(val), maxChars);
+    if (Array.isArray(val)) {
+      const items = val.map((item) => this.formatValueDigest(item, 40, depth + 1)).filter(Boolean);
+      return this.truncateWithEllipsis(items.join('、'), maxChars);
+    }
+    if (typeof val === 'object') {
+      const entries: string[] = [];
+      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+        const digest = this.formatValueDigest(v, 40, depth + 1);
+        if (digest) entries.push(`${k}：${digest}`);
+      }
+      return this.truncateWithEllipsis(entries.join('，'), maxChars);
+    }
+    return this.truncateWithEllipsis(String(val), maxChars);
+  }
+
+  private truncateWithEllipsis(text: string, maxChars: number): string {
+    const trimmed = text.trim();
+    if (trimmed.length <= maxChars) return trimmed;
+    return `${trimmed.slice(0, maxChars)}…`;
   }
 
   private async cleanupOldVersions(
@@ -1282,9 +1421,7 @@ export class UserProfileService {
 
       const toDelete = allRows.slice(retentionVersions);
       for (const row of toDelete) {
-        await this.relationDb.delete(USER_PROFILE_DIMENSION_DATA_TABLE, [
-          { field: 'profile_record_id', operator: Operator.EQ, value: row.id },
-        ]);
+        await this.deleteDimensionRowsByProfileRecord(String(row.id));
         await this.relationDb.delete(USER_PROFILE_RECORD_TABLE, [
           { field: 'id', operator: Operator.EQ, value: row.id },
         ]);

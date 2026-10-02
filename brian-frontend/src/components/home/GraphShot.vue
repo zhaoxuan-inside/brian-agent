@@ -110,15 +110,15 @@ onUnmounted(stopDrift)
 </script>
 
 <template>
-  <div ref="rootEl" class="select-none" role="img" :aria-label="label">
-    <div class="flex items-center px-4 h-9 bg-[#232327] border-b border-white/[.06]">
-      <span class="text-xs font-bold text-brian-blue">Brian</span>
-      <span class="ml-4 text-2xs text-apple-gray-500">
+  <div ref="rootEl" class="theme-chat select-none" role="img" :aria-label="label">
+    <div class="flex items-center px-4 h-9 bg-chat-surface-1 border-b border-chat-hairline">
+      <span class="text-xs font-bold text-chat-primary">Brian</span>
+      <span class="ml-4 text-2xs text-chat-ink-tertiary">
         信息 <span class="mx-1 opacity-50">›</span> {{ breadcrumb }}
         <Copy :size="10" class="inline ml-1 opacity-40" />
       </span>
     </div>
-    <div class="flex items-center gap-1 px-3 h-10 bg-[#1D1D20] border-b border-white/[.06] text-2xs text-apple-gray-400">
+    <div class="flex items-center gap-1 px-3 h-10 bg-chat-surface-1 border-b border-chat-hairline text-2xs text-chat-ink-tertiary">
       <span
         v-for="t in tabs" :key="t.label"
         class="gs-tab" :class="{ on: t.label === activeTab }"
@@ -126,18 +126,18 @@ onUnmounted(stopDrift)
         <component :is="t.icon" :size="11" />{{ t.label }}
       </span>
     </div>
-    <div class="flex items-center gap-2 px-3.5 py-2 bg-[#1D1D20] border-b border-white/[.06] text-4xs text-apple-gray-400">
+    <div class="flex items-center gap-2 px-3.5 py-2 bg-chat-surface-1 border-b border-chat-hairline text-4xs text-chat-ink-tertiary">
       <span class="gs-search"><Search :size="10" />{{ searchPlaceholder }}</span>
       <span class="gs-btn gs-btn-blue"><Crosshair :size="10" />定位</span>
       <span class="gs-btn gs-btn-gray">重置视图</span>
-      <span class="hidden sm:inline text-apple-gray-500">共 {{ nodes.length }} 节点</span>
-      <Eye :size="12" class="hidden sm:inline text-apple-gray-500" />
+      <span class="hidden sm:inline text-chat-ink-tertiary">共 {{ nodes.length }} 节点</span>
+      <Eye :size="12" class="hidden sm:inline text-chat-ink-tertiary" />
       <span class="hidden md:inline-flex items-center gap-1">斥力<i class="gs-slider" /><i class="gs-slider-dot" /></span>
       <span class="hidden md:inline-flex items-center gap-1">引力<i class="gs-slider" /><i class="gs-slider-dot" /></span>
       <span class="ml-auto gs-clean"><Trash2 :size="10" />一键清理</span>
     </div>
 
-    <div class="relative bg-[#131316]">
+    <div class="relative bg-chat-canvas">
       <svg viewBox="0 0 1000 560" class="w-full h-auto block" @mouseleave="hovered = null">
         <line
           v-for="(e, i) in edges" :key="`e${i}`"
@@ -157,40 +157,41 @@ onUnmounted(stopDrift)
         </g>
       </svg>
 
-      <div class="absolute right-3 top-3 px-3.5 py-2.5 rounded-xl bg-black/40 backdrop-blur-[2px] backdrop-blur border border-white/10 text-4xs leading-6 text-apple-gray-300 space-y-0.5">
+      <div class="gs-legend absolute right-3 top-3 px-3.5 py-2.5 rounded-xl text-4xs leading-6 text-chat-ink-subtle space-y-0.5">
         <div class="flex items-center gap-2">
           <span class="inline-flex items-center gap-1"><i class="w-2 h-2 rounded-full bg-apple-gray-300 inline-block" /><i class="w-1.5 h-1.5 rounded-full bg-apple-gray-500 inline-block" /></span>
           节点大小：越大连接度越高
         </div>
         <div class="flex items-center gap-2"><i class="gs-grad" />节点颜色：蓝=低频 → 红=高频</div>
-        <div class="flex items-center gap-2"><span class="tracking-[-2px] text-apple-gray-400">←→</span>连线长度：越短关联越强</div>
+        <div class="flex items-center gap-2"><span class="tracking-[-2px] text-chat-ink-tertiary">←→</span>连线长度：越短关联越强</div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.gs-legend { background: rgb(var(--chat-canvas) / 0.85); border: 1px solid rgb(var(--chat-hairline)); backdrop-filter: blur(2px); }
 .gs-tab { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 8px; transition: 0.2s; }
-.gs-tab:hover { color: #E5E5EA; background: rgba(255, 255, 255, 0.06); }
-.gs-tab.on { color: #fff; background: #0A84FF; }
+.gs-tab:hover { color: rgb(var(--chat-ink)); background: rgb(var(--chat-ink) / 0.05); }
+.gs-tab.on { color: rgb(var(--chat-on-primary)); background: rgb(var(--chat-primary)); }
 
-.gs-search { display: inline-flex; align-items: center; gap: 5px; min-width: 150px; padding: 4px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.06); color: #6E6E73; }
+.gs-search { display: inline-flex; align-items: center; gap: 5px; min-width: 150px; padding: 4px 10px; border-radius: 8px; background: rgb(var(--chat-ink) / 0.05); color: rgb(var(--chat-ink-tertiary)); }
 .gs-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 8px; }
-.gs-btn-blue { background: #0A84FF; color: #fff; }
-.gs-btn-gray { background: rgba(255, 255, 255, 0.09); }
-.gs-clean { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(255, 69, 58, 0.55); color: #FF6961; }
-.gs-slider { display: inline-block; width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #0A84FF 60%, rgba(255, 255, 255, 0.18) 60%); }
-.gs-slider-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #0A84FF; margin-left: -22px; }
+.gs-btn-blue { background: rgb(var(--chat-primary)); color: rgb(var(--chat-on-primary)); }
+.gs-btn-gray { background: rgb(var(--chat-ink) / 0.07); }
+.gs-clean { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 8px; border: 1px solid rgb(var(--chat-error) / 0.55); color: rgb(var(--chat-error)); }
+.gs-slider { display: inline-block; width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, rgb(var(--chat-primary)) 60%, rgb(var(--chat-ink) / 0.15) 60%); }
+.gs-slider-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--chat-primary)); margin-left: -22px; }
 
-.gs-edge { stroke: rgba(168, 178, 196, 0.17); stroke-width: 1; transition: opacity 0.3s, stroke 0.3s; }
-.gs-edge.hot { stroke: rgba(10, 132, 255, 0.85); stroke-width: 1.5; }
+.gs-edge { stroke: rgb(var(--chat-ink-subtle) / 0.28); stroke-width: 1; transition: opacity 0.3s, stroke 0.3s; }
+.gs-edge.hot { stroke: rgb(var(--chat-primary) / 0.85); stroke-width: 1.5; }
 .gs-edge.dim { opacity: 0.25; }
 .gs-node { cursor: pointer; }
 .gs-node.dim { opacity: 0.35; }
 .gs-dot { transition: filter 0.3s; }
 .gs-node:hover .gs-dot { filter: drop-shadow(0 0 7px currentColor); }
 .gs-halo { opacity: 0.13; }
-.gs-label { fill: #A8A8AD; font-size: 10.5px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #131316; stroke-width: 3px; stroke-linejoin: round; }
+.gs-label { fill: rgb(var(--chat-ink-subtle)); font-size: 10.5px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: rgb(var(--chat-canvas)); stroke-width: 3px; stroke-linejoin: round; }
 
-.gs-grad { display: inline-block; width: 30px; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #0A84FF, #FF453A); }
+.gs-grad { display: inline-block; width: 30px; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #5db8a6, #cc785c); }
 </style>

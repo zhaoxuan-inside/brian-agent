@@ -10,6 +10,10 @@ export class SessionSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   init(): void {
+    // ADR-012 迁移:旧表改名(幂等,旧表不存在或已改名时忽略)
+    try { this.relationDb.executeRaw(`ALTER TABLE "runtime_session" RENAME TO "${RUNTIME_SESSION_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
+    try { this.relationDb.executeRaw(`ALTER TABLE "runtime_message" RENAME TO "${RUNTIME_MESSAGE_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
+    try { this.relationDb.executeRaw(`ALTER TABLE "runtime_message_part" RENAME TO "${RUNTIME_MESSAGE_PART_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
     this.initSessionTable();
     this.initMessageTable();
     this.initPartTable();
@@ -79,8 +83,7 @@ export class SessionSchemaInitializer {
         "part_order"  INTEGER NOT NULL,
         "content"     TEXT    NOT NULL DEFAULT '',
         "tool_id"     TEXT    NOT NULL DEFAULT '',
-        "input_json"  TEXT    NOT NULL DEFAULT '',
-        "output_json" TEXT    NOT NULL DEFAULT '',
+        "execute_id"  TEXT    NOT NULL DEFAULT '',
         "status"      TEXT    NOT NULL DEFAULT 'pending',
         "block_type"  TEXT    NOT NULL DEFAULT '',
         "block_meta"  TEXT    NOT NULL DEFAULT '',
@@ -93,6 +96,16 @@ export class SessionSchemaInitializer {
       this.relationDb.executeRaw(
         `ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" RENAME COLUMN message_id TO msg_id`,
       );
+    } catch {  }
+    // ADR-012:tool part 去 input_json/output_json(I/O 唯一源为 execute_record,经 execute_id 关联)
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" ADD COLUMN "execute_id" TEXT NOT NULL DEFAULT ''`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" DROP COLUMN "input_json"`);
+    } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${RUNTIME_MESSAGE_PART_TABLE}" DROP COLUMN "output_json"`);
     } catch {  }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS "idx_${RUNTIME_MESSAGE_PART_TABLE}_message" ON "${RUNTIME_MESSAGE_PART_TABLE}" ("msg_id", "part_order")`,

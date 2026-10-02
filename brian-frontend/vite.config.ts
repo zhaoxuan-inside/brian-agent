@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@brian-agent/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url))
     }
   },
   server: {

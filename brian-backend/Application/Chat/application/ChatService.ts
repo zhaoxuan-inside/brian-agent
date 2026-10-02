@@ -22,7 +22,6 @@ import {
   SaveInfoInput, SaveInfoOutput,
   InfoCoreContext,
   DIALOG_TABLE,
-  CONTEXT_TABLE,
 } from '@brian-agent/core';
 import {
   ChatContext,
@@ -149,7 +148,6 @@ export class ChatService {
 
     const report2 = new Report({
       session_id: sessionId,
-      session_key: sessionId,
       trace_id: traceId,
       stream_endpoint_id: input.stream_endpoint_id,
     });
@@ -212,7 +210,7 @@ export class ChatService {
   private async syncRuntimeMessagesToInfoRaw(runtimeSessionId: string, chatSessionId: string, runId: string, traceId: string, metrics?: Metrics, citingInfoIds: string[] = []): Promise<void> {
     try {
       const rows = this.relationDb.queryRaw<{ id: string; role: string; content: string; created: number; run_id: string }>(
-        `SELECT "id", "role", "content", "created", "run_id" FROM "runtime_message" WHERE "session_id" = ? ORDER BY "seq" DESC LIMIT 200`,
+        `SELECT "id", "role", "content", "created", "run_id" FROM "runtime_message_record" WHERE "session_id" = ? ORDER BY "seq" DESC LIMIT 200`,
         [runtimeSessionId],
       );
       if (!rows || rows.length === 0) return;
@@ -232,7 +230,7 @@ export class ChatService {
         runIds.length === 0 ? [] : (() => {
           const placeholders = runIds.map(() => '?').join(',');
           const laneRows = this.relationDb.queryRaw<{ id: string }>(
-            `SELECT "id" FROM "runtime_run" WHERE "id" IN (${placeholders}) AND "lane" = 'subagent'`,
+            `SELECT "id" FROM "runtime_run_record" WHERE "id" IN (${placeholders}) AND "lane" = 'subagent'`,
             runIds,
           );
           return (laneRows ?? []).map((r) => String(r.id));
@@ -243,7 +241,7 @@ export class ChatService {
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
         const partRows = this.relationDb.queryRaw<{ msg_id: string }>(
-          `SELECT DISTINCT "msg_id" FROM "runtime_message_part" WHERE "run_id" IN (${placeholders}) AND "part_type" = 'tool'`,
+          `SELECT DISTINCT "msg_id" FROM "runtime_message_part_record" WHERE "run_id" IN (${placeholders}) AND "part_type" = 'tool'`,
           runIds,
         );
         toolMsgIds = new Set((partRows ?? []).map((r) => r.msg_id));
@@ -252,7 +250,7 @@ export class ChatService {
       if (runIds.length > 0) {
         const placeholders = runIds.map(() => '?').join(',');
         const runRows = this.relationDb.queryRaw<{ id: string; trace_id: string }>(
-          `SELECT "id", "trace_id" FROM "runtime_run" WHERE "id" IN (${placeholders})`,
+          `SELECT "id", "trace_id" FROM "runtime_run_record" WHERE "id" IN (${placeholders})`,
           runIds,
         );
         for (const r of runRows ?? []) {
@@ -323,7 +321,7 @@ export class ChatService {
     ];
 
     const insInput = Object.assign(new InsertDBInput(), {
-      table: 'chat_session',
+      table: 'chat_session_record',
       data,
     });
     await this.relationDb.insertDB(insInput, Object.assign(new InsertDBOutput(), {}), new DBContext());
@@ -355,7 +353,7 @@ export class ChatService {
       delInput.session_id = sessionId;
       const delOutput = new DelInfoBySessionOutput();
       await this.infoCore.delInfoBySession(delInput, delOutput, new InfoCoreContext(), metrics);
-      const affected = await this.relationDb.delete('chat_session', [
+      const affected = await this.relationDb.delete('chat_session_record', [
         { field: 'session_id', operator: Operator.EQ, value: sessionId },
       ]);
       await this.deleteWriterProfileForSession(sessionId);
@@ -374,11 +372,11 @@ export class ChatService {
 
   private async deleteTokenLogsForSession(sessionId: string): Promise<void> {
     try {
-      await this.relationDb.delete('llm_call_log', [
+      await this.relationDb.delete('llm_call_record', [
         { field: 'session_id', operator: Operator.EQ, value: sessionId },
       ]);
     } catch (err: unknown) {
-      this.logger?.warn?.('deleteSession: llm_call_log 清理失败（已跳过）', {
+      this.logger?.warn?.('deleteSession: llm_call_record 清理失败（已跳过）', {
         session_id: sessionId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -399,7 +397,7 @@ export class ChatService {
         });
         const traceIds = (execs ?? []).map((e) => String(e.trace_id ?? '')).filter(Boolean);
         if (traceIds.length > 0) {
-          await this.relationDb.delete('agent_execution_trace', [
+          await this.relationDb.delete('agent_execution_trace_record', [
             { field: 'trace_id', operator: Operator.IN, value: traceIds },
           ]);
         }
@@ -435,7 +433,7 @@ export class ChatService {
         if (fbRunIds.length > 0) fbConds.push({ field: 'run_id', operator: Operator.IN, value: fbRunIds });
         if (fbWorkIds.length > 0) fbConds.push({ field: 'work_id', operator: Operator.IN, value: fbWorkIds, logic: Logic.OR });
         await this.relationDb.delete('feedback_record', fbConds);
-        await this.relationDb.delete('feedback_process_log', fbConds);
+        await this.relationDb.delete('feedback_process_log_record', fbConds);
       }
     } catch (fbErr: unknown) {
       this.logger?.warn?.('deleteSession: 反馈数据级联清理失败（已跳过）', {
@@ -447,7 +445,7 @@ export class ChatService {
 
   private async deleteWriterProfileForSession(sessionId: string): Promise<void> {
     try {
-      await this.relationDb.delete('writer_agent_user_profile', [
+      await this.relationDb.delete('writer_agent_user_profile_record', [
         { field: 'session_id', operator: Operator.EQ, value: sessionId },
       ]);
     } catch (prefErr: unknown) {
@@ -506,7 +504,7 @@ export class ChatService {
   ): Promise<boolean> {
 
     const liveRows = this.relationDb.queryRaw<{ session_id: string }>(
-      `SELECT "session_id" FROM "chat_session"`,
+      `SELECT "session_id" FROM "chat_session_record"`,
     );
     const liveSessions = new Set<string>(
       (liveRows ?? []).map((r) => String(r.session_id ?? '')).filter(Boolean),
@@ -561,7 +559,7 @@ export class ChatService {
   private soSessionIdsByKeyword(keyword: string): string[] {
     const kw = `%${keyword}%`;
     const matchedRows = this.relationDb.queryRaw<{ session_id: string }>(
-      `SELECT "session_id" FROM "chat_session" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "${DIALOG_TABLE}" WHERE "dialog" LIKE ?`,
+      `SELECT "session_id" FROM "chat_session_record" WHERE "session_title" LIKE ? UNION SELECT DISTINCT "session_id" FROM "${DIALOG_TABLE}" WHERE "dialog" LIKE ?`,
       [kw, kw],
     );
     return matchedRows.map((r) => r.session_id).filter(Boolean);
@@ -590,7 +588,7 @@ export class ChatService {
     const pageSize = input.page_size ?? 20;
     const selInput = Object.assign(new SelectDBInput(), {
       query_param: {
-        table: 'chat_session',
+        table: 'chat_session_record',
         conditions,
         order_by: input.order_by ? [
           { field: input.order_by.replace(/^-/, ''), direction: input.order_by.startsWith('-') ? 'DESC' : 'ASC' },
@@ -616,7 +614,7 @@ export class ChatService {
     return maps;
   }
 
-  private soSessionQaStats(sessionIds: string[], metrics?: Metrics): Map<string, { qa_count: number; question_chars: number; answer_chars: number }> {
+  private soSessionQaStats(sessionIds: string[], _metrics?: Metrics): Map<string, { qa_count: number; question_chars: number; answer_chars: number }> {
     const statMap = new Map<string, { qa_count: number; question_chars: number; answer_chars: number }>();
     if (sessionIds.length === 0) return statMap;
     const placeholders = sessionIds.map(() => '?').join(',');
@@ -627,8 +625,8 @@ export class ChatService {
              SUM(CASE WHEN "type" = 'REQUEST' THEN 1 ELSE 0 END),
              SUM(CASE WHEN "type" = 'RESPONSE' THEN 1 ELSE 0 END)
            ) AS qa_count,
-           SUM(CASE WHEN "type" = 'REQUEST' THEN "dialog_length" ELSE 0 END) AS question_chars,
-           SUM(CASE WHEN "type" = 'RESPONSE' THEN "dialog_length" ELSE 0 END) AS answer_chars
+           SUM(CASE WHEN "type" = 'REQUEST' THEN LENGTH("dialog") ELSE 0 END) AS question_chars,
+           SUM(CASE WHEN "type" = 'RESPONSE' THEN LENGTH("dialog") ELSE 0 END) AS answer_chars
          FROM "${DIALOG_TABLE}" WHERE "session_id" IN (${placeholders}) GROUP BY "session_id"`,
         sessionIds,
       );
@@ -650,7 +648,7 @@ export class ChatService {
     try {
       const tagRows = this.relationDb.queryRaw<{ session_id: string; tag: string }>(
         `SELECT d."session_id", t."tag"
-         FROM "info_tag" t
+         FROM "info_tag_record" t
          INNER JOIN "${DIALOG_TABLE}" d ON t."info_id" = d."id"
          WHERE d."session_id" IN (${placeholders})
          GROUP BY d."session_id", t."tag"`,
@@ -683,7 +681,7 @@ export class ChatService {
         `SELECT "session_id",
            COALESCE(SUM("input_tokens"), 0) AS input_tokens,
            COALESCE(SUM("output_tokens"), 0) AS output_tokens
-         FROM "llm_call_log"
+         FROM "llm_call_record"
          WHERE "session_id" IN (${placeholders})
          GROUP BY "session_id"`,
         sessionIds,
@@ -695,7 +693,7 @@ export class ChatService {
         });
       }
     } catch (err) {
-      metrics?.warn('ChatService.soSession 会话 token 聚合失败（llm_call_log 降级为 trace 聚合）', {
+      metrics?.warn('ChatService.soSession 会话 token 聚合失败（llm_call_record 降级为 trace 聚合）', {
         error: err instanceof Error ? err.message : String(err),
         session_ids: sessionIds,
       });
@@ -716,7 +714,7 @@ export class ChatService {
         `SELECT ow."session_id", t."trace_id", t."iterations_json", t."total_token_usage"
          FROM "orchestration_work" ow
          INNER JOIN "orchestration_agent_execution" e ON ow."work_id" = e."work_id"
-         INNER JOIN "agent_execution_trace" t ON e."trace_id" = t."trace_id" AND e."trace_id" IS NOT NULL AND e."trace_id" != ''
+         INNER JOIN "agent_execution_trace_record" t ON e."trace_id" = t."trace_id" AND e."trace_id" IS NOT NULL AND e."trace_id" != ''
          WHERE ow."session_id" IN (${placeholders})
          GROUP BY ow."session_id", t."trace_id"`,
         missing,
@@ -794,7 +792,7 @@ export class ChatService {
   private async countSessionTotal(conditions: Condition[], metrics?: Metrics): Promise<number> {
     try {
       const totalInput = Object.assign(new CountDBInput(), {
-        table: 'chat_session',
+        table: 'chat_session_record',
         conditions,
       });
       const totalOutput = Object.assign(new CountDBOutput(), {});
@@ -813,7 +811,7 @@ export class ChatService {
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
       query_param: {
-        table: 'chat_session',
+        table: 'chat_session_record',
         conditions: [
           { field: 'session_id', operator: Operator.EQ, value: input.session_id },
         ] as Condition[],
@@ -869,7 +867,7 @@ export class ChatService {
     ];
 
     const updInput = Object.assign(new UpdateDBInput(), {
-      table: 'chat_session',
+      table: 'chat_session_record',
       data,
       conditions: [
         { field: 'session_id', operator: Operator.EQ, value: input.session_id },
@@ -966,7 +964,6 @@ export class ChatService {
       new InfoCoreContext(),
     );
 
-    const messages: GetChatHistoryOutput['messages'] = [];
     const allRows = lastNOutput.list;
 
     let start = 0;
@@ -1070,7 +1067,7 @@ export class ChatService {
       try {
         const selInput = Object.assign(new SelectOneDBInput(), {
           query_param: {
-            table: 'info_summary',
+            table: 'info_summary_record',
             conditions: [
               { field: 'info_id', operator: Operator.EQ, value: row.info_id },
             ] as Condition[],
@@ -1231,7 +1228,7 @@ export class ChatService {
     try {
       const selInput = Object.assign(new SelectOneDBInput(), {
         query_param: {
-          table: 'chat_session',
+          table: 'chat_session_record',
           conditions: [
             { field: 'session_id', operator: Operator.EQ, value: sessionId },
           ] as Condition[],
@@ -1266,7 +1263,7 @@ export class ChatService {
     try {
       const selInput = Object.assign(new SelectOneDBInput(), {
         query_param: {
-          table: 'chat_session',
+          table: 'chat_session_record',
           conditions: [
             { field: 'session_id', operator: Operator.EQ, value: sessionId },
           ] as Condition[],

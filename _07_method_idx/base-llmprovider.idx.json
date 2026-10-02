@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.218Z",
+  "updated_at": "2026-10-01T15:41:06.227Z",
   "shard": "base-llmprovider",
   "layer": "Base",
   "module": "LLMProvider",
@@ -254,6 +254,19 @@
     },
     {
       "id": "m-llmprovider-0020",
+      "signature": "boolean boolean soModelTokenStats(input: SoModelTokenStatsInput, output: SoModelTokenStatsOutput, context: LLMContext): Promise<boolean>",
+      "name": "soModelTokenStats",
+      "category": "data",
+      "layer": "Base",
+      "module": "LLMProvider",
+      "location": "brian-backend/Base/LLMProvider/access/LLMAccess.ts",
+      "description": "按 llm_available_id 聚合 llm_usage_org 全量输入/输出 tokens，模型卡片 Token 仪表盘数据源（R7 chg-057）",
+      "reusable": false,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-llmprovider-0021",
       "signature": "boolean parseChunk(chunk: unknown): LLMEvent[]",
       "name": "parseChunk",
       "category": "algorithm",
@@ -266,7 +279,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0021",
+      "id": "m-llmprovider-0022",
       "signature": "boolean buildFinishEvent(chunk: unknown, finishReason?: 'tool-calls' | 'stop' | 'aborted' | 'error'): LLMEvent",
       "name": "buildFinishEvent",
       "category": "orchestration",
@@ -279,7 +292,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0022",
+      "id": "m-llmprovider-0023",
       "signature": "boolean handleDelta(delta: NonNullable<NonNullable<ChatChunkShape['choices']>[number]['delta']>, events: LLMEvent[]): void",
       "name": "handleDelta",
       "category": "orchestration",
@@ -292,7 +305,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0023",
+      "id": "m-llmprovider-0024",
       "signature": "boolean handleToolCallDeltas(deltas: Array<{ index?: number; id?: string; type?: string; function?: { name?: string; arguments?: string }; }>, events: LLMEvent[]): void",
       "name": "handleToolCallDeltas",
       "category": "orchestration",
@@ -305,7 +318,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0024",
+      "id": "m-llmprovider-0025",
       "signature": "boolean ensureAccumulator(index: number, id?: string, toolId?: string): ToolCallAccumulator",
       "name": "ensureAccumulator",
       "category": "data",
@@ -318,7 +331,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0025",
+      "id": "m-llmprovider-0026",
       "signature": "boolean mapFinishReason(reason?: string | null): 'tool-calls' | 'stop'",
       "name": "mapFinishReason",
       "category": "orchestration",
@@ -331,7 +344,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0026",
+      "id": "m-llmprovider-0027",
       "signature": "boolean buildUsage(usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined): TokenUsage",
       "name": "buildUsage",
       "category": "algorithm",
@@ -344,7 +357,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0027",
+      "id": "m-llmprovider-0028",
       "signature": "boolean resolveLocalAbortReason(): AbortReasonKind",
       "name": "resolveLocalAbortReason",
       "category": "orchestration",
@@ -357,7 +370,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0028",
+      "id": "m-llmprovider-0029",
       "signature": "boolean run(): Promise<LLMEventsRunResult>",
       "name": "run",
       "category": "orchestration",
@@ -370,7 +383,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0029",
+      "id": "m-llmprovider-0030",
       "signature": "boolean setupAbortWiring(): () => void",
       "name": "setupAbortWiring",
       "category": "orchestration",
@@ -383,7 +396,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0030",
+      "id": "m-llmprovider-0031",
       "signature": "boolean abortLocal(reason: AbortReasonKind): void",
       "name": "abortLocal",
       "category": "orchestration",
@@ -396,7 +409,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0031",
+      "id": "m-llmprovider-0032",
       "signature": "boolean resolveExternalReason(signal?: AbortSignal): AbortReasonKind",
       "name": "resolveExternalReason",
       "category": "orchestration",
@@ -409,7 +422,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0032",
+      "id": "m-llmprovider-0033",
       "signature": "boolean launchRequest(): Promise<Response>",
       "name": "launchRequest",
       "category": "data",
@@ -422,7 +435,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0033",
+      "id": "m-llmprovider-0034",
       "signature": "boolean readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<LLMEventsRunResult>",
       "name": "readLoop",
       "category": "algorithm",
@@ -435,7 +448,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0034",
+      "id": "m-llmprovider-0035",
       "signature": "boolean dispatchLines(lines: string[], lastFrame: unknown): unknown",
       "name": "dispatchLines",
       "category": "data",
@@ -448,7 +461,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0035",
+      "id": "m-llmprovider-0036",
       "signature": "boolean emitToSubscriber(event: LLMEvent): void",
       "name": "emitToSubscriber",
       "category": "orchestration",
@@ -461,7 +474,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0036",
+      "id": "m-llmprovider-0037",
       "signature": "boolean buildResult(lastFrame: unknown, finishReason: 'tool-calls' | 'stop' | 'aborted' | 'error' | undefined): LLMEventsRunResult",
       "name": "buildResult",
       "category": "orchestration",
@@ -474,7 +487,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0037",
+      "id": "m-llmprovider-0038",
       "signature": "boolean toAbortOrConnectError(err: unknown): ProviderError",
       "name": "toAbortOrConnectError",
       "category": "algorithm",
@@ -487,7 +500,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0038",
+      "id": "m-llmprovider-0039",
       "signature": "boolean initialize(): Promise<void>",
       "name": "initialize",
       "category": "data",
@@ -500,7 +513,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0039",
+      "id": "m-llmprovider-0040",
       "signature": "boolean ensureEnabled(): void",
       "name": "ensureEnabled",
       "category": "orchestration",
@@ -513,7 +526,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0040",
+      "id": "m-llmprovider-0041",
       "signature": "boolean buildEndpoint(baseUrl: string, apiPath: string): string",
       "name": "buildEndpoint",
       "category": "algorithm",
@@ -526,7 +539,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0041",
+      "id": "m-llmprovider-0042",
       "signature": "boolean upsertUsage(llmEnableId: string, inputTokens: unknown, outputTokens: unknown): Promise<void>",
       "name": "upsertUsage",
       "category": "data",
@@ -539,7 +552,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0042",
+      "id": "m-llmprovider-0043",
       "signature": "boolean logCall(args: { llmId: string; session_id?: string; run_id?: string; work_id?: string; caller?: string; input_tokens?: number; output_tokens?: number; duration_ms?: number; status?: string; error_code?: string; }): Promise<void>",
       "name": "logCall",
       "category": "data",
@@ -552,7 +565,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0043",
+      "id": "m-llmprovider-0044",
       "signature": "boolean applyDims(input: { session_id?: string; run_id?: string; work_id?: string; caller?: string }, context?: Context): void",
       "name": "applyDims",
       "category": "orchestration",
@@ -565,7 +578,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0044",
+      "id": "m-llmprovider-0045",
       "signature": "boolean soTokenUsage(input: SoTokenUsageInput, output: SoTokenUsageOutput, _context: LLMContext): Promise<boolean>",
       "name": "soTokenUsage",
       "category": "data",
@@ -578,7 +591,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0045",
+      "id": "m-llmprovider-0046",
       "signature": "boolean addLLMProvider(input: AddLLMProviderInput, output: AddLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "addLLMProvider",
       "category": "data",
@@ -591,7 +604,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0046",
+      "id": "m-llmprovider-0047",
       "signature": "boolean updateLLMProvider(input: UpdateLLMProviderInput, output: UpdateLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "updateLLMProvider",
       "category": "data",
@@ -604,7 +617,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0047",
+      "id": "m-llmprovider-0048",
       "signature": "boolean delLLMProvider(input: DelLLMProviderInput, output: DelLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "delLLMProvider",
       "category": "data",
@@ -617,7 +630,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0048",
+      "id": "m-llmprovider-0049",
       "signature": "boolean soLLMProvider(input: SoLLMProviderInput, output: SoLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soLLMProvider",
       "category": "data",
@@ -630,7 +643,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0049",
+      "id": "m-llmprovider-0050",
       "signature": "boolean testLLMProvider(input: TestLLMProviderInput, output: TestLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "testLLMProvider",
       "category": "data",
@@ -643,7 +656,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0050",
+      "id": "m-llmprovider-0051",
       "signature": "boolean listLLM(input: ListLLMInput, output: ListLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "listLLM",
       "category": "data",
@@ -656,7 +669,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0051",
+      "id": "m-llmprovider-0052",
       "signature": "boolean soProviderRow(providerId: string): Promise<LLMProviderRecord>",
       "name": "soProviderRow",
       "category": "data",
@@ -669,7 +682,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0052",
+      "id": "m-llmprovider-0053",
       "signature": "boolean soCachedModels(providerId: string, output: ListLLMOutput): Promise<void>",
       "name": "soCachedModels",
       "category": "data",
@@ -682,7 +695,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0053",
+      "id": "m-llmprovider-0054",
       "signature": "boolean fetchRemoteModels(provider: LLMProviderRecord, output: ListLLMOutput): Promise<Array<{ modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }> | null>",
       "name": "fetchRemoteModels",
       "category": "data",
@@ -695,7 +708,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0054",
+      "id": "m-llmprovider-0055",
       "signature": "boolean syncModelCache(providerId: string, parsedModels: Array<{ modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }>, metrics?: Metrics): Promise<void>",
       "name": "syncModelCache",
       "category": "data",
@@ -708,7 +721,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0055",
+      "id": "m-llmprovider-0056",
       "signature": "boolean upsertModelCacheRow(providerId: string, m: { modelId: string; displayName?: string; description?: string; maxTokens?: number; raw: Record<string, unknown> }, metrics?: Metrics): Promise<void>",
       "name": "upsertModelCacheRow",
       "category": "data",
@@ -721,7 +734,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0056",
+      "id": "m-llmprovider-0057",
       "signature": "boolean updateModelsCacheTimestamp(providerId: string): Promise<void>",
       "name": "updateModelsCacheTimestamp",
       "category": "data",
@@ -734,7 +747,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0057",
+      "id": "m-llmprovider-0058",
       "signature": "boolean addLLM(input: AddLLMInput, output: AddLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "addLLM",
       "category": "data",
@@ -747,7 +760,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0058",
+      "id": "m-llmprovider-0059",
       "signature": "boolean delLLM(input: DelLLMInput, output: DelLLMOutput, _context: LLMContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "delLLM",
       "category": "data",
@@ -760,7 +773,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0059",
+      "id": "m-llmprovider-0060",
       "signature": "boolean updateLLM(input: UpdateLLMInput, output: UpdateLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "updateLLM",
       "category": "data",
@@ -773,7 +786,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0060",
+      "id": "m-llmprovider-0061",
       "signature": "boolean soLLM(input: SoLLMInput, output: SoLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soLLM",
       "category": "data",
@@ -786,7 +799,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0061",
+      "id": "m-llmprovider-0062",
       "signature": "boolean recordLLMCallMetrics(metrics?: Metrics, usage?: { llm_id?: string; attempt?: number; input_tokens: number; output_tokens: number; duration_ms: number; }): void",
       "name": "recordLLMCallMetrics",
       "category": "orchestration",
@@ -799,7 +812,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0062",
+      "id": "m-llmprovider-0063",
       "signature": "boolean execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "execLLM",
       "category": "orchestration",
@@ -812,7 +825,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0063",
+      "id": "m-llmprovider-0064",
       "signature": "boolean execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "execLLMEvents",
       "category": "orchestration",
@@ -825,7 +838,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0064",
+      "id": "m-llmprovider-0065",
       "signature": "boolean validateEventsInput(input: ExecLLMEventsInput): void",
       "name": "validateEventsInput",
       "category": "orchestration",
@@ -838,7 +851,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0065",
+      "id": "m-llmprovider-0066",
       "signature": "boolean executeEventsSingle(llmId: string, input: ExecLLMEventsInput, signal?: AbortSignal): Promise<EventsSingleResult>",
       "name": "executeEventsSingle",
       "category": "data",
@@ -851,7 +864,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0066",
+      "id": "m-llmprovider-0067",
       "signature": "boolean buildEventsRequest(llmId: string, input: ExecLLMEventsInput): Promise<{ url: string; method: string; headers: Record<string, string>; body?: string }>",
       "name": "buildEventsRequest",
       "category": "data",
@@ -864,7 +877,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0067",
+      "id": "m-llmprovider-0068",
       "signature": "boolean fillEventsOutput(output: ExecLLMEventsOutput, single: EventsSingleResult, startTime: number, input?: ExecLLMEventsInput): void",
       "name": "fillEventsOutput",
       "category": "orchestration",
@@ -877,7 +890,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0068",
+      "id": "m-llmprovider-0069",
       "signature": "boolean prepareWireMessages(input: ExecLLMEventsInput): LLMMessage[]",
       "name": "prepareWireMessages",
       "category": "orchestration",
@@ -890,7 +903,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0069",
+      "id": "m-llmprovider-0070",
       "signature": "boolean resolveCandidateModels(specifiedId?: string, metrics?: Metrics): Promise<string[]>",
       "name": "resolveCandidateModels",
       "category": "data",
@@ -903,7 +916,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0070",
+      "id": "m-llmprovider-0071",
       "signature": "boolean executeSingleLLM(llmId: string, input: ExecLLMInput, startTime: number, output: ExecLLMOutput): Promise<boolean>",
       "name": "executeSingleLLM",
       "category": "orchestration",
@@ -916,7 +929,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0071",
+      "id": "m-llmprovider-0072",
       "signature": "boolean soValidatedLLM(llmId: string, output: ExecLLMOutput): Promise<LLMAvailableRecord | null>",
       "name": "soValidatedLLM",
       "category": "data",
@@ -929,7 +942,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0072",
+      "id": "m-llmprovider-0073",
       "signature": "boolean soValidatedLLMProvider(llm: LLMAvailableRecord, output: ExecLLMOutput): Promise<LLMProviderRecord | null>",
       "name": "soValidatedLLMProvider",
       "category": "data",
@@ -942,7 +955,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0073",
+      "id": "m-llmprovider-0074",
       "signature": "boolean executeSingleLLMStreaming(llmId: string, input: ExecLLMInput, startTime: number, output: ExecLLMOutput): Promise<boolean>",
       "name": "executeSingleLLMStreaming",
       "category": "orchestration",
@@ -955,7 +968,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0074",
+      "id": "m-llmprovider-0075",
       "signature": "boolean soSingleEventsInput(llmId: string, input: ExecLLMInput): ExecLLMEventsInput",
       "name": "soSingleEventsInput",
       "category": "orchestration",
@@ -968,7 +981,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0075",
+      "id": "m-llmprovider-0076",
       "signature": "boolean executeSingleLLMRequest(llmId: string, strategy: ILLMProviderStrategy, req: HttpRequestOptions, input: ExecLLMInput, startTime: number, output: ExecLLMOutput): Promise<boolean>",
       "name": "executeSingleLLMRequest",
       "category": "orchestration",
@@ -981,7 +994,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0076",
+      "id": "m-llmprovider-0077",
       "signature": "boolean execChatHttpRequest(req: HttpRequestOptions)",
       "name": "execChatHttpRequest",
       "category": "orchestration",
@@ -994,7 +1007,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0077",
+      "id": "m-llmprovider-0078",
       "signature": "boolean fillChatResponse(rawText: string, strategy: ILLMProviderStrategy, prompt: string, startTime: number, output: ExecLLMOutput): void",
       "name": "fillChatResponse",
       "category": "data",
@@ -1007,7 +1020,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0078",
+      "id": "m-llmprovider-0079",
       "signature": "boolean logChatError(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void>",
       "name": "logChatError",
       "category": "orchestration",
@@ -1020,7 +1033,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0079",
+      "id": "m-llmprovider-0080",
       "signature": "boolean recordChatSuccess(llmId: string, input: ExecLLMInput, output: ExecLLMOutput): Promise<void>",
       "name": "recordChatSuccess",
       "category": "data",
@@ -1033,7 +1046,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0080",
+      "id": "m-llmprovider-0081",
       "signature": "boolean embedLLM(input: EmbedLLMInput, output: EmbedLLMOutput, context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "embedLLM",
       "category": "data",
@@ -1046,7 +1059,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0081",
+      "id": "m-llmprovider-0082",
       "signature": "boolean genLLMAttr(input: GenLLMAttrInput, output: GenLLMAttrOutput, _context: LLMContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "genLLMAttr",
       "category": "data",
@@ -1059,7 +1072,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0082",
+      "id": "m-llmprovider-0083",
       "signature": "boolean visualizedLLM(input: VisualizedLLMInput, output: VisualizedLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "visualizedLLM",
       "category": "data",
@@ -1072,7 +1085,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0083",
+      "id": "m-llmprovider-0084",
       "signature": "boolean enableLLM(input: EnableLLMInput, _output: EnableLLMOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "enableLLM",
       "category": "orchestration",
@@ -1085,7 +1098,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0084",
+      "id": "m-llmprovider-0085",
       "signature": "boolean supports(provider: LLMProviderRecord): boolean",
       "name": "supports",
       "category": "algorithm",
@@ -1098,7 +1111,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0085",
+      "id": "m-llmprovider-0086",
       "signature": "boolean buildHeaders(provider: LLMProviderRecord, contentType: unknown): Record<string, string>",
       "name": "buildHeaders",
       "category": "algorithm",
@@ -1111,7 +1124,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0086",
+      "id": "m-llmprovider-0087",
       "signature": "boolean buildTestRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildTestRequest",
       "category": "orchestration",
@@ -1124,7 +1137,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0087",
+      "id": "m-llmprovider-0088",
       "signature": "boolean buildListModelsRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildListModelsRequest",
       "category": "orchestration",
@@ -1137,7 +1150,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0088",
+      "id": "m-llmprovider-0089",
       "signature": "boolean buildChatRequest(provider: LLMProviderRecord, model: LLMAvailableRecord, input: ExecLLMInput): HttpRequestOptions",
       "name": "buildChatRequest",
       "category": "data",
@@ -1150,7 +1163,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0089",
+      "id": "m-llmprovider-0090",
       "signature": "boolean parseChatResponse(json: unknown, rawText: string): ParsedChatResult",
       "name": "parseChatResponse",
       "category": "algorithm",
@@ -1163,7 +1176,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0090",
+      "id": "m-llmprovider-0091",
       "signature": "boolean supports(_provider: LLMProviderRecord): boolean",
       "name": "supports",
       "category": "orchestration",
@@ -1176,7 +1189,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0091",
+      "id": "m-llmprovider-0092",
       "signature": "boolean buildEndpoint(baseUrl: string, apiPath: string): string",
       "name": "buildEndpoint",
       "category": "algorithm",
@@ -1189,7 +1202,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0092",
+      "id": "m-llmprovider-0093",
       "signature": "boolean buildHeaders(provider: LLMProviderRecord, contentType: unknown): Record<string, string>",
       "name": "buildHeaders",
       "category": "algorithm",
@@ -1202,7 +1215,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0093",
+      "id": "m-llmprovider-0094",
       "signature": "boolean buildTestRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildTestRequest",
       "category": "algorithm",
@@ -1215,7 +1228,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0094",
+      "id": "m-llmprovider-0095",
       "signature": "boolean buildListModelsRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildListModelsRequest",
       "category": "algorithm",
@@ -1228,7 +1241,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0095",
+      "id": "m-llmprovider-0096",
       "signature": "boolean parseListModelsResponse(json: unknown, _rawText: string): ParsedModelItem[]",
       "name": "parseListModelsResponse",
       "category": "algorithm",
@@ -1241,7 +1254,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0096",
+      "id": "m-llmprovider-0097",
       "signature": "boolean buildChatRequest(provider: LLMProviderRecord, model: LLMAvailableRecord, input: ExecLLMInput): HttpRequestOptions",
       "name": "buildChatRequest",
       "category": "data",
@@ -1254,7 +1267,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0097",
+      "id": "m-llmprovider-0098",
       "signature": "boolean parseChatResponse(json: unknown, _rawText: string): ParsedChatResult",
       "name": "parseChatResponse",
       "category": "algorithm",
@@ -1267,7 +1280,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0098",
+      "id": "m-llmprovider-0099",
       "signature": "boolean buildChatEventsRequest(provider: LLMProviderRecord, model: LLMAvailableRecord, input: ExecLLMEventsInput): HttpRequestOptions",
       "name": "buildChatEventsRequest",
       "category": "data",
@@ -1280,7 +1293,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0099",
+      "id": "m-llmprovider-0100",
       "signature": "boolean prepareEventsBody(model: LLMAvailableRecord, input: ExecLLMEventsInput): Record<string, unknown>",
       "name": "prepareEventsBody",
       "category": "algorithm",
@@ -1293,7 +1306,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0100",
+      "id": "m-llmprovider-0101",
       "signature": "boolean prepareEventsMessages(input: ExecLLMEventsInput): LLMMessage[]",
       "name": "prepareEventsMessages",
       "category": "orchestration",
@@ -1306,7 +1319,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0101",
+      "id": "m-llmprovider-0102",
       "signature": "boolean prepareEventsMaxTokens(model: LLMAvailableRecord, maxTokens?: number): number | undefined",
       "name": "prepareEventsMaxTokens",
       "category": "orchestration",
@@ -1319,7 +1332,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0102",
+      "id": "m-llmprovider-0103",
       "signature": "boolean prepareToolSpec(spec: LLMToolSpec): Record<string, unknown>",
       "name": "prepareToolSpec",
       "category": "orchestration",
@@ -1332,7 +1345,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0103",
+      "id": "m-llmprovider-0104",
       "signature": "boolean buildEmbedRequest(provider: LLMProviderRecord, model: LLMAvailableRecord, input: EmbedLLMInput): HttpRequestOptions",
       "name": "buildEmbedRequest",
       "category": "data",
@@ -1345,7 +1358,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0104",
+      "id": "m-llmprovider-0105",
       "signature": "boolean parseEmbedResponse(json: unknown, _rawText: string): ParsedEmbedResult",
       "name": "parseEmbedResponse",
       "category": "data",
@@ -1358,7 +1371,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0105",
+      "id": "m-llmprovider-0106",
       "signature": "boolean supports(provider: LLMProviderRecord): boolean",
       "name": "supports",
       "category": "algorithm",
@@ -1371,7 +1384,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0106",
+      "id": "m-llmprovider-0107",
       "signature": "boolean buildHeaders(provider: LLMProviderRecord, contentType: unknown): Record<string, string>",
       "name": "buildHeaders",
       "category": "algorithm",
@@ -1384,7 +1397,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0107",
+      "id": "m-llmprovider-0108",
       "signature": "boolean appendGoogleKey(url: string, apiKey?: string | null): string",
       "name": "appendGoogleKey",
       "category": "algorithm",
@@ -1397,7 +1410,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0108",
+      "id": "m-llmprovider-0109",
       "signature": "boolean buildTestRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildTestRequest",
       "category": "orchestration",
@@ -1410,7 +1423,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0109",
+      "id": "m-llmprovider-0110",
       "signature": "boolean buildListModelsRequest(provider: LLMProviderRecord): HttpRequestOptions",
       "name": "buildListModelsRequest",
       "category": "orchestration",
@@ -1423,7 +1436,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0110",
+      "id": "m-llmprovider-0111",
       "signature": "boolean buildChatRequest(provider: LLMProviderRecord, model: LLMAvailableRecord, input: ExecLLMInput): HttpRequestOptions",
       "name": "buildChatRequest",
       "category": "data",
@@ -1436,7 +1449,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0111",
+      "id": "m-llmprovider-0112",
       "signature": "boolean parseChatResponse(json: unknown, rawText: string): ParsedChatResult",
       "name": "parseChatResponse",
       "category": "algorithm",
@@ -1449,7 +1462,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0112",
+      "id": "m-llmprovider-0113",
       "signature": "boolean registerStrategy(strategy: ILLMProviderStrategy): void",
       "name": "registerStrategy",
       "category": "algorithm",
@@ -1462,7 +1475,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0113",
+      "id": "m-llmprovider-0114",
       "signature": "boolean soStrategyById(provider: LLMProviderRecord): ILLMProviderStrategy",
       "name": "soStrategyById",
       "category": "orchestration",
@@ -1475,7 +1488,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0114",
+      "id": "m-llmprovider-0115",
       "signature": "boolean supports(provider: LLMProviderRecord): boolean",
       "name": "supports",
       "category": "algorithm",
@@ -1488,7 +1501,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0115",
+      "id": "m-llmprovider-0116",
       "signature": "boolean parseListModelsResponse(json: unknown, rawText: string): ParsedModelItem[]",
       "name": "parseListModelsResponse",
       "category": "algorithm",
@@ -1501,7 +1514,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0116",
+      "id": "m-llmprovider-0117",
       "signature": "boolean supports(provider: LLMProviderRecord): boolean",
       "name": "supports",
       "category": "algorithm",
@@ -1514,7 +1527,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0117",
+      "id": "m-llmprovider-0118",
       "signature": "boolean parseListModelsResponse(json: unknown, _rawText: string): ParsedModelItem[]",
       "name": "parseListModelsResponse",
       "category": "algorithm",
@@ -1527,7 +1540,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0118",
+      "id": "m-llmprovider-0119",
       "signature": "boolean isModelsCacheFresh(modelsFetchedAt: number | null | undefined, force: boolean | undefined, now: number, ttlMs: number): boolean",
       "name": "isModelsCacheFresh",
       "category": "algorithm",
@@ -1540,7 +1553,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0119",
+      "id": "m-llmprovider-0120",
       "signature": "boolean extractRemoteErrorDetail(status: number, bodyText: string): string",
       "name": "extractRemoteErrorDetail",
       "category": "data",
@@ -1553,7 +1566,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0120",
+      "id": "m-llmprovider-0121",
       "signature": "boolean toCacheInsertRecord(providerId: string, model: ParsedModel): DataObject[]",
       "name": "toCacheInsertRecord",
       "category": "data",
@@ -1566,7 +1579,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0121",
+      "id": "m-llmprovider-0122",
       "signature": "boolean toCacheUpdatePatch(model: ParsedModel): DataObject[]",
       "name": "toCacheUpdatePatch",
       "category": "data",
@@ -1579,7 +1592,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-llmprovider-0122",
+      "id": "m-llmprovider-0123",
       "signature": "boolean init(): void",
       "name": "init",
       "category": "data",
@@ -1593,11 +1606,11 @@
     }
   ],
   "stats": {
-    "total": 122,
+    "total": 123,
     "by_category": {
       "algorithm": 25,
       "orchestration": 54,
-      "data": 43
+      "data": 44
     }
   }
 }

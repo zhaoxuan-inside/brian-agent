@@ -4,13 +4,19 @@ import type { Condition, OrderBy, Page } from '../../shared/query';
 export class SoulContext extends Context {}
 
 export interface SoulData {
-  
+
+  title?: string;
+
   soul_content: string;
-  
+
   soul_brief: string;
-  
+
   soul_usage: string;
-  
+
+  positive_examples?: string[];
+
+  negative_examples?: string[];
+
   enable?: boolean;
 }
 
@@ -105,8 +111,8 @@ export class RecordSoulUsageInput extends Input {
 
 export class RecordSoulUsageOutput extends Output {}
 
-export const SOUL_TABLE = 'soul';
-
-export const SOUL_USAGE_TABLE = 'soul_usage';
-
-export const SOUL_CONFIG_TABLE = 'soul_config';
+export const SOUL_TABLE = 'soul_record';
+export const SOUL_EMBEDDING_TABLE = 'soul_embedding_record';
+export const SOUL_EXAMPLE_EMBEDDING_TABLE = 'soul_example_embedding_record';
+export const SOUL_USAGE_TABLE = 'soul_usage_org';
+export const SOUL_CONFIG_TABLE = 'soul_config_record';

@@ -93,7 +93,8 @@ export function forceDirectedLayout(
     const p = positions.get(n.id)!
     const d = degree.get(n.id) || 0
     const wRatio = Math.min((n.weight || 0) / maxWeight, 1)
-    const hue = 210 - 210 * wRatio
+    // Claude 暖色带(ADR-016):青=低频 → 珊瑚=高频,低饱和
+    const hue = 168 - 150 * wRatio
     // 半径随连接度 sqrt 缩放(4–12),枢纽节点显著更大但不失真
     const r = Math.min(4 + Math.sqrt(d / maxDegree) * 8, 12)
     return {
@@ -102,7 +103,7 @@ export function forceDirectedLayout(
       y: p.y,
       r,
       hue,
-      color: `hsl(${hue}, 75%, 52%)`,
+      color: `hsl(${hue}, 58%, 52%)`,
     }
   })
 }

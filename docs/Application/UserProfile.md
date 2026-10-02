@@ -184,9 +184,9 @@
 #### `saveProfileRecord`
 
 - **类型**：数据处理
-- **说明**：写入/新增：画像 / record（操作关系数据库）
-- **签名**：`saveProfileRecord(sessionId: string \| undefined, newVersion: number, summary: string, recordId: string, now: number): Promise<void>`
-- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:304
+- **说明**：写入/新增：画像 / record / change_summary（操作关系数据库）
+- **签名**：`saveProfileRecord(sessionId: string \| undefined, newVersion: number, summary: string, changeSummary: string, recordId: string, now: number): Promise<void>`
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:346
 - **引用次数**：2
 
 #### `saveDimensionData`
@@ -404,9 +404,9 @@
 #### `buildFallbackSummary`
 
 - **类型**：数据处理
-- **说明**：构建/初始化：fallback / 摘要（序列化输出）
+- **说明**：构建/初始化：fallback 摘要（维度值可读 digest，无截断拼接）
 - **签名**：`buildFallbackSummary(dimensions: Record<string, unknown>, writerPreferences: { language: string; style: string; depth: string; format: string; additional_preferences: string; } \| null): string`
-- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1037
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1116
 - **引用次数**：2
 
 #### `analyzeDimensionWithLLM`
@@ -444,9 +444,33 @@
 #### `buildSummaryFromDimensions`
 
 - **类型**：数据处理
-- **说明**：构建/初始化：摘要 / dimensions（序列化输出，反序列化）
+- **说明**：构建/初始化：画像摘要（维度值可读 digest，超长以省略号收尾）
 - **签名**：`buildSummaryFromDimensions(dimData: Array<{ direction_key: string; value: string; confidence: number }>, enabledDirs: Array<Record<string, unknown>>): string`
-- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1205
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1285
+- **引用次数**：2
+
+#### `buildChangeSummary`
+
+- **类型**：数据处理
+- **说明**：构建/初始化：change_summary（与上一版维度值 JSON 比对得出更新维度清单）
+- **签名**：`buildChangeSummary(newVersion: number, dimensionData: Array<{ direction_key: string; value: string }>, prevDimensions: Record<string, { value: unknown; confidence: number; evidence: Array<Record<string, unknown>> }>, enabledDirs: Array<Record<string, unknown>>): string`
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1305
+- **引用次数**：2
+
+#### `formatValueDigest`
+
+- **类型**：通用算法
+- **说明**：格式化：维度值为可读 digest（对象展开为 key：value，超长省略号收尾）
+- **签名**：`formatValueDigest(val: unknown, maxChars = 80, depth = 0): string`
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1329
+- **引用次数**：3
+
+#### `truncateWithEllipsis`
+
+- **类型**：通用算法
+- **说明**：格式化：文本超长截断并以省略号收尾
+- **签名**：`truncateWithEllipsis(text: string, maxChars: number): string`
+- **位置**：brian-backend/Application/UserProfile/application/UserProfileService.ts:1348
 - **引用次数**：2
 
 #### `cleanupOldVersions`

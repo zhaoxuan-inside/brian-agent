@@ -50,11 +50,11 @@ function onKeydown(e: KeyboardEvent) {
     <div class="max-w-3xl mx-auto space-y-1.5">
       <div
         v-if="selectedCount && selectedCount > 0"
-        class="flex items-center justify-between px-3 py-1 rounded-xl bg-brian-blue/10 border border-brian-blue/20 text-brian-blue text-xs"
+        class="flex items-center justify-between px-3 py-1 rounded-chat-md bg-chat-primary/10 border border-chat-primary/25 text-chat-primary-hover text-xs"
       >
         <span class="truncate">已勾选 {{ selectedCount }} 条消息作为本次问答唯一上下文（与钉住消息合并）</span>
         <button
-          class="flex items-center gap-0.5 text-xs text-apple-gray-500 hover:text-brian-blue ml-2 flex-shrink-0"
+          class="flex items-center gap-0.5 text-xs text-chat-ink-subtle hover:text-chat-ink ml-2 flex-shrink-0"
           title="清空勾选"
           @click="emit('clearSelected')"
         >
@@ -62,10 +62,10 @@ function onKeydown(e: KeyboardEvent) {
         </button>
       </div>
 
-      <div class="flex items-end gap-2 bg-apple-gray-50 dark:bg-apple-gray-800 rounded-2xl border border-apple-gray-200 dark:border-apple-gray-700 px-4 py-2">
+      <div class="flex items-end gap-2 bg-chat-surface-1 rounded-chat-md border border-chat-hairline focus-within:border-chat-primary-hover px-4 py-2 transition-colors">
         <button
-          class="p-1.5 rounded-lg transition-colors flex-shrink-0"
-          :class="citingMode ? 'bg-brian-blue/10 text-brian-blue' : 'text-apple-gray-400 hover:text-brian-blue'"
+          class="p-1.5 rounded-chat-sm transition-colors flex-shrink-0"
+          :class="citingMode ? 'bg-chat-primary/15 text-chat-primary-hover' : 'text-chat-ink-tertiary hover:text-chat-ink'"
           :title="i18nStore.t('chat.citingMode')"
           @click="emit('toggleCiting')"
         >
@@ -75,7 +75,7 @@ function onKeydown(e: KeyboardEvent) {
         <textarea
           ref="textareaRef"
           v-model="text"
-          class="flex-1 bg-transparent resize-none text-sm text-apple-gray-900 dark:text-apple-gray-50 placeholder-apple-gray-400 focus:outline-none py-2 min-h-[36px] max-h-[200px]"
+          class="flex-1 bg-transparent resize-none text-sm text-chat-ink placeholder-chat-ink-tertiary focus:outline-none py-2 min-h-[36px] max-h-[200px]"
           :disabled="disabled"
           :placeholder="i18nStore.t('chat.input.placeholder')"
           rows="1"
@@ -85,7 +85,7 @@ function onKeydown(e: KeyboardEvent) {
 
         <button
           v-if="disabled"
-          class="p-1.5 rounded-lg text-warning-orange hover:bg-warning-orange/10 transition-colors flex-shrink-0"
+          class="p-1.5 rounded-chat-sm text-chat-warning hover:bg-chat-warning/10 transition-colors flex-shrink-0"
           :title="i18nStore.t('chat.stop')"
           @click="emit('stop')"
         >
@@ -93,8 +93,8 @@ function onKeydown(e: KeyboardEvent) {
         </button>
         <button
           v-else
-          class="p-1.5 rounded-lg transition-colors flex-shrink-0"
-          :class="text.trim() ? 'text-brian-blue hover:bg-brian-blue/10' : 'text-apple-gray-300'"
+          class="p-1.5 rounded-chat-sm transition-colors flex-shrink-0"
+          :class="text.trim() ? 'text-chat-primary-hover hover:bg-chat-primary/10' : 'text-chat-ink-tertiary'"
           :disabled="!text.trim()"
           @click="handleSend"
         >

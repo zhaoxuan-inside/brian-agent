@@ -22,28 +22,28 @@ const ballTitle = computed(() =>
 
 const ballRing = computed(() => {
   switch (_props.block.meta.status) {
-    case 'streaming': return 'border-brian-blue'
-    case 'done': return 'border-success-green/60'
-    case 'error': return 'border-error-red/60'
-    default: return 'border-apple-gray-200 dark:border-apple-gray-700'
+    case 'streaming': return 'border-chat-primary'
+    case 'done': return 'border-chat-success/60'
+    case 'error': return 'border-chat-error/60'
+    default: return 'border-chat-hairline'
   }
 })
 
 const iconColor = computed(() => {
   switch (_props.block.meta.status) {
-    case 'streaming': return 'text-brian-blue'
-    case 'done': return 'text-success-green'
-    case 'error': return 'text-error-red'
-    default: return 'text-apple-gray-400'
+    case 'streaming': return 'text-chat-primary-hover'
+    case 'done': return 'text-chat-success'
+    case 'error': return 'text-chat-error'
+    default: return 'text-chat-ink-subtle'
   }
 })
 
 const dotColor = computed(() => {
   switch (_props.block.meta.status) {
-    case 'streaming': return 'bg-brian-blue animate-pulse'
-    case 'done': return 'bg-success-green'
-    case 'error': return 'bg-error-red'
-    default: return 'bg-apple-gray-300'
+    case 'streaming': return 'bg-chat-primary animate-pulse'
+    case 'done': return 'bg-chat-success'
+    case 'error': return 'bg-chat-error'
+    default: return 'bg-chat-ink-tertiary'
   }
 })
 
@@ -80,30 +80,30 @@ const resultHtml = computed(() => renderMarkdown(resultView.value.text))
 <template>
   <div class="py-1 flex flex-col items-end gap-1">
     <div class="flex items-center gap-1.5">
-      <span class="text-4xs text-apple-gray-400 max-w-[160px] truncate" :title="ballTitle">
+      <span class="text-4xs text-chat-ink-tertiary max-w-[160px] truncate" :title="ballTitle">
         {{ block.toolName || 'Tool' }}
       </span>
       <button
-        class="relative flex-shrink-0 w-9 h-9 rounded-full bg-white dark:bg-apple-gray-900 border-2 flex items-center justify-center shadow-sm hover:shadow-md transition-shadow"
+        class="relative flex-shrink-0 w-9 h-9 rounded-full bg-chat-surface-2 border-2 flex items-center justify-center transition-colors"
         :class="ballRing"
         :title="ballTitle"
         @click="isExpanded = !isExpanded"
         :aria-expanded="isExpanded"
         :aria-label="ballTitle"
       >
-        <Loader2 v-if="block.meta.status === 'streaming'" :size="15" class="animate-spin text-brian-blue" />
+        <Loader2 v-if="block.meta.status === 'streaming'" :size="15" class="animate-spin text-chat-primary-hover" />
         <Wrench v-else :size="15" :class="iconColor" />
-        <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-apple-gray-900" :class="dotColor" />
+        <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-chat-surface-2" :class="dotColor" />
       </button>
     </div>
 
-    <div v-if="isExpanded" class="w-full min-w-[260px] block-card overflow-hidden text-left">
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
+    <div v-if="isExpanded" class="w-full min-w-[260px] chat-card overflow-hidden text-left">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-chat-hairline">
         <Wrench :size="13" :class="iconColor" class="flex-shrink-0" />
-        <span class="text-xs font-medium truncate">{{ block.toolName || 'Tool' }}</span>
-        <span class="text-2xs text-apple-gray-400 flex-shrink-0">{{ statusText }}</span>
+        <span class="text-xs font-medium truncate text-chat-ink">{{ block.toolName || 'Tool' }}</span>
+        <span class="text-2xs text-chat-ink-tertiary flex-shrink-0">{{ statusText }}</span>
         <button
-          class="ml-auto p-1 rounded text-apple-gray-400 hover:text-apple-gray-600 dark:hover:text-apple-gray-200 transition-colors"
+          class="ml-auto p-1 rounded-chat-sm text-chat-ink-tertiary hover:text-chat-ink transition-colors"
           title="收起"
           @click="isExpanded = false"
         >
@@ -112,16 +112,16 @@ const resultHtml = computed(() => renderMarkdown(resultView.value.text))
       </div>
       <div class="px-3 py-2.5 space-y-2.5 max-h-96 overflow-y-auto">
         <div>
-          <p class="text-2xs font-medium text-apple-gray-500 mb-1">参数</p>
-          <pre v-if="paramsText" class="text-xs bg-apple-gray-100 dark:bg-apple-gray-900 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-all">{{ paramsText }}</pre>
-          <p v-else class="text-2xs text-apple-gray-400">（无参数）</p>
+          <p class="text-2xs font-medium text-chat-ink-subtle mb-1">参数</p>
+          <pre v-if="paramsText" class="text-xs bg-chat-canvas border border-chat-hairline rounded-chat-sm p-2 overflow-x-auto whitespace-pre-wrap break-all text-chat-ink-muted">{{ paramsText }}</pre>
+          <p v-else class="text-2xs text-chat-ink-tertiary">（无参数）</p>
         </div>
         <div>
-          <p class="text-2xs font-medium text-apple-gray-500 mb-1">响应</p>
-          <p v-if="block.meta.status === 'streaming'" class="text-2xs text-apple-gray-400">执行中…</p>
-          <pre v-else-if="resultView.kind === 'json' && resultView.text" class="text-xs bg-apple-gray-100 dark:bg-apple-gray-900 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-all">{{ resultView.text }}</pre>
+          <p class="text-2xs font-medium text-chat-ink-subtle mb-1">响应</p>
+          <p v-if="block.meta.status === 'streaming'" class="text-2xs text-chat-ink-tertiary">执行中…</p>
+          <pre v-else-if="resultView.kind === 'json' && resultView.text" class="text-xs bg-chat-canvas border border-chat-hairline rounded-chat-sm p-2 overflow-x-auto whitespace-pre-wrap break-all text-chat-ink-muted">{{ resultView.text }}</pre>
           <div v-else-if="resultView.kind === 'markdown' && resultView.text" class="markdown-body text-xs break-words" v-html="resultHtml" />
-          <p v-else class="text-2xs text-apple-gray-400">（无返回）</p>
+          <p v-else class="text-2xs text-chat-ink-tertiary">（无返回）</p>
         </div>
       </div>
     </div>

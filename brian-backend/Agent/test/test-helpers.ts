@@ -18,87 +18,98 @@ export async function setupAgentTestMocks() {
 
 export function initAgentSchema(db: RelationDBAccess): void {
   const tables = [
-    `CREATE TABLE IF NOT EXISTS "agent" (
+    `CREATE TABLE IF NOT EXISTS "agent_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "agent_id" TEXT NOT NULL, "agent_name" TEXT NOT NULL DEFAULT '', "agent_purpose" TEXT NOT NULL DEFAULT '',
-      "agent_type" TEXT NOT NULL DEFAULT 'WORKER', "strategy_id" TEXT NOT NULL DEFAULT '',
-      "soul_id" TEXT NOT NULL DEFAULT '',
+      "title" TEXT NOT NULL DEFAULT '', "brief" TEXT NOT NULL DEFAULT '',
+      "type" TEXT NOT NULL DEFAULT 'WORKER', "strategy_id" TEXT NOT NULL DEFAULT '',
+      "soul_id" TEXT NOT NULL DEFAULT '', "llm_id" TEXT NOT NULL DEFAULT '',
       "skill_ids_json" TEXT NOT NULL DEFAULT '[]', "mcp_ids_json" TEXT NOT NULL DEFAULT '[]',
       "prompt_template_id" TEXT NOT NULL DEFAULT '',
-      "task_signature" TEXT NOT NULL DEFAULT '', "usage_count" INTEGER NOT NULL DEFAULT 0,
-      "eval_score" INTEGER NOT NULL DEFAULT 50, "enable" INTEGER NOT NULL DEFAULT 1
+      "task_signature" TEXT NOT NULL DEFAULT '',
+      "eval_score" INTEGER NOT NULL DEFAULT 50, "enable" INTEGER NOT NULL DEFAULT 1,
+      "created_by" TEXT NOT NULL DEFAULT 'user', "trace_id" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_usage" (
+    `CREATE TABLE IF NOT EXISTS "usage_event_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "agent_id" TEXT NOT NULL, "work_id" TEXT NOT NULL DEFAULT '',
-      "run_id" TEXT NOT NULL DEFAULT '', "usage_context" TEXT NOT NULL DEFAULT ''
+      "trace_id" TEXT NOT NULL DEFAULT '', "entity_type" TEXT NOT NULL, "entity_id" TEXT NOT NULL,
+      "agent_id" TEXT NOT NULL DEFAULT '', "work_id" TEXT NOT NULL DEFAULT '',
+      "run_id" TEXT NOT NULL DEFAULT '', "session_id" TEXT NOT NULL DEFAULT '',
+      "usage_context" TEXT NOT NULL DEFAULT '', "input_tokens" INTEGER NOT NULL DEFAULT 0,
+      "output_tokens" INTEGER NOT NULL DEFAULT 0
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_usage_daily" (
+    `CREATE TABLE IF NOT EXISTS "agent_usage_org" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "agent_id" TEXT NOT NULL, "usage_date" TEXT NOT NULL,
+      "trace_id" TEXT NOT NULL DEFAULT '', "agent_id" TEXT NOT NULL, "usage_date" TEXT NOT NULL,
       "usage_count" INTEGER NOT NULL DEFAULT 0,
       UNIQUE("agent_id", "usage_date")
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_opt_rule" (
+    `CREATE TABLE IF NOT EXISTS "agent_opt_rule_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "days" INTEGER NOT NULL DEFAULT 0, "min_usage_count" INTEGER NOT NULL DEFAULT 0,
       "min_eval_score" INTEGER NOT NULL DEFAULT 0
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_library_config" (
+    `CREATE TABLE IF NOT EXISTS "agent_library_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "prompt_template_id" TEXT NOT NULL DEFAULT '', "similarity_threshold" REAL NOT NULL DEFAULT 0.7,
+      "regen_rate" INTEGER NOT NULL DEFAULT 75,
+      "match_score_threshold" INTEGER NOT NULL DEFAULT 70,
+      "match_bm25_threshold" INTEGER NOT NULL DEFAULT 50,
+      "match_vector_threshold" INTEGER NOT NULL DEFAULT 50,
+      "match_max_tokens" INTEGER NOT NULL DEFAULT 512,
+      "match_enable_thinking" INTEGER NOT NULL DEFAULT 0,
       "max_agent_count" INTEGER NOT NULL DEFAULT 100
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_strategy" (
+    `CREATE TABLE IF NOT EXISTS "agent_strategy_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "strategy_id" TEXT NOT NULL, "strategy_label" TEXT NOT NULL,
+      "strategy_label" TEXT NOT NULL,
       "suitable_complexity_min" INTEGER NOT NULL DEFAULT 0,
       "suitable_complexity_max" INTEGER NOT NULL DEFAULT 100,
       "suitable_domains" TEXT NOT NULL DEFAULT '["*"]',
       "execution_rule" TEXT NOT NULL DEFAULT '{}', "enable" INTEGER NOT NULL DEFAULT 1
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_strategy_config" (
+    `CREATE TABLE IF NOT EXISTS "agent_strategy_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "default_strategy_id" TEXT NOT NULL DEFAULT '', "match_prompt_template_id" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_builder_config" (
+    `CREATE TABLE IF NOT EXISTS "agent_builder_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "task_analysis_prompt_template_id" TEXT NOT NULL DEFAULT '',
       "default_strategy_id" TEXT NOT NULL DEFAULT '', "auto_optimize" INTEGER NOT NULL DEFAULT 1
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_execution_config" (
+    `CREATE TABLE IF NOT EXISTS "agent_execution_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "think_prompt_template_id" TEXT NOT NULL DEFAULT '', "reflect_prompt_template_id" TEXT NOT NULL DEFAULT '',
       "answer_prompt_template_id" TEXT NOT NULL DEFAULT '', "default_max_iterations" INTEGER NOT NULL DEFAULT 10,
       "async_worker_interval" INTEGER NOT NULL DEFAULT 1000
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_execution_trace" (
+    `CREATE TABLE IF NOT EXISTS "agent_execution_trace_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "trace_id" TEXT NOT NULL, "agent_id" TEXT NOT NULL DEFAULT '',
       "start_time" INTEGER NOT NULL DEFAULT 0, "end_time" INTEGER NOT NULL DEFAULT 0,
       "iterations_json" TEXT NOT NULL DEFAULT '[]', "total_token_usage" INTEGER NOT NULL DEFAULT 0,
       "answer" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "writer_agent_config" (
+    `CREATE TABLE IF NOT EXISTS "writer_agent_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "write_prompt_template_id" TEXT NOT NULL DEFAULT '', "default_language" TEXT NOT NULL DEFAULT 'zh-CN',
       "default_style" TEXT NOT NULL DEFAULT 'clear', "default_depth" TEXT NOT NULL DEFAULT 'medium',
       "default_format" TEXT NOT NULL DEFAULT 'MARKDOWN', "llm_id" TEXT
     )`,
-    `CREATE TABLE IF NOT EXISTS "writer_agent_user_profile" (
+    `CREATE TABLE IF NOT EXISTS "writer_agent_user_profile_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "session_id" TEXT NOT NULL, "language" TEXT NOT NULL DEFAULT 'zh-CN',
       "style" TEXT NOT NULL DEFAULT 'clear', "depth" TEXT NOT NULL DEFAULT 'medium',
       "format" TEXT NOT NULL DEFAULT 'MARKDOWN', "additional_preferences" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_evaluation" (
+    `CREATE TABLE IF NOT EXISTS "agent_evaluation_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-      "eval_id" TEXT NOT NULL, "agent_id" TEXT NOT NULL DEFAULT '', "eval_type" TEXT NOT NULL DEFAULT '',
+      "eval_id" TEXT NOT NULL DEFAULT '',
+      "agent_id" TEXT NOT NULL DEFAULT '', "eval_type" TEXT NOT NULL DEFAULT '',
       "work_id" TEXT NOT NULL DEFAULT '', "run_id" TEXT NOT NULL DEFAULT '',
       "scores" TEXT NOT NULL DEFAULT '{}', "suggestions" TEXT NOT NULL DEFAULT '[]',
       "need_optimize" INTEGER NOT NULL DEFAULT 0
     )`,
-    `CREATE TABLE IF NOT EXISTS "evolutor_agent_config" (
+    `CREATE TABLE IF NOT EXISTS "evolutor_agent_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "eval_work_prompt_template_id" TEXT NOT NULL DEFAULT '',
       "eval_write_prompt_template_id" TEXT NOT NULL DEFAULT '',
@@ -106,7 +117,8 @@ export function initAgentSchema(db: RelationDBAccess): void {
       "eval_frequency_threshold" INTEGER NOT NULL DEFAULT 5,
       "eval_schedule_interval_ms" INTEGER NOT NULL DEFAULT 3600000,
       "eval_batch_size" INTEGER NOT NULL DEFAULT 20,
-      "llm_id" TEXT
+      "llm_id" TEXT,
+      "critical_disband_score" INTEGER NOT NULL DEFAULT 30
     )`,
     `CREATE TABLE IF NOT EXISTS "agent_context" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
@@ -119,7 +131,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "context_id" TEXT NOT NULL DEFAULT '', "info_id" TEXT NOT NULL DEFAULT '', "source" TEXT NOT NULL DEFAULT ''
     )`,
-    `CREATE TABLE IF NOT EXISTS "agent_context_config" (
+    `CREATE TABLE IF NOT EXISTS "agent_context_config_record" (
       "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
       "max_context_items" INTEGER NOT NULL DEFAULT 200, "enable_snapshot_persistence" INTEGER NOT NULL DEFAULT 1
     )`,
@@ -130,7 +142,7 @@ export function initAgentSchema(db: RelationDBAccess): void {
   const ruleJson = JSON.stringify({ version: '1.0', steps: [{ step: 'Think', next: 'Answer' }, { step: 'Answer', next: null }] }).replace(/'/g, "''");
   for (const label of ['Plan-and-Solve', 'CoT', 'ReAct']) {
     const sid = `strategy-${label.toLowerCase()}`;
-    db.executeRaw(`INSERT OR IGNORE INTO "agent_strategy" ("id","created","updated","strategy_id","strategy_label","suitable_complexity_min","suitable_complexity_max","suitable_domains","execution_rule","enable") VALUES ('${sid}',${now},${now},'${sid}','${label}',0,100,'["*"]','${ruleJson}',1)`);
+    db.executeRaw(`INSERT OR IGNORE INTO "agent_strategy_record" ("id","created","updated","strategy_label","suitable_complexity_min","suitable_complexity_max","suitable_domains","execution_rule","enable") VALUES ('${sid}',${now},${now},'${label}',0,100,'["*"]','${ruleJson}',1)`);
   }
 }
 

@@ -56,6 +56,20 @@ describe('LLMEventsRunner', () => {
     });
   });
 
+  it('应该产出阶段耗时拆分（connect/ttft/stream）', async () => {
+    const frames = [
+      dataFrame('{"choices":[{"delta":{"content":"A"},"finish_reason":null}]}'),
+      dataFrame('{"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'),
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, body: sseStream(frames) });
+    const runner = new LLMEventsRunner({ request: REQUEST, idle_watchdog_ms: 1000 });
+    const result = await runner.run();
+    expect(result.connect_ms).toBeGreaterThanOrEqual(0);
+    expect(result.ttft_ms).toBeGreaterThanOrEqual(result.connect_ms);
+    expect(result.stream_ms).toBeGreaterThanOrEqual(0);
+    expect(result.ttft_ms + result.stream_ms).toBeLessThanOrEqual(result.connect_ms + result.stream_ms + 5);
+  });
+
   it('应该归一化 reasoning_content 与跨帧 tool_calls', async () => {
     const frames = [
       dataFrame('{"choices":[{"delta":{"reasoning_content":"想"}}],"usage":null}'),

@@ -17,12 +17,15 @@ const props = withDefaults(defineProps<{
   closeOnBackdrop?: boolean
   /** aria-label,缺省用 title */
   label?: string
+  /** 'default' 为全局默认(iOS);'chat' 仅对话页挂 Claude 主题令牌(ADR-015) */
+  variant?: 'default' | 'chat'
 }>(), {
   title: '',
   panelClass: 'max-w-md',
   closeOnEsc: true,
   closeOnBackdrop: true,
   label: '',
+  variant: 'default',
 })
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -90,6 +93,7 @@ onBeforeUnmount(() => lockBody(false))
       <div
         v-if="open"
         class="fixed inset-0 z-modal flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-[2px]"
+        :class="{ 'theme-chat': props.variant === 'chat' }"
         role="dialog"
         aria-modal="true"
         :aria-label="label || title || '对话框'"
@@ -105,14 +109,21 @@ onBeforeUnmount(() => lockBody(false))
         >
           <div
             ref="shellRef"
-            class="relative flex flex-col w-full max-w-[calc(100vw-2rem)] bg-white dark:bg-apple-gray-800 rounded-2xl shadow-lift dark:shadow-lift-dark border border-apple-gray-200/60 dark:border-apple-gray-700/60 max-h-[85vh] animate-pop-in"
-            :class="panelClass"
+            class="relative flex flex-col w-full max-w-[calc(100vw-2rem)] max-h-[85vh] animate-pop-in"
+            :class="[
+              props.variant === 'chat'
+                ? 'bg-chat-surface-1 rounded-chat-lg border border-chat-hairline-strong shadow-[0_24px_64px_rgba(0,0,0,0.55)]'
+                : 'bg-white dark:bg-apple-gray-800 rounded-2xl shadow-lift dark:shadow-lift-dark border border-apple-gray-200/60 dark:border-apple-gray-700/60',
+              panelClass,
+            ]"
           >
             <header v-if="title" class="flex-shrink-0 flex items-center justify-between px-5 pt-4 pb-2">
-              <h2 class="text-[15px] font-semibold tracking-tight">{{ title }}</h2>
+              <h2 class="text-[15px] font-semibold tracking-tight" :class="props.variant === 'chat' ? 'text-chat-ink' : ''">{{ title }}</h2>
               <button
                 type="button"
-                class="icon-btn"
+                :class="props.variant === 'chat'
+                  ? 'p-2 rounded-chat-md text-chat-ink-tertiary hover:text-chat-ink hover:bg-chat-surface-2 transition-colors'
+                  : 'icon-btn'"
                 :aria-label="i18nStore.t('common.close')"
                 @click="requestClose"
               >

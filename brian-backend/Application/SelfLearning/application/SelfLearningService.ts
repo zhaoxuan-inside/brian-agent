@@ -153,11 +153,11 @@ export class SelfLearningService {
     const libraryId = IdGenerator.generate();
     const libraryName = input.library_name || path.basename(libraryPath);
 
+    // ADR-012:library_id 业务键由主键 id 统一承接
     await this.relationDb.insert('self_learning_library', [
-      { field: 'id', value: IdGenerator.generate() },
+      { field: 'id', value: libraryId },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'library_id', value: libraryId },
       { field: 'library_name', value: libraryName },
       { field: 'library_path', value: libraryPath },
       { field: 'category', value: input.category ?? '' },
@@ -231,12 +231,13 @@ export class SelfLearningService {
           }
         }
 
+        // ADR-012:file_id 业务键由主键 id 统一承接
+        const fileId = IdGenerator.generate();
         await this.relationDb.insert('self_learning_file', [
-          { field: 'id', value: IdGenerator.generate() },
+          { field: 'id', value: fileId },
           { field: 'created', value: now },
           { field: 'updated', value: now },
           { field: 'library_id', value: libraryId },
-          { field: 'file_id', value: IdGenerator.generate() },
           { field: 'file_name', value: entry.name },
           { field: 'file_path', value: absPath },
           { field: 'relative_path', value: relPath },
@@ -292,7 +293,7 @@ export class SelfLearningService {
           type: 'DELETE',
           table: 'self_learning_library',
           conditions: [
-            { field: 'library_id', operator: Operator.EQ, value: input.library_id },
+            { field: 'id', operator: Operator.EQ, value: input.library_id },
           ] as Condition[],
         },
       ],
@@ -305,7 +306,7 @@ export class SelfLearningService {
   async setLibraryEnabled(input: SetLibraryEnabledInput, output: SetLibraryEnabledOutput, _context: SelfLearningContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const libRow = await this.relationDb.selectOne('self_learning_library', [
-      { field: 'library_id', operator: Operator.EQ, value: input.library_id },
+      { field: 'id', operator: Operator.EQ, value: input.library_id },
     ]);
     if (!libRow) {
       throw new NotFoundError('资料库', input.library_id);
@@ -318,7 +319,7 @@ export class SelfLearningService {
         { field: 'enable_self_learning', value: input.enabled ? 1 : 0 },
         { field: 'updated', value: now },
       ],
-      [{ field: 'library_id', operator: Operator.EQ, value: input.library_id }],
+      [{ field: 'id', operator: Operator.EQ, value: input.library_id }],
     );
 
     if (input.enabled) {
@@ -369,7 +370,8 @@ export class SelfLearningService {
     const selOutput = Object.assign(new SelectDBOutput(), {});
     await this.relationDb.selectDB(selInput, selOutput, new DBContext());
 
-    const libraryIds = selOutput.rows.map(r => r.library_id as string);
+    // ADR-012:library 的业务键由 id 承接
+    const libraryIds = selOutput.rows.map(r => r.id as string);
     const statsMap = new Map<string, { total_files: number; learned_files: number }>();
     if (libraryIds.length > 0) {
       const placeholders = libraryIds.map(() => '?').join(',');
@@ -384,10 +386,12 @@ export class SelfLearningService {
 
     const libraries: Array<Record<string, unknown>> = [];
     for (const row of selOutput.rows) {
-      const libId = row.library_id as string;
+      const libId = row.id as string;
       const stats = statsMap.get(libId) || { total_files: 0, learned_files: 0 };
       libraries.push({
         ...row,
+        // ADR-012:对外字段名保持 library_id(值即主键 id)
+        library_id: libId,
         total_files: stats.total_files,
         learned_files: stats.learned_files,
       });
@@ -431,8 +435,8 @@ export class SelfLearningService {
       const pageSize = input.page_size;
       const offset = (input.page_current - 1) * pageSize;
 
-      const fileColumns = '"id","created","updated","library_id","file_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
-      const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "file_id" ASC LIMIT ${pageSize} OFFSET ${offset}`;
+      const fileColumns = '"id","created","updated","library_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
+      const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "id" ASC LIMIT ${pageSize} OFFSET ${offset}`;
       output.files = this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
       output.has_more = false;
       output.next_cursor = null;
@@ -444,13 +448,13 @@ export class SelfLearningService {
       const cCreated = idx > 0 ? Number(input.cursor.slice(0, idx)) : NaN;
       const cId = idx > 0 ? input.cursor.slice(idx + 1) : '';
       if (!isNaN(cCreated)) {
-        conds.push('("created" > ? OR ("created" = ? AND "file_id" > ?))');
+        conds.push('("created" > ? OR ("created" = ? AND "id" > ?))');
         args.push(cCreated, cCreated, cId);
       }
     }
 
-    const fileColumns = '"id","created","updated","library_id","file_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
-    const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "file_id" ASC LIMIT ${limit + 1}`;
+    const fileColumns = '"id","created","updated","library_id","file_name","file_path","relative_path","parent_path","is_directory","file_size","status","learned_at"';
+    const sql = `SELECT ${fileColumns} FROM "self_learning_file" WHERE ${conds.join(' AND ')} ORDER BY "created" ASC, "id" ASC LIMIT ${limit + 1}`;
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(sql, args);
 
     const hasMore = rows.length > limit;
@@ -458,7 +462,7 @@ export class SelfLearningService {
     const last = pageRows[pageRows.length - 1];
     output.files = pageRows;
     output.has_more = hasMore;
-    output.next_cursor = hasMore && last ? `${last.created}:${last.file_id}` : null;
+    output.next_cursor = hasMore && last ? `${last.created}:${last.id}` : null;
     return true;
   }
 
@@ -467,7 +471,7 @@ export class SelfLearningService {
 
     const treeLimit = 5000;
     const rows = this.relationDb.queryRaw<Record<string, unknown>>(
-      `SELECT "file_id", "file_name", "relative_path", "parent_path", "is_directory" FROM "self_learning_file" WHERE "library_id" = ? ORDER BY "is_directory" DESC, "file_name" ASC LIMIT ${treeLimit}`,
+      `SELECT "id" AS "file_id", "file_name", "relative_path", "parent_path", "is_directory" FROM "self_learning_file" WHERE "library_id" = ? ORDER BY "is_directory" DESC, "file_name" ASC LIMIT ${treeLimit}`,
       [input.library_id],
     );
 
@@ -515,7 +519,7 @@ export class SelfLearningService {
       query_param: {
         table: 'self_learning_file',
         conditions: [
-          { field: 'file_id', operator: Operator.EQ, value: input.file_id },
+          { field: 'id', operator: Operator.EQ, value: input.file_id },
         ] as Condition[],
       },
     });
@@ -605,7 +609,7 @@ export class SelfLearningService {
   private async ensureDocumentReadingSoul(): Promise<string> {
     const soOut = new SoSoulOutput();
     await this.soulAccess!.soSoul(
-      { conditions: [{ field: 'soul_brief', operator: Operator.EQ, value: DOCUMENT_READING_SOUL_BRIEF }] },
+      { conditions: [{ field: 'brief', operator: Operator.EQ, value: DOCUMENT_READING_SOUL_BRIEF }] },
       soOut,
       new SoulContext(),
     );
@@ -799,7 +803,7 @@ export class SelfLearningService {
       { field: 'error_message', value: null },
       { field: 'learned_at', value: null },
       { field: 'updated', value: now },
-    ], [{ field: 'file_id', operator: Operator.EQ, value: input.file_id }]);
+    ], [{ field: 'id', operator: Operator.EQ, value: input.file_id }]);
 
     output.file_name = String(file.file_name ?? '');
     output.content = input.content ?? '';
@@ -843,7 +847,7 @@ export class SelfLearningService {
         {
           type: 'DELETE',
           table: 'self_learning_file',
-          conditions: [{ field: 'file_id', operator: Operator.EQ, value: input.file_id }] as Condition[],
+          conditions: [{ field: 'id', operator: Operator.EQ, value: input.file_id }] as Condition[],
         },
       ],
     });
@@ -857,7 +861,7 @@ export class SelfLearningService {
       query_param: {
         table: 'self_learning_file',
         conditions: [
-          { field: 'file_id', operator: Operator.EQ, value: fileId },
+          { field: 'id', operator: Operator.EQ, value: fileId },
         ] as Condition[],
       },
     });
@@ -985,7 +989,7 @@ export class SelfLearningService {
       let processed = 0;
       for (const lib of libOut.rows) {
         if (this.cancelRequested.has('DOCUMENT')) return { detail: '已手动停止，本轮提前结束' };
-        const lid = lib.library_id as string;
+        const lid = lib.id as string;
         const libRate = (lib.learning_rate as number) ?? learningRate;
 
         await this.syncLibraryFiles(lid, String(lib.library_path ?? ''), IdGenerator.now());
@@ -1096,7 +1100,7 @@ export class SelfLearningService {
   }
 
   private async handleDocumentLearning(file: Record<string, unknown>): Promise<void> {
-    const fileId = file.file_id as string;
+    const fileId = file.id as string;
     const fileName = file.file_name as string;
     const filePath = file.file_path as string;
 
@@ -1160,7 +1164,7 @@ export class SelfLearningService {
 
     const selInput = Object.assign(new SelectOneDBInput(), {
       query_param: {
-        table: 'chat_session',
+        table: 'chat_session_record',
         conditions: [
           { field: 'session_id', operator: Operator.EQ, value: sessionId },
         ] as Condition[],
@@ -1171,7 +1175,7 @@ export class SelfLearningService {
 
     if (!selOutput.row) {
       const now = IdGenerator.now();
-      await this.relationDb.insert('chat_session', [
+      await this.relationDb.insert('chat_session_record', [
         { field: 'id', value: IdGenerator.generate() },
         { field: 'created', value: now },
         { field: 'updated', value: now },
@@ -1199,7 +1203,7 @@ export class SelfLearningService {
       table: 'self_learning_file',
       data,
       conditions: [
-        { field: 'file_id', operator: Operator.EQ, value: fileId },
+        { field: 'id', operator: Operator.EQ, value: fileId },
       ] as Condition[],
     });
     await this.relationDb.updateDB(updInput, Object.assign(new UpdateDBOutput(), {}), new DBContext());
@@ -1296,7 +1300,7 @@ export class SelfLearningService {
       await this.relationDb.selectDB(
         Object.assign(new SelectDBInput(), {
           query_param: {
-            table: 'info_tag',
+            table: 'info_tag_record',
             conditions: [
               { field: 'created', operator: Operator.GE, value: twentyFourHoursAgo },
             ] as Condition[],
@@ -1351,7 +1355,7 @@ export class SelfLearningService {
       await this.relationDb.selectDB(
         Object.assign(new SelectDBInput(), {
           query_param: {
-            table: 'info_tag',
+            table: 'info_tag_record',
             conditions: [
               { field: 'created', operator: Operator.GE, value: twentyFourHoursAgo },
             ] as Condition[],
@@ -1557,7 +1561,7 @@ export class SelfLearningService {
     const tagName = (content?.tag as string) || (content?.tag_name as string) || '';
     let infoCount = 0;
     if (tagName) {
-      infoCount = await this.relationDb.count('info_tag', [
+      infoCount = await this.relationDb.count('info_tag_record', [
         { field: 'tag', operator: Operator.EQ, value: tagName },
       ]);
     }
@@ -1664,7 +1668,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     const tagRow = Object.assign(new SelectOneDBOutput(), {});
     const tagSel = Object.assign(new SelectOneDBInput(), {
       query_param: {
-        table: 'info_tag',
+        table: 'info_tag_record',
         conditions: [
           { field: 'id', operator: Operator.EQ, value: input.tag_id },
         ] as Condition[],
@@ -1689,7 +1693,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       await this.relationDb.selectDB(
         Object.assign(new SelectDBInput(), {
           query_param: {
-            table: 'info_tag',
+            table: 'info_tag_record',
             conditions: [
               { field: 'tag', operator: Operator.EQ, value: tagName },
             ] as Condition[],
@@ -1707,7 +1711,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
         await this.relationDb.selectOneDB(
           Object.assign(new SelectOneDBInput(), {
             query_param: {
-              table: 'info_summary',
+              table: 'info_summary_record',
               conditions: [
                 { field: 'info_id', operator: Operator.EQ, value: infoId },
               ] as Condition[],
@@ -1727,7 +1731,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
     }
 
     const total = tagName
-      ? await this.relationDb.count('info_tag', [
+      ? await this.relationDb.count('info_tag_record', [
         { field: 'tag', operator: Operator.EQ, value: tagName },
       ])
       : 0;
@@ -1777,9 +1781,11 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
 
     const builtinSel = Object.assign(new SelectDBOutput(), {});
     await this.relationDb.selectDB(
+      // ADR-012:builtin 任务已并入 self_learning_task(source='builtin')
       Object.assign(new SelectDBInput(), {
         query_param: {
-          table: 'self_learning_builtin_task',
+          table: 'self_learning_task',
+          conditions: [{ field: 'source', operator: Operator.EQ, value: 'builtin' }] as Condition[],
         },
       }),
       builtinSel,
@@ -2103,7 +2109,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
   async configSelfLearning(input: ConfigSelfLearningInput, output: ConfigSelfLearningOutput, _context: SelfLearningContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const selInput = Object.assign(new SelectOneDBInput(), {
-      query_param: { table: 'self_learning_config' },
+      query_param: { table: 'self_learning_config_record' },
     });
     const selOutput = Object.assign(new SelectOneDBOutput(), {});
     await this.relationDb.selectOneDB(selInput, selOutput, new DBContext());
@@ -2138,7 +2144,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
       const now = IdGenerator.now();
       data.push({ field: 'created', value: current.created ?? now });
       const updInput = Object.assign(new UpdateDBInput(), {
-        table: 'self_learning_config',
+        table: 'self_learning_config_record',
         data,
         conditions: [
           { field: 'id', operator: Operator.EQ, value: configId },
@@ -2149,7 +2155,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
 
     const refreshed = Object.assign(new SelectOneDBOutput(), {});
     await this.relationDb.selectOneDB(
-      Object.assign(new SelectOneDBInput(), { query_param: { table: 'self_learning_config' } }),
+      Object.assign(new SelectOneDBInput(), { query_param: { table: 'self_learning_config_record' } }),
       refreshed,
       new DBContext(),
     );
@@ -2159,7 +2165,7 @@ private toTagEdgeRecord(nEdge: Record<string, unknown>): TagGraphEdge {
 
   private async getConfig(): Promise<Record<string, unknown>> {
     const selInput = Object.assign(new SelectOneDBInput(), {
-      query_param: { table: 'self_learning_config' },
+      query_param: { table: 'self_learning_config_record' },
     });
     const selOutput = Object.assign(new SelectOneDBOutput(), {});
     await this.relationDb.selectOneDB(selInput, selOutput, new DBContext());

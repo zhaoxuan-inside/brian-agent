@@ -1,9 +1,7 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
   LLM_CORE_CONFIG_TABLE,
-  AGENT_LLM_TABLE,
   LLM_PROVIDER_QUOTA_TABLE,
-  LLM_CORE_USAGE_TABLE,
 } from '../domain/types';
 
 export class LLMCoreSchemaInitializer {
@@ -11,6 +9,8 @@ export class LLMCoreSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   init(): void {
+    // ADR-012:配额表改名(幂等)
+    try { this.relationDb.executeRaw(`ALTER TABLE "llm_provider_quota" RENAME TO "${LLM_PROVIDER_QUOTA_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${LLM_CORE_CONFIG_TABLE}" (
@@ -30,19 +30,11 @@ export class LLMCoreSchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${LLM_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${LLM_CORE_CONFIG_TABLE}" ADD COLUMN "similarity_threshold" REAL NOT NULL DEFAULT 0.7`);
+    } catch { /* 列已存在 */ }
 
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_LLM_TABLE}" (
-        "id"        TEXT    NOT NULL PRIMARY KEY,
-        "created"   INTEGER NOT NULL,
-        "updated"   INTEGER NOT NULL,
-        "agent_id"  TEXT    NOT NULL UNIQUE,
-        "llm_id"    TEXT    NOT NULL
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${AGENT_LLM_TABLE}_agent_id" ON "${AGENT_LLM_TABLE}" ("agent_id")`,
-    );
+    // ADR-012:agent_llm 退役(不再建表;存量数据由 AgentLibrary 迁移器搬入 agent_record.llm_id 后删表)
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${LLM_PROVIDER_QUOTA_TABLE}" (
@@ -62,21 +54,5 @@ export class LLMCoreSchemaInitializer {
       `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_QUOTA_TABLE}_llm_provider_id" ON "${LLM_PROVIDER_QUOTA_TABLE}" ("llm_provider_id")`,
     );
 
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${LLM_CORE_USAGE_TABLE}" (
-        "id"                TEXT    NOT NULL PRIMARY KEY,
-        "created"           INTEGER NOT NULL,
-        "llm_provider_id"   TEXT    NOT NULL,
-        "timestamp"         INTEGER NOT NULL,
-        "tokens_used"       INTEGER NOT NULL,
-        "call_count"        INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CORE_USAGE_TABLE}_llm_provider_id" ON "${LLM_CORE_USAGE_TABLE}" ("llm_provider_id")`,
-    );
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${LLM_CORE_USAGE_TABLE}_timestamp" ON "${LLM_CORE_USAGE_TABLE}" ("timestamp")`,
-    );
   }
 }

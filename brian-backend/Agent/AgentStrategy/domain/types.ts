@@ -95,5 +95,5 @@ export class ConfigAgentStrategyOutput extends Output {
   config: AgentStrategyConfigRecord | null = null;
 }
 
-export const AGENT_STRATEGY_TABLE = 'agent_strategy';
-export const AGENT_STRATEGY_CONFIG_TABLE = 'agent_strategy_config';
+export const AGENT_STRATEGY_TABLE = 'agent_strategy_record';
+export const AGENT_STRATEGY_CONFIG_TABLE = 'agent_strategy_config_record';

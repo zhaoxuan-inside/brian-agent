@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.232Z",
+  "updated_at": "2026-10-02T03:58:53.575468+00:00",
   "shard": "runtime-runs",
   "layer": "Runtime",
   "module": "Runs",
@@ -689,7 +689,7 @@
       "layer": "Runtime",
       "module": "Runs",
       "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
-      "description": "判断校验：Agent（异步编排）",
+      "description": "Agent 匹配(chg-059):①显式 agent_ref 精准匹配→②会话亲和三段裁决(显式切换落全量选举/「继续」强信号沿用/话题连续性 dialog_embedding_record 匹配)→③全量选举与动态构建",
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
@@ -1122,14 +1122,105 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "id": "m-runs-0087",
+      "signature": "boolean decideSessionAffinity(userMessage: string, sessionKey: string, metrics?: Metrics, report?: Report): Promise<SessionAffinityDecision>",
+      "name": "decideSessionAffinity",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "会话亲和三段裁决(chg-059):显式切换语式→不沿用落全量选举;「继续」等强信号续写→直接沿用(0 向量开销);其余→话题连续性匹配裁决",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0088",
+      "signature": "boolean soTopicAffinity(text: string, sessionKey: string, metrics?: Metrics, report?: Report): Promise<SessionAffinityDecision>",
+      "name": "soTopicAffinity",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "话题连续性裁决(chg-059):本轮请求与会话最近轮次向量(dialog_embedding_record)最大相似度≥70 沿用会话专职专家,低于阈值判话题漂移重选举;未评估回退沿用",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0089",
+      "signature": "boolean persistDialogEmbedding(runId: string, input: SubmitRunInput, runtimeSessionId: string, stopReason: string, metrics?: Metrics, report?: Report): void",
+      "name": "persistDialogEmbedding",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "轮次话题向量固化入口(chg-059):settle 前 fire-and-forget,仅主 session lane 且正常结束(stop/budget)的轮次固化,失败轮不污染话题向量",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0090",
+      "signature": "boolean soSaveDialogEmbedding(runId: string, input: SubmitRunInput, runtimeSessionId: string, metrics?: Metrics, report?: Report): Promise<void>",
+      "name": "soSaveDialogEmbedding",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "固化执行(chg-059):取该 run 最后一条非空 assistant 回复,与用户请求拼接经 InfoCore saveDialogEmbedding 落库,异常仅告警不阻断主链路",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0091",
+      "signature": "string soRunFinalReply(runId: string, runtimeSessionId: string): string",
+      "name": "soRunFinalReply",
+      "category": "data",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "查询:该 run 最后一条非空 assistant 消息(Writer 定稿后即为最终回复,供轮次话题向量拼接)",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0092",
+      "signature": "boolean persistSessionActiveAgent(runtimeSessionId: string, agentDefId: string): Promise<void>",
+      "name": "persistSessionActiveAgent",
+      "category": "orchestration",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "写入:会话当前专职专家 agent_def_id 落 runtime_session_record,供下一轮会话亲和沿用",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-runs-0093",
+      "signature": "AgentDefRecord soSessionActiveAgentDef(runtimeSessionId: string): Promise<AgentDefRecord | null>",
+      "name": "soSessionActiveAgentDef",
+      "category": "data",
+      "layer": "Runtime",
+      "module": "Runs",
+      "location": "brian-backend/Runtime/Runs/application/RunGatewayService.ts",
+      "description": "查询:读取会话当前专职专家 AgentDef(runtime_session_record.agent_def_id → runtime_agent_def_record)",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
     }
   ],
   "stats": {
-    "total": 86,
+    "total": 93,
     "by_category": {
       "algorithm": 6,
-      "orchestration": 45,
-      "data": 35
+      "orchestration": 50,
+      "data": 37
     }
   }
 }

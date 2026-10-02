@@ -1,5 +1,5 @@
-export const BOOKMARK_FOLDER_TABLE = 'bookmark_folder';
-export const BOOKMARK_ITEM_TABLE = 'bookmark_item';
+export const BOOKMARK_FOLDER_TABLE = 'bookmark_folder_record';
+export const BOOKMARK_ITEM_TABLE = 'bookmark_item_record';
 
 export interface BookmarkFolderRecord {
   id: string; created: number; updated: number;

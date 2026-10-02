@@ -32,7 +32,7 @@ export class ConfigAgentContextOutput extends Output {
   enable_snapshot_persistence = true;
 }
 
-export const AGENT_CONTEXT_CONFIG_TABLE = 'agent_context_config';
+export const AGENT_CONTEXT_CONFIG_TABLE = 'agent_context_config_record';
 
 export const DEFAULT_MAX_CONTEXT_ITEMS = 200;
 export const DEFAULT_ENABLE_SNAPSHOT_PERSISTENCE = 1;

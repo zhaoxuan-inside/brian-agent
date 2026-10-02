@@ -1,31 +1,647 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-26T11:20:00+08:00",
+  "updated_at": "2026-10-02T03:59:23.186710+00:00",
   "terms": [
-    { "term": "记忆", "code_name": "Info", "definition": "对话中沉淀的记忆条目,含类型/标签/向量,是七路召回的原子单元", "aliases": ["Memory(禁用,指代不清)", "Note"], "domain": "记忆", "related_terms": ["InfoCore", "共现图", "引文图"], "source": "_01_business/01_requirements.md" },
-    { "term": "会话", "code_name": "Session", "definition": "一次对话交互的容器;应用层 chat_session 与运行时 runtime_session 双层", "aliases": ["Conversation", "Dialog"], "domain": "对话", "related_terms": ["RuntimeMessage", "MessagePart"], "source": "_04_framework_design/02_data_flow.md" },
-    { "term": "执行单元", "code_name": "Run", "definition": "从 submitRun 到 settleRun 的一次执行生命周期,由 RunGateway 管理", "aliases": ["Task(禁用,与任务卡混淆)", "Job"], "domain": "运行时", "related_terms": ["RunGateway", "Lane", "IterationBudget"], "source": "_01_business/01_requirements.md" },
-    { "term": "运行时智能体声明", "code_name": "AgentDef", "definition": "Runtime 层可被执行匹配的 Agent 运行时声明(向量+规则匹配)", "aliases": ["AgentDefinition"], "domain": "运行时", "related_terms": ["Agent", "matchAgentDef"], "source": "_04_framework_design/01_architecture.md" },
-    { "term": "智能体", "code_name": "Agent", "definition": "具备提示词/技能绑定/人格的可复用执行实体;库态存于 AgentLibrary,snapshot 实例化执行", "aliases": ["Assistant", "Bot"], "domain": "智能体", "related_terms": ["AgentDef", "AgentLibrary", "AgentBuilder"], "source": "_01_business/01_requirements.md" },
-    { "term": "技能", "code_name": "Skill", "definition": "一等工具:内置系统技能、用户沙箱技能、MCP 包装技能(mcp_exec)的统一执行面", "aliases": ["Tool(禁用:领域概念已于 bcd2479 移除,仅 Base/ToolProvider 保留为纯函数原语单一事实源)", "Plugin"], "domain": "工具面", "related_terms": ["SkillRuntime", "SkillCore", "MCP", "ToolProvider"], "source": "_03_tech_stack/ADR-006-skill-first-tool.md" },
-    { "term": "模型上下文协议服务", "code_name": "MCP", "definition": "Model Context Protocol 外部工具通道;包装为 mcp_exec 技能消费", "aliases": ["外部工具"], "domain": "工具面", "related_terms": ["Skill", "MCPProvider", "MCPCore"], "source": "_03_tech_stack/ADR-006-skill-first-tool.md" },
-    { "term": "人格", "code_name": "Soul", "definition": "人格提示词实体,注入 LLM 系统提示塑造行为风格", "aliases": ["Persona", "Character"], "domain": "人格", "related_terms": ["SoulProvider", "SoulCore"], "source": "_01_business/01_requirements.md" },
-    { "term": "执行踪迹", "code_name": "Trace", "definition": "trace_id 贯穿的执行踪迹:Metrics spans + Report 事件 + InfoCore TRACE 条目", "aliases": ["Tracing"], "domain": "可观测", "related_terms": ["Metrics", "Report"], "source": "_01_business/01_requirements.md" },
-    { "term": "观测指标", "code_name": "Metrics", "definition": "系统观测门面:进出入计时 spans/耗时/trace_id;AOP 自动采集", "aliases": ["Telemetry"], "domain": "可观测", "related_terms": ["Trace", "AopProxy"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
-    { "term": "流式报告", "code_name": "Report", "definition": "会话级流式事件通道(SSE 帧底座):pushText/pushEvent", "aliases": ["EventStream", "PushChannel"], "domain": "可观测", "related_terms": ["StreamProvider", "Trace"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
-    { "term": "方法签名", "code_name": "五参签名", "definition": "全后端统一 (input, output, context, metrics?, report?);evolution 职责由 Output.error/error_code 承担(ADR-007 映射 SOP 五段)", "aliases": ["五段签名(SOP 原始表述,映射见 ADR-007)"], "domain": "工程约定", "related_terms": ["Input", "Output", "Context", "Metrics", "Report"], "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md" },
-    { "term": "访问层", "code_name": "Access", "definition": "模块四层结构的入口薄壳:AopProxy 织入 + 转发 Service;跨模块只经 Access 调用", "aliases": ["Controller"], "domain": "工程约定", "related_terms": ["AopProxy", "Service"], "source": "_04_framework_design/01_architecture.md" },
-    { "term": "通道", "code_name": "Lane", "definition": "Run 的并发通道与信号量,控制同时执行的 Run 数量", "aliases": ["Queue(禁用,与 MQ 队列混淆)"], "domain": "运行时", "related_terms": ["Run", "LaneSemaphore"], "source": "_04_framework_design/02_data_flow.md" },
-    { "term": "迭代预算", "code_name": "IterationBudget", "definition": "Agent Loop 的轮次/步数预算,防循环失控", "aliases": ["LoopBudget"], "domain": "运行时", "related_terms": ["Run", "AgentLoop"], "source": "_04_framework_design/02_data_flow.md" },
-    { "term": "用户画像", "code_name": "UserProfile", "definition": "从对话自动归纳的用户维度画像,供 Writer 个性化输出", "aliases": ["Persona Profile"], "domain": "画像", "related_terms": ["WriterAgent", "SelfLearning"], "source": "_01_business/01_requirements.md" },
-    { "term": "自学习", "code_name": "SelfLearning", "definition": "本地知识库扫描→任务队列→insights→知识激活的应用层闭环", "aliases": ["AutoLearn"], "domain": "进化", "related_terms": ["EvolutorAgent", "UserProfile"], "source": "_04_framework_design/01_architecture.md" },
-    { "term": "进化器", "code_name": "EvolutorAgent", "definition": "评估执行效果→淘汰劣质 Agent/技能→重建的进化闭环 Agent", "aliases": ["Evolver", "Evaluator(禁用,与单次评估混淆)"], "domain": "进化", "related_terms": ["SelfLearning", "Agent"], "source": "_01_business/01_requirements.md" },
-    { "term": "设计令牌", "code_name": "DesignToken", "definition": "前端样式单一事实源:颜色/字号/间距/圆角/阴影/动效的命名变量(tailwind.config + CSS 变量)", "aliases": ["StyleToken", "ThemeVariable"], "domain": "前端", "related_terms": ["TailwindTheme"], "source": "_03_tech_stack/ADR-008-frontend-design-tokens.md" },
-    { "term": "孤立图节点", "code_name": "OrphanGraphNode", "definition": "在图数据库中完全失去关联消息与记忆引用(引用计数为0)的Tag或keyword图节点,由自学习图修复定期安全清理", "aliases": ["OrphanNode"], "domain": "图谱", "related_terms": ["InfoCore", "SelfLearning", "共现图"], "source": "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md" },
-    { "term": "成对问答", "code_name": "PairedQA", "definition": "以严格一次用户请求(REQUEST)和一次系统回答(RESPONSE)成对匹配计算的完整问答轮数", "aliases": ["QARound", "Turn"], "domain": "对话", "related_terms": ["ChatService", "Session"], "source": "_01_business/01_requirements.md" },
-    { "term": "全量Token统计", "code_name": "FullTokenAccounting", "definition": "从物理流水表llm_call_log汇总的会话总消耗,涵盖Agent主循环与skill/soul/mcp/prompt/agent等所有辅助匹配调用", "aliases": ["TotalTokens"], "domain": "可观测", "related_terms": ["Metrics", "llm_call_log", "ChatService"], "source": "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md" },
-    { "term": "问答主表", "code_name": "Dialog", "definition": "专门记录人机直接问答(REQUEST与RESPONSE)的物理存储表,无执行态与中间过程字段", "aliases": ["dialog_table"], "domain": "存储", "related_terms": ["Execute", "Context", "InfoCore"], "source": "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md" },
-    { "term": "执行过程表", "code_name": "Execute", "definition": "专门记录智能体在思考与组件执行(LLM/Skill/MCP/CDT)过程中的入参、出参、顺序与耗时的物理存储表", "aliases": ["execute_table", "Think(已废弃)"], "domain": "存储", "related_terms": ["Dialog", "Context", "InfoCore"], "source": "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md" },
-    { "term": "上下文映射表", "code_name": "Context", "definition": "专门维系单次问答与dialog物理记录之间上下文引用(timeline/citing/pin等)的物理关系表", "aliases": ["context_table", "info_context_source(已废弃)"], "domain": "存储", "related_terms": ["Dialog", "Execute", "InfoCore"], "source": "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md" }
-  ]
+    {
+      "term": "记忆",
+      "code_name": "Info",
+      "definition": "对话中沉淀的记忆条目,含类型/标签/向量,是七路召回的原子单元",
+      "aliases": [
+        "Memory(禁用,指代不清)",
+        "Note"
+      ],
+      "domain": "记忆",
+      "related_terms": [
+        "InfoCore",
+        "共现图",
+        "引文图"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "会话",
+      "code_name": "Session",
+      "definition": "一次对话交互的容器;应用层 chat_session 与运行时 runtime_session 双层",
+      "aliases": [
+        "Conversation",
+        "Dialog"
+      ],
+      "domain": "对话",
+      "related_terms": [
+        "RuntimeMessage",
+        "MessagePart"
+      ],
+      "source": "_04_framework_design/02_data_flow.md"
+    },
+    {
+      "term": "执行单元",
+      "code_name": "Run",
+      "definition": "从 submitRun 到 settleRun 的一次执行生命周期,由 RunGateway 管理",
+      "aliases": [
+        "Task(禁用,与任务卡混淆)",
+        "Job"
+      ],
+      "domain": "运行时",
+      "related_terms": [
+        "RunGateway",
+        "Lane",
+        "IterationBudget"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "运行时智能体声明",
+      "code_name": "AgentDef",
+      "definition": "Runtime 层可被执行匹配的 Agent 运行时声明(向量+规则匹配)",
+      "aliases": [
+        "AgentDefinition"
+      ],
+      "domain": "运行时",
+      "related_terms": [
+        "Agent",
+        "matchAgentDef"
+      ],
+      "source": "_04_framework_design/01_architecture.md"
+    },
+    {
+      "term": "智能体",
+      "code_name": "Agent",
+      "definition": "具备提示词/技能绑定/人格的可复用执行实体;库态存于 AgentLibrary,snapshot 实例化执行",
+      "aliases": [
+        "Assistant",
+        "Bot"
+      ],
+      "domain": "智能体",
+      "related_terms": [
+        "AgentDef",
+        "AgentLibrary",
+        "AgentBuilder"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "技能",
+      "code_name": "Skill",
+      "definition": "一等工具:内置系统技能、用户沙箱技能、MCP 包装技能(mcp_exec)的统一执行面",
+      "aliases": [
+        "Tool(禁用:领域概念已于 bcd2479 移除,仅 Base/ToolProvider 保留为纯函数原语单一事实源)",
+        "Plugin"
+      ],
+      "domain": "工具面",
+      "related_terms": [
+        "SkillRuntime",
+        "SkillCore",
+        "MCP",
+        "ToolProvider"
+      ],
+      "source": "_03_tech_stack/ADR-006-skill-first-tool.md"
+    },
+    {
+      "term": "模型上下文协议服务",
+      "code_name": "MCP",
+      "definition": "Model Context Protocol 外部工具通道;包装为 mcp_exec 技能消费",
+      "aliases": [
+        "外部工具"
+      ],
+      "domain": "工具面",
+      "related_terms": [
+        "Skill",
+        "MCPProvider",
+        "MCPCore"
+      ],
+      "source": "_03_tech_stack/ADR-006-skill-first-tool.md"
+    },
+    {
+      "term": "人格",
+      "code_name": "Soul",
+      "definition": "人格提示词实体,注入 LLM 系统提示塑造行为风格",
+      "aliases": [
+        "Persona",
+        "Character"
+      ],
+      "domain": "人格",
+      "related_terms": [
+        "SoulProvider",
+        "SoulCore"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "执行踪迹",
+      "code_name": "Trace",
+      "definition": "trace_id 贯穿的执行踪迹:Metrics spans + Report 事件 + InfoCore TRACE 条目",
+      "aliases": [
+        "Tracing"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "Metrics",
+        "Report"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "观测指标",
+      "code_name": "Metrics",
+      "definition": "系统观测门面:进出入计时 spans/耗时/trace_id;AOP 自动采集",
+      "aliases": [
+        "Telemetry"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "Trace",
+        "AopProxy"
+      ],
+      "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md"
+    },
+    {
+      "term": "流式报告",
+      "code_name": "Report",
+      "definition": "会话级流式事件通道(SSE 帧底座):pushText/pushEvent",
+      "aliases": [
+        "EventStream",
+        "PushChannel"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "StreamProvider",
+        "Trace"
+      ],
+      "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md"
+    },
+    {
+      "term": "方法签名",
+      "code_name": "五参签名",
+      "definition": "全后端统一 (input, output, context, metrics?, report?);evolution 职责由 Output.error/error_code 承担(ADR-007 映射 SOP 五段)",
+      "aliases": [
+        "五段签名(SOP 原始表述,映射见 ADR-007)"
+      ],
+      "domain": "工程约定",
+      "related_terms": [
+        "Input",
+        "Output",
+        "Context",
+        "Metrics",
+        "Report"
+      ],
+      "source": "_03_tech_stack/ADR-007-five-param-signature-aop.md"
+    },
+    {
+      "term": "访问层",
+      "code_name": "Access",
+      "definition": "模块四层结构的入口薄壳:AopProxy 织入 + 转发 Service;跨模块只经 Access 调用",
+      "aliases": [
+        "Controller"
+      ],
+      "domain": "工程约定",
+      "related_terms": [
+        "AopProxy",
+        "Service"
+      ],
+      "source": "_04_framework_design/01_architecture.md"
+    },
+    {
+      "term": "通道",
+      "code_name": "Lane",
+      "definition": "Run 的并发通道与信号量,控制同时执行的 Run 数量",
+      "aliases": [
+        "Queue(禁用,与 MQ 队列混淆)"
+      ],
+      "domain": "运行时",
+      "related_terms": [
+        "Run",
+        "LaneSemaphore"
+      ],
+      "source": "_04_framework_design/02_data_flow.md"
+    },
+    {
+      "term": "迭代预算",
+      "code_name": "IterationBudget",
+      "definition": "Agent Loop 的轮次/步数预算,防循环失控",
+      "aliases": [
+        "LoopBudget"
+      ],
+      "domain": "运行时",
+      "related_terms": [
+        "Run",
+        "AgentLoop"
+      ],
+      "source": "_04_framework_design/02_data_flow.md"
+    },
+    {
+      "term": "用户画像",
+      "code_name": "UserProfile",
+      "definition": "从对话自动归纳的用户维度画像,供 Writer 个性化输出",
+      "aliases": [
+        "Persona Profile"
+      ],
+      "domain": "画像",
+      "related_terms": [
+        "WriterAgent",
+        "SelfLearning"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "自学习",
+      "code_name": "SelfLearning",
+      "definition": "本地知识库扫描→任务队列→insights→知识激活的应用层闭环",
+      "aliases": [
+        "AutoLearn"
+      ],
+      "domain": "进化",
+      "related_terms": [
+        "EvolutorAgent",
+        "UserProfile"
+      ],
+      "source": "_04_framework_design/01_architecture.md"
+    },
+    {
+      "term": "进化器",
+      "code_name": "EvolutorAgent",
+      "definition": "评估执行效果→淘汰劣质 Agent/技能→重建的进化闭环 Agent",
+      "aliases": [
+        "Evolver",
+        "Evaluator(禁用,与单次评估混淆)"
+      ],
+      "domain": "进化",
+      "related_terms": [
+        "SelfLearning",
+        "Agent"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "设计令牌",
+      "code_name": "DesignToken",
+      "definition": "前端样式单一事实源:颜色/字号/间距/圆角/阴影/动效的命名变量(tailwind.config + CSS 变量)",
+      "aliases": [
+        "StyleToken",
+        "ThemeVariable"
+      ],
+      "domain": "前端",
+      "related_terms": [
+        "TailwindTheme"
+      ],
+      "source": "_03_tech_stack/ADR-008-frontend-design-tokens.md"
+    },
+    {
+      "term": "孤立图节点",
+      "code_name": "OrphanGraphNode",
+      "definition": "在图数据库中完全失去关联消息与记忆引用(引用计数为0)的Tag或keyword图节点,由自学习图修复定期安全清理",
+      "aliases": [
+        "OrphanNode"
+      ],
+      "domain": "图谱",
+      "related_terms": [
+        "InfoCore",
+        "SelfLearning",
+        "共现图"
+      ],
+      "source": "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md"
+    },
+    {
+      "term": "成对问答",
+      "code_name": "PairedQA",
+      "definition": "以严格一次用户请求(REQUEST)和一次系统回答(RESPONSE)成对匹配计算的完整问答轮数",
+      "aliases": [
+        "QARound",
+        "Turn"
+      ],
+      "domain": "对话",
+      "related_terms": [
+        "ChatService",
+        "Session"
+      ],
+      "source": "_01_business/01_requirements.md"
+    },
+    {
+      "term": "全量Token统计",
+      "code_name": "FullTokenAccounting",
+      "definition": "从物理流水表llm_call_log汇总的会话总消耗,涵盖Agent主循环与skill/soul/mcp/prompt/agent等所有辅助匹配调用",
+      "aliases": [
+        "TotalTokens"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "Metrics",
+        "llm_call_log",
+        "ChatService"
+      ],
+      "source": "_03_tech_stack/ADR-009-token-accounting-and-graph-safety.md"
+    },
+    {
+      "term": "问答主表",
+      "code_name": "Dialog",
+      "definition": "专门记录人机直接问答(REQUEST与RESPONSE)的物理存储表,无执行态与中间过程字段",
+      "aliases": [
+        "dialog_table"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "Execute",
+        "Context",
+        "InfoCore"
+      ],
+      "source": "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md"
+    },
+    {
+      "term": "执行过程表",
+      "code_name": "Execute",
+      "definition": "专门记录智能体在思考与组件执行(LLM/Skill/MCP/CDT)过程中的入参、出参、顺序与耗时的物理存储表;唯一写入方为事件处理器,读侧经 InfoCore 查询",
+      "aliases": [
+        "execute_table",
+        "Think(已废弃)"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "Dialog",
+        "Context",
+        "ExecuteEventProcessor"
+      ],
+      "source": "_03_tech_stack/ADR-010、ADR-011"
+    },
+    {
+      "term": "执行事件处理器",
+      "code_name": "ExecuteEventProcessor",
+      "definition": "execute 表唯一写入方:经 Report 静态 sink 消费 AOP 上报的 ExecuteEvent,统一序列化、按任务自增 exec_no 并落库;业务方法零存储操作",
+      "aliases": [
+        "EventProcessor",
+        "ExecuteSink"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "Execute",
+        "Report",
+        "AopProxy"
+      ],
+      "source": "_03_tech_stack/ADR-011"
+    },
+    {
+      "term": "上下文映射表",
+      "code_name": "Context",
+      "definition": "专门维系单次问答与dialog物理记录之间上下文引用(timeline/citing/pin等)的物理关系表",
+      "aliases": [
+        "context_table",
+        "info_context_source(已废弃)"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "Dialog",
+        "Execute",
+        "InfoCore"
+      ],
+      "source": "_03_tech_stack/ADR-010-three-tables-dialog-execute-context.md"
+    },
+    {
+      "term": "组件选择漏斗",
+      "code_name": "FunnelSelector",
+      "definition": "六组件(Agent/LLM/MCP/Skill/Soul/Prompt)选举统一漏斗(前端展示术语:组件选举,展示文案用「选举」不用「筛选」):BM25(绝对置信度+正负范例双向词项增强)→语义路由器(描述向量+正范例 Max-Sim 提升,负范例 Sim≥0.85 硬阻断、0.70~0.85 软惩罚)→大模型三级裁决,得分≥90 直接采纳免 LLM;候选文档=名称×2+摘要(+正向范例);摘要过短经 findLowQualityBriefs 告警",
+      "aliases": [
+        "MatchFunnel",
+        "三级漏斗",
+        "组件选举"
+      ],
+      "domain": "路由",
+      "related_terms": [
+        "Soul",
+        "语义规范",
+        "语义范例",
+        "MCP",
+        "Skill"
+      ],
+      "source": "_10 chg-024;R7 chg-057 双向裁决升级"
+    },
+    {
+      "term": "组件漏斗明细事件",
+      "code_name": "ComponentFunnel",
+      "definition": "五类组件匹配服务在匹配终态上报的结构化选举明细事件(component.funnel):按机制(bm25/vector/llm/direct)记录候选得分与 LLM 评估原始输入输出,经 stream_event 持久化,由执行分析器消费渲染思考全景「加载 Agent 快照」的组件选举明细;direct 表示绑定/缓存等非漏斗直接事实,前端对仅含 direct 的组件展示「复用绑定组件」标签并保持三个选举 tab",
+      "aliases": [
+        "component.funnel",
+        "选举明细事件"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "FunnelSelector",
+        "Report",
+        "ExecutionAnalyzer"
+      ],
+      "source": "_10 chg-039"
+    },
+    {
+      "term": "记录数据",
+      "code_name": "RecordData",
+      "definition": "二分存储模型(ADR-012)中的记录数据:一行=一条内容/事实/定义本身(原文、流水、定义、结论、配置项),表名约定 xxx_record;删除该行即丢失该事实;公共字段 id/trace_id/created/updated",
+      "aliases": [
+        "record"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "组织数据",
+        "TraceBase"
+      ],
+      "source": "_10 chg-041"
+    },
+    {
+      "term": "组织数据",
+      "code_name": "OrgData",
+      "definition": "二分存储模型(ADR-012)中的组织数据:一行=一条 id 关联/索引/聚合关系(装配关系、绑定、用量聚合、会话调度、倒排索引),表名约定 xxx_org,通过 id 指向记录数据;删除该行不影响被指向记录",
+      "aliases": [
+        "org"
+      ],
+      "domain": "存储",
+      "related_terms": [
+        "记录数据"
+      ],
+      "source": "_10 chg-041"
+    },
+    {
+      "term": "TraceBase",
+      "code_name": "TraceBase",
+      "definition": "Base 层统一统计模块:TraceService.recordUsage(entityType(agent|soul|skill|mcp|prompt|llm|llm_provider),entityId,context) 写 usage_event_record(统一使用事件流水),日聚合落七张 xxx_usage_org;退役七套散落 usage 表(llm_core_usage 配额流经 usage_context='llm_core.quota' 迁事件流水)",
+      "aliases": [
+        "TraceService",
+        "使用事件"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "组织数据",
+        "llm_call_record"
+      ],
+      "source": "_10 chg-041"
+    },
+    {
+      "term": "任务事件",
+      "code_name": "TaskEvent",
+      "definition": "一次任务执行产生的唯一事件形态:envelope(v/seq/ts/session_id/run_id/work_id/span/ref/kind/type/payload)+32 种 type,契约在 shared/src/contracts/task-event.ts",
+      "aliases": [
+        "BusinessEvent(旧名,现为后端别名)",
+        "stream_event(旧表,已删除)"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "EventDispatcher",
+        "RunObservation",
+        "run.merge"
+      ],
+      "source": "_03_tech_stack/ADR-013-unified-event-bus-observability.md"
+    },
+    {
+      "term": "观测总线",
+      "code_name": "EventDispatcher",
+      "definition": "Base/ObservabilityProvider 的唯一 fan-out 点:run 内单调 seq 分配、envelope 组装、同步分发至 SSE 帧/事件落库/run 状态三 sink",
+      "aliases": [
+        "事件总线",
+        "ObservabilityGateway"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "EventLogSink",
+        "RunStateSink",
+        "Report.emit"
+      ],
+      "source": "_03_tech_stack/ADR-013-unified-event-bus-observability.md"
+    },
+    {
+      "term": "运行观测投影",
+      "code_name": "RunObservation",
+      "definition": "reduceObservation(obs, ev) 纯函数产出的事件投影视图模型;seq 幂等,实时与历史重放共用;服务端不投影不合成分析",
+      "aliases": [
+        "全景分析(已废弃)",
+        "TaskExecutionAnalysis(已删除)"
+      ],
+      "domain": "可观测",
+      "related_terms": [
+        "TaskEvent",
+        "observation 接口"
+      ],
+      "source": "_03_tech_stack/ADR-013-unified-event-bus-observability.md"
+    },
+    {
+      "term": "组件向量记录",
+      "code_name": "ComponentEmbeddingRecord",
+      "definition": "为 Agent, MCP, Skill, Prompt, Soul 五大核心组件持久化存储描述 Embedding 向量与 SHA-256 内容 Hash 的记录表（xxx_embedding_record），加速漏斗匹配初筛并避免重复调用向量模型",
+      "aliases": [
+        "xxx_embedding_record",
+        "agent_embedding_record",
+        "skill_embedding_record",
+        "soul_embedding_record",
+        "mcp_embedding_record",
+        "prompt_template_embedding_record"
+      ],
+      "domain": "基础能力",
+      "related_terms": [
+        "ComponentEmbeddingHelper",
+        "FunnelSelector",
+        "batchGetOrComputeEmbeddings"
+      ],
+      "source": "_12_db_schema.md"
+    },
+    {
+      "term": "组件向量工具",
+      "code_name": "ComponentEmbeddingHelper",
+      "definition": "封装组件 Embedding 向量同步（syncComponentEmbedding）、失效安全清理（deleteComponentEmbedding）、预存读取与缺漏懒计算落库（batchGetOrComputeEmbeddings）的算法工具集",
+      "aliases": [
+        "ComponentEmbeddingHelper"
+      ],
+      "domain": "基础能力",
+      "related_terms": [
+        "ComponentEmbeddingRecord",
+        "FunnelSelector",
+        "computeContentHash"
+      ],
+      "source": "_05_function_design/01_function_matrix.md"
+    },
+    {
+      "term": "语义范例",
+      "code_name": "ComponentExample",
+      "definition": "组件的正向/负向范例文本(examples 3-5 条且每条≤15 字),向量化后存 xxx_example_embedding_record(example_type=positive|negative),供语义路由正向提升与负向硬阻断/软惩罚",
+      "aliases": [
+        "范例对(禁用,含糊)",
+        "正负样本(禁用,ML 训练歧义)"
+      ],
+      "domain": "路由",
+      "related_terms": [
+        "组件选择漏斗",
+        "组件向量工具",
+        "语义规范"
+      ],
+      "source": "_06_interface_design/02_internal_interfaces.md R7"
+    },
+    {
+      "term": "语义规范",
+      "code_name": "ComponentSemantics",
+      "definition": "六组件统一内容标准:名称 5-10 字、描述 30-40 字(输入+输出+功能)、正负范例各 3-5 条(≤15 字);由 ComponentSemanticsGenerator 以 LLM 生成并以 clampComponentSemantics 规则收敛",
+      "aliases": [
+        "内容规范(禁用,泛化)"
+      ],
+      "domain": "路由",
+      "related_terms": [
+        "语义范例"
+      ],
+      "source": "_06_interface_design/02_internal_interfaces.md R7"
+    },
+    {
+      "term": "入参样例",
+      "code_name": "McpParamSample",
+      "definition": "MCP 工具按 inputSchema 自动合成的默认测试参数 JSON(generateMockParamsFromSchema),持久化于 mcp_install_record.test_params_sample(工具名→样例映射),前端测试弹窗自动预填",
+      "aliases": [
+        "Mock参数(禁用,中英混写)"
+      ],
+      "domain": "工具面",
+      "related_terms": [
+        "MCP"
+      ],
+      "source": "_06_interface_design/02_internal_interfaces.md R7"
+    },
+    {
+      "term": "统一选举引擎",
+      "code_name": "ElectionEngine",
+      "definition": "六组件(Agent/LLM/Prompt/Soul/Skill/MCP)共用的一套选举模板方法:①复用判定(续写请求/绑定/缓存/签名事实源直命中)→②并行信号提取(合法候选集/BM25候选集/向量正例候选集/向量反例候选集/结构候选集)→③分级候选集阶梯游走(标准阶梯 T1=(结构∪向量正例)−反例→T2=(结构∪正例范例)−反例;LLM 另有 T3~T7 放宽级)逐级择优或整集采纳→④阶梯耗尽终端动作(创建新的组件/使用默认);综合得分=0.7×向量+0.3×BM25(权重与阈值经 election_config_record 可配);组件只实现 ComponentElectionAdapter 钩子,扩展新信号只需扩键与提取器",
+      "aliases": [
+        "ElectionService(禁用,未建此物)",
+        "漏斗(旧称,指 chg-058 前的三级漏斗)"
+      ],
+      "domain": "路由",
+      "related_terms": [
+        "组件选择漏斗",
+        "语义范例",
+        "语义规范",
+        "入参样例"
+      ],
+      "source": "_10 chg-058"
+    },
+    {
+      "term": "会话亲和",
+      "code_name": "SessionAffinity",
+      "definition": "会话内沿用同一 Agent 的三段裁决(chg-059,matchAgent 第②段):显式切换语式→跳过亲和落全量选举;「继续」等强信号续写→直接沿用会话专职专家(0 向量开销);其余→话题连续性匹配(dialog_embedding_record)≥阈值沿用/低于阈值判漂移重选举/未评估回退沿用",
+      "aliases": [
+        "Session Stickiness(禁用,中英混写)",
+        "会话粘性(禁用,歧义)"
+      ],
+      "domain": "路由",
+      "related_terms": [
+        "AgentDef",
+        "轮次话题向量",
+        "统一选举引擎"
+      ],
+      "source": "_10 chg-059;_05 R9 T-TOPIC-03"
+    },
+    {
+      "term": "轮次话题向量",
+      "code_name": "DialogEmbedding",
+      "definition": "每轮问答(请求+系统回复拼接文本)经向量模型固化的 embedding 记录(dialog_embedding_record,按 work_id 幂等,含 dimension),供会话亲和话题连续性匹配;无向量模型时静默跳过(优雅降级)",
+      "aliases": [
+        "对话向量(禁用,指代不清)"
+      ],
+      "domain": "记忆",
+      "related_terms": [
+        "会话亲和",
+        "InfoCore",
+        "组件向量记录"
+      ],
+      "source": "_10 chg-059;_12 dialog_embedding_record"
+    }
+  ],
+  "terms_count": 42
 }

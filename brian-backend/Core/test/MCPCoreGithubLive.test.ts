@@ -64,7 +64,7 @@ describe.skipIf(!LIVE)('MCPCore 全真瀑布：GitHub MCP 市场获取 + star �
     await llmAccess.initialize();
     mcpCore = new MCPCoreAccess(relationDb, mcpAccess, traceLlm(llmAccess), promptsAccess);
 
-    await relationDb.update('mcp_core_config', [
+    await relationDb.update('mcp_core_config_record', [
       { field: 'prompt_template_id', value: '' },
       { field: 'updated', value: Date.now() },
     ], []);

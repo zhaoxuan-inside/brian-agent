@@ -19,5 +19,6 @@
 | `saveUserPreference` | `i: SaveUserPreferenceInput, o: SaveUserPreferenceOutput, c: UserProfileContext, metrics...` | `Promise<boolean>` | — |
 | `soProfileHistory` | `i: GetProfileHistoryInput, o: GetProfileHistoryOutput, c: UserProfileContext, metrics?:...` | `Promise<boolean>` | — |
 | `soProfileByVersion` | `i: GetProfileByVersionInput, o: GetProfileByVersionOutput, c: UserProfileContext, metri...` | `Promise<boolean>` | — |
+| `soAllProfiles` | `i: GetAllProfilesInput, o: GetAllProfilesOutput, c: UserProfileContext, metrics?: Metri...` | `Promise<boolean>` | — |
 | `resetUserProfile` | `i: ResetUserProfileInput, o: ResetUserProfileOutput, c: UserProfileContext, metrics?: M...` | `Promise<boolean>` | — |
 | `configUserProfile` | `i: ConfigUserProfileInput, o: ConfigUserProfileOutput, c: UserProfileContext, metrics?:...` | `Promise<boolean>` | — |

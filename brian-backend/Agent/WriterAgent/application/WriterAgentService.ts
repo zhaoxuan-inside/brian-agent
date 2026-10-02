@@ -1,5 +1,5 @@
-﻿import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
-import { Metrics, Report } from '@brian-agent/base';
+import type { RelationDBAccess, LLMAccess, PromptsAccess } from '@brian-agent/base';
+import { BusinessEvent, Metrics, Report } from '@brian-agent/base';
 import {
   IdGenerator, Operator, ValidationError,
   ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, type LLMEvent,
@@ -41,6 +41,9 @@ const FORMAT_ENUM = ['TEXT', 'MARKDOWN', 'JSON'];
 const STYLE_ENUM = ['clear', 'concise', 'detailed', 'creative'];
 const DEPTH_ENUM = ['shallow', 'medium', 'deep'];
 const LANGUAGE_ENUM = ['zh-CN', 'en-US'];
+
+
+const WRITER_THINKING_DISABLED = { thinking: { type: 'disabled' }, enable_thinking: false } as const;
 
 type WriterPreferences = NonNullable<WriteInput['user_preferences']>;
 
@@ -165,7 +168,7 @@ export class WriterAgentService {
       await this.infoCore.context(
         Object.assign(new ContextInfoInput(), {
           session_id: ctx.session_id, work_id: ctx.work_id || '',
-          selected_msg_ids: ctx.selected_msg_ids, info: input.user_query, persist_snapshot: true,
+          selected_msg_ids: ctx.selected_msg_ids, info: input.user_query, persist_snapshot: false,
         }),
         ctxOut,
         new InfoCoreContext(),
@@ -261,9 +264,11 @@ export class WriterAgentService {
     }, metrics);
   }
 
-  
-  private buildWriteEventsInput(input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string): ExecLLMEventsInput {
-    const hasStreamAccess = this.streamAccess && typeof this.streamAccess.pushText === 'function';
+  /** ADR-013：Writer 流式正文统一走 reply.delta 业务事件（裸 text_chunk 通道已删除） */
+  private buildWriteEventsInput(
+    input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string, report?: Report,
+  ): ExecLLMEventsInput {
+    let writerStreamStarted = false;
     return Object.assign(new ExecLLMEventsInput(), {
       id: llmId,
       messages: [
@@ -271,17 +276,18 @@ export class WriterAgentService {
         { role: 'user' as const, content: prompt },
       ],
       temperature: 0.3,
+
+      extra: { ...WRITER_THINKING_DISABLED },
       session_id: ctx.session_id || '',
       run_id: input.run_id || ctx.run_id || '',
       work_id: input.work_id || ctx.work_id || '',
       caller: 'WriterAgent.execWrite',
       on_event: (ev: LLMEvent) => {
-        if (ev.type === 'text_delta' && ev.delta && hasStreamAccess) {
-          this.streamAccess!.pushText(ctx.session_id || '', 'text_chunk', ev.delta, {
-            work_id: input.work_id || ctx.work_id,
-            run_id: input.run_id || ctx.run_id,
-            chunk_delay_ms: 0,
-          });
+        if (ev.type === 'text_delta' && ev.delta) {
+          // 首个 delta 带 replace：前端 reducer 用 Writer 排版稿替换 Loop 原稿正文
+          const isFirst = !writerStreamStarted;
+          writerStreamStarted = true;
+          report?.emit(BusinessEvent.ReplyDelta, { delta: ev.delta, replace: isFirst });
         }
       },
     });
@@ -292,7 +298,7 @@ export class WriterAgentService {
     input: WriteInput, ctx: WriterAgentContext, llmId: string, system: string, prompt: string,
     metrics?: Metrics, report?: Report,
   ): Promise<{ ok: boolean; eventsOutput: ExecLLMEventsOutput }> {
-    const eventsInput = this.buildWriteEventsInput(input, ctx, llmId, system, prompt);
+    const eventsInput = this.buildWriteEventsInput(input, ctx, llmId, system, prompt, report);
     const eventsOutput = new ExecLLMEventsOutput();
     let ok = false;
     if (typeof this.llmAccess.execLLMEvents === 'function') {
@@ -302,6 +308,8 @@ export class WriterAgentService {
         id: llmId,
         prompt,
         ...(system ? { system } : {}),
+        
+        extra: { ...WRITER_THINKING_DISABLED },
         session_id: ctx.session_id || '',
         run_id: input.run_id || ctx.run_id || '',
         work_id: input.work_id || ctx.work_id || '',

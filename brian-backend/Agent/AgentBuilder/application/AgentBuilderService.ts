@@ -1,10 +1,39 @@
-import { Metrics, Report } from '@brian-agent/base';
+import {
+  Metrics,
+  Report,
+  funnelBm25Ranking,
+  funnelSemanticRouterRanking,
+  buildFunnelDocText,
+  toFunnelBm25Options,
+  funnelNegativeReason,
+  batchGetOrComputeEmbeddings,
+  batchGetDualExampleEmbeddings,
+  batchGetComponentExamples,
+  analyzeTaskComplexity,
+  runComponentElection,
+  standardTierLadder,
+  loadElectionThresholdOverrides,
+  applySignalScores,
+  DEFAULT_ELECTION_THRESHOLDS,
+  createSemanticsTaskFn,
+  type FunnelRankingEntry,
+  type ComponentElectionAdapter,
+  type ElectionCandidate,
+  type ElectionSignals,
+  type ElectionThresholds,
+  type PromptTemplateRecord,
+  PROMPT_TEMPLATE_EMBEDDING_TABLE,
+  PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE,
+} from '@brian-agent/base';
+import type { ComponentSemantics } from '@brian-agent/base';
+import { createComponentFunnelTrace, pushComponentFunnel, FUNNEL_MECHANISM_LABELS, type ComponentFunnelTrace } from '@brian-agent/base';
+import { EmbedLLMInput, EmbedLLMOutput } from '@brian-agent/base';
 import type { RelationDBAccess, LLMAccess, PromptsAccess, StreamAccess, Logger } from '@brian-agent/base';
 import {
   IdGenerator, Operator, ValidationError, NotFoundError,
   ExecLLMInput, ExecLLMOutput, LLMContext,
   ExecPromptInput, ExecPromptOutput, PromptContext,
-  SoPromptInput, SoPromptOutput,
+  SoPromptInput, SoPromptOutput, AddPromptInput, AddPromptOutput,
   InfoType,
   BusinessEvent,
   type DataObject,
@@ -65,6 +94,7 @@ interface AgentBuildComponents {
   agentName: string;
   promptTemplateId: string;
   agentPurpose: string;
+  agentSemantics: ComponentSemantics;
 }
 
 export class AgentBuilderService {
@@ -92,8 +122,6 @@ export class AgentBuilderService {
     const workId = ctx.work_id || '';
     const runId = input.run_id || ctx.run_id || '';
 
-    await this.emitAgentBuildingEvent(sessionId, workId, runId, agentId, input.task_content);
-
     const analysisLlm = await this.matchLlmForAgent(agentId, input.run_id, metrics, report);
     const analysis = await this.analyzeTask(input, config, analysisLlm, metrics, report);
 
@@ -109,7 +137,11 @@ export class AgentBuilderService {
     await this.persistBuiltAgent(libCtx, agentId, analysis, components);
     await this.bindCoreComponents(ctx, agentId, input.run_id || '', components);
     await this.archiveAgentBuild(sessionId, workId, runId, agentId, analysis, components, metrics);
-    await this.emitAgentBuiltEvent(sessionId, workId, runId, agentId, analysis, components);
+    report?.emit(BusinessEvent.AgentBuilt, {
+      agent_id: agentId,
+      name: components.agentName,
+      purpose: components.agentPurpose || '',
+    });
 
     output.agent_id = agentId;
     return true;
@@ -257,15 +289,6 @@ export class AgentBuilderService {
     return true;
   }
 
-  private async emitAgentBuildingEvent(sessionId: string, workId: string, runId: string, agentId: string, taskContent: string): Promise<void> {
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
-      await this.streamAccess.pushEvent(sessionId, 'agent_building', 'AGENT_SPEC', {
-        status: 'ANALYZING',
-        task_content: taskContent,
-      }, { work_id: workId, run_id: runId, agent_id: agentId });
-    }
-  }
-
   private async reuseMatchedAgent(
     input: BuildAgentInput, output: BuildAgentOutput, libCtx: AgentLibraryContext,
     agentId: string, sessionId: string, workId: string, runId: string, signature: string,
@@ -287,7 +310,6 @@ export class AgentBuilderService {
 
     await this.recordMatchedAgentUsage(matchOut.agent_id, libCtx, workId, runId, metrics, report);
     output.agent_id = matchOut.agent_id;
-    await this.emitAgentMatchedEvent(sessionId, workId, runId, agentId, matchOut);
     return true;
   }
 
@@ -306,16 +328,6 @@ export class AgentBuilderService {
       metrics,
       report,
     );
-  }
-
-  private async emitAgentMatchedEvent(sessionId: string, workId: string, runId: string, agentId: string, matchOut: MatchAgentOutput): Promise<void> {
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
-      await this.streamAccess.pushEvent(sessionId, 'agent_matched', 'AGENT_SPEC', {
-        matched_agent_id: matchOut.agent_id,
-        reused: true,
-        matched_by: matchOut.matched_by || 'SIMILARITY',
-      }, { work_id: workId, run_id: runId, agent_id: agentId });
-    }
   }
 
   private async matchStrategyForAgent(taskContent: string, complexity: number, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
@@ -337,13 +349,14 @@ export class AgentBuilderService {
     return strategyOut.strategy_id;
   }
 
-  private async matchLlmForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, fallbackLlmId: string, metrics?: Metrics, report?: Report): Promise<string> {
+  private async matchLlmForBuild(ctx: AgentBuilderContext, agentId: string, runId: string, taskContent: string, fallbackLlmId: string, metrics?: Metrics, report?: Report): Promise<string> {
     const llmOut = new MatchLLMOutput();
     await this.llmCore.matchLLM(
       Object.assign(new MatchLLMInput(), {
         agent_id: agentId,
         context_id: ctx.session_id || '',
         run_id: runId,
+        task_content: taskContent,
       }),
       llmOut,
       new LLMCoreContext(),
@@ -352,7 +365,7 @@ export class AgentBuilderService {
     );
     const llmId = llmOut.llm_id || fallbackLlmId || '';
 
-    report?.pushBusinessEvent(BusinessEvent.LlmSelected, {
+    report?.emit(BusinessEvent.LlmSelected, {
       llm_id: llmId,
       stage: 'build',
       reason: 'Core 按任务/配额选型（matchLLM 选定并写入 agent_llm 绑定，供任务分析与本 Agent 执行复用）',
@@ -375,7 +388,7 @@ export class AgentBuilderService {
     );
 
     const selected = this.soSelectedSkillEntries(skillOut);
-    report?.pushBusinessEvent(BusinessEvent.SkillSelected, {
+    report?.emit(BusinessEvent.SkillSelected, {
       source: 'build',
       skills: selected,
       system_skills: (skillOut.system_skills ?? []).map((s) => ({ id: s.skill_id, brief: s.skill_brief })),
@@ -414,7 +427,7 @@ export class AgentBuilderService {
       report,
     );
 
-    report?.pushBusinessEvent(BusinessEvent.McpSelected, {
+    report?.emit(BusinessEvent.McpSelected, {
       stage: 'build',
       mcps: (mcpOut.mcp_ids ?? []).map((id) => ({ id, brief: '' })),
       reason: `mcpCore.matchMCP 判定终态=match_detail=${mcpOut.detail ?? 'unknown'}（MCP 数 ${(mcpOut.mcp_ids ?? []).length}）`,
@@ -439,7 +452,7 @@ export class AgentBuilderService {
       report,
     );
 
-    report?.pushBusinessEvent(BusinessEvent.SoulSelected, {
+    report?.emit(BusinessEvent.SoulSelected, {
       soul_id: soulOut.soul_id || '',
       brief: String(soulOut.soul?.soul_brief ?? '').slice(0, 200),
       stage: 'build',
@@ -450,10 +463,10 @@ export class AgentBuilderService {
     return soulOut;
   }
 
-  private async selectPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
-    const promptTemplateId = await this.matchPromptForAgent(taskText, domain, metrics, report);
+  private async selectPromptForAgent(agentId: string, taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
+    const promptTemplateId = await this.matchPromptForAgent(agentId, taskText, domain, metrics, report);
 
-    report?.pushBusinessEvent(BusinessEvent.PromptSelected, {
+    report?.emit(BusinessEvent.PromptSelected, {
       template_id: promptTemplateId,
       stage: 'build',
       reason: promptTemplateId
@@ -468,23 +481,27 @@ export class AgentBuilderService {
     analysis: AgentBuildAnalysis, analysisLlm: string,
     metrics?: Metrics, report?: Report,
   ): Promise<AgentBuildComponents> {
-    const strategyId = await this.matchStrategyForAgent(input.task_content, analysis.complexity, analysis.domain, metrics, report);
-    const llmId = await this.matchLlmForBuild(ctx, agentId, input.run_id || ctx.run_id || '', analysisLlm, metrics, report);
-    const skillOut = await this.matchSkillForBuild(ctx, agentId, input.run_id || '', metrics, report);
-    const mcpOut = await this.matchMcpForBuild(ctx, agentId, input.run_id || '', metrics, report);
-    const soulOut = await this.matchSoulForBuild(ctx, agentId, input.run_id || '', input.task_content, analysis.domain, metrics, report);
+    const [strategyId, llmId, skillOut, mcpOut, soulOut, promptTemplateId] = await Promise.all([
+      this.matchStrategyForAgent(input.task_content, analysis.complexity, analysis.domain, metrics, report),
+      this.matchLlmForBuild(ctx, agentId, input.run_id || ctx.run_id || '', input.task_content, analysisLlm, metrics, report),
+      this.matchSkillForBuild(ctx, agentId, input.run_id || '', metrics, report),
+      this.matchMcpForBuild(ctx, agentId, input.run_id || '', metrics, report),
+      this.matchSoulForBuild(ctx, agentId, input.run_id || '', input.task_content, analysis.domain, metrics, report),
+      this.selectPromptForAgent(agentId, input.task_content || analysis.signature, analysis.domain, metrics, report),
+    ]);
+
     const agentName = generateAgentName(soulOut.soul, skillOut.skills || [], analysis.domain || analysis.signature);
-    const promptTemplateId = await this.selectPromptForAgent(input.task_content || analysis.signature, analysis.domain, metrics, report);
-    const agentPurpose = await this.generateAgentPurpose(
+    const agentSemantics = await this.generateAgentSemantics(
       input.task_content || analysis.signature,
       analysis.domain || '通用',
+      agentName,
       String(soulOut.soul?.soul_brief ?? ''),
       (skillOut.skills ?? []).map((s) => s.skill_brief),
       mcpOut.mcp_ids ?? [],
       metrics,
-      report,
     );
-    return { strategyId, llmId, skillOut, mcpOut, soulOut, agentName, promptTemplateId, agentPurpose };
+    const agentPurpose = agentSemantics.brief;
+    return { strategyId, llmId, skillOut, mcpOut, soulOut, agentName, promptTemplateId, agentPurpose, agentSemantics };
   }
 
   private async persistBuiltAgent(libCtx: AgentLibraryContext, agentId: string, analysis: AgentBuildAnalysis, components: AgentBuildComponents): Promise<void> {
@@ -502,6 +519,8 @@ export class AgentBuilderService {
         skill_ids: this.soSelectedSkillEntries(components.skillOut).map((s) => s.id),
         mcp_ids: components.mcpOut.mcp_ids ?? [],
         prompt_template_id: components.promptTemplateId,
+        positive_examples: components.agentSemantics.positive_examples,
+        negative_examples: components.agentSemantics.negative_examples,
 
         created_by: 'system',
       }),
@@ -512,14 +531,20 @@ export class AgentBuilderService {
   }
 
   private async bindCoreComponents(ctx: AgentBuilderContext, agentId: string, runId: string, components: AgentBuildComponents): Promise<void> {
-    await this.optSkillBindings(agentId, ctx.session_id || '', runId, this.soSelectedSkillEntries(components.skillOut).map((s) => s.id));
-    await this.optMcpBindings(agentId, ctx.session_id || '', runId, components.mcpOut.mcp_ids ?? []);
-    await this.optSoulBinding(agentId, ctx.session_id || '', runId, components.soulOut.soul_id || '');
+    const skillIds = this.soSelectedSkillEntries(components.skillOut).map((s) => s.id);
+    const mcpIds = components.mcpOut.mcp_ids ?? [];
+    const soulId = components.soulOut.soul_id || '';
+
+    await Promise.all([
+      this.optSkillBindings(agentId, ctx.session_id || '', runId, skillIds),
+      this.optMcpBindings(agentId, ctx.session_id || '', runId, mcpIds),
+      this.optSoulBinding(agentId, ctx.session_id || '', runId, soulId),
+    ]);
   }
 
   private async optSkillBindings(agentId: string, contextId: string, runId: string, skillIds: string[]): Promise<void> {
-    for (const skillId of skillIds) {
-      await this.skillCore.optSkill(
+    await Promise.all(skillIds.map((skillId) =>
+      this.skillCore.optSkill(
         Object.assign(new OptSkillInput(), {
           agent_id: agentId,
           context_id: contextId,
@@ -528,13 +553,13 @@ export class AgentBuilderService {
         }),
         new OptSkillOutput(),
         new SkillCoreContext(),
-      );
-    }
+      ),
+    ));
   }
 
   private async optMcpBindings(agentId: string, contextId: string, runId: string, mcpIds: string[]): Promise<void> {
-    for (const mcpId of mcpIds) {
-      await this.mcpCore.optMCP(
+    await Promise.all(mcpIds.map((mcpId) =>
+      this.mcpCore.optMCP(
         Object.assign(new OptMcpInput(), {
           agent_id: agentId,
           context_id: contextId,
@@ -543,8 +568,8 @@ export class AgentBuilderService {
         }),
         new OptMcpOutput(),
         new McpCoreContext(),
-      );
-    }
+      ),
+    ));
   }
 
   private async optSoulBinding(agentId: string, contextId: string, runId: string, soulId: string): Promise<void> {
@@ -596,16 +621,6 @@ export class AgentBuilderService {
       metrics?.warn('AgentBuilderService.buildAgent 构建过程存档落库失败已容忍', {
         error: err instanceof Error ? err.message : String(err), agent_id: agentId, session_id: sessionId,
       });
-    }
-  }
-
-  private async emitAgentBuiltEvent(
-    sessionId: string, workId: string, runId: string, agentId: string,
-    analysis: AgentBuildAnalysis, components: AgentBuildComponents,
-  ): Promise<void> {
-    if (this.streamAccess && typeof this.streamAccess.pushEvent === 'function' && sessionId) {
-      const summary = this.buildBuildSummary(agentId, analysis, components);
-      await this.streamAccess.pushEvent(sessionId, 'agent_built', 'AGENT_SPEC', summary, { work_id: workId, run_id: runId, agent_id: agentId });
     }
   }
 
@@ -909,87 +924,195 @@ export class AgentBuilderService {
     });
   }
 
-  private async matchPromptForAgent(taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
+  private async embedFunnelText(text: string, metrics?: Metrics): Promise<number[]> {
     try {
-      const out = new SoPromptOutput();
-      await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext(), metrics, report);
+      const out = new EmbedLLMOutput();
+      await this.llmAccess.embedLLM(Object.assign(new EmbedLLMInput(), { id: '', input: text }), out, new LLMContext(), metrics);
+      return out.embedding ?? [];
+    } catch {
+      return [];
+    }
+  }
 
-      const candidates = (out.list ?? []).filter((t) => {
-        if (!t.enable) return false;
-        const title = t.prompt_template_title ?? '';
-        if (t.is_system && (title.includes('评估') || title.includes('汇总') || title.includes('阶段') || title.includes('Think') || title.includes('Reflect') || title.includes('Answer') || title.includes('匹配'))) {
-          return false;
-        }
-        return true;
-      });
+  private async matchPromptForAgent(agentId: string, taskText: string, domain: string, metrics?: Metrics, report?: Report): Promise<string> {
+    const funnel = createComponentFunnelTrace('prompt', agentId);
+    const templateId = await this.soPromptFunnelSelect(taskText, domain, metrics, report, funnel);
+    pushComponentFunnel(report, funnel, templateId ? 'prompt_selected' : 'prompt_miss');
+    return templateId;
+  }
 
+  private async soPromptFunnelSelect(taskText: string, domain: string, metrics: Metrics | undefined, report: Report | undefined, funnel: ComponentFunnelTrace): Promise<string> {
+    try {
+      const candidates = await this.soPromptCandidates();
       if (candidates.length === 0) return '';
-
-      const execInput = new ExecLLMInput();
-      execInput.prompt = [
-        '为以下用户任务评估最匹配的特定提示词模板（如无高度契合的专业模板，请给出低于 70 的分数）：',
-        `任务内容：${taskText.slice(0, 300)}`,
-        `任务领域：${domain}`,
-        '',
-        '候选模板列表：',
-        ...candidates.map((c, i) => `${i + 1}. ID: ${c.id}, 标题: ${c.prompt_template_title}, 说明: ${c.prompt_template_brief ?? ''}`),
-        '',
-        '请以 JSON 格式输出评估结果（score 为 0-100 的整数，表示匹配契合度；若无高度匹配的特定模板请给出低于 70 的分数）：',
-        '{"template_id": "...", "score": 85, "reason": "..."}',
-        '只输出 JSON，不要任何其他文本。',
-      ].join('\n');
-      execInput.max_tokens = 200;
-
-      const execOutput = new ExecLLMOutput();
-      execInput.caller = 'AgentBuilderService.matchPromptTemplate.llmScore';
-      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
-      if (!ok || !execOutput.result) return '';
-
-      const parsed = parseJsonObject(execOutput.result);
-      if (!parsed) return '';
-
-      const score = Number(parsed.score ?? 0);
-      const normalizedScore = score > 0 && score <= 1 ? Math.round(score * 100) : Math.round(score);
-      const templateId = String(parsed.template_id ?? '');
-
-      if (normalizedScore >= 75 && templateId && candidates.some((c) => c.id === templateId)) {
-        return templateId;
-      }
-      return '';
+      const result = { templateId: '' };
+      const adapter = this.promptElectionAdapter(taskText, domain, candidates, result, metrics, funnel);
+      await runComponentElection(adapter, taskText, result);
+      return result.templateId;
     } catch {
       return '';
     }
   }
 
-  private async generateAgentPurpose(
+  /** 合法候选集：启用中的模板，剔除系统内置评估/汇总/阶段类契约模板 */
+  private async soPromptCandidates(): Promise<SoPromptOutput['list']> {
+    const out = new SoPromptOutput();
+    await this.promptsAccess.soPrompt(Object.assign(new SoPromptInput(), {}), out, new PromptContext());
+    return (out.list ?? []).filter((t) => {
+      if (!t.enable) return false;
+      const title = t.prompt_template_title ?? '';
+      if (t.is_system && (title.includes('评估') || title.includes('汇总') || title.includes('阶段') || title.includes('Think') || title.includes('Reflect') || title.includes('Answer') || title.includes('匹配'))) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** Prompt 选举适配器（单选择优；终端=按任务生成新模板入库，规格 3.3.3 创建新的 Prompt） */
+  private promptElectionAdapter(
+    taskText: string, domain: string, candidates: SoPromptOutput['list'],
+    result: { templateId: string }, metrics?: Metrics, funnel?: ComponentFunnelTrace,
+  ): ComponentElectionAdapter<PromptTemplateRecord> {
+    return {
+      component: 'prompt',
+      multiSelect: false,
+      directAdoptSingle: false,
+      funnel,
+      findReusable: async () => null,
+      extractSignals: () => this.promptExtractSignals(taskText, candidates, metrics, funnel),
+      tiers: () => standardTierLadder(),
+      select: async (_i, _o, picked, tier) => {
+        result.templateId = picked[0].id;
+        funnel?.markAdopted('vector');
+        metrics?.info('Prompt 选举命中', { tier: tier.label, template_id: picked[0].id });
+        return true;
+      },
+      exhaust: async () => {
+        result.templateId = await this.createPromptForTask(taskText, domain, metrics, funnel);
+        return true;
+      },
+    };
+  }
+
+  /** 信号提取（并行）：合法集 + BM25/语义路由双通道（正/负范例双向）；结构信号弃权 */
+  private async promptExtractSignals(taskText: string, candidates: SoPromptOutput['list'], metrics?: Metrics, funnel?: ComponentFunnelTrace): Promise<ElectionSignals<PromptTemplateRecord>> {
+    const overrides = await loadElectionThresholdOverrides(this.relationDb, 'prompt');
+    const thresholds: ElectionThresholds = { ...DEFAULT_ELECTION_THRESHOLDS, ...overrides };
+    const docs = candidates.map((c) => ({ id: c.id, name: c.prompt_template_title ?? '', brief: c.prompt_template_brief ?? '' }));
+    const docOf = new Map(candidates.map((c) => [c.id, c]));
+    const queryEmbedding = await this.embedFunnelText(taskText, metrics);
+    const [bm25Ranking, vectorRanking] = await Promise.all([
+      this.promptBm25Signal(taskText, docs, funnel),
+      this.promptVectorSignal(queryEmbedding, docs, metrics, funnel),
+    ]);
+    const pickedCandidates: ElectionCandidate<PromptTemplateRecord>[] = docs.map((d) => ({
+      id: d.id, label: d.name || d.id, doc: docOf.get(d.id) as PromptTemplateRecord,
+      bm25Score: 0, vectorScore: 0, exampleSim: 0, negativeSim: 0, rejectedByNegative: false,
+    }));
+    applySignalScores(pickedCandidates, bm25Ranking, vectorRanking);
+    return { candidates: pickedCandidates, complexity: analyzeTaskComplexity({ text: taskText }), structureIds: new Set<string>(), thresholds };
+  }
+
+  /** BM25 信号（并行支路）：正/负范例双向增强后全量排序，登记漏斗明细 */
+  private async promptBm25Signal(taskText: string, docs: Array<{ id: string; name: string; brief: string }>, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    const examples = await batchGetComponentExamples({
+      relationDb: this.relationDb, table: PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'prompt_template_id', targetIds: docs.map((d) => d.id),
+    });
+    const ranking = funnelBm25Ranking(taskText, docs, toFunnelBm25Options(examples));
+    funnel?.addMechanism({
+      mechanism: 'bm25', label: FUNNEL_MECHANISM_LABELS.bm25, adopted: ranking.some((e) => e.score >= 90 && !e.rejected),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.name || e.doc.brief.slice(0, 40), score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 向量信号（并行支路）：语义路由器（描述向量+正/负范例向量）全量排序，登记漏斗明细 */
+  private async promptVectorSignal(queryEmbedding: number[], docs: Array<{ id: string; name: string; brief: string }>, metrics?: Metrics, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    if (!queryEmbedding || queryEmbedding.length === 0) return [];
+    const items = docs.map((d) => ({ id: d.id, text: buildFunnelDocText(d.name, d.brief) }));
+    const [precomputed, dualExamples] = await Promise.all([
+      batchGetOrComputeEmbeddings({
+        relationDb: this.relationDb, table: PROMPT_TEMPLATE_EMBEDDING_TABLE, targetIdField: 'prompt_template_id',
+        items, embedFn: (t) => this.embedFunnelText(t, metrics),
+      }),
+      batchGetDualExampleEmbeddings({
+        relationDb: this.relationDb, table: PROMPT_TEMPLATE_EXAMPLE_EMBEDDING_TABLE, targetIdField: 'prompt_template_id',
+        targetIds: docs.map((d) => d.id),
+      }),
+    ]);
+    const ranking = await funnelSemanticRouterRanking(
+      queryEmbedding, docs, (d) => this.embedFunnelText(buildFunnelDocText(d.name, d.brief), metrics),
+      precomputed, dualExamples.positiveMap, dualExamples.negativeMap,
+    );
+    funnel?.addMechanism({
+      mechanism: 'vector', label: FUNNEL_MECHANISM_LABELS.vector, adopted: ranking.some((e) => !e.rejected && e.score >= 80),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.name || e.doc.brief.slice(0, 40), score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 阶梯耗尽终端：按任务生成新 Prompt 模板入库并返回其 id（语义规范引擎统一收敛） */
+  private async createPromptForTask(taskText: string, domain: string, metrics?: Metrics, funnel?: ComponentFunnelTrace): Promise<string> {
+    const execInput = new ExecLLMInput();
+    execInput.prompt = [
+      '请为以下任务创作一个可复用的 Prompt 模板。输出严格 JSON（无代码块）：',
+      '{"title": "模板标题（5-10个汉字，突出职能）", "template": "模板正文，用 {{task_content}} 表示任务占位符，{{context}} 表示上下文占位符"}',
+      `任务内容：${taskText.slice(0, 300)}`,
+      `任务领域：${domain}`,
+    ].join('\n');
+    execInput.max_tokens = 500;
+    execInput.caller = 'AgentBuilderService.createPromptForTask';
+    const execOutput = new ExecLLMOutput();
+    const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics);
+    if (!ok) return '';
+    const parsed = parseJsonObject(execOutput.result ?? '');
+    const template = String(parsed?.template ?? '').trim();
+    if (!template) return '';
+    const addInput = new AddPromptInput();
+    addInput.data = {
+      prompt_template_title: String(parsed?.title ?? taskText.slice(0, 10)),
+      prompt_template: template,
+      prompt_template_brief: `接收任务${domain ? `（${domain} 领域）` : ''}，按模板占位符注入任务与上下文，输出结构化执行结果`,
+    } as never;
+    const addOutput = new AddPromptOutput();
+    const created = await this.promptsAccess.addPrompt(addInput, addOutput, new PromptContext());
+    if (!created) return '';
+    funnel?.addDirect('创建新的 Prompt', [{ id: addOutput.id, name: String(parsed?.title ?? ''), score: 0 }]);
+    metrics?.info('Prompt 选举耗尽：已生成新模板入库', { template_id: addOutput.id, title: String(parsed?.title ?? '') });
+    return addOutput.id;
+  }
+  private async generateAgentSemantics(
     taskText: string,
     domain: string,
+    agentName: string,
     soulBrief: string,
     skillBriefs: string[],
     mcpIds: string[],
     metrics?: Metrics,
-    report?: Report,
-  ): Promise<string> {
-    const fallback = `负责 ${domain} 领域任务处理: ${taskText.slice(0, 120)}`;
-    try {
-      const execInput = new ExecLLMInput();
-      execInput.prompt = [
-        '为以下新 Agent 生成一句中文说明（50 字以内），概括其负责的任务领域、职责与可用能力。',
-        '说明将用于后续按语义相似度匹配 Agent，请包含关键领域词。',
-        `任务：${taskText.slice(0, 200)}`,
-        `领域：${domain}`,
-        soulBrief ? `人格：${soulBrief.slice(0, 80)}` : '',
-        skillBriefs.length ? `技能：${skillBriefs.slice(0, 5).join('、').slice(0, 120)}` : '',
-        mcpIds.length ? `MCP：${mcpIds.slice(0, 5).join('、')}` : '',
-        '只输出说明文本，不要任何前缀或引号。',
-      ].filter(Boolean).join('\n');
-      const execOutput = new ExecLLMOutput();
-      execInput.caller = 'AgentBuilderService.generateAgentPurpose';
-      const ok = await this.llmAccess.execLLM(execInput, execOutput, new LLMContext(), metrics, report);
-      const text = (execOutput.result ?? '').trim();
-      return ok && text ? text.slice(0, 200) : fallback;
-    } catch {
-      return fallback;
+  ): Promise<ComponentSemantics> {
+    const extra = [
+      domain ? `任务领域:${domain}` : '',
+      soulBrief ? `人格:${soulBrief.slice(0, 80)}` : '',
+      skillBriefs.length ? `技能:${skillBriefs.slice(0, 5).join('、').slice(0, 120)}` : '',
+      mcpIds.length ? `MCP:${mcpIds.slice(0, 5).join('、')}` : '',
+    ].filter(Boolean).join('；');
+    const generated = await createSemanticsTaskFn(this.llmAccess)({
+      kind: 'agent',
+      title: agentName,
+      brief: `负责 ${domain} 领域任务处理与专业解答`,
+      content: taskText.slice(0, 300),
+      extra,
+    }).catch(() => null);
+    if (generated && generated.brief) {
+      metrics?.info('AgentBuilderService.generateAgentSemantics 语义四元组生成成功', { domain });
+      return generated;
     }
+    return {
+      title: agentName,
+      brief: `负责 ${domain} 领域任务处理与专业解答。参考任务：${taskText.slice(0, 60)}`,
+      positive_examples: [],
+      negative_examples: [],
+    };
   }
 }

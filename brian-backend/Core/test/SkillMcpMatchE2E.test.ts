@@ -21,6 +21,7 @@ import {
   SoMcpOutput,
   type LLMAccess,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import type { MCPAccess } from '@brian-agent/base';
 import {
   SkillCoreContext,
@@ -28,7 +29,6 @@ import {
   MatchSkillOutput,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
   type GitHubSkillClient,
   type ParsedSkillMd,
 } from '../SkillCoreProvider';
@@ -37,8 +37,9 @@ import {
   McpCoreContext,
   MatchMcpInput,
   MatchMcpOutput,
+  ConfigMcpCoreInput,
+  ConfigMcpCoreOutput,
   MCP_CORE_CONFIG_TABLE,
-  AGENT_MCP_USAGE_TABLE,
 } from '../MCPCoreProvider';
 import { MCPCoreService } from '../MCPCoreProvider/application/MCPCoreService';
 
@@ -88,6 +89,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-skill-e2e-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SKILL_CORE_CONFIG_TABLE}" (
@@ -108,17 +110,6 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
         "updated" INTEGER NOT NULL,
         "days" INTEGER NOT NULL,
         "min_usage_count" INTEGER NOT NULL
-      )
-    `);
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "skill_id" TEXT NOT NULL,
-        "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
     skillAccess = new SkillAccess(relationDb);
@@ -162,14 +153,13 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     const service = new SkillCoreService(relationDb, skillAccess, llm, promptsAccess, stubGithub([], null));
 
     const out = new MatchSkillOutput();
-    await service.matchSkill(matchInput('查一下北京天气'), out, ctx);
+    const forcedInput = matchInput('查一下北京天气');
+    forcedInput.bypass_cache = true;
+    await service.matchSkill(forcedInput, out, ctx);
     expect(out.skills).toHaveLength(1);
     expect(out.skills[0].skill_id).toBe(addOut.id);
-    expect(out.skills[0].relevance).toBeCloseTo(0.96);
-    expect(prompts[0]).toContain('Skill 匹配评估助手');
-    expect(prompts[0]).toContain('weather-skill');
-    expect(prompts[0]).toContain('查一下北京天气');
-    expectNoPlaceholder(prompts[0]);
+    expect(out.detail).toBe('election_skill_t1');
+    expect(prompts.length).toBe(0); // R8 统一选举：T1 阶梯命中直接采纳，零 LLM 调用（裁判链见下一用例）
   });
 
   it('回退防劫持：用户同标题模板（is_system=0）存在时仍优先 builtin 契约模板', async () => {
@@ -177,7 +167,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     const userInput = new (await import('@brian-agent/base')).AddPromptInput();
     userInput.data = {
       prompt_template_title: '我的 Skill 匹配规则',
-      prompt_template: '旧契约：请输出 [{"skill_brief": "...", "relevance": 0.9}]，task={{task_content}}',
+      prompt_template: '旧契约：请输出 [{"brief": "...", "relevance": 0.9}]，task={{task_content}}',
     };
     const userOutput = new (await import('@brian-agent/base')).AddPromptOutput();
     await promptsAccess.addPrompt(userInput, userOutput, new (await import('@brian-agent/base')).PromptContext());
@@ -207,7 +197,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     expectNoPlaceholder(prompts[0]);
 
     const soOut = new SoSkillOutput();
-    await skillAccess.soSkill({ conditions: [{ field: 'name', operator: '=', value: 'html-report' }] } as never, soOut, new SkillContext());
+    await skillAccess.soSkill({ conditions: [{ field: 'title', operator: '=', value: 'html-report' }] } as never, soOut, new SkillContext());
     expect(soOut.list).toHaveLength(1);
     expect(soOut.list[0].enable).toBe(true);
   });
@@ -225,7 +215,7 @@ describe('Skill 匹配链路（真实 builtin 模板种子 + 标题回退）', (
     expect(github.searchSkills).toHaveBeenCalledWith(['gen'], '');
 
     const soOut = new SoSkillOutput();
-    await skillAccess.soSkill({ conditions: [{ field: 'name', operator: '=', value: 'gen-skill' }] } as never, soOut, new SkillContext());
+    await skillAccess.soSkill({ conditions: [{ field: 'title', operator: '=', value: 'gen-skill' }] } as never, soOut, new SkillContext());
     expect(soOut.list).toHaveLength(1);
     expect(soOut.list[0].enable).toBe(true);
     expect(soOut.list[0].scripts?.[0]?.name).toBe('main.js');
@@ -240,10 +230,10 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
   let promptsAccess: PromptsAccess;
   let ctx: McpCoreContext;
 
-  function stubMcpAccess(): { access: MCPAccess; calls: Record<string, number> } {
+  function stubMcpAccess(installedList: any[] = []): { access: MCPAccess; calls: Record<string, number> } {
     const calls = { install: 0, start: 0 };
     const access = {
-      soMcp: async (_i: unknown, o: SoMcpOutput) => { o.list = []; return true; },
+      soMcp: async (_i: unknown, o: SoMcpOutput) => { o.list = installedList; return true; },
       soMcpProvider: async (_i: SoMcpProviderInput, o: SoMcpProviderOutput) => {
         o.list = [{ id: 'prov-1', provider_code: 'github', mcp_provider_url: 'https://market.example', enable: true } as never];
         return true;
@@ -272,6 +262,7 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-mcp-e2e-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
 
     relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${MCP_CORE_CONFIG_TABLE}" (
@@ -288,17 +279,6 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
         "market_install_enabled" INTEGER NOT NULL DEFAULT 1
       )
     `);
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_MCP_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY,
-        "created" INTEGER NOT NULL,
-        "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL,
-        "mcp_id" TEXT NOT NULL,
-        "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
 
@@ -311,48 +291,53 @@ describe('MCP 匹配链路（真实 builtin 模板种子 + 标题回退）', () 
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {  }
   });
 
-  it('闲聊任务：回退命中 builtin MCP 匹配推荐 → task_content 渲染 → need=false 负缓存零市场调用', async () => {
-    const { llm, prompts, execLlm } = makeLlm(['{"need": false, "keywords": [], "candidates": []}']);
-    const { access, calls } = stubMcpAccess();
+  it('闲聊任务：语义路由未达阈值 → 返回空并写入负缓存（零 LLM 调用）', async () => {
+    const { llm, execLlm } = makeLlm(['{"need": false, "keywords": [], "candidates": []}']);
+    llm.embedLLM = async (i: any, o: any) => {
+      o.embedding = (i.input && i.input.includes('笑话')) ? [1, 0, 0] : [0, 1, 0];
+      return true;
+    };
+    const { access, calls } = stubMcpAccess([
+      { id: 'mcp-1', mcp_title: 'weather', mcp_brief: '面向气象查询，输出天气报告。', enable: 1 },
+    ]);
     const service = new MCPCoreService(relationDb, access, llm, promptsAccess);
 
     const out1 = new MatchMcpOutput();
     await service.matchMCP(matchInput('讲个笑话'), out1, ctx);
     expect(out1.mcp_ids).toEqual([]);
-
-    expect(prompts[0]).toContain('MCP 工具匹配评估助手');
-    expect(prompts[0]).toContain('讲个笑话');
-    expectNoPlaceholder(prompts[0]);
+    expect(out1.detail).toBe('mcp_exhausted');
     expect(calls.install).toBe(0);
+    expect(execLlm).toHaveBeenCalledTimes(0);
 
     const out2 = new MatchMcpOutput();
     await service.matchMCP(matchInput('讲个笑话'), out2, ctx);
     expect(out2.mcp_ids).toEqual([]);
-    expect(execLlm).toHaveBeenCalledTimes(1);
+    expect(out2.detail).toBe('mcp_exhausted');
+    expect(execLlm).toHaveBeenCalledTimes(0);
   });
 
-  it('任务需要外部工具：need=true 本地无命中 → 市场模板选型 → installMcp + startMcp 闭环', async () => {
-    const { llm, prompts } = makeLlm([
-      '{"need": true, "keywords": ["web"], "candidates": []}',
-      '[{"id": "cache-9", "score": 93}]',
+  it('任务与已安装 MCP 匹配：BM25 与向量两级过滤命中已安装 MCP（零 LLM 调用）', async () => {
+    const { llm, execLlm } = makeLlm([]);
+    llm.embedLLM = async (i: any, o: any) => {
+      o.embedding = (i.input.includes('AI') || i.input.includes('新闻') || i.input.includes('搜索')) ? [1, 0, 0] : [0, 1, 0];
+      return true;
+    };
+    const { access } = stubMcpAccess([
+      { id: 'inst-news', mcp_title: 'AI新闻搜索', mcp_brief: '面向全网资讯检索，接收AI与新闻查询，检索最新文章，输出新闻列表。', enable: 1 },
     ]);
-    const { access, calls } = stubMcpAccess();
     const service = new MCPCoreService(relationDb, access, llm, promptsAccess);
+
+    await service.configMCPCore(
+      { score_threshold: 20, vector_similarity_threshold: 0.6 } as ConfigMcpCoreInput,
+      new ConfigMcpCoreOutput(),
+      ctx,
+    );
 
     const out = new MatchMcpOutput();
     await service.matchMCP(matchInput('搜索最新的 AI 新闻'), out, ctx);
 
-    expect(prompts[0]).toContain('MCP 工具匹配评估助手');
-    expect(prompts[0]).toContain('搜索最新的 AI 新闻');
-    expectNoPlaceholder(prompts[0]);
-
-    expect(prompts[1]).toContain('MCP 工具选型评估助手');
-    expect(prompts[1]).toContain('search-mcp');
-    expect(prompts[1]).toContain('搜索最新的 AI 新闻');
-    expectNoPlaceholder(prompts[1]);
-
-    expect(calls.install).toBe(1);
-    expect(calls.start).toBe(1);
-    expect(out.mcp_ids).toEqual(['inst-9']);
+    expect(out.mcp_ids).toEqual(['inst-news']);
+    expect(out.detail).toBe('election_mcp_t1');
+    expect(execLlm).toHaveBeenCalledTimes(0);
   });
 });

@@ -101,7 +101,7 @@ export class SummaryAgentService {
   private async ensureBuiltinSoul(): Promise<string> {
     const so = new SoSoulOutput();
     await this.soulAccess.soSoul(
-      { conditions: [{ field: 'soul_brief', operator: Operator.EQ, value: SUMMARY_SOUL_BRIEF }] },
+      { conditions: [{ field: 'brief', operator: Operator.EQ, value: SUMMARY_SOUL_BRIEF }] },
       so,
       new SoulContext(),
     );

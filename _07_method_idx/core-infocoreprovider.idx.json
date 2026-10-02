@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.226Z",
+  "updated_at": "2026-10-02T03:58:53.575468+00:00",
   "shard": "core-infocoreprovider",
   "layer": "Core",
   "module": "InfoCoreProvider",
@@ -2292,13 +2292,39 @@
       "reusable": true,
       "deprecated": false,
       "replaced_by": null
+    },
+    {
+      "id": "m-infocoreprovider-0177",
+      "signature": "boolean saveDialogEmbedding(input: SaveDialogEmbeddingInput, output: SaveDialogEmbeddingOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "saveDialogEmbedding",
+      "category": "orchestration",
+      "layer": "Core",
+      "module": "InfoCoreProvider",
+      "location": "brian-backend/Core/InfoCoreProvider/access/InfoCoreAccess.ts",
+      "description": "轮次话题向量固化(chg-059):向量模型门控,请求+回复拼接文本生成 embedding 后按 work_id 幂等 upsert dialog_embedding_record;无模型/生成失败 saved=false 优雅降级",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-infocoreprovider-0178",
+      "signature": "boolean matchDialogTopic(input: MatchDialogTopicInput, output: MatchDialogTopicOutput, context: InfoCoreContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "matchDialogTopic",
+      "category": "orchestration",
+      "layer": "Core",
+      "module": "InfoCoreProvider",
+      "location": "brian-backend/Core/InfoCoreProvider/access/InfoCoreAccess.ts",
+      "description": "会话话题匹配(chg-059):查询文本向量与会话最近 20 轮轮次向量逐一 cosine(维度一致才可比),回填最大相似度 0-100;无向量模型/无可比轮次 evaluated=false 回退",
+      "reusable": true,
+      "deprecated": false,
+      "replaced_by": null
     }
   ],
   "stats": {
-    "total": 176,
+    "total": 178,
     "by_category": {
       "algorithm": 17,
-      "orchestration": 68,
+      "orchestration": 70,
       "data": 91
     }
   }

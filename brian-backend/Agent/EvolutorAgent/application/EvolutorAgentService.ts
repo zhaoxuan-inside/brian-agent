@@ -29,8 +29,9 @@ import {
 import {
   GetAgentInput, GetAgentOutput, UpdateAgentInput, UpdateAgentOutput,
   AgeAgentInput, AgeAgentOutput, AgentLibraryContext,
-  AGENT_USAGE_TABLE, AGENT_TABLE,
+  AGENT_TABLE,
 } from '../../AgentLibrary/domain/types';
+import { USAGE_EVENT_TABLE, AGENT_USAGE_ORG_TABLE } from '@brian-agent/base';
 import {
   GetTraceInput, GetTraceOutput, AgentExecutionContext,
 } from '../../AgentExecution/domain/types';
@@ -54,7 +55,7 @@ function mapEval(row: Record<string, unknown>): AgentEvaluationRecord {
     id: String(row.id),
     created: Number(row.created),
     updated: Number(row.updated),
-    eval_id: String(row.eval_id),
+    eval_id: String(row.id),
     agent_id: String(row.agent_id),
     eval_type: String(row.eval_type),
     work_id: String(row.work_id),
@@ -202,10 +203,10 @@ export class EvolutorAgentService {
     const evalId = IdGenerator.generate();
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_EVALUATION_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
+      { field: 'id', value: evalId },
+      { field: 'eval_id', value: evalId },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'eval_id', value: evalId },
       { field: 'agent_id', value: input.agent_id },
       { field: 'eval_type', value: 'WORK_AGENT' },
       { field: 'work_id', value: input.work_id },
@@ -260,7 +261,7 @@ export class EvolutorAgentService {
     output.suggestions = suggestions;
     output.need_optimize = needOptimize;
 
-    report?.pushBusinessEvent(BusinessEvent.EvaluationCompleted, {
+    report?.emit(BusinessEvent.EvaluationCompleted, {
       eval_type: 'WORK_AGENT',
       eval_id: evalId,
       agent_id: input.agent_id,
@@ -275,7 +276,7 @@ export class EvolutorAgentService {
 
   private async disbandBadAgent(agentBizId: string, report?: Report, metrics?: Metrics): Promise<boolean> {
     const rows = this.relationDb.queryRaw<{ id: string; created_by: string }>(
-      `SELECT "id", "created_by" FROM "agent" WHERE "agent_id" = ? LIMIT 1`,
+      `SELECT "id", "created_by" FROM "agent_record" WHERE "agent_id" = ? LIMIT 1`,
       [agentBizId],
     );
     const row = rows?.[0];
@@ -287,7 +288,7 @@ export class EvolutorAgentService {
     const delOut = new DelAgentOutput();
     await this.agentLibrary.delAgent(delIn, delOut, new AgentLibraryContext());
     await this.disableRuntimeDefs(agentBizId, metrics);
-    report?.pushBusinessEvent(BusinessEvent.AgentDisbanded, { agent_id: agentBizId, reason: 'low_eval_score' });
+    report?.emit(BusinessEvent.AgentDisbanded, { agent_id: agentBizId, reason: 'low_eval_score' });
     return true;
   }
 
@@ -402,10 +403,10 @@ export class EvolutorAgentService {
     const evalId = IdGenerator.generate();
     const now = IdGenerator.now();
     await this.relationDb.insert(AGENT_EVALUATION_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
+      { field: 'id', value: evalId },
+      { field: 'eval_id', value: evalId },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'eval_id', value: evalId },
       { field: 'agent_id', value: input.agent_id },
       { field: 'eval_type', value: 'WRITER_AGENT' },
       { field: 'work_id', value: input.work_id },
@@ -449,7 +450,7 @@ export class EvolutorAgentService {
     output.suggestions = suggestions;
     output.need_optimize = needOptimize;
 
-    report?.pushBusinessEvent(BusinessEvent.EvaluationCompleted, {
+    report?.emit(BusinessEvent.EvaluationCompleted, {
       eval_type: 'WRITER_AGENT',
       eval_id: evalId,
       agent_id: input.agent_id,
@@ -654,10 +655,10 @@ export class EvolutorAgentService {
   ): Promise<void> {
     const agg = this.relationDb.queryRaw<{ agent_id: string; cnt: number }>(
       `SELECT u.agent_id AS agent_id, COUNT(*) AS cnt
-         FROM ${AGENT_USAGE_TABLE} u
+         FROM ${USAGE_EVENT_TABLE} u
          LEFT JOIN ${AGENT_EVALUATION_TABLE} e
            ON e.agent_id = u.agent_id AND e.work_id = u.work_id
-         WHERE u.created >= ? AND e.id IS NULL AND COALESCE(u.usage_context, '') != ''
+         WHERE u.entity_type = 'agent' AND u.created >= ? AND e.id IS NULL AND COALESCE(u.usage_context, '') != ''
          GROUP BY u.agent_id`,
       [cutoff],
     );
@@ -697,10 +698,10 @@ export class EvolutorAgentService {
   private fetchPendingUsages(agentId: string, cutoff: number, cursorCreated: number, cursorId: string, batchSize: number) {
     return this.relationDb.queryRaw<{ agent_id: string; work_id: string; run_id: string; usage_context: string; created: number; id: string }>(
       `SELECT u.agent_id, u.work_id, u.run_id, u.usage_context, u.created, u.id
-             FROM ${AGENT_USAGE_TABLE} u
+             FROM ${USAGE_EVENT_TABLE} u
              LEFT JOIN ${AGENT_EVALUATION_TABLE} e
                ON e.agent_id = u.agent_id AND e.work_id = u.work_id
-             WHERE u.agent_id = ? AND u.created >= ? AND e.id IS NULL
+             WHERE u.entity_type = 'agent' AND u.agent_id = ? AND u.created >= ? AND e.id IS NULL
                AND (u.created > ? OR (u.created = ? AND u.id > ?))
              ORDER BY u.created ASC, u.id ASC
              LIMIT ?`,
@@ -827,19 +828,16 @@ export class EvolutorAgentService {
       };
     });
 
-    const usages = await this.relationDb.select(AGENT_USAGE_TABLE, {
+    const cutoffDate = IdGenerator.dateOf(cutoff);
+    const usageRows = await this.relationDb.select(AGENT_USAGE_ORG_TABLE, {
       conditions: [
-        { field: 'agent_id', operator: Operator.EQ, value: input.agent_id },
-        { field: 'created', operator: Operator.GE, value: cutoff },
+        { field: 'agent_id', operator: Operator.EQ, value: agent.agent_id },
+        { field: 'usage_date', operator: Operator.GE, value: cutoffDate },
       ],
     });
-    const byDay = new Map<string, number>();
-    for (const u of usages) {
-      const d = new Date(Number(u.created));
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      byDay.set(key, (byDay.get(key) ?? 0) + 1);
-    }
-    const usageTrend = [...byDay.entries()].map(([date, count]) => ({ date, count }));
+    const usageTrend = usageRows
+      .map((u) => ({ date: String(u.usage_date), count: Number(u.usage_count) || 0 }))
+      .sort((a, b) => a.date.localeCompare(b.date)) as Array<{ date: string; count: number }>;
 
     const avg = scoreTrend.length
       ? Math.round(scoreTrend.reduce((a, b) => a + b.overall, 0) / scoreTrend.length)
@@ -855,7 +853,7 @@ export class EvolutorAgentService {
       current_score: agent.eval_score,
       evolution_summary:
         `Agent ${agent.agent_name} avg score ${avg} over ${days}d, ` +
-        `${usages.length} usages, ${evals.length} evaluations.`,
+        `${usageTrend.reduce((a, b) => a + b.count, 0)} usages, ${evals.length} evaluations.`,
     };
     return true;
   }
@@ -989,11 +987,16 @@ export class EvolutorAgentService {
 
   private async refreshEvalScore(agentId: string, overall: number): Promise<void> {
     const row = await this.relationDb.selectOne(AGENT_TABLE, [
-      { field: 'agent_id', operator: Operator.EQ, value: agentId },
+      { field: 'id', operator: Operator.EQ, value: agentId },
     ]);
     if (!row) return;
     const oldScore = Number(row.eval_score ?? 50);
-    const usageCount = Number(row.usage_count ?? 0);
+    // ADR-012:agent.usage_count 列退役,加权基数改用 TraceBase 事件流水的真实使用计数
+    const usageRows = await this.relationDb.queryRaw<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM "${USAGE_EVENT_TABLE}" WHERE "entity_type" = 'agent' AND "entity_id" = ?`,
+      [agentId],
+    );
+    const usageCount = Number(usageRows?.[0]?.total ?? 0);
     const weightedScore = Math.round((oldScore * usageCount + overall) / (usageCount + 1));
 
     await this.agentLibrary.updateAgent(

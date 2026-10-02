@@ -1,6 +1,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatUiStore } from '@/stores/chatUi'
+import { useThemeStore } from '@/stores/theme'
 import { chatApi } from '@/api'
 import type { ChatMapNode } from '@/api/types'
 import { NODE_H, NODE_W } from '@/utils/chatMapLayout'
@@ -12,6 +13,7 @@ import {
 export function useChatMap() {
   const sessionStore = useSessionStore()
   const chatUi = useChatUiStore()
+  const themeStore = useThemeStore()
 
   const containerRef = ref<HTMLDivElement | null>(null)
   const scale = ref(1)
@@ -95,22 +97,24 @@ export function useChatMap() {
   }
 
   function getEdgeStroke(e: EdgeRef) {
+    // Claude 暖色语义(ADR-015):选中/引文=coral,出边=teal,入边=amber,中性=暖灰随明暗
+    const dark = themeStore.isDark
     if (isEdgeSelected(e)) {
-      return '#2563eb'
+      return dark ? '#d98b70' : '#cc785c'
     }
     if (activeNodeId.value) {
       if (e.source === activeNodeId.value) {
-        return '#8b5cf6'
+        return '#5db8a6'
       }
       if (e.target === activeNodeId.value) {
-        return '#0284c7'
+        return '#e8a55a'
       }
-      return 'rgba(160, 175, 195, 0.2)'
+      return dark ? 'rgba(160, 157, 150, 0.15)' : 'rgba(108, 106, 100, 0.15)'
     }
     if (e.edgeType === 'CITATION' || e.edgeType === 'FOLLOW_UP') {
-      return '#3b82f6'
+      return dark ? '#d98b70' : '#cc785c'
     }
-    return 'rgba(120, 130, 150, 0.45)'
+    return dark ? 'rgba(160, 157, 150, 0.4)' : 'rgba(108, 106, 100, 0.4)'
   }
 
   function getEdgeStrokeWidth(e: EdgeRef) {
@@ -236,18 +240,9 @@ export function useChatMap() {
     sessionStore.triggerFocus(infoId)
   }
 
-  
-  async function showThinking(infoId: string) {
+  /** 历史消息思考过程：经 /chat/observation 重放（ADR-013） */
+  function showThinking(infoId: string) {
     chatUi.startThinkingLoading(infoId)
-
-    try {
-      const res = await chatApi.thinking(infoId, 'blocks')
-      chatUi.setThinkingBlocks(res.blocks ?? [])
-      chatUi.setThinkingTrace((res as { trace?: import('@/api/types').ThinkingTrace | null }).trace ?? null)
-    } catch {
-      chatUi.setThinkingBlocks([])
-      chatUi.setThinkingTrace(null)
-    }
   }
 
   function centerOnNode(node: ChatMapNode) {

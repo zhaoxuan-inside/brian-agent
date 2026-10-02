@@ -53,7 +53,7 @@ async function copyTraceId() {
   <div class="py-1">
     <div class="flex items-center gap-2 px-2 flex-wrap">
       <template v-if="submitted">
-        <span class="text-xs text-apple-gray-400">感谢反馈</span>
+        <span class="text-xs text-chat-ink-tertiary">感谢反馈</span>
       </template>
       <template v-else>
         <div class="flex items-center gap-1">
@@ -61,7 +61,7 @@ async function copyTraceId() {
             v-for="i in 5"
             :key="i"
             class="p-0.5 transition-colors"
-            :class="(hoveredRating || rating) >= i ? 'text-warning-orange' : 'text-apple-gray-300'"
+            :class="(hoveredRating || rating) >= i ? 'text-chat-warning' : 'text-chat-ink-tertiary'"
             @click="submitRating(i)"
             @mouseenter="hoveredRating = i"
             @mouseleave="hoveredRating = 0"
@@ -69,18 +69,18 @@ async function copyTraceId() {
             <Star :size="14" :fill="(hoveredRating || rating) >= i ? 'currentColor' : 'none'" />
           </button>
         </div>
-        <div class="w-px h-4 bg-apple-gray-300 dark:bg-apple-gray-600" />
-        <button class="p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors" @click="submitLike('like')">
+        <div class="w-px h-4 bg-chat-hairline-strong" />
+        <button class="p-1 rounded-chat-sm text-chat-ink-tertiary hover:text-chat-primary-hover hover:bg-chat-surface-2 transition-colors" @click="submitLike('like')">
           <ThumbsUp :size="14" />
         </button>
-        <button class="p-1 rounded text-apple-gray-400 hover:text-error-red hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors" @click="submitLike('dislike')">
+        <button class="p-1 rounded-chat-sm text-chat-ink-tertiary hover:text-chat-error hover:bg-chat-surface-2 transition-colors" @click="submitLike('dislike')">
           <ThumbsDown :size="14" />
         </button>
       </template>
 
       <button
         v-if="block.traceId"
-        class="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors"
+        class="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-chat-sm text-xs text-chat-ink-tertiary hover:text-chat-primary-hover hover:bg-chat-surface-2 transition-colors"
         @click="copyTraceId"
       >
         <component :is="copied ? Check : Copy" :size="12" />

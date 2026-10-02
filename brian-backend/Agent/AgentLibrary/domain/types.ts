@@ -22,7 +22,6 @@ export interface AgentRecord {
   
   prompt_template_id: string;
   task_signature: string;
-  usage_count: number;
   eval_score: number;
   enable: number | boolean;
   
@@ -80,13 +79,17 @@ export class AddAgentInput extends Input {
   task_signature!: string;
   agent_name!: string;
   agent_purpose?: string;
-  
+
   skill_ids?: string[];
-  
+
   mcp_ids?: string[];
-  
+
   prompt_template_id?: string;
-  
+
+  positive_examples?: string[];
+
+  negative_examples?: string[];
+
   created_by?: string;
 }
 
@@ -125,6 +128,8 @@ export class UpdateAgentInput extends Input {
   enable?: boolean;
   strategy_id?: string;
   soul_id?: string;
+  positive_examples?: string[];
+  negative_examples?: string[];
 }
 
 export class UpdateAgentOutput extends Output {}
@@ -247,11 +252,11 @@ export class ConfigAgentLibraryOutput extends Output {
   match_enable_thinking = false;
 }
 
-export const AGENT_TABLE = 'agent';
-export const AGENT_USAGE_TABLE = 'agent_usage';
-export const AGENT_USAGE_DAILY_TABLE = 'agent_usage_daily';
-export const AGENT_OPT_RULE_TABLE = 'agent_opt_rule';
-export const AGENT_LIBRARY_CONFIG_TABLE = 'agent_library_config';
+export const AGENT_TABLE = 'agent_record';
+export const AGENT_EMBEDDING_TABLE = 'agent_embedding_record';
+export const AGENT_EXAMPLE_EMBEDDING_TABLE = 'agent_example_embedding_record';
+export const AGENT_OPT_RULE_TABLE = 'agent_opt_rule_record';
+export const AGENT_LIBRARY_CONFIG_TABLE = 'agent_library_config_record';
 
 export const VALID_AGENT_TYPES = ['WORKER', 'WRITER', 'EVOLUTOR', 'SUMMARY', 'INTENT'] as const;
 export const SYSTEM_AGENT_TYPES = ['WRITER', 'EVOLUTOR', 'SUMMARY', 'INTENT'] as const;

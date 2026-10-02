@@ -6,13 +6,14 @@ import type {
   VectorDBAccess,
   GraphDBAccess,
 } from '@brian-agent/base';
-import { IdGenerator, Operator, GraphDirection, InfoType, CollectionSource, HandleResultType, DEFAULT_HANDLE_RESULT_TYPE, RecursiveTextSplitter } from '@brian-agent/base';
+import { IdGenerator, Operator, GraphDirection, InfoType, CollectionSource, HandleResultType, DEFAULT_HANDLE_RESULT_TYPE, RecursiveTextSplitter, cosineSimilarity } from '@brian-agent/base';
 import type { Condition } from '@brian-agent/base';
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict';
 import { ValidationError, NotFoundError } from '../../shared/errors';
-import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, DIALOG_TABLE, EXECUTE_TABLE, CONTEXT_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
+import { InfoCoreContext, SaveInfoInput, SaveInfoOutput, PinInfoInput, PinInfoOutput, ProcessInfoInput, VectorInfoOutput, TagInfoOutput, SummaryInfoOutput, KeywordInfoOutput, BackfillMissingSummariesInput, BackfillMissingSummariesOutput, GraphTagInput, GraphTagOutput, RebuildCooccurGraphInput, RebuildCooccurGraphOutput, LastNInfoInput, LastNInfoOutput, GraphNInfoInput, GraphNInfoOutput, SimilarKInfoInput, SimilarKInfoOutput, KeywordKInfoInput, KeywordKInfoOutput, RelationKInfoInput, RelationKInfoOutput, GraphInfoInput, GraphInfoOutput, SoCitationEdgesInput, SoCitationEdgesOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, RebuildCitationGraphInput, RebuildCitationGraphOutput, ContextInfoInput, ContextInfoOutput, SoContextByWorkInput, SoContextByWorkOutput, SoInfoTagConfigInput, SoInfoTagConfigOutput, UpdateInfoTagConfigInput, UpdateInfoTagConfigOutput, SoInfoSummaryConfigInput, SoInfoSummaryConfigOutput, UpdateInfoSummaryConfigInput, UpdateInfoSummaryConfigOutput, SoInfoConfigInput, SoInfoConfigOutput, UpdateInfoConfigInput, UpdateInfoConfigOutput, SoInfoVectorConfigInput, SoInfoVectorConfigOutput, UpdateInfoVectorConfigInput, UpdateInfoVectorConfigOutput, SoInfoContextConfigInput, SoInfoContextConfigOutput, UpdateInfoContextConfigInput, UpdateInfoContextConfigOutput, DelInfoInput, DelInfoOutput, UpdateInfoInput, UpdateInfoOutput, DelInfoByWorkInput, DelInfoByWorkOutput, DelInfoBySessionInput, DelInfoBySessionOutput, ExistInfoInput, ExistInfoOutput, CleanOrphanGraphNodesInput, CleanOrphanGraphNodesOutput, SaveDialogEmbeddingInput, SaveDialogEmbeddingOutput, MatchDialogTopicInput, MatchDialogTopicOutput, DIALOG_TABLE, DIALOG_EMBEDDING_TABLE, DIALOG_TOPIC_RECENT_ROUNDS, EXECUTE_TABLE, CONTEXT_TABLE, INFO_VECTOR_TABLE, INFO_TAG_TABLE, INFO_SUMMARY_TABLE, INFO_KEYWORD_TABLE, INFO_TAG_CONFIG_TABLE, INFO_SUMMARY_CONFIG_TABLE, INFO_CONFIG_TABLE, INFO_VECTOR_CONFIG_TABLE, INFO_CONTEXT_CONFIG_TABLE } from '../domain/types';
 import type { InfoRawRecord, InfoSummaryRecord, InfoTagConfigRecord, InfoSummaryConfigRecord, InfoConfigRecord, InfoVectorConfigRecord, InfoContextConfigRecord, ContextCollectionSource, ContextInfoItem, ContextSourceIdMap, ContextContentMap, ContextAttributeMap } from '../domain/types';
+import { CONTEXT_PRIORITY_STRATEGIES, DEFAULT_CONTEXT_PRIORITY_STRATEGY } from '../domain/types';
 import { Context, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, LLMContext, PromptContext, VectorContext, AddVectorInput, AddVectorOutput, SoVectorInput, SoVectorOutput, GetVectorInput, GetVectorOutput, DelVectorByFilterInput, DelVectorByFilterOutput, GraphContext, AddGraphNodeInput, AddGraphNodeOutput, UpdateGraphNodeInput, UpdateGraphNodeOutput, AddGraphEdgeInput, AddGraphEdgeOutput, UpdateGraphEdgeInput, UpdateGraphEdgeOutput, DelGraphNodeInput, DelGraphNodeOutput, GraphTarget, SelectGraphInput, SelectGraphOutput, GetGraphNeighborsInput, GetGraphNeighborsOutput, GetGraphNodeInput, GetGraphNodeOutput } from '@brian-agent/base';
 import type {
   VectorObject,
@@ -85,6 +86,7 @@ interface ContextBuildPlan {
   timelineLimit: number;
   enableCrossSession: boolean;
   selectedIds: string[];
+  enableSnapshotPersistence: boolean;
 }
 
 interface ContextWeakDimensionLimits {
@@ -154,43 +156,7 @@ export class InfoCoreService {
       { field: 'work_id', value: input.work_id },
       { field: 'type', value: rawType },
       { field: 'dialog', value: input.info },
-      { field: 'dialog_length', value: input.info.length },
-      { field: 'dialog_brief', value: input.summary || '' },
       { field: 'trace_id', value: finalTraceId },
-    ]);
-  }
-
-  private async persistExecuteRecord(
-    infoId: string,
-    input: SaveInfoInput,
-    createdAt: number,
-    rowTraceId: string,
-    handleResultType?: string,
-  ): Promise<void> {
-    const compType = handleResultType && handleResultType !== HandleResultType.CORRECT
-      ? handleResultType
-      : (input.info_type || 'Execution');
-    const compId = handleResultType && handleResultType !== HandleResultType.CORRECT
-      ? `error:${handleResultType}`
-      : (input.info_type || '');
-
-    await this.relationDb.insert(EXECUTE_TABLE, [
-      { field: 'id', value: infoId },
-      { field: 'created', value: createdAt },
-      { field: 'updated', value: createdAt },
-      { field: 'session_id', value: input.session_id },
-      { field: 'work_id', value: input.work_id },
-      { field: 'run_id', value: input.run_id || '' },
-      { field: 'trace_id', value: rowTraceId },
-      { field: 'agent_id', value: input.info_creator_id || '' },
-      { field: 'exec_no', value: 0 },
-      { field: 'component_id', value: compId },
-      { field: 'component_type', value: compType },
-      { field: 'input', value: '' },
-      { field: 'input_length', value: 0 },
-      { field: 'output', value: input.info },
-      { field: 'output_length', value: input.info.length },
-      { field: 'gap', value: 0 },
     ]);
   }
 
@@ -199,16 +165,16 @@ export class InfoCoreService {
     input: SaveInfoInput,
     createdAt: number,
     rowTraceId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const rawType = (input.info_type || (input.info_creator_role?.toLowerCase() === 'assistant' ? 'RESPONSE' : 'REQUEST')).toUpperCase();
     const handleResultType = input.handle_result_type || DEFAULT_HANDLE_RESULT_TYPE;
     const isError = handleResultType !== HandleResultType.CORRECT;
 
     if (!isError && (rawType === 'REQUEST' || rawType === 'RESPONSE')) {
       await this.persistDialogRecord(infoId, input, rawType, createdAt, rowTraceId);
-    } else {
-      await this.persistExecuteRecord(infoId, input, createdAt, rowTraceId, handleResultType);
+      return true;
     }
+    return false;
   }
 
   async saveInfo(input: SaveInfoInput, output: SaveInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
@@ -223,7 +189,11 @@ export class InfoCoreService {
     const infoId = IdGenerator.generate();
     const rowTraceId = input.trace_id !== undefined ? input.trace_id : (input.info_creator_id || metrics?.trace_id || '');
 
-    await this.persistInfoRecord(infoId, input, createdAt, rowTraceId);
+    const persisted = await this.persistInfoRecord(infoId, input, createdAt, rowTraceId);
+    if (!persisted) {
+      
+      return true;
+    }
 
     if (input.parent_info_ids && input.parent_info_ids.length > 0) {
       await this.connectCitationEdges(infoId, input.session_id, input.info, input.parent_info_ids, metrics);
@@ -240,6 +210,7 @@ export class InfoCoreService {
         { field: 'updated', value: now },
         { field: 'info_id', value: infoId },
         { field: 'summary', value: summaryText },
+        { field: 'summary_length', value: summaryText.length },
       ]);
     }
 
@@ -411,13 +382,15 @@ export class InfoCoreService {
     const now = IdGenerator.now();
     let summary: string;
 
+    if (!this.isSummaryEligibleType(String(infoRow.info_type ?? ''), summaryConfig)) {
+      return true;
+    }
+
     if (infoRow.info.length <= (summaryConfig.threshold ?? 100)) {
       summary = infoRow.info;
-    } else if (this.isSummaryEligibleType(String(infoRow.info_type ?? ''), summaryConfig)) {
+    } else {
       summary = await this.generateSummaryText(infoRow.info, summaryConfig, metrics);
       if (!summary) return true;
-    } else {
-      return true;
     }
     if (!summary) {
       return true;
@@ -431,6 +404,7 @@ export class InfoCoreService {
       { field: 'updated', value: now },
       { field: 'info_id', value: input.info_id },
       { field: 'summary', value: summary },
+      { field: 'summary_length', value: summary.length },
     ]);
 
     output.summary_id = id;
@@ -455,7 +429,7 @@ export class InfoCoreService {
     }
 
     for (let attempt = 1; attempt <= SUMMARY_LLM_MAX_ATTEMPTS; attempt++) {
-      const summary = await this.execSummaryLLM(info, summaryConfig.llm_id, metrics);
+      const summary = await this.execSummaryLLM(info, summaryConfig, metrics);
       if (summary) return summary;
       if (attempt < SUMMARY_LLM_MAX_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, SUMMARY_LLM_RETRY_DELAY_MS));
@@ -464,16 +438,31 @@ export class InfoCoreService {
     return '';
   }
 
-  private async execSummaryLLM(info: string, llmId: string, metrics?: Metrics): Promise<string> {
+  private async execSummaryLLM(info: string, summaryConfig: InfoSummaryConfigRecord, metrics?: Metrics): Promise<string> {
     try {
+      let prompt = `请将以下内容浓缩为一条简洁、准确、保留关键信息与结论的摘要（不超过 15% 原文长度，不要添加任何评论或前缀）：\n\n${info}`;
+      if (summaryConfig.prompt_template_id) {
+        const promptOut = new ExecPromptOutput();
+        const ok = await this.promptsAccess.execPrompt(
+          Object.assign(new ExecPromptInput(), {
+            id: summaryConfig.prompt_template_id,
+            variables: { text: info },
+          }),
+          promptOut, new PromptContext(),
+        );
+        if (ok && promptOut.prompt) {
+          prompt = promptOut.prompt;
+        }
+      }
+
       const execInput = new ExecLLMInput();
-      execInput.id = llmId;
-      execInput.prompt = `请将以下内容浓缩为一条简洁、准确、保留关键信息与结论的摘要（不超过 15% 原文长度，不要添加任何评论或前缀）：\n\n${info}`;
+      execInput.id = summaryConfig.llm_id;
+      execInput.prompt = prompt;
       const execOutput = new ExecLLMOutput();
       await this.llmAccess.execLLM(execInput, execOutput, new LLMContext());
       return String(execOutput.result ?? '').trim();
     } catch (err) {
-      metrics?.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${llmId}）`, {
+      metrics?.warn(`[InfoCoreProvider] 摘要生成失败（llm_id=${summaryConfig.llm_id}）`, {
         error: err instanceof Error ? err.message : String(err),
       });
       return '';
@@ -710,7 +699,7 @@ export class InfoCoreService {
       const conditions: Condition[] = [];
       if (input.session_id) conditions.push({ field: 'session_id', operator: Operator.EQ, value: input.session_id });
       if (input.work_id) conditions.push({ field: 'work_id', operator: Operator.EQ, value: input.work_id });
-      conditions.push({ field: 'component_type', operator: Operator.EQ, value: input.handle_result_type });
+      conditions.push({ field: 'status', operator: Operator.EQ, value: 'error' });
 
       const eRows = await this.relationDb.select(EXECUTE_TABLE, {
         conditions,
@@ -802,6 +791,103 @@ export class InfoCoreService {
     const scored = await this.toScoredInfoList(hits);
     output.list = scored.slice(0, topK);
     return true;
+  }
+
+  /**
+   * 轮次话题向量固化(chg-059):拼接文本生成 embedding,按 work_id 幂等落 dialog_embedding_record。
+   * 未配置向量模型或生成失败时 saved=false 静默跳过,调用方不视为错误(优雅降级)。
+   */
+  async saveDialogEmbedding(input: SaveDialogEmbeddingInput, output: SaveDialogEmbeddingOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.session_id || !input.work_id || !String(input.text ?? '').trim()) {
+      output.reason = 'invalid_input';
+      return true;
+    }
+    const vectorConfig = await this.getInfoVectorConfig();
+    if (!vectorConfig || vectorConfig.enable !== 1 || !vectorConfig.llm_id) {
+      output.reason = 'no_vector_model';
+      return true;
+    }
+    const vector = await this.generateEmbedding(input.text.trim(), vectorConfig, context, metrics);
+    if (!vector || vector.length === 0) {
+      output.reason = 'empty_vector';
+      return true;
+    }
+    await this.upsertDialogEmbedding(input.session_id, input.work_id, vector);
+    output.saved = true;
+    output.dimension = vector.length;
+    return true;
+  }
+
+  private async upsertDialogEmbedding(sessionId: string, workId: string, vector: number[]): Promise<void> {
+    const now = IdGenerator.now();
+    const serialized = JSON.stringify(vector);
+    const existing = await this.relationDb.selectOne(DIALOG_EMBEDDING_TABLE, [
+      { field: 'work_id', operator: Operator.EQ, value: workId },
+    ]).catch(() => null);
+    if (existing) {
+      await this.relationDb.update(DIALOG_EMBEDDING_TABLE, [
+        { field: 'updated', value: now },
+        { field: 'embedding', value: serialized },
+        { field: 'dimension', value: vector.length },
+      ], [{ field: 'work_id', operator: Operator.EQ, value: workId }]);
+      return;
+    }
+    await this.relationDb.insert(DIALOG_EMBEDDING_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'session_id', value: sessionId },
+      { field: 'work_id', value: workId },
+      { field: 'embedding', value: serialized },
+      { field: 'dimension', value: vector.length },
+    ]);
+  }
+
+  /**
+   * 会话话题匹配(chg-059):查询文本向量与会话最近 N 轮轮次向量逐一 cosine,回填最大相似度(0-100)。
+   * evaluated=false 表示无向量模型或无可比轮次,调用方应回退既有会话亲和逻辑。
+   */
+  async matchDialogTopic(input: MatchDialogTopicInput, output: MatchDialogTopicOutput, context: InfoCoreContext, metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    if (!input.session_id || !String(input.query_text ?? '').trim()) return true;
+    const vectorConfig = await this.getInfoVectorConfig();
+    if (!vectorConfig || vectorConfig.enable !== 1 || !vectorConfig.llm_id) return true;
+    const queryVector = await this.generateEmbedding(input.query_text.trim(), vectorConfig, context, metrics);
+    if (!queryVector || queryVector.length === 0) return true;
+    const rows = await this.relationDb.select(DIALOG_EMBEDDING_TABLE, {
+      conditions: [{ field: 'session_id', operator: Operator.EQ, value: input.session_id }],
+      order_by: [{ field: 'created', direction: 'DESC' }],
+      page: { current: 1, size: DIALOG_TOPIC_RECENT_ROUNDS },
+    }).catch(() => []);
+    this.scoreDialogTopicRows(rows, queryVector, output);
+    return true;
+  }
+
+  private scoreDialogTopicRows(rows: Array<Record<string, unknown>>, queryVector: number[], output: MatchDialogTopicOutput): void {
+    for (const row of rows ?? []) {
+      if (Number(row.dimension) !== queryVector.length) continue;
+      const vector = this.parseDialogEmbedding(row.embedding);
+      if (!vector) continue;
+      const similarity = cosineSimilarity(queryVector, vector);
+      if (similarity === null) continue;
+      const score = Math.round(similarity * 100);
+      if (score > output.best_similarity) {
+        output.best_similarity = score;
+        output.matched_work_id = String(row.work_id ?? '');
+      }
+      output.compared_rounds += 1;
+    }
+    output.evaluated = output.compared_rounds > 0;
+  }
+
+  private parseDialogEmbedding(raw: unknown): number[] | null {
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed) && parsed.length > 0 ? (parsed as number[]) : null;
+    } catch {
+      return null;
+    }
   }
 
   async keywordKInfo(input: KeywordKInfoInput, output: KeywordKInfoOutput, _context: InfoCoreContext, _metrics?: Metrics, _report?: Report,
@@ -1002,14 +1088,14 @@ export class InfoCoreService {
   private buildGraphExecNodes(execRows: Array<Record<string, unknown>>) {
     return execRows.map((r) => {
       const compType = String(r['component_type'] ?? '');
-      const isErr = compType === HandleResultType.CALL_ERROR || compType === HandleResultType.INTERNAL_ERROR;
+      const isErr = String(r['status'] ?? 'ok') === 'error';
       return {
         id: r['id'] as string,
         label: String(r['output'] ?? r['input'] ?? '').slice(0, 80),
         info_id: r['id'] as string,
         info_type: compType || 'EXECUTION',
         info_creator_role: 'SYSTEM',
-        handle_result_type: isErr ? compType : DEFAULT_HANDLE_RESULT_TYPE,
+        handle_result_type: isErr ? HandleResultType.CALL_ERROR : DEFAULT_HANDLE_RESULT_TYPE,
       };
     });
   }
@@ -1238,20 +1324,29 @@ export class InfoCoreService {
     return true;
   }
 
+  private async timedContextPhase<T>(phase: string, metrics: Metrics | undefined, fn: () => Promise<T>): Promise<T> {
+    const span = metrics?.beginSpan(`Core.InfoCoreProvider.InfoCoreService.context.${phase}`);
+    try {
+      return await fn();
+    } finally {
+      if (metrics && span) metrics.endSpan(span);
+    }
+  }
+
   async context(input: ContextInfoInput, output: ContextInfoOutput, _context: InfoCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.validateContextInput(input);
     const contextConfig = await this.getInfoContextConfig();
     const plan = this.prepareContextBuildPlan(input, contextConfig);
 
-    const pinnedCandidates = await this.collectPinnedCandidates(input.session_id, input.pinned_msg_ids);
-    const base = await this.collectSelectedOrTimelineCandidates(input, plan.selectedIds, plan.timelineLimit);
+    const pinnedCandidates = await this.timedContextPhase('pinned', metrics, () => this.collectPinnedCandidates(input.session_id, input.pinned_msg_ids));
+    const base = await this.timedContextPhase('timeline', metrics, () => this.collectSelectedOrTimelineCandidates(input, plan.selectedIds, plan.timelineLimit));
     const currentCandidate = await this.extractCurrentCandidate(input.session_id, plan.selectedIds, base.timelineCandidates);
     const baseContextCount = pinnedCandidates.length + base.citingCandidates.length + base.timelineCandidates.length;
     const limits = this.resolveWeakDimensionLimits(contextConfig, baseContextCount);
     const { refText, refInfoRow } = await this.resolveReferenceText(input, base.citingCandidates, base.timelineCandidates);
-    const weak = await this.collectWeakDimensionCandidates(input.session_id, refText, refInfoRow, limits, plan.enableCrossSession, _context, metrics, report);
-    const randCandidates = await this.collectRandomCandidates(input.session_id, limits.randLimit, plan.enableCrossSession, pinnedCandidates, base.citingCandidates, currentCandidate, metrics);
+    const weak = await this.timedContextPhase('weak-dims', metrics, () => this.collectWeakDimensionCandidates(input.session_id, refText, refInfoRow, limits, plan.enableCrossSession, _context, metrics, report));
+    const randCandidates = await this.timedContextPhase('random', metrics, () => this.collectRandomCandidates(input.session_id, limits.randLimit, plan.enableCrossSession, pinnedCandidates, base.citingCandidates, currentCandidate, metrics));
     this.excludeCurrentFromWeakDimensions(currentCandidate, [weak.tag, weak.sim, weak.kw, randCandidates]);
 
     const candidatesMap = this.buildContextCandidatesMap({
@@ -1259,13 +1354,14 @@ export class InfoCoreService {
       tag: weak.tag, sim: weak.sim, kw: weak.kw, rand: randCandidates,
     });
     const priorityList = this.parseContextPriorityList(contextConfig?.priority_order);
-    const summaryMap = await this.prefetchContextSummaries(priorityList, candidatesMap, currentCandidate);
+    const summaryMap = await this.timedContextPhase('summaries', metrics, () => this.prefetchContextSummaries(priorityList, candidatesMap, currentCandidate));
     const collectedItems = this.collectDedupedContextItems(priorityList, candidatesMap, summaryMap, currentCandidate);
     output.list = collectedItems.slice(0, plan.maxTotal);
     output.categories = this.buildContextCategories(output.list);
     output.category_ids = this.buildContextCategoryIds(output.categories!);
     output.sources_summary = this.buildContextSourcesSummary(output.categories!);
-    await this.fillContextTriplesAndPersist(output, output.list, input.work_id, input.session_id, input.persist_snapshot !== false, metrics);
+    const round = Number(input.round ?? 0) || 0;
+    await this.timedContextPhase('persist', metrics, () => this.fillContextTriplesAndPersist(output, output.list, input.work_id, input.session_id, round, plan.enableSnapshotPersistence, metrics));
     return true;
   }
 
@@ -1588,6 +1684,7 @@ export class InfoCoreService {
           { field: 'updated', value: nowFallback },
           { field: 'info_id', value: infoId },
           { field: 'summary', value: rawText },
+          { field: 'summary_length', value: rawText.length },
         ]);
         metrics?.warn('InfoCoreService.delInfo 摘要缺失，已将原文写入摘要保留后清理原始内容', {
           info_id: infoId,
@@ -1661,7 +1758,6 @@ export class InfoCoreService {
       DIALOG_TABLE,
       [
         { field: 'dialog', value: input.info },
-        { field: 'dialog_length', value: input.info.length },
         { field: 'updated', value: IdGenerator.now() },
       ],
       [
@@ -1927,7 +2023,7 @@ export class InfoCoreService {
       info_creator_role: isUser ? 'USER' : 'ASSISTANT',
       info_creator_id: String(r['trace_id'] ?? ''),
       info: String(r['dialog'] ?? ''),
-      info_length: Number(r['dialog_length'] ?? 0),
+      info_length: Number(r['info_length'] ?? String(r['dialog'] ?? '').length),
       pin: 0,
       trace_id: String(r['trace_id'] ?? ''),
       handle_result_type: HandleResultType.CORRECT,
@@ -1935,14 +2031,7 @@ export class InfoCoreService {
   }
 
   private toExecuteAsInfoRawRecord(r: Record<string, unknown>): InfoRawRecord {
-    const compType = String(r['component_type'] ?? '');
-    const compId = String(r['component_id'] ?? '');
-    let handleResultType: string = HandleResultType.CORRECT;
-    if (compType === HandleResultType.CALL_ERROR || compType === HandleResultType.INTERNAL_ERROR) {
-      handleResultType = compType;
-    } else if (compId.startsWith('error:')) {
-      handleResultType = compId.slice(6);
-    }
+    const status = String(r['status'] ?? 'ok');
 
     return {
       id: String(r['id'] ?? ''),
@@ -1959,7 +2048,7 @@ export class InfoCoreService {
       info_length: Number(r['output_length'] ?? 0),
       pin: 0,
       trace_id: String(r['trace_id'] ?? ''),
-      handle_result_type: handleResultType,
+      handle_result_type: status === 'error' ? HandleResultType.CALL_ERROR : HandleResultType.CORRECT,
     };
   }
 
@@ -2641,11 +2730,15 @@ export class InfoCoreService {
   }
 
   private prepareContextBuildPlan(input: ContextInfoInput, contextConfig: InfoContextConfigRecord | null): ContextBuildPlan {
+    const enableSnapshotPersistence = input.persist_snapshot !== undefined
+      ? input.persist_snapshot
+      : (contextConfig ? contextConfig.enable_snapshot_persistence !== 0 : true);
     return {
       maxTotal: contextConfig?.total || 1000,
       timelineLimit: contextConfig?.base_timeline_count ?? 500,
       enableCrossSession: input.enable_cross_session !== false,
       selectedIds: (input.selected_msg_ids || input.custom_info_ids || []).filter((id) => Boolean(id)),
+      enableSnapshotPersistence,
     };
   }
 
@@ -2798,9 +2891,9 @@ export class InfoCoreService {
     report?: Report,
   ): Promise<ContextWeakDimensionCandidates> {
     const [tag, sim, kw] = await Promise.all([
-      this.collectTagRelativeCandidates(sessionId, refInfoRow, limits.tagLimit, enableCrossSession, _context, metrics, report),
-      this.collectSimilarityCandidates(sessionId, refText, limits.simLimit, enableCrossSession, _context, metrics, report),
-      this.collectKeywordCandidates(sessionId, refText, limits.kwLimit, limits.kwScoreThreshold, enableCrossSession, _context, metrics, report),
+      this.timedContextPhase('weak.tag', metrics, () => this.collectTagRelativeCandidates(sessionId, refInfoRow, limits.tagLimit, enableCrossSession, _context, metrics, report)),
+      this.timedContextPhase('weak.sim', metrics, () => this.collectSimilarityCandidates(sessionId, refText, limits.simLimit, enableCrossSession, _context, metrics, report)),
+      this.timedContextPhase('weak.kw', metrics, () => this.collectKeywordCandidates(sessionId, refText, limits.kwLimit, limits.kwScoreThreshold, enableCrossSession, _context, metrics, report)),
     ]);
     return { tag, sim, kw };
   }
@@ -2990,30 +3083,36 @@ export class InfoCoreService {
   }
 
   private buildContextCandidatesMap(buckets: ContextCandidateBuckets): Map<ContextCollectionSource, InfoRawRecord[]> {
-    const withoutTraces = (list: InfoRawRecord[]): InfoRawRecord[] =>
-      list.filter((c) => !this.isTraceInfo(c));
     return new Map<ContextCollectionSource, InfoRawRecord[]>([
-      [CollectionSource.PINNED, withoutTraces(buckets.pinned)],
-      [CollectionSource.CITING, withoutTraces(buckets.citing)],
-      [CollectionSource.TIMELINE, withoutTraces(buckets.timeline)],
-      [CollectionSource.TAG_RELATIVE, withoutTraces(buckets.tag)],
-      [CollectionSource.SIMILARITY, withoutTraces(buckets.sim)],
-      [CollectionSource.KEYWORD, withoutTraces(buckets.kw)],
-      [CollectionSource.RANDOM, withoutTraces(buckets.rand)],
+      [CollectionSource.PINNED, buckets.pinned],
+      [CollectionSource.CITING, buckets.citing],
+      [CollectionSource.TIMELINE, buckets.timeline],
+      [CollectionSource.TAG_RELATIVE, buckets.tag],
+      [CollectionSource.SIMILARITY, buckets.sim],
+      [CollectionSource.KEYWORD, buckets.kw],
+      [CollectionSource.RANDOM, buckets.rand],
     ]);
   }
 
   private parseContextPriorityList(priorityOrderStr?: string): ContextCollectionSource[] {
-    const rawPriority = priorityOrderStr
-      ? priorityOrderStr.split(',').map((s) => s.trim().toUpperCase() as ContextCollectionSource)
-      : CONTEXT_COLLECTION_SOURCES;
+    if (!priorityOrderStr) {
+      return [...DEFAULT_CONTEXT_PRIORITY_STRATEGY.sources];
+    }
+    const trimmed = priorityOrderStr.trim();
+    const upperKey = trimmed.toUpperCase();
+    if (CONTEXT_PRIORITY_STRATEGIES[upperKey]) {
+      return [...CONTEXT_PRIORITY_STRATEGIES[upperKey].sources];
+    }
+    const rawPriority = trimmed
+      .split(',')
+      .map((s) => s.trim().toUpperCase() as ContextCollectionSource);
     const priorityList: ContextCollectionSource[] = [];
     for (const src of rawPriority) {
       if (CONTEXT_COLLECTION_SOURCES.includes(src) && !priorityList.includes(src)) {
         priorityList.push(src);
       }
     }
-    return priorityList;
+    return priorityList.length > 0 ? priorityList : [...DEFAULT_CONTEXT_PRIORITY_STRATEGY.sources];
   }
 
   private async prefetchContextSummaries(
@@ -3136,6 +3235,7 @@ export class InfoCoreService {
     resultList: ContextInfoItem[],
     workId: string,
     sessionId?: string,
+    round: number = 0,
     persist: boolean = true,
     metrics?: Metrics,
   ): Promise<void> {
@@ -3177,7 +3277,7 @@ export class InfoCoreService {
     output.attribute_map = attributeMap;
 
     if (persist) {
-      await this.persistContextSourceMap(workId, sourceIdsMap, sessionId, metrics);
+      await this.persistContextSourceMap(workId, sourceIdsMap, sessionId, round, metrics);
     }
   }
 
@@ -3185,12 +3285,15 @@ export class InfoCoreService {
     workId: string,
     sourceIdsMap: ContextSourceIdMap,
     sessionId?: string,
+    round: number = 0,
     metrics?: Metrics,
   ): Promise<void> {
     if (!workId) return;
+    // ADR-012:context_org 按 (work_id, round) 保留每轮装配快照,重建只影响同轮行
     try {
       await this.relationDb.delete(CONTEXT_TABLE, [
         { field: 'work_id', operator: Operator.EQ, value: workId },
+        { field: 'round', operator: Operator.EQ, value: round },
       ]);
     } catch {  }
 
@@ -3216,6 +3319,7 @@ export class InfoCoreService {
             { field: 'updated', value: now },
             { field: 'session_id', value: resolvedSessionId },
             { field: 'work_id', value: workId },
+            { field: 'round', value: round },
             { field: 'dialog_id', value: infoId },
             { field: 'type', value: source.toLowerCase() },
           ]);
@@ -3370,12 +3474,6 @@ export class InfoCoreService {
 
   private isCorrectInfo(record: { handle_result_type?: string }): boolean {
     return (record.handle_result_type ?? DEFAULT_HANDLE_RESULT_TYPE) === HandleResultType.CORRECT;
-  }
-
-  private isTraceInfo(record: { info_type?: string; info?: string }): boolean {
-    if (record.info_type !== InfoType.ACT) return false;
-    const info = String(record.info ?? '').trim();
-    return info.startsWith('{"type":"trace"') || info.startsWith('{"type": "trace"');
   }
 
   private toInfoRawRecord(raw: Record<string, unknown>): InfoRawRecord {

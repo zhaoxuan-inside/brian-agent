@@ -65,7 +65,7 @@ export interface ToolCronNextResult {
   next_time: number | null;
 }
 
-export const TOOL_CONFIG_TABLE = 'tool_config';
+export const TOOL_CONFIG_TABLE = 'tool_config_record';
 
 import { Input } from '../../shared/base/Input';
 import { Output } from '../../shared/base/Output';

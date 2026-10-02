@@ -17,30 +17,37 @@ export interface McpProviderData {
 }
 
 export interface McpData {
-  
+
   mcp_provider_id: string;
-  
+
   mcp_title: string;
-  
+
   mcp_brief?: string;
-  
+
   mcp_install_cmd?: string;
-  
+
   mcp_start_cmd?: string;
-  
+
   mcp_stop_cmd?: string;
-  
+
   mcp_uninstall_cmd?: string;
-  
+
   version?: string;
-  
+
   status?: string;
-  
+
   enable?: boolean;
-  
+
   transport_type?: string;
-  
+
   transport_config?: string;
+
+  /** 工具名→默认测试入参 JSON 映射（listMcpTools 持久化） */
+  test_params_sample?: string;
+
+  positive_examples?: string[];
+
+  negative_examples?: string[];
 }
 
 export interface McpProviderRecord extends McpProviderData {
@@ -117,6 +124,8 @@ export class ListMcpOutput extends Output {
 export class InstallMcpInput extends Input {
   mcp_provider_id!: string;
   mcp_id!: string;
+  positive_examples?: string[];
+  negative_examples?: string[];
 }
 
 export class InstallMcpOutput extends Output {
@@ -157,6 +166,14 @@ export class UninstallMcpInput extends Input {
 }
 
 export class UninstallMcpOutput extends Output {}
+
+export class UninstallMcpsInput extends Input {
+  ids!: string[];
+}
+
+export class UninstallMcpsOutput extends Output {
+  uninstalled_count = 0;
+}
 
 export class UpdateMcpInput extends Input {
   id!: string;
@@ -203,8 +220,25 @@ export class ExecMcpInput extends Input {
 
 export class ExecMcpOutput extends Output {
   result: unknown = null;
-  
+
   raw_response = '';
+}
+
+export class ListMcpToolsInput extends Input {
+  id!: string;
+}
+
+/** MCP 工具清单条目：inputSchema 自动合成 test_params_sample（R7） */
+export interface McpToolEntry {
+  name: string;
+  description: string;
+  input_schema?: Record<string, unknown>;
+  test_params_sample: Record<string, unknown>;
+}
+
+export class ListMcpToolsOutput extends Output {
+  tools: McpToolEntry[] = [];
+  status: 'running' | 'stopped' = 'stopped';
 }
 
 export class EnableMCPInput extends Input {
@@ -231,8 +265,11 @@ export class GetMcpUsageOutput extends Output {
   total = 0;
 }
 
-export const MCP_PROVIDER_TABLE = 'mcp_provider';
-export const MCP_CACHE_TABLE = 'mcp_cache';
-export const MCP_INSTALL_TABLE = 'mcp_install';
-export const MCP_USAGE_TABLE = 'mcp_usage';
-export const MCP_CONFIG_TABLE = 'mcp_config';
+export const MCP_PROVIDER_TABLE = 'mcp_provider_record';
+export const MCP_CACHE_TABLE = 'mcp_cache_record';
+export const MCP_INSTALL_TABLE = 'mcp_install_record';
+export const MCP_EMBEDDING_TABLE = 'mcp_embedding_record';
+export const MCP_EXAMPLE_EMBEDDING_TABLE = 'mcp_example_embedding_record';
+export const MCP_USAGE_TABLE = 'mcp_usage_org';
+export const MCP_CONFIG_TABLE = 'mcp_config_record';
+

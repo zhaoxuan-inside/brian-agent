@@ -49,6 +49,8 @@ export class ExecAgentLoopInput extends Input {
   defer_final_reply?: boolean;
   
   thought_mode?: string;
+  
+  enable_thinking?: boolean;
 }
 
 export class ExecAgentLoopOutput extends Output {

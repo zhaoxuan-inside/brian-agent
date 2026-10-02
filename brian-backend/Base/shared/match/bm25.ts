@@ -30,12 +30,11 @@ export interface BM25MatchResult {
 }
 
 /**
- * 基于 BM25 计算候选文档集的相关性得分并归一化为百分制 (0~100)
+ * 对候选文档集计算 BM25 原始分与相对归一化分(全量返回,不做阈值过滤;纯计算)
  */
-export function rankCandidatesByBM25(
+export function scoreCandidatesByBM25(
   query: string,
   docs: BM25CandidateDoc[],
-  threshold = 50,
 ): BM25MatchResult[] {
   const queryTokens = tokenizeForSearch(query);
   if (queryTokens.length === 0 || docs.length === 0) return [];
@@ -85,10 +84,19 @@ export function rankCandidatesByBM25(
     const raw = rawScores[i];
     if (raw <= 0) continue;
     const normalized = Math.min(100, Math.round((raw / maxRawScore) * 100));
-    if (normalized >= threshold) {
-      results.push({ id: docs[i].id, score: normalized, rawScore: raw });
-    }
+    results.push({ id: docs[i].id, score: normalized, rawScore: raw });
   }
 
   return results.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * 基于 BM25 计算候选文档集的相关性得分并归一化为百分制 (0~100)
+ */
+export function rankCandidatesByBM25(
+  query: string,
+  docs: BM25CandidateDoc[],
+  threshold = 50,
+): BM25MatchResult[] {
+  return scoreCandidatesByBM25(query, docs).filter((r) => r.score >= threshold);
 }

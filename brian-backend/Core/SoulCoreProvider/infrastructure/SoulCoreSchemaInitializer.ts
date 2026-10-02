@@ -2,7 +2,6 @@ import type { RelationDBAccess } from '@brian-agent/base';
 import {
   SOUL_CORE_CONFIG_TABLE,
   SOUL_OPT_RULE_TABLE,
-  SOUL_CORE_USAGE_TABLE,
 } from '../domain/types';
 
 export class SoulCoreSchemaInitializer {
@@ -10,6 +9,8 @@ export class SoulCoreSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
   init(): void {
+    // ADR-012:老化规则表改名(幂等)
+    try { this.relationDb.executeRaw(`ALTER TABLE "soul_opt_rule" RENAME TO "${SOUL_OPT_RULE_TABLE}"`); } catch { /* 旧表不存在或已改名 */ }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SOUL_CORE_CONFIG_TABLE}" (
@@ -45,6 +46,9 @@ export class SoulCoreSchemaInitializer {
     } catch {
 
     }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${SOUL_CORE_CONFIG_TABLE}" ADD COLUMN "similarity_threshold" REAL NOT NULL DEFAULT 0.7`);
+    } catch { /* 列已存在 */ }
 
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${SOUL_OPT_RULE_TABLE}" (
@@ -56,40 +60,6 @@ export class SoulCoreSchemaInitializer {
       )
     `);
 
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SOUL_CORE_USAGE_TABLE}" (
-        "id"          TEXT    NOT NULL PRIMARY KEY,
-        "created"     INTEGER NOT NULL,
-        "updated"     INTEGER NOT NULL,
-        "agent_id"    TEXT    NOT NULL,
-        "soul_id"     TEXT    NOT NULL,
-        "usage_date"  TEXT    NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    this.migrateLegacyUsageTable();
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${SOUL_CORE_USAGE_TABLE}_agent_soul" ON "${SOUL_CORE_USAGE_TABLE}" ("agent_id", "soul_id")`,
-    );
-  }
-
-  private migrateLegacyUsageTable(): void {
-    const cols = this.relationDb.queryRaw<{ name: string }>(
-      `PRAGMA table_info("${SOUL_CORE_USAGE_TABLE}")`, [],
-    );
-    if ((cols ?? []).some((c) => c.name === 'agent_soul_id')) {
-      this.relationDb.executeRaw(`DROP TABLE "${SOUL_CORE_USAGE_TABLE}"`);
-      this.relationDb.executeRaw(`
-        CREATE TABLE "${SOUL_CORE_USAGE_TABLE}" (
-          "id"          TEXT    NOT NULL PRIMARY KEY,
-          "created"     INTEGER NOT NULL,
-          "updated"     INTEGER NOT NULL,
-          "agent_id"    TEXT    NOT NULL,
-          "soul_id"     TEXT    NOT NULL,
-          "usage_date"  TEXT    NOT NULL,
-          "usage_count" INTEGER NOT NULL DEFAULT 1
-        )
-      `);
-    }
+    // ADR-012:soul_core_usage 已退役,用量统一入 TraceBase(usage_event_record / soul_usage_org)
   }
 }

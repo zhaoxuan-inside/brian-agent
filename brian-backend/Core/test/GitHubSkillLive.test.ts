@@ -15,7 +15,6 @@ import {
   MatchSkillOutput,
   SKILL_CORE_CONFIG_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
 } from '../SkillCoreProvider';
 import { SkillCoreService } from '../SkillCoreProvider/application/SkillCoreService';
 import { GitHubSkillClient } from '../SkillCoreProvider/infrastructure/GitHubSkillClient';
@@ -61,13 +60,6 @@ describe.skipIf(!LIVE)('GitHub Skill 检索真机联测（BRIAN_LIVE_GITHUB=1）
       CREATE TABLE IF NOT EXISTS "${SKILL_OPT_RULE_TABLE}" (
         "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
         "days" INTEGER NOT NULL, "min_usage_count" INTEGER NOT NULL
-      )
-    `);
-    relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${SKILL_USAGE_TABLE}" (
-        "id" TEXT NOT NULL PRIMARY KEY, "created" INTEGER NOT NULL, "updated" INTEGER NOT NULL,
-        "agent_id" TEXT NOT NULL, "skill_id" TEXT NOT NULL, "usage_date" TEXT NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
       )
     `);
     skillAccess = new SkillAccess(relationDb);

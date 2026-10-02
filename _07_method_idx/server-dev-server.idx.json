@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.234Z",
+  "updated_at": "2026-10-01T15:41:06.238Z",
   "shard": "server-dev-server",
   "layer": "Server",
   "module": "dev-server",
@@ -267,19 +267,6 @@
     },
     {
       "id": "m-dev-server-0021",
-      "signature": "boolean buildThinkingBlocksAndDag(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, infoCore: any, workIds: string[], promptsAccess?: any, soulAccess?: any): Promise<{ workBlocksMap: Map<string, any[]>; workDagMap: Map<string, any>; workTraceMap: Map<string, any> }>",
-      "name": "buildThinkingBlocksAndDag",
-      "category": "data",
-      "layer": "Server",
-      "module": "dev-server",
-      "location": "brian-backend/dev-server.ts",
-      "description": "构建/初始化：thinking / blocks / DAG 流程（操作关系数据库）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-dev-server-0022",
       "signature": "boolean soContextByWorkShared(infoCore: InfoCoreLike, workId: string): Promise<ContextTriples>",
       "name": "soContextByWorkShared",
       "category": "orchestration",
@@ -292,7 +279,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-dev-server-0023",
+      "id": "m-dev-server-0022",
       "signature": "boolean buildRuntimeWorkContext(infoCore: InfoCoreLike, relationDb: AllRelationDb, runId: string, lastBuilt: any): Promise<Record<string, unknown>>",
       "name": "buildRuntimeWorkContext",
       "category": "data",
@@ -305,20 +292,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-dev-server-0024",
-      "signature": "boolean buildThinkingBlocksFromRuntime(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, infoCore: InfoCoreLike, runId: string): Promise<{ blocks: any[]; dag: any; trace?: any } | null>",
-      "name": "buildThinkingBlocksFromRuntime",
-      "category": "data",
-      "layer": "Server",
-      "module": "dev-server",
-      "location": "brian-backend/dev-server.ts",
-      "description": "构建/初始化：thinking / blocks / runtime（操作关系数据库，序列化输出，反序列化）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-dev-server-0025",
+      "id": "m-dev-server-0023",
       "signature": "boolean rebuildPromptFromRef(rebuilder: PromptRebuilder, ref: any, refIndex: number, iters: any[], triples: any): Promise<string>",
       "name": "rebuildPromptFromRef",
       "category": "orchestration",
@@ -331,20 +305,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-dev-server-0026",
-      "signature": "boolean buildThinkingBlocksFromOrchestration(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, infoCore: any, workIds: string[], promptsAccess?: any, soulAccess?: any): Promise<{ workBlocksMap: Map<string, any[]>; workDagMap: Map<string, any> }>",
-      "name": "buildThinkingBlocksFromOrchestration",
-      "category": "data",
-      "layer": "Server",
-      "module": "dev-server",
-      "location": "brian-backend/dev-server.ts",
-      "description": "构建/初始化：thinking / blocks / orchestration（操作关系数据库，反序列化）",
-      "reusable": true,
-      "deprecated": false,
-      "replaced_by": null
-    },
-    {
-      "id": "m-dev-server-0027",
+      "id": "m-dev-server-0024",
       "signature": "boolean createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Server",
       "name": "createServer",
       "category": "data",
@@ -357,7 +318,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-dev-server-0028",
+      "id": "m-dev-server-0025",
       "signature": "boolean main()",
       "name": "main",
       "category": "data",
@@ -371,11 +332,11 @@
     }
   ],
   "stats": {
-    "total": 28,
+    "total": 25,
     "by_category": {
       "algorithm": 5,
       "orchestration": 6,
-      "data": 17
+      "data": 14
     }
   }
 }

@@ -1,7 +1,7 @@
 ﻿import type {
   RelationDBAccess, LLMAccess, PromptsAccess, SkillAccess, SoulAccess, MCPAccess, MQAccess, StreamAccess, Logger,
 } from '@brian-agent/base';
-import { Metrics, Report } from '@brian-agent/base';
+import { BusinessEvent, Metrics, Report } from '@brian-agent/base';
 import {
   IdGenerator, Operator, ValidationError, NotFoundError,
   ExecLLMInput, ExecLLMOutput, LLMContext,
@@ -12,9 +12,6 @@ import {
   SendMQInput, SendMQOutput, MQContext,
   GetQueueStatsInput, GetQueueStatsOutput,
   SoPromptInput, SoPromptOutput,
-  InfoType,
-  HandleResultType,
-  classifyHandleResult,
   type DataObject,
 } from '@brian-agent/base';
 import type { AgentLibraryAccess } from '../../AgentLibrary/access/AgentLibraryAccess';
@@ -47,7 +44,7 @@ import {
 } from '../domain/types';
 import type { TraceIterations, TraceIterationRecord } from '../domain/trace';
 import {
-  buildPromptRef, buildThinkStep, buildActStep, buildReflectStep, buildAnswerStep, buildLightTraceRef,
+  buildPromptRef, buildThinkStep, buildActStep, buildReflectStep, buildAnswerStep,
 } from './trace/TraceCodec';
 import { TraceStore } from './trace/TraceStore';
 import {
@@ -58,7 +55,7 @@ import {
   GetStrategyInput, GetStrategyOutput, AgentStrategyContext,
 } from '../../AgentStrategy/domain/types';
 import {
-  SaveInfoInput, SaveInfoOutput, ContextInfoInput, ContextInfoOutput, InfoCoreContext,
+  ContextInfoInput, ContextInfoOutput, InfoCoreContext,
   StartWorkerInput, StartWorkerOutput, SoWorkerInput, SoWorkerOutput, MQCoreContext,
   LastNInfoInput, LastNInfoOutput,
 } from '@brian-agent/core';
@@ -117,6 +114,7 @@ interface AgentExecutionEnv {
   maxFromRule: number;
   taskId: string;
   config: AgentExecutionConfigRecord | null;
+  report?: Report;
 }
 
 interface PreparedExecResources {
@@ -177,7 +175,7 @@ export class AgentExecutionService {
 
   private readonly traceStore: TraceStore;
 
-  async execAgent(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics?: Metrics, _report?: Report,
+  async execAgent(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     const { start, config, traceId, maxIter, libCtx } = await this.prepareExecRun(input, ctx);
     const { agent, domain, agentName } = await this.soEnabledAgent(input.agent_id, libCtx);
@@ -186,7 +184,7 @@ export class AgentExecutionService {
     const contextData = await this.buildExecContextData(input, ctx, metrics);
     const { stratOut, ...execResources } = await this.prepareExecResources(input, ctx, agent, llmId);
     const { rule, maxFromRule } = this.resolveExecRule(stratOut, execResources.skillIds, execResources.mcpIds, maxIter);
-    const env: AgentExecutionEnv = { input, ctx, agent, ...execResources, contextData, agentName, domain, llmId, maxFromRule, taskId: input.task_id ?? '', config };
+    const env: AgentExecutionEnv = { input, ctx, agent, ...execResources, contextData, agentName, domain, llmId, maxFromRule, taskId: input.task_id ?? '', config, report };
     const traceIterations: TraceIterations = [];
     const run = await this.runExecRule(rule, env, '', traceIterations);
     let { finalAnswer, totalTokens } = run;
@@ -196,7 +194,9 @@ export class AgentExecutionService {
       totalTokens += fallback.totalTokens;
     }
     await this.recordExecUsage(input, ctx, libCtx, traceId, finalAnswer);
-    await this.saveExecTraceInfo(input, output, ctx, metrics, traceId, finalAnswer, totalTokens);
+    if (!finalAnswer || !finalAnswer.trim()) {
+      output.error = 'Work Agent 未产生有效输出（LLM 调用失败或返回为空）';
+    }
     const end = IdGenerator.now();
     await this.storeExecTrace(input, traceId, start, end, traceIterations, totalTokens, finalAnswer, metrics);
     return this.finishExecOutput(output, finalAnswer, run.iteration, traceIterations, traceId, end - start);
@@ -373,35 +373,9 @@ export class AgentExecutionService {
 
   
 
-  private async saveExecTraceInfo(input: ExecAgentInput, output: ExecAgentOutput, ctx: AgentExecutionContext, metrics: Metrics | undefined,
-    traceId: string, finalAnswer: string, totalTokens: number): Promise<boolean> {
-    
-    
-    const producedOutput = Boolean(finalAnswer && finalAnswer.trim());
-    if (!producedOutput) {
-      output.error = 'Work Agent 未产生有效输出（LLM 调用失败或返回为空）';
-    }
-    const sessionId = ctx.session_id;
-    if (!sessionId) return producedOutput;
-    try {
-      const traceHandleResult = producedOutput ? HandleResultType.CORRECT : classifyHandleResult(output.error, 'external');
-      await this.infoCore.saveInfo(
-        Object.assign(new SaveInfoInput(), {
-          session_id: sessionId, work_id: input.work_id || ctx.work_id,
-          run_id: input.run_id || ctx.run_id || '', info_type: InfoType.ACT,
-          info_creator_role: 'AGENT', info_creator_id: input.agent_id,
-          info: JSON.stringify(buildLightTraceRef(traceId, finalAnswer, totalTokens)), handle_result_type: traceHandleResult,
-        }),
-        new SaveInfoOutput(),
-        new InfoCoreContext(),
-      );
-    } catch (err) {
-      
-      metrics?.warn('AgentExecutionService.execAgent 执行结果存档 saveInfo 失败已容忍',
-        { error: err instanceof Error ? err.message : String(err), agent_id: input.agent_id, session_id: sessionId });
-    }
-    return producedOutput;
-  }
+   
+
+
 
   
   private async storeExecTrace(
@@ -578,11 +552,10 @@ export class AgentExecutionService {
     output.output_tokens = Number(llmOut.output_tokens ?? 0);
     output.token_usage = Number((llmOut.input_tokens ?? 0) + (llmOut.output_tokens ?? 0));
 
-    await this.saveStepInfo(ctx, 'THINK', 'AGENT', input.agent_id, output.reasoning);
     return true;
   }
 
-  async execAct(input: ActInput, output: ActOutput, ctx: AgentExecutionContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
+  async execAct(input: ActInput, output: ActOutput, _ctx: AgentExecutionContext, _metrics?: Metrics, _report?: Report): Promise<boolean> {
     let action: Record<string, unknown> = {};
     try {
       action = JSON.parse(input.next_action) as Record<string, unknown>;
@@ -602,75 +575,46 @@ export class AgentExecutionService {
       if (!input.skill_ids.includes(toolId)) {
         throw new ValidationError(`Skill not bound to agent: ${toolId}`);
       }
-      try {
-        const skillOut = new ExecSkillOutput();
-        const ok = await this.skillAccess.execSkill(
-          Object.assign(new ExecSkillInput(), { id: toolId, params }),
-          skillOut,
-          new SkillContext(),
-        );
-        if (!ok) {
-          throw new ValidationError(skillOut.error ?? `execSkill failed: ${toolId}`);
-        }
-        output.result = typeof skillOut.result === 'string'
-          ? skillOut.result
-          : JSON.stringify(skillOut.result ?? {});
-        await this.saveStepInfo(ctx, 'SKILL', 'SKILL', toolId, output.result);
-        return true;
-      } catch (err) {
-        await this.saveStepInfo(
-          ctx, 'SKILL', 'SKILL', toolId, this.errorText(err),
-          classifyHandleResult(err, 'external'),
-        );
-        throw err;
+      const skillOut = new ExecSkillOutput();
+      const ok = await this.skillAccess.execSkill(
+        Object.assign(new ExecSkillInput(), { id: toolId, params }),
+        skillOut,
+        new SkillContext(),
+      );
+      if (!ok) {
+        throw new ValidationError(skillOut.error ?? `execSkill failed: ${toolId}`);
       }
+      output.result = typeof skillOut.result === 'string'
+        ? skillOut.result
+        : JSON.stringify(skillOut.result ?? {});
+      return true;
     }
 
     if (toolType === 'MCP') {
       if (!input.mcp_ids.includes(toolId)) {
         throw new ValidationError(`MCP not bound to agent: ${toolId}`);
       }
-      try {
-        const mcpOut = new ExecMcpOutput();
-        const ok = await this.mcpAccess.execMcp(
-          Object.assign(new ExecMcpInput(), { id: toolId, params }),
-          mcpOut,
-          new McpContext(),
-        );
-        if (!ok) {
-          throw new ValidationError(mcpOut.error ?? `execMcp failed: ${toolId}`);
-        }
-        output.result = typeof mcpOut.result === 'string'
-          ? mcpOut.result
-          : JSON.stringify(mcpOut.result ?? {});
-        await this.saveStepInfo(ctx, 'MCP', 'MCP', toolId, output.result);
-        return true;
-      } catch (err) {
-        await this.saveStepInfo(
-          ctx, 'MCP', 'MCP', toolId, this.errorText(err),
-          classifyHandleResult(err, 'external'),
-        );
-        throw err;
+      const mcpOut = new ExecMcpOutput();
+      const ok = await this.mcpAccess.execMcp(
+        Object.assign(new ExecMcpInput(), { id: toolId, params }),
+        mcpOut,
+        new McpContext(),
+      );
+      if (!ok) {
+        throw new ValidationError(mcpOut.error ?? `execMcp failed: ${toolId}`);
       }
+      output.result = typeof mcpOut.result === 'string'
+        ? mcpOut.result
+        : JSON.stringify(mcpOut.result ?? {});
+      return true;
     }
 
     if (toolType === 'CDT') {
-      try {
-        const result = await this.execCdtAction(toolId, params);
-        output.result = result;
-        await this.saveStepInfo(ctx, InfoType.CDT, 'CDT', toolId, result);
-        return true;
-      } catch (err) {
-        await this.saveStepInfo(
-          ctx, InfoType.CDT, 'CDT', toolId, this.errorText(err),
-          classifyHandleResult(err, 'external'),
-        );
-        throw err;
-      }
+      output.result = await this.execCdtAction(toolId, params);
+      return true;
     }
 
     output.result = 'No external tool required';
-    await this.saveStepInfo(ctx, 'ACT', 'AGENT', input.agent_id, output.result);
     return true;
   }
 
@@ -714,7 +658,6 @@ export class AgentExecutionService {
     output.input_tokens = Number(llmOut.input_tokens ?? 0);
     output.output_tokens = Number(llmOut.output_tokens ?? 0);
     output.token_usage = Number((llmOut.input_tokens ?? 0) + (llmOut.output_tokens ?? 0));
-    await this.saveStepInfo(ctx, 'REFLECT', 'AGENT', input.agent_id, output.reflection);
     return true;
   }
 
@@ -1302,49 +1245,36 @@ export class AgentExecutionService {
     return Array.isArray(subSteps) ? (subSteps as unknown[]).map(String) : undefined;
   }
 
+  /** ADR-013：裸 agent_thinking 通道迁移为 think.delta 业务事件（推理全文按步追加以 delta 形式） */
   private pushThink(env: AgentExecutionEnv, nodeId: string, thinkOut: ThinkOutput, iteration: number): void {
-    const { ctx, input, agent, agentName, taskId } = env;
-    const sessionId = ctx.session_id || '';
-    if (!this.streamAccess || typeof this.streamAccess.pushEvent !== 'function' || !sessionId || !thinkOut.reasoning) return;
-    this.streamAccess.pushEvent(sessionId, 'agent_thinking', 'TRACE', {
-      reasoning: thinkOut.reasoning,
-      next_action: thinkOut.next_action,
-      prompt: thinkOut.prompt,
-      raw_response: thinkOut.raw_response,
-      iteration,
-    }, {
-      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
-      agent_id: input.agent_id, agent_name: agentName,
-      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    }).catch(() => {});
+    if (!env.report || !thinkOut.reasoning) return;
+    env.report.emit(BusinessEvent.ThinkDelta, {
+      delta: `[第 ${iteration} 步推理 · ${nodeId}]\n${thinkOut.reasoning}\n`,
+    });
+    void thinkOut.next_action; void thinkOut.prompt; void thinkOut.raw_response;
   }
 
+  /** ADR-013：裸 agent_action 通道迁移为 skill.started + skill.result */
   private pushAct(env: AgentExecutionEnv, nodeId: string, actOut: ActOutput, iteration: number): void {
-    const { ctx, input, agent, agentName, taskId } = env;
-    const sessionId = ctx.session_id || '';
-    if (!this.streamAccess || typeof this.streamAccess.pushEvent !== 'function' || !sessionId) return;
-    this.streamAccess.pushEvent(sessionId, 'agent_action', 'TRACE', {
-      tool_type: actOut.tool_type, tool_id: actOut.tool_id, result: actOut.result,
-      params: actOut.params, next_action: actOut.next_action, iteration,
-    }, {
-      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
-      agent_id: input.agent_id, agent_name: agentName,
-      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    }).catch(() => {});
+    if (!env.report) return;
+    const partId = `${nodeId}-act-${iteration}`;
+    env.report.emit(BusinessEvent.SkillStarted, {
+      part_id: partId, tool_id: actOut.tool_id, skill_id: actOut.tool_id, input: actOut.params,
+    });
+    env.report.emit(BusinessEvent.SkillResult, {
+      part_id: partId, tool_id: actOut.tool_id, skill_id: actOut.tool_id,
+      status: 'ok', output: actOut.result,
+    });
+    void actOut.next_action;
   }
 
+  /** ADR-013：裸 agent_reflection 通道迁移为 think.delta */
   private pushReflect(env: AgentExecutionEnv, nodeId: string, reflectOut: ReflectOutput, iteration: number): void {
-    const { ctx, input, agent, agentName, taskId } = env;
-    const sessionId = ctx.session_id || '';
-    if (!this.streamAccess || typeof this.streamAccess.pushEvent !== 'function' || !sessionId) return;
-    this.streamAccess.pushEvent(sessionId, 'agent_reflection', 'TRACE', {
-      passed: !reflectOut.should_continue, reflection: reflectOut.reflection,
-      prompt: reflectOut.prompt, raw_response: reflectOut.raw_response, iteration,
-    }, {
-      work_id: input.work_id || ctx.work_id || '', run_id: input.run_id || ctx.run_id || '',
-      agent_id: input.agent_id, agent_name: agentName,
-      agent_type: agent?.agent_type || 'WORKER', node_id: nodeId, task_id: taskId,
-    }).catch(() => {});
+    if (!env.report || !reflectOut.reflection) return;
+    env.report.emit(BusinessEvent.ThinkDelta, {
+      delta: `[第 ${iteration} 步反思 · ${nodeId} · ${reflectOut.should_continue ? '继续' : '通过'}]\n${reflectOut.reflection}\n`,
+    });
+    void reflectOut.prompt; void reflectOut.raw_response;
   }
 
   
@@ -1468,7 +1398,7 @@ export class AgentExecutionService {
       const ids = entries.map((s) => s.skill_id);
       
       const skillRows = this.relationDb.queryRaw<{ id: string; skill_brief: string; skill_md: string }>(
-        `SELECT "id", "skill_brief", "skill_md" FROM "skill" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
+        `SELECT "id", "skill_brief", "skill_md" FROM "skill_record" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
         ids,
       );
       const workMap = new Map((skillRows || []).map((r) => [r.id, r.skill_md]));
@@ -1498,7 +1428,7 @@ export class AgentExecutionService {
       const ids = out.mcp_ids ?? [];
       if (ids.length === 0) return [];
       const rows = this.relationDb.queryRaw<{ id: string; mcp_title: string; mcp_brief: string | null }>(
-        `SELECT "id", "mcp_title", "mcp_brief" FROM "mcp_install" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
+        `SELECT "id", "mcp_title", "mcp_brief" FROM "mcp_install_record" WHERE "id" IN (${ids.map(() => '?').join(',')})`,
         ids,
       );
       return (rows || []).map((r) => ({ id: r.id, title: r.mcp_title, brief: r.mcp_brief || '' }));
@@ -1615,42 +1545,6 @@ export class AgentExecutionService {
     if (typeof value === 'string') return value;
     if (value === undefined || value === null) return '';
     return JSON.stringify(value);
-  }
-
-  private async saveStepInfo(
-    ctx: AgentExecutionContext,
-    infoType: string,
-    creatorRole: string,
-    creatorId: string,
-    info: string,
-    handleResultType?: string,
-  ): Promise<void> {
-    if (!ctx.session_id) return;
-    try {
-      await this.infoCore.saveInfo(
-        Object.assign(new SaveInfoInput(), {
-          session_id: ctx.session_id,
-          work_id: ctx.work_id,
-          run_id: ctx.run_id || '',
-          info_type: infoType,
-          info_creator_role: creatorRole,
-          info_creator_id: creatorId,
-          info,
-          handle_result_type: handleResultType,
-        }),
-        new SaveInfoOutput(),
-        new InfoCoreContext(),
-      );
-    } catch (err) {
-      
-      
-      
-      void err;
-    }
-  }
-
-  private errorText(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
   }
 
   private async getConfig(): Promise<AgentExecutionConfigRecord | null> {

@@ -3,6 +3,7 @@ import type { Interceptor, InterceptContext } from './Interceptor';
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Metrics } from '../base/Metrics';
 import { Report } from '../base/Report';
+import { ExecuteEventInterceptor } from './ExecuteEventInterceptor';
 
 export interface Logger {
   
@@ -127,10 +128,10 @@ export class AopProxy {
     if (options?.interceptors && options.interceptors.length > 0) {
       return options.interceptors;
     }
-    if (options?.logger) {
-      return [AopProxy.createLoggerInterceptor(options.logger)];
-    }
-    return [AopProxy.createLoggerInterceptor(new ConsoleLogger())];
+    return [
+      AopProxy.createLoggerInterceptor(options?.logger ?? new ConsoleLogger()),
+      new ExecuteEventInterceptor(),
+    ];
   }
 
   private static proxyGet<T extends object>(
@@ -241,7 +242,6 @@ export class AopProxy {
       args[4] = new Report({
         trace_id: effectiveTraceId,
         session_id: AopProxy.pickField(args[0], 'session_id'),
-        session_key: AopProxy.pickField(args[0], 'session_key') || AopProxy.pickField(args[0], 'session_id'),
         run_id: AopProxy.pickField(args[0], 'run_id'),
         stream_endpoint_id: AopProxy.pickField(args[0], 'stream_endpoint_id'),
         work_id: AopProxy.pickField(args[0], 'work_id'),

@@ -30,34 +30,34 @@ function submit() {
 
 <template>
   <div class="flex items-start gap-2 justify-end">
-    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-brian-blue/10 text-brian-blue flex items-center justify-center mt-1">
+    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-chat-primary/15 text-chat-primary-hover flex items-center justify-center mt-1">
       <Brain :size="16" />
     </div>
     <div class="max-w-[85%] min-w-0">
-      <div class="rounded-2xl bg-white dark:bg-apple-gray-900 border border-apple-gray-200 dark:border-apple-gray-700 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-apple-gray-100 dark:border-apple-gray-800 flex items-center gap-2">
-          <MessageCircleQuestion :size="16" class="text-brian-blue" />
+      <div class="chat-card overflow-hidden">
+        <div class="px-4 py-3 border-b border-chat-hairline flex items-center gap-2">
+          <MessageCircleQuestion :size="16" class="text-chat-primary-hover" />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-100">Agent 请求{{ kindLabel }}</p>
-            <p class="text-xs text-apple-gray-400 mt-0.5">答复将作为对话下一条消息发送给 Agent</p>
+            <p class="text-sm font-semibold text-chat-ink">Agent 请求{{ kindLabel }}</p>
+            <p class="text-xs text-chat-ink-tertiary mt-0.5">答复将作为对话下一条消息发送给 Agent</p>
           </div>
-          <span class="ml-auto flex-shrink-0 text-xs font-medium" :class="askUser.status === 'answered' ? 'text-success-green dark:text-success-green/80' : 'text-apple-gray-500 dark:text-apple-gray-400'">
+          <span class="ml-auto flex-shrink-0 text-xs font-medium" :class="askUser.status === 'answered' ? 'text-chat-success' : 'text-chat-ink-subtle'">
             {{ statusLabel }}
           </span>
         </div>
         <div class="px-4 py-3 text-sm">
-          <p class="text-apple-gray-700 dark:text-apple-gray-200 whitespace-pre-wrap break-words">{{ askUser.question }}</p>
+          <p class="text-chat-ink-muted whitespace-pre-wrap break-words">{{ askUser.question }}</p>
           <div v-if="askUser.status === 'pending'" class="mt-3 flex items-center gap-2">
             <input
               v-model="draft"
               type="text"
-              class="flex-1 min-w-0 rounded-lg border border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50 dark:bg-apple-gray-800 px-3 py-2 text-sm text-apple-gray-800 dark:text-apple-gray-100 outline-none focus:border-brian-blue disabled:opacity-50"
+              class="flex-1 min-w-0 rounded-chat-md border border-chat-hairline bg-chat-canvas px-3 py-2 text-sm text-chat-ink placeholder-chat-ink-tertiary outline-none focus:border-chat-primary-hover disabled:opacity-50"
               placeholder="输入你的答复…"
               :disabled="!interactive"
               @keydown.enter="submit"
             />
             <button
-              class="flex-shrink-0 px-3 py-2 rounded-lg text-sm text-white bg-brian-blue hover:bg-brian-blue/90 disabled:opacity-50 flex items-center gap-1"
+              class="flex-shrink-0 px-3 py-2 rounded-chat-md text-sm text-chat-on-primary bg-chat-primary hover:bg-chat-primary-hover disabled:opacity-50 flex items-center gap-1 transition-colors"
               :disabled="!canSubmit"
               @click="submit"
             >

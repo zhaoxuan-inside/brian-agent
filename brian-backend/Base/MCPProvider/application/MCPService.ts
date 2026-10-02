@@ -11,6 +11,8 @@ import {
   StdioMcpClient,
   callToolOverHttp,
   callToolOverRest,
+  listToolsOverHttp,
+  generateMockParamsFromSchema,
   type McpTransportConfig,
 } from './McpTransport';
 import { ConfigService } from '../../shared/config/ConfigService';
@@ -18,17 +20,64 @@ import { ComponentDisabledError, ValidationError, NotFoundError } from '../../sh
 import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator, Logic } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
-import { McpContext, McpProviderRecord, McpInstallRecord, AddMcpProviderInput, AddMcpProviderOutput, DelMcpProviderInput, DelMcpProviderOutput, UpdateMcpProviderInput, UpdateMcpProviderOutput, SoMcpProviderInput, SoMcpProviderOutput, TestMcpProviderInput, TestMcpProviderOutput, ListMcpInput, ListMcpOutput, InstallMcpInput, InstallMcpOutput, StartMcpInput, StartMcpOutput, StopMcpInput, StopMcpOutput, StartMcpsInput, StartMcpsOutput, RefreshMcpStatusInput, RefreshMcpStatusOutput, UninstallMcpInput, UninstallMcpOutput, UpdateMcpInput, UpdateMcpOutput, UpgradeMcpInput, UpgradeMcpOutput, GetMcpInput, GetMcpOutput, SoMcpInput, SoMcpOutput, ExecMcpInput, ExecMcpOutput, EnableMCPInput, EnableMCPOutput, GetMcpUsageInput, GetMcpUsageOutput, MCP_PROVIDER_TABLE, MCP_CACHE_TABLE, MCP_INSTALL_TABLE, MCP_USAGE_TABLE, MCP_CONFIG_TABLE } from '../domain/types';
+import { Context } from '../../shared/base/Context';
+import {
+  syncComponentEmbedding,
+  deleteComponentEmbedding,
+  syncComponentExamples,
+  buildFunnelDocText,
+} from '../../shared/match';
+import {
+  resolveComponentSemantics,
+  type SemanticsTaskFn,
+} from '../../shared/semantics';
+import {
+  McpContext, McpProviderRecord, McpInstallRecord, McpData,
+  AddMcpProviderInput, AddMcpProviderOutput,
+  DelMcpProviderInput, DelMcpProviderOutput,
+  UpdateMcpProviderInput, UpdateMcpProviderOutput,
+  SoMcpProviderInput, SoMcpProviderOutput,
+  TestMcpProviderInput, TestMcpProviderOutput,
+  ListMcpInput, ListMcpOutput,
+  InstallMcpInput, InstallMcpOutput,
+  StartMcpInput, StartMcpOutput,
+  StopMcpInput, StopMcpOutput,
+  StartMcpsInput, StartMcpsOutput,
+  RefreshMcpStatusInput, RefreshMcpStatusOutput,
+  UninstallMcpInput, UninstallMcpOutput,
+  UninstallMcpsInput, UninstallMcpsOutput,
+  UpdateMcpInput, UpdateMcpOutput,
+  UpgradeMcpInput, UpgradeMcpOutput,
+  GetMcpInput, GetMcpOutput,
+  SoMcpInput, SoMcpOutput,
+  ExecMcpInput, ExecMcpOutput,
+  ListMcpToolsInput, ListMcpToolsOutput, McpToolEntry,
+  EnableMCPInput, EnableMCPOutput,
+  GetMcpUsageInput, GetMcpUsageOutput,
+  MCP_PROVIDER_TABLE, MCP_CACHE_TABLE, MCP_INSTALL_TABLE,
+  MCP_EMBEDDING_TABLE, MCP_EXAMPLE_EMBEDDING_TABLE, MCP_USAGE_TABLE, MCP_CONFIG_TABLE,
+} from '../domain/types';
 
 export class MCPService {
   private enabled = true;
   private readonly config: ConfigService;
   private readonly runningMcps = new Map<string, StdioMcpClient>();
+  private readonly runningNonStdioIds = new Set<string>();
   private readonly http: HttpAccess;
+  private embedFn?: (text: string, context?: Context) => Promise<number[]>;
+  private semanticsFn?: SemanticsTaskFn;
 
   constructor(private readonly relationDb: RelationDBAccess) {
     this.config = new ConfigService(relationDb, MCP_CONFIG_TABLE);
     this.http = new HttpAccess(new ConfigService(relationDb, TOOL_CONFIG_TABLE));
+  }
+
+  setEmbedFn(fn: (text: string, context?: Context) => Promise<number[]>): void {
+    this.embedFn = fn;
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.semanticsFn = fn;
   }
 
   private ensureEnabled(): void {
@@ -57,13 +106,13 @@ export class MCPService {
     }
   }
 
-  private resolveStdioCommand(mcp: Record<string, unknown>): { command: string; args: string[] } {
+  private resolveStdioCommand(mcp: Record<string, unknown>): { command: string; args: string[]; env?: Record<string, string> } {
     const cfg = this.parseTransportConfig(mcp);
     if (cfg.command) {
-      return { command: cfg.command, args: cfg.args || [] };
+      return { command: cfg.command, args: cfg.args || [], env: cfg.env };
     }
     const parts = String(mcp.mcp_start_cmd || '').split(/\s+/).filter(Boolean);
-    return { command: parts[0] || '', args: parts.slice(1) };
+    return { command: parts[0] || '', args: parts.slice(1), env: cfg.env };
   }
 
   async syncInstallStatus(): Promise<number> {
@@ -173,7 +222,6 @@ export class MCPService {
       { field: 'id', value: id },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'provider_code', value: d.provider_code ?? null },
       { field: 'mcp_provider_url', value: d.mcp_provider_url },
       { field: 'mcp_provider_title', value: d.mcp_provider_title },
       { field: 'mcp_provider_brief', value: d.mcp_provider_brief ?? null },
@@ -315,10 +363,12 @@ export class MCPService {
 
     let mcpList: Array<{ title: string; brief: string; installCmd: string }> = [];
     try {
-      const providerCode = String((provider as Record<string, unknown>).provider_code || '');
+      const providerCode = this.deriveProviderCode(provider as Record<string, unknown>);
 
       if (providerCode === 'github') {
         mcpList = await this.fetchNpmMarketList();
+      } else if (providerCode === 'modelscope') {
+        mcpList = await this.fetchModelScopeMarketList();
       } else {
         const respHttpInput = Object.assign(new ExecRequestInput(), { url: `${String(provider.mcp_provider_url)}/mcps`, timeout_ms: 30000 });
         const respHttpOutput = new ExecRequestOutput();
@@ -411,10 +461,53 @@ export class MCPService {
     return list;
   }
 
+  private async fetchModelScopeMarketList(): Promise<Array<{ title: string; brief: string; installCmd: string }>> {
+    const input = Object.assign(new ExecRequestInput(), {
+      url: 'https://modelscope.cn/api/v1/dolphin/mcpServers',
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ PageSize: 30, PageNumber: 1, Criterion: [] }),
+      timeout_ms: 30000,
+    });
+    const output = new ExecRequestOutput();
+    try {
+      await this.http.execRequest(input, output, new HttpContext());
+      if (!output.response?.ok && output.response?.status !== 200) return [];
+      const data = JSON.parse(output.response.bodyText);
+      const servers = data?.Data?.McpServer?.McpServers || [];
+      return servers.map((s: Record<string, unknown>) => {
+        const title = String(s.ChineseName || s.Name || 'unknown');
+        const brief = String(s.AbstractCN || s.Abstract || '');
+        const srv = (s.ServerConfig as Array<{ mcpServers?: Record<string, { command?: string; args?: string[] }> }>)?.[0]?.mcpServers;
+        const cfg = srv ? Object.values(srv)[0] : undefined;
+        const cmd = cfg?.command ? `${cfg.command} ${(cfg.args || []).join(' ')}`.trim() : `npx -y ${String(s.Name || title)}`;
+        return { title, brief, installCmd: cmd };
+      });
+    } catch {
+      return [];
+    }
+  }
+
   async installMcp(input: InstallMcpInput, output: InstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
+    const mcpCache = await this.loadInstallableCache(input);
+    const installCmd = String(mcpCache.mcp_install_cmd);
+    await this.assertNotInstalled(input.mcp_provider_id, String(mcpCache.mcp_title));
+    await this.runInstallCommand(installCmd, input.mcp_id, metrics);
 
+    const providerCode = await this.resolveProviderCode(input.mcp_provider_id);
+    const { transportType, transportConfig } = this.resolveTransport(providerCode, this.generateCommands(installCmd).start);
+    const sem = await this.resolveInstallSemantics(mcpCache, input, metrics);
+    const id = await this.createInstallRecord(mcpCache, input.mcp_provider_id, installCmd, transportType, transportConfig, sem);
+    output.id = id;
+
+    await this.syncMcpVectors(id, sem, metrics);
+    await this.syncInstallStatus();
+    return true;
+  }
+
+  private async loadInstallableCache(input: InstallMcpInput): Promise<Record<string, unknown>> {
     const mcpCache = await this.relationDb.selectOne(MCP_CACHE_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.mcp_id },
       { field: 'mcp_provider_id', operator: Operator.EQ, value: input.mcp_provider_id },
@@ -422,58 +515,111 @@ export class MCPService {
     if (!mcpCache) {
       throw new NotFoundError('MCP Cache', input.mcp_id);
     }
+    return mcpCache as unknown as Record<string, unknown>;
+  }
 
-    const installCmd = String(mcpCache.mcp_install_cmd);
-
+  private async assertNotInstalled(providerId: string, title: string): Promise<void> {
     const existing = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
-      { field: 'mcp_provider_id', operator: Operator.EQ, value: input.mcp_provider_id },
-      { field: 'mcp_title', operator: Operator.EQ, value: String(mcpCache.mcp_title) },
+      { field: 'mcp_provider_id', operator: Operator.EQ, value: providerId },
+      { field: 'mcp_title', operator: Operator.EQ, value: title },
     ]);
     if (existing) {
-      throw new ValidationError(`MCP 已安装：${mcpCache.mcp_title}`);
+      throw new ValidationError(`MCP 已安装：${title}`);
     }
+  }
 
+  private async runInstallCommand(installCmd: string, mcpId: string, metrics?: Metrics): Promise<void> {
     try {
       execSync(installCmd, { timeout: 120000, stdio: 'pipe' });
     } catch (err) {
-
       metrics?.warn('MCPService.installMcp npm 安装命令执行失败，仍记录安装信息', {
         error: err instanceof Error ? err.message : String(err),
-        mcp_id: input.mcp_id,
+        mcp_id: mcpId,
         install_cmd: installCmd,
       });
     }
+  }
 
+  private async resolveProviderCode(providerId: string): Promise<string> {
+    const provider = await this.relationDb.selectOne(MCP_PROVIDER_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: providerId },
+    ]);
+    return provider ? this.deriveProviderCode(provider as Record<string, unknown>) : '';
+  }
+
+  /** 安装语义裁决：市场原始标题为兜底，LLM 可用时生成合规中文标题/描述/正负范例 */
+  private async resolveInstallSemantics(mcpCache: Record<string, unknown>, input: InstallMcpInput, metrics?: Metrics) {
+    const cacheTitle = String(mcpCache.mcp_title ?? '');
+    const cacheBrief = String(mcpCache.mcp_brief ?? '');
+    const sem = await resolveComponentSemantics({
+      kind: 'mcp',
+      source: { kind: 'mcp', title: cacheTitle, brief: cacheBrief },
+      provided: { positive_examples: input.positive_examples, negative_examples: input.negative_examples },
+      semanticsFn: this.semanticsFn,
+      metrics,
+    });
+    return {
+      title: sem.title || cacheTitle,
+      brief: sem.brief || cacheBrief,
+      positive_examples: sem.positive_examples,
+      negative_examples: sem.negative_examples,
+    };
+  }
+
+  private async createInstallRecord(
+    mcpCache: Record<string, unknown>, providerId: string, installCmd: string,
+    transportType: string, transportConfig: string,
+    sem: { title: string; brief: string },
+  ): Promise<string> {
     const cmds = this.generateCommands(installCmd);
     const id = IdGenerator.generate();
     const now = IdGenerator.now();
-
-    const provider = await this.relationDb.selectOne(MCP_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: input.mcp_provider_id },
-    ]);
-    const providerCode = provider ? String((provider as Record<string, unknown>).provider_code || '') : '';
-    const { transportType, transportConfig } = this.resolveTransport(providerCode, cmds.start);
-
     await this.relationDb.insert(MCP_INSTALL_TABLE, [
       { field: 'id', value: id },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'mcp_provider_id', value: input.mcp_provider_id },
-      { field: 'mcp_title', value: mcpCache.mcp_title },
-      { field: 'mcp_brief', value: mcpCache.mcp_brief },
+      { field: 'mcp_provider_id', value: providerId },
+      { field: 'mcp_title', value: sem.title },
+      { field: 'mcp_brief', value: sem.brief },
       { field: 'mcp_install_cmd', value: installCmd },
       { field: 'mcp_start_cmd', value: cmds.start },
       { field: 'mcp_stop_cmd', value: cmds.stop },
       { field: 'mcp_uninstall_cmd', value: cmds.uninstall },
       { field: 'transport_type', value: transportType },
       { field: 'transport_config', value: transportConfig },
-      { field: 'status', value: 'stopped' },
       { field: 'enable', value: 1 },
     ]);
-    output.id = id;
+    return id;
+  }
 
-    await this.syncInstallStatus();
-    return true;
+  private async syncMcpVectors(id: string, sem: { title: string; brief: string; positive_examples?: string[]; negative_examples?: string[] }, metrics?: Metrics): Promise<void> {
+    await syncComponentEmbedding({
+      relationDb: this.relationDb,
+      table: MCP_EMBEDDING_TABLE,
+      targetIdField: 'mcp_id',
+      targetId: id,
+      text: buildFunnelDocText(sem.title, sem.brief),
+      embedFn: this.embedFn,
+      metrics,
+    });
+    await syncComponentExamples({
+      relationDb: this.relationDb,
+      table: MCP_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'mcp_id',
+      targetId: id,
+      positiveExamples: sem.positive_examples,
+      negativeExamples: sem.negative_examples,
+      embedFn: this.embedFn,
+      metrics,
+    });
+  }
+
+  /** ADR-012:provider_code 列退役,市场来源由 provider URL 推导 */
+  private deriveProviderCode(provider: Record<string, unknown>): string {
+    const url = String(provider['mcp_provider_url'] ?? '').toLowerCase();
+    if (url.includes('github')) return 'github';
+    if (url.includes('modelscope')) return 'modelscope';
+    return '';
   }
 
   private resolveTransport(providerCode: string, startCmd: string): { transportType: string; transportConfig: string } {
@@ -494,6 +640,26 @@ export class MCPService {
     return { transportType, transportConfig: JSON.stringify(transportConfig) };
   }
 
+  private launchStdioMcp(id: string, mcp: Record<string, unknown>, metrics?: Metrics): void {
+    this.killRunningMcp(id);
+    const { command, args, env } = this.resolveStdioCommand(mcp);
+    if (!command) {
+      throw new ValidationError(`MCP ${mcp.mcp_title} 缺少启动命令`);
+    }
+    const client = new StdioMcpClient();
+    try {
+      client.spawn(command, args, env);
+    } catch (err) {
+      metrics?.warn('MCPService.startMcp stdio 进程启动失败（调用时将按未运行报错）', {
+        error: err instanceof Error ? err.message : String(err),
+        mcp_id: id,
+        command,
+      });
+    }
+    this.runningMcps.set(id, client);
+    client.initialize().catch(() => {  });
+  }
+
   async startMcp(input: StartMcpInput, _output: StartMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
@@ -504,34 +670,11 @@ export class MCPService {
       throw new NotFoundError('MCP Install', input.id);
     }
     const transportType = this.getTransportType(mcp);
-
     if (transportType === 'stdio') {
-      this.killRunningMcp(input.id);
-      const { command, args } = this.resolveStdioCommand(mcp);
-      if (!command) {
-        throw new ValidationError(`MCP ${mcp.mcp_title} 缺少启动命令`);
-      }
-      const client = new StdioMcpClient();
-      try {
-        client.spawn(command, args);
-      } catch (err) {
-
-        metrics?.warn('MCPService.startMcp stdio 进程启动失败（调用时将按未运行报错）', {
-          error: err instanceof Error ? err.message : String(err),
-          mcp_id: input.id,
-          command,
-        });
-      }
-      this.runningMcps.set(input.id, client);
-
-      client.initialize().catch(() => {  });
+      this.launchStdioMcp(input.id, mcp, metrics);
+    } else {
+      this.runningNonStdioIds.add(input.id);
     }
-    await this.relationDb.update(MCP_INSTALL_TABLE, [
-      { field: 'status', value: 'running' },
-      { field: 'updated', value: IdGenerator.now() },
-    ], [
-      { field: 'id', operator: Operator.EQ, value: input.id },
-    ]);
     return true;
   }
 
@@ -544,27 +687,22 @@ export class MCPService {
     if (!mcp) {
       throw new NotFoundError('MCP Install', input.id);
     }
-    this.killRunningMcp(input.id);
-    if (String(mcp.mcp_stop_cmd || '')) {
-      try {
-        execSync(String(mcp.mcp_stop_cmd), {
-          timeout: 10000,
-          stdio: 'pipe',
-        });
-      } catch (err) {
-
-        metrics?.warn('MCPService.stopMcp 停止命令执行失败（进程可能需人工确认回收）', {
-          error: err instanceof Error ? err.message : String(err),
-          mcp_id: input.id,
-        });
+    const transportType = this.getTransportType(mcp);
+    if (transportType === 'stdio') {
+      this.killRunningMcp(input.id);
+      if (String(mcp.mcp_stop_cmd || '')) {
+        try {
+          execSync(String(mcp.mcp_stop_cmd), { timeout: 10000, stdio: 'pipe' });
+        } catch (err) {
+          metrics?.warn('MCPService.stopMcp 停止命令执行失败（进程可能需人工确认回收）', {
+            error: err instanceof Error ? err.message : String(err),
+            mcp_id: input.id,
+          });
+        }
       }
+    } else {
+      this.runningNonStdioIds.delete(input.id);
     }
-    await this.relationDb.update(MCP_INSTALL_TABLE, [
-      { field: 'status', value: 'stopped' },
-      { field: 'updated', value: IdGenerator.now() },
-    ], [
-      { field: 'id', operator: Operator.EQ, value: input.id },
-    ]);
     return true;
   }
 
@@ -577,30 +715,22 @@ export class MCPService {
   }
 
   private isMcpRunning(id: string, transportType?: string): boolean {
-
-    if (transportType && transportType !== 'stdio') return true;
+    if (transportType && transportType !== 'stdio') {
+      return this.runningNonStdioIds.has(id);
+    }
     const client = this.runningMcps.get(id);
     return client ? client.isAlive() : false;
   }
 
   async stopAllMcp(): Promise<number> {
-    const count = this.runningMcps.size;
+    const count = this.runningMcps.size + this.runningNonStdioIds.size;
     for (const id of Array.from(this.runningMcps.keys())) {
       this.killRunningMcp(id);
     }
     this.runningMcps.clear();
+    this.runningNonStdioIds.clear();
 
-    const running = await this.relationDb.select(MCP_INSTALL_TABLE, {
-      conditions: [{ field: 'status', operator: Operator.EQ, value: 'running' }],
-    });
-    for (const r of running) {
-      await this.relationDb.update(MCP_INSTALL_TABLE, [
-        { field: 'status', value: 'stopped' },
-        { field: 'updated', value: IdGenerator.now() },
-      ], [
-        { field: 'id', operator: Operator.EQ, value: String(r.id) },
-      ]);
-    }
+    // ADR-012:mcp_install 去 status 列,运行态以内存句柄+实时探测为准
     return count;
   }
 
@@ -620,12 +750,6 @@ export class MCPService {
       const client = this.runningMcps.get(id);
       if (!client || !client.isAlive()) {
         this.runningMcps.delete(id);
-        await this.relationDb.update(MCP_INSTALL_TABLE, [
-          { field: 'status', value: 'stopped' },
-          { field: 'updated', value: IdGenerator.now() },
-        ], [
-          { field: 'id', operator: Operator.EQ, value: id },
-        ]);
       }
     }
   }
@@ -676,50 +800,96 @@ export class MCPService {
     await this.relationDb.delete(MCP_INSTALL_TABLE, [
       { field: 'id', operator: Operator.EQ, value: input.id },
     ]);
+    await deleteComponentEmbedding({
+      relationDb: this.relationDb,
+      table: MCP_EMBEDDING_TABLE,
+      targetIdField: 'mcp_id',
+      targetId: input.id,
+    });
+    await deleteComponentEmbedding({
+      relationDb: this.relationDb,
+      table: MCP_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'mcp_id',
+      targetId: input.id,
+    });
+    return true;
+  }
+
+  async uninstallMcps(input: UninstallMcpsInput, output: UninstallMcpsOutput, context: McpContext, metrics?: Metrics, report?: Report,
+  ): Promise<boolean> {
+    this.ensureEnabled();
+    for (const id of input.ids ?? []) {
+      try {
+        const unIn = Object.assign(new UninstallMcpInput(), { id });
+        await this.uninstallMcp(unIn, new UninstallMcpOutput(), context, metrics, report);
+        output.uninstalled_count++;
+      } catch (err) {
+        metrics?.warn('MCPService.uninstallMcps 批量卸载单个失败', { id, error: String(err) });
+      }
+    }
     return true;
   }
 
   async updateMcp(input: UpdateMcpInput, _output: UpdateMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
-    const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
     const patch = input.data;
-    if (patch.mcp_title !== undefined) {
-      data.push({ field: 'mcp_title', value: patch.mcp_title });
+    if (patch.enable === false && this.runningMcps.has(input.id)) {
+      throw new ValidationError('处于启动状态的 MCP 不能禁用');
     }
-    if (patch.mcp_brief !== undefined) {
-      data.push({ field: 'mcp_brief', value: patch.mcp_brief });
-    }
-    if (patch.mcp_install_cmd !== undefined) {
-      data.push({ field: 'mcp_install_cmd', value: patch.mcp_install_cmd });
-    }
-    if (patch.mcp_start_cmd !== undefined) {
-      data.push({ field: 'mcp_start_cmd', value: patch.mcp_start_cmd });
-    }
-    if (patch.mcp_stop_cmd !== undefined) {
-      data.push({ field: 'mcp_stop_cmd', value: patch.mcp_stop_cmd });
-    }
-    if (patch.mcp_uninstall_cmd !== undefined) {
-      data.push({ field: 'mcp_uninstall_cmd', value: patch.mcp_uninstall_cmd });
-    }
-    if (patch.transport_type !== undefined) {
-      data.push({ field: 'transport_type', value: patch.transport_type });
-    }
-    if (patch.transport_config !== undefined) {
-      data.push({ field: 'transport_config', value: patch.transport_config });
-    }
-    if (patch.enable !== undefined) {
-      if (!patch.enable && this.runningMcps.has(input.id)) {
-        throw new ValidationError('处于启动状态的 MCP 不能禁用');
-      }
-      data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
-    }
+    const data = this.buildMcpUpdateFields(patch);
     await this.relationDb.update(
       MCP_INSTALL_TABLE,
       data,
       [{ field: 'id', operator: Operator.EQ, value: input.id }],
     );
+    if (patch.mcp_title !== undefined || patch.mcp_brief !== undefined) {
+      await this.syncMcpEmbeddingOnUpdate(input.id, _metrics);
+    }
+    if (patch.positive_examples !== undefined || patch.negative_examples !== undefined) {
+      await syncComponentExamples({
+        relationDb: this.relationDb,
+        table: MCP_EXAMPLE_EMBEDDING_TABLE,
+        targetIdField: 'mcp_id',
+        targetId: input.id,
+        positiveExamples: patch.positive_examples,
+        negativeExamples: patch.negative_examples,
+        embedFn: this.embedFn,
+        metrics: _metrics,
+      });
+    }
     return true;
+  }
+
+  private buildMcpUpdateFields(patch: Partial<McpData>): DataObject[] {
+    const data: DataObject[] = [{ field: 'updated', value: IdGenerator.now() }];
+    const fieldMappings: Array<[keyof McpData, string]> = [
+      ['mcp_title', 'mcp_title'], ['mcp_brief', 'mcp_brief'],
+      ['mcp_install_cmd', 'mcp_install_cmd'], ['mcp_start_cmd', 'mcp_start_cmd'],
+      ['mcp_stop_cmd', 'mcp_stop_cmd'], ['mcp_uninstall_cmd', 'mcp_uninstall_cmd'],
+      ['transport_type', 'transport_type'], ['transport_config', 'transport_config'],
+    ];
+    for (const [key, column] of fieldMappings) {
+      if (patch[key] !== undefined) data.push({ field: column, value: patch[key] as unknown });
+    }
+    if (patch.enable !== undefined) data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
+    return data;
+  }
+
+  private async syncMcpEmbeddingOnUpdate(id: string, metrics?: Metrics): Promise<void> {
+    const row = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: id },
+    ]);
+    if (!row) return;
+    await syncComponentEmbedding({
+      relationDb: this.relationDb,
+      table: MCP_EMBEDDING_TABLE,
+      targetIdField: 'mcp_id',
+      targetId: id,
+      text: buildFunnelDocText(String(row.mcp_title ?? ''), String(row.mcp_brief ?? '')),
+      embedFn: this.embedFn,
+      metrics,
+    });
   }
 
   async upgradeMcp(input: UpgradeMcpInput, output: UpgradeMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report,
@@ -854,6 +1024,72 @@ export class MCPService {
       await this.upsertUsage(input.id);
     }
     return true;
+  }
+
+  /** R7:拉取已安装 MCP 的工具清单,逐工具生成 test_params_sample 并持久化(重复拉取读缓存列) */
+  async listMcpTools(input: ListMcpToolsInput, output: ListMcpToolsOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,
+  ): Promise<boolean> {
+    this.ensureEnabled();
+    const mcp = await this.relationDb.selectOne(MCP_INSTALL_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: input.id },
+    ]);
+    if (!mcp) {
+      throw new NotFoundError('MCP Install', input.id);
+    }
+    const row = mcp as unknown as Record<string, unknown>;
+    const transportType = this.getTransportType(row);
+    output.status = this.isMcpRunning(input.id, transportType) ? 'running' : 'stopped';
+    const cached = this.parseStoredToolSamples(String(row.test_params_sample ?? ''));
+    const rawTools = await this.fetchTools(input.id, transportType, row);
+    output.tools = rawTools.map((t) => this.toToolEntry(t, cached));
+    await this.persistToolSamples(input.id, output.tools);
+    return true;
+  }
+
+  private async fetchTools(id: string, transportType: string, mcp: Record<string, unknown>): Promise<Array<{ name: string; description?: string; inputSchema?: any }>> {
+    if (transportType === 'stdio') {
+      const client = this.runningMcps.get(id);
+      if (!client || !client.isAlive()) {
+        throw new ValidationError(`MCP ${mcp.mcp_title} 未启动，请先启动后再获取工具清单`);
+      }
+      return client.listTools();
+    }
+    if (transportType === 'rest') {
+      return [];
+    }
+    return listToolsOverHttp(this.parseTransportConfig(mcp));
+  }
+
+  private toToolEntry(t: { name: string; description?: string; inputSchema?: any }, cached: Map<string, Record<string, unknown>>): McpToolEntry {
+    const name = String(t.name ?? '');
+    return {
+      name,
+      description: String(t.description ?? ''),
+      input_schema: (t.inputSchema ?? undefined) as Record<string, unknown> | undefined,
+      test_params_sample: cached.get(name) ?? generateMockParamsFromSchema(t.inputSchema),
+    };
+  }
+
+  private parseStoredToolSamples(raw: string): Map<string, Record<string, unknown>> {
+    const map = new Map<string, Record<string, unknown>>();
+    if (!raw) return map;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, Record<string, unknown>>;
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && typeof v === 'object') map.set(k, v);
+      }
+    } catch { /* 容错 */ }
+    return map;
+  }
+
+  private async persistToolSamples(id: string, tools: McpToolEntry[]): Promise<void> {
+    if (tools.length === 0) return;
+    const samples: Record<string, Record<string, unknown>> = {};
+    for (const t of tools) samples[t.name] = t.test_params_sample;
+    await this.relationDb.update(MCP_INSTALL_TABLE, [
+      { field: 'updated', value: IdGenerator.now() },
+      { field: 'test_params_sample', value: JSON.stringify(samples) },
+    ], [{ field: 'id', operator: Operator.EQ, value: id }]);
   }
 
   async enableMCP(input: EnableMCPInput, _output: EnableMCPOutput, _context: McpContext, _metrics?: Metrics, _report?: Report,

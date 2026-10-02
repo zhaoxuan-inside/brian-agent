@@ -2,7 +2,6 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, History, Search, Trash2, X, PanelRight, Square, CheckSquare, Edit3, Check } from '@lucide/vue'
-import NeuralBackground from '@/components/layout/NeuralBackground.vue'
 import Header from '@/components/layout/Header.vue'
 import PageBreadcrumb from '@/components/layout/PageBreadcrumb.vue'
 import ChatArea from '@/components/chat/ChatArea.vue'
@@ -184,80 +183,81 @@ async function confirmDelete() {
 </script>
 
 <template>
-  <div class="h-screen w-screen overflow-hidden flex flex-col">
-    <NeuralBackground />
-    <Header />
+  <!-- Linear 主题(ADR-014):根节点挂 .theme-chat,子树内全部语义色切到 Linear 令牌 -->
+  <div class="theme-chat font-chat h-screen w-screen overflow-hidden flex flex-col bg-chat-canvas text-chat-ink">
+    <Header variant="chat" />
     <div class="pt-14 relative z-10">
-      <div class="sticky top-14 h-10 flex items-center px-5 border-b border-apple-gray-200 dark:border-apple-gray-700 bg-white/80 dark:bg-apple-gray-800/80 backdrop-blur-md">
-        <PageBreadcrumb :path="[i18nStore.t('nav.chat')]" />
+      <div class="sticky top-14 h-10 flex items-center px-5 border-b border-chat-hairline bg-chat-canvas">
+        <PageBreadcrumb :path="[i18nStore.t('nav.chat')]" variant="chat" />
       </div>
     </div>
 
     <button
       v-if="!showSidebar"
-      class="fixed right-0 top-20 z-30 p-2 rounded-l-lg glass-panel border border-r-0 text-apple-gray-400 hover:text-brian-blue transition-all shadow-sm hover:pr-3"
+      class="fixed right-0 top-20 z-30 p-2 rounded-l-chat-md bg-chat-surface-1 border border-r-0 border-chat-hairline text-chat-ink-subtle hover:text-chat-ink hover:border-chat-hairline-strong transition-all"
+      title="打开历史会话"
       @click="toggleSidebar"
     >
       <PanelRight :size="18" />
     </button>
 
     <Transition name="fade">
-      <div v-if="overflowWarning" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-warning-orange/10 border border-warning-orange/30 text-warning-orange text-sm font-medium shadow-lg">
+      <div v-if="overflowWarning" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-3 py-1 rounded-chat-pill bg-chat-surface-2 border border-chat-hairline-strong text-chat-ink-muted text-xs font-medium">
         {{ i18nStore.t('chat.overflow') }}
       </div>
     </Transition>
 
     <Transition name="sidebar">
-      <div v-if="showSidebar" class="fixed right-0 top-14 bottom-0 w-72 z-20 glass-panel border-l flex flex-col">
-        <div class="p-3 border-b border-apple-gray-200 dark:border-apple-gray-700">
+      <div v-if="showSidebar" class="fixed right-0 top-14 bottom-0 w-72 z-20 bg-chat-surface-1 border-l border-chat-hairline flex flex-col">
+        <div class="p-3 border-b border-chat-hairline">
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
-              <History :size="18" class="text-brian-blue" />
-              <h3 class="text-sm font-semibold">{{ i18nStore.t('chat.history') }}</h3>
+              <History :size="18" class="text-chat-primary-hover" />
+              <h3 class="text-sm font-semibold text-chat-ink tracking-tight">{{ i18nStore.t('chat.history') }}</h3>
             </div>
-            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800" @click="showSidebar = false">
+            <button class="p-1.5 rounded-chat-md text-chat-ink-tertiary hover:text-chat-ink hover:bg-chat-surface-2 transition-colors" @click="showSidebar = false">
               <X :size="16" />
             </button>
           </div>
           <div class="flex items-center gap-2">
-            <button class="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-600 dark:text-apple-gray-400 text-sm hover:bg-apple-gray-200 dark:hover:bg-apple-gray-700 transition-colors" @click="showSearch = !showSearch">
+            <button class="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-chat-md bg-chat-surface-2 border border-chat-hairline text-chat-ink-muted text-sm hover:text-chat-ink hover:border-chat-hairline-strong transition-colors" @click="showSearch = !showSearch">
               <Search :size="16" />
             </button>
-            <button class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-brian-blue text-white text-sm font-medium hover:bg-brian-blue/90 transition-colors" @click="handleNewChat">
+            <button class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-chat-md bg-chat-primary text-chat-on-primary text-sm font-medium hover:bg-chat-primary-hover transition-colors" @click="handleNewChat">
               <Plus :size="16" /> {{ i18nStore.t('chat.new') }}
             </button>
           </div>
           <div v-if="showSearch" class="mt-2">
-            <input v-model="searchQuery" :placeholder="i18nStore.t('chat.search')" class="w-full px-3 py-1.5 rounded-lg bg-apple-gray-100 dark:bg-apple-gray-800 border border-apple-gray-200 dark:border-apple-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-brian-blue" />
+            <input v-model="searchQuery" :placeholder="i18nStore.t('chat.search')" class="w-full px-3 py-1.5 rounded-chat-md bg-chat-surface-2 border border-chat-hairline text-chat-ink placeholder-chat-ink-tertiary text-sm focus:outline-none focus:border-chat-primary-hover" />
           </div>
         </div>
 
-        <div v-if="filteredChatList.length > 0" class="flex items-center justify-between px-3 py-2 border-b border-apple-gray-100 dark:border-apple-gray-800">
-          <button class="flex items-center gap-1.5 text-xs text-apple-gray-500 hover:text-brian-blue" @click="toggleSelectAll">
+        <div v-if="filteredChatList.length > 0" class="flex items-center justify-between px-3 py-2 border-b border-chat-hairline">
+          <button class="flex items-center gap-1.5 text-xs text-chat-ink-subtle hover:text-chat-primary-hover" @click="toggleSelectAll">
             <component :is="allSelected ? CheckSquare : Square" :size="14" />
             {{ allSelected ? i18nStore.t('common.deselectAll') : i18nStore.t('common.selectAll') }}
           </button>
-          <button v-if="selectedSessions.size > 0" class="flex items-center gap-1 text-xs text-error-red hover:bg-error-red/10 px-2 py-1 rounded" @click="requestBatchDelete">
+          <button v-if="selectedSessions.size > 0" class="flex items-center gap-1 text-xs text-chat-error hover:bg-chat-error/10 px-2 py-1 rounded-chat-sm" @click="requestBatchDelete">
             <Trash2 :size="12" /> {{ i18nStore.t('chat.deleteSelected', { n: selectedSessions.size }) }}
           </button>
         </div>
 
         <div class="flex-1 overflow-y-auto px-3 pb-3">
-          <div v-if="filteredChatList.length === 0" class="text-center py-8 text-apple-gray-400 text-sm">
+          <div v-if="filteredChatList.length === 0" class="text-center py-8 text-chat-ink-tertiary text-sm">
             {{ searchQuery ? i18nStore.t('chat.noMatch') : i18nStore.t('chat.noSessions') }}
           </div>
           <div v-else class="space-y-2 pt-2">
             <div
               v-for="chat in filteredChatList"
               :key="chat.sessionId"
-              class="rounded-xl border transition-colors cursor-pointer"
-              :class="chat.sessionId === sessionStore.currentSessionId ? 'bg-brian-blue/5 border-brian-blue/30' : 'bg-white dark:bg-apple-gray-800/50 border-apple-gray-200 dark:border-apple-gray-700 hover:border-brian-blue/30'"
+              class="rounded-chat-md border transition-colors cursor-pointer"
+              :class="chat.sessionId === sessionStore.currentSessionId ? 'bg-chat-surface-3 border-chat-primary/50' : 'bg-chat-surface-2 border-chat-hairline hover:border-chat-hairline-strong'"
               @click="handleSelectChat(chat.sessionId)"
             >
               <div class="p-3">
                 <div class="flex items-start justify-between mb-1.5">
-                  <span class="text-xs text-apple-gray-400">{{ formatTime(chat.lastTime) }}</span>
-                  <button class="text-apple-gray-400 hover:text-brian-blue" :aria-label="i18nStore.t('chat.selectSession')" @click.stop="toggleSelect(chat.sessionId)">
+                  <span class="text-xs text-chat-ink-tertiary">{{ formatTime(chat.lastTime) }}</span>
+                  <button class="text-chat-ink-tertiary hover:text-chat-primary-hover" :aria-label="i18nStore.t('chat.selectSession')" @click.stop="toggleSelect(chat.sessionId)">
                     <component :is="selectedSessions.has(chat.sessionId) ? CheckSquare : Square" :size="14" />
                   </button>
                 </div>
@@ -265,23 +265,23 @@ async function confirmDelete() {
                   <div v-if="editingSessionId === chat.sessionId" class="flex items-center gap-1 flex-1 min-w-0 mr-2" @click.stop>
                     <input
                       v-model="editingTitle"
-                      class="px-2 py-0.5 text-xs rounded bg-white dark:bg-apple-gray-800 border border-brian-blue focus:outline-none w-full"
+                      class="px-2 py-0.5 text-xs rounded-chat-sm bg-chat-canvas border border-chat-primary-hover focus:outline-none w-full text-chat-ink"
                       @keyup.enter="saveSessionTitle(chat.sessionId)"
                     />
-                    <button class="p-1 rounded text-brian-blue hover:bg-brian-blue/10 flex-shrink-0" :title="i18nStore.t('chat.saveTitle')" @click="saveSessionTitle(chat.sessionId)">
+                    <button class="p-1 rounded-chat-sm text-chat-primary-hover hover:bg-chat-primary/10 flex-shrink-0" :title="i18nStore.t('chat.saveTitle')" @click="saveSessionTitle(chat.sessionId)">
                       <Check :size="12" />
                     </button>
-                    <button class="p-1 rounded text-apple-gray-400 hover:bg-apple-gray-100 flex-shrink-0" :title="i18nStore.t('common.cancel')" @click="editingSessionId = null">
+                    <button class="p-1 rounded-chat-sm text-chat-ink-tertiary hover:bg-chat-surface-3 flex-shrink-0" :title="i18nStore.t('common.cancel')" @click="editingSessionId = null">
                       <X :size="12" />
                     </button>
                   </div>
                   <div v-else class="flex items-center justify-between flex-1 min-w-0 mr-2">
-                    <p class="text-sm truncate flex-1">{{ chat.sessionTitle || chat.lastMessage || '新会话' }}</p>
-                    <button class="p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 flex-shrink-0 ml-1" :title="i18nStore.t('chat.rename')" @click.stop="startEditTitle(chat)">
+                    <p class="text-sm truncate flex-1 text-chat-ink">{{ chat.sessionTitle || chat.lastMessage || '新会话' }}</p>
+                    <button class="p-1 rounded-chat-sm text-chat-ink-tertiary hover:text-chat-primary-hover hover:bg-chat-primary/10 flex-shrink-0 ml-1" :title="i18nStore.t('chat.rename')" @click.stop="startEditTitle(chat)">
                       <Edit3 :size="12" />
                     </button>
                   </div>
-                  <button class="ml-1 p-1 rounded text-apple-gray-400 hover:text-error-red hover:bg-error-red/10 transition-colors flex-shrink-0" title="删除会话" :aria-label="i18nStore.t('chat.deleteSession')" @click.stop="requestDeleteSession(chat.sessionId)">
+                  <button class="ml-1 p-1 rounded-chat-sm text-chat-ink-tertiary hover:text-chat-error hover:bg-chat-error/10 transition-colors flex-shrink-0" title="删除会话" :aria-label="i18nStore.t('chat.deleteSession')" @click.stop="requestDeleteSession(chat.sessionId)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -302,10 +302,11 @@ async function confirmDelete() {
         : i18nStore.t('chat.confirmDeleteSingle')"
       :confirm-text="i18nStore.t('chat.confirmDeleteBtn')"
       intent="danger"
+      variant="chat"
       @confirm="confirmDelete"
       @cancel="deleteConfirm = null"
     >
-      <p class="text-xs text-apple-gray-400 mt-1">{{ i18nStore.t('chat.deleteWarning') }}</p>
+      <p class="text-xs text-chat-ink-tertiary mt-1">{{ i18nStore.t('chat.deleteWarning') }}</p>
     </ConfirmDialog>
   </div>
 </template>

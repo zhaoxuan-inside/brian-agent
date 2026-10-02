@@ -1,6 +1,7 @@
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../../TraceBase';
 import { SkillSchemaInitializer } from '../infrastructure/SkillSchemaInitializer';
 import { SkillService } from '../application/SkillService';
 import { IsolatedVMSandbox } from '../infrastructure/sandbox/IsolatedVMSandbox';
@@ -25,6 +26,7 @@ import {
   SeedSystemSkillsOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
+import type { SemanticsTaskFn } from '../../shared/semantics';
 
 export class SkillAccess {
   private readonly service: SkillService;
@@ -32,6 +34,8 @@ export class SkillAccess {
 
   constructor(relationDb: RelationDBAccess, logger?: Logger) {
     
+    // ADR-012: 初始化 TraceBase 统计表（含旧 usage 表改名/退役迁移）
+    new TraceSchemaInitializer(relationDb).init();
     new SkillSchemaInitializer(relationDb).init();
     
     
@@ -44,6 +48,14 @@ export class SkillAccess {
   }
 
   
+
+  setEmbedFn(fn: (text: string, context?: any) => Promise<number[]>): void {
+    this.service.setEmbedFn(fn);
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.service.setSemanticsFn(fn);
+  }
 
   async initialize(): Promise<void> {
     await this.service.initialize();

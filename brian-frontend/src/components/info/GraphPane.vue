@@ -68,12 +68,12 @@ function setSvgRef(el: unknown) {
             </li>
             <li class="flex items-center gap-2.5">
               <svg class="shrink-0" width="36" height="12" viewBox="0 0 36 12">
-                <line x1="0" y1="6" x2="8" y2="6" stroke="#8e8e93" stroke-width="1.5" />
-                <line x1="28" y1="6" x2="36" y2="6" stroke="#8e8e93" stroke-width="1.5" />
-                <circle cx="0" cy="6" r="2" fill="#8e8e93" />
-                <circle cx="8" cy="6" r="2" fill="#8e8e93" />
-                <circle cx="28" cy="6" r="2" fill="#8e8e93" />
-                <circle cx="36" cy="6" r="2" fill="#8e8e93" />
+                <line x1="0" y1="6" x2="8" y2="6" stroke="#8e8b82" stroke-width="1.5" />
+                <line x1="28" y1="6" x2="36" y2="6" stroke="#8e8b82" stroke-width="1.5" />
+                <circle cx="0" cy="6" r="2" fill="#8e8b82" />
+                <circle cx="8" cy="6" r="2" fill="#8e8b82" />
+                <circle cx="28" cy="6" r="2" fill="#8e8b82" />
+                <circle cx="36" cy="6" r="2" fill="#8e8b82" />
               </svg>
               <span>连线长度：越短关联越强</span>
             </li>

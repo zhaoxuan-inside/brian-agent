@@ -256,7 +256,7 @@ describe('AgentContext', () => {
 
   describe('domain constants', () => {
     it('table name constants are correct', () => {
-      expect(AGENT_CONTEXT_CONFIG_TABLE).toBe('agent_context_config');
+      expect(AGENT_CONTEXT_CONFIG_TABLE).toBe('agent_context_config_record');
     });
 
     it('default config values are correct', () => {

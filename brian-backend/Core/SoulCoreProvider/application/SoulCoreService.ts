@@ -1,10 +1,34 @@
 import { Metrics, Report } from '@brian-agent/base';
 import { callLLMJson } from '@brian-agent/base';
+import {
+  funnelBm25Ranking,
+  funnelSemanticRouterRanking,
+  buildFunnelDocText,
+  toFunnelBm25Options,
+  funnelNegativeReason,
+  batchGetOrComputeEmbeddings,
+  batchGetDualExampleEmbeddings,
+  batchGetComponentExamples,
+  analyzeTaskComplexity,
+  runComponentElection,
+  standardTierLadder,
+  loadElectionThresholdOverrides,
+  applySignalScores,
+  DEFAULT_ELECTION_THRESHOLDS,
+  type FunnelRankingEntry,
+  type ComponentElectionAdapter,
+  type ElectionSignals,
+  type ElectionThresholds,
+  SOUL_EMBEDDING_TABLE,
+  SOUL_EXAMPLE_EMBEDDING_TABLE,
+} from '@brian-agent/base';
+import { createComponentFunnelTrace, pushComponentFunnel, clipFunnelText, FUNNEL_MECHANISM_LABELS, type ComponentFunnelTrace } from '@brian-agent/base';
+import { TraceService, RecordUsageInput, RecordUsageOutput, USAGE_EVENT_TABLE } from '@brian-agent/base';
 import type { RelationDBAccess } from '@brian-agent/base';
 import type { SoulAccess } from '@brian-agent/base';
 import type { LLMAccess } from '@brian-agent/base';
 import type { PromptsAccess } from '@brian-agent/base';
-import { SoulContext, AddSoulInput, Context, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, ExecPromptInput, ExecPromptOutput, LLMContext, ExecLLMInput, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError, PROMPT_TEMPLATE_TABLE } from '@brian-agent/base';
+import { SoulContext, AddSoulInput, Context, AddSoulOutput, GetSoulInput, GetSoulOutput, SoSoulOutput, RecordSoulUsageInput, RecordSoulUsageOutput, PromptContext, GetPromptInput, GetPromptOutput, LLMContext, ExecLLMOutput, EmbedLLMInput, EmbedLLMOutput, Operator, OperationType, IdGenerator, JsonParser, ValidationError, NotFoundError } from '@brian-agent/base';
 import type { DataObject } from '@brian-agent/base';
 import {
   SoulCoreContext,
@@ -27,13 +51,11 @@ import {
   ConfigSoulCoreOutput,
   SOUL_CORE_CONFIG_TABLE,
   SOUL_OPT_RULE_TABLE,
-  SOUL_CORE_USAGE_TABLE,
 } from '../domain/types';
 import { ProcessingError } from '../../shared/errors';
 import { SingleRowConfigStore } from '../../shared/SingleRowConfigStore';
 import { ensureDefaultConfig } from '../../shared/ConfigHelper';
 import { VectorMatchCache, buildCacheKey } from '../../shared/VectorMatchCache';
-import { parseRankingCandidates, filterByThreshold } from '../../shared/RankingParser';
 import { MatchCache, ScoreThreshold, VectorSimilarity } from '../../shared/MatchConstants';
 
 export class SoulCoreService {
@@ -43,6 +65,8 @@ export class SoulCoreService {
   
   private readonly matchCache = new VectorMatchCache();
 
+  private readonly trace: TraceService;
+
   
 
   constructor(
@@ -51,6 +75,7 @@ export class SoulCoreService {
     private readonly llmAccess: LLMAccess,
     private readonly promptsAccess: PromptsAccess,
   ) {
+    this.trace = new TraceService(this.relationDb);
     this.configStore = new SingleRowConfigStore<SoulCoreConfigRecord>(this.relationDb, {
       table: SOUL_CORE_CONFIG_TABLE,
       toRecord: (raw) => this.toSoulCoreConfigRecord(raw),
@@ -77,40 +102,61 @@ export class SoulCoreService {
 
   
 
-  async matchSoul(input: MatchSoulInput, output: MatchSoulOutput, context: SoulCoreContext, _metrics?: Metrics, _report?: Report,
+  async matchSoul(input: MatchSoulInput, output: MatchSoulOutput, context: SoulCoreContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
-    const { agent_id, context_id, run_id, task_content, task_domain } = input;
-    if (!agent_id) {
+    if (!input.agent_id) {
       throw new ValidationError('matchSoul 需要提供 agent_id');
     }
+    const funnel = createComponentFunnelTrace('soul', input.agent_id);
+    const detail = await this.soMatchSoulRoute(input, output, context, metrics, funnel);
+    pushComponentFunnel(report, funnel, detail);
+    return true;
+  }
 
-    
-    if (input.bound_soul_id) {
-      const soulRecord = await this.getSoulById(input.bound_soul_id);
-      output.soul_id = input.bound_soul_id;
+  private async checkBoundSoul(input: MatchSoulInput, output: MatchSoulOutput, funnel: ComponentFunnelTrace): Promise<boolean> {
+    if (!input.bound_soul_id) return false;
+    const soulRecord = await this.getSoulById(input.bound_soul_id);
+    output.soul_id = input.bound_soul_id;
+    output.soul = soulRecord;
+    output.from_cache = true;
+    funnel.addDirect('绑定事实源', [{ id: input.bound_soul_id, name: String(soulRecord?.soul_brief ?? input.bound_soul_id), score: 100 }]);
+    return true;
+  }
+
+  private async checkCachedSoul(output: MatchSoulOutput, cachedSoulId: string, funnel: ComponentFunnelTrace): Promise<boolean> {
+    if (!cachedSoulId) return false;
+    const soulRecord = await this.hydrateSoulOrClear(cachedSoulId);
+    if (soulRecord) {
+      output.soul_id = cachedSoulId;
       output.soul = soulRecord;
       output.from_cache = true;
+      funnel.addDirect('匹配缓存命中', [{ id: cachedSoulId, name: String(soulRecord.soul_brief ?? cachedSoulId), score: 100 }]);
       return true;
     }
+    this.matchCache.clear();
+    return false;
+  }
 
-    
-    const cached = input.bypass_cache
-      ? { record: null, query: await this.matchCache.embedOf(task_content ?? '', (t) => this.embedTask(t, context)) }
-      : await this.matchCache.lookup(task_content ?? '', (t) => this.embedTask(t, context));
-    const cachedSoulId = cached.record?.result[0]?.id ?? '';
-    if (cachedSoulId) {
-      const soulRecord = await this.hydrateSoulOrClear(cachedSoulId);
-      if (soulRecord) {
-        output.soul_id = cachedSoulId;
-        output.soul = soulRecord;
-        output.from_cache = true;
-        return true;
-      }
-      this.matchCache.clear();
+  private async soMatchSoulRoute(
+    input: MatchSoulInput,
+    output: MatchSoulOutput,
+    context: SoulCoreContext,
+    metrics: Metrics | undefined,
+    funnel: ComponentFunnelTrace,
+  ): Promise<string> {
+
+    if (await this.checkBoundSoul(input, output, funnel)) {
+      return 'bound';
     }
 
-    const config = await this.getCoreConfig();
-    
+    const cached = input.bypass_cache
+      ? { record: null, query: await this.matchCache.embedOf(input.task_content ?? '', (t) => this.embedTask(t, context)) }
+      : await this.matchCache.lookup(input.task_content ?? '', (t) => this.embedTask(t, context));
+    const cachedSoulId = cached.record?.result[0]?.id ?? '';
+    if (await this.checkCachedSoul(output, cachedSoulId, funnel)) {
+      return 'cache_hit';
+    }
+
     const soOutput = new SoSoulOutput();
     await this.soulAccess.soSoul(
       { conditions: [{ field: 'enable', operator: Operator.EQ, value: 1 }] },
@@ -118,26 +164,119 @@ export class SoulCoreService {
     );
     const availableSouls = soOutput.list;
 
-    
-    
-    let selectedSoulId = '';
-    if (availableSouls.length > 0) {
-      selectedSoulId = await this.rankSoulsByLLM(
-        agent_id, context_id, run_id, task_content, task_domain, availableSouls, config, context,
-      );
+    if (input.bypass_cache) {
+      await this.soulExhaustTerminal(input, output, availableSouls, cached.query ?? [], context, funnel);
+      return output.detail || 'soul_exhausted';
     }
-    if (!selectedSoulId) {
-      selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, run_id, task_content, task_domain, context);
-    }
+    const adapter = this.soulElectionAdapter(input, output, availableSouls, cached.query ?? [], context, funnel);
+    await runComponentElection(adapter, input, output);
+    return output.detail || 'election_soul_done';
+  }
 
+  /** Soul 选举适配器（单选择优；终端=大模型动态生成全新 Soul） */
+  private soulElectionAdapter(
+    input: MatchSoulInput, output: MatchSoulOutput,
+    availableSouls: Array<{ id: string; soul_brief: string; soul_usage?: string }>,
+    queryEmbedding: number[], context: Context, funnel?: ComponentFunnelTrace,
+  ): ComponentElectionAdapter<{ id: string; soul_brief: string; soul_usage?: string }> {
+    return {
+      component: 'soul',
+      multiSelect: false,
+      directAdoptSingle: false,
+      funnel,
+      findReusable: async () => null,
+      extractSignals: () => this.soulExtractSignals(input, availableSouls, queryEmbedding, context, funnel),
+      tiers: () => standardTierLadder(),
+      select: async (_i, _o, picked, tier) => {
+        await this.adoptFunnelSoul(output, input.task_content ?? '', queryEmbedding, picked[0].id, context, `election_soul_${tier.id}`, Math.round(picked[0].vectorScore));
+        return true;
+      },
+      exhaust: async () => this.soulExhaustTerminal(input, output, availableSouls, queryEmbedding, context, funnel),
+    };
+  }
+
+  /** 信号提取（并行）：合法集 + BM25/向量双通道；结构信号弃权（Soul 无复杂度适配元数据） */
+  private async soulExtractSignals(
+    input: MatchSoulInput,
+    availableSouls: Array<{ id: string; soul_brief: string; soul_usage?: string }>,
+    queryEmbedding: number[], context: Context, funnel?: ComponentFunnelTrace,
+  ): Promise<ElectionSignals<{ id: string; soul_brief: string; soul_usage?: string }>> {
+    const overrides = await loadElectionThresholdOverrides(this.relationDb, 'soul');
+    const thresholds: ElectionThresholds = { ...DEFAULT_ELECTION_THRESHOLDS, ...overrides };
+    const docs = availableSouls.map((s) => ({
+      id: String(s.id ?? ''), name: '',
+      brief: [s.soul_brief, s.soul_usage].filter(Boolean).join(' '),
+    }));
+    const docOf = new Map(docs.map((d) => [d.id, availableSouls.find((s) => String(s.id ?? '') === d.id)]));
+    const embedding = queryEmbedding.length > 0 ? queryEmbedding : await this.embedTask(input.task_content ?? '', context).catch(() => []);
+    const [bm25Ranking, vectorRanking] = await Promise.all([
+      this.soulBm25Signal(input.task_content ?? '', docs, funnel),
+      this.soulVectorSignal(embedding, docs, context, funnel),
+    ]);
+    const candidates = docs.map((d) => ({
+      id: d.id, label: d.brief.slice(0, 40) || d.id,
+      doc: docOf.get(d.id) as { id: string; soul_brief: string; soul_usage?: string },
+      bm25Score: 0, vectorScore: 0, exampleSim: 0, negativeSim: 0, rejectedByNegative: false,
+    }));
+    applySignalScores(candidates, bm25Ranking, vectorRanking);
+    return { candidates, complexity: analyzeTaskComplexity({ text: input.task_content ?? '' }), structureIds: new Set<string>(), thresholds };
+  }
+
+  /** BM25 信号（并行支路）：正/负范例双向增强后全量排序，登记漏斗明细 */
+  private async soulBm25Signal(taskContent: string, docs: Array<{ id: string; name: string; brief: string }>, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    const examples = await batchGetComponentExamples({
+      relationDb: this.relationDb, table: SOUL_EXAMPLE_EMBEDDING_TABLE,
+      targetIdField: 'soul_id', targetIds: docs.map((d) => d.id),
+    });
+    const ranking = funnelBm25Ranking(taskContent, docs, toFunnelBm25Options(examples));
+    funnel?.addMechanism({
+      mechanism: 'bm25', label: FUNNEL_MECHANISM_LABELS.bm25, adopted: ranking.some((e) => e.score >= 90 && !e.rejected),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.brief.slice(0, 40) || e.doc.id, score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 向量信号（并行支路）：语义路由器（描述向量+正/负范例向量）全量排序，登记漏斗明细 */
+  private async soulVectorSignal(queryEmbedding: number[], docs: Array<{ id: string; name: string; brief: string }>, context: Context, funnel?: ComponentFunnelTrace): Promise<FunnelRankingEntry<{ id: string; name: string; brief: string }>[]> {
+    if (!queryEmbedding || queryEmbedding.length === 0) return [];
+    const items = docs.map((d) => ({ id: d.id, text: buildFunnelDocText(d.name, d.brief) }));
+    const [precomputed, dualExamples] = await Promise.all([
+      batchGetOrComputeEmbeddings({
+        relationDb: this.relationDb, table: SOUL_EMBEDDING_TABLE, targetIdField: 'soul_id',
+        items, embedFn: (t, ctx) => this.embedTask(t, ctx), context,
+      }),
+      batchGetDualExampleEmbeddings({
+        relationDb: this.relationDb, table: SOUL_EXAMPLE_EMBEDDING_TABLE, targetIdField: 'soul_id',
+        targetIds: docs.map((d) => d.id),
+      }),
+    ]);
+    const ranking = await funnelSemanticRouterRanking(
+      queryEmbedding, docs, (d) => this.embedTask(buildFunnelDocText(d.name, d.brief), context),
+      precomputed, dualExamples.positiveMap, dualExamples.negativeMap,
+    );
+    funnel?.addMechanism({
+      mechanism: 'vector', label: FUNNEL_MECHANISM_LABELS.vector, adopted: ranking.some((e) => !e.rejected && e.score >= 80),
+      candidates: ranking.map((e) => ({ id: e.doc.id, name: e.doc.brief.slice(0, 40) || e.doc.id, score: e.score, reason: funnelNegativeReason(e) })),
+    });
+    return ranking;
+  }
+
+  /** 阶梯耗尽终端：知识库无合适人格，跳过 LLM 排序打分，直接大模型动态生成全新 Soul（规格 3.4.3） */
+  private async soulExhaustTerminal(
+    input: MatchSoulInput, output: MatchSoulOutput,
+    _availableSouls: Array<{ id: string; soul_brief: string; soul_usage?: string }>,
+    cachedQuery: number[], context: Context, funnel?: ComponentFunnelTrace,
+  ): Promise<boolean> {
+    const { agent_id, context_id, run_id, task_content, task_domain } = input;
+    const selectedSoulId = await this.generateAndAddSoul(agent_id, context_id, run_id, task_content, task_domain, context, funnel);
     const soulRecord = await this.getSoulById(selectedSoulId);
-    
     if (selectedSoulId) {
-      await this.commitMatchCache(task_content ?? '', cached.query, selectedSoulId, context);
+      await this.commitMatchCache(task_content ?? '', cachedQuery, selectedSoulId, context);
     }
     output.soul_id = selectedSoulId;
     output.soul = soulRecord;
     output.from_cache = false;
+    output.detail = selectedSoulId ? 'generated' : 'empty';
     return true;
   }
 
@@ -206,9 +345,10 @@ export class SoulCoreService {
     for (const rule of rules) {
       const since = IdGenerator.now() - Number(rule.days) * 24 * 60 * 60 * 1000;
       const minUsage = Number(rule.min_usage_count);
+      // ADR-012: stale 检测改查 usage_event_record 事件流水，原 SUM(usage_count) 语义等价于 COUNT(*)
       const rows = this.relationDb.queryRaw<{ agent_id: string; soul_id: string; total: number }>(
-        `SELECT "agent_id", "soul_id", SUM("usage_count") AS total FROM "${SOUL_CORE_USAGE_TABLE}"
-         WHERE "created" >= ? GROUP BY "agent_id", "soul_id" HAVING SUM("usage_count") < ?`,
+        `SELECT "agent_id", "entity_id" AS "soul_id", COUNT(*) AS "total" FROM "${USAGE_EVENT_TABLE}"
+         WHERE "entity_type" = 'soul' AND "created" >= ? GROUP BY "agent_id", "entity_id" HAVING COUNT(*) < ?`,
         [since, minUsage],
       );
       for (const row of rows ?? []) {
@@ -428,6 +568,26 @@ export class SoulCoreService {
 
   
 
+  private async adoptFunnelSoul(
+    output: MatchSoulOutput,
+    taskContent: string,
+    queryEmbedding: number[],
+    soulId: string,
+    context: Context,
+    detail: string,
+    score: number,
+    metrics?: Metrics,
+  ): Promise<void> {
+    const soulRecord = await this.hydrateSoulOrClear(soulId);
+    if (!soulRecord) return;
+    await this.commitMatchCache(taskContent, queryEmbedding, soulId, context);
+    output.soul_id = soulId;
+    output.soul = soulRecord;
+    output.from_cache = false;
+    output.detail = detail;
+    metrics?.info('Soul 漏斗命中（免 LLM）', { soul_id: soulId, detail, score });
+  }
+
   private async generateAndAddSoul(
     agentId: string,
     contextId: string,
@@ -435,6 +595,7 @@ export class SoulCoreService {
     taskContent?: string,
     taskDomain?: string,
     matchCtx?: Context,
+    funnel?: ComponentFunnelTrace,
   ): Promise<string> {
     const config = await this.getCoreConfig();
     const llmId = config?.llm_id || '';
@@ -450,7 +611,8 @@ export class SoulCoreService {
       '',
       '请依据任务领域与内容，生成与该任务高度契合的角色设定（例如旅游规划任务应生成旅游顾问角色，而非通用编码助手）。',
       '请以 JSON 格式返回，包含以下字段：',
-      '  - soul_brief: 简短的 Soul 名称/标题（一行）',
+      '  - soul_brief: Soul 检索摘要（30~80 字，用于组件匹配召回）：格式为「角色定位｜核心能力｜优势方向｜适用场景」。必须具体、与角色贴切、包含该角色最擅长处理的任务类型关键词；禁止只写角色名或泛化称呼（如"编码助手"不合格，"专精 Vue3 与 Node.js 全栈的一线架构师，擅长排查构建卡点与性能瓶颈，适用于前端工程化任务"合格）',
+      '  - soul_title: Soul 名称/标题（一行）',
       '  - soul_content: 完整的 Soul 角色设定内容',
       '  - soul_usage: Soul 适用场景描述',
       '',
@@ -486,7 +648,7 @@ export class SoulCoreService {
     await this.soulAccess.addSoul(
       {
         data: {
-          soul_brief: this.asTrimmedString(parsed.soul_brief) || '自动生成的 Soul',
+          soul_brief: this.asTrimmedString(parsed.soul_brief) || this.asTrimmedString(parsed.soul_title) || '自动生成的 Soul',
           soul_content: this.asTrimmedString(parsed.soul_content) || '乐于助人的 AI 助手。',
           soul_usage: this.asTrimmedString(parsed.soul_usage) || '通用对话、信息查询、任务辅助',
         },
@@ -494,6 +656,14 @@ export class SoulCoreService {
       addOutput, new SoulContext(),
     );
 
+    funnel?.addMechanism({
+      mechanism: 'llm',
+      label: '大模型生成 (无匹配命中)',
+      adopted: true,
+      prompt: clipFunnelText(generationPrompt),
+      output: clipFunnelText(JSON.stringify(parsed, null, 2)),
+      candidates: [{ id: addOutput.id, name: this.asTrimmedString(parsed.soul_brief) || addOutput.id, score: 100 }],
+    });
     return addOutput.id;
   }
 
@@ -508,93 +678,6 @@ export class SoulCoreService {
 
   
 
-  private async rankSoulsByLLM(
-    agentId: string,
-    contextId: string,
-    runId: string,
-    taskContent: string | undefined,
-    taskDomain: string | undefined,
-    availableSouls: Array<{ id: string; soul_brief: string; soul_usage?: string }>,
-    config: SoulCoreConfigRecord | null,
-    matchCtx?: Context,
-  ): Promise<string> {
-    const selectionVariables = {
-      agent_id: agentId,
-      context_id: contextId,
-      run_id: runId,
-      task_content: taskContent || '',
-      task_domain: taskDomain || '',
-      available_souls: JSON.stringify(availableSouls.map((s) => ({
-        id: s.id,
-        soul_brief: s.soul_brief,
-        soul_usage: s.soul_usage ?? '',
-      }))),
-    };
-    const templateId = config?.prompt_template_id || await this.soMatchPromptTemplateId();
-    const selectionPrompt = await this.renderMatchPrompt(
-      templateId,
-      selectionVariables,
-    );
-    const llmId = config?.llm_id || '';
-    const result = await this.soRankLLM({
-      id: llmId,
-      prompt: selectionPrompt,
-      temperature: 0.1,
-      max_tokens: 256,
-    }, matchCtx);
-    const threshold = config?.score_threshold ?? ScoreThreshold.Default;
-    const candidates = parseRankingCandidates(result);
-    const filtered = filterByThreshold(candidates, threshold);
-    return filtered[0]?.id ?? '';
-  }
-
-  
-  private async soMatchPromptTemplateId(): Promise<string> {
-    const row = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.LIKE, value: '%Soul 匹配%' },
-    ]);
-    if (row && row.id) return String(row.id);
-    const anyRow = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'enable', operator: Operator.EQ, value: 1 },
-    ]);
-    if (anyRow && anyRow.id) return String(anyRow.id);
-    throw new ProcessingError('未找到 Soul 匹配提示词模板');
-  }
-
-  
-
-  private async renderMatchPrompt(templateId: string, variables: Record<string, unknown>): Promise<string> {
-    const execPromptOutput = new ExecPromptOutput();
-    await this.promptsAccess.execPrompt(
-      { id: templateId, variables } as ExecPromptInput,
-      execPromptOutput, new PromptContext(),
-    );
-    if (execPromptOutput.prompt) {
-      return execPromptOutput.prompt;
-    }
-    throw new ProcessingError(`Prompt 模板不可用或渲染为空: ${templateId}`);
-  }
-
-  
-
-    private async soRankLLM(input: ExecLLMInput, matchCtx?: Context): Promise<string> {
-    
-    input.session_id = input.session_id || matchCtx?.session_id || '';
-    input.run_id = input.run_id || matchCtx?.run_id || '';
-    input.work_id = input.work_id || matchCtx?.work_id || '';
-    input.caller = 'SoulCoreService.rankSouls';
-    
-    input.extra = { ...(input.extra ?? {}), thinking: { type: 'disabled' } };
-    const execLLMOutput = new ExecLLMOutput();
-    try {
-      const ok = await this.llmAccess.execLLM(input, execLLMOutput, matchCtx ?? new LLMContext());
-      return ok ? (execLLMOutput.result ?? '') : '';
-    } catch {
-      return '';
-    }
-  }
-
-  
   private async commitMatchCache(taskContent: string, embedding: number[] | null, soulId: string, matchCtx?: Context): Promise<void> {
     if (!soulId) {
       return;
@@ -682,17 +765,13 @@ export class SoulCoreService {
   
 
   
+  /** ADR-012: 统一经 TraceService 记录 Soul 使用事件（事件流水 + soul_usage_org 日聚合） */
   private async recordSoulCoreUsage(agentId: string, soulId: string): Promise<void> {
-    const now = IdGenerator.now();
-    await this.relationDb.insert(SOUL_CORE_USAGE_TABLE, [
-      { field: 'id', value: IdGenerator.generate() },
-      { field: 'created', value: now },
-      { field: 'updated', value: now },
-      { field: 'agent_id', value: agentId },
-      { field: 'soul_id', value: soulId },
-      { field: 'usage_date', value: new Date().toISOString().slice(0, 10) },
-      { field: 'usage_count', value: 1 },
-    ]);
+    const usageInput = new RecordUsageInput();
+    usageInput.entity_type = 'soul';
+    usageInput.entity_id = soulId;
+    usageInput.agent_id = agentId;
+    await this.trace.recordUsage(usageInput, new RecordUsageOutput(), new SoulCoreContext());
   }
 
   

@@ -29,7 +29,7 @@ function mapRecord(row: Record<string, unknown>): FeedbackRecord {
     id: String(row.id),
     created: Number(row.created),
     updated: Number(row.updated),
-    feedback_id: String(row.feedback_id),
+    feedback_id: String(row.id),
     source: String(row.source) as FeedbackRecord['source'],
     agent_id: String(row.agent_id ?? ''),
     work_id: String(row.work_id ?? ''),
@@ -47,8 +47,8 @@ function mapProcessLog(row: Record<string, unknown>): FeedbackProcessLogRecord {
     id: String(row.id),
     created: Number(row.created),
     updated: Number(row.updated),
-    process_id: String(row.process_id),
-    feedback_id: String(row.feedback_id ?? ''),
+    process_id: String(row.id),
+    feedback_id: String(row.feedback_id ?? row.id ?? ''),
     action: String(row.action ?? 'submitted') as ProcessAction,
     agent_id: String(row.agent_id ?? ''),
     run_id: String(row.run_id ?? ''),
@@ -174,7 +174,7 @@ export class FeedbackService {
       const feedbackMap = new Map<string, FeedbackRecord>();
       if (feedbackIds.length > 0) {
         const feedbackRows = await this.relationDb.select(FEEDBACK_RECORD_TABLE, {
-          conditions: [{ field: 'feedback_id', operator: Operator.IN, value: feedbackIds }],
+          conditions: [{ field: 'id', operator: Operator.IN, value: feedbackIds }],
         });
         for (const row of feedbackRows) {
           const record = mapRecord(row);
@@ -221,7 +221,7 @@ export class FeedbackService {
     _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     const logRow = await this.relationDb.selectOne(FEEDBACK_PROCESS_LOG_TABLE, [
-      { field: 'process_id', operator: Operator.EQ, value: input.process_id },
+      { field: 'id', operator: Operator.EQ, value: input.process_id },
     ]);
     if (!logRow) {
       output.error = '未找到记录';
@@ -233,7 +233,7 @@ export class FeedbackService {
 
     if (log.feedback_id) {
       const fbRow = await this.relationDb.selectOne(FEEDBACK_RECORD_TABLE, [
-        { field: 'feedback_id', operator: Operator.EQ, value: log.feedback_id },
+        { field: 'id', operator: Operator.EQ, value: log.feedback_id },
       ]);
       output.feedback = fbRow ? mapRecord(fbRow) : null;
     }
@@ -293,8 +293,8 @@ export class FeedbackService {
   ): Promise<boolean> {
     try {
       const orphanPredicate =
-        `(run_id = '' OR run_id NOT IN (SELECT id FROM runtime_run))` +
-        ` AND (work_id = '' OR work_id NOT IN (SELECT work_id FROM dialog WHERE work_id IS NOT NULL))`;
+        `(run_id = '' OR run_id NOT IN (SELECT id FROM runtime_run_record))` +
+        ` AND (work_id = '' OR work_id NOT IN (SELECT work_id FROM dialog_record WHERE work_id IS NOT NULL))`;
       let purged = 0;
       for (const table of [FEEDBACK_RECORD_TABLE, FEEDBACK_PROCESS_LOG_TABLE]) {
         const orphanRows = await this.relationDb.queryRaw<{ id: string }>(

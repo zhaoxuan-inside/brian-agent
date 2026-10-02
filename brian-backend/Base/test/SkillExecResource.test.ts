@@ -12,6 +12,7 @@ import {
   SKILL_USAGE_TABLE,
 } from '@brian-agent/base';
 import { Operator } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '../TraceBase/infrastructure/TraceSchemaInitializer';
 
 const COLLECT_PY = [
   'import json, os, shutil, time',
@@ -71,6 +72,7 @@ describe('SkillProvider.execSkill 真机资源采集（system-resource-report）
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brian-skill-res-'));
     relationDb = new RelationDBAccess({ dbPath: path.join(tempDir, 'test.db') });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     skillAccess = new SkillAccess(relationDb);
     await skillAccess.initialize();
     const addOut = new AddSkillOutput();

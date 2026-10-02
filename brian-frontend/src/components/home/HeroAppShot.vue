@@ -171,12 +171,12 @@ onUnmounted(clearTimers)
 </script>
 
 <template>
-  <div ref="rootEl" class="select-none" :class="{ on: entered }" role="img" aria-label="Brian-Agent 对话页演示：左侧 ChatMap 记忆地图为整齐两列网格，假鼠标演示勾选多条消息与 Pin 钉住，右侧回答基于所选消息生成">
-    <div class="rounded-xl overflow-hidden bg-[#161619] border border-white/[.08] shadow-2xl">
-      <div class="flex items-center px-4 h-10 bg-[#1C1C1F] border-b border-white/[.06]">
-        <span class="text-sm font-bold text-brian-blue">Brian</span>
-        <div class="ml-auto flex items-center gap-3 text-apple-gray-500">
-          <MessageSquare :size="13" class="!text-brian-blue" />
+  <div ref="rootEl" class="hero-shot theme-chat select-none" :class="{ on: entered }" role="img" aria-label="Brian-Agent 对话页演示：左侧 ChatMap 记忆地图为整齐两列网格，假鼠标演示勾选多条消息与 Pin 钉住，右侧回答基于所选消息生成">
+    <div class="hs-shell rounded-xl overflow-hidden shadow-2xl">
+      <div class="flex items-center px-4 h-10 hs-topbar">
+        <span class="text-sm font-bold text-chat-primary">Brian</span>
+        <div class="ml-auto flex items-center gap-3 text-chat-ink-tertiary">
+          <MessageSquare :size="13" class="!text-chat-primary" />
           <Brain :size="13" />
           <BookOpen :size="13" />
           <BarChart3 :size="13" />
@@ -188,14 +188,14 @@ onUnmounted(clearTimers)
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-[1.42fr_1fr] md:divide-x divide-y md:divide-y-0 divide-white/[.06]">
+      <div class="grid grid-cols-1 md:grid-cols-[1.42fr_1fr] md:divide-x divide-y md:divide-y-0 divide-chat-hairline">
         <svg viewBox="0 0 640 620" class="w-full h-auto block">
           <defs>
             <marker id="hf-arrow" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
-              <path d="M0.5,1 L7,4 L0.5,7 Z" fill="rgba(10,132,255,0.55)" stroke="none" />
+              <path class="hf-arrow" d="M0.5,1 L7,4 L0.5,7 Z" />
             </marker>
             <pattern id="hf-dots" width="26" height="26" patternUnits="userSpaceOnUse">
-              <circle cx="1.4" cy="1.4" r="1.4" fill="rgba(255,255,255,0.035)" />
+              <circle class="hf-dotcell" cx="1.4" cy="1.4" r="1.4" />
             </pattern>
           </defs>
           <rect width="640" height="620" fill="url(#hf-dots)" />
@@ -282,13 +282,13 @@ onUnmounted(clearTimers)
           </g>
         </svg>
 
-        <div class="bg-[#1B1B1E] flex flex-col min-h-0">
+        <div class="hs-chatcol flex flex-col min-h-0">
           <div class="flex-1 p-3 space-y-2.5">
             <template v-for="(m, mi) in chatCards" :key="mi">
               <div v-if="m.who === 'user'" class="hc-msg flex items-start gap-2" style="animation-delay: 0.5s">
                 <span class="hc-avatar"><User :size="11" /></span>
                 <div class="hc-card flex-1">
-                  <div class="flex items-center text-[9.5px] text-apple-gray-500">
+                  <div class="flex items-center text-[9.5px] text-chat-ink-tertiary">
                     13:48
                     <span class="ml-auto flex items-center gap-2">
                       <i class="hc-check" />
@@ -299,10 +299,10 @@ onUnmounted(clearTimers)
                     </span>
                   </div>
                   <p class="hc-fold">▸ 摘要 <span class="ml-2">▾ 原文</span></p>
-                  <p class="text-2xs font-semibold text-apple-gray-100">{{ m.title }}</p>
+                  <p class="text-2xs font-semibold text-chat-ink">{{ m.title }}</p>
                   <div class="hc-chips">
                     <span v-for="c in m.chips" :key="c.label" class="hc-chip" :class="c.kind">{{ c.label }} <ChevronDown :size="8" class="inline" /></span>
-                    <span class="ml-auto text-[9px] text-apple-gray-600">{{ m.chars }}</span>
+                    <span class="ml-auto text-[9px] text-chat-ink-tertiary">{{ m.chars }}</span>
                   </div>
                 </div>
               </div>
@@ -310,15 +310,15 @@ onUnmounted(clearTimers)
               <div v-else class="hc-msg" :style="{ animationDelay: (mi === 0 ? 0.15 : 0.85) + 's' }">
                 <div class="hc-card" :class="{ 'hc-answered': answerReady && mi === 2 }">
                   <span v-if="answerReady && mi === 2" class="hc-badge">✓ 基于勾选 2 条 + 钉住 1 条生成</span>
-                  <p v-if="m.title" class="text-2xs font-semibold text-apple-gray-100 mb-1">{{ m.title }}</p>
-                  <p v-for="(line, li) in m.lines" :key="li" class="text-4xs leading-[1.6] text-apple-gray-300">{{ line }}</p>
+                  <p v-if="m.title" class="text-2xs font-semibold text-chat-ink mb-1">{{ m.title }}</p>
+                  <p v-for="(line, li) in m.lines" :key="li" class="text-4xs leading-[1.6] text-chat-ink-subtle">{{ line }}</p>
                   <div class="hc-chips mt-1.5">
                     <span v-for="c in m.chips" :key="c.label" class="hc-chip" :class="c.kind">
                       <Brain v-if="c.label === '思考过程'" :size="8" class="inline" />
                       <Gauge v-if="c.label === '评估结果'" :size="8" class="inline" />
                       {{ c.label }} <ChevronDown v-if="c.kind !== 'eval'" :size="8" class="inline" />
                     </span>
-                    <span class="ml-auto inline-flex items-center gap-1 text-[9px] text-apple-gray-600"><Copy :size="8" />复制 TraceId · {{ m.chars }}</span>
+                    <span class="ml-auto inline-flex items-center gap-1 text-[9px] text-chat-ink-tertiary"><Copy :size="8" />复制 TraceId · {{ m.chars }}</span>
                   </div>
                 </div>
               </div>
@@ -327,10 +327,10 @@ onUnmounted(clearTimers)
 
           <div class="p-3 pt-1">
             <div class="hc-input">
-              <Paperclip :size="12" class="text-apple-gray-500" />
-              <span class="text-2xs text-apple-gray-500">输入消息...</span>
+              <Paperclip :size="12" class="text-chat-ink-tertiary" />
+              <span class="text-2xs text-chat-ink-tertiary">输入消息...</span>
               <i class="hc-cursor" />
-              <Send :size="13" class="ml-auto text-brian-blue" />
+              <Send :size="13" class="ml-auto text-chat-primary" />
             </div>
           </div>
         </div>
@@ -340,78 +340,84 @@ onUnmounted(clearTimers)
 </template>
 
 <style scoped>
+/* 演示实例(ADR-016):根挂 theme-chat,全部取值走 chat 令牌变量,随明暗开关双模式 */
+.hs-shell { background: rgb(var(--chat-canvas)); border: 1px solid rgb(var(--chat-hairline-strong)); }
+.hs-topbar { background: rgb(var(--chat-surface-1)); border-bottom: 1px solid rgb(var(--chat-hairline)); }
+.hs-chatcol { background: rgb(var(--chat-canvas)); }
+.hf-arrow { fill: rgb(var(--chat-primary) / 0.55); stroke: none; }
+.hf-dotcell { fill: rgb(var(--chat-ink) / 0.05); }
 .hf-in { opacity: 0; animation: hf-in 0.6s ease forwards; }
 .hf-float { animation: hf-floaty 7s ease-in-out infinite alternate; }
-.hf-card { fill: #232327; stroke: #3A3A3E; stroke-width: 1; transition: stroke 0.3s; }
-.hf-card.on-check { stroke: rgba(10, 132, 255, 0.8); }
-.hf-card.on-pin { stroke: rgba(255, 159, 10, 0.7); }
-.hf-time { fill: #6E6E73; font-size: 8.5px; }
-.hf-title { fill: #E5E5EA; font-size: 11.5px; font-weight: 600; }
-.hf-sub { fill: #98989D; font-size: 9px; }
+.hf-card { fill: rgb(var(--chat-surface-1)); stroke: rgb(var(--chat-hairline)); stroke-width: 1; transition: stroke 0.3s; }
+.hf-card.on-check { stroke: rgb(var(--chat-primary) / 0.8); }
+.hf-card.on-pin { stroke: rgb(var(--chat-warning) / 0.7); }
+.hf-time { fill: rgb(var(--chat-ink-tertiary)); font-size: 8.5px; }
+.hf-title { fill: rgb(var(--chat-ink)); font-size: 11.5px; font-weight: 600; }
+.hf-sub { fill: rgb(var(--chat-ink-subtle)); font-size: 9px; }
 
-.hf-check rect { fill: none; stroke: #5A5A5F; stroke-width: 1.1; transition: 0.2s; }
-.hf-check.on rect { fill: #0A84FF; stroke: #0A84FF; }
-.hf-check-mark { stroke: #fff; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transform: scale(0.4); transform-box: fill-box; transform-origin: center; transition: 0.25s 0.05s; }
+.hf-check rect { fill: none; stroke: rgb(var(--chat-hairline-strong)); stroke-width: 1.1; transition: 0.2s; }
+.hf-check.on rect { fill: rgb(var(--chat-primary)); stroke: rgb(var(--chat-primary)); }
+.hf-check-mark { stroke: rgb(var(--chat-on-primary)); stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transform: scale(0.4); transform-box: fill-box; transform-origin: center; transition: 0.25s 0.05s; }
 .hf-check.on .hf-check-mark { opacity: 1; transform: none; }
 .hf-pinbtn-bg { fill: transparent; transition: 0.2s; }
-.hf-pinbtn-glyph { stroke: #6E6E73; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: 0.2s; }
-.hf-pinbtn.on .hf-pinbtn-bg { fill: rgba(255, 159, 10, 0.16); }
-.hf-pinbtn.on .hf-pinbtn-glyph { stroke: #FF9F0A; }
-.hf-pinbtn-ring { fill: none; stroke: rgba(255, 69, 58, 0.85); stroke-width: 1.4; animation: hf-pulse 1.6s ease-in-out infinite; }
+.hf-pinbtn-glyph { stroke: rgb(var(--chat-ink-tertiary)); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: 0.2s; }
+.hf-pinbtn.on .hf-pinbtn-bg { fill: rgb(var(--chat-warning) / 0.16); }
+.hf-pinbtn.on .hf-pinbtn-glyph { stroke: rgb(var(--chat-warning)); }
+.hf-pinbtn-ring { fill: none; stroke: rgb(var(--chat-error) / 0.85); stroke-width: 1.4; animation: hf-pulse 1.6s ease-in-out infinite; }
 
-.hf-status rect { fill: rgba(255, 255, 255, 0.05); stroke: rgba(255, 255, 255, 0.1); transition: 0.3s; }
-.hf-status text { fill: #6E6E73; font-size: 10px; transition: 0.3s; }
-.hf-status-dot { fill: #5A5A5F; transition: 0.3s; }
-.hf-status.active rect { fill: rgba(10, 132, 255, 0.12); stroke: rgba(10, 132, 255, 0.4); }
-.hf-status.active text { fill: #6DB2FF; }
-.hf-status.active .hf-status-dot { fill: #0A84FF; }
+.hf-status rect { fill: rgb(var(--chat-ink) / 0.04); stroke: rgb(var(--chat-hairline)); transition: 0.3s; }
+.hf-status text { fill: rgb(var(--chat-ink-tertiary)); font-size: 10px; transition: 0.3s; }
+.hf-status-dot { fill: rgb(var(--chat-hairline-strong)); transition: 0.3s; }
+.hf-status.active rect { fill: rgb(var(--chat-primary) / 0.1); stroke: rgb(var(--chat-primary) / 0.4); }
+.hf-status.active text { fill: rgb(var(--chat-primary-hover)); }
+.hf-status.active .hf-status-dot { fill: rgb(var(--chat-primary)); }
 
 .hf-tip { opacity: 0; transition: opacity 0.35s ease, transform 0.35s ease; }
 .hf-tip.show { opacity: 1; }
-.hf-tip-box { fill: rgba(10, 132, 255, 0.14); stroke: rgba(10, 132, 255, 0.45); stroke-width: 1; }
-.hf-tip-box.amber { fill: rgba(255, 159, 10, 0.13); stroke: rgba(255, 159, 10, 0.45); }
-.hf-tip-txt { font-size: 10.5px; text-anchor: middle; fill: #6DB2FF; }
-.hf-tip-txt.amber { fill: #FFB84D; }
+.hf-tip-box { fill: rgb(var(--chat-primary) / 0.12); stroke: rgb(var(--chat-primary) / 0.45); stroke-width: 1; }
+.hf-tip-box.amber { fill: rgb(var(--chat-warning) / 0.12); stroke: rgb(var(--chat-warning) / 0.45); }
+.hf-tip-txt { font-size: 10.5px; text-anchor: middle; fill: rgb(var(--chat-primary-hover)); }
+.hf-tip-txt.amber { fill: rgb(var(--chat-warning)); }
 
-.hf-ripple { fill: none; stroke: rgba(10, 132, 255, 0.7); stroke-width: 1.6; transform-box: fill-box; transform-origin: center; animation: hf-ripple 0.55s ease-out forwards; }
+.hf-ripple { fill: none; stroke: rgb(var(--chat-primary) / 0.7); stroke-width: 1.6; transform-box: fill-box; transform-origin: center; animation: hf-ripple 0.55s ease-out forwards; }
 .hf-cursor { transition: transform 0.65s cubic-bezier(0.35, 0, 0.25, 1); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5)); }
 .hf-cursor-inner { transition: transform 0.12s ease; transform-origin: 0 0; }
 .hf-cursor-inner.pressing { transform: scale(0.82); }
-.hf-cursor-body { fill: #FAFAFC; stroke: rgba(20, 20, 24, 0.9); stroke-width: 1; stroke-linejoin: round; }
+.hf-cursor-body { fill: #ffffff; stroke: rgb(var(--chat-ink) / 0.9); stroke-width: 1; stroke-linejoin: round; }
 
-.hf-chip.blue { fill: rgba(10, 132, 255, 0.16); }
-.hf-chip.gray { fill: rgba(255, 255, 255, 0.09); }
-.hf-chip.eval { fill: rgba(255, 159, 10, 0.16); }
-.hf-chip.lit { fill: #0A84FF; }
+.hf-chip.blue { fill: rgb(var(--chat-primary) / 0.14); }
+.hf-chip.gray { fill: rgb(var(--chat-ink) / 0.06); }
+.hf-chip.eval { fill: rgb(var(--chat-warning) / 0.14); }
+.hf-chip.lit { fill: rgb(var(--chat-primary)); }
 .hf-chip-txt { font-size: 8px; text-anchor: middle; pointer-events: none; }
-.hf-chip-txt.blue { fill: #6DB2FF; }
-.hf-chip-txt.gray { fill: #B8B8BD; }
-.hf-chip-txt.eval { fill: #FFB84D; }
-.hf-chip-txt.lit { fill: #fff; font-weight: 600; }
-.hf-chars { fill: #5E5E63; font-size: 8.5px; }
+.hf-chip-txt.blue { fill: rgb(var(--chat-primary-hover)); }
+.hf-chip-txt.gray { fill: rgb(var(--chat-ink-subtle)); }
+.hf-chip-txt.eval { fill: rgb(var(--chat-warning)); }
+.hf-chip-txt.lit { fill: rgb(var(--chat-on-primary)); font-weight: 600; }
+.hf-chars { fill: rgb(var(--chat-ink-tertiary)); font-size: 8.5px; }
 
-.hf-edge { fill: none; stroke: rgba(10, 132, 255, 0.4); stroke-width: 1.3; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; }
-.hf-edge.solid { stroke: rgba(10, 132, 255, 0.58); stroke-width: 1.4; stroke-dasharray: 600; stroke-dashoffset: 600; }
-.hf-pulse { fill: #4DA3FF; filter: drop-shadow(0 0 3px rgba(10, 132, 255, 0.8)); }
+.hf-edge { fill: none; stroke: rgb(var(--chat-primary) / 0.4); stroke-width: 1.3; stroke-linecap: round; stroke-dasharray: 0.1 6.9; opacity: 0; }
+.hf-edge.solid { stroke: rgb(var(--chat-primary) / 0.55); stroke-width: 1.4; stroke-dasharray: 600; stroke-dashoffset: 600; }
+.hf-pulse { fill: rgb(var(--chat-primary)); filter: drop-shadow(0 0 3px rgba(204, 120, 92, 0.6)); }
 .on .hf-edge.solid { animation: hf-draw 1.3s ease forwards; }
 .on .hf-edge:not(.solid) { animation: hf-fadein 0.8s ease forwards, hf-flow 1.8s linear infinite; }
 
 .hc-msg { opacity: 0; }
 .on .hc-msg { animation: hc-up 0.6s ease forwards; }
-.hc-avatar { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: rgba(10, 132, 255, 0.18); color: #6DB2FF; display: grid; place-items: center; margin-top: 2px; }
-.hc-card { background: #232327; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; padding: 8px 10px; transition: border-color 0.4s, box-shadow 0.4s; }
-.hc-card.hc-answered { border-color: rgba(10, 132, 255, 0.55); box-shadow: 0 0 14px rgba(10, 132, 255, 0.18); }
-.hc-badge { display: inline-block; margin-bottom: 5px; padding: 2px 8px; border-radius: 999px; font-size: 9px; background: rgba(10, 132, 255, 0.16); color: #6DB2FF; border: 1px solid rgba(10, 132, 255, 0.4); animation: hc-up 0.4s ease; }
-.hc-check { display: inline-block; width: 9px; height: 9px; border: 1px solid #5A5A5F; border-radius: 2px; }
-.hc-ring { position: absolute; inset: -3px -4px; border: 1.2px solid rgba(255, 69, 58, 0.85); border-radius: 4px; animation: hf-pulse 2s infinite; }
-.hc-fold { font-size: 9px; color: #6E6E73; margin: 2px 0; }
+.hc-avatar { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: rgb(var(--chat-primary) / 0.16); color: rgb(var(--chat-primary-hover)); display: grid; place-items: center; margin-top: 2px; }
+.hc-card { background: rgb(var(--chat-surface-1)); border: 1px solid rgb(var(--chat-hairline)); border-radius: 10px; padding: 8px 10px; transition: border-color 0.4s, box-shadow 0.4s; }
+.hc-card.hc-answered { border-color: rgb(var(--chat-primary) / 0.55); box-shadow: 0 0 14px rgba(204, 120, 92, 0.2); }
+.hc-badge { display: inline-block; margin-bottom: 5px; padding: 2px 8px; border-radius: 999px; font-size: 9px; background: rgb(var(--chat-primary) / 0.12); color: rgb(var(--chat-primary-hover)); border: 1px solid rgb(var(--chat-primary) / 0.4); animation: hc-up 0.4s ease; }
+.hc-check { display: inline-block; width: 9px; height: 9px; border: 1px solid rgb(var(--chat-hairline-strong)); border-radius: 2px; }
+.hc-ring { position: absolute; inset: -3px -4px; border: 1.2px solid rgb(var(--chat-error) / 0.85); border-radius: 4px; animation: hf-pulse 2s infinite; }
+.hc-fold { font-size: 9px; color: rgb(var(--chat-ink-tertiary)); margin: 2px 0; }
 .hc-chips { display: flex; align-items: center; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
 .hc-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1.5px 6px; border-radius: 999px; font-size: 9px; }
-.hc-chip.blue { background: rgba(10, 132, 255, 0.14); color: #6DB2FF; }
-.hc-chip.gray { background: rgba(255, 255, 255, 0.08); color: #B8B8BD; }
-.hc-chip.eval { background: rgba(255, 159, 10, 0.14); color: #FFB84D; }
-.hc-input { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 999px; background: #232327; border: 1px solid rgba(255, 255, 255, 0.07); }
-.hc-cursor { display: inline-block; width: 1px; height: 12px; background: #32ADE6; animation: hf-blink 1s steps(1) infinite; }
+.hc-chip.blue { background: rgb(var(--chat-primary) / 0.12); color: rgb(var(--chat-primary-hover)); }
+.hc-chip.gray { background: rgb(var(--chat-ink) / 0.06); color: rgb(var(--chat-ink-subtle)); }
+.hc-chip.eval { background: rgb(var(--chat-warning) / 0.12); color: rgb(var(--chat-warning)); }
+.hc-input { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 999px; background: rgb(var(--chat-surface-1)); border: 1px solid rgb(var(--chat-hairline)); }
+.hc-cursor { display: inline-block; width: 1px; height: 12px; background: rgb(var(--chat-primary)); animation: hf-blink 1s steps(1) infinite; }
 
 @keyframes hf-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes hf-floaty { from { transform: translateY(0); } to { transform: translateY(-4px); } }

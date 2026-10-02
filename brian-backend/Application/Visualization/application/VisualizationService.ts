@@ -441,7 +441,7 @@ export class VisualizationService {
       info_type: r.type,
       info_creator_role: r.type === 'REQUEST' ? 'USER' : 'ASSISTANT',
       info: r.dialog,
-      info_length: r.dialog_length,
+      info_length: r.dialog_length !== undefined ? Number(r.dialog_length) : String(r.dialog ?? '').length,
       pin: pinSet.has(String(r.id)) ? 1 : 0,
       run_id: r.work_id,
       handle_result_type: '',
@@ -902,7 +902,7 @@ export class VisualizationService {
 
     try {
       for (const infoId of infoIds) {
-        const rows = await this.relationDb.select('info_summary', {
+        const rows = await this.relationDb.select('info_summary_record', {
           conditions: [{ field: 'info_id', operator: Operator.EQ, value: infoId }],
           fields: ['info_id', 'summary'],
         });
@@ -929,7 +929,7 @@ export class VisualizationService {
 
   private async resolveContextSourceInfo(infoId: string): Promise<Record<string, unknown>> {
     try {
-      const rows = await this.relationDb.select('info_context_config', {
+      const rows = await this.relationDb.select('info_context_config_record', {
         fields: ['id', 'base_timeline_count', 'base_tag_relative_count', 'base_similarity_count', 'base_keyword_count', 'base_random_count', 'total'],
       });
       return { config: rows[0] ?? {}, info_id: infoId };

@@ -46,6 +46,7 @@ FRONTEND_PORT=5173
 # CDT（浏览器自动化）自动启动默认关闭：省一个常驻 Chrome（~400-600MB），低内存开发机建议保持
 # 需要浏览器自动化时设 BRIAN_CDT_AUTO=1，或启动后在 /tool 页手动启动 CDT
 export BRIAN_CDT_AUTO="${BRIAN_CDT_AUTO:-0}"
+export BRIAN_DATA_DIR="${BRIAN_DATA_DIR:-$BACKEND_DIR/data}"
 
 BACKEND_LOG="/tmp/brian-backend.log"
 FRONTEND_LOG="/tmp/brian-frontend.log"
@@ -79,7 +80,7 @@ banner() {
 
 # 通过端口检测后端是否存活
 backend_alive() {
-  curl --noproxy "*" --connect-timeout 2 -m 3 -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/api/config/soul" 2>/dev/null | grep -q "200"
+  curl --noproxy "*" --connect-timeout 2 -m 3 -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null | grep -q "200"
   return $?
 }
 
@@ -91,20 +92,24 @@ frontend_alive() {
 
 # 获取后端 PID（多种方式检测）
 backend_pid() {
+  local p=$(lsof -ti :$BACKEND_PORT 2>/dev/null | head -1)
+  if [ -n "$p" ]; then echo "$p"; return; fi
   if [ -f "$BACKEND_PID_FILE" ]; then
     local pid=$(cat "$BACKEND_PID_FILE" 2>/dev/null)
     if kill -0 "$pid" 2>/dev/null; then echo "$pid"; return; fi
   fi
-  pgrep -f "tsx.*dev-server" 2>/dev/null | head -1
+  pgrep -f "dev-server" 2>/dev/null | head -1
 }
 
 # 获取前端 PID
 frontend_pid() {
+  local p=$(lsof -ti :$FRONTEND_PORT 2>/dev/null | head -1)
+  if [ -n "$p" ]; then echo "$p"; return; fi
   if [ -f "$FRONTEND_PID_FILE" ]; then
     local pid=$(cat "$FRONTEND_PID_FILE" 2>/dev/null)
     if kill -0 "$pid" 2>/dev/null; then echo "$pid"; return; fi
   fi
-  pgrep -f "node.*vite" 2>/dev/null | head -1
+  pgrep -f "vite" 2>/dev/null | head -1
 }
 
 # ---------------------------------------------------------------------------
@@ -126,17 +131,19 @@ start_backend() {
   fi
 
   cd "$BACKEND_DIR"
-  nohup npx tsx dev-server.ts >> "$BACKEND_LOG" 2>&1 &
-  echo $! > "$BACKEND_PID_FILE"
+  setsid nohup npx tsx dev-server.ts </dev/null >> "$BACKEND_LOG" 2>&1 &
+  local b_pid=$!
+  disown $b_pid 2>/dev/null || true
+  echo $b_pid > "$BACKEND_PID_FILE"
 
   # 等待就绪（最多 120 秒）
   for i in $(seq 1 60); do
     sleep 2
     if backend_alive; then
-      ok "后端就绪 (端口 $BACKEND_PORT, PID $(cat $BACKEND_PID_FILE))"
+      ok "后端就绪 (端口 $BACKEND_PORT, PID $(backend_pid))"
       return
     fi
-    if ! kill -0 "$(cat $BACKEND_PID_FILE)" 2>/dev/null; then
+    if ! kill -0 "$b_pid" 2>/dev/null; then
       fail "后端进程启动失败，查看日志: brian logs backend"
       exit 1
     fi
@@ -160,8 +167,10 @@ start_frontend() {
   fi
 
   cd "$FRONTEND_DIR"
-  nohup npx vite --host 0.0.0.0 >> "$FRONTEND_LOG" 2>&1 &
-  echo $! > "$FRONTEND_PID_FILE"
+  setsid nohup npx vite --host 0.0.0.0 </dev/null >> "$FRONTEND_LOG" 2>&1 &
+  local f_pid=$!
+  disown $f_pid 2>/dev/null || true
+  echo $f_pid > "$FRONTEND_PID_FILE"
 
   for i in $(seq 1 15); do
     sleep 2

@@ -109,4 +109,4 @@ export class CloseDBInput extends Input {}
 
 export class CloseDBOutput extends Output {}
 
-export const RELATIONDB_CONFIG_TABLE = 'relationdb_config';
+export const RELATIONDB_CONFIG_TABLE = 'relationdb_config_record';

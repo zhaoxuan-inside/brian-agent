@@ -42,6 +42,8 @@ import {
   EnableLLMOutput,
   SoTokenUsageInput,
   SoTokenUsageOutput,
+  SoModelTokenStatsInput,
+  SoModelTokenStatsOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
 
@@ -190,5 +192,10 @@ export class LLMAccess {
   async soTokenUsage(input: SoTokenUsageInput, output: SoTokenUsageOutput, context: LLMContext,
   ): Promise<boolean> {
     return this.service.soTokenUsage(input, output, context);
+  }
+
+  async soModelTokenStats(input: SoModelTokenStatsInput, output: SoModelTokenStatsOutput, context: LLMContext,
+  ): Promise<boolean> {
+    return this.service.soModelTokenStats(input, output, context);
   }
 }

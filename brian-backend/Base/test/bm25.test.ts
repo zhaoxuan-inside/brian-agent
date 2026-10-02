@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rankCandidatesByBM25, tokenizeForSearch } from '../Agents/application/bm25';
+import { rankCandidatesByBM25, tokenizeForSearch } from '@brian-agent/base';
 
 describe('BM25 Algorithm (Agent candidate pre-filtering)', () => {
   it('分词函数应正确解析中文、英文与二元字组', () => {

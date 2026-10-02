@@ -102,7 +102,7 @@ export class GraphVisualizationConfigOutput extends Output {
   graph_show_labels = true;
 }
 
-export const VISUALIZATION_CONFIG_TABLE = 'visualization_config';
+export const VISUALIZATION_CONFIG_TABLE = 'visualization_config_record';
 
 export const QUESTION_ANSWER_EDGE_TYPE = 'QUESTION_ANSWER';
 export const CITATION_EDGE_TYPE = 'CITATION';

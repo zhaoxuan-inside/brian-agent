@@ -25,32 +25,32 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
 
     const promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
-    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent (
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_record (
       id TEXT PRIMARY KEY, created INTEGER, updated INTEGER,
-      agent_id TEXT, agent_name TEXT, agent_type TEXT, strategy_id TEXT,
-      soul_id TEXT, skill_ids_json TEXT, mcp_ids_json TEXT, prompt_template_id TEXT,
-      task_signature TEXT, usage_count INTEGER DEFAULT 0,
-      eval_score INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, agent_purpose TEXT DEFAULT ''
+      title TEXT, type TEXT, strategy_id TEXT,
+      soul_id TEXT, skill_ids_json TEXT, mcp_ids_json TEXT, prompt_template_id TEXT, llm_id TEXT DEFAULT '',
+      task_signature TEXT,
+      eval_score INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, brief TEXT DEFAULT ''
     )`);
-    relationDb.executeRaw(`INSERT INTO agent (id, created, updated, agent_id, agent_name, agent_purpose, enable) VALUES
-      ('a1', 1, 1, 'agent-travel', '心绪漫游向导', '城市出行散步休闲路线推荐', 1),
-      ('a2', 1, 1, 'agent-finance', '行情瞭望', '股市行情走势分析', 1)`);
-    relationDb.executeRaw(`INSERT INTO runtime_agent_def (id, created, updated, name, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
+    relationDb.executeRaw(`INSERT INTO agent_record (id, created, updated, title, brief, enable) VALUES
+      ('agent-travel', 1, 1, '心绪漫游向导', '城市出行散步休闲路线推荐', 1),
+      ('agent-finance', 1, 1, '行情瞭望', '股市行情走势分析', 1)`);
+    relationDb.executeRaw(`INSERT INTO runtime_agent_def_record (id, created, updated, title, mode, agent_ref, task_signature, prompt_template_id, model_id, soul_id, tools_json, temperature, budget_total, status, agent_purpose) VALUES
       ('def-travel', 1, 1, '心绪漫游向导', 'primary', 'agent-travel', '[general] stub-travel', '', '', '', '', NULL, 60, 'active', '城市出行散步休闲路线推荐'),
       ('def-finance', 1, 1, '行情瞭望', 'primary', 'agent-finance', '[general] stub-finance', '', '', '', '', NULL, 60, 'active', '股市行情走势分析')`);
 
-    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template (id, created, updated, prompt_template_title, prompt_template_brief, prompt_template, enable, is_system) VALUES (
+    relationDb.executeRaw(`INSERT OR REPLACE INTO prompt_template_record (id, created, updated, title, brief, content, enable, is_system) VALUES (
       '22222222-3333-4444-5555-666666666666', 1, 1, 'Agent 匹配评估', 'Agent 匹配评估提示词',
       '评估候选 Agent 与任务的匹配度。输出 JSON: {"score": 90, "reason": "匹配", "agent_id": "选中者"}。\n\n任务：{{task_content}}\n\n候选：{{candidates}}', 1, 1
     )`);
 
-    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_library_config (
+    relationDb.executeRaw(`CREATE TABLE IF NOT EXISTS agent_library_config_record (
       id TEXT PRIMARY KEY, created INTEGER, updated INTEGER,
       prompt_template_id TEXT NOT NULL, similarity_threshold REAL NOT NULL DEFAULT 0.7,
       max_agent_count INTEGER NOT NULL DEFAULT 100, regen_rate INTEGER NOT NULL DEFAULT 75,
       match_score_threshold INTEGER NOT NULL DEFAULT 70
     )`);
-    relationDb.executeRaw(`INSERT INTO agent_library_config (id, created, updated, prompt_template_id) VALUES ('cfg', 1, 1, '22222222-3333-4444-5555-666666666666')`);
+    relationDb.executeRaw(`INSERT INTO agent_library_config_record (id, created, updated, prompt_template_id) VALUES ('cfg', 1, 1, '22222222-3333-4444-5555-666666666666')`);
 
     execLLMMock = vi.fn(async (_input: ExecLLMInput, output: ExecLLMOutput) => {
       output.result = '{"score": 90, "reason": "LLM 语义裁判命中", "agent_id": "agent-travel"}';
@@ -110,36 +110,30 @@ describe('AgentDefService 向量+LLM 两级匹配', () => {
     expect(execLLMMock).not.toHaveBeenCalled();
   });
 
-  it('向量置信度不足（仅达过滤阈值未达采纳阈值）：回退 LLM 语义裁判', async () => {
+  it('中置信任务：T1 阶梯择优命中既有 def，跳过 LLM 裁判（R8 统一选举）', async () => {
     const result = await match('中置信出行散步休闲路线规划');
-    expect(result.matched_by).toBe('llm');
+    expect(result.matched_by).toBe('vector');
     expect(result.def_id).toBe('def-travel');
-    expect(execLLMMock).toHaveBeenCalledTimes(1);
+    expect(execLLMMock).not.toHaveBeenCalled();
   });
 
-  it('embedding 不可用：回退 LLM 裁判（行为与旧链路一致）', async () => {
+  it('embedding 不可用：阶梯全空 → 创建新 Agent（R8 规格终端动作）', async () => {
     embedLLMMock.mockImplementation(async (_input: EmbedLLMInput, output: EmbedLLMOutput) => {
       output.embedding = [];
       return false;
     });
     const result = await match('周末帮我推荐几个适合出行的城市散步路线');
-    expect(result.matched_by).toBe('llm');
-    expect(execLLMMock).toHaveBeenCalledTimes(1);
+    expect(result.matched_by).toBe('built');
+    expect(execLLMMock).not.toHaveBeenCalled();
   });
 
-  it('LLM 裁判候选 Profile 瘦身（仅包含 agent_id, agent_name, description，彻底剥离 capabilities/skills）', async () => {
+  it('R8 统一选举：信号提取阶段不再走 LLM 裁判（选举零 execLLM 调用）', async () => {
     embedLLMMock.mockImplementation(async (_input: EmbedLLMInput, output: EmbedLLMOutput) => {
       output.embedding = [];
       return false;
     });
 
     await match('城市散步休闲出行路线推荐');
-    expect(execLLMMock).toHaveBeenCalledTimes(1);
-    const prompt = (execLLMMock.mock.calls[0][0] as ExecLLMInput).prompt;
-    expect(prompt).toContain('agent_id');
-    expect(prompt).toContain('agent_name');
-    expect(prompt).toContain('description');
-    expect(prompt).not.toContain('capabilities');
-    expect(prompt).not.toContain('bound_count');
+    expect(execLLMMock).not.toHaveBeenCalled();
   });
 });

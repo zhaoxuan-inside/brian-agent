@@ -373,6 +373,14 @@ export class ExecLLMOutput extends Output {
   duration_ms = 0;
   
   raw_response = '';
+
+  
+  
+  connect_ms = 0;
+  
+  ttft_ms = 0;
+  
+  stream_ms = 0;
 }
 
 export class ExecLLMEventsInput extends Input {
@@ -416,6 +424,9 @@ export class ExecLLMEventsOutput extends Output {
   
   result = '';
   
+  /** 本次调用的 llm_call_record 行 id(ADR-012 轮次组织用) */
+  call_id = '';
+  
   reasoning = '';
   
   tool_calls: ParsedToolCall[] = [];
@@ -429,6 +440,14 @@ export class ExecLLMEventsOutput extends Output {
   duration_ms = 0;
   
   wire_messages: LLMMessage[] = [];
+
+  
+  
+  connect_ms = 0;
+  
+  ttft_ms = 0;
+  
+  stream_ms = 0;
 }
 
 export class EmbedLLMInput extends Input {
@@ -493,22 +512,42 @@ export class SoTokenUsageInput extends Input {
 }
 
 export class SoTokenUsageOutput extends Output {
-  
+
   input_tokens = 0;
-  
+
   output_tokens = 0;
-  
+
   call_count = 0;
 }
 
-export const LLM_PROVIDER_TABLE = 'llm_provider';
+/** 单模型 Token 聚合统计（R7 卡片仪表盘） */
+export interface ModelTokenStat {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  call_count: number;
+}
 
-export const LLM_CACHE_TABLE = 'llm_cache';
+export class SoModelTokenStatsInput extends Input {
+}
 
-export const LLM_AVAILABLE_TABLE = 'llm_available';
+export class SoModelTokenStatsOutput extends Output {
+  /** key = llm_available_id */
+  stats: Record<string, ModelTokenStat> = {};
+}
 
-export const LLM_USAGE_TABLE = 'llm_usage';
+export const LLM_PROVIDER_TABLE = 'llm_provider_record';
 
-export const LLM_CALL_LOG_TABLE = 'llm_call_log';
+export const LLM_CACHE_TABLE = 'llm_cache_record';
 
-export const LLM_CONFIG_TABLE = 'llm_config';
+export const LLM_AVAILABLE_TABLE = 'llm_available_record';
+
+
+export const LLM_CALL_RECORD_TABLE = 'llm_call_record';
+
+export const LLM_CALL_DETAIL_TABLE = 'llm_call_detail_record';
+
+/** llm_call_detail_record 原文单字段上限(防异常巨型负载) */
+export const LLM_RECORD_TEXT_MAX_CHARS = 200_000;
+
+export const LLM_CONFIG_TABLE = 'llm_config_record';

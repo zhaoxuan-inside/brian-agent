@@ -19,6 +19,7 @@ export enum AgentMatchLayer {
   Vector = 'vector',
   LLM = 'llm',
   Built = 'built',
+  Session = 'session',
 }
 
 export interface AgentDefRecord {
@@ -98,6 +99,14 @@ export class MatchAgentDefOutput extends Output {
   matched_by!: AgentMatchLayer;
   
   def!: AgentDefRecord;
+
+  /** 匹配选举明细（ADR-013：agent.selected 事件透传，前端可信度链路直读） */
+  mechanisms?: Array<{
+    mechanism: 'bm25' | 'vector' | 'llm' | 'direct' | 'session_affinity' | 'dialog_topic_match' | 'dialog_topic_drift';
+    label?: string;
+    adopted?: boolean;
+    candidates: Array<{ id: string; name?: string; score?: number; reason?: string }>;
+  }>;
 }
 
 export class SoAgentSnapshotInput extends Input {
@@ -183,6 +192,6 @@ export class KillErroredAgentInput extends Input {
 
 export class KillErroredAgentOutput extends Output {}
 
-export const RUNTIME_AGENT_DEF_TABLE = 'runtime_agent_def';
-
-export const RUNTIME_AGENTS_CONFIG_TABLE = 'runtime_agents_config';
+export const RUNTIME_AGENT_DEF_TABLE = 'runtime_agent_def_record';
+export const AGENT_EXAMPLE_EMBEDDING_TABLE = 'agent_example_embedding_record';
+export const RUNTIME_AGENTS_CONFIG_TABLE = 'runtime_agents_config_record';

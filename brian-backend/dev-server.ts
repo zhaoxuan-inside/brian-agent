@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
-import { IdGenerator, InfoType, Operator, Metrics, type MetricsLogger } from '@brian-agent/base';
+import { IdGenerator, InfoType, Operator, Metrics, type MetricsLogger, loadElectionThresholds, saveElectionThresholds } from '@brian-agent/base';
 import {
   RunGatewayContext, AnswerPermissionInput, AnswerPermissionOutput, AnswerUserAskInput, AnswerUserAskOutput, } from '@brian-agent/runtime';
 
@@ -26,18 +26,18 @@ import {
   FeedbackContext, SubmitFeedbackInput, SubmitFeedbackOutput, QueryFeedbackInput, QueryFeedbackOutput, AnalyzeFeedbackInput, AnalyzeFeedbackOutput, QueryProcessLogsInput, QueryProcessLogsOutput, GetProcessLogDetailInput, GetProcessLogDetailOutput, GetFeedbackConfigInput, GetFeedbackConfigOutput, UpdateFeedbackConfigInput, UpdateFeedbackConfigOutput, RecordProcessLogInput, RecordProcessLogOutput, } from './Base/FeedbackHandler';
 import {
   CronContext, ListCronTasksInput, ListCronTasksOutput, GetCronTaskInput, GetCronTaskOutput, SetCronTaskInput, SetCronTaskOutput, SetCronTaskEnabledInput, SetCronTaskEnabledOutput, TriggerCronTaskInput, TriggerCronTaskOutput, ListCronTaskRunsInput, ListCronTaskRunsOutput, } from './Base/CronProvider';
-import { InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput, SaveInfoInput, SaveInfoOutput } from './Core/InfoCoreProvider';
+import { InfoCoreContext, SimilarKInfoInput, SimilarKInfoOutput, DelInfoGraphInput, DelInfoGraphOutput, ClearGraphInput, ClearGraphOutput } from './Core/InfoCoreProvider';
 import { SoStrategyInput, SoStrategyOutput, ToggleStrategyInput, ToggleStrategyOutput, AgentStrategyContext } from './Agent/AgentStrategy';
 import {
 } from './Agent/AgentBuilder';
-import { buildThinkingBlocksAndDag } from './server/thinkingBlocks';
+import { toTaskEvent, withSession } from './Base/ObservabilityProvider';
 import { buildContext, getRuntimeGateway, httpReq } from './server/context';
 import { fileLogger } from './server/fileLog';
 
 import {
   SelfLearningContext, ListLearningTasksInput, ListLearningTasksOutput, AddLibraryInput, AddLibraryOutput, DeleteLibraryInput, DeleteLibraryOutput, SearchLibraryInput, SearchLibraryOutput, SetLibraryEnabledInput, SetLibraryEnabledOutput, GetLibraryFilesInput, GetLibraryFilesOutput, GetLibraryTreeInput, GetLibraryTreeOutput, GetFileContentInput, GetFileContentOutput, QueryDocumentInput, QueryDocumentOutput, SaveAnnotationInput, SaveAnnotationOutput, GetFileAnnotationsInput, GetFileAnnotationsOutput, UpdateFileContentInput, UpdateFileContentOutput, DeleteFileInput, DeleteFileOutput, StartLearningInput, StartLearningOutput, StopLearningInput, StopLearningOutput, GetLearningProgressInput, GetLearningProgressOutput, GetLearningResultsInput, GetLearningResultsOutput, GetLearningStatsInput, GetLearningStatsOutput, ConfigSelfLearningInput, ConfigSelfLearningOutput, } from './Application/SelfLearning/domain/types';
 import {
-  UserProfileContext, GetUserProfileInput, GetUserProfileOutput, GenerateProfileInput, GenerateProfileOutput, SaveUserPreferenceInput, SaveUserPreferenceOutput, GetProfileHistoryInput, GetProfileHistoryOutput, GetProfileByVersionInput, GetProfileByVersionOutput, ResetUserProfileInput, ResetUserProfileOutput, ConfigProfileDirectionInput, ConfigProfileDirectionOutput, DeleteProfileDirectionInput, DeleteProfileDirectionOutput, GetProfileDirectionInput, GetProfileDirectionOutput, } from './Application/UserProfile/domain/types';
+  UserProfileContext, GetUserProfileInput, GetUserProfileOutput, GenerateProfileInput, GenerateProfileOutput, SaveUserPreferenceInput, SaveUserPreferenceOutput, GetProfileHistoryInput, GetProfileHistoryOutput, GetProfileByVersionInput, GetProfileByVersionOutput, GetAllProfilesInput, GetAllProfilesOutput, ResetUserProfileInput, ResetUserProfileOutput, ConfigProfileDirectionInput, ConfigProfileDirectionOutput, DeleteProfileDirectionInput, DeleteProfileDirectionOutput, GetProfileDirectionInput, GetProfileDirectionOutput, } from './Application/UserProfile/domain/types';
 import {
   VisualizationContext, GetVisualizedMessagesInput, GetVisualizedMessagesOutput, GetVisualizedMessageGraphInput, GetVisualizedMessageGraphOutput, GetVisualizedAgentDAGInput, GetVisualizedAgentDAGOutput, GetVisualizedWorkFlowInput, GetVisualizedWorkFlowOutput, GetAgentTraceInput, GetAgentTraceOutput, GetVisualizedMessageDAGInput, GetVisualizedMessageDAGOutput, GetResourceInput, GetResourceOutput, GraphVisualizationConfigInput, GraphVisualizationConfigOutput, ConfigVisualizationInput, ConfigVisualizationOutput, } from './Application/Visualization/domain/types';
 
@@ -45,11 +45,11 @@ import {
   ConfigContext, GetConfigDetailInput, GetConfigDetailOutput, GetConfigItemInput, GetConfigItemOutput, UpdateConfigInput, UpdateConfigOutput, GetConfigHistoryInput, GetConfigHistoryOutput, } from './Application/Config/domain/types';
 import { ALL_CONFIG_REGISTRATIONS } from './Application/Config/domain/configRegistrations';
 
-import { LLMContext, ListLLMInput, ListLLMOutput, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, GetLLMInput, GetLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, LLMCacheRecord } from './Base/LLMProvider';
+import { LLMContext, ListLLMInput, ListLLMOutput, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, GetLLMInput, GetLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, LLMCacheRecord, SoModelTokenStatsInput, SoModelTokenStatsOutput } from './Base/LLMProvider';
 import { SoulContext, SoSoulInput, SoSoulOutput, AddSoulInput, AddSoulOutput, UpdateSoulInput, UpdateSoulOutput, DelSoulInput, DelSoulOutput } from './Base/SoulProvider';
 import { SkillContext, SoSkillInput, SoSkillOutput, AddSkillInput, AddSkillOutput, UpdateSkillInput, UpdateSkillOutput, DelSkillInput, DelSkillOutput, ExecSkillInput, ExecSkillOutput } from './Base/SkillProvider';
 import {
-  McpContext, ListMcpInput, ListMcpOutput, SoMcpProviderInput, SoMcpProviderOutput, SoMcpInput, SoMcpOutput, AddMcpProviderInput, AddMcpProviderOutput, UpdateMcpProviderInput, UpdateMcpProviderOutput, DelMcpProviderInput, DelMcpProviderOutput, InstallMcpInput, InstallMcpOutput, StartMcpInput, StartMcpOutput, StopMcpInput, StopMcpOutput, StartMcpsInput, StartMcpsOutput, RefreshMcpStatusInput, RefreshMcpStatusOutput, GetMcpUsageInput, GetMcpUsageOutput, UninstallMcpInput, UninstallMcpOutput, UpgradeMcpInput, UpgradeMcpOutput, ExecMcpInput, ExecMcpOutput, } from './Base/MCPProvider';
+  McpContext, ListMcpInput, ListMcpOutput, SoMcpProviderInput, SoMcpProviderOutput, SoMcpInput, SoMcpOutput, AddMcpProviderInput, AddMcpProviderOutput, UpdateMcpProviderInput, UpdateMcpProviderOutput, DelMcpProviderInput, DelMcpProviderOutput, InstallMcpInput, InstallMcpOutput, StartMcpInput, StartMcpOutput, StopMcpInput, StopMcpOutput, StartMcpsInput, StartMcpsOutput, RefreshMcpStatusInput, RefreshMcpStatusOutput, GetMcpUsageInput, GetMcpUsageOutput, UninstallMcpInput, UninstallMcpOutput, UninstallMcpsInput, UninstallMcpsOutput, UpgradeMcpInput, UpgradeMcpOutput, ExecMcpInput, ExecMcpOutput, ListMcpToolsInput, ListMcpToolsOutput, } from './Base/MCPProvider';
 import {
   AgentLibraryContext, GetAgentInput, GetAgentOutput, DelAgentInput, DelAgentOutput, ToggleAgentInput, ToggleAgentOutput, AddAgentInput, AddAgentOutput, UpdateAgentInput, UpdateAgentOutput, VALID_AGENT_TYPES, } from './Agent/AgentLibrary';
 
@@ -182,7 +182,7 @@ function queryInfoTagsByInfoIds(relationDb: import('./Base/RelationDBProvider/ac
   const tagMap = new Map<string, string[]>();
   if (infoIds.length === 0) return tagMap;
   const tagRows = relationDb.queryRaw<{ info_id: string; tag: string }>(
-    `SELECT "info_id", "tag" FROM "info_tag" WHERE "info_id" IN (${infoIds.map(() => '?').join(',')})`,
+    `SELECT "info_id", "tag" FROM "info_tag_record" WHERE "info_id" IN (${infoIds.map(() => '?').join(',')})`,
     infoIds,
   );
   for (const t of tagRows) {
@@ -190,6 +190,26 @@ function queryInfoTagsByInfoIds(relationDb: import('./Base/RelationDBProvider/ac
     tagMap.get(t.info_id)!.push(t.tag);
   }
   return tagMap;
+}
+
+/** R7:读取组件正负范例原文,按 idField 映射为 {positive_examples, negative_examples} */
+function queryComponentExamples(relationDb: import('./Base/RelationDBProvider/access/RelationDBAccess').RelationDBAccess, table: string, idField: string, ids: string[]): Map<string, { positive: string[]; negative: string[] }> {
+  const map = new Map<string, { positive: string[]; negative: string[] }>();
+  if (ids.length === 0) return map;
+  const rows = relationDb.queryRaw<{ target: string; example_text: string; example_type: string }>(
+    `SELECT "${idField}" AS "target", "example_text", "example_type" FROM "${table}" WHERE "${idField}" IN (${ids.map(() => '?').join(',')}) ORDER BY "created" ASC`,
+    ids,
+  );
+  for (const r of rows) {
+    const tid = String(r.target ?? '');
+    const text = String(r.example_text ?? '').trim();
+    if (!tid || !text) continue;
+    const entry = map.get(tid) || { positive: [], negative: [] };
+    if (String(r.example_type || 'positive') === 'negative') entry.negative.push(text);
+    else entry.positive.push(text);
+    map.set(tid, entry);
+  }
+  return map;
 }
 
 async function buildCooccurGraphFromGraphDB(
@@ -491,7 +511,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && pathname === '/api/config/save-defaults') {
         const configTables = ctx.relationDb.queryRaw<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config' OR name='orchestration_strategy' OR name='prompt_template')",
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name LIKE '%_config_record' OR name LIKE '%_privilege' OR name LIKE '%_privilege_record' OR name='config_registry_record' OR name='config_config_record' OR name='orchestration_strategy' OR name='prompt_template_record')",
           [],
         );
         const data: Record<string, unknown[]> = {};
@@ -500,16 +520,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const now = Date.now();
         const existing = ctx.relationDb.queryRaw<{ id: string }>(
-          'SELECT "id" FROM "config_snapshot" WHERE "name" = ? LIMIT 1', ['默认快照'],
+          'SELECT "id" FROM "config_snapshot_record" WHERE "name" = ? LIMIT 1', ['默认快照'],
         );
         if (existing.length > 0) {
           ctx.relationDb.executeRaw(
-            'UPDATE "config_snapshot" SET "snapshot_data" = ?, "updated" = ? WHERE "name" = ?',
+            'UPDATE "config_snapshot_record" SET "snapshot_data" = ?, "updated" = ? WHERE "name" = ?',
             [JSON.stringify(data), now, '默认快照'],
           );
         } else {
           ctx.relationDb.executeRaw(
-            'INSERT INTO "config_snapshot" ("id", "created", "updated", "name", "snapshot_data") VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO "config_snapshot_record" ("id", "created", "updated", "name", "snapshot_data") VALUES (?, ?, ?, ?, ?)',
             [IdGenerator.generate(), now, now, '默认快照', JSON.stringify(data)],
           );
         }
@@ -519,7 +539,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'POST' && pathname === '/api/config/reset') {
 
         const configTables = ctx.relationDb.queryRaw<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config' OR name='orchestration_strategy' OR name='prompt_template')",
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name LIKE '%_config_record' OR name LIKE '%_privilege' OR name LIKE '%_privilege_record' OR name='config_registry_record' OR name='config_config_record' OR name='orchestration_strategy' OR name='prompt_template_record')",
           [],
         );
         const backup: Record<string, unknown[]> = {};
@@ -533,16 +553,16 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const backupPath = path.join(dataDir, 'config-backup.json');
         fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2), 'utf-8');
 
-        ctx.relationDb.executeRaw('DELETE FROM "config_registry"', []);
-        ctx.relationDb.executeRaw('DELETE FROM "config_layer_privilege"', []);
-        ctx.relationDb.executeRaw('DELETE FROM "config_module_privilege"', []);
+        ctx.relationDb.executeRaw('DELETE FROM "config_registry_record"', []);
+        ctx.relationDb.executeRaw('DELETE FROM "config_layer_privilege_record"', []);
+        ctx.relationDb.executeRaw('DELETE FROM "config_module_privilege_record"', []);
 
         for (const row of configTables || []) {
           try { ctx.relationDb.executeRaw(`DELETE FROM "${row.name}"`, []); } catch {  }
         }
 
         const defaultSnapshot = ctx.relationDb.queryRaw<{ snapshot_data: string }>(
-          'SELECT "snapshot_data" FROM "config_snapshot" WHERE "name" = ? LIMIT 1', ['默认快照'],
+          'SELECT "snapshot_data" FROM "config_snapshot_record" WHERE "name" = ? LIMIT 1', ['默认快照'],
         )[0];
         let restored = 0;
         if (defaultSnapshot) {
@@ -565,7 +585,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const name = (body as Record<string, unknown>).name as string || '';
         const snapshotName = name || new Date(now).toLocaleString('zh-CN', { hour12: false });
         const configTables = ctx.relationDb.queryRaw<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config' OR name='orchestration_strategy' OR name='prompt_template')",
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name LIKE '%_config_record' OR name LIKE '%_privilege' OR name LIKE '%_privilege_record' OR name='config_registry_record' OR name='config_config_record' OR name='orchestration_strategy' OR name='prompt_template_record')",
           [],
         );
         const snapshotData: Record<string, unknown[]> = {};
@@ -577,20 +597,20 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const id = IdGenerator.generate();
         ctx.relationDb.executeRaw(
-          'INSERT INTO config_snapshot (id, created, updated, name, snapshot_data) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO config_snapshot_record (id, created, updated, name, snapshot_data) VALUES (?, ?, ?, ?, ?)',
           [id, now, now, snapshotName, JSON.stringify(snapshotData)],
         );
         sendJson(res, 200, { id, name: snapshotName, created: now });
 
       } else if (method === 'GET' && pathname === '/api/config/snapshot') {
         const rows = ctx.relationDb.queryRaw<{ id: string; created: number; name: string }>(
-          'SELECT id, created, name FROM config_snapshot ORDER BY created DESC', [],
+          'SELECT id, created, name FROM config_snapshot_record ORDER BY created DESC', [],
         );
         sendJson(res, 200, { list: rows || [] });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/snapshot/')) {
         const snapshotId = pathname.split('/api/config/snapshot/')[1];
-        ctx.relationDb.executeRaw('DELETE FROM config_snapshot WHERE id = ?', [snapshotId]);
+        ctx.relationDb.executeRaw('DELETE FROM config_snapshot_record WHERE id = ?', [snapshotId]);
         sendJson(res, 200, { success: true });
 
       } else if (method === 'PUT' && /^\/api\/config\/snapshot\/[^/]+\/name$/.test(pathname)) {
@@ -598,7 +618,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const newName = String((body as Record<string, unknown>).name || '').trim();
         if (!newName) { sendJson(res, 400, { error: '快照名称不能为空' }); return; }
         const result = ctx.relationDb.executeRaw(
-          'UPDATE config_snapshot SET "name" = ?, "updated" = ? WHERE "id" = ?', [newName, Date.now(), snapshotId],
+          'UPDATE config_snapshot_record SET "name" = ?, "updated" = ? WHERE "id" = ?', [newName, Date.now(), snapshotId],
         );
         const affected = typeof result === 'object' && result !== null && 'changes' in (result as Record<string, unknown>)
           ? Number((result as Record<string, unknown>).changes)
@@ -609,13 +629,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'POST' && /\/api\/config\/snapshot\/[^/]+\/restore$/.test(pathname)) {
         const snapshotId = pathname.split('/api/config/snapshot/')[1].split('/restore')[0];
         const row = ctx.relationDb.queryRaw<{ snapshot_data: string }>(
-          'SELECT snapshot_data FROM config_snapshot WHERE id = ?', [snapshotId],
+          'SELECT snapshot_data FROM config_snapshot_record WHERE id = ?', [snapshotId],
         )[0];
         if (!row) { sendJson(res, 404, { error: '快照不存在' }); return; }
         const data: Record<string, unknown[]> = JSON.parse(row.snapshot_data);
 
         const configTables = ctx.relationDb.queryRaw<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name='config_registry' OR name LIKE '%_privilege' OR name='config_config' OR name='orchestration_strategy' OR name='prompt_template')",
+          "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_config' OR name LIKE '%_config_record' OR name LIKE '%_privilege' OR name LIKE '%_privilege_record' OR name='config_registry_record' OR name='config_config_record' OR name='orchestration_strategy' OR name='prompt_template_record')",
           [],
         );
         for (const t of configTables || []) {
@@ -640,13 +660,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (!title) { sendJson(res, 400, { error: '模型名称不能为空' }); return; }
         if (!providerId) { sendJson(res, 400, { error: '所属 Provider 不能为空' }); return; }
         const dup = ctx.relationDb.queryRaw<{ id: string }>(
-          'SELECT "id" FROM "llm_available" WHERE "llm_provider_id" = ? AND "llm_title" = ? LIMIT 1', [providerId, title],
+          'SELECT "id" FROM "llm_available_record" WHERE "llm_provider_id" = ? AND "llm_title" = ? LIMIT 1', [providerId, title],
         );
         if (dup && dup.length > 0) { sendJson(res, 409, { error: `模型已存在: ${title}` }); return; }
         const now = IdGenerator.now();
         try {
           ctx.relationDb.executeRaw(
-            'INSERT INTO "llm_available" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "llm_brief", "model_usage", "max_tokens", "enable", "is_default") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+            'INSERT INTO "llm_available_record" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "llm_brief", "model_usage", "max_tokens", "enable", "is_default") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
             [IdGenerator.generate(), now, now, providerId, title, String(d.llm_type || 'text'), String(d.llm_brief || ''), String(d.model_usage || ''), Number(d.maxTokens ?? d.max_tokens) || 0, d.enable === false ? 0 : 1],
           );
           sendJson(res, 200, { success: true });
@@ -656,29 +676,39 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'GET' && pathname === '/api/config/model') {
         const rows = ctx.relationDb.queryRaw<{ id: string; llm_provider_id: string; llm_title: string; llm_brief: string | null; llm_type: string; enable: number; is_default: number; model_usage: string | null; max_tokens: number | null }>(
-          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_type", e."enable", COALESCE(e."is_default", 0) as "is_default", e."model_usage", COALESCE(e."max_tokens", 0) as "max_tokens" FROM "llm_available" e ORDER BY e."llm_title" ASC',
+          'SELECT e."id", e."llm_provider_id", e."llm_title", e."llm_brief", e."llm_type", e."enable", COALESCE(e."is_default", 0) as "is_default", e."model_usage", COALESCE(e."max_tokens", 0) as "max_tokens" FROM "llm_available_record" e ORDER BY e."llm_title" ASC',
           [],
         );
-        const models = (rows || []).map(r => ({
-          id: r.id,
-          modelName: r.llm_title,
-          providerId: r.llm_provider_id,
-          providerName: r.llm_provider_id,
-          llm_type: r.llm_type || 'text',
-          maxTokens: r.max_tokens || 0,
-          supportsVision: false,
-          supportsTools: true,
-          isDefault: !!r.is_default,
-          enable: !!r.enable,
-          llm_brief: r.llm_brief || '',
-          model_usage: r.model_usage || '',
-        }));
+        const statsOut = new SoModelTokenStatsOutput();
+        await ctx.llmAccess.soModelTokenStats(new SoModelTokenStatsInput(), statsOut, new LLMContext());
+        const models = (rows || []).map(r => {
+          const stat = statsOut.stats[r.id];
+          return {
+            id: r.id,
+            modelName: r.llm_title,
+            providerId: r.llm_provider_id,
+            providerName: r.llm_provider_id,
+            llm_type: r.llm_type || 'text',
+            maxTokens: r.max_tokens || 0,
+            supportsVision: r.llm_type === 'multimodal',
+            supportsTools: true,
+            isDefault: !!r.is_default,
+            enable: !!r.enable,
+            llm_brief: r.llm_brief || '',
+            model_usage: r.model_usage || '',
+            usage_tokens: {
+              input_tokens: stat?.input_tokens ?? 0,
+              output_tokens: stat?.output_tokens ?? 0,
+              total_tokens: stat?.total_tokens ?? 0,
+            },
+          };
+        });
         sendJson(res, 200, models);
 
       } else if (method === 'GET' && pathname.startsWith('/api/config/model/') && !pathname.includes('/test') && !pathname.includes('/default')) {
         const id = pathname.split('/api/config/model/')[1].split('/')[0];
         const row = ctx.relationDb.queryRaw<{ id: string; llm_title: string; llm_provider_id: string; enable: number }>(
-          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_available" WHERE "id" = ?', [id],
+          'SELECT "id", "llm_title", "llm_provider_id", "enable" FROM "llm_available_record" WHERE "id" = ?', [id],
         )[0];
         sendJson(res, 200, row ? { id: row.id, modelName: row.llm_title, providerId: row.llm_provider_id, enable: !!row.enable } : { id, name: 'unknown' });
 
@@ -773,9 +803,26 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/config\/model\/[^/]+\/default$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        ctx.relationDb.executeRaw('UPDATE "llm_available" SET "is_default" = 0', []);
-        ctx.relationDb.executeRaw('UPDATE "llm_available" SET "is_default" = 1 WHERE "id" = ?', [id]);
+        ctx.relationDb.executeRaw('UPDATE "llm_available_record" SET "is_default" = 0', []);
+        ctx.relationDb.executeRaw('UPDATE "llm_available_record" SET "is_default" = 1 WHERE "id" = ?', [id]);
         sendJson(res, 200, { success: true });
+
+      } else if (method === 'GET' && /^\/api\/config\/election\/[^/]+$/.test(pathname)) {
+        // R8: 统一选举阈值读取（component: agent|llm|prompt|soul|skill|mcp）
+        const component = decodeURIComponent(pathname.split('/api/config/election/')[1]);
+        const thresholds = await loadElectionThresholds(ctx.relationDb, component);
+        sendJson(res, 200, { component, thresholds });
+
+      } else if (method === 'PUT' && /^\/api\/config\/election\/[^/]+$/.test(pathname)) {
+        const component = decodeURIComponent(pathname.split('/api/config/election/')[1]);
+        const data = ((body as Record<string, unknown>).thresholds || body) as Record<string, unknown>;
+        const patch: Record<string, number> = {};
+        for (const key of ['bm25', 'vectorOverall', 'vectorExample', 'vectorNegative', 'vectorWeight', 'bm25Weight']) {
+          const v = Number((data as Record<string, unknown>)[key]);
+          if (Number.isFinite(v) && v > 0) patch[key] = v;
+        }
+        const thresholds = await saveElectionThresholds(ctx.relationDb, component, patch);
+        sendJson(res, 200, { component, thresholds, success: true });
 
       } else if (method === 'PUT' && pathname.startsWith('/api/config/model/') && !/\/default$/.test(pathname)) {
         const id = pathname.split('/api/config/model/')[1];
@@ -793,14 +840,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (data.enable !== undefined || data.enabled !== undefined) push('enable', (data.enable ?? data.enabled) ? 1 : 0);
         if (sets.length > 0) {
           try {
-            ctx.relationDb.executeRaw(`UPDATE "llm_available" SET ${sets.join(', ')} WHERE "id" = ?`, [...vals, id]);
+            ctx.relationDb.executeRaw(`UPDATE "llm_available_record" SET ${sets.join(', ')} WHERE "id" = ?`, [...vals, id]);
           } catch {}
         }
         sendJson(res, 200, { success: true, id });
 
       } else if (method === 'DELETE' && pathname.startsWith('/api/config/model/')) {
         const id = pathname.split('/api/config/model/')[1];
-        try { ctx.relationDb.executeRaw('DELETE FROM "llm_available" WHERE "id" = ?', [id]); } catch {}
+        try { ctx.relationDb.executeRaw('DELETE FROM "llm_available_record" WHERE "id" = ?', [id]); } catch {}
         sendJson(res, 200, { success: true });
 
       } else if (method === 'GET' && pathname === '/api/config/provider') {
@@ -856,10 +903,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
         const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null; llm_param: string | null }>(
-          'SELECT "llm_title", "llm_brief", "features", "llm_param" FROM "llm_cache" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
+          'SELECT "llm_title", "llm_brief", "features", "llm_param" FROM "llm_cache_record" WHERE "llm_provider_id" = ? ORDER BY "llm_title" ASC', [id],
         );
         const enabledRows = ctx.relationDb.queryRaw<{ llm_title: string }>(
-          'SELECT "llm_title" FROM "llm_available" WHERE "llm_provider_id" = ?', [id],
+          'SELECT "llm_title" FROM "llm_available_record" WHERE "llm_provider_id" = ?', [id],
         );
         const enabledSet = new Set((enabledRows || []).map(r => r.llm_title));
         const models = (rows || []).map(r => {
@@ -884,7 +931,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/models\/add$/.test(pathname)) {
         const providerId = pathname.split('/api/config/provider/')[1]?.split('/')[0] || '';
         const modelIds = (body as Record<string, unknown>).modelIds as string[] || [];
-        const llmType = (['text', 'vision', 'embedding'] as const).includes((body as Record<string, unknown>).llm_type as any)
+        const llmType = (['text', 'multimodal', 'embedding'] as const).includes((body as Record<string, unknown>).llm_type as any)
           ? (body as Record<string, unknown>).llm_type as string
           : 'text';
         let added = 0;
@@ -892,15 +939,15 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           if (!title) continue;
           try {
             const cachedRow = ctx.relationDb.queryRaw<{ max_tokens: number | null }>(
-              'SELECT "max_tokens" FROM "llm_cache" WHERE "llm_provider_id" = ? AND "llm_title" = ?', [providerId, title],
+              'SELECT "max_tokens" FROM "llm_cache_record" WHERE "llm_provider_id" = ? AND "llm_title" = ?', [providerId, title],
             )[0];
             const maxTokens = cachedRow?.max_tokens || 0;
             ctx.relationDb.executeRaw(
-              'INSERT OR IGNORE INTO "llm_available" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "enable", "max_tokens") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              'INSERT OR IGNORE INTO "llm_available_record" ("id", "created", "updated", "llm_provider_id", "llm_title", "llm_type", "enable", "max_tokens") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
               [IdGenerator.generate(), IdGenerator.now(), IdGenerator.now(), providerId, title, llmType, 1, maxTokens],
             );
             if (maxTokens > 0) {
-              try { ctx.relationDb.executeRaw('UPDATE "llm_available" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {  }
+              try { ctx.relationDb.executeRaw('UPDATE "llm_available_record" SET "max_tokens" = ? WHERE "llm_provider_id" = ? AND "llm_title" = ?', [maxTokens, providerId, title]); } catch {  }
             }
             added++;
           } catch (err) {
@@ -955,26 +1002,34 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'GET' && pathname.startsWith('/api/prompts/')) {
         const id = pathname.split('/api/prompts/')[1];
-        const row = ctx.relationDb.queryRaw<{ id: string; prompt_template_title: string; prompt_template_brief: string | null; prompt_template: string; enable: number }>(
-          'SELECT "id", "prompt_template_title", "prompt_template_brief", "prompt_template", "enable" FROM "prompt_template" WHERE "id" = ?',
+        const row = ctx.relationDb.queryRaw<{ id: string; title: string; brief: string | null; content: string; enable: number }>(
+          'SELECT "id", "title", "brief", "content", "enable" FROM "prompt_template_record" WHERE "id" = ?',
           [id],
         )[0];
         if (row) {
-          sendJson(res, 200, { id: row.id, title: row.prompt_template_title, brief: row.prompt_template_brief || '', template: row.prompt_template, enabled: !!row.enable });
+          const exMap = queryComponentExamples(ctx.relationDb, 'prompt_template_example_embedding_record', 'prompt_template_id', [id]);
+          sendJson(res, 200, {
+            id: row.id, title: row.title, brief: row.brief || '', template: row.content, enabled: !!row.enable,
+            positive_examples: exMap.get(id)?.positive ?? [],
+            negative_examples: exMap.get(id)?.negative ?? [],
+          });
         } else {
           sendJson(res, 404, { error: 'Prompt template not found' });
         }
 
       } else if (method === 'GET' && pathname === '/api/prompts') {
-        const rows = ctx.relationDb.queryRaw<{ id: string; prompt_template_title: string; prompt_template_brief: string | null; enable: number }>(
-          'SELECT "id", "prompt_template_title", "prompt_template_brief", "enable" FROM "prompt_template" ORDER BY "prompt_template_title" ASC',
+        const rows = ctx.relationDb.queryRaw<{ id: string; title: string; brief: string | null; enable: number }>(
+          'SELECT "id", "title", "brief", "enable" FROM "prompt_template_record" ORDER BY "title" ASC',
           [],
         );
+        const exMap = queryComponentExamples(ctx.relationDb, 'prompt_template_example_embedding_record', 'prompt_template_id', (rows || []).map(r => r.id));
         const prompts = (rows || []).map(r => ({
           id: r.id,
-          title: r.prompt_template_title,
-          brief: r.prompt_template_brief || '',
+          title: r.title,
+          brief: r.brief || '',
           enabled: !!r.enable,
+          positive_examples: exMap.get(r.id)?.positive ?? [],
+          negative_examples: exMap.get(r.id)?.negative ?? [],
         }));
         sendJson(res, 200, { prompts });
 
@@ -984,6 +1039,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             prompt_template_title: body.title || '',
             prompt_template_brief: body.brief || undefined,
             prompt_template: body.template || '',
+            positive_examples: body.positive_examples,
+            negative_examples: body.negative_examples,
             enable: body.enabled !== undefined ? !!body.enabled : true,
           },
         });
@@ -999,6 +1056,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             prompt_template_title: body.title,
             prompt_template_brief: body.brief,
             prompt_template: body.template,
+            positive_examples: body.positive_examples,
+            negative_examples: body.negative_examples,
             enable: body.enabled !== undefined ? !!body.enabled : undefined,
           },
         });
@@ -1018,7 +1077,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SoSoulOutput();
         const context = new SoulContext();
         await ctx.configAccess.soSoul(input, output, context);
-        sendJson(res, 200, output.list || []);
+        const soulRows = (output.list || []) as unknown as Array<Record<string, unknown>>;
+        const exMap = queryComponentExamples(ctx.relationDb, 'soul_example_embedding_record', 'soul_id', soulRows.map(r => String(r.id)));
+        sendJson(res, 200, soulRows.map(r => ({
+          ...r,
+          positive_examples: exMap.get(String(r.id))?.positive ?? [],
+          negative_examples: exMap.get(String(r.id))?.negative ?? [],
+        })));
 
       } else if (method === 'POST' && pathname === '/api/config/soul') {
         const input = Object.assign(new AddSoulInput(), { data: body });
@@ -1056,17 +1121,22 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           const output = new ListMcpOutput();
           const context = new McpContext();
           await ctx.configAccess.listMcp(input, output, context);
-          sendJson(res, 200, output.list || []);
+          const mcpRows = (output.list || []) as unknown as Array<Record<string, unknown>>;
+          const exMap = queryComponentExamples(ctx.relationDb, 'mcp_example_embedding_record', 'mcp_id', mcpRows.map(r => String(r.id)));
+          sendJson(res, 200, mcpRows.map(r => ({
+            ...r,
+            positive_examples: exMap.get(String(r.id))?.positive ?? [],
+            negative_examples: exMap.get(String(r.id))?.negative ?? [],
+          })));
         }
 
       } else if (method === 'GET' && pathname === '/api/config/mcp/market') {
-        const rows = ctx.relationDb.queryRaw<{ id: string; provider_code: string | null; mcp_provider_title: string; mcp_provider_url: string; mcp_provider_brief: string | null; enable: number }>(
-          'SELECT "id", "provider_code", "mcp_provider_title", "mcp_provider_url", "mcp_provider_brief", "enable" FROM "mcp_provider" ORDER BY "mcp_provider_title" ASC',
+        const rows = ctx.relationDb.queryRaw<{ id: string; mcp_provider_title: string; mcp_provider_url: string; mcp_provider_brief: string | null; enable: number }>(
+          'SELECT "id", "mcp_provider_title", "mcp_provider_url", "mcp_provider_brief", "enable" FROM "mcp_provider_record" ORDER BY "mcp_provider_title" ASC',
           [],
         );
         sendJson(res, 200, (rows || []).map(r => ({
           id: r.id,
-          provider_code: r.provider_code || '',
           mcp_provider_title: r.mcp_provider_title,
           mcp_provider_url: r.mcp_provider_url,
           mcp_provider_brief: r.mcp_provider_brief || '',
@@ -1100,25 +1170,35 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let latency = 0;
         try {
           const start = Date.now();
-          if (provId === 'github') {
+          const provRows = ctx.relationDb.queryRaw<{ id: string; mcp_provider_url: string }>(
+            'SELECT "id", "mcp_provider_url" FROM "mcp_provider_record" WHERE "id" = ? LIMIT 1',
+            [provId],
+          );
+          // ADR-012:provider_code 列退役,来源由 URL 推导,回退路由参数本身
+          const url = String(provRows?.[0]?.mcp_provider_url ?? '').toLowerCase();
+          const targetCode = url.includes('github') ? 'github' : url.includes('modelscope') ? 'modelscope' : url.includes('smithery') ? 'smithery' : url.includes('dashscope') ? 'aliyun_bailian' : provId;
+          const targetUrl = provRows?.[0]?.mcp_provider_url;
+
+          if (targetCode === 'github') {
             const r = await httpReq({ url: 'https://registry.npmjs.org/-/v1/search?text=keywords:mcp&size=1' });
             latency = Date.now() - start;
             ok = r.ok;
             statusMsg = ok ? 'npm registry 可达' : `HTTP ${r.status}`;
-          } else if (provId === 'smithery') {
+          } else if (targetCode === 'smithery') {
             const r = await httpReq({ url: 'https://api.smithery.ai/servers?pageSize=1' });
             latency = Date.now() - start;
             ok = r.ok;
             statusMsg = ok ? 'Smithery API 可达' : `HTTP ${r.status}`;
-          } else if (provId === 'aliyun_bailian') {
+          } else if (targetCode === 'aliyun_bailian') {
             await httpReq({ url: 'https://dashscope.aliyuncs.com', timeoutMs: 5000 });
             latency = Date.now() - start;
             ok = true;
             statusMsg = 'DashScope API 可达';
-          } else if (provId === 'modelscope') {
-            const r = await httpReq({ url: 'https://modelscope.cn', timeoutMs: 5000 });
+          } else if (targetCode === 'modelscope') {
+            const testUrl = targetUrl || 'https://modelscope.cn/mcp';
+            const r = await httpReq({ url: testUrl, timeoutMs: 5000 });
             latency = Date.now() - start;
-            ok = r.ok;
+            ok = r.ok || (r.status >= 200 && r.status < 400);
             statusMsg = ok ? 'ModelScope 可达' : `HTTP ${r.status}`;
           } else {
             ok = false; statusMsg = `未知的市场 ID: ${provId}`;
@@ -1137,7 +1217,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let tools: { id: string; title: string; brief: string; install_cmd?: string; installed?: boolean }[] = [];
 
         try {
-          if (provId === 'github') {
+          // ADR-012:provider_code 列退役,回退用路由参数识别
+          const targetCode = provId;
+
+          if (targetCode === 'github') {
             const searchTerm = q ? `keywords:mcp+${encodeURIComponent(q)}` : 'keywords:mcp+server';
             const npmRes = await httpReq({ url: `https://registry.npmjs.org/-/v1/search?text=${searchTerm}&size=${pageSize}&from=${(page - 1) * pageSize}` });
             if (!npmRes.ok) throw new Error(`npm 请求失败 HTTP ${npmRes.status}`);
@@ -1151,13 +1234,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             }));
 
             const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
-              'SELECT "mcp_title" FROM "mcp_install"', [],
+              'SELECT "mcp_title" FROM "mcp_install_record"', [],
             );
             const instNames = new Set((instRows || []).map(r => r.mcp_title));
-            for (const t of tools) { if (instNames.has(t.title)) t.installed = true; }
+            for (const t of tools) { if (instNames.has(t.title) || instNames.has(t.id)) t.installed = true; }
             sendJson(res, 200, { list: tools, total: data.total });
 
-          } else if (provId === 'smithery') {
+          } else if (targetCode === 'smithery') {
             const params = new URLSearchParams();
             params.set('pageSize', String(Math.min(pageSize, 100)));
             params.set('page', String(page));
@@ -1172,16 +1255,114 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               installed: false,
             }));
             const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
-              'SELECT "mcp_title" FROM "mcp_install"', [],
+              'SELECT "mcp_title" FROM "mcp_install_record"', [],
             );
             const instNames = new Set((instRows || []).map(r => r.mcp_title));
-            for (const t of tools) { if (instNames.has(t.title)) t.installed = true; }
+            for (const t of tools) { if (instNames.has(t.title) || instNames.has(t.id)) t.installed = true; }
             sendJson(res, 200, { list: tools, total: data.pagination?.totalCount || tools.length });
 
-          } else if (provId === 'aliyun_bailian') {
-            sendJson(res, 200, { list: [], total: 0, message: '阿里云百炼 MCP 市场需配置 DashScope API Key 后接入。请前往 aliyun_bailian_api_key 配置项填入密钥。' });
-          } else if (provId === 'modelscope') {
-            sendJson(res, 200, { list: [], total: 0, message: 'ModelScope MCP 市场需配置 API Key 后接入。请前往 modelscope_api_key 配置项填入密钥。' });
+          } else if (targetCode === 'modelscope') {
+            const msReqBody = {
+              PageSize: Math.min(pageSize, 50),
+              PageNumber: page,
+              Query: q,
+              Criterion: [],
+            };
+            const msRes = await httpReq({
+              url: 'https://modelscope.cn/api/v1/dolphin/mcpServers',
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(msReqBody),
+              timeoutMs: 10000,
+            });
+            if (!msRes.ok && msRes.status !== 200) {
+              throw new Error(`ModelScope 请求失败 HTTP ${msRes.status}`);
+            }
+            const data = JSON.parse(msRes.bodyText) as {
+              Success?: boolean;
+              Data?: {
+                McpServer?: {
+                  TotalCount?: number;
+                  McpServers?: Array<{
+                    Id?: string;
+                    Name?: string;
+                    ChineseName?: string;
+                    AbstractCN?: string;
+                    Abstract?: string;
+                    ServerConfig?: Array<{ mcpServers?: Record<string, { command?: string; args?: string[] }> }>;
+                  }>;
+                };
+              };
+            };
+            const rawServers = data.Data?.McpServer?.McpServers || [];
+            tools = rawServers.map(s => {
+              const title = s.ChineseName || s.Name || s.Id || 'unknown';
+              const brief = s.AbstractCN || s.Abstract || '';
+              let installCmd = '';
+              const srvCfg = s.ServerConfig?.[0]?.mcpServers;
+              if (srvCfg) {
+                const firstKey = Object.keys(srvCfg)[0];
+                const cfg = srvCfg[firstKey];
+                if (cfg?.command) {
+                  installCmd = `${cfg.command} ${(cfg.args || []).join(' ')}`.trim();
+                }
+              }
+              return {
+                id: s.Name || s.Id || title,
+                title,
+                brief,
+                install_cmd: installCmd || undefined,
+                installed: false,
+              };
+            });
+
+            const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
+              'SELECT "mcp_title" FROM "mcp_install_record"', [],
+            );
+            const instNames = new Set((instRows || []).map(r => r.mcp_title));
+            for (const t of tools) { if (instNames.has(t.title) || instNames.has(t.id)) t.installed = true; }
+            sendJson(res, 200, { list: tools, total: data.Data?.McpServer?.TotalCount || tools.length });
+
+          } else if (targetCode === 'aliyun_bailian') {
+            const allBailianTools = [
+              {
+                id: 'alibaba-cloud-ops-mcp-server',
+                title: '阿里云云运维 MCP (Ops)',
+                brief: '阿里云官方云运维 MCP 服务，支持 ECS / VPC / OSS / RDS / SLS 等云上资源的全生命周期查询与运维管理',
+                install_cmd: 'uvx alibaba-cloud-ops-mcp-server --transport stdio',
+                installed: false,
+              },
+              {
+                id: 'alibabacloud-fc-mcp-server',
+                title: '阿里云函数计算 (FC)',
+                brief: '阿里云官方函数计算 MCP 服务，支持 Serverless 函数代码部署、触发器管理与实时函数计算调用',
+                install_cmd: 'npx -y alibabacloud-fc-mcp-server',
+                installed: false,
+              },
+              {
+                id: 'alibabacloud-devops-mcp-server',
+                title: '阿里云云效研发协同 (DevOps)',
+                brief: '阿里云云效官方 MCP 服务，支持代码仓库浏览、流水线构建控制与项目协作工单自动化',
+                install_cmd: 'npx -y alibabacloud-devops-mcp-server',
+                installed: false,
+              },
+              {
+                id: 'qwen-image-mcp',
+                title: '通义千问视觉与图像生成 (QwenImage)',
+                brief: '基于通义千问 / DashScope 视觉与多模态大模型的图像理解与创意生成 MCP 服务',
+                install_cmd: 'uvx qwen-image-mcp',
+                installed: false,
+              },
+            ];
+            tools = q
+              ? allBailianTools.filter(t => t.title.toLowerCase().includes(q.toLowerCase()) || t.brief.toLowerCase().includes(q.toLowerCase()) || t.id.toLowerCase().includes(q.toLowerCase()))
+              : allBailianTools;
+            const instRows = ctx.relationDb.queryRaw<{ mcp_title: string }>(
+              'SELECT "mcp_title" FROM "mcp_install_record"', [],
+            );
+            const instNames = new Set((instRows || []).map(r => r.mcp_title));
+            for (const t of tools) { if (instNames.has(t.title) || instNames.has(t.id)) t.installed = true; }
+            sendJson(res, 200, { list: tools, total: tools.length });
           } else {
             sendJson(res, 200, { list: [], total: 0, message: `未知的市场 ID: ${provId}` });
           }
@@ -1194,55 +1375,264 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const toolId = (body as Record<string, unknown>).mcp_id as string || (body as Record<string, unknown>).tool_id as string || '';
         if (!provId || !toolId) { sendJson(res, 400, { error: '缺少 mcp_provider_id 或 mcp_id' }); return; }
         try {
+          // ADR-012:provider_code 列退役,回退用路由参数识别
+          const targetCode = provId;
 
-          if (provId === 'github') {
+          if (targetCode === 'github') {
             const pkgRes = await httpReq({ url: `https://registry.npmjs.org/${toolId}/latest` });
             if (!pkgRes.ok) { sendJson(res, 400, { error: `npm 包 ${toolId} 不存在` }); return; }
             const pkg = JSON.parse(pkgRes.bodyText) as { name: string; description: string; bin?: Record<string, string>; version?: string };
 
             const dup = ctx.relationDb.queryRaw<{ id: string }>(
-              'SELECT "id" FROM "mcp_install" WHERE "mcp_provider_id"=? AND "mcp_title"=?',
-              [provId, toolId],
+              'SELECT "id" FROM "mcp_install_record" WHERE ("mcp_provider_id"=? OR "mcp_provider_id"=?) AND ("mcp_title"=? OR "mcp_title"=?)',
+              [provId, targetCode, toolId, pkg.name],
             )[0];
             if (dup) { sendJson(res, 409, { error: `MCP 已安装：${toolId}` }); return; }
             const installCmd = `npm install -g ${toolId}`;
-            const startCmd = `npx ${toolId}`;
+            const startCmd = `npx -y ${toolId}`;
             const stopCmd = `pkill -f ${toolId}`;
             const uninstallCmd = `npm uninstall -g ${toolId}`;
-            let installError = '';
             try {
               execSync(installCmd, { timeout: 120000, stdio: 'pipe' });
             } catch (e: unknown) {
               const msg = e instanceof Error ? e.message : String(e);
-              installError = msg.split('\n').slice(-3).join(' ').trim() || 'npm install 执行失败';
+              fileLogger.warn(`[dev-server] npm install -g 提示（将自动通过 npx -y 运行）: ${msg}`);
             }
-            if (installError) {
-              sendJson(res, 500, { error: `npm 安装失败: ${installError}` });
-              return;
-            }
+            const transportConfig = {
+              command: 'npx',
+              args: ['-y', toolId],
+              env: {
+                NODE_ENV: 'production',
+              },
+            };
             const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const now = Date.now();
             ctx.relationDb.executeRaw(
-              `INSERT INTO "mcp_install" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","version","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-              [id, now, now, provId, toolId, pkg.description || '', installCmd, startCmd, stopCmd, uninstallCmd, pkg.version || '', 'stopped', 1],
+              `INSERT INTO "mcp_install_record" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","version","transport_type","transport_config","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, targetCode, toolId, pkg.description || '', installCmd, startCmd, stopCmd, uninstallCmd, pkg.version || '1.0.0', 'stdio', JSON.stringify(transportConfig), 'stopped', 1],
             );
 
             await ctx.mcpAccess.syncInstallStatus();
             sendJson(res, 200, { success: true, id });
 
-          } else if (provId === 'smithery') {
+          } else if (targetCode === 'modelscope') {
+            let serverDetails: Record<string, unknown> | null = null;
+            try {
+              const msRes = await httpReq({
+                url: 'https://modelscope.cn/api/v1/dolphin/mcpServers',
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ PageSize: 5, PageNumber: 1, Query: toolId, Criterion: [] }),
+                timeoutMs: 10000,
+              });
+              if (msRes.ok) {
+                const data = JSON.parse(msRes.bodyText) as { Data?: { McpServer?: { McpServers?: Array<Record<string, unknown>> } } };
+                const list = data?.Data?.McpServer?.McpServers || [];
+                serverDetails = list.find(s => s.Name === toolId || s.Id === toolId || s.ChineseName === toolId) || list[0] || null;
+              }
+            } catch (err) {
+              fileLogger.warn(`[dev-server] ModelScope 获取详情失败: ${err}`);
+            }
+
+            const title = String(serverDetails?.ChineseName || serverDetails?.Name || toolId);
+            const brief = String(serverDetails?.AbstractCN || serverDetails?.Abstract || 'ModelScope 社区贡献 MCP 工具');
+
             const dup = ctx.relationDb.queryRaw<{ id: string }>(
-              'SELECT "id" FROM "mcp_install" WHERE "mcp_provider_id"=? AND "mcp_title"=?',
-              [provId, toolId],
+              'SELECT "id" FROM "mcp_install_record" WHERE ("mcp_provider_id"=? OR "mcp_provider_id"=?) AND ("mcp_title"=? OR "mcp_title"=?)',
+              [provId, targetCode, toolId, title],
             )[0];
-            if (dup) { sendJson(res, 409, { error: `MCP 已安装：${toolId}` }); return; }
+            if (dup) { sendJson(res, 409, { error: `MCP 已安装：${title}` }); return; }
+
+            let transportType = 'stdio';
+            let command = '';
+            let args: string[] = [];
+            let installCmd = '';
+            let startCmd = '';
+            let httpUrl = String(serverDetails?.DeployedUrl || '');
+            let envConfig: Record<string, string> = {};
+
+            const rawSrvConfig = serverDetails?.ServerConfig as Array<{ mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; type?: string; url?: string }> }> | undefined;
+            const srvCfg = rawSrvConfig?.[0]?.mcpServers;
+            if (srvCfg) {
+              const firstKey = Object.keys(srvCfg)[0];
+              const cfg = srvCfg[firstKey];
+              if (cfg?.type === 'http' || cfg?.url) {
+                transportType = 'http';
+                httpUrl = cfg.url || httpUrl;
+              } else if (cfg?.command) {
+                command = cfg.command;
+                args = (cfg.args || []).slice();
+                if (cfg.env && typeof cfg.env === 'object') {
+                  envConfig = { ...cfg.env };
+                }
+              }
+            }
+
+            if (command === 'cmd') {
+              const npxIdx = args.findIndex(a => a === 'npx');
+              if (npxIdx >= 0) {
+                command = 'npx';
+                args = args.slice(npxIdx + 1);
+              }
+            }
+
+            if (httpUrl) {
+              transportType = 'http';
+              installCmd = 'remote-http';
+              startCmd = httpUrl;
+            } else if (command === 'uvx' || (!command && toolId.includes('mcp-server-'))) {
+              transportType = 'stdio';
+              command = 'uvx';
+              if (args.length === 0) args = [toolId];
+              installCmd = `uvx ${args.join(' ')}`;
+              startCmd = `uvx ${args.join(' ')}`;
+            } else {
+              transportType = 'stdio';
+              command = command || 'npx';
+              if (command === 'npx' && !args.includes('-y')) {
+                args = ['-y', ...(args.length > 0 ? args : [toolId])];
+              } else if (args.length === 0) {
+                args = [toolId];
+              }
+              installCmd = `${command} ${args.join(' ')}`;
+              startCmd = `${command} ${args.join(' ')}`;
+            }
+
+            for (const k of Object.keys(envConfig)) {
+              if (!envConfig[k]) {
+                envConfig[k] = process.env[k] || `sys_managed_${k.toLowerCase()}`;
+              }
+            }
+
+            const transportConfig = transportType === 'http'
+              ? { url: httpUrl }
+              : { command, args, env: envConfig };
+
             const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const now = Date.now();
             ctx.relationDb.executeRaw(
-              `INSERT INTO "mcp_install" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-              [id, now, now, provId, toolId, 'Smithery MCP server', 'smithery connect', 'smithery start', 'smithery stop', 'smithery disconnect', 'stopped', 1],
+              `INSERT INTO "mcp_install_record" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","version","transport_type","transport_config","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, targetCode, title, brief, installCmd, startCmd, `pkill -f ${command || 'mcp'}`, 'remove', '1.0.0', transportType, JSON.stringify(transportConfig), 'stopped', 1],
             );
-            sendJson(res, 200, { success: true, id, warning: 'Smithery MCP 已注册为连接模式（未执行本地安装），需本机具备 smithery CLI 方可启动' });
+
+            sendJson(res, 200, { success: true, id });
+
+          } else if (targetCode === 'smithery') {
+            let serverData: Record<string, unknown> | null = null;
+            try {
+              const smRes = await httpReq({
+                url: `https://api.smithery.ai/servers/${encodeURIComponent(toolId)}`,
+                timeoutMs: 10000,
+              });
+              if (smRes.ok) {
+                serverData = JSON.parse(smRes.bodyText) as Record<string, unknown>;
+              }
+            } catch (err) {
+              fileLogger.warn(`[dev-server] Smithery 获取详情失败: ${err}`);
+            }
+
+            const title = String(serverData?.displayName || serverData?.qualifiedName || toolId);
+            const brief = String(serverData?.description || 'Smithery MCP 注册中心服务');
+
+            const dup = ctx.relationDb.queryRaw<{ id: string }>(
+              'SELECT "id" FROM "mcp_install_record" WHERE ("mcp_provider_id"=? OR "mcp_provider_id"=?) AND ("mcp_title"=? OR "mcp_title"=?)',
+              [provId, targetCode, toolId, title],
+            )[0];
+            if (dup) { sendJson(res, 409, { error: `MCP 已安装：${title}` }); return; }
+
+            const rawConnections = serverData?.connections as Array<{ deploymentUrl?: string; type?: string }> | undefined;
+            const deploymentUrl = String(serverData?.deploymentUrl || rawConnections?.[0]?.deploymentUrl || '');
+
+            let transportType = 'http';
+            let transportConfig: Record<string, unknown> = {};
+            let installCmd = '';
+            let startCmd = '';
+
+            const apiKey = process.env.SMITHERY_API_KEY || '';
+            if (deploymentUrl) {
+              transportType = 'http';
+              transportConfig = {
+                url: deploymentUrl,
+                headers: {
+                  Accept: 'application/json, text/event-stream',
+                  ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+                },
+              };
+              installCmd = 'http-connect';
+              startCmd = deploymentUrl;
+            } else {
+              transportType = 'stdio';
+              transportConfig = {
+                command: 'npx',
+                args: ['-y', '@smithery/cli@latest', 'run', toolId, '--config', '{}'],
+                env: {
+                  NODE_ENV: 'production',
+                },
+              };
+              installCmd = `npx -y @smithery/cli@latest run ${toolId}`;
+              startCmd = `npx -y @smithery/cli@latest run ${toolId}`;
+            }
+
+            const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            ctx.relationDb.executeRaw(
+              `INSERT INTO "mcp_install_record" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","version","transport_type","transport_config","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, targetCode, title, brief, installCmd, startCmd, 'disconnect', 'remove', '1.0.0', transportType, JSON.stringify(transportConfig), 'stopped', 1],
+            );
+
+            sendJson(res, 200, { success: true, id });
+
+          } else if (targetCode === 'aliyun_bailian') {
+            const allBailianTools: Array<{ id: string; title: string; brief: string; install_cmd: string; command: string; args: string[] }> = [
+              { id: 'alibaba-cloud-ops-mcp-server', title: '阿里云云运维 MCP (Ops)', brief: '阿里云官方云运维 MCP 服务，支持 ECS / VPC / OSS / RDS / SLS 等云上资源的全生命周期查询与运维管理', install_cmd: 'uvx alibaba-cloud-ops-mcp-server --transport stdio', command: 'uvx', args: ['alibaba-cloud-ops-mcp-server', '--transport', 'stdio'] },
+              { id: 'alibabacloud-fc-mcp-server', title: '阿里云函数计算 (FC)', brief: '阿里云官方函数计算 MCP 服务，支持 Serverless 函数代码部署、触发器管理与实时函数计算调用', install_cmd: 'npx -y alibabacloud-fc-mcp-server', command: 'npx', args: ['-y', 'alibabacloud-fc-mcp-server'] },
+              { id: 'alibabacloud-devops-mcp-server', title: '阿里云云效研发协同 (DevOps)', brief: '阿里云云效官方 MCP 服务，支持代码仓库浏览、流水线构建控制与项目协作工单自动化', install_cmd: 'npx -y alibabacloud-devops-mcp-server', command: 'npx', args: ['-y', 'alibabacloud-devops-mcp-server'] },
+              { id: 'qwen-image-mcp', title: '通义千问视觉与图像生成 (QwenImage)', brief: '基于通义千问 / DashScope 视觉与多模态大模型的图像理解与创意生成 MCP 服务', install_cmd: 'uvx qwen-image-mcp', command: 'uvx', args: ['qwen-image-mcp'] },
+            ];
+
+            const toolDef = allBailianTools.find(t => t.id === toolId || t.title === toolId) || {
+              id: toolId,
+              title: toolId,
+              brief: '阿里云官方 MCP 服务',
+              install_cmd: toolId.startsWith('aliba') ? `npx -y ${toolId}` : `uvx ${toolId}`,
+              command: toolId.startsWith('aliba') ? 'npx' : 'uvx',
+              args: toolId.startsWith('aliba') ? ['-y', toolId] : [toolId],
+            };
+
+            const dup = ctx.relationDb.queryRaw<{ id: string }>(
+              'SELECT "id" FROM "mcp_install_record" WHERE ("mcp_provider_id"=? OR "mcp_provider_id"=?) AND ("mcp_title"=? OR "mcp_title"=?)',
+              [provId, targetCode, toolId, toolDef.title],
+            )[0];
+            if (dup) { sendJson(res, 409, { error: `MCP 已安装：${toolDef.title}` }); return; }
+
+            let apiKey = process.env.DASHSCOPE_API_KEY || '';
+            if (!apiKey) {
+              const qwenRow = ctx.relationDb.queryRaw<{ api_key: string }>(
+                'SELECT "api_key" FROM "llm_provider_record" WHERE "llm_provider_title" LIKE ? OR "llm_provider_url" LIKE ? LIMIT 1',
+                ['%Qwen%', '%dashscope%'],
+              )[0];
+              apiKey = qwenRow?.api_key || '';
+            }
+
+            const transportConfig = {
+              command: toolDef.command,
+              args: toolDef.args,
+              env: {
+                DASHSCOPE_API_KEY: apiKey,
+                ALIBABA_CLOUD_ACCESS_KEY_ID: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID || '',
+                ALIBABA_CLOUD_ACCESS_KEY_SECRET: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET || '',
+                NODE_ENV: 'production',
+              },
+            };
+
+            const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            ctx.relationDb.executeRaw(
+              `INSERT INTO "mcp_install_record" ("id","created","updated","mcp_provider_id","mcp_title","mcp_brief","mcp_install_cmd","mcp_start_cmd","mcp_stop_cmd","mcp_uninstall_cmd","version","transport_type","transport_config","status","enable") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, now, now, targetCode, toolDef.title, toolDef.brief, toolDef.install_cmd, `${toolDef.command} ${toolDef.args.join(' ')}`, 'kill', 'remove', '1.0.0', 'stdio', JSON.stringify(transportConfig), 'stopped', 1],
+            );
+
+            sendJson(res, 200, { success: true, id });
 
           } else {
 
@@ -1271,12 +1661,27 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         await ctx.configAccess.uninstallMcp(unInput, unOutput, new McpContext());
         sendJson(res, 200, { success: true });
 
+      } else if (method === 'POST' && /\/api\/config\/mcp\/batch-uninstall$/.test(pathname)) {
+        const ids = ((body as Record<string, unknown>).ids as string[]) || [];
+        const input = Object.assign(new UninstallMcpsInput(), { ids });
+        const output = new UninstallMcpsOutput();
+        await ctx.configAccess.uninstallMcps(input, output, new McpContext());
+        sendJson(res, 200, { success: true, uninstalled_count: output.uninstalled_count });
+
       } else if (method === 'GET' && pathname === '/api/agent') {
         const input = Object.assign(new GetAgentInput(), {});
         const output = new GetAgentOutput();
         const context = new AgentLibraryContext();
         await ctx.agentLibrary.soAgent(input, output, context);
-        sendJson(res, 200, { agents: output.agents || [] });
+        const agentRows = (output.agents || []) as unknown as Array<Record<string, unknown>>;
+        const exMap = queryComponentExamples(ctx.relationDb, 'agent_example_embedding_record', 'agent_id', agentRows.map(r => String(r.agent_id)));
+        sendJson(res, 200, {
+          agents: agentRows.map(r => ({
+            ...r,
+            positive_examples: exMap.get(String(r.agent_id))?.positive ?? [],
+            negative_examples: exMap.get(String(r.agent_id))?.negative ?? [],
+          })),
+        });
 
       } else if (method === 'GET' && pathname.startsWith('/api/agent/') && !pathname.startsWith('/api/agent/strategy') && !/\/toggle$/.test(pathname)) {
         const id = decodeURIComponent(pathname.split('/api/agent/')[1]);
@@ -1316,14 +1721,14 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (!strategyId) {
           try {
             const cfg = ctx.relationDb.queryRaw<{ default_strategy_id: string }>(
-              'SELECT "default_strategy_id" FROM "agent_strategy_config" LIMIT 1', [],
+              'SELECT "default_strategy_id" FROM "agent_strategy_config_record" LIMIT 1', [],
             );
             strategyId = cfg?.[0]?.default_strategy_id || '';
           } catch {  strategyId = ''; }
         }
         if (!strategyId) {
           const fallback = ctx.relationDb.queryRaw<{ strategy_id: string }>(
-            'SELECT "strategy_id" FROM "agent_strategy" WHERE "enable" = 1 ORDER BY "suitable_complexity_min" ASC LIMIT 1', [],
+            'SELECT "strategy_id" FROM "agent_strategy_record" WHERE "enable" = 1 ORDER BY "suitable_complexity_min" ASC LIMIT 1', [],
           );
           strategyId = fallback?.[0]?.strategy_id || '';
         }
@@ -1335,6 +1740,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           task_signature: String(b.task_signature || `[${String(b.agent_name || 'custom').toLowerCase()}] 自定义任务`),
           agent_name: String(b.agent_name || `Agent-${agentId.slice(0, 8)}`),
           agent_purpose: String(b.agent_purpose || b.description || ''),
+          positive_examples: Array.isArray(b.positive_examples) ? b.positive_examples.map(String).filter(Boolean) : [],
+          negative_examples: Array.isArray(b.negative_examples) ? b.negative_examples.map(String).filter(Boolean) : [],
 
           created_by: 'user',
         });
@@ -1360,7 +1767,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const b = (body || {}) as Record<string, unknown>;
         try {
           const row = ctx.relationDb.queryRaw<{ agent_id: string }>(
-            'SELECT "agent_id" FROM "agent" WHERE "id" = ? LIMIT 1', [id],
+            'SELECT "agent_id" FROM "agent_record" WHERE "id" = ? LIMIT 1', [id],
           )[0];
           if (!row) {
             sendJson(res, 404, { error: `Agent 不存在: ${id}` });
@@ -1374,6 +1781,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           if (b.task_signature !== undefined) updIn.task_signature = String(b.task_signature);
           if (b.strategy_id !== undefined) updIn.strategy_id = String(b.strategy_id);
           if (b.soul_id !== undefined) updIn.soul_id = String(b.soul_id);
+          if (Array.isArray(b.positive_examples)) updIn.positive_examples = b.positive_examples.map(String);
+          if (Array.isArray(b.negative_examples)) updIn.negative_examples = b.negative_examples.map(String);
           await ctx.agentLibrary.updateAgent(updIn, new UpdateAgentOutput(), new AgentLibraryContext());
           sendJson(res, 200, { success: true });
         } catch (e: unknown) {
@@ -1397,7 +1806,15 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SoSkillOutput();
         const context = new SkillContext();
         await ctx.configAccess.soSkill(input, output, context);
-        sendJson(res, 200, { skills: output.list || [] });
+        const skillRows = (output.list || []) as unknown as Array<Record<string, unknown>>;
+        const exMap = queryComponentExamples(ctx.relationDb, 'skill_example_embedding_record', 'skill_id', skillRows.map(r => String(r.id)));
+        sendJson(res, 200, {
+          skills: skillRows.map(r => ({
+            ...r,
+            positive_examples: exMap.get(String(r.id))?.positive ?? [],
+            negative_examples: exMap.get(String(r.id))?.negative ?? [],
+          })),
+        });
 
       } else if (method === 'POST' && pathname === '/api/skill') {
         const input = Object.assign(new AddSkillInput(), { data: body });
@@ -1417,7 +1834,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'POST' && /\/api\/skill\/[^/]+\/toggle$/.test(pathname)) {
         const id = pathname.split('/api/skill/')[1].split('/toggle')[0];
         const currentRows = ctx.relationDb.queryRaw<{ enable: number }>(
-          'SELECT "enable" FROM "skill" WHERE "id" = ? LIMIT 1', [id],
+          'SELECT "enable" FROM "skill_record" WHERE "id" = ? LIMIT 1', [id],
         );
         if (!currentRows || currentRows.length === 0) {
           sendJson(res, 404, { error: `Skill 不存在: ${id}` });
@@ -1479,16 +1896,34 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const soIn = new SoMcpInput();
         const soOut = new SoMcpOutput();
         await ctx.mcpAccess.soMcp(soIn, soOut, new McpContext());
-        sendJson(res, 200, { installed: (soOut.list || []).map(r => ({
-          id: r.id,
-          displayName: r.mcp_title,
-          description: r.mcp_brief || '',
-          version: r.version || '',
-          status: r.status || 'stopped',
-          running: String(r.status) === 'running',
-          enabled: !!r.enable,
-          transport_type: (r as unknown as Record<string, unknown>).transport_type || 'stdio',
-        })) });
+        const provRows = ctx.relationDb.queryRaw<{ id: string; provider_code: string | null; mcp_provider_title: string }>(
+          'SELECT "id", "provider_code", "mcp_provider_title" FROM "mcp_provider_record"',
+          [],
+        ) || [];
+        const provMap = new Map<string, string>();
+        for (const p of provRows) {
+          if (p.id) provMap.set(p.id, p.mcp_provider_title);
+          if (p.provider_code) provMap.set(p.provider_code, p.mcp_provider_title);
+        }
+        const installedIds = (soOut.list || []).map(r => r.id);
+        const instExMap = queryComponentExamples(ctx.relationDb, 'mcp_example_embedding_record', 'mcp_id', installedIds);
+        sendJson(res, 200, { installed: (soOut.list || []).map(r => {
+          const providerId = (r as unknown as Record<string, unknown>).mcp_provider_id as string || '';
+          return {
+            id: r.id,
+            displayName: r.mcp_title,
+            description: r.mcp_brief || '',
+            version: r.version || '',
+            status: r.status || 'stopped',
+            running: String(r.status) === 'running',
+            enabled: !!r.enable,
+            transport_type: (r as unknown as Record<string, unknown>).transport_type || 'stdio',
+            mcp_provider_id: providerId,
+            provider_title: provMap.get(providerId) || providerId || '未知提供商',
+            positive_examples: instExMap.get(r.id)?.positive ?? [],
+            negative_examples: instExMap.get(r.id)?.negative ?? [],
+          };
+        }) });
 
       } else if (method === 'POST' && pathname === '/api/mcp/batch-start') {
         const ids = ((body as Record<string, unknown>).ids as string[]) || [];
@@ -1496,6 +1931,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new StartMcpsOutput();
         await ctx.mcpAccess.startMcps(input, output, new McpContext());
         sendJson(res, 200, { success: true, started_count: output.started_count });
+
+      } else if (method === 'POST' && pathname === '/api/mcp/batch-uninstall') {
+        const ids = ((body as Record<string, unknown>).ids as string[]) || [];
+        const input = Object.assign(new UninstallMcpsInput(), { ids });
+        const output = new UninstallMcpsOutput();
+        await ctx.mcpAccess.uninstallMcps(input, output, new McpContext());
+        sendJson(res, 200, { success: true, uninstalled_count: output.uninstalled_count });
 
       } else if (method === 'POST' && pathname === '/api/mcp/refresh') {
         const input = new RefreshMcpStatusInput();
@@ -1542,10 +1984,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/toggle$/.test(pathname)) {
         const id = pathname.split('/api/mcp/')[1].split('/')[0];
-        const row = ctx.relationDb.queryRaw<{ enable: number }>('SELECT "enable" FROM "mcp_install" WHERE "id"=?', [id])[0];
+        const row = ctx.relationDb.queryRaw<{ enable: number }>('SELECT "enable" FROM "mcp_install_record" WHERE "id"=?', [id])[0];
         if (!row) { sendJson(res, 404, { error: 'MCP not found' }); return; }
         const newEn = row.enable ? 0 : 1;
-        ctx.relationDb.executeRaw('UPDATE "mcp_install" SET "enable"=?,"updated"=? WHERE "id"=?', [newEn, Date.now(), id]);
+        ctx.relationDb.executeRaw('UPDATE "mcp_install_record" SET "enable"=?,"updated"=? WHERE "id"=?', [newEn, Date.now(), id]);
         sendJson(res, 200, { success: true, enabled: !!newEn });
 
       } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/start$/.test(pathname)) {
@@ -1577,6 +2019,32 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const callOutput = new ExecMcpOutput();
         await ctx.mcpAccess.execMcp(callInput, callOutput, new McpContext());
         sendJson(res, 200, { result: callOutput.result, raw_response: callOutput.raw_response });
+
+      } else if (method === 'POST' && /\/api\/mcp\/[^/]+\/tools$/.test(pathname)) {
+        // R7: 工具清单 + test_params_sample 预填(持久化到 mcp_install_record.test_params_sample)
+        const id = pathname.split('/api/mcp/')[1].split('/')[0];
+        const toolsInput = Object.assign(new ListMcpToolsInput(), { id });
+        const toolsOutput = new ListMcpToolsOutput();
+        await ctx.mcpAccess.listMcpTools(toolsInput, toolsOutput, new McpContext());
+        sendJson(res, 200, { status: toolsOutput.status, tools: toolsOutput.tools });
+
+      } else if (method === 'POST' && pathname === '/api/config/semantics/suggest') {
+        // R7: AI 规范润色 —— 任意组件意图 → 标准语义四元组(5-10字名称/30-40字描述/正负范例)
+        const d = (body || {}) as Record<string, unknown>;
+        const kind = String(d.kind || 'agent') as 'agent' | 'mcp' | 'skill' | 'soul' | 'prompt';
+        const { resolveComponentSemantics, createSemanticsTaskFn } = await import('./Base/shared/semantics');
+        const semOut = await resolveComponentSemantics({
+          kind,
+          source: {
+            kind,
+            title: String(d.title || ''),
+            brief: String(d.brief || ''),
+            content: String(d.content || ''),
+            extra: String(d.extra || ''),
+          },
+          semanticsFn: createSemanticsTaskFn(ctx.llmAccess),
+        });
+        sendJson(res, 200, { semantics: semOut });
 
       } else if (method === 'DELETE' && /\/api\/mcp\/[^/]+$/g.test(pathname) && !pathname.includes('/install') && !pathname.includes('/toggle') && !pathname.includes('/start') && !pathname.includes('/stop')) {
         const id = pathname.split('/api/mcp/')[1];
@@ -1660,24 +2128,9 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const allWorkIds = Array.from(
           new Set(rawMessages.filter((m) => m.work_id).map((m) => String(m.work_id)))
         );
-        const respondedWorkIds = new Set(
-          rawMessages.filter((m) => m.info_type === InfoType.RESPONSE && m.work_id).map((m) => String(m.work_id))
-        );
-
-        const { workBlocksMap, workDagMap } = await buildThinkingBlocksAndDag(ctx.relationDb, ctx.infoCore, allWorkIds, ctx.promptsAccess, ctx.soulAccess);
+        void allWorkIds;
 
         const messages = rawMessages.map((m) => {
-          const isResponse = m.info_type === InfoType.RESPONSE;
-          const wid = m.work_id ? String(m.work_id) : '';
-
-          const attachBlocks = wid && workBlocksMap.has(wid) && (isResponse || !respondedWorkIds.has(wid));
-          const blocks = attachBlocks
-            ? workBlocksMap.get(wid)!.map((b) => ({ ...b, msgId: m.info_id }))
-            : undefined;
-          const agentDag = (isResponse && wid && workDagMap.has(wid))
-            ? workDagMap.get(wid)
-            : undefined;
-
           return {
             id: m.info_id,
             role: m.info_creator_role === 'USER' ? 'user' : 'assistant',
@@ -1691,71 +2144,53 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             citingInfoIds: m.citing_info_ids ?? [],
             citedInfoIds: m.cited_info_ids ?? [],
             citingIds: m.cited_info_ids ?? [],
-            blocks,
-            agentDag,
           };
         });
 
         sendJson(res, 200, { messages: [...messages, ...permissionMessages] });
 
-      } else if (method === 'GET' && pathname === '/api/chat/thinking') {
-
+      } else if (method === 'GET' && pathname === '/api/chat/observation') {
+        // ADR-013：历史重放读（执行中=拉历史叠加实时；结束后=纯重放）。同一 reducer，无服务端分析。
         const infoId = String(params.get('info_id') ?? '');
-        const runId = String(params.get('run_id') ?? '');
-        let workId = String(params.get('work_id') ?? '');
+        let runId = String(params.get('run_id') ?? '');
+        const afterSeq = Number(params.get('after_seq') ?? 0) || 0;
 
-        if (!workId && !infoId && !runId) {
-          sendJson(res, 400, { error: '请至少提供 work_id / info_id / run_id 中的一个参数' });
+        if (!runId && infoId) {
+          try {
+            const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
+              `SELECT "work_id" FROM "dialog_record" WHERE "id" = ? LIMIT 1`,
+              [infoId],
+            );
+            if (rows.length > 0) runId = String(rows[0].work_id ?? '');
+          } catch { }
+        }
+        if (!runId) {
+          sendJson(res, 400, { error: '请提供 run_id 或 info_id' });
           return;
         }
 
-        if (!workId && (infoId || runId)) {
-          try {
-            if (infoId) {
-              const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
-                `SELECT "work_id" FROM "dialog" WHERE "id" = ? LIMIT 1`,
-                [infoId],
-              );
-              if (rows.length > 0) workId = String(rows[0].work_id ?? '');
-              if (!workId) {
-                const execRows = ctx.relationDb.queryRaw<{ work_id: string }>(
-                  `SELECT "work_id" FROM "execute" WHERE "id" = ? LIMIT 1`,
-                  [infoId],
-                );
-                if (execRows.length > 0) workId = String(execRows[0].work_id ?? '');
-              }
-            } else if (runId) {
-              const rows = ctx.relationDb.queryRaw<{ work_id: string }>(
-                `SELECT "work_id" FROM "dialog" WHERE "work_id" = ? LIMIT 1`,
-                [runId],
-              );
-              if (rows.length > 0) workId = String(rows[0].work_id ?? '');
-              if (!workId) {
-                const execRows = ctx.relationDb.queryRaw<{ work_id: string }>(
-                  `SELECT "work_id" FROM "execute" WHERE "work_id" = ? OR "run_id" = ? LIMIT 1`,
-                  [runId, runId],
-                );
-                if (execRows.length > 0) workId = String(execRows[0].work_id ?? '');
-              }
-            }
-          } catch (err) {
-            fileLogger.warn('[dev-server] GET /api/chat/thinking work_id 反查失败（容忍：按未找到处理）', err instanceof Error ? err.message : String(err));
-          }
-        }
+        const stateRows = ctx.relationDb.queryRaw<Record<string, unknown>>(
+          `SELECT "session_id", "work_id", "phase" FROM "run_state_record" WHERE "id" = ? LIMIT 1`,
+          [runId],
+        );
+        const state = stateRows[0];
+        const sessionId = String(state?.session_id ?? '');
 
-        const reqModule = String(params.get('module') ?? 'all').toLowerCase();
-        const { workBlocksMap, workDagMap, workTraceMap } = await buildThinkingBlocksAndDag(ctx.relationDb, ctx.infoCore, workId ? [workId] : [], ctx.promptsAccess, ctx.soulAccess);
-        const blocks = (reqModule === 'dag') ? [] : (workBlocksMap.get(workId) ?? []);
-        const dag = (reqModule === 'blocks') ? null : (workDagMap.get(workId) ?? null);
-        const trace = (reqModule === 'dag' || reqModule === 'blocks') ? (workTraceMap.get(workId) ?? null) : (workTraceMap.get(workId) ?? null);
+        const evRows = ctx.relationDb.queryRaw<{
+          seq: number; kind: string; event_type: string; ts: number;
+          agent_id: string; round: number | null; span_json: string; ref_json: string; payload_json: string;
+        }>(
+          `SELECT "seq","kind","event_type","ts","agent_id","round","span_json","ref_json","payload_json"
+           FROM "task_event_record" WHERE "run_id" = ? AND "seq" > ? ORDER BY "seq" ASC`,
+          [runId, afterSeq],
+        );
+        const events = (evRows ?? []).map((r) => withSession(toTaskEvent(r), sessionId, runId, String(state?.work_id ?? runId)));
         sendJson(res, 200, {
-          work_id: workId,
           run_id: runId,
-          count: blocks.length,
-          blocks,
-          dag,
-          trace,
-          module: reqModule,
+          session_id: sessionId,
+          phase: String(state?.phase ?? (events.length ? 'running' : 'unknown')),
+          last_seq: events.length ? events[events.length - 1].seq : afterSeq,
+          events,
         });
 
       } else if (method === 'GET' && pathname === '/api/chat/eval-result') {
@@ -1773,7 +2208,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if ((!workId && !runId) && infoId) {
           try {
             const rows = ctx.relationDb.queryRaw<{ work_id: string; trace_id: string }>(
-              `SELECT "work_id", "trace_id" FROM "dialog" WHERE "id" = ? LIMIT 1`,
+              `SELECT "work_id", "trace_id" FROM "dialog_record" WHERE "id" = ? LIMIT 1`,
               [infoId],
             );
             if (rows.length > 0) {
@@ -1782,7 +2217,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
               traceId = traceId || String(rows[0].trace_id ?? '');
             } else {
               const execRows = ctx.relationDb.queryRaw<{ work_id: string; run_id: string; trace_id: string }>(
-                `SELECT "work_id", "run_id", "trace_id" FROM "execute" WHERE "id" = ? LIMIT 1`,
+                `SELECT "work_id", "run_id", "trace_id" FROM "execute_record" WHERE "id" = ? LIMIT 1`,
                 [infoId],
               );
               if (execRows.length > 0) {
@@ -1806,7 +2241,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
             return ctx.relationDb.queryRaw<{ answer: string; created: number; elapsed_ms: number; agent_name: string }>(
               `SELECT e.answer, e.created, e.elapsed_ms, a.agent_name
                FROM orchestration_agent_execution e
-               LEFT JOIN agent a ON (e.agent_id = a.id OR e.agent_id = a.agent_id)
+               LEFT JOIN agent_record a ON e.agent_id = a.id
                WHERE e.work_id = ? AND e.execution_type = 'SYSTEM' AND a.agent_type = 'EVOLUTOR'
                ORDER BY e.created DESC LIMIT 1`,
               [workId],
@@ -1824,7 +2259,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         try {
           const evalRows = ctx.relationDb.queryRaw<{ run_id: string; work_id: string; scores: string; suggestions: string; need_optimize: number; created: number; updated: number; agent_id: string }>(
             `SELECT e."run_id", e."work_id", e."scores", e."suggestions", e."need_optimize", e."created", e."updated", e."agent_id"
-             FROM "agent_evaluation" e WHERE e."run_id" = ? OR e."work_id" = ? ORDER BY e."created" DESC LIMIT 1`,
+             FROM "agent_evaluation_record" e WHERE e."run_id" = ? OR e."work_id" = ? ORDER BY e."created" DESC LIMIT 1`,
             [runId || workId, runId || workId],
           );
 
@@ -1863,7 +2298,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (evalAgentId) {
           try {
             const agentRows = ctx.relationDb.queryRaw<{ agent_name: string }>(
-              'SELECT "agent_name" FROM "agent" WHERE "agent_id" = ? OR "id" = ? LIMIT 1', [evalAgentId, evalAgentId],
+              'SELECT "agent_name" FROM "agent_record" WHERE "agent_id" = ? OR "id" = ? LIMIT 1', [evalAgentId, evalAgentId],
             );
             if (agentRows && agentRows.length > 0 && agentRows[0].agent_name) agentName = agentRows[0].agent_name;
           } catch {  }
@@ -1982,10 +2417,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         try {
           await ctx.chatAccess.openChatStream(streamInput, streamOutput, new ChatContext(), chatMetrics, undefined, onEvent);
         } catch (err: any) {
-          await ctx.streamAccess.pushEvent(sessionId, 'error', 'CONTROL', {
-            error_message: err?.message || 'Stream failed',
-            error_code: 'INTERNAL',
-          });
+          write(`data: ${JSON.stringify({ event: 'error.occurred', error_message: err?.message || 'Stream failed', error_code: 'INTERNAL' })}\n\n`);
         } finally {
           await ctx.streamAccess.closeStream(
             Object.assign(new CloseStreamInput(), { session_id: sessionId, reason: 'Stream finished' }),
@@ -2112,7 +2544,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context_org" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog_record" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;
@@ -2129,7 +2561,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const parts = pathname.split('/');
         const tag = decodeURIComponent(parts[parts.length - 1] || '');
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d INNER JOIN "info_tag" t ON t."info_id" = d."id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond('d.')} ORDER BY d."created" DESC LIMIT 200`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context_org" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog_record" d INNER JOIN "info_tag_record" t ON t."info_id" = d."id" WHERE t."tag" = ? AND ${memoryVisibleTypeCond('d.')} ORDER BY d."created" DESC LIMIT 200`,
           [tag, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const tagMap = queryInfoTagsByInfoIds(ctx.relationDb, rows.map((r: any) => r.info_id));
@@ -2146,7 +2578,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const conds: string[] = [];
         const args: any[] = [];
         if (kw) {
-          conds.push('(d."dialog" LIKE ? OR d."id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" LIKE ?))');
+          conds.push('(d."dialog" LIKE ? OR d."id" IN (SELECT "info_id" FROM "info_tag_record" WHERE "tag" LIKE ?))');
           args.push(`%${kw}%`, `%${kw}%`);
         }
         if (type) {
@@ -2169,7 +2601,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           args.push(...MEMORY_VISIBLE_INFO_TYPES);
         }
         if (tag) {
-          conds.push('d."id" IN (SELECT "info_id" FROM "info_tag" WHERE "tag" = ?)');
+          conds.push('d."id" IN (SELECT "info_id" FROM "info_tag_record" WHERE "tag" = ?)');
           args.push(tag);
         }
         if (startTime !== undefined) {
@@ -2191,7 +2623,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
         const where = conds.length > 0 ? ` WHERE ${conds.join(' AND ')}` : '';
         const rows = ctx.relationDb.queryRaw<any>(
-          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
+          `SELECT d."id", d."id" AS "info_id", d."type" AS "info_type", CASE WHEN d."type" = 'REQUEST' THEN 'USER' ELSE 'ASSISTANT' END AS "info_creator_role", d."dialog" AS "info", EXISTS(SELECT 1 FROM "context_org" c WHERE c."dialog_id" = d."id" AND c."type" = 'pin') AS "pin", d."session_id", d."created", d."updated" FROM "dialog_record" d${where} ORDER BY d."created" DESC, d."id" DESC LIMIT ${limit + 1}`,
           args,
         );
         const hasMore = rows.length > limit;
@@ -2223,11 +2655,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const affectedExecute = await ctx.relationDb.delete('execute', [{ field: 'id', operator: Operator.IN, value: infoIds }]);
         await ctx.relationDb.delete('context', [{ field: 'dialog_id', operator: Operator.IN, value: infoIds }]);
         sendJson(res, 200, { deleted_count: affectedDialog + affectedExecute });
-        sendJson(res, 200, { deleted_count: affected });
 
       } else if (method === 'GET' && pathname === '/api/memory/tags') {
         const tagRows = ctx.relationDb.queryRaw<{ tag: string; cnt: number }>(
-          'SELECT "tag", COUNT(*) AS "cnt" FROM "info_tag" GROUP BY "tag" ORDER BY "cnt" DESC',
+          'SELECT "tag", COUNT(*) AS "cnt" FROM "info_tag_record" GROUP BY "tag" ORDER BY "cnt" DESC',
         );
         sendJson(res, 200, { tags: tagRows.map((r) => r.tag) });
 
@@ -2281,7 +2712,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           const { GraphContext, SelectGraphOutput, GraphTarget } = await import('./Base/GraphDBProvider/domain/types');
 
           const matchedTags = ctx.relationDb.queryRaw<{ tag: string; info_id: string }>(
-            'SELECT DISTINCT "tag", "info_id" FROM "info_tag" WHERE "tag" LIKE ? LIMIT 20',
+            'SELECT DISTINCT "tag", "info_id" FROM "info_tag_record" WHERE "tag" LIKE ? LIMIT 20',
             [`%${query.replace(/%/g, '').replace(/'/g, '')}%`],
           );
           if (!matchedTags || matchedTags.length === 0) {
@@ -2357,10 +2788,10 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
       } else if (method === 'GET' && /\/api\/memory\/stats\//.test(pathname)) {
         const totalRows = ctx.relationDb.queryRaw<{ cnt: number }>(
-          'SELECT COUNT(*) AS "cnt" FROM "dialog"',
+          'SELECT COUNT(*) AS "cnt" FROM "dialog_record"',
         );
         const typeRows = ctx.relationDb.queryRaw<{ info_type: string; cnt: number }>(
-          'SELECT "type" AS "info_type", COUNT(*) AS "cnt" FROM "dialog" GROUP BY "type"',
+          'SELECT "type" AS "info_type", COUNT(*) AS "cnt" FROM "dialog_record" GROUP BY "type"',
         );
         const byType: Record<string, number> = {};
         for (const r of typeRows) { byType[r.info_type || 'unknown'] = r.cnt; }
@@ -2377,7 +2808,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const start = new Date(year, month - 1, 1).getTime();
         const end = new Date(year, month, 1).getTime();
         const rows = ctx.relationDb.queryRaw<{ created: number }>(
-          'SELECT "created" FROM "dialog" WHERE "created" >= ? AND "created" < ?',
+          'SELECT "created" FROM "dialog_record" WHERE "created" >= ? AND "created" < ?',
           [start, end],
         );
         const days: Record<string, number> = {};
@@ -2391,7 +2822,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ day_num: number; cnt: number }>(
-          `SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "dialog" WHERE "created" IS NOT NULL AND ${memoryVisibleTypeCond('')} GROUP BY day_num`,
+          `SELECT CAST(("created" + ?) / 86400000 AS INTEGER) AS day_num, COUNT(*) AS cnt FROM "dialog_record" WHERE "created" IS NOT NULL AND ${memoryVisibleTypeCond('')} GROUP BY day_num`,
           [tzMs, ...MEMORY_VISIBLE_INFO_TYPES],
         );
         const dates: Record<string, number> = {};
@@ -2407,7 +2838,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
         const tzMs = (parseInt(params.get('tz') || '0', 10) || 0) * 60000;
         const rows = ctx.relationDb.queryRaw<{ last_ts: number }>(
-          'SELECT MAX(d."created") AS "last_ts" FROM "dialog" d INNER JOIN "chat_session" cs ON d."session_id" = cs."session_id" WHERE d."session_id" IS NOT NULL AND d."session_id" != \'\' AND d."created" IS NOT NULL GROUP BY d."session_id"',
+          'SELECT MAX(d."created") AS "last_ts" FROM "dialog_record" d INNER JOIN "chat_session_record" cs ON d."session_id" = cs."session_id" WHERE d."session_id" IS NOT NULL AND d."session_id" != \'\' AND d."created" IS NOT NULL GROUP BY d."session_id"',
           [],
         );
         const dates: Record<string, number> = {};
@@ -2608,8 +3039,8 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const queue = typeof body.queue === 'string' && body.queue.trim() ? body.queue.trim() : 'default';
         const fromTime = typeof body.from_time === 'number' && body.from_time > 0 ? body.from_time : undefined;
         const sql = fromTime
-          ? 'UPDATE "queue_message" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\' AND "created" >= ?'
-          : 'UPDATE "queue_message" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\'';
+          ? 'UPDATE "queue_message_record" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\' AND "created" >= ?'
+          : 'UPDATE "queue_message_record" SET "status" = \'PENDING\', "retry_count" = 0, "next_retry_at" = NULL, "updated" = ? WHERE "queue" = ? AND "status" = \'PROCESSING\'';
         const params: unknown[] = [Date.now(), queue];
         if (fromTime) params.push(fromTime);
         const count = ctx.relationDb.executeRaw(sql, params);
@@ -2624,7 +3055,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'GET' && pathname === '/api/config/mq/queues') {
         const rows = ctx.relationDb.queryRaw<{ queue: string }>(
-          'SELECT DISTINCT "queue" FROM "queue_message" ORDER BY "queue" ASC',
+          'SELECT DISTINCT "queue" FROM "queue_message_record" ORDER BY "queue" ASC',
           [],
         );
         sendJson(res, 200, { queues: (rows || []).map(r => r.queue) });
@@ -2633,7 +3064,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const queue = (body as Record<string, unknown>).queue as string || '';
         if (!queue) { sendJson(res, 400, { error: 'queue is required' }); return; }
         const deleted = ctx.relationDb.executeRaw(
-          'DELETE FROM "queue_message" WHERE "queue" = ?',
+          'DELETE FROM "queue_message_record" WHERE "queue" = ?',
           [queue],
         );
         sendJson(res, 200, { deleted, queue });
@@ -2874,23 +3305,6 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new SubmitFeedbackOutput();
         await ctx.feedbackAccess.submitFeedback(input, output, new FeedbackContext());
 
-        if (runId && rating !== undefined) {
-          try {
-            const saveRatingInput = Object.assign(new SaveInfoInput(), {
-              session_id: body.session_id || '',
-              work_id: workId || '',
-              run_id: runId,
-              info_type: 'USER_FEEDBACK',
-              info_creator_role: 'user',
-              info: JSON.stringify({ rating, comment: body.comment || '', agent_id: agentId || '' }),
-            });
-            await ctx.infoCore.saveInfo(saveRatingInput, new SaveInfoOutput(), new InfoCoreContext());
-          } catch (err) {
-
-            fileLogger.warn('[dev-server] POST /api/feedback 评分落库失败（容忍：反馈主流程不受影响）', err instanceof Error ? err.message : String(err));
-          }
-        }
-
         const configOut = new GetFeedbackConfigOutput();
         await ctx.feedbackAccess.getFeedbackConfig(new GetFeedbackConfigInput(), configOut, new FeedbackContext());
         const threshold = configOut.config?.disband_threshold ?? 30;
@@ -2902,7 +3316,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         if (shouldDisband) {
           try {
             const linkedRows = ctx.relationDb.queryRaw<{ agent_id: string }>(
-              'SELECT DISTINCT a.agent_id FROM agent_usage a WHERE a.run_id = ? AND a.agent_id LIKE \'agent-%\' LIMIT 1',
+              'SELECT DISTINCT a.agent_id FROM usage_event_record a WHERE a.run_id = ? AND a.agent_id LIKE \'agent-%\' LIMIT 1',
               [runId],
             );
             if (linkedRows.length > 0) {
@@ -3023,6 +3437,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         const output = new GetProfileHistoryOutput();
         await ctx.userProfileAccess.soProfileHistory(input, output, new UserProfileContext());
         sendJson(res, 200, { history: output.history });
+      } else if (method === 'GET' && pathname === '/api/profile/all') {
+        const input = Object.assign(new GetAllProfilesInput(), {
+          limit: params.get('limit') ? parseInt(params.get('limit')!, 10) : undefined,
+        });
+        const output = new GetAllProfilesOutput();
+        await ctx.userProfileAccess.soAllProfiles(input, output, new UserProfileContext());
+        sendJson(res, 200, { profiles: output.profiles });
       } else if (method === 'GET' && pathname.startsWith('/api/profile/version/')) {
         const versionStr = pathname.split('/').pop()!;
         const version = parseInt(versionStr, 10);
@@ -3174,7 +3595,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/analytics/token-trend') {
 
         const rows = ctx.relationDb.queryRaw<{ date: string; tokens: number }>(
-          'SELECT "usage_date" AS "date", SUM(COALESCE("input_tokens",0) + COALESCE("output_tokens",0)) AS "tokens" FROM "llm_usage" GROUP BY "usage_date" ORDER BY "usage_date" ASC',
+          'SELECT "usage_date" AS "date", SUM(COALESCE("input_tokens",0) + COALESCE("output_tokens",0)) AS "tokens" FROM "llm_usage_org" GROUP BY "usage_date" ORDER BY "usage_date" ASC',
           [],
         );
         sendJson(res, 200, { points: (rows || []).map(r => ({ date: r.date, tokens: Number(r.tokens) || 0 })) });
@@ -3182,7 +3603,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/analytics/model-distribution') {
 
         const rows = ctx.relationDb.queryRaw<{ model: string; tokens: number; input_tokens: number; output_tokens: number; deleted: number; type: string }>(
-          'SELECT COALESCE(e."llm_title", u."llm_available_id") AS "model", COALESCE(e."llm_type", \'deleted\') AS "type", (e."llm_title" IS NULL) AS "deleted", SUM(COALESCE(u."input_tokens",0) + COALESCE(u."output_tokens",0)) AS "tokens", SUM(COALESCE(u."input_tokens",0)) AS "input_tokens", SUM(COALESCE(u."output_tokens",0)) AS "output_tokens" FROM "llm_usage" u LEFT JOIN "llm_available" e ON e."id" = u."llm_available_id" GROUP BY u."llm_available_id" ORDER BY "tokens" DESC',
+          'SELECT COALESCE(e."llm_title", u."llm_available_id") AS "model", COALESCE(e."llm_type", \'deleted\') AS "type", (e."llm_title" IS NULL) AS "deleted", SUM(COALESCE(u."input_tokens",0) + COALESCE(u."output_tokens",0)) AS "tokens", SUM(COALESCE(u."input_tokens",0)) AS "input_tokens", SUM(COALESCE(u."output_tokens",0)) AS "output_tokens" FROM "llm_usage_org" u LEFT JOIN "llm_available_record" e ON e."id" = u."llm_available_id" GROUP BY u."llm_available_id" ORDER BY "tokens" DESC',
           [],
         );
         sendJson(res, 200, { models: (rows || []).map(r => ({ model: r.model, type: r.type || 'deleted', tokens: Number(r.tokens) || 0, input_tokens: Number(r.input_tokens) || 0, output_tokens: Number(r.output_tokens) || 0, deleted: !!r.deleted })) });
@@ -3190,27 +3611,27 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
       } else if (method === 'GET' && pathname === '/api/analytics/last-run-overview') {
 
         const run = ctx.relationDb.queryRaw<{ id: string; session_key: string; accepted_at: number; settled_at: number }>(
-          `SELECT "id", "session_key", "accepted_at", "settled_at" FROM "runtime_run" WHERE "status" = 'finished' AND "settled_at" > "accepted_at" ORDER BY "settled_at" DESC LIMIT 1`,
+          `SELECT "id", "session_key", "accepted_at", "settled_at" FROM "runtime_run_record" WHERE "status" = 'finished' AND "settled_at" > "accepted_at" ORDER BY "settled_at" DESC LIMIT 1`,
         )?.[0];
         if (!run) {
           sendJson(res, 200, { available: false });
         } else {
           const durationS = Math.max(0, Math.round((run.settled_at - run.accepted_at) / 100) / 10);
           const tok = ctx.relationDb.queryRaw<{ it: number; ot: number }>(
-            `SELECT COALESCE(SUM("input_tokens"),0) AS "it", COALESCE(SUM("output_tokens"),0) AS "ot" FROM "llm_call_log" WHERE "run_id" = ?`,
+            `SELECT COALESCE(SUM("input_tokens"),0) AS "it", COALESCE(SUM("output_tokens"),0) AS "ot" FROM "llm_call_record" WHERE "run_id" = ?`,
             [run.id],
           )?.[0];
           const skillCount = ctx.relationDb.queryRaw<{ n: number }>(
-            `SELECT COUNT(*) AS "n" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = 'skill.started'`,
+            `SELECT COUNT(*) AS "n" FROM "stream_event_record" WHERE "session_key" = ? AND "event_type" = 'skill.started'`,
             [run.session_key],
           )?.[0]?.n ?? 0;
 
           const legacySkillCount = ctx.relationDb.queryRaw<{ n: number }>(
-            `SELECT COUNT(*) AS "n" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = 'tool.started'`,
+            `SELECT COUNT(*) AS "n" FROM "stream_event_record" WHERE "session_key" = ? AND "event_type" = 'tool.started'`,
             [run.session_key],
           )?.[0]?.n ?? 0;
           const permCount = ctx.relationDb.queryRaw<{ n: number }>(
-            `SELECT COUNT(*) AS "n" FROM "stream_event" WHERE "session_key" = ? AND "event_type" = 'permission.asked'`,
+            `SELECT COUNT(*) AS "n" FROM "stream_event_record" WHERE "session_key" = ? AND "event_type" = 'permission.asked'`,
             [run.session_key],
           )?.[0]?.n ?? 0;
           sendJson(res, 200, {
@@ -3253,7 +3674,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         let callCount = 0;
         try {
           const rows = ctx.relationDb.queryRaw<{ input_tokens: number; output_tokens: number; call_count: number }>(
-            `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "llm_call_log" ${where}`,
+            `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "llm_call_record" ${where}`,
             condParams,
           );
           inputTokens = Number(rows?.[0]?.input_tokens ?? 0) || 0;
@@ -3562,7 +3983,7 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         try {
 
           const vectorConfigRows = ctx.relationDb.queryRaw<{ llm_id: string }>(
-            'SELECT "llm_id" FROM "info_vector_config" LIMIT 1',
+            'SELECT "llm_id" FROM "info_vector_config_record" LIMIT 1',
             [],
           );
           if (vectorConfigRows.length === 0 || !vectorConfigRows[0].llm_id) {

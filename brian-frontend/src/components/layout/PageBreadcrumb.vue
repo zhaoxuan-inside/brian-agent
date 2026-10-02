@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ChevronRight, Copy, Check } from '@lucide/vue'
 
-const props = defineProps<{ path: string[] }>()
+/**
+ * variant='glass' 为全局默认;variant='chat' 仅对话页(ADR-015)。
+ */
+const props = withDefaults(defineProps<{
+  path: string[]
+  variant?: 'glass' | 'chat'
+}>(), {
+  variant: 'glass',
+})
+
+const isChat = computed(() => props.variant === 'chat')
 
 const copied = ref(false)
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -32,15 +42,16 @@ function copyPath() {
 <template>
   <div class="flex items-center gap-1.5">
     <template v-for="(item, idx) in path" :key="idx">
-      <ChevronRight v-if="idx > 0" :size="12" class="text-apple-gray-400 flex-shrink-0" />
-      <span class="text-sm text-apple-gray-600 dark:text-apple-gray-300">{{ item }}</span>
+      <ChevronRight v-if="idx > 0" :size="12" class="flex-shrink-0" :class="isChat ? 'text-chat-ink-tertiary' : 'text-apple-gray-400'" />
+      <span class="text-sm" :class="isChat ? 'text-chat-ink-muted' : 'text-apple-gray-600 dark:text-apple-gray-300'">{{ item }}</span>
     </template>
     <button
-      class="ml-1 p-1 rounded text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10 transition-colors flex-shrink-0"
+      class="ml-1 p-1 rounded transition-colors flex-shrink-0"
+      :class="isChat ? 'text-chat-ink-tertiary hover:text-chat-primary-hover' : 'text-apple-gray-400 hover:text-brian-blue hover:bg-brian-blue/10'"
       title="复制路径"
       @click="copyPath"
     >
-      <Check v-if="copied" :size="13" class="text-success-green" />
+      <Check v-if="copied" :size="13" :class="isChat ? 'text-chat-success' : 'text-success-green'" />
       <Copy v-else :size="13" />
     </button>
   </div>

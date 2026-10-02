@@ -2,13 +2,13 @@ import type {
   LLMAccess,
   Logger,
   Metrics,
-  Report,
   LLMMessage,
   ParsedToolCall,
   LLMEvent,
+  RelationDBAccess,
 } from '@brian-agent/base';
 
-import { BusinessEvent } from '@brian-agent/base';
+import { BusinessEvent, EXECUTE_TABLE, Operator, Report } from '@brian-agent/base';
 import type { SkillSpecJson } from '../../SkillRuntime';
 import {
   LLMContext,
@@ -20,6 +20,7 @@ import {
 } from '@brian-agent/base';
 import { DEFAULT_BUDGET_TOTAL, IterationBudget, AbortReason, RunPhase } from '../../shared/types';
 import type { SessionAccess } from '../../Session';
+import { RUN_ROUND_ORG_TABLE } from '../../Runs';
 import type { SkillRuntimeAccess } from '../../SkillRuntime';
 import {
   ExecAgentLoopInput,
@@ -90,6 +91,7 @@ interface LoopRunContext {
   deferFinalReply: boolean;
 
   thoughtMode?: string;
+  enableThinking?: boolean;
 
   report?: Report;
 
@@ -102,6 +104,7 @@ interface LoopRunContext {
 
 interface LLMTurnResult {
   ok: boolean;
+  callId?: string;
   verdict?: LoopStopReason;
   text?: string;
   reasoning?: string;
@@ -136,6 +139,7 @@ export class AgentLoopService {
     private readonly llm: LLMAccess,
     private readonly session: SessionAccess,
     private readonly skillRuntime: SkillRuntimeAccess,
+    private readonly relationDb?: RelationDBAccess,
     private readonly logger?: Logger,
 
     private readonly queue?: LoopQueue,
@@ -185,6 +189,10 @@ export class AgentLoopService {
       await this.registerRunSkills(input, metrics);
       const specs = await this.soLoopSkillSpecs(input.skills, input.run_id, metrics);
       await this.persistUserMessage(input, metrics);
+      if (report) {
+        if (!report.run_id) report.run_id = input.run_id;
+        if (!report.work_id) report.work_id = input.work_id || input.run_id;
+      }
       await this.publishRunStatus({ runId: input.run_id, sessionKey: input.session_key, report }, RunPhase.Start);
       return this.prepareContextFields(input, budget, controller, specs, metrics, report);
     } catch (err) {
@@ -223,6 +231,7 @@ export class AgentLoopService {
       finalTurn: false,
       deferFinalReply: input.defer_final_reply === true,
       thoughtMode: input.thought_mode,
+      enableThinking: input.enable_thinking ?? (input.thought_mode !== 'Direct'),
       metrics,
       report,
       deltaBuffer: { text: '', reasoning: '' },
@@ -323,6 +332,11 @@ export class AgentLoopService {
 
   private async runInnerTurn(ctx: LoopRunContext): Promise<'continue' | LoopStopReason> {
     const round = ctx.iterations + 1;
+    if (ctx.report) {
+      if (!ctx.report.run_id && ctx.runId) ctx.report.run_id = ctx.runId;
+      if (!ctx.report.work_id && ctx.runId) ctx.report.work_id = ctx.runId;
+      ctx.report.round = round;
+    }
     const steered = this.queue?.drainSteering(ctx.sessionKey) ?? [];
     if (steered.length) {
       await this.persistInjectedMessages(ctx, steered);
@@ -333,7 +347,7 @@ export class AgentLoopService {
       return gate.reason ?? LoopStopReason.Budget;
     }
     ctx.finalTurn = gate.finalTurn;
-    ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnStarted, {
+    ctx.report?.emit(BusinessEvent.LoopTurnStarted, {
       round,
       thought_mode: ctx.thoughtMode ?? '',
       final_turn: ctx.finalTurn,
@@ -351,12 +365,12 @@ export class AgentLoopService {
         input_tokens: turn.inputTokens,
         output_tokens: turn.outputTokens,
       });
-      this.flushDeltaBuffer(ctx, 'think');
+      this.flushDeltaBuffer(ctx);
       this.emitLoopTurnResult(ctx, round, 'none', '', [], 'error', turn.error ?? '本轮 LLM 调用失败，停止执行');
       return turn.verdict ?? LoopStopReason.Error;
     }
 
-    this.flushDeltaBuffer(ctx, 'think');
+    this.flushDeltaBuffer(ctx);
     await this.persistAssistantTurn(ctx, turn);
     const toolNames = (turn.toolCalls ?? []).map((c) => c.tool_id);
     const decision = turn.finishReason === 'tool-calls' ? 'continue' : 'stop';
@@ -368,11 +382,6 @@ export class AgentLoopService {
         : '本轮无需调用技能（finish_reason=stop），Agent 结论已产出，收敛结束';
     this.emitLoopTurnResult(ctx, round, String(turn.finishReason ?? ''), turn.text ?? '', toolNames, decision, decisionReason);
     if (turn.finishReason !== 'tool-calls') {
-      if (turn.finishReason !== 'error' && turn.text) {
-        if (!ctx.deferFinalReply) {
-          ctx.report?.pushBusinessEvent(BusinessEvent.ReplyDelta, { delta: turn.text });
-        }
-      }
       ctx.result = turn.text ?? '';
 
       if (turn.finishReason === 'error') {
@@ -394,7 +403,7 @@ export class AgentLoopService {
     nextAction: 'continue' | 'stop' | 'error' | 'budget',
     reason: string,
   ): void {
-    ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnResult, {
+    ctx.report?.emit(BusinessEvent.LoopTurnResult, {
       round,
       thought_mode: ctx.thoughtMode ?? '',
       finish_reason: finishReason,
@@ -411,14 +420,14 @@ export class AgentLoopService {
     const input = await this.prepareLLMTurnInput(ctx);
     const output = new ExecLLMEventsOutput();
     try {
-      const ok = await this.llm.execLLMEvents(input, output, new LLMCtx(), ctx.metrics);
+      const ok = await this.llm.execLLMEvents(input, output, new LLMCtx(), ctx.metrics, ctx.report);
       if (!ok) {
         ctx.error = output.error;
         return { ok: false, verdict: LoopStopReason.Error, error: output.error };
       }
 
       const turnResult = this.fillTurnResult(output);
-      ctx.report?.pushBusinessEvent(BusinessEvent.LoopTurnCompleted, {
+      ctx.report?.emit(BusinessEvent.LoopTurnCompleted, {
         round: ctx.iterations + 1,
       });
       return turnResult;
@@ -439,6 +448,7 @@ export class AgentLoopService {
   private fillTurnResult(output: ExecLLMEventsOutput): LLMTurnResult {
     return {
       ok: true,
+      callId: output.call_id,
       text: output.result,
       reasoning: output.reasoning,
       finishReason: output.finish_reason,
@@ -472,9 +482,16 @@ export class AgentLoopService {
     input.idle_watchdog_ms = ctx.idleWatchdogMs;
     input.signal = ctx.controller.signal;
     input.on_event = (event) => this.streamHandler(ctx, event);
+    if (ctx.enableThinking === false) {
+      input.extra = {
+        ...(input.extra ?? {}),
+        thinking: { type: 'disabled' },
+        enable_thinking: false,
+      };
+    }
 
     const round = ctx.iterations + 1;
-    ctx.report?.pushBusinessEvent(BusinessEvent.ContextBuilt, {
+    ctx.report?.emit(BusinessEvent.ContextBuilt, {
       round,
       thought_mode: ctx.thoughtMode ?? '',
       message_count: input.messages.length,
@@ -488,6 +505,7 @@ export class AgentLoopService {
     return input;
   }
 
+  /** delta 分流（ADR-013）：reasoning_delta → think.delta，text_delta → reply.delta，50ms 批量刷出 */
   private streamHandler(ctx: LoopRunContext, event: LLMEvent): void {
     if (event.type === 'reasoning_delta') {
       this.bufferDelta(ctx, 'reasoning', event.delta);
@@ -501,12 +519,11 @@ export class AgentLoopService {
   private bufferDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string): void {
     ctx.deltaBuffer[field] += delta;
     if (!ctx.deltaBuffer.timer) {
-
-      ctx.deltaBuffer.timer = setTimeout(() => this.flushDeltaBuffer(ctx, 'think'), DELTA_FLUSH_MS);
+      ctx.deltaBuffer.timer = setTimeout(() => this.flushDeltaBuffer(ctx), DELTA_FLUSH_MS);
     }
   }
 
-  private flushDeltaBuffer(ctx: LoopRunContext, textAs: 'reply' | 'think' = 'reply'): void {
+  private flushDeltaBuffer(ctx: LoopRunContext): void {
     if (ctx.deltaBuffer.timer) {
       clearTimeout(ctx.deltaBuffer.timer);
       ctx.deltaBuffer.timer = undefined;
@@ -517,17 +534,18 @@ export class AgentLoopService {
         continue;
       }
       ctx.deltaBuffer[field] = '';
-      this.publishPartDelta(ctx, field, buffered, textAs);
+      this.publishDelta(ctx, field, buffered);
     }
   }
 
-  private publishPartDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string, textAs: 'reply' | 'think' = 'reply'): void {
-
-    const event = field === 'text' && textAs === 'reply' ? BusinessEvent.ReplyDelta : BusinessEvent.ThinkDelta;
-    ctx.report?.pushBusinessEvent(event, { delta });
+  private publishDelta(ctx: LoopRunContext, field: 'text' | 'reasoning', delta: string): void {
+    const event = field === 'text' ? BusinessEvent.ReplyDelta : BusinessEvent.ThinkDelta;
+    ctx.report?.emit(event, { delta });
   }
 
   private async prepareModelMessages(sessionId: string, metrics?: Metrics): Promise<LLMMessage[]> {
+    // ADR-012:wire 重建要读 execute_record,先等待执行事件写链落库
+    await Report.flushObservability();
     const soIn = new SoMessagesInput();
     soIn.session_id = sessionId;
     soIn.limit = LOOP_MESSAGE_LIMIT;
@@ -538,46 +556,93 @@ export class AgentLoopService {
       if (message.role === MessageRole.User) {
         wire.push({ role: 'user', content: message.content });
       } else {
-        this.assistantToWire(message, wire);
+        await this.assistantToWire(message, wire);
       }
     }
     return wire;
   }
 
-  private assistantToWire(message: MessageWithParts, wire: LLMMessage[]): void {
+  private async assistantToWire(message: MessageWithParts, wire: LLMMessage[]): Promise<void> {
     const toolParts = message.parts.filter((p) => p.part_type === PartType.Tool);
     const text = message.parts.find((p) => p.part_type === PartType.Text)?.content ?? message.content;
-    const toolCalls = toolParts
-      .map((p) => this.toWireSkillCall(p))
-      .filter((c): c is WireSkillCall => Boolean(c));
+    const toolCalls: WireSkillCall[] = [];
+    for (const p of toolParts) {
+      const call = await this.toWireSkillCall(p);
+      if (call) toolCalls.push(call);
+    }
     if (toolCalls.length) {
       wire.push({ role: 'assistant', content: text, tool_calls: toolCalls });
     } else if (text) {
       wire.push({ role: 'assistant', content: text });
     }
     for (const part of toolParts) {
-      wire.push(this.toSkillResultMessage(part));
+      wire.push(await this.toSkillResultMessage(part));
     }
   }
 
-  private toWireSkillCall(part: PartRecord): WireSkillCall | null {
-    const meta = this.parseToolMeta(part.input_json);
+  /** ADR-012:tool part I/O 唯一源为 execute_record,经 execute_id 关联读取 */
+  private async fetchExecuteIO(executeId?: string): Promise<{ input: string; output: string } | null> {
+    if (!executeId || !this.relationDb) return null;
+    try {
+      const row = await this.relationDb.selectOne(EXECUTE_TABLE, [
+        { field: 'id', operator: Operator.EQ, value: executeId },
+      ]);
+      if (!row) return null;
+      return { input: String(row.input ?? ''), output: String(row.output ?? '') };
+    } catch {
+      return null;
+    }
+  }
+
+  /** 从 execute_record.input(ExecSkillInput 序列化)还原工具调用 arguments */
+  private extractArguments(ioInput: string): string {
+    try {
+      const parsed = JSON.parse(ioInput || '{}');
+      const raw = parsed.raw_args ?? parsed.arguments;
+      if (raw === undefined || raw === null) return '{}';
+      return typeof raw === 'string' ? raw : JSON.stringify(raw);
+    } catch {
+      return ioInput || '{}';
+    }
+  }
+
+  /** 从 execute_record.output(ExecSkillOutput 序列化)还原工具输出文本 */
+  private extractOutputText(ioOutput: string): string {
+    try {
+      const parsed = JSON.parse(ioOutput || 'null');
+      if (parsed && typeof parsed === 'object') {
+        const text = (parsed as { result?: { output?: unknown }; output?: unknown }).result?.output
+          ?? (parsed as { output?: unknown }).output;
+        if (typeof text === 'string') return text;
+        return JSON.stringify(text ?? '');
+      }
+      return ioOutput || '';
+    } catch {
+      return ioOutput || '';
+    }
+  }
+
+  private async toWireSkillCall(part: PartRecord): Promise<WireSkillCall | null> {
+    const meta = this.parseToolMeta(part.block_meta);
     if (!meta.tool_call_id) {
       return null;
     }
+    const io = await this.fetchExecuteIO(part.execute_id);
+    const toolArgs = io ? this.extractArguments(io.input) : '{}';
     return {
       id: meta.tool_call_id,
       type: 'function',
-      function: { name: part.tool_id ?? '', arguments: meta.arguments ?? '{}' },
+      function: { name: part.tool_id ?? '', arguments: toolArgs },
     };
   }
 
-  private toSkillResultMessage(part: PartRecord): LLMMessage {
-    const meta = this.parseToolMeta(part.input_json);
+  private async toSkillResultMessage(part: PartRecord): Promise<LLMMessage> {
+    const meta = this.parseToolMeta(part.block_meta);
+    const io = await this.fetchExecuteIO(part.execute_id);
     return {
       role: 'tool',
       tool_call_id: meta.tool_call_id ?? part.id,
-      content: part.output_json || part.content || '（工具无输出）',
+      content: (io ? this.extractOutputText(io.output) : '') || part.content || '（工具无输出）',
     };
   }
 
@@ -595,6 +660,35 @@ export class AgentLoopService {
     await this.session.addMessage(add, messageOut, new SessionCtx(), ctx.metrics);
     ctx.lastMessageId = messageOut.msg_id;
     await this.persistTurnParts(ctx, messageOut.msg_id, turn);
+    await this.persistRunRoundOrg(ctx, turn);
+  }
+
+  /** ADR-012:run_round_org 一行 = 一轮 LLM 调用与助手消息的 id 关联(组织数据) */
+  private async persistRunRoundOrg(ctx: LoopRunContext, turn: LLMTurnResult): Promise<void> {
+    if (!this.relationDb) return;
+    try {
+      const now = IdGenerator.now();
+      await this.relationDb.insert(
+        RUN_ROUND_ORG_TABLE,
+        [
+          { field: 'id', value: IdGenerator.generate() },
+          { field: 'created', value: now },
+          { field: 'updated', value: now },
+          { field: 'trace_id', value: ctx.report?.trace_id ?? '' },
+          { field: 'run_id', value: ctx.runId },
+          { field: 'round', value: ctx.iterations },
+          { field: 'llm_call_id', value: turn.callId ?? '' },
+          { field: 'assistant_message_id', value: ctx.lastMessageId ?? '' },
+          { field: 'stop_reason', value: turn.finishReason ?? '' },
+        ],
+      );
+    } catch (err) {
+      this.logger?.warn?.('run_round_org 落库失败(容忍,不阻断执行)', {
+        run_id: ctx.runId,
+        round: ctx.iterations,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async persistTurnParts(ctx: LoopRunContext, messageId: string, turn: LLMTurnResult): Promise<void> {
@@ -630,7 +724,7 @@ export class AgentLoopService {
     input.run_id = ctx.runId;
     input.part_type = PartType.Tool;
     input.tool_id = call.tool_id;
-    input.input_json = JSON.stringify({ tool_call_id: call.id, arguments: call.arguments });
+    input.block_meta = JSON.stringify({ tool_call_id: call.id });
     const output = new AddPartOutput();
     await this.session.addPart(input, output, new SessionCtx(), ctx.metrics);
     await this.publishPartCreated(ctx, messageId, output.part_id, PartType.Tool, call.tool_id);
@@ -662,7 +756,7 @@ export class AgentLoopService {
     }
     const permissionId = IdGenerator.generate();
 
-    ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAsked, {
+    ctx.report?.emit(BusinessEvent.PermissionAsked, {
       permission_id: permissionId,
       skill_id: call.tool_id,
       tool_id: call.tool_id,
@@ -679,7 +773,7 @@ export class AgentLoopService {
       asked_at: Date.now(),
     });
     const result = await this.permissionGate.wait({ permission_id: permissionId, tool_id: call.tool_id });
-    ctx.report?.pushBusinessEvent(BusinessEvent.PermissionAnswered, {
+    ctx.report?.emit(BusinessEvent.PermissionAnswered, {
       permission_id: permissionId,
       skill_id: call.tool_id,
       tool_id: call.tool_id,
@@ -709,7 +803,7 @@ export class AgentLoopService {
       if (p.part_type !== PartType.Tool || p.tool_id !== call.tool_id) {
         return false;
       }
-      return this.parseToolMeta(p.input_json).tool_call_id === call.id;
+      return this.parseToolMeta(p.block_meta).tool_call_id === call.id;
     });
     return found ?? null;
   }
@@ -728,10 +822,10 @@ export class AgentLoopService {
     upd.status = PartStatus.Running;
     await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx(), ctx.metrics);
 
-    ctx.report?.pushBusinessEvent(BusinessEvent.SkillStarted, { part_id: partId, skill_id: call.tool_id, tool_id: call.tool_id, input: call.arguments });
+    ctx.report?.emit(BusinessEvent.SkillStarted, { part_id: partId, skill_id: call.tool_id, tool_id: call.tool_id, input: call.arguments });
   }
 
-  private async execLoopSkill(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number }> {
+  private async execLoopSkill(ctx: LoopRunContext, call: ParsedToolCall): Promise<{ status: string; output: string; elapsed_ms?: number; execute_id?: string }> {
     const input = new ExecSkillInput();
     input.tool_id = call.tool_id;
     input.raw_args = call.arguments;
@@ -741,29 +835,34 @@ export class AgentLoopService {
     input.component_scope = ctx.componentScope;
 
     input.emitEvent = (type: string, payload: unknown) => {
-      ctx.report?.pushBusinessEvent(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });
+      ctx.report?.emit(type as never, { run_id: ctx.runId, ...(typeof payload === 'object' && payload ? payload : {}) });
     };
     const output = new ExecSkillOutput();
+    // ADR-012:执行事件落库行 id 经 Report.last_execute_id 透出,用于 message_part.execute_id 关联
     await this.skillRuntime.execSkill(input, output, new ToolCtx(), ctx.metrics, ctx.report);
-    return output.result;
+    return { ...output.result, execute_id: ctx.report?.last_execute_id };
   }
 
-  private async completeSkillPart(ctx: LoopRunContext, partId: string, call: ParsedToolCall, result: { status: string; output: string; elapsed_ms?: number },
+  private async completeSkillPart(ctx: LoopRunContext, partId: string, call: ParsedToolCall, result: { status: string; output: string; elapsed_ms?: number; execute_id?: string },
   ): Promise<void> {
     const upd = new UpdatePartInput();
     upd.part_id = partId;
     upd.status = result.status === 'ok' ? PartStatus.Completed : PartStatus.Error;
-    upd.output_json = result.output;
+    upd.execute_id = result.execute_id;
     upd.elapsed_ms = result.elapsed_ms;
     await this.session.updatePart(upd, new UpdatePartOutput(), new SessionCtx(), ctx.metrics);
-    ctx.report?.pushBusinessEvent(BusinessEvent.SkillResult, { part_id: partId, skill_id: call.tool_id, tool_id: call.tool_id, status: result.status, output: result.output, elapsed_ms: result.elapsed_ms });
+    ctx.report?.emit(
+      BusinessEvent.SkillResult,
+      { part_id: partId, skill_id: call.tool_id, tool_id: call.tool_id, status: result.status, output: result.output, elapsed_ms: result.elapsed_ms },
+      result.execute_id ? { execute_id: result.execute_id, part_id: partId } : undefined,
+    );
   }
 
   private async publishPartCreated(ctx: LoopRunContext, messageId: string, partId: string, partType: PartType, _toolId?: string): Promise<void> {
     if (partType === PartType.Text) {
-      ctx.report?.pushBusinessEvent(BusinessEvent.ReplyCreated, { msg_id: messageId, part_id: partId });
+      ctx.report?.emit(BusinessEvent.ReplyCreated, { msg_id: messageId, part_id: partId });
     } else if (partType === PartType.Reasoning) {
-      ctx.report?.pushBusinessEvent(BusinessEvent.ThinkCreated, { msg_id: messageId, part_id: partId });
+      ctx.report?.emit(BusinessEvent.ThinkCreated, { msg_id: messageId, part_id: partId });
     }
 
   }
@@ -773,7 +872,7 @@ export class AgentLoopService {
     const event = phase === RunPhase.Start ? BusinessEvent.RunStarted
       : phase === RunPhase.End ? BusinessEvent.RunFinished
       : BusinessEvent.RunFailed;
-    target.report?.pushBusinessEvent(event, payload);
+    target.report?.emit(event, payload);
   }
 
   private fillLoopOutput(output: ExecAgentLoopOutput, ctx: LoopRunContext): void {

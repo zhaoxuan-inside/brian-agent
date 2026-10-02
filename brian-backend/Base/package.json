@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@brian-agent/shared": "file:../../shared",
     "@lancedb/lancedb": "^0.15.0",
     "apache-arrow": "^18.1.0",
     "better-sqlite3": "^11.0.0",

@@ -13,6 +13,23 @@ import {
 export class ConfigSchemaInitializer {
   constructor(private readonly relationDb: RelationDBAccess) {}
 
+  /** ADR-012: config 中心六表改名(幂等,独立初始化路径兜底) */
+  private migrateLegacyTableNames(): void {
+    const renames: Array<[string, string]> = [
+      ['config_registry', CONFIG_REGISTRY_TABLE],
+      ['config_config', CONFIG_CONFIG_TABLE],
+      ['config_layer_privilege', CONFIG_LAYER_PRIVILEGE_TABLE],
+      ['config_module_privilege', CONFIG_MODULE_PRIVILEGE_TABLE],
+      ['config_snapshot', CONFIG_SNAPSHOT_TABLE],
+      ['config_history', CONFIG_HISTORY_TABLE],
+    ];
+    for (const [oldName, newName] of renames) {
+      try {
+        this.relationDb.executeRaw(`ALTER TABLE "${oldName}" RENAME TO "${newName}"`);
+      } catch { /* 旧表不存在或已改名 */ }
+    }
+  }
+
   init(): void {
     this.relationDb.executeRaw(`
       CREATE TABLE IF NOT EXISTS "${CONFIG_REGISTRY_TABLE}" (

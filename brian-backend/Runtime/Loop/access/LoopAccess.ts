@@ -22,9 +22,9 @@ import {
 export class LoopAccess {
   private readonly service: AgentLoopService;
 
-  constructor(_relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, skillRuntime: SkillRuntimeAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate, permissionAudit?: PermissionAudit,
+  constructor(relationDb: RelationDBAccess, llm: LLMAccess, session: SessionAccess, skillRuntime: SkillRuntimeAccess, logger?: Logger, queue?: LoopQueue, permissionGate?: PermissionGate, permissionAudit?: PermissionAudit,
   ) {
-    const rawService = new AgentLoopService(llm, session, skillRuntime, logger, queue, permissionGate, permissionAudit);
+    const rawService = new AgentLoopService(llm, session, skillRuntime, relationDb, logger, queue, permissionGate, permissionAudit);
     this.service = AopProxy.wrap(rawService, { logger }) as AgentLoopService;
   }
 

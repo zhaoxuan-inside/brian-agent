@@ -70,9 +70,8 @@ export class ConfigMcpCoreOutput extends Output {
   config: McpCoreConfigRecord | null = null;
 }
 
-export const MCP_CORE_CONFIG_TABLE = 'mcp_core_config';
+export const MCP_CORE_CONFIG_TABLE = 'mcp_core_config_record';
 
-export const AGENT_MCP_TABLE = 'agent_mcp';
-export const AGENT_MCP_USAGE_TABLE = 'agent_mcp_usage';
+export const AGENT_MCP_TABLE = 'agent_mcp_org';
 
 export const DEFAULT_REGENERATE_RATE = 75;

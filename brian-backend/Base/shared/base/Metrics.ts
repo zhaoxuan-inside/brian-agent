@@ -7,10 +7,11 @@ export interface MetricsLogger {
 
   log?(level: string, message: string, meta?: Record<string, unknown>): void;
 }
-
 export interface LLMCallUsageMetrics {
   
+  
   llm_id?: string;
+  
   
   attempt?: number;
   
@@ -19,8 +20,17 @@ export interface LLMCallUsageMetrics {
   output_tokens: number;
   
   duration_ms: number;
-}
 
+  
+  
+  connect_ms?: number;
+  
+  
+  ttft_ms?: number;
+  
+  
+  stream_ms?: number;
+}
 export interface MetricsSpan {
   
   id: number;
@@ -125,6 +135,22 @@ export class Metrics {
   spanDuration(span: MetricsSpan): number {
     if (span.end === undefined) return 0;
     return span.end >= span.start ? span.end - span.start : 0;
+  }
+
+  
+  
+  
+
+  spanDepth(span: MetricsSpan): number {
+    let depth = 0;
+    let current: MetricsSpan | undefined = span;
+    const seen = new Set<number>();
+    while (current && current.parent !== undefined && !seen.has(current.parent)) {
+      seen.add(current.id);
+      depth += 1;
+      current = this.spans.find((s) => s.id === current!.parent);
+    }
+    return depth;
   }
 
   

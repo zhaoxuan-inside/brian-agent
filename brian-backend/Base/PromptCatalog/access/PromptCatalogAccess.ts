@@ -48,7 +48,7 @@ export class PromptCatalogAccess {
       await this.refreshUnchanged(existing, def, canonicalHash);
     }
     const legacy = await this.relationDb.selectOne(PROMPT_TEMPLATE_TABLE, [
-      { field: 'prompt_template_title', operator: Operator.EQ, value: def.title },
+      { field: 'title', operator: Operator.EQ, value: def.title },
       { field: 'is_system', operator: Operator.EQ, value: 1 },
     ]) as Record<string, unknown> | null;
     if (legacy) {
@@ -66,7 +66,7 @@ export class PromptCatalogAccess {
   
   
   private async refreshUnchanged(existing: Record<string, unknown>, def: BuiltinPromptDef, canonicalHash: string): Promise<void> {
-    const contentMd5 = md5(String(existing['prompt_template'] ?? ''));
+    const contentMd5 = md5(String(existing['content'] ?? ''));
     const untouched = contentMd5 === String(existing.seed_hash ?? '')
       || (def.retiredHashes ?? []).includes(contentMd5);
     const emptyHash = !String(existing.seed_hash ?? '');
@@ -77,7 +77,7 @@ export class PromptCatalogAccess {
     await this.relationDb.update(
       PROMPT_TEMPLATE_TABLE,
       [
-        { field: 'prompt_template', value: def.template },
+        { field: 'content', value: def.template },
         { field: 'seed_hash', value: canonicalHash },
       ],
       [{ field: 'id', operator: Operator.EQ, value: String(existing['id']) }],
@@ -90,9 +90,9 @@ export class PromptCatalogAccess {
       { field: 'id', value: def.id },
       { field: 'created', value: now },
       { field: 'updated', value: now },
-      { field: 'prompt_template_title', value: def.title },
-      { field: 'prompt_template_brief', value: def.brief ?? '' },
-      { field: 'prompt_template', value: def.template },
+      { field: 'title', value: def.title },
+      { field: 'brief', value: def.brief ?? '' },
+      { field: 'content', value: def.template },
       { field: 'is_system', value: 1 },
       { field: 'seed_hash', value: canonicalHash },
       { field: 'enable', value: 1 },

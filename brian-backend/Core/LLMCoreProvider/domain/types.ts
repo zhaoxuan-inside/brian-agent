@@ -70,6 +70,9 @@ export class MatchLLMInput extends Input {
 
   /** 期望匹配的模型类型：'text'（默认文本模型）或 'embedding'（向量模型） */
   llm_type?: 'text' | 'embedding';
+
+  /** 任务内容（R8 统一选举信号源：BM25/向量通道的查询文本） */
+  task_content?: string;
 }
 
 export class MatchLLMOutput extends Output {
@@ -79,6 +82,8 @@ export class MatchLLMOutput extends Output {
   llm: Record<string, unknown> | null = null;
   
   from_cache = false;
+  /** 选举结果明细（election_llm_<tier> / cache_hit 等） */
+  detail = '';
 }
 
 export class LimitLLMInput extends Input {
@@ -147,10 +152,12 @@ export class RecordLLMUsageOutput extends Output {
   id = '';
 }
 
-export const LLM_CORE_CONFIG_TABLE = 'llm_core_config';
+export const LLM_CORE_CONFIG_TABLE = 'llm_core_config_record';
 
-export const AGENT_LLM_TABLE = 'agent_llm';
+// agent_llm 已退役(ADR-012),绑定归 agent_record.llm_id
 
-export const LLM_PROVIDER_QUOTA_TABLE = 'llm_provider_quota';
+export const LLM_PROVIDER_QUOTA_TABLE = 'llm_provider_quota_record';
 
-export const LLM_CORE_USAGE_TABLE = 'llm_core_usage';
+/** ADR-012:agent_llm 退役后,LLM 绑定读写落在 Agent 域 agent_record(物理表名在此登记) */
+export const AGENT_RECORD_TABLE = 'agent_record';
+

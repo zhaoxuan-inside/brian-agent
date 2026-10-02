@@ -34,10 +34,10 @@ const {
   >
     <div
       v-if="nodes.length === 0"
-      class="absolute inset-0 flex flex-col items-center justify-center text-apple-gray-400 text-sm"
+      class="absolute inset-0 flex flex-col items-center justify-center text-chat-ink-tertiary text-sm"
     >
       <p>暂无 ChatMap 数据</p>
-      <p class="text-xs mt-1">发送消息后将生成对话图谱</p>
+      <p class="text-xs mt-1 text-chat-ink-subtle">发送消息后将生成对话图谱</p>
     </div>
 
     <div
@@ -127,9 +127,9 @@ const {
     </div>
 
     <div class="absolute bottom-2 right-2 flex items-center gap-1 z-10">
-      <button class="px-2 py-1 text-xs rounded bg-white/80 dark:bg-apple-gray-800/80 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue" @click="scale = Math.min(2.5, scale + 0.2)">+</button>
-      <button class="px-2 py-1 text-xs rounded bg-white/80 dark:bg-apple-gray-800/80 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue" @click="scale = Math.max(0.2, scale - 0.2)">-</button>
-      <button class="px-2 py-1 text-xs rounded bg-white/80 dark:bg-apple-gray-800/80 text-apple-gray-600 dark:text-apple-gray-400 hover:text-brian-blue" @click="scale = 1; offset = { x: 40, y: 40 }">重置</button>
+      <button class="px-2 py-1 text-xs rounded-chat-sm bg-chat-surface-1/90 border border-chat-hairline text-chat-ink-subtle hover:text-chat-ink hover:border-chat-hairline-strong transition-colors" @click="scale = Math.min(2.5, scale + 0.2)">+</button>
+      <button class="px-2 py-1 text-xs rounded-chat-sm bg-chat-surface-1/90 border border-chat-hairline text-chat-ink-subtle hover:text-chat-ink hover:border-chat-hairline-strong transition-colors" @click="scale = Math.max(0.2, scale - 0.2)">-</button>
+      <button class="px-2 py-1 text-xs rounded-chat-sm bg-chat-surface-1/90 border border-chat-hairline text-chat-ink-subtle hover:text-chat-ink hover:border-chat-hairline-strong transition-colors" @click="scale = 1; offset = { x: 40, y: 40 }">重置</button>
     </div>
   </div>
 </template>

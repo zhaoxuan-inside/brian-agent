@@ -116,7 +116,7 @@ describe('SelfLearningService', () => {
 
   function ensureInfoTables(): void {
     db.executeRaw(`
-      CREATE TABLE IF NOT EXISTS info_tag (
+      CREATE TABLE IF NOT EXISTS info_tag_record (
         id TEXT PRIMARY KEY NOT NULL,
         created INTEGER NOT NULL,
         updated INTEGER NOT NULL,
@@ -125,7 +125,7 @@ describe('SelfLearningService', () => {
       )
     `);
     db.executeRaw(`
-      CREATE TABLE IF NOT EXISTS info_summary (
+      CREATE TABLE IF NOT EXISTS info_summary_record (
         id TEXT PRIMARY KEY NOT NULL,
         created INTEGER NOT NULL,
         updated INTEGER NOT NULL,
@@ -134,7 +134,7 @@ describe('SelfLearningService', () => {
       )
     `);
     db.executeRaw(`
-      CREATE TABLE IF NOT EXISTS dialog (
+      CREATE TABLE IF NOT EXISTS dialog_record (
         id TEXT PRIMARY KEY NOT NULL,
         created INTEGER NOT NULL,
         updated INTEGER NOT NULL,
@@ -346,21 +346,19 @@ describe('SelfLearningService', () => {
 
     beforeEach(async () => {
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-1' },
+        { field: 'id', value: libId },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: libId },
         { field: 'library_name', value: 'Test Lib' },
         { field: 'library_path', value: '/tmp/test' },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'file-row-1' },
+        { field: 'id', value: 'file-1' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: libId },
-        { field: 'file_id', value: 'file-1' },
         { field: 'file_name', value: 'test.md' },
         { field: 'file_path', value: '/tmp/test/test.md' },
         { field: 'file_size', value: 100 },
@@ -402,52 +400,47 @@ describe('SelfLearningService', () => {
   describe('soLibrary', () => {
     beforeEach(async () => {
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-a' },
+        { field: 'id', value: 'lib-a' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-a' },
         { field: 'library_name', value: 'Alpha Docs' },
         { field: 'library_path', value: '/tmp/alpha' },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-b' },
+        { field: 'id', value: 'lib-b' },
         { field: 'created', value: 1700000002000 },
         { field: 'updated', value: 1700000002000 },
-        { field: 'library_id', value: 'lib-b' },
         { field: 'library_name', value: 'Beta Notes' },
         { field: 'library_path', value: '/tmp/beta' },
         { field: 'enable_self_learning', value: 0 },
         { field: 'learning_rate', value: 3 },
       ]);
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-c' },
+        { field: 'id', value: 'lib-c' },
         { field: 'created', value: 1700000003000 },
         { field: 'updated', value: 1700000003000 },
-        { field: 'library_id', value: 'lib-c' },
         { field: 'library_name', value: 'Alpha Research' },
         { field: 'library_path', value: '/tmp/alpha-research' },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 8 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f1' },
+        { field: 'id', value: 'file-a1' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-a' },
-        { field: 'file_id', value: 'file-a1' },
         { field: 'file_name', value: 'a1.md' },
         { field: 'file_path', value: '/tmp/alpha/a1.md' },
         { field: 'file_size', value: 100 },
         { field: 'status', value: 'COMPLETED' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f2' },
+        { field: 'id', value: 'file-a2' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-a' },
-        { field: 'file_id', value: 'file-a2' },
         { field: 'file_name', value: 'a2.md' },
         { field: 'file_path', value: '/tmp/alpha/a2.md' },
         { field: 'file_size', value: 200 },
@@ -528,54 +521,53 @@ describe('SelfLearningService', () => {
 
     beforeEach(async () => {
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-lib' },
+        { field: 'id', value: libId },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: libId },
         { field: 'library_name', value: 'Files Test' },
         { field: 'library_path', value: '/tmp/files-test' },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-pending' },
+
+        { field: 'id', value: 'file-pending' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: libId },
-        { field: 'file_id', value: 'file-pending' },
         { field: 'file_name', value: 'pending.md' },
         { field: 'file_path', value: '/tmp/files-test/pending.md' },
         { field: 'file_size', value: 100 },
         { field: 'status', value: 'PENDING' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-completed' },
+
+        { field: 'id', value: 'file-completed' },
         { field: 'created', value: 1700000002000 },
         { field: 'updated', value: 1700000002000 },
         { field: 'library_id', value: libId },
-        { field: 'file_id', value: 'file-completed' },
         { field: 'file_name', value: 'completed.md' },
         { field: 'file_path', value: '/tmp/files-test/completed.md' },
         { field: 'file_size', value: 200 },
         { field: 'status', value: 'COMPLETED' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-processing' },
+
+        { field: 'id', value: 'file-processing' },
         { field: 'created', value: 1700000003000 },
         { field: 'updated', value: 1700000003000 },
         { field: 'library_id', value: libId },
-        { field: 'file_id', value: 'file-processing' },
         { field: 'file_name', value: 'processing.md' },
         { field: 'file_path', value: '/tmp/files-test/processing.md' },
         { field: 'file_size', value: 300 },
         { field: 'status', value: 'PROCESSING' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-failed' },
+
+        { field: 'id', value: 'file-failed' },
         { field: 'created', value: 1700000004000 },
         { field: 'updated', value: 1700000004000 },
         { field: 'library_id', value: libId },
-        { field: 'file_id', value: 'file-failed' },
         { field: 'file_name', value: 'failed.md' },
         { field: 'file_path', value: '/tmp/files-test/failed.md' },
         { field: 'file_size', value: 400 },
@@ -674,10 +666,9 @@ describe('SelfLearningService', () => {
     it('TC-SL-042: Empty library → files=[]', async () => {
       const emptyLibId = 'empty-lib';
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'row-empty' },
+        { field: 'id', value: emptyLibId },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: emptyLibId },
         { field: 'library_name', value: 'Empty Lib' },
         { field: 'library_path', value: '/tmp/empty' },
         { field: 'enable_self_learning', value: 1 },
@@ -703,21 +694,19 @@ describe('SelfLearningService', () => {
       const filePath = path.join(dir, fileName);
 
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-row' },
+        { field: 'id', value: 'lib-fc' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-fc' },
         { field: 'library_name', value: 'FC Test' },
         { field: 'library_path', value: dir },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-fc' },
+        { field: 'id', value: 'file-fc-test' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-fc' },
-        { field: 'file_id', value: 'file-fc-test' },
         { field: 'file_name', value: fileName },
         { field: 'file_path', value: filePath },
         { field: 'file_size', value: content.length },
@@ -751,21 +740,19 @@ describe('SelfLearningService', () => {
       const learnedAt = 1700000099500;
 
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-row-2' },
+        { field: 'id', value: 'lib-fc2' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-fc2' },
         { field: 'library_name', value: 'FC2 Test' },
         { field: 'library_path', value: dir },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-fc2' },
+        { field: 'id', value: 'file-x' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-fc2' },
-        { field: 'file_id', value: 'file-fc-learned' },
         { field: 'file_name', value: 'doc.md' },
         { field: 'file_path', value: filePath },
         { field: 'file_size', value: 6 },
@@ -773,7 +760,7 @@ describe('SelfLearningService', () => {
         { field: 'learned_at', value: learnedAt },
       ]);
 
-      const input = Object.assign(new GetFileContentInput(), { file_id: 'file-fc-learned' });
+      const input = Object.assign(new GetFileContentInput(), { file_id: 'file-x' });
       const output = new GetFileContentOutput();
 
       await service.soFileContent(input, output, makeCtx());
@@ -787,28 +774,26 @@ describe('SelfLearningService', () => {
       const filePath = path.join(dir, 'pending.md');
 
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-row-3' },
+        { field: 'id', value: 'lib-fc3' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-fc3' },
         { field: 'library_name', value: 'FC3 Test' },
         { field: 'library_path', value: dir },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'f-fc3' },
+        { field: 'id', value: 'file-x' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-fc3' },
-        { field: 'file_id', value: 'file-fc-pending' },
         { field: 'file_name', value: 'pending.md' },
         { field: 'file_path', value: filePath },
         { field: 'file_size', value: 10 },
         { field: 'status', value: 'PENDING' },
       ]);
 
-      const input = Object.assign(new GetFileContentInput(), { file_id: 'file-fc-pending' });
+      const input = Object.assign(new GetFileContentInput(), { file_id: 'file-x' });
       const output = new GetFileContentOutput();
 
       await service.soFileContent(input, output, makeCtx());
@@ -826,18 +811,16 @@ describe('SelfLearningService', () => {
         { field: 'id', value: `lib-${fileId}` },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: `lib-${fileId}` },
         { field: 'library_name', value: 'Edit Test' },
         { field: 'library_path', value: dir },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: `row-${fileId}` },
+        { field: 'id', value: fileId },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: `lib-${fileId}` },
-        { field: 'file_id', value: fileId },
         { field: 'file_name', value: name },
         { field: 'file_path', value: filePath },
         { field: 'relative_path', value: name },
@@ -864,7 +847,7 @@ describe('SelfLearningService', () => {
       expect(output.size).toBe(Buffer.byteLength(next, 'utf-8'));
 
       const row = db.queryRaw<{ status: string; file_size: number; learned_at: number | null }>(
-        'SELECT "status", "file_size", "learned_at" FROM "self_learning_file" WHERE "file_id" = ?',
+        'SELECT "status", "file_size", "learned_at" FROM "self_learning_file" WHERE "id" = ?',
         ['file-edit-1'],
       )[0];
       expect(row.status).toBe('PENDING');
@@ -881,13 +864,12 @@ describe('SelfLearningService', () => {
       const dir = makeTempDir();
       fs.mkdirSync(path.join(dir, 'sub'));
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
-        { field: 'library_id', value: 'lib-dir' }, { field: 'library_name', value: 'Dir' },
+        { field: 'id', value: 'lib-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 }, { field: 'library_name', value: 'Dir' },
         { field: 'library_path', value: dir }, { field: 'enable_self_learning', value: 1 }, { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'row-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
-        { field: 'library_id', value: 'lib-dir' }, { field: 'file_id', value: 'file-dir' },
+        { field: 'id', value: 'file-dir' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
+        { field: 'library_id', value: 'lib-dir' },
         { field: 'file_name', value: 'sub' }, { field: 'file_path', value: path.join(dir, 'sub') },
         { field: 'is_directory', value: 1 }, { field: 'status', value: 'PENDING' },
       ]);
@@ -900,7 +882,7 @@ describe('SelfLearningService', () => {
       const dir = makeTempDir();
       const filePath = await seedFile(dir, 'file-del-1', 'del.md', '# Del');
       await db.insert('document_annotation', [
-        { field: 'id', value: 'ann-1' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
+        { field: 'id', value: 'lib-file-del-1' }, { field: 'created', value: 1 }, { field: 'updated', value: 1 },
         { field: 'library_id', value: 'lib-file-del-1' }, { field: 'file_id', value: 'file-del-1' },
         { field: 'selection_text', value: 'Del' }, { field: 'selection_start', value: 0 }, { field: 'selection_end', value: 3 },
         { field: 'question', value: 'q' }, { field: 'result', value: 'a' }, { field: 'llm_id', value: '' },
@@ -911,7 +893,7 @@ describe('SelfLearningService', () => {
 
       expect(fs.existsSync(filePath)).toBe(false);
       expect(output.deleted_annotations).toBe(1);
-      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "file_id" = ?', ['file-del-1']);
+      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "id" = ?', ['file-del-1']);
       expect(Number(rows[0]?.c ?? 0)).toBe(0);
       const ann = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "document_annotation" WHERE "file_id" = ?', ['file-del-1']);
       expect(Number(ann[0]?.c ?? 0)).toBe(0);
@@ -928,7 +910,7 @@ describe('SelfLearningService', () => {
       fs.rmSync(filePath);
       const output = new DeleteFileOutput();
       await service.deleteFile(Object.assign(new DeleteFileInput(), { file_id: 'file-del-2' }), output, makeCtx());
-      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "file_id" = ?', ['file-del-2']);
+      const rows = db.queryRaw<{ c: number }>('SELECT COUNT(*) AS c FROM "self_learning_file" WHERE "id" = ?', ['file-del-2']);
       expect(Number(rows[0]?.c ?? 0)).toBe(0);
     });
   });
@@ -937,20 +919,18 @@ describe('SelfLearningService', () => {
     beforeEach(async () => {
       vi.useFakeTimers();
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-sl-1' },
+        { field: 'id', value: 'lib-sl-a' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'library_id', value: 'lib-sl-a' },
         { field: 'library_name', value: 'SL Lib A' },
         { field: 'library_path', value: '/tmp/sl-a' },
         { field: 'enable_self_learning', value: 1 },
         { field: 'learning_rate', value: 5 },
       ]);
       await db.insert('self_learning_library', [
-        { field: 'id', value: 'lib-sl-2' },
+        { field: 'id', value: 'lib-sl-b' },
         { field: 'created', value: 1700000002000 },
         { field: 'updated', value: 1700000002000 },
-        { field: 'library_id', value: 'lib-sl-b' },
         { field: 'library_name', value: 'SL Lib B' },
         { field: 'library_path', value: '/tmp/sl-b' },
         { field: 'enable_self_learning', value: 1 },
@@ -1214,6 +1194,7 @@ describe('SelfLearningService', () => {
   describe('handleDocumentLearning', () => {
     function makeFileRecord(overrides?: Record<string, unknown>): Record<string, unknown> {
       return {
+        id: 'file-sl-080',
         file_id: 'file-sl-080',
         file_name: 'test.md',
         file_path: path.join(makeTempDir(), 'test.md'),
@@ -1230,7 +1211,7 @@ describe('SelfLearningService', () => {
       const selInput = Object.assign(new SelectOneDBInput(), {
         query_param: {
           table: 'self_learning_file',
-          conditions: [{ field: 'file_id', operator: Operator.EQ, value: 'file-sl-080' }],
+          conditions: [{ field: 'id', operator: Operator.EQ, value: 'file-sl-080' }],
         },
       });
       const selOutput = Object.assign(new SelectOneDBOutput(), {});
@@ -1423,14 +1404,14 @@ describe('SelfLearningService', () => {
     });
 
     beforeEach(async () => {
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: tagId },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'tag', value: 'JavaScript' },
         { field: 'info_id', value: 'info-1' },
       ]);
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tag-related-2' },
         { field: 'created', value: 1700000002000 },
         { field: 'updated', value: 1700000002000 },
@@ -1461,7 +1442,7 @@ describe('SelfLearningService', () => {
     });
 
     it('TC-SL-132: No related info → total=0', async () => {
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tag-empty-1' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
@@ -1497,7 +1478,7 @@ describe('SelfLearningService', () => {
         { field: 'id', value: 'task-1' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'task_id', value: 'running-task-1' },
+        { field: 'id', value: 'running-task-1' },
         { field: 'task_name', value: 'Document Learning' },
         { field: 'task_type', value: 'DOCUMENT' },
         { field: 'status', value: 'RUNNING' },
@@ -1520,7 +1501,7 @@ describe('SelfLearningService', () => {
         { field: 'id', value: 'task-2' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
-        { field: 'task_id', value: 'pending-task-1' },
+        { field: 'id', value: 'pending-task-1' },
         { field: 'task_name', value: 'Task B' },
         { field: 'task_type', value: 'DOCUMENT' },
         { field: 'status', value: 'PENDING' },
@@ -1531,7 +1512,7 @@ describe('SelfLearningService', () => {
         { field: 'id', value: 'task-3' },
         { field: 'created', value: 1700000003000 },
         { field: 'updated', value: 1700000003000 },
-        { field: 'task_id', value: 'pending-task-2' },
+        { field: 'id', value: 'pending-task-2' },
         { field: 'task_name', value: 'Task A' },
         { field: 'task_type', value: 'TAG_MAINTENANCE' },
         { field: 'status', value: 'PENDING' },
@@ -1775,33 +1756,30 @@ describe('SelfLearningService', () => {
 
     it('TC-SL-166: Document stats correct', async () => {
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'ds-1' },
+        { field: 'id', value: 'file-ds-1' },
         { field: 'created', value: 1700000001000 },
         { field: 'updated', value: 1700000001000 },
         { field: 'library_id', value: 'lib-ds' },
-        { field: 'file_id', value: 'file-ds-1' },
         { field: 'file_name', value: 'completed.md' },
         { field: 'file_path', value: '/tmp/ds/completed.md' },
         { field: 'file_size', value: 100 },
         { field: 'status', value: 'COMPLETED' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'ds-2' },
+        { field: 'id', value: 'file-ds-2' },
         { field: 'created', value: 1700000002000 },
         { field: 'updated', value: 1700000002000 },
         { field: 'library_id', value: 'lib-ds' },
-        { field: 'file_id', value: 'file-ds-2' },
         { field: 'file_name', value: 'pending.md' },
         { field: 'file_path', value: '/tmp/ds/pending.md' },
         { field: 'file_size', value: 200 },
         { field: 'status', value: 'PENDING' },
       ]);
       await db.insert('self_learning_file', [
-        { field: 'id', value: 'ds-3' },
+        { field: 'id', value: 'file-ds-3' },
         { field: 'created', value: 1700000003000 },
         { field: 'updated', value: 1700000003000 },
         { field: 'library_id', value: 'lib-ds' },
-        { field: 'file_id', value: 'file-ds-3' },
         { field: 'file_name', value: 'failed.md' },
         { field: 'file_path', value: '/tmp/ds/failed.md' },
         { field: 'file_size', value: 300 },
@@ -1923,7 +1901,7 @@ describe('SelfLearningService', () => {
 
     it('TC-SL-100: startTagConnectionEstablishment calls graphTag for new tags within 24h', async () => {
       const now = Date.now();
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tg-new-1' },
         { field: 'created', value: now - 1000 },
         { field: 'updated', value: now - 1000 },
@@ -1940,7 +1918,7 @@ describe('SelfLearningService', () => {
       infoCore.graphTag.mockClear();
 
       const now = Date.now();
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tg-old-1' },
         { field: 'created', value: now - 48 * 3600 * 1000 },
         { field: 'updated', value: now - 48 * 3600 * 1000 },
@@ -1958,7 +1936,7 @@ describe('SelfLearningService', () => {
       const now = Date.now();
 
       for (let i = 0; i < 3; i++) {
-        await db.insert('info_tag', [
+        await db.insert('info_tag_record', [
           { field: 'id', value: `tg-multi-${i}` },
           { field: 'created', value: now - 1000 + i },
           { field: 'updated', value: now - 1000 + i },
@@ -1974,7 +1952,7 @@ describe('SelfLearningService', () => {
 
     it('TC-SL-105: startTagActivation activates edges for active tags', async () => {
       const now = Date.now();
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tg-active-1' },
         { field: 'created', value: now - 1000 },
         { field: 'updated', value: now - 1000 },
@@ -2010,7 +1988,7 @@ describe('SelfLearningService', () => {
 
     it('TC-SL-107: startTagActivation records activation count in result', async () => {
       const now = Date.now();
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tg-act-1' },
         { field: 'created', value: now - 1000 },
         { field: 'updated', value: now - 1000 },
@@ -2121,7 +2099,7 @@ describe('SelfLearningService', () => {
       expect(graphDb.ageGraphEdge).toHaveBeenCalled();
 
       const now = Date.now();
-      await db.insert('info_tag', [
+      await db.insert('info_tag_record', [
         { field: 'id', value: 'tg-rev-1' },
         { field: 'created', value: now - 1000 },
         { field: 'updated', value: now - 1000 },
@@ -2213,7 +2191,7 @@ describe('SelfLearningService', () => {
 
     function insertRecentTag(id: string, tag: string): Promise<void> {
       const now = Date.now();
-      return db.insert('info_tag', [
+      return db.insert('info_tag_record', [
         { field: 'id', value: id },
         { field: 'created', value: now - 1000 },
         { field: 'updated', value: now - 1000 },
@@ -2357,7 +2335,7 @@ async function getLibraryById(
     query_param: {
       table: 'self_learning_library',
       conditions: [
-        { field: 'library_id', operator: Operator.EQ, value: libraryId },
+        { field: 'id', operator: Operator.EQ, value: libraryId },
       ],
     },
   });

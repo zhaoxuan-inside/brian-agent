@@ -23,10 +23,10 @@ const headingClasses = computed(() => {
 <template>
   <div class="py-1">
     <div
-      class="block-card px-4 py-2.5"
+      class="chat-card px-4 py-2.5"
       :class="[
         isHeading ? headingClasses : 'text-sm leading-relaxed',
-        block.meta.status === 'error' ? 'border-error-red/30 bg-error-red/5' : ''
+        block.meta.status === 'error' ? 'border-chat-error/30 bg-chat-error/5' : ''
       ]"
       :aria-live="isStreaming ? 'polite' : undefined"
     >
@@ -34,27 +34,27 @@ const headingClasses = computed(() => {
         <span
           v-for="cid in block.citingIds"
           :key="cid"
-          class="px-1.5 py-0.5 text-xs rounded bg-brian-blue/10 text-brian-blue cursor-pointer hover:bg-brian-blue/20"
+          class="px-1.5 py-0.5 text-xs rounded-chat-sm bg-chat-primary/10 text-chat-primary-hover cursor-pointer hover:bg-chat-primary/20"
         >{{ cid.slice(-8) }}</span>
       </div>
 
       <p
         v-if="isHeading"
         class="whitespace-pre-wrap"
-        :class="block.meta.status === 'error' ? 'text-error-red/70' : ''"
+        :class="block.meta.status === 'error' ? 'text-chat-error/70' : ''"
       >
         {{ 'content' in block ? block.content : '' }}
       </p>
       <div
         v-else
         class="markdown-body text-sm leading-relaxed break-words"
-        :class="block.meta.status === 'error' ? 'text-error-red/70' : ''"
+        :class="block.meta.status === 'error' ? 'text-chat-error/70' : ''"
         v-html="getDisplayHtml('content' in block ? block.content : '', isStreaming)"
       />
-      <span v-if="isStreaming" class="inline-block w-1.5 h-4 bg-brian-blue animate-cursor-blink align-middle ml-0.5" />
+      <span v-if="isStreaming" class="inline-block w-1.5 h-4 bg-chat-primary-hover animate-cursor-blink align-middle ml-0.5" />
 
       <div v-if="'citedCount' in block && block.citedCount && block.citedCount > 0" class="mt-2 flex items-center">
-        <span class="text-xs text-apple-gray-400">{{ block.citedCount }} 次引用</span>
+        <span class="text-xs text-chat-ink-tertiary">{{ block.citedCount }} 次引用</span>
       </div>
     </div>
   </div>

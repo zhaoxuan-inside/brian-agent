@@ -177,8 +177,7 @@ export class SessionService {
       part_order: partOrder,
       content: input.content ?? '',
       tool_id: input.tool_id ?? '',
-      input_json: input.input_json ?? '',
-      output_json: '',
+      execute_id: '',
       status: PartStatus.Pending,
       block_type: input.block_type ?? '',
       block_meta: input.block_meta ?? '',
@@ -225,8 +224,8 @@ export class SessionService {
     if (input.status !== undefined) {
       patch.status = input.status;
     }
-    if (input.output_json !== undefined) {
-      patch.output_json = input.output_json;
+    if (input.execute_id !== undefined) {
+      patch.execute_id = input.execute_id;
     }
     if (input.token_count !== undefined) {
       patch.token_count = input.token_count;
@@ -326,8 +325,7 @@ export class SessionService {
       part_order: Number(p.part_order),
       content: String(p.content ?? ''),
       tool_id: String(p.tool_id ?? '') || undefined,
-      input_json: String(p.input_json ?? '') || undefined,
-      output_json: String(p.output_json ?? '') || undefined,
+      execute_id: String(p.execute_id ?? '') || undefined,
       status: String(p.status) as PartRecord['status'],
       block_type: String(p.block_type ?? '') || undefined,
       block_meta: String(p.block_meta ?? '') || undefined,

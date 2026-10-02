@@ -11,7 +11,7 @@ function expectHealthy(graph: GraphShotGraph, minNodes: number) {
     expect(n.y).toBeLessThan(GRAPH_SHOT_H + 40)
     expect(n.r).toBeGreaterThanOrEqual(4)
     expect(n.r).toBeLessThanOrEqual(13)
-    expect(n.color).toMatch(/^hsl\(\d+(\.\d+)?, 75%, 52%\)$/)
+    expect(n.color).toMatch(/^hsl\(\d+(\.\d+)?, 58%, 52%\)$/)
   })
   graph.edges.forEach((e) => {
     expect(e.a).toBeGreaterThanOrEqual(0)
@@ -23,7 +23,7 @@ function expectHealthy(graph: GraphShotGraph, minNodes: number) {
 }
 
 describe('graphData（力导向范例数据）', () => {
-  it('涌现图：四簇 + 孤岛在画布内，枢纽偏红', () => {
+  it('涌现图：四簇 + 孤岛在画布内，枢纽偏珊瑚', () => {
     expectHealthy(TAG_GRAPH, 35)
     const hub = TAG_GRAPH.nodes.find((n) => n.label === '旅行规划')
     expect(hub).toBeDefined()
@@ -31,7 +31,7 @@ describe('graphData（力导向范例数据）', () => {
     expect(parseFloat(hub!.color.match(/hsl\((\d+)/)![1])).toBeLessThan(40)
   })
 
-  it('关键词图：密度更高，api 为红色枢纽，三角节点存在', () => {
+  it('关键词图：密度更高，api 为珊瑚色枢纽，三角节点存在', () => {
     expectHealthy(KEYWORD_GRAPH, 60)
     const labels = new Set(KEYWORD_GRAPH.nodes.map((n) => n.label))
     ;['api', 'agent', 'external', 'required', 'tool'].forEach((l) => expect(labels.has(l)).toBe(true))

@@ -24,6 +24,7 @@ import {
   ClosePromptOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
+import type { SemanticsTaskFn } from '../../shared/semantics';
 
 export class PromptsAccess {
   private readonly service: PromptsService;
@@ -53,6 +54,14 @@ export class PromptsAccess {
   
   
   
+
+  setEmbedFn(fn: (text: string, context?: any) => Promise<number[]>): void {
+    this.service.setEmbedFn(fn);
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.service.setSemanticsFn(fn);
+  }
 
   async initialize(): Promise<void> {
     await this.service.initialize();

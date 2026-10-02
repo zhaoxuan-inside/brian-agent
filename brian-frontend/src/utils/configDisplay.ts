@@ -80,7 +80,6 @@ export const NAV_SECTIONS: NavSection[] = [
     { key: 'mcp-market', label: 'MCP 市场', icon: Globe, type: 'entity', entityType: 'mcp-provider' },
     { key: 'mcp-instance', label: 'MCP 实例', icon: Plug, type: 'entity', entityType: 'mcp' },
     { key: 'mcp-params', label: '运行参数', icon: Settings, type: 'params', configModule: 'mcp_core', configCategories: ['basic'] },
-    { key: 'mcp-stats', label: '调用统计', icon: BarChart3, type: 'entity', entityType: 'mcp-stats' },
   ]},
   { key: 'skills', label: 'Skill 配置', icon: Wand2, desc: 'Skill 管理与匹配优化', subsections: [
     { key: 'skills-list', label: 'Skill 管理', icon: Wand2, type: 'entity', entityType: 'skill' },

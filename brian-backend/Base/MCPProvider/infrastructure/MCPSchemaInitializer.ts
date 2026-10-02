@@ -3,7 +3,8 @@ import {
   MCP_PROVIDER_TABLE,
   MCP_CACHE_TABLE,
   MCP_INSTALL_TABLE,
-  MCP_USAGE_TABLE,
+  MCP_EMBEDDING_TABLE,
+  MCP_EXAMPLE_EMBEDDING_TABLE,
   MCP_CONFIG_TABLE,
 } from '../domain/types';
 
@@ -16,19 +17,23 @@ export class MCPSchemaInitializer {
 
   private readonly ddlStatements: readonly DdlEntry[] = [
 
+    // ADR-012:组件定义表改名 + 去冗余列(幂等)
+    { sql: `ALTER TABLE "mcp_provider" RENAME TO "${MCP_PROVIDER_TABLE}"`, ignoreReason: '旧表不存在或已改名' },
+    { sql: `ALTER TABLE "mcp_install" RENAME TO "${MCP_INSTALL_TABLE}"`, ignoreReason: '旧表不存在或已改名' },
+    { sql: `ALTER TABLE "${MCP_PROVIDER_TABLE}" DROP COLUMN "provider_code"`, ignoreReason: '列不存在' },
+    { sql: `ALTER TABLE "${MCP_INSTALL_TABLE}" DROP COLUMN "status"`, ignoreReason: '列不存在' },
+
     `
       CREATE TABLE IF NOT EXISTS "${MCP_PROVIDER_TABLE}" (
         "id"                   TEXT    NOT NULL PRIMARY KEY,
         "created"              INTEGER NOT NULL,
         "updated"              INTEGER NOT NULL,
-        "provider_code"        TEXT,
         "mcp_provider_url"     TEXT    NOT NULL,
         "mcp_provider_title"   TEXT    NOT NULL,
         "mcp_provider_brief"   TEXT,
         "enable"               INTEGER NOT NULL DEFAULT 1
       )
     `,
-    { sql: `ALTER TABLE "${MCP_PROVIDER_TABLE}" ADD COLUMN "provider_code" TEXT`, ignoreReason: '已存在 provider_code 列时忽略' },
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_PROVIDER_TABLE}_created" ON "${MCP_PROVIDER_TABLE}" ("created")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_PROVIDER_TABLE}_updated" ON "${MCP_PROVIDER_TABLE}" ("updated")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_PROVIDER_TABLE}_title" ON "${MCP_PROVIDER_TABLE}" ("mcp_provider_title")`,
@@ -41,9 +46,11 @@ export class MCPSchemaInitializer {
         "mcp_provider_id"   TEXT    NOT NULL,
         "mcp_title"         TEXT    NOT NULL,
         "mcp_brief"         TEXT    NOT NULL,
-        "mcp_install_cmd"   TEXT    NOT NULL
+        "mcp_install_cmd"   TEXT    NOT NULL,
+        "test_params_sample" TEXT   DEFAULT ''
       )
     `,
+    { sql: `ALTER TABLE "${MCP_CACHE_TABLE}" ADD COLUMN "test_params_sample" TEXT DEFAULT ''`, ignoreReason: '已存在 test_params_sample 列时忽略' },
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CACHE_TABLE}_created" ON "${MCP_CACHE_TABLE}" ("created")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CACHE_TABLE}_updated" ON "${MCP_CACHE_TABLE}" ("updated")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_CACHE_TABLE}_provider" ON "${MCP_CACHE_TABLE}" ("mcp_provider_id")`,
@@ -66,7 +73,6 @@ export class MCPSchemaInitializer {
         "version"             TEXT,
         "transport_type"      TEXT,
         "transport_config"    TEXT,
-        "status"              TEXT    NOT NULL DEFAULT 'stopped',
         "enable"              INTEGER NOT NULL DEFAULT 1
       )
     `,
@@ -74,6 +80,7 @@ export class MCPSchemaInitializer {
     { sql: `ALTER TABLE "${MCP_INSTALL_TABLE}" ADD COLUMN "transport_type" TEXT`, ignoreReason: '已存在 transport_type 列时忽略' },
     { sql: `ALTER TABLE "${MCP_INSTALL_TABLE}" ADD COLUMN "transport_config" TEXT`, ignoreReason: '已存在 transport_config 列时忽略' },
     { sql: `ALTER TABLE "${MCP_INSTALL_TABLE}" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'stopped'`, ignoreReason: '已存在 status 列时忽略' },
+    { sql: `ALTER TABLE "${MCP_INSTALL_TABLE}" ADD COLUMN "test_params_sample" TEXT DEFAULT ''`, ignoreReason: '已存在 test_params_sample 列时忽略' },
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_created" ON "${MCP_INSTALL_TABLE}" ("created")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_updated" ON "${MCP_INSTALL_TABLE}" ("updated")`,
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_provider" ON "${MCP_INSTALL_TABLE}" ("mcp_provider_id")`,
@@ -85,19 +92,41 @@ export class MCPSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${MCP_INSTALL_TABLE}_uninstall_cmd" ON "${MCP_INSTALL_TABLE}" ("mcp_uninstall_cmd")`,
 
     `
-      CREATE TABLE IF NOT EXISTS "${MCP_USAGE_TABLE}" (
-        "id"              TEXT    NOT NULL PRIMARY KEY,
-        "created"         INTEGER NOT NULL,
-        "updated"         INTEGER NOT NULL,
-        "mcp_install_id"  TEXT    NOT NULL,
-        "usage_date"      TEXT    NOT NULL,
-        "usage_count"     INTEGER NOT NULL DEFAULT 0
+      CREATE TABLE IF NOT EXISTS "${MCP_EMBEDDING_TABLE}" (
+        "id"           TEXT    NOT NULL PRIMARY KEY,
+        "created"      INTEGER NOT NULL,
+        "updated"      INTEGER NOT NULL,
+        "mcp_id"       TEXT    NOT NULL UNIQUE,
+        "model"        TEXT    NOT NULL,
+        "dimension"    INTEGER NOT NULL,
+        "content_hash" TEXT    NOT NULL,
+        "content"      TEXT    NOT NULL,
+        "embedding"    TEXT    NOT NULL,
+        "trace_id"     TEXT    NOT NULL DEFAULT ''
       )
     `,
-    `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_created" ON "${MCP_USAGE_TABLE}" ("created")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_updated" ON "${MCP_USAGE_TABLE}" ("updated")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_install" ON "${MCP_USAGE_TABLE}" ("mcp_install_id")`,
-    `CREATE INDEX IF NOT EXISTS "idx_${MCP_USAGE_TABLE}_date" ON "${MCP_USAGE_TABLE}" ("usage_date")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${MCP_EMBEDDING_TABLE}_mcp_id" ON "${MCP_EMBEDDING_TABLE}" ("mcp_id")`,
+
+    `
+      CREATE TABLE IF NOT EXISTS "${MCP_EXAMPLE_EMBEDDING_TABLE}" (
+        "id"           TEXT    NOT NULL PRIMARY KEY,
+        "created"      INTEGER NOT NULL,
+        "updated"      INTEGER NOT NULL,
+        "mcp_id"       TEXT    NOT NULL,
+        "example_text" TEXT    NOT NULL,
+        "example_type" TEXT    NOT NULL DEFAULT 'positive',
+        "model"        TEXT    NOT NULL,
+        "dimension"    INTEGER NOT NULL,
+        "content_hash" TEXT    NOT NULL,
+        "embedding"    TEXT    NOT NULL,
+        "trace_id"     TEXT    NOT NULL DEFAULT ''
+      )
+    `,
+    { sql: `ALTER TABLE "${MCP_EXAMPLE_EMBEDDING_TABLE}" ADD COLUMN "example_type" TEXT NOT NULL DEFAULT 'positive'`, ignoreReason: '已存在 example_type 列时忽略' },
+    `CREATE INDEX IF NOT EXISTS "idx_${MCP_EXAMPLE_EMBEDDING_TABLE}_mcp_id" ON "${MCP_EXAMPLE_EMBEDDING_TABLE}" ("mcp_id")`,
+    `CREATE INDEX IF NOT EXISTS "idx_${MCP_EXAMPLE_EMBEDDING_TABLE}_mcp_type" ON "${MCP_EXAMPLE_EMBEDDING_TABLE}" ("mcp_id", "example_type")`,
+
+    // ADR-012: mcp_usage 表已由 TraceBase 的 usage_event_record / mcp_usage_org 取代，不再建表
 
     `
       CREATE TABLE IF NOT EXISTS "${MCP_CONFIG_TABLE}" (

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-28T12:36:55.221Z",
+  "updated_at": "2026-10-01T15:41:06.228Z",
   "shard": "base-mcpprovider",
   "layer": "Base",
   "module": "MCPProvider",
@@ -280,6 +280,19 @@
     },
     {
       "id": "m-mcpprovider-0022",
+      "signature": "boolean boolean listMcpTools(input: ListMcpToolsInput, output: ListMcpToolsOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean>",
+      "name": "listMcpTools",
+      "category": "orchestration",
+      "layer": "Base",
+      "module": "MCPProvider",
+      "location": "brian-backend/Base/MCPProvider/access/MCPAccess.ts",
+      "description": "拉取已安装 MCP 工具清单，逐工具按 inputSchema 生成并持久化 test_params_sample（R7 chg-057）",
+      "reusable": false,
+      "deprecated": false,
+      "replaced_by": null
+    },
+    {
+      "id": "m-mcpprovider-0023",
       "signature": "boolean ensureEnabled(): void",
       "name": "ensureEnabled",
       "category": "orchestration",
@@ -292,7 +305,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0023",
+      "id": "m-mcpprovider-0024",
       "signature": "boolean extractPackageName(installCmd: string): string",
       "name": "extractPackageName",
       "category": "algorithm",
@@ -305,7 +318,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0024",
+      "id": "m-mcpprovider-0025",
       "signature": "boolean getTransportType(mcp: Record<string, unknown>): string",
       "name": "getTransportType",
       "category": "orchestration",
@@ -318,7 +331,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0025",
+      "id": "m-mcpprovider-0026",
       "signature": "boolean parseTransportConfig(mcp: Record<string, unknown>): McpTransportConfig",
       "name": "parseTransportConfig",
       "category": "data",
@@ -331,7 +344,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0026",
+      "id": "m-mcpprovider-0027",
       "signature": "boolean resolveStdioCommand(mcp: Record<string, unknown>): { command: string; args: string[] }",
       "name": "resolveStdioCommand",
       "category": "algorithm",
@@ -344,7 +357,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0027",
+      "id": "m-mcpprovider-0028",
       "signature": "boolean syncInstallStatus(): Promise<number>",
       "name": "syncInstallStatus",
       "category": "data",
@@ -357,7 +370,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0028",
+      "id": "m-mcpprovider-0029",
       "signature": "boolean generateCommands(installCmd: string): { start: string; stop: string; uninstall: string; }",
       "name": "generateCommands",
       "category": "data",
@@ -370,7 +383,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0029",
+      "id": "m-mcpprovider-0030",
       "signature": "boolean upsertUsage(mcpInstallId: string): Promise<void>",
       "name": "upsertUsage",
       "category": "data",
@@ -383,7 +396,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0030",
+      "id": "m-mcpprovider-0031",
       "signature": "boolean addMcpProvider(input: AddMcpProviderInput, output: AddMcpProviderOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "addMcpProvider",
       "category": "data",
@@ -396,7 +409,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0031",
+      "id": "m-mcpprovider-0032",
       "signature": "boolean delMcpProvider(input: DelMcpProviderInput, output: DelMcpProviderOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "delMcpProvider",
       "category": "data",
@@ -409,7 +422,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0032",
+      "id": "m-mcpprovider-0033",
       "signature": "boolean updateMcpProvider(input: UpdateMcpProviderInput, _output: UpdateMcpProviderOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "updateMcpProvider",
       "category": "data",
@@ -422,7 +435,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0033",
+      "id": "m-mcpprovider-0034",
       "signature": "boolean soMcpProvider(input: SoMcpProviderInput, output: SoMcpProviderOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soMcpProvider",
       "category": "data",
@@ -435,7 +448,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0034",
+      "id": "m-mcpprovider-0035",
       "signature": "boolean testMcpProvider(input: TestMcpProviderInput, output: TestMcpProviderOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "testMcpProvider",
       "category": "data",
@@ -448,7 +461,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0035",
+      "id": "m-mcpprovider-0036",
       "signature": "boolean listMcp(input: ListMcpInput, output: ListMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "listMcp",
       "category": "data",
@@ -461,7 +474,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0036",
+      "id": "m-mcpprovider-0037",
       "signature": "boolean fetchJson(url: string): Promise<T | null>",
       "name": "fetchJson",
       "category": "data",
@@ -474,7 +487,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0037",
+      "id": "m-mcpprovider-0038",
       "signature": "boolean fetchNpmMarketList(): Promise<Array<{ title: string; brief: string; installCmd: string }>>",
       "name": "fetchNpmMarketList",
       "category": "data",
@@ -487,7 +500,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0038",
+      "id": "m-mcpprovider-0039",
       "signature": "boolean installMcp(input: InstallMcpInput, output: InstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "installMcp",
       "category": "data",
@@ -500,7 +513,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0039",
+      "id": "m-mcpprovider-0040",
       "signature": "boolean resolveTransport(providerCode: string, startCmd: string): { transportType: string; transportConfig: string }",
       "name": "resolveTransport",
       "category": "data",
@@ -513,7 +526,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0040",
+      "id": "m-mcpprovider-0041",
       "signature": "boolean startMcp(input: StartMcpInput, _output: StartMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "startMcp",
       "category": "data",
@@ -526,7 +539,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0041",
+      "id": "m-mcpprovider-0042",
       "signature": "boolean stopMcp(input: StopMcpInput, _output: StopMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "stopMcp",
       "category": "data",
@@ -539,7 +552,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0042",
+      "id": "m-mcpprovider-0043",
       "signature": "boolean killRunningMcp(id: string): void",
       "name": "killRunningMcp",
       "category": "data",
@@ -552,7 +565,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0043",
+      "id": "m-mcpprovider-0044",
       "signature": "boolean isMcpRunning(id: string, transportType?: string): boolean",
       "name": "isMcpRunning",
       "category": "data",
@@ -565,7 +578,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0044",
+      "id": "m-mcpprovider-0045",
       "signature": "boolean stopAllMcp(): Promise<number>",
       "name": "stopAllMcp",
       "category": "data",
@@ -578,7 +591,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0045",
+      "id": "m-mcpprovider-0046",
       "signature": "boolean startMcps(input: StartMcpsInput, output: StartMcpsOutput, context: McpContext, metrics?: Metrics, report?: Report): Promise<boolean>",
       "name": "startMcps",
       "category": "orchestration",
@@ -591,7 +604,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0046",
+      "id": "m-mcpprovider-0047",
       "signature": "boolean refreshRunningStatus(): Promise<void>",
       "name": "refreshRunningStatus",
       "category": "data",
@@ -604,7 +617,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0047",
+      "id": "m-mcpprovider-0048",
       "signature": "boolean refreshMcpStatus(_input: RefreshMcpStatusInput, output: RefreshMcpStatusOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "refreshMcpStatus",
       "category": "data",
@@ -617,7 +630,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0048",
+      "id": "m-mcpprovider-0049",
       "signature": "boolean uninstallMcp(input: UninstallMcpInput, _output: UninstallMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "uninstallMcp",
       "category": "data",
@@ -630,7 +643,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0049",
+      "id": "m-mcpprovider-0050",
       "signature": "boolean updateMcp(input: UpdateMcpInput, _output: UpdateMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "updateMcp",
       "category": "data",
@@ -643,7 +656,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0050",
+      "id": "m-mcpprovider-0051",
       "signature": "boolean upgradeMcp(input: UpgradeMcpInput, output: UpgradeMcpOutput, _context: McpContext, metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "upgradeMcp",
       "category": "data",
@@ -656,7 +669,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0051",
+      "id": "m-mcpprovider-0052",
       "signature": "boolean soMcpById(input: GetMcpInput, output: GetMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soMcpById",
       "category": "data",
@@ -669,7 +682,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0052",
+      "id": "m-mcpprovider-0053",
       "signature": "boolean soMcp(input: SoMcpInput, output: SoMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soMcp",
       "category": "data",
@@ -682,7 +695,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0053",
+      "id": "m-mcpprovider-0054",
       "signature": "boolean execMcp(input: ExecMcpInput, output: ExecMcpOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "execMcp",
       "category": "data",
@@ -695,7 +708,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0054",
+      "id": "m-mcpprovider-0055",
       "signature": "boolean enableMCP(input: EnableMCPInput, _output: EnableMCPOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "enableMCP",
       "category": "orchestration",
@@ -708,7 +721,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0055",
+      "id": "m-mcpprovider-0056",
       "signature": "boolean soMcpUsage(input: GetMcpUsageInput, output: GetMcpUsageOutput, _context: McpContext, _metrics?: Metrics, _report?: Report): Promise<boolean>",
       "name": "soMcpUsage",
       "category": "data",
@@ -721,7 +734,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0056",
+      "id": "m-mcpprovider-0057",
       "signature": "boolean parseJsonObject(line: string): Record<string, unknown> | null",
       "name": "parseJsonObject",
       "category": "data",
@@ -734,7 +747,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0057",
+      "id": "m-mcpprovider-0058",
       "signature": "boolean parseSseResponse(text: string): unknown",
       "name": "parseSseResponse",
       "category": "data",
@@ -747,7 +760,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0058",
+      "id": "m-mcpprovider-0059",
       "signature": "boolean unwrapRpcResult(response: unknown): unknown",
       "name": "unwrapRpcResult",
       "category": "data",
@@ -760,7 +773,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0059",
+      "id": "m-mcpprovider-0060",
       "signature": "boolean spawn(command: string, args: string[]): void",
       "name": "spawn",
       "category": "data",
@@ -773,7 +786,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0060",
+      "id": "m-mcpprovider-0061",
       "signature": "boolean onData(text: string): void",
       "name": "onData",
       "category": "data",
@@ -786,7 +799,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0061",
+      "id": "m-mcpprovider-0062",
       "signature": "boolean onExit(code: number | null, signal: string | null): void",
       "name": "onExit",
       "category": "algorithm",
@@ -799,7 +812,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0062",
+      "id": "m-mcpprovider-0063",
       "signature": "boolean isAlive(): boolean",
       "name": "isAlive",
       "category": "data",
@@ -812,7 +825,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0063",
+      "id": "m-mcpprovider-0064",
       "signature": "boolean request(method: string, params: Record<string, unknown>, timeoutMs: unknown): Promise<unknown>",
       "name": "request",
       "category": "data",
@@ -825,7 +838,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0064",
+      "id": "m-mcpprovider-0065",
       "signature": "boolean initialize(): Promise<unknown>",
       "name": "initialize",
       "category": "orchestration",
@@ -838,7 +851,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0065",
+      "id": "m-mcpprovider-0066",
       "signature": "boolean callTool(name: string, args: Record<string, unknown>, timeoutMs: unknown): Promise<unknown>",
       "name": "callTool",
       "category": "orchestration",
@@ -851,7 +864,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0066",
+      "id": "m-mcpprovider-0067",
       "signature": "boolean kill(): void",
       "name": "kill",
       "category": "data",
@@ -864,7 +877,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0067",
+      "id": "m-mcpprovider-0068",
       "signature": "boolean callToolOverHttp(config: McpTransportConfig, toolName: string, args: Record<string, unknown>, timeoutMs: unknown): Promise<{ raw: string; result: unknown }>",
       "name": "callToolOverHttp",
       "category": "data",
@@ -877,7 +890,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0068",
+      "id": "m-mcpprovider-0069",
       "signature": "boolean callToolOverRest(config: McpTransportConfig, toolName: string, args: Record<string, unknown>, timeoutMs: unknown): Promise<{ raw: string; result: unknown }>",
       "name": "callToolOverRest",
       "category": "data",
@@ -890,7 +903,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0069",
+      "id": "m-mcpprovider-0070",
       "signature": "boolean init(): void",
       "name": "init",
       "category": "data",
@@ -903,7 +916,7 @@
       "replaced_by": null
     },
     {
-      "id": "m-mcpprovider-0070",
+      "id": "m-mcpprovider-0071",
       "signature": "boolean ctx()",
       "name": "ctx",
       "category": "orchestration",
@@ -917,10 +930,10 @@
     }
   ],
   "stats": {
-    "total": 70,
+    "total": 71,
     "by_category": {
       "algorithm": 3,
-      "orchestration": 28,
+      "orchestration": 29,
       "data": 39
     }
   }

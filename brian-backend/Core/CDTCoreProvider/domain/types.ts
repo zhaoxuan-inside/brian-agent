@@ -2,8 +2,8 @@ import { Input, Context, Output } from '@brian-agent/base';
 
 export class CDTCoreContext extends Context {}
 
-export const CDT_PAGE_SESSION_TABLE = 'cdt_page_session';
-export const CDT_LOGIN_CREDENTIAL_TABLE = 'cdt_login_credential';
+export const CDT_PAGE_SESSION_TABLE = 'cdt_page_session_record';
+export const CDT_LOGIN_CREDENTIAL_TABLE = 'cdt_login_credential_record';
 
 export interface CDTPageSessionRecord {
   id: string;

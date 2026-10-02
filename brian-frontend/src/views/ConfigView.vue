@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { useI18nStore } from '@/stores/i18n'
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -23,9 +23,12 @@ import CronConfigModal from '@/components/CronConfigModal.vue'
 // ===== 新增（2026-09-22）：配置变更历史 + Diff 对比（TODO-List §2）=====
 import ConfigHistoryModal from '@/components/config/ConfigHistoryModal.vue'
 import ConfigValueDiff from '@/components/config/ConfigValueDiff.vue'
+import UniversalConfigCard from '@/components/config/UniversalConfigCard.vue'
+import SemanticsFields from '@/components/config/SemanticsFields.vue'
+import { extractPromptVariables } from '@brian-agent/shared'
 import { configApi, agentApi, skillApi, mcpApi, fetchApi, cdtApi, bookmarkApi, vectorDbApi, graphDbApi, mqApi } from '@/api'
 import type { VectorSearchInfo } from '@/api'
-import type { ConfigTreeLayer, MQMessage, MQStats, McpUsageRecord } from '@/api/types'
+import type { ConfigTreeLayer, MQMessage, MQStats } from '@/api/types'
 
 import { NAV_SECTIONS } from '@/utils/configDisplay'
 import { formatDateTime as formatTime } from '@/utils/format'
@@ -282,6 +285,7 @@ const INFO_CREATOR_LABELS: Record<string, string> = {
 // 上下文构建维度（采集来源）
 const COLLECTION_SOURCE_LABELS: Record<string, string> = {
   PINNED: '钉住消息',
+  CITING: '引用消息',
   TIMELINE: '时间线消息',
   TAG_RELATIVE: '标签相关消息',
   SIMILARITY: '向量相似度消息',
@@ -289,7 +293,7 @@ const COLLECTION_SOURCE_LABELS: Record<string, string> = {
   RANDOM: '随机关联消息',
 }
 
-const COLLECTION_SOURCE_OPTIONS = ['PINNED', 'TIMELINE', 'TAG_RELATIVE', 'SIMILARITY', 'KEYWORD', 'RANDOM']
+const COLLECTION_SOURCE_OPTIONS = ['PINNED', 'CITING', 'TIMELINE', 'TAG_RELATIVE', 'SIMILARITY', 'KEYWORD', 'RANDOM']
 
 function infoTypeLabel(t: string): string {
   return INFO_TYPE_LABELS[t] ?? t
@@ -775,7 +779,7 @@ watch(() => activeSubSection.value, (val) => {
   if (val === 'snapshot') loadSnapshots()
 })
 
-const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean }[]>([])
+const prompts = ref<{ id: string; title: string; brief: string; enabled: boolean; positive_examples?: string[]; negative_examples?: string[] }[]>([])
 const promptHelpCollapsed = ref(true)
 const strategyHelpCollapsed = ref(true)
 const promptSearchQuery = ref('')
@@ -822,19 +826,25 @@ const promptPlaceholder = '请将以下内容翻译为{{target_lang}}：\n\n原�
 
 const promptModalVisible = ref(false)
 const editingPrompt = ref<{ id: string; title: string; brief: string; enabled: boolean } | null>(null)
-const promptForm = ref({ title: '', brief: '', template: '', enabled: true })
+const promptForm = ref({ title: '', brief: '', template: '', enabled: true, positiveExamples: [] as string[], negativeExamples: [] as string[] })
 const promptSaving = ref(false)
 
-async function openPromptModal(p?: { id: string; title: string; brief: string; enabled: boolean }) {
+async function openPromptModal(p?: { id: string; title: string; brief: string; enabled: boolean; positive_examples?: string[]; negative_examples?: string[] }) {
   editingPrompt.value = p || null
   if (p) {
-    promptForm.value = { title: p.title, brief: p.brief || '', template: '', enabled: p.enabled }
+    promptForm.value = {
+      title: p.title, brief: p.brief || '', template: '', enabled: p.enabled,
+      positiveExamples: [...(p.positive_examples || [])],
+      negativeExamples: [...(p.negative_examples || [])],
+    }
     try {
       const full = await configApi.prompts.get(p.id)
       promptForm.value.template = full.template || ''
+      if (full.positive_examples) promptForm.value.positiveExamples = [...full.positive_examples]
+      if (full.negative_examples) promptForm.value.negativeExamples = [...full.negative_examples]
     } catch { /* keep empty */ }
   } else {
-    promptForm.value = { title: '', brief: '', template: '', enabled: true }
+    promptForm.value = { title: '', brief: '', template: '', enabled: true, positiveExamples: [], negativeExamples: [] }
   }
   promptModalVisible.value = true
 }
@@ -852,6 +862,8 @@ async function savePrompt() {
       title: promptForm.value.title.trim(),
       brief: promptForm.value.brief.trim() || undefined,
       template: promptForm.value.template,
+      positive_examples: promptForm.value.positiveExamples.map(s => s.trim()).filter(Boolean),
+      negative_examples: promptForm.value.negativeExamples.map(s => s.trim()).filter(Boolean),
       enabled: promptForm.value.enabled,
     }
     if (editingPrompt.value) {
@@ -1118,35 +1130,150 @@ async function saveInfoTypes() {
   }
 }
 
-// ===== 维度优先级顺序弹窗（上下文构建） =====
+// ===== 维度优先级顺序与策略组（上下文构建） =====
+interface PriorityStrategyPreset {
+  id: string
+  name: string
+  desc: string
+  order: string[]
+}
+
+const CONTEXT_PRIORITY_STRATEGY_OPTIONS: PriorityStrategyPreset[] = [
+  {
+    id: 'DEFAULT',
+    name: '默认策略',
+    desc: '标准平衡模式：优先保留强上下文（钉住/引用/时间线），均衡兼顾标签图谱与向量语义相关性。',
+    order: ['PINNED', 'CITING', 'TIMELINE', 'TAG_RELATIVE', 'SIMILARITY', 'KEYWORD', 'RANDOM'],
+  },
+  {
+    id: 'TIMELINE_FIRST',
+    name: '时序优先',
+    desc: '对话连续模式：突出本会话近期连续对话记录，防止时序消息被弱维度稀释。',
+    order: ['PINNED', 'CITING', 'TIMELINE', 'SIMILARITY', 'TAG_RELATIVE', 'KEYWORD', 'RANDOM'],
+  },
+  {
+    id: 'SEMANTIC_FIRST',
+    name: '语义优先',
+    desc: '知识检索模式：跨会话深度问答场景，优先保留语义向量高度相似的历史记忆。',
+    order: ['PINNED', 'CITING', 'SIMILARITY', 'TAG_RELATIVE', 'KEYWORD', 'TIMELINE', 'RANDOM'],
+  },
+  {
+    id: 'TAG_FIRST',
+    name: '标签优先',
+    desc: '主题聚焦模式：围绕同主题标签与知识图谱共现关系优先聚类历史消息。',
+    order: ['PINNED', 'CITING', 'TAG_RELATIVE', 'SIMILARITY', 'KEYWORD', 'TIMELINE', 'RANDOM'],
+  },
+  {
+    id: 'STRICT_FOCUS',
+    name: '强约束聚焦',
+    desc: '精准聚焦模式：仅保留用户明确钉住、选定引用与本会话时序记录，不引入弱维度发散。',
+    order: ['PINNED', 'CITING', 'TIMELINE'],
+  },
+]
+
 const priorityOrderModalVisible = ref(false)
 const editingPriorityOrderItem = ref<ParamItem | null>(null)
 const priorityOrderList = ref<Array<{ source: string; enabled: boolean }>>([])
 const priorityOrderSaving = ref(false)
 const priorityDragIndex = ref<number | null>(null)
 const priorityDragOverIndex = ref<number | null>(null)
+const selectedPriorityStrategyKey = ref<string>('DEFAULT')
+
+function detectPriorityStrategy(enabledSources: string[]): string {
+  for (const strat of CONTEXT_PRIORITY_STRATEGY_OPTIONS) {
+    if (strat.order.length === enabledSources.length && strat.order.every((s, i) => s === enabledSources[i])) {
+      return strat.id
+    }
+  }
+  return 'CUSTOM'
+}
+
+const currentPriorityStrategyDescription = computed(() => {
+  if (selectedPriorityStrategyKey.value === 'CUSTOM') {
+    return '自定义策略：已手动调整维度编排顺序或启停特定采集维度。'
+  }
+  const s = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(o => o.id === selectedPriorityStrategyKey.value)
+  return s ? s.desc : ''
+})
 
 function formatPriorityOrderValue(value: unknown): string {
   const raw = value !== undefined && value !== null ? String(value) : ''
-  const sources = raw.split(',').map(s => s.trim()).filter(Boolean)
-  if (sources.length === 0) return '配置采集维度'
-  return sources.map(s => COLLECTION_SOURCE_LABELS[s] ?? s).join(' → ')
+  if (!raw.trim()) return '配置策略'
+  const matchedById = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(s => s.id === raw.trim().toUpperCase())
+  if (matchedById) return matchedById.name
+  const sources = raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+  if (sources.length === 0) return '配置策略'
+  const matchedByOrder = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(
+    s => s.order.length === sources.length && s.order.every((src, i) => src === sources[i]),
+  )
+  return matchedByOrder ? matchedByOrder.name : '自定义策略'
+}
+
+function getPriorityOrderTooltip(value: unknown): string {
+  const raw = value !== undefined && value !== null ? String(value) : ''
+  if (!raw.trim()) return '点击配置维度优先级策略'
+  const matchedById = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(s => s.id === raw.trim().toUpperCase())
+  if (matchedById) {
+    const chain = matchedById.order.map(s => COLLECTION_SOURCE_LABELS[s] ?? s).join(' → ')
+    return `${matchedById.name}（${matchedById.id}）：${matchedById.desc}\n生效顺序：${chain}`
+  }
+  const sources = raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+  if (sources.length === 0) return '点击配置维度优先级策略'
+  const matchedByOrder = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(
+    s => s.order.length === sources.length && s.order.every((src, i) => src === sources[i]),
+  )
+  const chain = sources.map(s => COLLECTION_SOURCE_LABELS[s] ?? s).join(' → ')
+  if (matchedByOrder) {
+    return `${matchedByOrder.name}（${matchedByOrder.id}）：${matchedByOrder.desc}\n生效顺序：${chain}`
+  }
+  return `自定义策略\n生效顺序：${chain}`
 }
 
 function openPriorityOrderModal(item: ParamItem) {
   editingPriorityOrderItem.value = item
   const val = getConfigPrimitiveValue(item)
   const raw = val !== undefined && val !== null ? String(val) : ''
-  const enabledSet = new Set(
-    raw.split(',').map(s => s.trim().toUpperCase()).filter(s => COLLECTION_SOURCE_OPTIONS.includes(s)),
-  )
-  priorityOrderList.value = COLLECTION_SOURCE_OPTIONS.map(source => ({
+  const matchedById = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(s => s.id === raw.trim().toUpperCase())
+  let parsedSources: string[] = []
+  if (matchedById) {
+    parsedSources = [...matchedById.order]
+  } else {
+    parsedSources = raw
+      .split(',')
+      .map(s => s.trim().toUpperCase())
+      .filter(s => COLLECTION_SOURCE_OPTIONS.includes(s))
+  }
+  if (parsedSources.length === 0) {
+    parsedSources = [...CONTEXT_PRIORITY_STRATEGY_OPTIONS[0].order]
+  }
+  const enabledSet = new Set(parsedSources)
+  const orderedOptions = [
+    ...parsedSources,
+    ...COLLECTION_SOURCE_OPTIONS.filter(s => !enabledSet.has(s)),
+  ]
+  priorityOrderList.value = orderedOptions.map(source => ({
     source,
     enabled: enabledSet.has(source),
   }))
+  selectedPriorityStrategyKey.value = detectPriorityStrategy(parsedSources)
   priorityDragIndex.value = null
   priorityDragOverIndex.value = null
   priorityOrderModalVisible.value = true
+}
+
+function applyPriorityStrategy(strategyId: string) {
+  selectedPriorityStrategyKey.value = strategyId
+  const strat = CONTEXT_PRIORITY_STRATEGY_OPTIONS.find(s => s.id === strategyId)
+  if (!strat) return
+  const enabledSet = new Set(strat.order)
+  const orderedOptions = [
+    ...strat.order,
+    ...COLLECTION_SOURCE_OPTIONS.filter(s => !enabledSet.has(s)),
+  ]
+  priorityOrderList.value = orderedOptions.map(source => ({
+    source,
+    enabled: enabledSet.has(source),
+  }))
 }
 
 function closePriorityOrderModal() {
@@ -1155,11 +1282,20 @@ function closePriorityOrderModal() {
   priorityOrderList.value = []
   priorityDragIndex.value = null
   priorityDragOverIndex.value = null
+  selectedPriorityStrategyKey.value = 'DEFAULT'
+}
+
+function onPriorityOrderChanged() {
+  const currentEnabled = priorityOrderList.value.filter(r => r.enabled).map(r => r.source)
+  selectedPriorityStrategyKey.value = detectPriorityStrategy(currentEnabled)
 }
 
 function togglePrioritySource(source: string) {
   const row = priorityOrderList.value.find(r => r.source === source)
-  if (row) row.enabled = !row.enabled
+  if (row) {
+    row.enabled = !row.enabled
+    onPriorityOrderChanged()
+  }
 }
 
 function movePriorityItem(from: number, to: number) {
@@ -1168,6 +1304,7 @@ function movePriorityItem(from: number, to: number) {
   const [moved] = list.splice(from, 1)
   list.splice(to, 0, moved)
   priorityOrderList.value = list
+  onPriorityOrderChanged()
 }
 
 function onPriorityDragStart(index: number) {
@@ -1193,9 +1330,12 @@ function onPriorityDragEnd() {
 async function savePriorityOrder() {
   if (!editingPriorityOrderItem.value) return
   const enabled = priorityOrderList.value.filter(r => r.enabled).map(r => r.source)
+  const matchedKey = detectPriorityStrategy(enabled)
+  const valToSave = matchedKey !== 'CUSTOM' ? matchedKey : enabled.join(',')
   priorityOrderSaving.value = true
   try {
-    await configApi.configItem.update(editingPriorityOrderItem.value.config_key, enabled.join(','))
+    await configApi.configItem.update(editingPriorityOrderItem.value.config_key, valToSave)
+    cardValues.value[editingPriorityOrderItem.value.config_key] = valToSave
     showToast('配置已保存', 'success')
     closePriorityOrderModal()
     await loadConfigTree()
@@ -1298,7 +1438,7 @@ interface FetchedModel { id: string; name: string; brief: string; features?: Rec
 const cachedModels = ref<FetchedModel[]>([])
 const modelSearchQuery = ref('')
 const selectedModelIds = ref<Set<string>>(new Set())
-const modelAddType = ref<'text' | 'vision' | 'embedding'>('text')
+const modelAddType = ref<'text' | 'multimodal' | 'embedding'>('text')
 
 const filteredCachedModels = computed(() => {
   const q = modelSearchQuery.value.toLowerCase()
@@ -1543,6 +1683,11 @@ interface BackendModel {
   llm_type?: string
   llm_brief?: string
   model_usage?: string
+  usage_tokens?: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
 }
 
 const models = ref<BackendModel[]>([])
@@ -1760,9 +1905,12 @@ async function handleToggleModel(modelId: string) {
 
 interface BackendSoul {
   id: string
+  title?: string
   soul_brief?: string
   soul_content?: string
   soul_usage?: string
+  positive_examples?: string[]
+  negative_examples?: string[]
   enabled?: boolean
   enable?: boolean
 }
@@ -1771,7 +1919,7 @@ const souls = ref<BackendSoul[]>([])
 const soulsLoading = ref(false)
 const soulModalVisible = ref(false)
 const editingSoul = ref<BackendSoul | null>(null)
-const soulForm = ref({ soulBrief: '', soulContent: '', soulUsage: '' })
+const soulForm = ref({ soulTitle: '', soulBrief: '', soulContent: '', soulUsage: '', positiveExamples: [] as string[], negativeExamples: [] as string[] })
 const soulSubmitting = ref(false)
 
 async function loadSouls() {
@@ -1793,13 +1941,16 @@ function openSoulModal(soul?: BackendSoul) {
   if (soul) {
     editingSoul.value = soul
     soulForm.value = {
+      soulTitle: soul.title || '',
       soulBrief: soul.soul_brief || '',
       soulContent: soul.soul_content || '',
       soulUsage: soul.soul_usage || '',
+      positiveExamples: [...(soul.positive_examples || [])],
+      negativeExamples: [...(soul.negative_examples || [])],
     }
   } else {
     editingSoul.value = null
-    soulForm.value = { soulBrief: '', soulContent: '', soulUsage: '' }
+    soulForm.value = { soulTitle: '', soulBrief: '', soulContent: '', soulUsage: '', positiveExamples: [], negativeExamples: [] }
   }
   soulModalVisible.value = true
 }
@@ -1810,9 +1961,12 @@ async function submitSoulForm() {
   soulSubmitting.value = true
   try {
     const data = {
+      title: soulForm.value.soulTitle,
       soul_brief: soulForm.value.soulBrief,
       soul_content: soulForm.value.soulContent,
       soul_usage: soulForm.value.soulUsage,
+      positive_examples: soulForm.value.positiveExamples.map(s => s.trim()).filter(Boolean),
+      negative_examples: soulForm.value.negativeExamples.map(s => s.trim()).filter(Boolean),
     }
     if (editingSoul.value) {
       await configApi.soul.update(editingSoul.value.id, data)
@@ -1954,6 +2108,8 @@ interface BackendSkill {
   scripts?: { name: string; content: string }[]
   references?: { name: string; content: string }[]
   assets?: { name: string; content: string }[]
+  positive_examples?: string[]
+  negative_examples?: string[]
   enabled?: boolean
   enable?: boolean
   system?: boolean
@@ -1975,6 +2131,8 @@ const skillForm = ref({
   scripts: [] as SkillFileEntry[],
   references: [] as SkillFileEntry[],
   assets: [] as SkillFileEntry[],
+  positiveExamples: [] as string[],
+  negativeExamples: [] as string[],
 })
 const skillSubmitting = ref(false)
 const skillSearchQuery = ref('')
@@ -2030,10 +2188,12 @@ function openSkillModal(skill?: BackendSkill) {
       scripts: (skill.scripts || []).map(f => ({ ...f })),
       references: (skill.references || []).map(f => ({ ...f })),
       assets: (skill.assets || []).map(f => ({ ...f })),
+      positiveExamples: [...(skill.positive_examples || [])],
+      negativeExamples: [...(skill.negative_examples || [])],
     }
   } else {
     editingSkill.value = null
-    skillForm.value = { name: '', skillBrief: '', skillMd: '', scripts: [], references: [], assets: [] }
+    skillForm.value = { name: '', skillBrief: '', skillMd: '', scripts: [], references: [], assets: [], positiveExamples: [], negativeExamples: [] }
   }
   skillModalVisible.value = true
 }
@@ -2079,6 +2239,8 @@ async function submitSkillForm() {
       scripts: skillForm.value.scripts.length > 0 ? skillForm.value.scripts : undefined,
       references: skillForm.value.references.length > 0 ? skillForm.value.references : undefined,
       assets: skillForm.value.assets.length > 0 ? skillForm.value.assets : undefined,
+      positive_examples: skillForm.value.positiveExamples.map(s => s.trim()).filter(Boolean),
+      negative_examples: skillForm.value.negativeExamples.map(s => s.trim()).filter(Boolean),
     }
     if (editingSkill.value) {
       await skillApi.update(editingSkill.value.id, data)
@@ -2189,6 +2351,11 @@ interface BackendMcp {
   status?: string
   running?: boolean
   enabled?: boolean
+  transport_type?: string
+  mcp_provider_id?: string
+  provider_title?: string
+  positive_examples?: string[]
+  negative_examples?: string[]
 }
 
 const mcps = ref<BackendMcp[]>([])
@@ -2196,13 +2363,98 @@ const mcpsLoading = ref(false)
 const selectedMcpIds = ref<string[]>([])
 const mcpRefreshing = ref(false)
 const mcpBatchStarting = ref(false)
-const mcpUsage = ref<McpUsageRecord[]>([])
-const mcpUsageTotal = ref(0)
-const mcpUsageLoading = ref(false)
+
+// R7: MCP 工具测试弹窗状态（工具清单 + test_params_sample 预填）
+interface McpTestTool {
+  name: string
+  description: string
+  test_params_sample: Record<string, unknown>
+}
+const mcpTestModalVisible = ref(false)
+const mcpTestTarget = ref<BackendMcp | null>(null)
+const mcpTestTools = ref<McpTestTool[]>([])
+const mcpTestStatus = ref<'running' | 'stopped'>('stopped')
+const mcpTestLoading = ref(false)
+const mcpTestSelectedTool = ref('')
+const mcpTestParamsText = ref('{}')
+const mcpTestResult = ref('')
+const mcpTestRunning = ref(false)
+const mcpTestError = ref('')
+
+async function openMcpTestModal(item: BackendMcp) {
+  mcpTestTarget.value = item
+  mcpTestModalVisible.value = true
+  mcpTestLoading.value = true
+  mcpTestTools.value = []
+  mcpTestSelectedTool.value = ''
+  mcpTestResult.value = ''
+  mcpTestError.value = ''
+  try {
+    const res = await mcpApi.tools(item.id)
+    mcpTestTools.value = res.tools || []
+    mcpTestStatus.value = res.status || 'stopped'
+    if (mcpTestTools.value.length > 0) selectMcpTestTool(mcpTestTools.value[0].name)
+  } catch (e: unknown) {
+    mcpTestError.value = e instanceof Error ? e.message : '获取工具清单失败（stdio 类型需先启动）'
+  } finally {
+    mcpTestLoading.value = false
+  }
+}
+
+function selectMcpTestTool(name: string) {
+  mcpTestSelectedTool.value = name
+  const tool = mcpTestTools.value.find(t => t.name === name)
+  mcpTestParamsText.value = JSON.stringify(tool?.test_params_sample ?? {}, null, 2)
+}
+
+async function runMcpToolTest() {
+  if (!mcpTestTarget.value || mcpTestRunning.value) return
+  let params: Record<string, unknown> = {}
+  try {
+    params = JSON.parse(mcpTestParamsText.value || '{}')
+  } catch {
+    mcpTestError.value = '入参不是合法 JSON'
+    return
+  }
+  mcpTestRunning.value = true
+  mcpTestError.value = ''
+  mcpTestResult.value = ''
+  try {
+    const res = await mcpApi.call(mcpTestTarget.value.id, mcpTestSelectedTool.value, params)
+    mcpTestResult.value = typeof res.result === 'string' ? res.result : JSON.stringify(res.result, null, 2)
+  } catch (e: unknown) {
+    mcpTestError.value = e instanceof Error ? e.message : '调用失败'
+  } finally {
+    mcpTestRunning.value = false
+  }
+}
+
+function closeMcpTestModal() { mcpTestModalVisible.value = false; mcpTestTarget.value = null; mcpTestResult.value = ''; mcpTestError.value = '' }
+
+/** R7: Prompt 卡片变量徽章（{{变量}} 提取） */
+function promptVariables(p: Record<string, unknown>): string[] {
+  return extractPromptVariables(String(p.template ?? p.content ?? p.prompt_template ?? ''))
+}
+
+/** 变量徽章文案（模板内不能直接写字面 {{，经此函数拼接避免插值嵌套） */
+function promptVariableLabel(v: string): string {
+  return '{{' + v + '}}'
+}
+
+/** R7: Token 紧凑展示（1.2M / 380K） */
+function formatTokens(n: number): string {
+  if (!n) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return Math.round(n / 1_000) + 'K'
+  return String(n)
+}
 
 async function loadMcps() {
   mcpsLoading.value = true
   try {
+    if (mcpProviders.value.length === 0) {
+      loadMcpProviders().catch(() => {})
+    }
     const res = await mcpApi.installed()
     mcps.value = (res.installed || []) as BackendMcp[]
   } catch {
@@ -2211,36 +2463,6 @@ async function loadMcps() {
     mcpsLoading.value = false
   }
 }
-
-async function loadMcpUsage() {
-  mcpUsageLoading.value = true
-  try {
-    const res = await mcpApi.usage()
-    mcpUsage.value = res.list || []
-    mcpUsageTotal.value = res.total || 0
-  } catch {
-    mcpUsage.value = []
-    mcpUsageTotal.value = 0
-  } finally {
-    mcpUsageLoading.value = false
-  }
-}
-
-const mcpUsageToday = computed(() => {
-  const today = new Date().toISOString().slice(0, 10)
-  return mcpUsage.value.filter(u => u.usage_date === today).reduce((s, u) => s + (u.usage_count || 0), 0)
-})
-
-const mcpUsageByMcp = computed(() => {
-  const map = new Map<string, { title: string; count: number }>()
-  for (const u of mcpUsage.value) {
-    const key = u.mcp_install_id || u.mcp_title || 'unknown'
-    const cur = map.get(key) || { title: u.mcp_title || key, count: 0 }
-    cur.count += u.usage_count || 0
-    map.set(key, cur)
-  }
-  return Array.from(map.values()).sort((a, b) => b.count - a.count)
-})
 
 async function handleBatchStartMcp() {
   if (selectedMcpIds.value.length === 0 || mcpBatchStarting.value) return
@@ -2313,6 +2535,106 @@ const mcpToolCache = new Map<string, { tools: McpMarketTool[]; timestamp: number
 const mcpProviders = ref<BackendMcpProvider[]>([])
 const mcpProvidersLoading = ref(false)
 
+// ============================================================
+// MCP 实例管理（搜索、按提供商筛选、批量卸载）
+// ============================================================
+
+const mcpSearchQuery = ref('')
+const mcpSelectedProviderFilter = ref('')
+const mcpBatchUninstalling = ref(false)
+
+function getMcpProviderTitle(item: BackendMcp | string): string {
+  const providerId = typeof item === 'string' ? item : (item.mcp_provider_id || '')
+  if (typeof item !== 'string' && item.provider_title) return item.provider_title
+  if (!providerId) return '未知提供商'
+  const p = mcpProviders.value.find(prov => prov.id === providerId || prov.provider_code === providerId)
+  return p?._displayName || p?.mcp_provider_title || providerId
+}
+
+const availableMcpProviderOptions = computed(() => {
+  const provMap = new Map<string, { label: string; count: number }>()
+  for (const m of mcps.value) {
+    const key = m.mcp_provider_id || 'unknown'
+    const label = m.provider_title || getMcpProviderTitle(m)
+    const cur = provMap.get(key) || { label, count: 0 }
+    cur.count++
+    provMap.set(key, cur)
+  }
+  return Array.from(provMap.entries()).map(([key, v]) => ({
+    key,
+    label: v.label,
+    count: v.count,
+  }))
+})
+
+const filteredMcps = computed(() => {
+  const q = mcpSearchQuery.value.trim().toLowerCase()
+  const pFilter = mcpSelectedProviderFilter.value
+  return mcps.value.filter(item => {
+    if (pFilter) {
+      const itemProv = item.mcp_provider_id || 'unknown'
+      if (itemProv !== pFilter) {
+        const matchedProv = mcpProviders.value.find(p => p.id === pFilter || p.provider_code === pFilter)
+        const itemProvObj = mcpProviders.value.find(p => p.id === itemProv || p.provider_code === itemProv)
+        if (!matchedProv || !itemProvObj || (matchedProv.id !== itemProvObj.id && matchedProv.provider_code !== itemProvObj.provider_code)) {
+          return false
+        }
+      }
+    }
+    if (q) {
+      const title = (item.displayName || item.name || item.id || '').toLowerCase()
+      const desc = (item.description || '').toLowerCase()
+      const prov = (item.provider_title || getMcpProviderTitle(item)).toLowerCase()
+      return title.includes(q) || desc.includes(q) || prov.includes(q)
+    }
+    return true
+  })
+})
+
+const isAllMcpsSelected = computed(() => {
+  if (filteredMcps.value.length === 0) return false
+  return filteredMcps.value.every(m => selectedMcpIds.value.includes(m.id))
+})
+
+function toggleSelectAllMcps() {
+  if (isAllMcpsSelected.value) {
+    const currentFilteredIds = new Set(filteredMcps.value.map(m => m.id))
+    selectedMcpIds.value = selectedMcpIds.value.filter(id => !currentFilteredIds.has(id))
+  } else {
+    const set = new Set(selectedMcpIds.value)
+    for (const m of filteredMcps.value) {
+      set.add(m.id)
+    }
+    selectedMcpIds.value = Array.from(set)
+  }
+}
+
+function handleMcpSearch() {
+  // 保持关键词并响应输入，提供可调用的搜索动作
+}
+
+function handleResetMcpFilter() {
+  mcpSearchQuery.value = ''
+  mcpSelectedProviderFilter.value = ''
+}
+
+async function handleBatchUninstallMcp() {
+  if (selectedMcpIds.value.length === 0 || mcpBatchUninstalling.value) return
+  if (!confirm(`确定批量卸载选中的 ${selectedMcpIds.value.length} 个 MCP？`)) return
+  mcpBatchUninstalling.value = true
+  try {
+    const res = await mcpApi.batchUninstall(selectedMcpIds.value)
+    await loadMcps()
+    const count = res.uninstalled_count ?? selectedMcpIds.value.length
+    selectedMcpIds.value = []
+    showToast(`已卸载 ${count} 个 MCP`, 'success')
+  } catch (e: unknown) {
+    showToast(e instanceof Error ? e.message : '批量卸载失败')
+  } finally {
+    mcpBatchUninstalling.value = false
+  }
+}
+
 const mcpMarketTools = ref<McpMarketTool[]>([])
 const mcpMarketLoading = ref(false)
 const mcpMarketLoadingMore = ref(false)
@@ -2370,7 +2692,7 @@ const mcpConfigShowKey = ref(false)
 
 const mcpConfigMeta: Record<string, { keyField: string; placeholder: string; hint: string }> = {
   'aliyun_bailian': { keyField: 'aliyun_bailian_api_key', placeholder: 'sk-...', hint: '请在阿里云百炼控制台获取 DashScope API Key' },
-  'modelscope': { keyField: 'modelscope_api_key', placeholder: '输入 ModelScope API Key', hint: '请在魔搭社区个人设置中获取 API Key' },
+  'modelscope': { keyField: 'modelscope_api_key', placeholder: '输入 ModelScope API Key', hint: 'API Key 可选，公开浏览无需配置；可在魔搭社区个人设置中获取' },
   'smithery': { keyField: 'smithery_api_key', placeholder: 'sk-...', hint: 'API Key 可选，公开浏览无需配置' },
   'github': { keyField: 'github_api_key', placeholder: 'ghp_...', hint: '可选，用于提升 API 速率限制' },
 }
@@ -2634,11 +2956,16 @@ interface BackendAgent {
   strategy_id?: string
   llm_id?: string
   soul_id?: string
+  prompt_template_id?: string
+  skill_ids_json?: string
+  mcp_ids_json?: string
   task_signature?: string
   enable?: boolean
   enabled?: boolean
   eval_score?: number
   usage_count?: number
+  positive_examples?: string[]
+  negative_examples?: string[]
 }
 
 const agents = ref<BackendAgent[]>([])
@@ -2648,6 +2975,7 @@ const editingAgent = ref<BackendAgent | null>(null)
 const agentForm = ref({
   name: '', type: 'WORKER', description: '',
   strategyId: '', soulId: '', taskSignature: '',
+  positiveExamples: [] as string[], negativeExamples: [] as string[],
 })
 const agentSubmitting = ref(false)
 
@@ -2668,6 +2996,17 @@ function getModelName(modelId: string): string {
 function getSoulName(soulId: string): string {
   const s = souls.value.find(sl => sl.id === soulId)
   return s ? (s.soul_brief || s.id) : soulId || '—'
+}
+function getPromptName(promptId: string): string {
+  if (!promptId) return '—'
+  const p = prompts.value.find(pp => pp.id === promptId)
+  return p ? (p.title || p.id) : promptId
+}
+function parseIdList(json: string | undefined): string[] {
+  try {
+    const v = JSON.parse(json || '[]')
+    return Array.isArray(v) ? v.map(String).filter(Boolean) : []
+  } catch { return [] }
 }
 
 async function loadAgents() {
@@ -2717,10 +3056,12 @@ async function openAgentModal(agent?: BackendAgent) {
       strategyId: agent.strategy_id || '',
       soulId: agent.soul_id || '',
       taskSignature: agent.task_signature || '',
+      positiveExamples: [...(agent.positive_examples || [])],
+      negativeExamples: [...(agent.negative_examples || [])],
     }
   } else {
     editingAgent.value = null
-    agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', soulId: '', taskSignature: '' }
+    agentForm.value = { name: '', type: 'WORKER', description: '', strategyId: '', soulId: '', taskSignature: '', positiveExamples: [], negativeExamples: [] }
   }
   agentModalVisible.value = true
 }
@@ -2738,6 +3079,8 @@ async function submitAgentForm() {
       strategy_id: agentForm.value.strategyId,
       soul_id: agentForm.value.soulId,
       task_signature: agentForm.value.taskSignature,
+      positive_examples: agentForm.value.positiveExamples.map(s => s.trim()).filter(Boolean),
+      negative_examples: agentForm.value.negativeExamples.map(s => s.trim()).filter(Boolean),
     }
     if (editingAgent.value) {
       await agentApi.update(editingAgent.value.id, data)
@@ -3493,9 +3836,8 @@ watch(activeSubSection, async (val) => {
       case 'model': await loadModels(); break
       case 'soul': await loadSouls(); break
       case 'skill': await loadSkills(); break
-      case 'mcp': await loadMcps(); break
+      case 'mcp': await loadMcpProviders(); await loadMcps(); break
       case 'mcp-provider': await loadMcpProviders(); break
-      case 'mcp-stats': await loadMcps(); await loadMcpUsage(); break
       case 'agent': await loadAgents(); break
       case 'prompt': await loadPrompts(); break
       case 'strategy': await loadAgentStrategies(); break
@@ -4141,10 +4483,11 @@ watch(activeSubSection, async (val) => {
                         <button
                           v-else-if="isPriorityOrderConfig(item.config_key)"
                           class="flex-1 min-w-0 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-xs text-apple-gray-700 dark:text-apple-gray-300 hover:border-brian-blue/40 transition-colors"
+                          :title="getPriorityOrderTooltip(getConfigPrimitiveValue(item))"
                           :disabled="item.writable === false"
                           @click="openPriorityOrderModal(item)"
                         >
-                          <span class="truncate">{{ formatPriorityOrderValue(getConfigPrimitiveValue(item)) }}</span>
+                          <span class="truncate font-medium">{{ formatPriorityOrderValue(getConfigPrimitiveValue(item)) }}</span>
                           <GripVertical :size="13" class="text-brian-blue shrink-0" />
                         </button>
                         <input
@@ -4232,7 +4575,11 @@ watch(activeSubSection, async (val) => {
                             </span>
                           </div>
                         </template>
-                        <span v-else class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300">
+                        <span
+                          v-else
+                          class="text-sm font-mono text-apple-gray-600 dark:text-apple-gray-300"
+                          :title="isPriorityOrderConfig(item.config_key) ? getPriorityOrderTooltip(getConfigPrimitiveValue(item)) : undefined"
+                        >
                           {{ getConfigDisplayValue(item) }}
                         </span>
                         <button
@@ -4404,42 +4751,43 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">没有匹配的模型</p>
           </div>
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
-            <div
+            <UniversalConfigCard
               v-for="m in filteredModels" :key="m.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
-              @click="openModelModal(m)"
+              :title="m.modelName || ''"
+              :subtitle="m.providerName || m.providerId || ''"
+              :brief="m.llm_brief || ''"
+              :enabled="m.enable"
+              height-class="h-[190px]"
+              @edit="openModelModal(m)"
+              @toggle="handleToggleModel(m.id)"
+              @delete="handleDeleteModel(m.id)"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start gap-2.5 mb-2">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Boxes :size="18" /></div>
-                  <div class="min-w-0 flex-1">
-                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ m.modelName || '' }}</h3>
-                    <p class="text-2xs text-apple-gray-400 truncate">{{ m.providerName || m.providerId || '' }}</p>
-                  </div>
-                  <span v-if="m.isDefault" class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-4xs font-medium rounded-full bg-brian-blue/10 text-brian-blue flex-shrink-0"><Star :size="10" /> 默认</span>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="m.enable ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="m.enable ? '启用' : '停用'" />
+              <template #icon><Boxes :size="18" /></template>
+              <template #header-right>
+                <span v-if="m.isDefault" class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-4xs font-medium rounded-full bg-brian-blue/10 text-brian-blue flex-shrink-0"><Star :size="10" /> 默认</span>
+              </template>
+              <template #body>
+                <div class="flex flex-wrap items-center gap-1 text-4xs">
+                  <span v-if="m.llm_type === 'multimodal'" class="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-500">多模态</span>
+                  <span v-else-if="m.llm_type === 'embedding'" class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">向量</span>
+                  <span v-else class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">文本</span>
+                  <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">{{ (m.maxTokens || 0) >= 1000000 ? ((m.maxTokens || 0) / 1000000).toFixed(1) + 'K' : (m.maxTokens || 0) >= 1000 ? Math.round((m.maxTokens || 0) / 1000) + 'K' : (m.maxTokens || 0) }} ctx</span>
                 </div>
-                <p class="text-2xs text-apple-gray-400">
-                  {{ (m.maxTokens || 0) >= 1000000 ? ((m.maxTokens || 0) / 1000000).toFixed(1) + 'M' : (m.maxTokens || 0) >= 1000 ? ((m.maxTokens || 0) / 1000).toFixed(0) + 'K' : (m.maxTokens || 0) }} tokens
+                <p v-if="m.usage_tokens" class="text-4xs text-apple-gray-400 mt-1.5" title="累计消耗 tokens（实时聚合）">
+                  入: {{ formatTokens(m.usage_tokens.input_tokens) }} · 出: {{ formatTokens(m.usage_tokens.output_tokens) }}
                 </p>
-              </div>
-              <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <div class="flex items-center gap-1">
-                  <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="m.enable ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" title="启用/停用" @click.stop="handleToggleModel(m.id)">
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="m.enable ? 'translate-x-4' : ''" />
-                  </button>
-                  <button
-                    class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded transition-colors"
-                    :class="m.isDefault ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20'"
-                    :disabled="!!m.isDefault"
-                    @click.stop="handleSetDefault(m.id)"
-                  >
-                    <Star :size="11" /> {{ m.isDefault ? '默认' : '设为默认' }}
-                  </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteModel(m.id)"><Trash2 :size="11" /> 删除</button>
-                </div>
-              </div>
-            </div>
+              </template>
+              <template #actions-left>
+                <button
+                  class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded transition-colors"
+                  :class="m.isDefault ? 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400 cursor-not-allowed' : 'bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20'"
+                  :disabled="!!m.isDefault"
+                  @click.stop="handleSetDefault(m.id)"
+                >
+                  <Star :size="11" /> {{ m.isDefault ? '默认' : '设为默认' }}
+                </button>
+              </template>
+            </UniversalConfigCard>
           </div>
         </div>
 
@@ -4456,33 +4804,26 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">暂无 Soul 配置</p>
           </div>
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
-            <div
+            <UniversalConfigCard
               v-for="s in souls" :key="s.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
-              @click="openSoulModal(s)"
+              :title="s.title || s.soul_brief || s.id"
+              :subtitle="s.soul_usage || ''"
+              :brief="s.soul_brief || ''"
+              :positive-examples="s.positive_examples || []"
+              :negative-examples="s.negative_examples || []"
+              :enabled="(s.enabled ?? true)"
+              accent-class="bg-violet-500/10 text-violet-500"
+              @edit="openSoulModal(s)"
+              @toggle="handleToggleSoul(s.id)"
+              @delete="handleDeleteSoul(s.id)"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start gap-2.5 mb-2">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Heart :size="18" /></div>
-                  <div class="min-w-0 flex-1">
-                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ s.soul_brief || s.id }}</h3>
-                    <p class="text-2xs text-apple-gray-400">{{ s.soul_usage || '' }}</p>
-                  </div>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(s.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
-                </div>
+              <template #icon><Heart :size="18" /></template>
+              <template #body>
                 <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="(s.soul_content || '')">
                   {{ (s.soul_content || '').slice(0, 120) || '暂无内容' }}
                 </p>
-              </div>
-              <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <div class="flex items-center gap-1">
-                  <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(s.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleSoul(s.id)">
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(s.enabled ?? true) ? 'translate-x-4' : ''" />
-                  </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSoul(s.id)"><Trash2 :size="11" /> 删除</button>
-                </div>
-              </div>
-            </div>
+              </template>
+            </UniversalConfigCard>
           </div>
         </div>
 
@@ -4507,48 +4848,44 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">没有匹配的 Skill</p>
           </div>
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
-            <div
+            <UniversalConfigCard
               v-for="sk in filteredSkills" :key="sk.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden"
-              :class="sk.system ? '' : 'cursor-pointer'"
-              @click="openSkillModal(sk)"
+              :title="sk.name || sk.id"
+              :brief="sk.skill_brief || sk.name || ''"
+              :positive-examples="sk.positive_examples || []"
+              :negative-examples="sk.negative_examples || []"
+              :enabled="(sk.enabled ?? true)"
+              :editable="!sk.system"
+              :show-toggle="!sk.system"
+              :accent-class="sk.system ? 'bg-violet-500/10 text-violet-500' : 'bg-brian-blue/10 text-brian-blue'"
+              @edit="openSkillModal(sk)"
+              @toggle="handleToggleSkill(sk.id)"
+              @delete="handleDeleteSkill(sk.id)"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start gap-2.5 mb-2">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" :class="sk.system ? 'bg-violet-500/10 text-violet-500' : 'bg-brian-blue/10 text-brian-blue'">
-                    <ShieldCheck v-if="sk.system" :size="18" />
-                    <Wand2 v-else :size="18" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ sk.name || sk.id }}</h3>
-                    <p class="text-2xs text-apple-gray-400">{{ sk.enabled ?? true ? '启用' : '停用' }}</p>
-                  </div>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              <template #icon>
+                <ShieldCheck v-if="sk.system" :size="18" />
+                <Wand2 v-else :size="18" />
+              </template>
+              <template #body>
+                <div class="flex flex-wrap gap-1 text-4xs">
+                  <span v-if="sk.scripts?.length" class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">Scripts({{ sk.scripts.length }})</span>
+                  <span v-if="sk.references?.length" class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">References({{ sk.references.length }})</span>
+                  <span v-if="sk.assets?.length" class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300">Assets({{ sk.assets.length }})</span>
+                  <span v-if="sk.skill_md" class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">SKILL.md</span>
                 </div>
-                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="sk.skill_brief || sk.name">{{ sk.skill_brief || sk.name || '暂无描述' }}</p>
-              </div>
-              <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <template v-if="sk.system">
-                  <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-4xs font-medium rounded bg-violet-500/10 text-violet-500">
-                    <ShieldCheck :size="11" />
-                    系统
-                  </span>
-                  <span class="text-4xs text-apple-gray-400">内置 · 不可删改</span>
-                </template>
-                <template v-else>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="openSkillTestModal(sk)">
-                    <FlaskConical :size="11" />
-                    测试
-                  </button>
-                  <div class="flex items-center gap-1">
-                    <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(sk.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleSkill(sk.id)">
-                      <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(sk.enabled ?? true) ? 'translate-x-4' : ''" />
-                    </button>
-                    <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteSkill(sk.id)"><Trash2 :size="11" /> 删除</button>
-                  </div>
-                </template>
-              </div>
-            </div>
+              </template>
+              <template #actions-left>
+                <button v-if="!sk.system" class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="openSkillTestModal(sk)">
+                  <FlaskConical :size="11" />
+                  测试
+                </button>
+                <span v-else class="inline-flex items-center gap-1 px-1.5 py-0.5 text-4xs font-medium rounded bg-violet-500/10 text-violet-500">
+                  <ShieldCheck :size="11" />
+                  系统 · 不可删改
+                </span>
+              </template>
+              <template #delete-label>删除</template>
+            </UniversalConfigCard>
           </div>
         </div>
 
@@ -4718,9 +5055,51 @@ watch(activeSubSection, async (val) => {
         </div>
 
         <div v-if="isEntityView && currentEntityType === 'mcp'" class="px-5 pb-6">
-          <div class="flex justify-between items-center mb-4">
-            <span class="text-xs text-apple-gray-400">{{ mcps.length }} 个已安装 MCP</span>
-            <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div class="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              <div class="relative w-48 sm:w-56">
+                <Search :size="13" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-apple-gray-400" />
+                <input
+                  v-model="mcpSearchQuery"
+                  type="text"
+                  :class="inputClass + ' !py-1.5 !pl-7 !pr-3 !text-xs'"
+                  placeholder="搜索 MCP 名称或描述..."
+                  @keydown.enter="handleMcpSearch"
+                />
+              </div>
+              <button
+                class="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors cursor-pointer"
+                @click="handleMcpSearch"
+              >
+                <Search :size="13" />
+                搜索
+              </button>
+              <select
+                v-model="mcpSelectedProviderFilter"
+                :class="inputClass + ' !py-1.5 !px-2.5 !w-auto !text-xs cursor-pointer'"
+              >
+                <option value="">全部提供商 ({{ mcps.length }})</option>
+                <option
+                  v-for="p in availableMcpProviderOptions"
+                  :key="p.key"
+                  :value="p.key"
+                >
+                  {{ p.label }} ({{ p.count }})
+                </option>
+              </select>
+              <span class="text-xs text-apple-gray-400">
+                {{ filteredMcps.length }} / {{ mcps.length }} 个已安装 MCP
+              </span>
+              <button
+                v-if="filteredMcps.length > 0"
+                class="flex items-center gap-1 px-1.5 py-1 text-xs text-apple-gray-500 hover:text-brian-blue transition-colors cursor-pointer"
+                @click="toggleSelectAllMcps"
+              >
+                <component :is="isAllMcpsSelected ? CheckSquare : Square" :size="13" />
+                {{ isAllMcpsSelected ? '取消全选' : '全选' }}
+              </button>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
               <button
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 :disabled="selectedMcpIds.length === 0 || mcpBatchStarting"
@@ -4729,6 +5108,15 @@ watch(activeSubSection, async (val) => {
                 <Loader2 v-if="mcpBatchStarting" :size="13" class="animate-spin" />
                 <Zap v-else :size="13" />
                 {{ mcpBatchStarting ? '启动中...' : `批量启动${selectedMcpIds.length ? ` (${selectedMcpIds.length})` : ''}` }}
+              </button>
+              <button
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-error-red text-white hover:bg-error-red/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="selectedMcpIds.length === 0 || mcpBatchUninstalling"
+                @click="handleBatchUninstallMcp"
+              >
+                <Loader2 v-if="mcpBatchUninstalling" :size="13" class="animate-spin" />
+                <Trash2 v-else :size="13" />
+                {{ mcpBatchUninstalling ? '卸载中...' : `批量卸载${selectedMcpIds.length ? ` (${selectedMcpIds.length})` : ''}` }}
               </button>
               <button
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors disabled:opacity-50"
@@ -4747,95 +5135,48 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500 mb-2">暂无已安装的 MCP 服务</p>
             <p class="text-xs text-apple-gray-400">请在"<span class="text-brian-blue">MCP 市场</span>"中浏览并安装 MCP 工具</p>
           </div>
-          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
-            <div
-              v-for="item in mcps" :key="item.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden"
+          <div v-else-if="filteredMcps.length === 0" class="flex flex-col items-center justify-center py-16">
+            <Search :size="28" class="text-apple-gray-400 mb-3" />
+            <p class="text-sm text-apple-gray-500 mb-2">没有匹配的 MCP 实例</p>
+            <button
+              class="px-3 py-1.5 text-xs text-brian-blue hover:bg-brian-blue/10 rounded-lg transition-colors cursor-pointer"
+              @click="handleResetMcpFilter"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start justify-between gap-2 mb-2">
-                  <div class="flex items-start gap-2.5 min-w-0">
-                    <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="18" /></div>
-                    <div class="min-w-0">
-                      <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ item.displayName || item.name || item.id }}</h3>
-                      <p class="text-2xs text-apple-gray-400">{{ item.enabled ?? true ? '启用' : '停用' }}{{ item.version ? ` · v${item.version}` : '' }}</p>
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0">
-                    <span class="w-2.5 h-2.5 rounded-full" :class="item.running ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="item.running ? '运行中' : '已停止'" />
-                    <input type="checkbox" :value="item.id" v-model="selectedMcpIds" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue focus:ring-brian-blue flex-shrink-0 cursor-pointer" />
-                  </div>
-                </div>
-                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="item.description">{{ item.description || '暂无描述' }}</p>
-              </div>
-              <div class="flex items-center justify-between pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <div class="flex items-center gap-1">
-                  <button v-if="!item.running" class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click="handleStartMcp(item.id)"><Zap :size="11" /> 启动</button>
-                  <button v-else class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20 transition-colors" @click="handleStopMcp(item.id)"><span class="inline-block w-1.5 h-1.5 rounded-full bg-current" /> 关闭</button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click="handleUpgradeMcp(item.id)"><RefreshCw :size="11" /> 更新</button>
-                </div>
-                <div class="flex items-center gap-1">
-                  <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(item.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click="handleToggleMcp(item.id)">
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(item.enabled ?? true) ? 'translate-x-4' : ''" />
-                  </button>
-                  <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click="handleUninstallMcp(item.id)"><Trash2 :size="11" /> 卸载</button>
-                </div>
-              </div>
-            </div>
+              重置筛选条件
+            </button>
+          </div>
+          <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
+            <UniversalConfigCard
+              v-for="item in filteredMcps" :key="item.id"
+              :title="item.displayName || item.name || item.id"
+              :subtitle="item.provider_title || getMcpProviderTitle(item)"
+              :brief="item.description || ''"
+              :positive-examples="item.positive_examples || []"
+              :negative-examples="item.negative_examples || []"
+              :enabled="(item.enabled ?? true)"
+              :status-dot-class="item.running ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+              @edit="openMcpTestModal(item)"
+              @toggle="handleToggleMcp(item.id)"
+              @delete="handleUninstallMcp(item.id)"
+            >
+              <template #icon><Plug :size="18" /></template>
+              <template #header-right>
+                <input type="checkbox" :value="item.id" v-model="selectedMcpIds" class="w-3.5 h-3.5 rounded border-apple-gray-300 text-brian-blue focus:ring-brian-blue flex-shrink-0 cursor-pointer" @click.stop />
+              </template>
+              <template #body>
+                <p class="text-2xs text-apple-gray-400 truncate">{{ item.enabled ?? true ? '启用' : '停用' }}{{ item.version ? ` · v${item.version}` : '' }}</p>
+              </template>
+              <template #actions-left>
+                <button v-if="!item.running" class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="handleStartMcp(item.id)"><Zap :size="11" /> 启动</button>
+                <button v-else class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-warning-orange/10 text-warning-orange hover:bg-warning-orange/20 transition-colors" @click.stop="handleStopMcp(item.id)"><span class="inline-block w-1.5 h-1.5 rounded-full bg-current" /> 关闭</button>
+                <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-brian-blue/10 text-brian-blue hover:bg-brian-blue/20 transition-colors" @click.stop="handleUpgradeMcp(item.id)"><RefreshCw :size="11" /> 更新</button>
+                <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded bg-success-green/10 text-success-green hover:bg-success-green/20 transition-colors" @click.stop="openMcpTestModal(item)"><FlaskConical :size="11" /> MCP 测试</button>
+              </template>
+              <template #delete-label>卸载</template>
+            </UniversalConfigCard>
           </div>
         </div>
 
-        <div v-if="isEntityView && currentEntityType === 'mcp-stats'" class="px-5 pb-6">
-          <div v-if="mcpsLoading" class="flex justify-center py-16"><Loader2 :size="24" class="animate-spin text-brian-blue" /></div>
-          <div v-else-if="mcps.length === 0" class="flex flex-col items-center justify-center py-16">
-            <BarChart3 :size="28" class="text-apple-gray-400 mb-3" />
-            <p class="text-sm text-apple-gray-500">暂无已安装的 MCP，无法统计调用数据</p>
-          </div>
-          <div v-else>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
-                <p class="text-xs text-apple-gray-400 mb-1">已安装 MCP</p>
-                <p class="text-2xl font-bold text-apple-gray-900 dark:text-apple-gray-50">{{ mcps.length }}</p>
-              </div>
-              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
-                <p class="text-xs text-apple-gray-400 mb-1">启用的 MCP</p>
-                <p class="text-2xl font-bold text-success-green">{{ mcps.filter(m => m.enabled ?? true).length }}</p>
-              </div>
-              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
-                <p class="text-xs text-apple-gray-400 mb-1">停用的 MCP</p>
-                <p class="text-2xl font-bold text-warning-orange">{{ mcps.filter(m => !(m.enabled ?? true)).length }}</p>
-              </div>
-              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
-                <p class="text-xs text-apple-gray-400 mb-1">总调用次数</p>
-                <p class="text-2xl font-bold text-brian-blue">{{ mcpUsageTotal }}</p>
-              </div>
-              <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 p-4">
-                <p class="text-xs text-apple-gray-400 mb-1">今日调用次数</p>
-                <p class="text-2xl font-bold text-brian-blue">{{ mcpUsageToday }}</p>
-              </div>
-            </div>
-            <div class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800">
-              <div class="px-4 py-3 border-b border-apple-gray-200 dark:border-apple-gray-700 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-apple-gray-900 dark:text-apple-gray-50">MCP 调用统计</h3>
-                <RefreshCw :size="14" class="text-apple-gray-400 cursor-pointer hover:text-brian-blue transition-colors" @click="loadMcpUsage" />
-              </div>
-              <div v-if="mcpUsageLoading" class="flex justify-center py-10"><Loader2 :size="20" class="animate-spin text-brian-blue" /></div>
-              <div v-else-if="mcpUsageByMcp.length === 0" class="px-4 py-10 text-center text-sm text-apple-gray-400">暂无调用记录</div>
-              <div v-else class="divide-y divide-apple-gray-100 dark:divide-apple-gray-700">
-                <div
-                  v-for="u in mcpUsageByMcp" :key="u.title"
-                  class="px-4 py-3 flex items-center justify-between"
-                >
-                  <div class="flex items-center gap-3 min-w-0">
-                    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Plug :size="14" /></div>
-                    <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ u.title || 'unknown' }}</p>
-                  </div>
-                  <span class="text-sm font-semibold text-brian-blue flex-shrink-0">{{ u.count }} 次</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
 
         <div v-if="isEntityView && currentEntityType === 'agent'" class="px-5 pb-6">
           <div class="flex justify-between items-center mb-4">
@@ -4850,26 +5191,22 @@ watch(activeSubSection, async (val) => {
             <p class="text-sm text-apple-gray-500">暂无 Agent 实例</p>
           </div>
           <div v-else class="grid grid-cols-[repeat(auto-fill,264px)] gap-3 p-3">
-            <div
+            <UniversalConfigCard
               v-for="a in agents" :key="a.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
-              @click="openAgentModal(a)"
+              :title="a.agent_name || a.name || a.id"
+              :brief="a.agent_purpose || a.description || a.task_signature || ''"
+              :positive-examples="a.positive_examples || []"
+              :negative-examples="a.negative_examples || []"
+              :enabled="(a.enable ?? a.enabled ?? true)"
+              @edit="openAgentModal(a)"
+              @toggle="handleToggleAgent(a.id)"
+              @delete="handleDeleteAgent(a.id)"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start justify-between mb-2">
-                  <div class="flex items-start gap-2.5 min-w-0">
-                    <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><Bot :size="18" /></div>
-                    <div class="min-w-0">
-                      <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ a.agent_name || a.name || a.id }}</h3>
-                      <div class="flex items-center gap-2 mt-0.5">
-                        <span class="text-4xs px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.agent_type || a.type || 'WORKER' }}</span>
-                        <span class="text-2xs text-apple-gray-400">{{ a.enable ?? a.enabled ?? true ? '启用' : '停用' }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5" :class="(a.enable ?? a.enabled ?? true) ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
-                </div>
-                <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mb-2 line-clamp-2">{{ a.agent_purpose || a.description || a.task_signature || '暂无描述' }}</p>
+              <template #icon><Bot :size="18" /></template>
+              <template #header-right>
+                <span class="text-4xs px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue flex-shrink-0">{{ a.agent_type || a.type || 'WORKER' }}</span>
+              </template>
+              <template #body>
                 <div class="flex flex-wrap gap-1 text-4xs min-h-0 overflow-hidden">
                   <div v-if="a.strategy_id" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">策略</span>
@@ -4883,6 +5220,18 @@ watch(activeSubSection, async (val) => {
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">Soul</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getSoulName(a.soul_id) }}</span>
                   </div>
+                  <div v-if="a.prompt_template_id" class="flex items-center gap-1.5 min-w-0 max-w-full">
+                    <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">Prompt</span>
+                    <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue truncate">{{ getPromptName(a.prompt_template_id) }}</span>
+                  </div>
+                  <div v-if="parseIdList(a.skill_ids_json).length" class="flex items-center gap-1.5 min-w-0 max-w-full">
+                    <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">技能</span>
+                    <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">× {{ parseIdList(a.skill_ids_json).length }}</span>
+                  </div>
+                  <div v-if="parseIdList(a.mcp_ids_json).length" class="flex items-center gap-1.5 min-w-0 max-w-full">
+                    <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">MCP</span>
+                    <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">× {{ parseIdList(a.mcp_ids_json).length }}</span>
+                  </div>
                   <div v-if="a.eval_score !== undefined" class="flex items-center gap-1.5 min-w-0 max-w-full">
                     <span class="px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-300 flex-shrink-0">评分</span>
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.eval_score }}</span>
@@ -4892,14 +5241,8 @@ watch(activeSubSection, async (val) => {
                     <span class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue">{{ a.usage_count }}次</span>
                   </div>
                 </div>
-              </div>
-              <div class="flex items-center justify-end gap-1.5 pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <button class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0" :class="(a.enable ?? a.enabled ?? true) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" @click.stop="handleToggleAgent(a.id)">
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200" :class="(a.enable ?? a.enabled ?? true) ? 'translate-x-4' : ''" />
-                </button>
-                <button class="flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeleteAgent(a.id)"><Trash2 :size="11" /> 删除</button>
-              </div>
-            </div>
+              </template>
+            </UniversalConfigCard>
           </div>
         </div>
 
@@ -4958,35 +5301,33 @@ watch(activeSubSection, async (val) => {
               <Plus :size="24" class="mb-2" />
               <span class="text-sm font-medium">添加模板</span>
             </button>
-            <div
+            <UniversalConfigCard
               v-for="p in filteredPrompts" :key="p.id"
-              class="rounded-xl border border-apple-gray-200 dark:border-apple-gray-700 bg-white dark:bg-apple-gray-800 hover:shadow-md hover:border-brian-blue/30 transition-shadow p-4 h-[176px] flex flex-col overflow-hidden cursor-pointer"
-              :class="selectedPrompts.has(p.id) ? 'border-brian-blue/40 bg-brian-blue/5' : ''"
-              @click="openPromptModal(p)"
+              :title="p.title"
+              :brief="p.brief || ''"
+              :positive-examples="p.positive_examples || []"
+              :negative-examples="p.negative_examples || []"
+              :enabled="!!p.enabled"
+              :selected="selectedPrompts.has(p.id)"
+              @edit="openPromptModal(p)"
+              @delete="handleDeletePrompt(p.id)"
             >
-              <div class="mb-3 min-h-0 overflow-hidden">
-                <div class="flex items-start gap-2.5 mb-2">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue"><MessageSquare :size="18" /></div>
-                  <div class="min-w-0 flex-1">
-                    <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p.title }}</h3>
-                  </div>
-                  <button
-                    class="p-0.5 flex-shrink-0"
-                    :class="selectedPrompts.has(p.id) ? 'text-brian-blue' : 'text-apple-gray-300 hover:text-brian-blue'"
-                    @click.stop="togglePromptSelect(p.id)"
-                  >
-                    <component :is="selectedPrompts.has(p.id) ? CheckSquare : Square" :size="16" />
-                  </button>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="p.enabled ? 'bg-success-green' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" />
+              <template #icon><MessageSquare :size="18" /></template>
+              <template #header-right>
+                <button
+                  class="p-0.5 flex-shrink-0"
+                  :class="selectedPrompts.has(p.id) ? 'text-brian-blue' : 'text-apple-gray-300 hover:text-brian-blue'"
+                  @click.stop="togglePromptSelect(p.id)"
+                >
+                  <component :is="selectedPrompts.has(p.id) ? CheckSquare : Square" :size="16" />
+                </button>
+              </template>
+              <template #body>
+                <div v-if="promptVariables(p)" class="flex flex-wrap gap-1 text-4xs min-h-0 overflow-hidden">
+                  <span v-for="v in promptVariables(p).slice(0, 4)" :key="v" class="px-1.5 py-0.5 rounded bg-brian-blue/10 text-brian-blue font-mono truncate max-w-full">{{ promptVariableLabel(v) }}</span>
                 </div>
-                <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="p.brief || ''">
-                  {{ p.brief || '暂无简介' }}
-                </p>
-              </div>
-              <div class="flex items-center justify-end pt-3 border-t border-apple-gray-100 dark:border-apple-gray-700 mt-auto">
-                <button class="flex items-center gap-1 px-1.5 py-1 text-4xs font-medium rounded text-error-red hover:bg-error-red/10 transition-colors" @click.stop="handleDeletePrompt(p.id)"><Trash2 :size="11" /> 删除</button>
-              </div>
-            </div>
+              </template>
+            </UniversalConfigCard>
           </div>
         </div>
 
@@ -5517,7 +5858,7 @@ watch(activeSubSection, async (val) => {
           </Transition>
         </Teleport>
 
-        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'mcp-provider', 'mcp-stats', 'agent', 'prompt', 'strategy', 'orch-strategy', 'cdt-status', 'cdt-page', 'profile-direction'].includes(currentEntityType || '')" class="px-5 pb-6">
+        <div v-if="isEntityView && !['provider', 'model', 'soul', 'skill', 'mcp', 'mcp-provider', 'agent', 'prompt', 'strategy', 'orch-strategy', 'cdt-status', 'cdt-page', 'profile-direction'].includes(currentEntityType || '')" class="px-5 pb-6">
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <Settings :size="28" class="text-apple-gray-400 mb-3" />
             <p class="text-sm text-apple-gray-500">该实体类型（{{ currentEntityType }}）的管理功能正在开发中</p>
@@ -5663,7 +6004,7 @@ watch(activeSubSection, async (val) => {
                   <div v-if="selectedModelIds.size > 0" class="flex items-center justify-end gap-2 pt-2">
                     <select v-model="modelAddType" class="px-2 py-1.5 text-xs rounded-lg border border-apple-gray-200 dark:border-apple-gray-600 bg-transparent text-apple-gray-700 dark:text-apple-gray-300">
                       <option value="text">文本生成 (text)</option>
-                      <option value="vision">多模态 (vision)</option>
+                      <option value="multimodal">多模态 (multimodal)</option>
                       <option value="embedding">向量化 (embedding)</option>
                     </select>
                     <button
@@ -5712,7 +6053,7 @@ watch(activeSubSection, async (val) => {
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">用途类型</label>
                 <select v-model="modelForm.usage" :class="inputClass" :disabled="!!editingModel">
                   <option value="text">文本生成 (text)</option>
-                  <option value="vision">多模态 (vision)</option>
+                  <option value="multimodal">多模态 (multimodal)</option>
                   <option value="embedding">向量化 (embedding)</option>
                 </select>
               </div>
@@ -5813,11 +6154,17 @@ watch(activeSubSection, async (val) => {
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeSoulModal"><X :size="18" /></button>
           </div>
           <div class="px-5 py-4 overflow-y-auto space-y-4">
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简要名称 (soul_brief) *</label>
-              <input v-model="soulForm.soulBrief" type="text" :class="inputClass" placeholder="例如：严苛导师、幽默伙伴" />
-              <p class="text-4xs text-apple-gray-400 mt-0.5">简短标签，用于 Agent 匹配时的快速筛选</p>
-            </div>
+            <SemanticsFields
+              v-model:title="soulForm.soulTitle"
+              v-model:brief="soulForm.soulBrief"
+              v-model:positive-examples="soulForm.positiveExamples"
+              v-model:negative-examples="soulForm.negativeExamples"
+              kind="soul"
+              :content="soulForm.soulContent"
+              :extra="soulForm.soulUsage"
+              title-placeholder="例如：严苛导师"
+              brief-placeholder="接收开发者代码或问题，输出点评与改进建议，提供严苛审查功能"
+            />
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">人格描述 (soul_content) *</label>
               <textarea v-model="soulForm.soulContent" :class="inputClass" rows="6" placeholder="描述角色性格、语气风格、行为准则、说话方式...&#10;&#10;例如：&#10;你是一位经验丰富的编程导师，说话简洁有力，&#10;从不绕弯子。对代码质量要求严苛，&#10;但会在学生突破后不吝夸奖。" />
@@ -5831,10 +6178,60 @@ watch(activeSubSection, async (val) => {
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
             <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeSoulModal">取消</button>
-            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="soulSubmitting || !soulForm.soulBrief.trim() || !soulForm.soulContent.trim()" @click="submitSoulForm">
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="soulSubmitting || (!soulForm.soulTitle.trim() && !soulForm.soulBrief.trim()) || !soulForm.soulContent.trim()" @click="submitSoulForm">
               <Loader2 v-if="soulSubmitting" :size="14" class="animate-spin" />
               <Save v-else :size="14" />
               保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <Transition name="modal">
+      <div v-if="mcpTestModalVisible" class="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closeMcpTestModal" />
+        <div class="relative w-full max-w-2xl max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+          <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
+            <div>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">MCP 测试 — {{ mcpTestTarget?.displayName || '' }}</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">
+                工具清单与入参样例自动预填
+                <span class="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-4xs" :class="mcpTestStatus === 'running' ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-400'">
+                  {{ mcpTestStatus === 'running' ? '运行中' : '已停止（stdio 需先启动）' }}
+                </span>
+              </p>
+            </div>
+            <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeMcpTestModal"><X :size="18" /></button>
+          </div>
+          <div class="px-5 py-4 overflow-y-auto flex-1 space-y-3">
+            <div v-if="mcpTestLoading" class="flex justify-center py-10"><Loader2 :size="22" class="animate-spin text-brian-blue" /></div>
+            <template v-else>
+              <p v-if="mcpTestError" class="text-xs text-warning-orange">{{ mcpTestError }}</p>
+              <p v-if="mcpTestTools.length === 0 && !mcpTestError" class="text-xs text-apple-gray-400 text-center py-6">该 MCP 未返回工具清单</p>
+              <div v-if="mcpTestTools.length > 0">
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">选择工具 ({{ mcpTestTools.length }})</label>
+                <select :value="mcpTestSelectedTool" :class="inputClass + ' cursor-pointer'" @change="selectMcpTestTool(($event.target as HTMLSelectElement).value)">
+                  <option v-for="t in mcpTestTools" :key="t.name" :value="t.name">{{ t.name }}</option>
+                </select>
+                <p v-if="mcpTestSelectedTool" class="text-4xs text-apple-gray-400 mt-1">{{ mcpTestTools.find(t => t.name === mcpTestSelectedTool)?.description || '暂无描述' }}</p>
+              </div>
+              <div v-if="mcpTestSelectedTool">
+                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">入参 JSON（已按 inputSchema 自动预填）</label>
+                <textarea v-model="mcpTestParamsText" :class="[inputClass, 'font-mono text-xs resize-y']" rows="6" />
+              </div>
+              <div v-if="mcpTestResult" class="rounded-lg bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700 p-3">
+                <p class="text-4xs font-medium text-success-green mb-1">执行结果</p>
+                <pre class="text-2xs text-apple-gray-600 dark:text-apple-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">{{ mcpTestResult }}</pre>
+              </div>
+            </template>
+          </div>
+          <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">
+            <button class="px-4 py-2 text-sm font-medium rounded-lg bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-600 dark:text-apple-gray-300 hover:bg-apple-gray-200 dark:hover:bg-apple-gray-600 transition-colors" @click="closeMcpTestModal">关闭</button>
+            <button class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-brian-blue text-white hover:bg-brian-blue/90 transition-colors disabled:opacity-60" :disabled="!mcpTestSelectedTool || mcpTestRunning || mcpTestStatus !== 'running'" @click="runMcpToolTest">
+              <Loader2 v-if="mcpTestRunning" :size="14" class="animate-spin" />
+              <FlaskConical v-else :size="14" />
+              立即执行
             </button>
           </div>
         </div>
@@ -5873,6 +6270,17 @@ watch(activeSubSection, async (val) => {
               <textarea v-model="skillForm.skillMd" :class="[inputClass, 'font-mono text-xs resize-y']" rows="10" placeholder="# 技能名称&#10;&#10;## 何时使用&#10;当用户需要...&#10;&#10;## 如何执行&#10;1. 接收参数...&#10;2. 调用脚本...&#10;3. 返回结果..." />
               <p class="text-4xs text-apple-gray-400 mt-0.5">Markdown 格式。智能体据此判断何时调用、如何执行此技能</p>
             </div>
+
+            <SemanticsFields
+              v-model:title="skillForm.name"
+              v-model:brief="skillForm.skillBrief"
+              v-model:positive-examples="skillForm.positiveExamples"
+              v-model:negative-examples="skillForm.negativeExamples"
+              kind="skill"
+              :content="skillForm.skillMd"
+              title-placeholder="例如：天气查询"
+              brief-placeholder="接收城市名称，输出当日天气与温度，提供天气查询功能"
+            />
 
             <template v-for="dir in [{key:'scripts',label:'scripts/',icon:'Terminal'},{key:'references',label:'references/',icon:'FileText'},{key:'assets',label:'assets/',icon:'Image'}]" :key="dir.key">
               <div class="border-t border-apple-gray-200 dark:border-apple-gray-700 pt-3">
@@ -5956,11 +6364,7 @@ watch(activeSubSection, async (val) => {
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closeAgentModal"><X :size="18" /></button>
           </div>
           <div class="px-5 py-4 overflow-y-auto space-y-4">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Agent 名称 *</label>
-                <input v-model="agentForm.name" type="text" :class="inputClass" placeholder="代码审查Agent" />
-              </div>
+            <div class="flex justify-end items-center gap-3">
               <div>
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">Agent 类型 *</label>
                 <select v-model="agentForm.type" :class="inputClass">
@@ -5972,10 +6376,16 @@ watch(activeSubSection, async (val) => {
                 </select>
               </div>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">描述</label>
-              <textarea v-model="agentForm.description" :class="inputClass" rows="2" placeholder="Agent 描述" />
-            </div>
+            <SemanticsFields
+              v-model:title="agentForm.name"
+              v-model:brief="agentForm.description"
+              v-model:positive-examples="agentForm.positiveExamples"
+              v-model:negative-examples="agentForm.negativeExamples"
+              kind="agent"
+              :extra="agentForm.taskSignature"
+              title-placeholder="例如：代码审查优化"
+              brief-placeholder="输入定义 + 输出定义 + 功能定义"
+            />
             <div class="grid grid-cols-3 gap-3">
               <div>
                 <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">执行策略</label>
@@ -6021,14 +6431,16 @@ watch(activeSubSection, async (val) => {
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closePromptModal"><X :size="18" /></button>
           </div>
           <div class="px-5 py-4 overflow-y-auto space-y-4">
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模板名称 *</label>
-              <input v-model="promptForm.title" type="text" :class="inputClass" placeholder="翻译助手 Prompt" />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">简介</label>
-              <input v-model="promptForm.brief" type="text" :class="inputClass" placeholder="简要说明模板用途" />
-            </div>
+            <SemanticsFields
+              v-model:title="promptForm.title"
+              v-model:brief="promptForm.brief"
+              v-model:positive-examples="promptForm.positiveExamples"
+              v-model:negative-examples="promptForm.negativeExamples"
+              kind="prompt"
+              :content="promptForm.template"
+              title-placeholder="例如：多语言翻译"
+              brief-placeholder="接收原文与目标语言，输出保持原意的译文，提供翻译功能"
+            />
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">模板内容 * <span v-pre class="font-normal text-apple-gray-400">（Markdown + {{变量}}）</span></label>
               <textarea v-model="promptForm.template" :class="inputClass" rows="8" :placeholder="promptPlaceholder" />
@@ -6168,46 +6580,85 @@ watch(activeSubSection, async (val) => {
     <Transition name="modal">
       <div v-if="priorityOrderModalVisible" class="fixed inset-0 z-[95] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" @click="closePriorityOrderModal" />
-        <div class="relative w-full max-w-md max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
+        <div class="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-white dark:bg-apple-gray-800 rounded-2xl shadow-xl border border-apple-gray-200 dark:border-apple-gray-700">
           <div class="flex items-start justify-between px-5 py-4 border-b border-apple-gray-200 dark:border-apple-gray-700">
             <div>
-              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">维度优先级顺序</h3>
-              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">开关控制采集哪些维度，拖动调整维度编排顺序</p>
+              <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50">维度优先级策略</h3>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 mt-0.5">选择预设策略组，或自定义拖动调整去重保留优先级与采集开关</p>
             </div>
             <button class="p-1.5 rounded-lg text-apple-gray-400 hover:bg-apple-gray-100 dark:hover:bg-apple-gray-700 transition-colors" @click="closePriorityOrderModal"><X :size="18" /></button>
           </div>
-          <div class="px-5 py-4 overflow-y-auto space-y-2">
-            <div
-              v-for="(row, i) in priorityOrderList"
-              :key="row.source"
-              class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors"
-              :class="[
-                priorityDragOverIndex === i && priorityDragIndex !== null && priorityDragIndex !== i
-                  ? 'border-brian-blue/60 bg-brian-blue/5'
-                  : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-900/30',
-                row.enabled ? '' : 'opacity-50',
-              ]"
-              draggable="true"
-              @dragstart="onPriorityDragStart(i)"
-              @dragover.prevent="onPriorityDragOver(i)"
-              @drop.prevent="onPriorityDrop(i)"
-              @dragend="onPriorityDragEnd"
-            >
-              <span class="text-apple-gray-400 dark:text-apple-gray-500 cursor-grab shrink-0">
-                <GripVertical :size="16" />
-              </span>
-              <span class="text-xs font-mono text-apple-gray-400 dark:text-apple-gray-500 w-6 shrink-0">{{ i + 1 }}</span>
-              <span class="flex-1 text-sm text-apple-gray-800 dark:text-apple-gray-100">{{ COLLECTION_SOURCE_LABELS[row.source] ?? row.source }}</span>
-              <span class="text-4xs font-mono text-apple-gray-400 dark:text-apple-gray-500">{{ row.source }}</span>
-              <button
-                class="relative w-10 h-6 rounded-full transition-colors duration-200 shrink-0"
-                :class="row.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
-                title="采集开关"
-                @click="togglePrioritySource(row.source)"
-              >
-                <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200"
-                  :class="row.enabled ? 'translate-x-4' : ''" />
-              </button>
+          <div class="px-5 py-4 overflow-y-auto space-y-4">
+            <!-- 策略组预设 -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-apple-gray-700 dark:text-apple-gray-300">预设策略组</span>
+                <span v-if="selectedPriorityStrategyKey === 'CUSTOM'" class="text-3xs px-2 py-0.5 rounded-full bg-apple-gray-100 dark:bg-apple-gray-700 text-apple-gray-500 dark:text-apple-gray-400">
+                  自定义微调中
+                </span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <button
+                  v-for="opt in CONTEXT_PRIORITY_STRATEGY_OPTIONS"
+                  :key="opt.id"
+                  type="button"
+                  class="flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-all"
+                  :class="[
+                    selectedPriorityStrategyKey === opt.id
+                      ? 'border-brian-blue bg-brian-blue/10 text-brian-blue dark:bg-brian-blue/20'
+                      : 'border-apple-gray-200 dark:border-apple-gray-700 hover:border-apple-gray-300 dark:hover:border-apple-gray-600 bg-white dark:bg-apple-gray-800 text-apple-gray-700 dark:text-apple-gray-300'
+                  ]"
+                  @click="applyPriorityStrategy(opt.id)"
+                >
+                  <span class="text-xs font-medium">{{ opt.name }}</span>
+                  <span class="text-4xs opacity-75 mt-0.5 line-clamp-1">{{ opt.id === 'DEFAULT' ? '默认推荐' : opt.id }}</span>
+                </button>
+              </div>
+              <p class="text-xs text-apple-gray-500 dark:text-apple-gray-400 bg-apple-gray-50 dark:bg-apple-gray-900/40 px-3 py-2 rounded-lg border border-apple-gray-100 dark:border-apple-gray-800">
+                💡 {{ currentPriorityStrategyDescription }}
+              </p>
+            </div>
+
+            <!-- 维度编排与开关 -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-apple-gray-700 dark:text-apple-gray-300">维度编排与开关</span>
+                <span class="text-3xs text-apple-gray-400 dark:text-apple-gray-500">按序号从高到低决定排他保留优先权</span>
+              </div>
+              <div class="space-y-2">
+                <div
+                  v-for="(row, i) in priorityOrderList"
+                  :key="row.source"
+                  class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors"
+                  :class="[
+                    priorityDragOverIndex === i && priorityDragIndex !== null && priorityDragIndex !== i
+                      ? 'border-brian-blue/60 bg-brian-blue/5'
+                      : 'border-apple-gray-200 dark:border-apple-gray-700 bg-apple-gray-50/50 dark:bg-apple-gray-900/30',
+                    row.enabled ? '' : 'opacity-50',
+                  ]"
+                  draggable="true"
+                  @dragstart="onPriorityDragStart(i)"
+                  @dragover.prevent="onPriorityDragOver(i)"
+                  @drop.prevent="onPriorityDrop(i)"
+                  @dragend="onPriorityDragEnd"
+                >
+                  <span class="text-apple-gray-400 dark:text-apple-gray-500 cursor-grab shrink-0">
+                    <GripVertical :size="16" />
+                  </span>
+                  <span class="text-xs font-mono text-apple-gray-400 dark:text-apple-gray-500 w-6 shrink-0">{{ i + 1 }}</span>
+                  <span class="flex-1 text-sm text-apple-gray-800 dark:text-apple-gray-100">{{ COLLECTION_SOURCE_LABELS[row.source] ?? row.source }}</span>
+                  <span class="text-4xs font-mono text-apple-gray-400 dark:text-apple-gray-500">{{ row.source }}</span>
+                  <button
+                    class="relative w-10 h-6 rounded-full transition-colors duration-200 shrink-0"
+                    :class="row.enabled ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'"
+                    title="采集开关"
+                    @click="togglePrioritySource(row.source)"
+                  >
+                    <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200"
+                      :class="row.enabled ? 'translate-x-4' : ''" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="flex justify-end gap-2 px-5 py-4 border-t border-apple-gray-200 dark:border-apple-gray-700">

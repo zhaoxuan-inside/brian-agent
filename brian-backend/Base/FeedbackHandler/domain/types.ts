@@ -110,8 +110,8 @@ export class AnalyzeFeedbackOutput extends Output {
 }
 
 export const FEEDBACK_RECORD_TABLE = 'feedback_record';
-export const FEEDBACK_PROCESS_LOG_TABLE = 'feedback_process_log';
-export const FEEDBACK_CONFIG_TABLE = 'feedback_config';
+export const FEEDBACK_PROCESS_LOG_TABLE = 'feedback_process_log_record';
+export const FEEDBACK_CONFIG_TABLE = 'feedback_config_record';
 
 export type ProcessAction = 'submitted' | 'disbanded' | 'skipped';
 

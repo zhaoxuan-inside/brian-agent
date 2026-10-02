@@ -220,7 +220,7 @@ describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复'
     });
     await access.initialize();
     const rows = relationDb.queryRaw<{ config_key: string; config_value: string }>(
-      'SELECT "config_key", "config_value" FROM "vectordb_config" ORDER BY "config_key"',
+      'SELECT "config_key", "config_value" FROM "vectordb_config_record" ORDER BY "config_key"',
       [],
     );
     const map = new Map(rows.map((r) => [r.config_key, r.config_value]));
@@ -230,11 +230,11 @@ describe('VectorDBService.initializeConfig 默认配置写入与 enabled 恢复'
     expect(map.get('default_distance_metric')).toBe('COSINE');
 
     relationDb.executeRaw(
-      "UPDATE \"vectordb_config\" SET \"config_value\" = '25' WHERE \"config_key\" = 'default_top_k'",
+      "UPDATE \"vectordb_config_record\" SET \"config_value\" = '25' WHERE \"config_key\" = 'default_top_k'",
     );
     await access.initialize();
     const rows2 = relationDb.queryRaw<{ config_key: string; config_value: string }>(
-      'SELECT "config_key", "config_value" FROM "vectordb_config"',
+      'SELECT "config_key", "config_value" FROM "vectordb_config_record"',
       [],
     );
     const map2 = new Map(rows2.map((r) => [r.config_key, r.config_value]));

@@ -75,6 +75,7 @@ export class SubmitRunInput extends Input {
   parent_run_id?: string;
   
   agent_ref?: string;
+  force_new?: boolean;
 
   citing_msg_ids?: string[];
   selected_msg_ids?: string[];
@@ -240,6 +241,9 @@ export interface Waiter {
   resolve: (result: { status: RunStatus; stop_reason?: string }) => void;
 }
 
-export const RUNTIME_RUN_TABLE = 'runtime_run';
+export const RUNTIME_RUN_TABLE = 'runtime_run_record';
 
-export const RUNTIME_RUNS_CONFIG_TABLE = 'runtime_runs_config';
+/** ADR-012 轮次组织表:一行 = 一次 Loop 轮次调用与助手消息的 id 关联(组织数据) */
+export const RUN_ROUND_ORG_TABLE = 'run_round_org';
+
+export const RUNTIME_RUNS_CONFIG_TABLE = 'runtime_runs_config_record';

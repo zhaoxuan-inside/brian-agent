@@ -1,6 +1,7 @@
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import { TraceSchemaInitializer } from '../../TraceBase';
 import { SoulSchemaInitializer } from '../infrastructure/SoulSchemaInitializer';
 import { SoulService } from '../application/SoulService';
 import {
@@ -23,6 +24,7 @@ import {
   RecordSoulUsageOutput,
 } from '../domain/types';
 import { AopProxy, type Logger } from '../../shared/aop/AopProxy';
+import type { SemanticsTaskFn } from '../../shared/semantics';
 
 export class SoulAccess {
   private readonly service: SoulService;
@@ -31,6 +33,8 @@ export class SoulAccess {
 
   constructor(relationDb: RelationDBAccess, logger?: Logger) {
     
+    // ADR-012: 初始化 TraceBase 统计表（含旧 usage 表改名/退役迁移）
+    new TraceSchemaInitializer(relationDb).init();
     new SoulSchemaInitializer(relationDb).init();
     
     const rawService = new SoulService(relationDb);
@@ -38,6 +42,14 @@ export class SoulAccess {
   }
 
   
+
+  setEmbedFn(fn: (text: string, context?: any) => Promise<number[]>): void {
+    this.service.setEmbedFn(fn);
+  }
+
+  setSemanticsFn(fn: SemanticsTaskFn): void {
+    this.service.setSemanticsFn(fn);
+  }
 
   async initialize(): Promise<void> {
     await this.service.initialize();

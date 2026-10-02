@@ -29,13 +29,18 @@ export function generateAgentName(
   skills: Array<{ skill_id: string; skill_brief: string; relevance: number }>,
   domain: string,
 ): string {
-  const soulBrief = cleanAgentName(String((soul as Record<string, string> | null)?.soul_brief ?? ''));
-  if (soulBrief) return soulBrief;
-
-  if (skills.length > 0 && skills[0].skill_brief) {
-    const skillName = cleanAgentName(skills[0].skill_brief);
-    if (skillName) return skillName;
+  let name = cleanAgentName(String((soul as Record<string, string> | null)?.title ?? (soul as Record<string, string> | null)?.soul_brief ?? ''));
+  if (!name && skills.length > 0 && skills[0].skill_brief) {
+    name = cleanAgentName(skills[0].skill_brief);
   }
-
-  return DOMAIN_LABEL_MAP[domain.toLowerCase().trim()] || cleanAgentName(domain) || '通用问答';
+  if (!name) {
+    name = DOMAIN_LABEL_MAP[domain.toLowerCase().trim()] || cleanAgentName(domain) || '专业任务处理';
+  }
+  if (name.length < 5) {
+    name = `${name}执行专家`;
+  }
+  if (name.length > 10) {
+    name = name.slice(0, 10);
+  }
+  return name;
 }

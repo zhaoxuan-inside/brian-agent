@@ -34,5 +34,11 @@ export * from './CronProvider';
 
 export * from './StreamProvider';
 
+export * from './ObservabilityProvider';
+
 export * from './FeedbackHandler';
+
+export * from './ExecuteEventProvider';
+
+export * from './TraceBase';
 

@@ -8,6 +8,8 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
+| `setEmbedFn` | `fn: (text: string, context?: any) => Promise<number[]>` | `void` | — |
+| `setSemanticsFn` | `fn: SemanticsTaskFn` | `void` | — |
 | `initialize` | `` | `Promise<void>` | — |
 | `addSkill` | `input: AddSkillInput, output: AddSkillOutput, context: SkillContext, metrics?: Metrics,...` | `Promise<boolean>` | — |
 | `seedSystemSkills` | `input: SeedSystemSkillsInput, output: SeedSystemSkillsOutput, context: SkillContext, me...` | `Promise<boolean>` | — |

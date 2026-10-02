@@ -1,7 +1,6 @@
 import type { RelationDBAccess } from '@brian-agent/base';
 import {
   MCP_CORE_CONFIG_TABLE,
-  AGENT_MCP_USAGE_TABLE,
   DEFAULT_REGENERATE_RATE,
 } from '../domain/types';
 
@@ -35,45 +34,16 @@ export class MCPCoreSchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "vector_similarity_threshold" REAL NOT NULL DEFAULT 0.8`);
     } catch {  }
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "similarity_threshold" REAL NOT NULL DEFAULT 0.7`);
+    } catch { /* 列已存在 */ }
 
     try {
       this.relationDb.executeRaw(`ALTER TABLE "${MCP_CORE_CONFIG_TABLE}" ADD COLUMN "market_install_enabled" INTEGER NOT NULL DEFAULT 1`);
     } catch {  }
 
-    this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS "${AGENT_MCP_USAGE_TABLE}" (
-        "id"          TEXT    NOT NULL PRIMARY KEY,
-        "created"     INTEGER NOT NULL,
-        "updated"     INTEGER NOT NULL,
-        "agent_id"    TEXT    NOT NULL,
-        "mcp_id"      TEXT    NOT NULL,
-        "usage_date"  TEXT    NOT NULL,
-        "usage_count" INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    this.migrateLegacyUsageTable();
-    this.relationDb.executeRaw(
-      `CREATE INDEX IF NOT EXISTS "idx_${AGENT_MCP_USAGE_TABLE}_agent_mcp" ON "${AGENT_MCP_USAGE_TABLE}" ("agent_id", "mcp_id")`,
-    );
-  }
-
-  private migrateLegacyUsageTable(): void {
-    const cols = this.relationDb.queryRaw<{ name: string }>(
-      `PRAGMA table_info("${AGENT_MCP_USAGE_TABLE}")`, [],
-    );
-    if ((cols ?? []).some((c) => c.name === 'agent_mcp_id')) {
-      this.relationDb.executeRaw(`DROP TABLE "${AGENT_MCP_USAGE_TABLE}"`);
-      this.relationDb.executeRaw(`
-        CREATE TABLE "${AGENT_MCP_USAGE_TABLE}" (
-          "id"          TEXT    NOT NULL PRIMARY KEY,
-          "created"     INTEGER NOT NULL,
-          "updated"     INTEGER NOT NULL,
-          "agent_id"    TEXT    NOT NULL,
-          "mcp_id"      TEXT    NOT NULL,
-          "usage_date"  TEXT    NOT NULL,
-          "usage_count" INTEGER NOT NULL DEFAULT 1
-        )
-      `);
-    }
+    // ADR-012: agent_mcp_usage 已退役(统一入 TraceBase usage_event_record / mcp_usage_org),不再建表;
+    // 存量库由 TraceSchemaInitializer.LEGACY_DROPS 负责 DROP,此处兜底保证不再重建
+    this.relationDb.executeRaw(`DROP TABLE IF EXISTS "agent_mcp_usage"`);
   }
 }

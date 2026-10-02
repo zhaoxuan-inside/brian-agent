@@ -1,5 +1,6 @@
 import { Metrics } from '../../shared/base/Metrics';
 import { Report } from '../../shared/base/Report';
+import { BusinessEvent } from '../../shared/base/BusinessEvent';
 import { Context } from '../../shared/base/Context';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
 import type { Logger } from '../../shared/aop/AopProxy';
@@ -22,11 +23,12 @@ import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import { Operator, Direction } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
 import type { LLMMessage } from '../../shared/llm/LLMEvent';
-import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS } from './llmevents/LLMEventsRunner';
-import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_USAGE_TABLE, LLM_CALL_LOG_TABLE, LLM_CONFIG_TABLE } from '../domain/types';
+import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS, type LLMEventsRunResult } from './llmevents/LLMEventsRunner';
+import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, SoModelTokenStatsInput, SoModelTokenStatsOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_CALL_RECORD_TABLE, LLM_CALL_DETAIL_TABLE, LLM_RECORD_TEXT_MAX_CHARS, LLM_CONFIG_TABLE } from '../domain/types';
 import { LLMStrategyFactory } from './strategies';
 import type { ILLMProviderStrategy, HttpRequestOptions } from './strategies';
-import { newPatch, newRecord } from '../../shared/query';
+import { newRecord } from '../../shared/query';
+import { TraceService, RecordUsageInput, RecordUsageOutput, TraceContext, LLM_USAGE_ORG_TABLE } from '../../TraceBase';
 import {
   isModelsCacheFresh,
   extractRemoteErrorDetail,
@@ -38,6 +40,7 @@ const TEST_TIMEOUT_MS = 10000;
 
 interface EventsSingleResult {
   ok: boolean;
+  call_id?: string;
   text?: string;
   reasoning?: string;
   finish_reason?: string;
@@ -49,6 +52,12 @@ interface EventsSingleResult {
   aborted_reason?: AbortReasonKind;
 
   emitted_events?: boolean;
+
+  connect_ms?: number;
+
+  ttft_ms?: number;
+
+  stream_ms?: number;
 }
 
 const LIST_TIMEOUT_MS = 30000;
@@ -69,6 +78,7 @@ export class LLMService {
 
   private readonly config: ConfigService;
   private readonly http: HttpAccess;
+  private readonly trace: TraceService;
 
   constructor(
     private readonly relationDb: RelationDBAccess,
@@ -77,6 +87,7 @@ export class LLMService {
   ) {
     this.config = new ConfigService(relationDb, LLM_CONFIG_TABLE);
     this.http = new HttpAccess(new ConfigService(relationDb, TOOL_CONFIG_TABLE));
+    this.trace = new TraceService(relationDb);
   }
 
   async initialize(): Promise<void> {
@@ -103,57 +114,37 @@ export class LLMService {
     return `${baseUrl.replace(/\/+$/, '')}/${apiPath.replace(/^\/+/, '')}`;
   }
 
-  private async upsertUsage(
-    llmEnableId: string,
-    inputTokens = 0,
-    outputTokens = 0,
-  ): Promise<void> {
-    const today = IdGenerator.today();
-    const existing = await this.relationDb.selectOne(LLM_USAGE_TABLE, [
-      { field: 'llm_available_id', operator: Operator.EQ, value: llmEnableId },
-      { field: 'usage_date', operator: Operator.EQ, value: today },
-    ]);
+  private async upsertUsage(llmEnableId: string, inputTokens = 0, outputTokens = 0): Promise<void> {
+    const usageInput = new RecordUsageInput();
+    usageInput.entity_type = 'llm';
+    usageInput.entity_id = llmEnableId;
+    usageInput.input_tokens = inputTokens;
+    usageInput.output_tokens = outputTokens;
+    await this.trace.recordUsage(usageInput, new RecordUsageOutput(), new TraceContext());
+  }
 
-    if (existing) {
-      await this.relationDb.update(
-        LLM_USAGE_TABLE,
-        newPatch({
-          usage_count: ((existing.usage_count as number) ?? 0) + 1,
-          input_tokens: ((existing.input_tokens as number) ?? 0) + inputTokens,
-          output_tokens: ((existing.output_tokens as number) ?? 0) + outputTokens,
-        }),
-        [
-          { field: 'llm_available_id', operator: Operator.EQ, value: llmEnableId },
-          { field: 'usage_date', operator: Operator.EQ, value: today },
-        ],
-      );
-    } else {
-      await this.relationDb.insert(
-        LLM_USAGE_TABLE,
-        newRecord({
-          llm_available_id: llmEnableId,
-          usage_date: today,
-          usage_count: 1,
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-        }),
-      );
-    }
+
+  private clipRecordText(text: string | undefined): string {
+    const raw = String(text ?? '');
+    return raw.length > LLM_RECORD_TEXT_MAX_CHARS ? `${raw.slice(0, LLM_RECORD_TEXT_MAX_CHARS)}…(已截断)` : raw;
   }
 
   private async logCall(args: {
     llmId: string; session_id?: string; run_id?: string; work_id?: string; caller?: string;
     input_tokens?: number; output_tokens?: number; duration_ms?: number;
     status?: string; error_code?: string;
-  }): Promise<void> {
+    input_prompt?: string; output_content?: string;
+  }): Promise<string> {
     try {
       const llmRow = await this.relationDb.selectOne(LLM_AVAILABLE_TABLE, [
         { field: 'id', operator: Operator.EQ, value: args.llmId },
       ]);
       const llm = llmRow as unknown as { llm_title?: string; llm_type?: string } | null;
+      const callId = IdGenerator.generate();
       await this.relationDb.insert(
-        LLM_CALL_LOG_TABLE,
+        LLM_CALL_RECORD_TABLE,
         newRecord({
+          id: callId,
           llm_available_id: args.llmId,
           session_id: args.session_id ?? '',
           run_id: args.run_id ?? '',
@@ -168,12 +159,33 @@ export class LLMService {
           duration_ms: Number(args.duration_ms ?? 0) || 0,
         }),
       );
+      // 原文明细(ADR-012):1:1 落 llm_call_detail_record,记录真实输入 Prompt 与模型输出全文
+      const inputText = this.clipRecordText(args.input_prompt);
+      const outputText = this.clipRecordText(args.output_content);
+      if (inputText || outputText) {
+        await this.relationDb.insert(
+          LLM_CALL_DETAIL_TABLE,
+          newRecord({
+            llm_call_id: callId,
+            llm_available_id: args.llmId,
+            session_id: args.session_id ?? '',
+            run_id: args.run_id ?? '',
+            work_id: args.work_id ?? '',
+            input: inputText,
+            input_length: inputText.length,
+            output: outputText,
+            output_length: outputText.length,
+          }),
+        );
+      }
+      return callId;
     } catch (err) {
 
       this.logger?.warn?.('LLMService.logCall 明细账落账失败（best-effort 不阻断主流程）', {
         error: err instanceof Error ? err.message : String(err),
         llm_id: args.llmId,
       });
+      return '';
     }
   }
 
@@ -207,13 +219,34 @@ export class LLMService {
     }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const rows = this.relationDb.queryRaw<{ input_tokens: number; output_tokens: number; call_count: number }>(
-      `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "${LLM_CALL_LOG_TABLE}" ${where}`,
+      `SELECT COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "${LLM_CALL_RECORD_TABLE}" ${where}`,
       params,
     );
     const row = rows?.[0];
     output.input_tokens = Number(row?.input_tokens ?? 0) || 0;
     output.output_tokens = Number(row?.output_tokens ?? 0) || 0;
     output.call_count = Number(row?.call_count ?? 0) || 0;
+    return true;
+  }
+
+  /** R7:按 llm_available_id 聚合全量输入/输出 tokens(llm_usage_org 日聚合表),模型卡片 Token 仪表盘数据源 */
+  async soModelTokenStats(
+    input: SoModelTokenStatsInput, output: SoModelTokenStatsOutput,
+    _context: LLMContext,
+  ): Promise<boolean> {
+    const rows = this.relationDb.queryRaw<{ llm_available_id: string; input_tokens: number; output_tokens: number; call_count: number }>(
+      `SELECT "llm_available_id", COALESCE(SUM("input_tokens"),0) AS "input_tokens", COALESCE(SUM("output_tokens"),0) AS "output_tokens", COUNT(*) AS "call_count" FROM "${LLM_USAGE_ORG_TABLE}" GROUP BY "llm_available_id"`,
+    );
+    for (const r of rows ?? []) {
+      const inTok = Number(r.input_tokens ?? 0) || 0;
+      const outTok = Number(r.output_tokens ?? 0) || 0;
+      output.stats[String(r.llm_available_id)] = {
+        input_tokens: inTok,
+        output_tokens: outTok,
+        total_tokens: inTok + outTok,
+        call_count: Number(r.call_count ?? 0) || 0,
+      };
+    }
     return true;
   }
 
@@ -361,7 +394,7 @@ export class LLMService {
       });
       const availableIds = availableRows.map((r) => String(r.id));
       if (availableIds.length > 0) {
-        await this.relationDb.delete(LLM_USAGE_TABLE, [
+        await this.relationDb.delete(LLM_USAGE_ORG_TABLE, [
           { field: 'llm_available_id', operator: Operator.IN, value: availableIds },
         ]);
       }
@@ -641,37 +674,40 @@ export class LLMService {
     }
 
     if (modelIds.length > 0) {
-      await this.relationDb.delete(LLM_USAGE_TABLE, [
+      await this.relationDb.delete(LLM_USAGE_ORG_TABLE, [
         { field: 'llm_available_id', operator: Operator.IN, value: modelIds },
       ]);
       try {
-        await this.relationDb.delete('agent_llm', [
-          { field: 'llm_id', operator: Operator.IN, value: modelIds },
-        ]);
-      } catch {  }
-      try {
-        await this.relationDb.update('evolutor_agent_config', [
+        // ADR-012:agent_llm 退役,删模型时清 agent_record.llm_id 绑定
+        await this.relationDb.update('agent_record', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
       } catch {  }
       try {
-        await this.relationDb.update('writer_agent_config', [
+        await this.relationDb.update('evolutor_agent_config_record', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
       } catch {  }
       try {
-        await this.relationDb.update('self_learning_config', [
+        await this.relationDb.update('writer_agent_config_record', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
         ]);
       } catch {  }
       try {
-        await this.relationDb.update('self_learning_config', [
+        await this.relationDb.update('self_learning_config_record', [
+          { field: 'llm_id', value: '' },
+        ], [
+          { field: 'llm_id', operator: Operator.IN, value: modelIds },
+        ]);
+      } catch {  }
+      try {
+        await this.relationDb.update('self_learning_config_record', [
           { field: 'document_query_llm_id', value: '' },
         ], [
           { field: 'document_query_llm_id', operator: Operator.IN, value: modelIds },
@@ -685,7 +721,7 @@ export class LLMService {
         ]);
       } catch {  }
       try {
-        await this.relationDb.update('soul_core_config', [
+        await this.relationDb.update('soul_core_config_record', [
           { field: 'llm_id', value: '' },
         ], [
           { field: 'llm_id', operator: Operator.IN, value: modelIds },
@@ -780,6 +816,9 @@ export class LLMService {
     input_tokens: number;
     output_tokens: number;
     duration_ms: number;
+    connect_ms?: number;
+    ttft_ms?: number;
+    stream_ms?: number;
   }): void {
     if (!metrics || !usage) {
       return;
@@ -791,21 +830,48 @@ export class LLMService {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         duration_ms: usage.duration_ms,
+        connect_ms: usage.connect_ms,
+        ttft_ms: usage.ttft_ms,
+        stream_ms: usage.stream_ms,
       });
-      metrics.info(`LLM call: ${usage.input_tokens} in / ${usage.output_tokens} out tokens in ${usage.duration_ms}ms`, {
+      metrics.info(`LLM call: ${usage.input_tokens} in / ${usage.output_tokens} out tokens in ${usage.duration_ms}ms (connect=${usage.connect_ms ?? 0}ms ttft=${usage.ttft_ms ?? 0}ms stream=${usage.stream_ms ?? 0}ms)`, {
         log_source: 'LLM',
         llm_id: usage.llm_id,
         attempt: usage.attempt,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         duration_ms: usage.duration_ms,
+        connect_ms: usage.connect_ms ?? 0,
+        ttft_ms: usage.ttft_ms ?? 0,
+        stream_ms: usage.stream_ms ?? 0,
       });
     } catch {
 
     }
   }
 
-  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
+  private reportLlmInvoked(report: Report | undefined, payload: {
+    caller?: string; llm_id: string; attempt?: number; status: 'ok' | 'error';
+    input_tokens?: number; output_tokens?: number; duration_ms?: number;
+    connect_ms?: number; ttft_ms?: number; stream_ms?: number; error?: string;
+  }): void {
+    if (!report) return;
+    report.emit(BusinessEvent.LlmInvoked, {
+      caller: payload.caller ?? '',
+      llm_id: payload.llm_id,
+      attempt: payload.attempt ?? 1,
+      status: payload.status,
+      input_tokens: payload.input_tokens ?? 0,
+      output_tokens: payload.output_tokens ?? 0,
+      duration_ms: payload.duration_ms ?? 0,
+      connect_ms: payload.connect_ms ?? 0,
+      ttft_ms: payload.ttft_ms ?? 0,
+      stream_ms: payload.stream_ms ?? 0,
+      error: payload.error,
+    });
+  }
+
+  async execLLM(input: ExecLLMInput, output: ExecLLMOutput, context: LLMContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     this.applyDims(input, context);
@@ -831,7 +897,7 @@ export class LLMService {
     for (let i = 0; i < maxAttempts; i++) {
       const currentId = candidateIds[i];
       const singleOutput = new ExecLLMOutput();
-      const ok = await this.executeSingleLLM(currentId, input, startTime, singleOutput);
+      const ok = await this.executeSingleLLM(currentId, input, startTime, singleOutput, metrics);
       if (ok) {
         Object.assign(output, singleOutput);
 
@@ -841,6 +907,15 @@ export class LLMService {
           input_tokens: Number(output.input_tokens ?? 0) || 0,
           output_tokens: Number(output.output_tokens ?? 0) || 0,
           duration_ms: Number(output.duration_ms ?? 0) || (Date.now() - startTime),
+          connect_ms: output.connect_ms,
+          ttft_ms: output.ttft_ms,
+          stream_ms: output.stream_ms,
+        });
+        this.reportLlmInvoked(report, {
+          caller: input.caller, llm_id: currentId, attempt: i + 1, status: 'ok',
+          input_tokens: output.input_tokens, output_tokens: output.output_tokens,
+          duration_ms: output.duration_ms, connect_ms: output.connect_ms,
+          ttft_ms: output.ttft_ms, stream_ms: output.stream_ms,
         });
         if (i > 0) {
           this.logger?.debug(
@@ -883,10 +958,14 @@ export class LLMService {
     output.error = `所有可用模型均调用失败 (尝试了 ${maxAttempts} 个模型): ${lastError}`;
     output.error_code = lastErrorCode || 'ALL_MODELS_FAILED';
     output.duration_ms = Date.now() - startTime;
+    this.reportLlmInvoked(report, {
+      caller: input.caller, llm_id: candidateIds[0] ?? '', status: 'error',
+      duration_ms: output.duration_ms, error: lastError,
+    });
     return false;
   }
 
-  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, _report?: Report,
+  async execLLMEvents(input: ExecLLMEventsInput, output: ExecLLMEventsOutput, context: LLMContext, metrics?: Metrics, report?: Report,
   ): Promise<boolean> {
     this.ensureEnabled();
     this.applyDims(input, context);
@@ -900,7 +979,7 @@ export class LLMService {
     let lastError = '';
     let lastErrorCode = '';
     for (let i = 0; i < maxAttempts; i++) {
-      const single = await this.executeEventsSingle(candidateIds[i], input, input.signal);
+      const single = await this.executeEventsSingle(candidateIds[i], input, input.signal, metrics);
       if (single.ok) {
         this.fillEventsOutput(output, single, startTime, input);
 
@@ -910,6 +989,15 @@ export class LLMService {
           input_tokens: Number(output.input_tokens ?? 0) || 0,
           output_tokens: Number(output.output_tokens ?? 0) || 0,
           duration_ms: Number(output.duration_ms ?? 0) || (Date.now() - startTime),
+          connect_ms: output.connect_ms,
+          ttft_ms: output.ttft_ms,
+          stream_ms: output.stream_ms,
+        });
+        this.reportLlmInvoked(report, {
+          caller: input.caller, llm_id: candidateIds[i], attempt: i + 1, status: 'ok',
+          input_tokens: output.input_tokens, output_tokens: output.output_tokens,
+          duration_ms: output.duration_ms, connect_ms: output.connect_ms,
+          ttft_ms: output.ttft_ms, stream_ms: output.stream_ms,
         });
         return true;
       }
@@ -928,6 +1016,10 @@ export class LLMService {
     output.error = `所有可用模型均调用失败 (尝试了 ${maxAttempts} 个模型): ${lastError}`;
     output.error_code = lastErrorCode || 'ALL_MODELS_FAILED';
     output.duration_ms = Date.now() - startTime;
+    this.reportLlmInvoked(report, {
+      caller: input.caller, llm_id: candidateIds[0] ?? '', status: 'error',
+      duration_ms: output.duration_ms, error: lastError,
+    });
     return false;
   }
 
@@ -946,6 +1038,7 @@ export class LLMService {
     llmId: string,
     input: ExecLLMEventsInput,
     signal?: AbortSignal,
+    metrics?: Metrics,
   ): Promise<EventsSingleResult> {
     let emitted = false;
     const startedAt = Date.now();
@@ -957,56 +1050,122 @@ export class LLMService {
         }
       : undefined;
     try {
-      const request = await this.buildEventsRequest(llmId, input);
-      const runner = new LLMEventsRunner({
-        request,
-        signal,
-        idle_watchdog_ms: input.idle_watchdog_ms ?? DEFAULT_IDLE_WATCHDOG_MS,
-        on_event: onEvent,
-        logger: this.logger,
-      });
-      const result = await runner.run();
-      await this.upsertUsage(llmId, result.input_tokens, result.output_tokens);
-      await this.logCall({
-        llmId,
-        session_id: input.session_id,
-        run_id: input.run_id,
-        work_id: input.work_id,
-        caller: input.caller,
-        status: 'ok',
-        input_tokens: result.input_tokens,
-        output_tokens: result.output_tokens,
-        duration_ms: Date.now() - startedAt,
-      });
-      return {
-        ok: true,
-        text: result.text,
-        reasoning: result.reasoning,
-        finish_reason: result.finish_reason,
-        tool_calls: result.tool_calls,
-        input_tokens: result.input_tokens,
-        output_tokens: result.output_tokens,
-        emitted_events: emitted || result.emitted_events,
-      };
+      const result = await this.runEventsStream(llmId, input, signal, metrics, onEvent);
+      const callId = await this.recordEventsCallSuccess(llmId, input, result, startedAt);
+      const success = this.toEventsSuccess(result, emitted);
+      success.call_id = callId;
+      return success;
     } catch (err) {
-      if (err instanceof AbortedError) {
-        await this.logCall({
-          llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-          duration_ms: Date.now() - startedAt, status: 'error', error_code: err.error_code,
-        });
-        return { ok: false, error: err.message, error_code: err.error_code, aborted_reason: err.reason, emitted_events: emitted };
-      }
-      const errorCode = err instanceof ProviderError ? err.error_code : 'CONNECT_ERROR';
-      await this.logCall({
-        llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
-        duration_ms: Date.now() - startedAt, status: 'error', error_code: errorCode,
-      });
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        error_code: errorCode,
-        emitted_events: emitted,
-      };
+      return await this.toEventsFailure(llmId, input, err, startedAt, emitted);
+    }
+  }
+
+  private async runEventsStream(
+    llmId: string,
+    input: ExecLLMEventsInput,
+    signal: AbortSignal | undefined,
+    metrics: Metrics | undefined,
+    onEvent?: (event: Parameters<NonNullable<ExecLLMEventsInput['on_event']>>[0]) => void,
+  ): Promise<LLMEventsRunResult> {
+    const request = await this.buildEventsRequestWithSpan(llmId, input, metrics);
+    const runner = new LLMEventsRunner({
+      request,
+      signal,
+      idle_watchdog_ms: input.idle_watchdog_ms ?? DEFAULT_IDLE_WATCHDOG_MS,
+      on_event: onEvent,
+      logger: this.logger,
+    });
+    const streamSpan = metrics?.beginSpan('Base.LLMProvider.LLMService.streamChat');
+    try {
+      return await runner.run();
+    } finally {
+      if (metrics && streamSpan) metrics.endSpan(streamSpan);
+    }
+  }
+
+  /** events 调用的输入原文:prompt 优先,否则序列化 messages/system */
+  private eventsInputPrompt(input: ExecLLMEventsInput): string {
+    if (input.prompt) return String(input.prompt);
+    if (Array.isArray(input.messages) && input.messages.length > 0) {
+      return input.messages.map((m) => `[${(m as { role?: string }).role ?? 'user'}]\n${String((m as { content?: string }).content ?? '')}`).join('\n\n');
+    }
+    return String(input.system ?? '');
+  }
+
+  private async recordEventsCallSuccess(
+    llmId: string,
+    input: ExecLLMEventsInput,
+    result: LLMEventsRunResult,
+    startedAt: number,
+  ): Promise<string> {
+    await this.upsertUsage(llmId, result.input_tokens, result.output_tokens);
+    const callId = await this.logCall({
+      llmId,
+      session_id: input.session_id,
+      run_id: input.run_id,
+      work_id: input.work_id,
+      caller: input.caller,
+      status: 'ok',
+      input_tokens: result.input_tokens,
+      output_tokens: result.output_tokens,
+      duration_ms: Date.now() - startedAt,
+      input_prompt: this.eventsInputPrompt(input),
+      output_content: result.text,
+    });
+    return callId;
+  }
+
+  private toEventsSuccess(result: LLMEventsRunResult, emitted: boolean): EventsSingleResult {
+    return {
+      ok: true,
+      text: result.text,
+      reasoning: result.reasoning,
+      finish_reason: result.finish_reason,
+      tool_calls: result.tool_calls,
+      input_tokens: result.input_tokens,
+      output_tokens: result.output_tokens,
+      emitted_events: emitted || result.emitted_events,
+      connect_ms: result.connect_ms,
+      ttft_ms: result.ttft_ms,
+      stream_ms: result.stream_ms,
+    };
+  }
+
+  private async toEventsFailure(
+    llmId: string,
+    input: ExecLLMEventsInput,
+    err: unknown,
+    startedAt: number,
+    emitted: boolean,
+  ): Promise<EventsSingleResult> {
+    const errorCode = err instanceof AbortedError ? err.error_code
+      : (err instanceof ProviderError ? err.error_code : 'CONNECT_ERROR');
+    await this.logCall({
+      llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
+      duration_ms: Date.now() - startedAt, status: 'error', error_code: errorCode,
+      input_prompt: this.eventsInputPrompt(input),
+    });
+    if (err instanceof AbortedError) {
+      return { ok: false, error: err.message, error_code: err.error_code, aborted_reason: err.reason, emitted_events: emitted };
+    }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      error_code: errorCode,
+      emitted_events: emitted,
+    };
+  }
+
+  private async buildEventsRequestWithSpan(
+    llmId: string,
+    input: ExecLLMEventsInput,
+    metrics?: Metrics,
+  ): Promise<{ url: string; method: string; headers: Record<string, string>; body?: string }> {
+    const span = metrics?.beginSpan('Base.LLMProvider.LLMService.buildEventsRequest');
+    try {
+      return await this.buildEventsRequest(llmId, input);
+    } finally {
+      if (metrics && span) metrics.endSpan(span);
     }
   }
 
@@ -1048,9 +1207,13 @@ export class LLMService {
     output.reasoning = single.reasoning ?? '';
     output.finish_reason = single.finish_reason ?? 'stop';
     output.tool_calls = single.tool_calls ?? [];
+    output.call_id = single.call_id ?? '';
     output.input_tokens = single.input_tokens ?? 0;
     output.output_tokens = single.output_tokens ?? 0;
     output.duration_ms = Date.now() - startTime;
+    output.connect_ms = single.connect_ms ?? 0;
+    output.ttft_ms = single.ttft_ms ?? 0;
+    output.stream_ms = single.stream_ms ?? 0;
     output.wire_messages = input ? this.prepareWireMessages(input) : [];
   }
 
@@ -1127,6 +1290,7 @@ export class LLMService {
     input: ExecLLMInput,
     startTime: number,
     output: ExecLLMOutput,
+    metrics?: Metrics,
   ): Promise<boolean> {
     const llm = await this.soValidatedLLM(llmId, output);
     if (!llm) return false;
@@ -1135,8 +1299,8 @@ export class LLMService {
     const strategy = LLMStrategyFactory.soStrategyById(provider);
     const req = strategy.buildChatRequest(provider, llm, input);
     const ok = (input.stream && typeof input.onDelta === 'function')
-      ? await this.executeSingleLLMStreaming(llmId, input, startTime, output)
-      : await this.executeSingleLLMRequest(llmId, strategy, req, input, startTime, output);
+      ? await this.executeSingleLLMStreaming(llmId, input, startTime, output, metrics)
+      : await this.executeSingleLLMRequest(llmId, strategy, req, input, startTime, output, metrics);
     if (!ok) return false;
     await this.recordChatSuccess(llmId, input, output);
     return true;
@@ -1188,8 +1352,9 @@ export class LLMService {
     input: ExecLLMInput,
     startTime: number,
     output: ExecLLMOutput,
+    metrics?: Metrics,
   ): Promise<boolean> {
-    const single = await this.executeEventsSingle(llmId, this.soSingleEventsInput(llmId, input));
+    const single = await this.executeEventsSingle(llmId, this.soSingleEventsInput(llmId, input), undefined, metrics);
     if (!single.ok) {
       output.error = single.error || 'LLM 流式调用失败';
       output.error_code = single.error_code || 'EXEC_FAILED';
@@ -1202,6 +1367,9 @@ export class LLMService {
     output.input_tokens = single.input_tokens ?? 0;
     output.output_tokens = single.output_tokens ?? 0;
     output.duration_ms = Date.now() - startTime;
+    output.connect_ms = single.connect_ms ?? 0;
+    output.ttft_ms = single.ttft_ms ?? 0;
+    output.stream_ms = single.stream_ms ?? 0;
     return true;
   }
 
@@ -1232,9 +1400,13 @@ export class LLMService {
     input: ExecLLMInput,
     startTime: number,
     output: ExecLLMOutput,
+    metrics?: Metrics,
   ): Promise<boolean> {
+    const httpSpan = metrics?.beginSpan('Base.LLMProvider.LLMService.chatHttpRequest');
+    const httpStartedAt = Date.now();
     try {
       const res = await this.execChatHttpRequest(req);
+      output.connect_ms = Date.now() - httpStartedAt;
       if (!res.ok) {
         output.error = `LLM 调用失败: HTTP ${res.status} ${res.bodyText}`;
         output.error_code = 'REMOTE_ERROR';
@@ -1249,6 +1421,8 @@ export class LLMService {
       output.duration_ms = Date.now() - startTime;
       await this.logChatError(llmId, input, output);
       return false;
+    } finally {
+      if (metrics && httpSpan) metrics.endSpan(httpSpan);
     }
     return true;
   }
@@ -1292,6 +1466,8 @@ export class LLMService {
     await this.logCall({
       llmId, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
       duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+      input_prompt: String(input.prompt ?? ''),
+      output_content: String(output.error ?? ''),
     });
   }
 
@@ -1308,6 +1484,8 @@ export class LLMService {
       input_tokens: output.input_tokens,
       output_tokens: output.output_tokens,
       duration_ms: output.duration_ms,
+      input_prompt: String(input.prompt ?? ''),
+      output_content: output.result,
     });
   }
 
@@ -1418,6 +1596,7 @@ export class LLMService {
     await this.logCall({
       llmId: input.id, session_id: input.session_id, run_id: input.run_id, work_id: input.work_id, caller: input.caller,
       duration_ms: output.duration_ms, status: 'error', error_code: output.error_code,
+      input_prompt: String(input.input ?? ''),
     });
     return false;
   }
@@ -1451,6 +1630,7 @@ export class LLMService {
       input_tokens: output.input_tokens,
       output_tokens: 0,
       duration_ms: output.duration_ms,
+      input_prompt: String(input.input ?? ''),
     });
   }
 
@@ -1602,7 +1782,7 @@ export class LLMService {
         provider_count: await this.relationDb.count(LLM_PROVIDER_TABLE),
         model_count: await this.relationDb.count(LLM_CACHE_TABLE),
         enabled_llm_count: await this.relationDb.count(LLM_AVAILABLE_TABLE),
-        usage_record_count: await this.relationDb.count(LLM_USAGE_TABLE),
+        usage_record_count: await this.relationDb.count(LLM_USAGE_ORG_TABLE),
       };
     } else if (scope === 'diskUsage') {
       const pageSizes = this.relationDb.queryRaw<{ page_size: number }>(

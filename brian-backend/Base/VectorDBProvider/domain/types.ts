@@ -153,4 +153,4 @@ export class CloseVectorDBOutput extends Output {}
 
 export const VECTOR_RECORD_TABLE = 'vector_record';
 
-export const VECTORDB_CONFIG_TABLE = 'vectordb_config';
+export const VECTORDB_CONFIG_TABLE = 'vectordb_config_record';

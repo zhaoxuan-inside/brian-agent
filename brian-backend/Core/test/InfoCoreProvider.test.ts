@@ -1,5 +1,5 @@
 import { Metrics, Report } from '@brian-agent/base';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -19,7 +19,10 @@ import {
   AddGraphNodeOutput,
   GraphTarget,
   GraphContext,
+  EmbedLLMInput,
+  EmbedLLMOutput,
 } from '@brian-agent/base';
+import { TraceSchemaInitializer } from '@brian-agent/base';
 import {
   InfoCoreAccess,
   InfoCoreContext,
@@ -83,8 +86,13 @@ import {
   DelInfoBySessionInput,
   DelInfoBySessionOutput,
   DIALOG_TABLE,
+  DIALOG_EMBEDDING_TABLE,
   EXECUTE_TABLE,
   CONTEXT_TABLE,
+  SaveDialogEmbeddingInput,
+  SaveDialogEmbeddingOutput,
+  MatchDialogTopicInput,
+  MatchDialogTopicOutput,
 } from '../InfoCoreProvider';
 import { ValidationError, NotFoundError } from '../shared/errors';
 
@@ -103,6 +111,7 @@ describe('InfoCoreProvider', () => {
     dbPath = path.join(tempDir, 'test.db');
     relationDb = new RelationDBAccess({ dbPath });
     await relationDb.initialize();
+    new TraceSchemaInitializer(relationDb).init();
     llmAccess = new LLMAccess(relationDb);
     promptsAccess = new PromptsAccess(relationDb);
     await promptsAccess.initialize();
@@ -205,7 +214,7 @@ describe('InfoCoreProvider', () => {
       const output = new SaveInfoOutput();
       await infoCore.saveInfo(input, output, new InfoCoreContext());
 
-      const rows = await relationDb.select('info_summary', {
+      const rows = await relationDb.select('info_summary_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
       });
       expect(rows.length).toBe(1);
@@ -216,7 +225,7 @@ describe('InfoCoreProvider', () => {
       const output = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput(), output, new InfoCoreContext());
 
-      const rows = await relationDb.select('info_summary', {
+      const rows = await relationDb.select('info_summary_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
       });
       expect(rows.length).toBe(0);
@@ -354,7 +363,7 @@ describe('InfoCoreProvider', () => {
 
     it('should use raw info as summary when content within threshold', async () => {
       const saveOut = new SaveInfoOutput();
-      await infoCore.saveInfo(makeSaveInput({ info: '短内容' }), saveOut, new InfoCoreContext());
+      await infoCore.saveInfo(makeSaveInput({ info: '短内容', info_type: 'RESPONSE' }), saveOut, new InfoCoreContext());
 
       const input = new ProcessInfoInput();
       input.info_id = saveOut.info_id;
@@ -362,7 +371,7 @@ describe('InfoCoreProvider', () => {
       await infoCore.summaryInfo(input, output, new InfoCoreContext());
       expect(output.summary_id).toBeTruthy();
 
-      const rows = await relationDb.select('info_summary', {
+      const rows = await relationDb.select('info_summary_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: saveOut.info_id }],
       });
       expect(rows.length).toBe(1);
@@ -385,7 +394,7 @@ describe('InfoCoreProvider', () => {
 
     it('仅对超阈值、无摘要的正常信息补生成摘要（短文本/错误/已老化清空的不补）', async () => {
 
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 0', []);
 
       const longOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ info: '长'.repeat(150) }), longOut, new InfoCoreContext());
@@ -396,7 +405,7 @@ describe('InfoCoreProvider', () => {
 
       await relationDb.executeRaw(`UPDATE "${DIALOG_TABLE}" SET "dialog" = '' WHERE "id" = ?`, [longOut.info_id]);
 
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\'', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 1, "llm_id" = \'llm-stub-1\'', []);
       const calls: Array<{ id: string }> = [];
       const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess('这是补生成的摘要', calls), promptsAccess, vectorDb, graphDb);
 
@@ -408,12 +417,12 @@ describe('InfoCoreProvider', () => {
     });
 
     it('对缺失摘要的长文本信息补生成，且重复执行幂等', async () => {
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 0', []);
 
       const longOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ info: '这是一段需要生成摘要的长文本内容。'.repeat(10), info_type: 'RESPONSE' }), longOut, new InfoCoreContext());
 
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
       const calls: Array<{ id: string }> = [];
       const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess('这是补生成的摘要', calls), promptsAccess, vectorDb, graphDb);
 
@@ -423,7 +432,7 @@ describe('InfoCoreProvider', () => {
       expect(calls.length).toBe(1);
       expect(calls[0].id).toBe('llm-stub-1');
 
-      const rows = await relationDb.select('info_summary', {
+      const rows = await relationDb.select('info_summary_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: longOut.info_id }],
       });
       expect(rows.length).toBe(1);
@@ -436,12 +445,12 @@ describe('InfoCoreProvider', () => {
     });
 
     it('LLM 失败时降级返回 0 且重试一次，不阻塞流程', async () => {
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 0', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 0', []);
 
       const longOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ info: '另一段需要生成摘要的长文本内容。'.repeat(10), info_type: 'RESPONSE' }), longOut, new InfoCoreContext());
 
-      await relationDb.executeRaw('UPDATE "info_summary_config" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
+      await relationDb.executeRaw('UPDATE "info_summary_config_record" SET "enable" = 1, "llm_id" = \'llm-stub-1\', "threshold" = 20', []);
       const calls: Array<{ id: string }> = [];
       const stubCore = new InfoCoreAccess(relationDb, makeStubLLMAccess(null, calls), promptsAccess, vectorDb, graphDb);
 
@@ -466,88 +475,84 @@ describe('InfoCoreProvider', () => {
   });
 
   describe('handle_result_type（错误信息隔离）', () => {
-    it('saveInfo 错误信息落库 handle_result_type，且摘要为原文', async () => {
-      const input = makeSaveInput({
-        info: 'Skill 执行失败：参数非法',
-        handle_result_type: HandleResultType.CALL_ERROR,
-        summary: '不应被采用的人工摘要',
-      });
-      const output = new SaveInfoOutput();
-      await infoCore.saveInfo(input, output, new InfoCoreContext());
+    it('saveInfo 错误记录与非问答类型不落库（执行过程统一由事件处理器落 execute）', async () => {
+      const sessionId = 's-conv-error';
+      const workId = 'w-conv-error';
+      const errOut = new SaveInfoOutput();
+      await infoCore.saveInfo(
+        makeSaveInput({ session_id: sessionId, work_id: workId, info: 'Skill 执行失败：参数非法', handle_result_type: HandleResultType.CALL_ERROR }),
+        errOut, new InfoCoreContext(),
+      );
+      expect(errOut.info_id).toBe('');
 
-      const rows = await relationDb.select(EXECUTE_TABLE, {
-        conditions: [{ field: 'id', operator: Operator.EQ, value: output.info_id }],
-      });
-      expect(rows.length).toBe(1);
+      const actOut = new SaveInfoOutput();
+      await infoCore.saveInfo(
+        makeSaveInput({ session_id: sessionId, work_id: workId, info_type: 'ACT', info: '步骤产物' }),
+        actOut, new InfoCoreContext(),
+      );
+      expect(actOut.info_id).toBe('');
 
-      const summaryRows = await relationDb.select('info_summary', {
-        conditions: [{ field: 'info_id', operator: Operator.EQ, value: output.info_id }],
+      const dialogRows = await relationDb.select(DIALOG_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
       });
-      expect(summaryRows.length).toBe(1);
-      expect(summaryRows[0].summary).toBe('Skill 执行失败：参数非法');
+      const execRows = await relationDb.select(EXECUTE_TABLE, {
+        conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
+      });
+      expect(dialogRows.length).toBe(0);
+      expect(execRows.length).toBe(0);
     });
 
-    it('错误信息不参与自学习：vectorInfo/tagInfo/keywordInfo 均不落库', async () => {
-      const saveOut = new SaveInfoOutput();
-      await infoCore.saveInfo(
-        makeSaveInput({ info: '网络连接超时 ECONNREFUSED', handle_result_type: HandleResultType.INTERNAL_ERROR }),
-        saveOut, new InfoCoreContext(),
-      );
+    async function insertProcessorExecuteRow(overrides?: { id?: string; session_id?: string; work_id?: string; status?: string; component_type?: string; output?: string }): string {
+      const rowId = overrides?.id ?? IdGenerator.generate();
+      const now = IdGenerator.now();
+      await relationDb.insert(EXECUTE_TABLE, [
+        { field: 'id', value: rowId },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'session_id', value: overrides?.session_id ?? 's-proc' },
+        { field: 'work_id', value: overrides?.work_id ?? 'w-proc' },
+        { field: 'run_id', value: overrides?.work_id ?? 'w-proc' },
+        { field: 'trace_id', value: '' },
+        { field: 'agent_id', value: '' },
+        { field: 'exec_no', value: 1 },
+        { field: 'component_id', value: 'LLMService.execLLMEvents' },
+        { field: 'component_type', value: overrides?.component_type ?? 'LLM' },
+        { field: 'input', value: '' },
+        { field: 'input_length', value: 0 },
+        { field: 'output', value: overrides?.output ?? '' },
+        { field: 'output_length', value: (overrides?.output ?? '').length },
+        { field: 'gap', value: 12 },
+        { field: 'status', value: overrides?.status ?? 'ok' },
+      ]);
+      return rowId;
+    }
 
-      const input = new ProcessInfoInput();
-      input.info_id = saveOut.info_id;
-
-      await infoCore.vectorInfo(input, new VectorInfoOutput(), new InfoCoreContext());
-      await infoCore.tagInfo(input, new TagInfoOutput(), new InfoCoreContext());
-      await infoCore.keywordInfo(input, new KeywordInfoOutput(), new InfoCoreContext());
-
-      const vectorRows = await relationDb.select('info_vector', {
-        conditions: [{ field: 'info_id', operator: Operator.EQ, value: saveOut.info_id }],
-      });
-      const tagRows = await relationDb.select('info_tag', {
-        conditions: [{ field: 'info_id', operator: Operator.EQ, value: saveOut.info_id }],
-      });
-      const keywordRows = await relationDb.select('info_keyword', {
-        conditions: [{ field: 'info_id', operator: Operator.EQ, value: saveOut.info_id }],
-      });
-
-      expect(vectorRows.length).toBe(0);
-      expect(tagRows.length).toBe(0);
-      expect(keywordRows.length).toBe(0);
-    });
-
-    it('lastNInfo 支持按 handle_result_type 过滤', async () => {
-      const a = new SaveInfoOutput();
-      await infoCore.saveInfo(makeSaveInput({ session_id: 's-hr', info: '正常信息' }), a, new InfoCoreContext());
-      const b = new SaveInfoOutput();
-      await infoCore.saveInfo(
-        makeSaveInput({ session_id: 's-hr', info: '错误信息', handle_result_type: HandleResultType.INTERNAL_ERROR }),
-        b, new InfoCoreContext(),
-      );
+    it('lastNInfo 支持按 handle_result_type 过滤（基于 execute.status）', async () => {
+      const sessionId = 's-hr';
+      const workId = 'w-hr';
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: workId, info: '正常信息' }), new SaveInfoOutput(), new InfoCoreContext());
+      const errRowId = await insertProcessorExecuteRow({ session_id: sessionId, work_id: workId, status: 'error' });
 
       const errInput = new LastNInfoInput();
-      errInput.session_id = 's-hr';
+      errInput.session_id = sessionId;
       errInput.lastN = 10;
       errInput.handle_result_type = HandleResultType.INTERNAL_ERROR;
       const errOut = new LastNInfoOutput();
       await infoCore.lastNInfo(errInput, errOut, new InfoCoreContext());
       expect(errOut.list.length).toBe(1);
-      expect(errOut.list[0].info_id).toBe(b.info_id);
+      expect(errOut.list[0].info_id).toBe(errRowId);
     });
 
-    it('graphInfo 节点携带 handle_result_type', async () => {
-      const saveOut = new SaveInfoOutput();
-      await infoCore.saveInfo(
-        makeSaveInput({ session_id: 's-graph', info: '错误信息', handle_result_type: HandleResultType.CALL_ERROR }),
-        saveOut, new InfoCoreContext(),
-      );
+    it('graphInfo 执行节点错误标记基于 execute.status', async () => {
+      const sessionId = 's-graph';
+      await insertProcessorExecuteRow({ session_id: sessionId, work_id: 'w-graph', status: 'error' });
 
       const gInput = new GraphInfoInput();
-      gInput.session_id = 's-graph';
+      gInput.session_id = sessionId;
       const gOut = new GraphInfoOutput();
       await infoCore.graphInfo(gInput, gOut, new InfoCoreContext());
 
-      const node = gOut.graph.nodes.find((n) => n.info_id === saveOut.info_id);
+      const node = gOut.graph.nodes.find((n) => n.info_id && n.info_creator_role === 'SYSTEM');
       expect(node).toBeTruthy();
       expect(node?.handle_result_type).toBe(HandleResultType.CALL_ERROR);
     });
@@ -563,14 +568,14 @@ describe('InfoCoreProvider', () => {
       );
 
       const now = IdGenerator.now();
-      await relationDb.insert('info_tag', [
+      await relationDb.insert('info_tag_record', [
         { field: 'id', value: IdGenerator.generate() },
         { field: 'created', value: now },
         { field: 'updated', value: now },
         { field: 'info_id', value: okOut.info_id },
         { field: 'tag', value: '正常标签' },
       ]);
-      await relationDb.insert('info_tag', [
+      await relationDb.insert('info_tag_record', [
         { field: 'id', value: IdGenerator.generate() },
         { field: 'created', value: now },
         { field: 'updated', value: now },
@@ -582,10 +587,10 @@ describe('InfoCoreProvider', () => {
       await infoCore.rebuildCooccurGraph(new RebuildCooccurGraphInput(), rebuildOut, new InfoCoreContext());
       expect(rebuildOut.purged_rows).toBeGreaterThanOrEqual(1);
 
-      const errTagRows = await relationDb.select('info_tag', {
+      const errTagRows = await relationDb.select('info_tag_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: errOut.info_id }],
       });
-      const okTagRows = await relationDb.select('info_tag', {
+      const okTagRows = await relationDb.select('info_tag_record', {
         conditions: [{ field: 'info_id', operator: Operator.EQ, value: okOut.info_id }],
       });
       expect(errTagRows.length).toBe(0);
@@ -1091,7 +1096,36 @@ describe('InfoCoreProvider', () => {
       } finally {
 
         const resetIn = new UpdateInfoContextConfigInput();
-        resetIn.priority_order = 'PINNED,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
+        resetIn.priority_order = 'PINNED,CITING,TIMELINE,TAG_RELATIVE,SIMILARITY,KEYWORD,RANDOM';
+        await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+      }
+    });
+
+    it('should support priority_order strategy identifiers like DEFAULT and STRICT_FOCUS', async () => {
+      const sessionId = 'strat-priority-session';
+      for (let i = 0; i < 3; i++) {
+        const out = new SaveInfoOutput();
+        await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, info: `Strat ${i}` }), out, new InfoCoreContext());
+      }
+
+      const cfgIn = new UpdateInfoContextConfigInput();
+      cfgIn.priority_order = 'STRICT_FOCUS';
+      await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+
+      try {
+        const input = new ContextInfoInput();
+        input.session_id = sessionId;
+        input.work_id = `work-${sessionId}`;
+        const output = new ContextInfoOutput();
+        await infoCore.context(input, output, new InfoCoreContext());
+
+        expect(output.categories?.tag_relative.length).toBe(0);
+        expect(output.categories?.similarity.length).toBe(0);
+        expect(output.categories?.keyword.length).toBe(0);
+        expect(output.categories?.random.length).toBe(0);
+      } finally {
+        const resetIn = new UpdateInfoContextConfigInput();
+        resetIn.priority_order = 'DEFAULT';
         await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
       }
     });
@@ -1128,6 +1162,47 @@ describe('InfoCoreProvider', () => {
       expect(timelineIds.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('should respect enable_snapshot_persistence config when input.persist_snapshot is undefined', async () => {
+      const sessionId = 'snapshot-cfg-session';
+      const userOut = new SaveInfoOutput();
+      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: 'work-snap-0', info_type: 'REQUEST', info: 'Q0' }), userOut, new InfoCoreContext());
+
+      const cfgIn = new UpdateInfoContextConfigInput();
+      cfgIn.enable_snapshot_persistence = 0;
+      await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+
+      try {
+        const inputDisabled = new ContextInfoInput();
+        inputDisabled.session_id = sessionId;
+        inputDisabled.work_id = 'work-snap-disabled';
+        const outDisabled = new ContextInfoOutput();
+        await infoCore.context(inputDisabled, outDisabled, new InfoCoreContext());
+
+        const rowsDisabled = await relationDb.select(CONTEXT_TABLE, {
+          conditions: [{ field: 'work_id', operator: Operator.EQ, value: 'work-snap-disabled' }],
+        });
+        expect(rowsDisabled.length).toBe(0);
+
+        cfgIn.enable_snapshot_persistence = 1;
+        await infoCore.updateInfoContextConfig(cfgIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+
+        const inputEnabled = new ContextInfoInput();
+        inputEnabled.session_id = sessionId;
+        inputEnabled.work_id = 'work-snap-enabled';
+        const outEnabled = new ContextInfoOutput();
+        await infoCore.context(inputEnabled, outEnabled, new InfoCoreContext());
+
+        const rowsEnabled = await relationDb.select(CONTEXT_TABLE, {
+          conditions: [{ field: 'work_id', operator: Operator.EQ, value: 'work-snap-enabled' }],
+        });
+        expect(rowsEnabled.length).toBeGreaterThan(0);
+      } finally {
+        const resetIn = new UpdateInfoContextConfigInput();
+        resetIn.enable_snapshot_persistence = 1;
+        await infoCore.updateInfoContextConfig(resetIn, new UpdateInfoContextConfigOutput(), new InfoCoreContext());
+      }
+    });
+
     it('should split storage across dialog and execute tables and cascade delete', async () => {
       const sessionId = 'three-table-test-session';
       const workId = 'three-table-work-1';
@@ -1135,8 +1210,28 @@ describe('InfoCoreProvider', () => {
       const reqOut = new SaveInfoOutput();
       await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: workId, info_type: 'REQUEST', info: 'User Question' }), reqOut, new InfoCoreContext());
 
-      const actOut = new SaveInfoOutput();
-      await infoCore.saveInfo(makeSaveInput({ session_id: sessionId, work_id: workId, info_type: 'ACT', info: 'Agent Tool Call' }), actOut, new InfoCoreContext());
+      
+
+      const now = IdGenerator.now();
+      await relationDb.insert(EXECUTE_TABLE, [
+        { field: 'id', value: 'exec-row-1' },
+        { field: 'created', value: now },
+        { field: 'updated', value: now },
+        { field: 'session_id', value: sessionId },
+        { field: 'work_id', value: workId },
+        { field: 'run_id', value: workId },
+        { field: 'trace_id', value: '' },
+        { field: 'agent_id', value: '' },
+        { field: 'exec_no', value: 1 },
+        { field: 'component_id', value: 'LLMService.execLLMEvents' },
+        { field: 'component_type', value: 'LLM' },
+        { field: 'input', value: '' },
+        { field: 'input_length', value: 0 },
+        { field: 'output', value: 'Agent Tool Call' },
+        { field: 'output_length', value: 15 },
+        { field: 'gap', value: 20 },
+        { field: 'status', value: 'ok' },
+      ]);
 
       const dialogRows = await relationDb.select(DIALOG_TABLE, {
         conditions: [{ field: 'session_id', operator: Operator.EQ, value: sessionId }],
@@ -1432,9 +1527,9 @@ describe('InfoCoreProvider', () => {
       );
 
       // 3. In SQLite: only ActiveTag and ActiveKeyword are referenced by info-1
-      relationDb.executeRaw(`INSERT INTO "${DIALOG_TABLE}" ("id", "created", "updated", "session_id", "work_id", "type", "dialog", "dialog_length", "dialog_brief", "trace_id") VALUES ('info-1', 1700000000000, 1700000000000, 's-1', 'w-1', 'REQUEST', 'hello', 5, '', '')`);
-      relationDb.executeRaw(`INSERT INTO "info_tag" ("id", "created", "updated", "info_id", "tag") VALUES ('it-1', 1700000000000, 1700000000000, 'info-1', 'ActiveTag')`);
-      relationDb.executeRaw(`INSERT INTO "info_keyword" ("info_id", "word") VALUES ('info-1', 'ActiveKeyword')`);
+      relationDb.executeRaw(`INSERT INTO "${DIALOG_TABLE}" ("id", "created", "updated", "session_id", "work_id", "type", "dialog", "trace_id") VALUES ('info-1', 1700000000000, 1700000000000, 's-1', 'w-1', 'REQUEST', 'hello', '')`);
+      relationDb.executeRaw(`INSERT INTO "info_tag_record" ("id", "created", "updated", "info_id", "tag") VALUES ('it-1', 1700000000000, 1700000000000, 'info-1', 'ActiveTag')`);
+      relationDb.executeRaw(`INSERT INTO "info_keyword_org" ("info_id", "word") VALUES ('info-1', 'ActiveKeyword')`);
 
       // 4. Trigger cleanOrphanGraphNodes
       const cleanIn = new CleanOrphanGraphNodesInput();
@@ -1458,6 +1553,158 @@ describe('InfoCoreProvider', () => {
       const kwNames = (selKeywords.list as any[]).map((n) => n.content?.keyword || n.content?.word);
       expect(kwNames).toContain('ActiveKeyword');
       expect(kwNames).not.toContain('OrphanKeyword');
+    });
+  });
+
+  describe('dialog embedding 轮次话题向量（chg-059）', () => {
+    function makeDialogEmbedInput(sessionId: string, workId: string, text: string): SaveDialogEmbeddingInput {
+      const input = new SaveDialogEmbeddingInput();
+      input.session_id = sessionId;
+      input.work_id = workId;
+      input.text = text;
+      return input;
+    }
+
+    function enableEmbeddingMock(mapping: Array<{ match: string; vector: number[] }>): void {
+      vi.spyOn(llmAccess, 'soLLMById').mockImplementation(async (_i: unknown, o: { llm?: unknown }) => {
+        o.llm = { id: 'llm-embed', llm_type: 'embedding' } as never;
+        return true;
+      });
+      vi.spyOn(llmAccess, 'embedLLM').mockImplementation(async (input: EmbedLLMInput, output: EmbedLLMOutput) => {
+        const text = String(input.input ?? '');
+        const hit = mapping.find((m) => text.includes(m.match));
+        output.embedding = hit ? hit.vector : [0, 0, 1];
+        return true;
+      });
+    }
+
+    async function enableVectorConfig(): Promise<void> {
+      await infoCore.updateInfoVectorConfig(
+        { llm_id: 'llm-embed', enable: 1 } as any,
+        new UpdateInfoVectorConfigOutput(), new InfoCoreContext(),
+      );
+    }
+
+    async function dialogEmbeddingRows(sessionId: string): Promise<Array<Record<string, unknown>>> {
+      return relationDb.queryRaw<Record<string, unknown>>(
+        `SELECT * FROM "${DIALOG_EMBEDDING_TABLE}" WHERE "session_id" = ? ORDER BY "created" ASC`,
+        [sessionId],
+      ) ?? [];
+    }
+
+    it('DDL 建表：dialog_embedding_record 含 id/created/updated/session_id/work_id/embedding/dimension 列', () => {
+      const rows = relationDb.queryRaw<{ name: string }>(
+        `SELECT "name" FROM pragma_table_info('${DIALOG_EMBEDDING_TABLE}') ORDER BY "cid"`,
+      ) ?? [];
+      const cols = rows.map((r) => r.name);
+      for (const col of ['id', 'created', 'updated', 'session_id', 'work_id', 'embedding', 'dimension']) {
+        expect(cols).toContain(col);
+      }
+    });
+
+    it('未配置向量模型：saved=false reason=no_vector_model（优雅降级不报错）', async () => {
+      const output = new SaveDialogEmbeddingOutput();
+      const result = await infoCore.saveDialogEmbedding(
+        makeDialogEmbedInput('sess-topic', 'work-1', '帮我推荐城市出行路线'),
+        output, new InfoCoreContext(),
+      );
+      expect(result).toBe(true);
+      expect(output.saved).toBe(false);
+      expect(output.reason).toBe('no_vector_model');
+      expect(await dialogEmbeddingRows('sess-topic')).toHaveLength(0);
+    });
+
+    it('入参缺失或空白文本：saved=false reason=invalid_input', async () => {
+      const blank = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('sess-topic', 'work-1', '   '), blank, new InfoCoreContext());
+      expect(blank.saved).toBe(false);
+      expect(blank.reason).toBe('invalid_input');
+
+      const noSession = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('', 'work-1', '文本'), noSession, new InfoCoreContext());
+      expect(noSession.saved).toBe(false);
+      expect(noSession.reason).toBe('invalid_input');
+    });
+
+    it('向量模型返回空向量：saved=false reason=empty_vector', async () => {
+      enableEmbeddingMock([{ match: '', vector: [] }]);
+      await enableVectorConfig();
+      const output = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('sess-topic', 'work-1', '帮我推荐城市出行路线'), output, new InfoCoreContext());
+      expect(output.saved).toBe(false);
+      expect(output.reason).toBe('empty_vector');
+    });
+
+    it('保存成功且同 work_id 幂等 upsert：重复固化只保留一行并更新向量', async () => {
+      enableEmbeddingMock([{ match: '出行', vector: [1, 0.2, 0] }]);
+      await enableVectorConfig();
+
+      const first = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('sess-topic', 'work-1', '帮我推荐城市出行路线'), first, new InfoCoreContext());
+      expect(first.saved).toBe(true);
+      expect(first.dimension).toBe(3);
+
+      const again = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('sess-topic', 'work-1', '完全无关的另一段新文本'), again, new InfoCoreContext());
+      expect(again.saved).toBe(true);
+
+      const rows = await dialogEmbeddingRows('sess-topic');
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0].work_id)).toBe('work-1');
+      expect(Number(rows[0].dimension)).toBe(3);
+      const vector = JSON.parse(String(rows[0].embedding)) as number[];
+      expect(vector).toEqual([0, 0, 1]);
+    });
+
+    it('matchDialogTopic：cosine 最大相似度回填，维度不一致轮次跳过', async () => {
+      enableEmbeddingMock([
+        { match: '出行', vector: [1, 0, 0] },
+        { match: '股票', vector: [0, 1, 0] },
+      ]);
+      await enableVectorConfig();
+
+      const saved = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(makeDialogEmbedInput('sess-topic', 'work-1', '帮我推荐城市出行路线'), saved, new InfoCoreContext());
+      expect(saved.saved).toBe(true);
+
+      relationDb.executeRaw(`INSERT INTO "${DIALOG_EMBEDDING_TABLE}" ("id", "created", "updated", "session_id", "work_id", "embedding", "dimension") VALUES
+        ('emb-wrong-dim', 1, 1, 'sess-topic', 'work-dim', '${JSON.stringify(new Array(768).fill(0))}', 768)`);
+
+      const unrelated = new SaveDialogEmbeddingInput();
+      unrelated.session_id = 'sess-topic';
+      unrelated.work_id = 'work-2';
+      unrelated.text = '股票行情走势分析';
+      const unrelatedOut = new SaveDialogEmbeddingOutput();
+      await infoCore.saveDialogEmbedding(unrelated, unrelatedOut, new InfoCoreContext());
+      expect(unrelatedOut.saved).toBe(true);
+
+      const output = new MatchDialogTopicOutput();
+      const input = new MatchDialogTopicInput();
+      input.session_id = 'sess-topic';
+      input.query_text = '周末出行散步路线推荐';
+      const result = await infoCore.matchDialogTopic(input, output, new InfoCoreContext());
+      expect(result).toBe(true);
+      expect(output.evaluated).toBe(true);
+      expect(output.compared_rounds).toBe(2);
+      expect(output.best_similarity).toBeGreaterThanOrEqual(70);
+      expect(output.matched_work_id).toBe('work-1');
+
+      const drift = new MatchDialogTopicOutput();
+      const driftIn = new MatchDialogTopicInput();
+      driftIn.session_id = 'sess-topic';
+      driftIn.query_text = '量子计算机纠错编码基本原理';
+      await infoCore.matchDialogTopic(driftIn, drift, new InfoCoreContext());
+      expect(drift.best_similarity).toBeLessThan(70);
+    });
+
+    it('matchDialogTopic：无轮次向量或无向量模型 evaluated=false（调用方回退亲和逻辑）', async () => {
+      const input = new MatchDialogTopicInput();
+      input.session_id = 'sess-empty';
+      input.query_text = '任意问题';
+      const output = new MatchDialogTopicOutput();
+      await infoCore.matchDialogTopic(input, output, new InfoCoreContext());
+      expect(output.evaluated).toBe(false);
+      expect(output.best_similarity).toBe(0);
     });
   });
 });

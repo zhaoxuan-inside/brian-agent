@@ -20,7 +20,6 @@ export {
   SKILL_CORE_CONFIG_TABLE,
   AGENT_SKILL_TABLE,
   SKILL_OPT_RULE_TABLE,
-  SKILL_USAGE_TABLE,
 } from './domain/types';
 
 export type {

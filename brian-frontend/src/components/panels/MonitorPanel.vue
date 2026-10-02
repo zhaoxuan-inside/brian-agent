@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
-import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2, MessageSquare, X, Loader2, CircleCheck, UserX, SkipForward, Tag } from '@lucide/vue'
-import { monitorApi, feedbackApi } from '@/api'
-import type { SystemHealth, FeedbackProcessLogListItem, FeedbackProcessLogDetail } from '@/api/types'
+import { Activity, Cpu, HardDrive, Database, TrendingUp, Layers, RefreshCw, Eye, Copy, Check, CheckSquare, Square, Search, Trash2, MessageSquare, X, Loader2, CircleCheck, UserX, SkipForward, Tag, Plug } from '@lucide/vue'
+import { monitorApi, feedbackApi, mcpApi } from '@/api'
+import type { SystemHealth, FeedbackProcessLogListItem, FeedbackProcessLogDetail, McpUsageRecord } from '@/api/types'
 import { copyToClipboard } from '@/utils/clipboard'
 
 const health = ref<SystemHealth>({ status: 'healthy', components: [], uptime: 0 })
@@ -44,6 +44,92 @@ const fbTotal = ref(0)
 const fbDetailOpen = ref(false)
 const fbDetail = ref<FeedbackProcessLogDetail | null>(null)
 const fbDetailLoading = ref(false)
+
+interface McpItem {
+  id: string
+  title?: string
+  mcp_title?: string
+  mcp_brief?: string
+  description?: string
+  transport_type?: string
+  enabled?: boolean
+  enable?: number | boolean
+}
+
+const mcpInstalled = ref<McpItem[]>([])
+const mcpUsage = ref<McpUsageRecord[]>([])
+const mcpUsageTotal = ref(0)
+const mcpLoading = ref(false)
+const mcpRefreshing = ref(false)
+const mcpLoaded = ref(false)
+
+function isMcpEnabled(m: McpItem): boolean {
+  if (typeof m.enabled === 'boolean') return m.enabled
+  if (typeof m.enable === 'boolean') return m.enable
+  if (typeof m.enable === 'number') return m.enable !== 0
+  return true
+}
+
+async function fetchMcpStats(manual = false) {
+  const initial = !mcpLoaded.value
+  if (initial) mcpLoading.value = true
+  else if (manual) mcpRefreshing.value = true
+  try {
+    const [installedRes, usageRes] = await Promise.allSettled([
+      mcpApi.installed(),
+      mcpApi.usage(),
+    ])
+    if (installedRes.status === 'fulfilled') {
+      mcpInstalled.value = (installedRes.value.installed || []) as McpItem[]
+    }
+    if (usageRes.status === 'fulfilled') {
+      mcpUsage.value = usageRes.value.list || []
+      mcpUsageTotal.value = usageRes.value.total || 0
+    }
+    mcpLoaded.value = true
+  } catch (e) {
+    console.error('[MonitorPanel] 加载 MCP 统计数据失败', e)
+    if (initial) {
+      mcpInstalled.value = []
+      mcpUsage.value = []
+      mcpUsageTotal.value = 0
+    }
+  } finally {
+    if (initial) mcpLoading.value = false
+    mcpRefreshing.value = false
+  }
+}
+
+const mcpUsageToday = computed(() => {
+  const today = formatDate(new Date())
+  return mcpUsage.value.filter(u => u.usage_date === today).reduce((s, u) => s + (u.usage_count || 0), 0)
+})
+
+const mcpUsageByMcp = computed(() => {
+  const map = new Map<string, { key: string; title: string; brief?: string; transport_type?: string; enabled: boolean; count: number }>()
+  for (const m of mcpInstalled.value) {
+    map.set(m.id, {
+      key: m.id,
+      title: m.mcp_title || m.title || m.id,
+      brief: m.mcp_brief || m.description,
+      transport_type: m.transport_type,
+      enabled: isMcpEnabled(m),
+      count: 0,
+    })
+  }
+  for (const u of mcpUsage.value) {
+    const key = u.mcp_install_id || u.mcp_title || 'unknown'
+    const cur = map.get(key) || {
+      key,
+      title: u.mcp_title || key,
+      enabled: true,
+      count: 0,
+    }
+    cur.count += u.usage_count || 0
+    map.set(key, cur)
+  }
+  return Array.from(map.values()).sort((a, b) => b.count - a.count)
+})
 
 async function fetchFeedbackRecords(manual = false) {
   const initial = !fbLoaded.value
@@ -264,7 +350,12 @@ onMounted(() => {
   fetchAll(true)
   loadLogSources()
   fetchFeedbackRecords()
-  pollTimer.value = setInterval(() => { fetchAll(false); fetchFeedbackRecords() }, 10000)
+  fetchMcpStats()
+  pollTimer.value = setInterval(() => {
+    fetchAll(false)
+    fetchFeedbackRecords()
+    fetchMcpStats()
+  }, 10000)
 })
 onUnmounted(() => {
   if (pollTimer.value) clearInterval(pollTimer.value)
@@ -374,10 +465,10 @@ function tokenCellColor(tokens: number, future: boolean): string {
 
 const MODEL_TYPE_LABELS: Record<string, string> = {
   text: '文本生成',
-  vision: '多模态',
+  multimodal: '多模态',
   embedding: '向量化',
 }
-const MODEL_TYPE_ORDER = ['text', 'vision', 'embedding']
+const MODEL_TYPE_ORDER = ['text', 'multimodal', 'embedding']
 
 const modelTypeTab = ref('text')
 
@@ -565,6 +656,92 @@ function displayModelName(m: { model: string; deleted?: boolean }): string {
                 <span class="text-apple-gray-400 px-1">/</span>
                 <span class="text-success-green">{{ (m.output_tokens || 0).toLocaleString() }}</span>
               </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="block-card rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold flex items-center gap-2">
+          <Plug :size="16" class="text-brian-blue" /> MCP 调用统计
+          <span v-if="mcpInstalled.length > 0" class="text-2xs font-normal text-apple-gray-400">
+            共 {{ mcpInstalled.length }} 个 MCP
+          </span>
+        </h3>
+        <button
+          class="p-1.5 rounded-lg text-apple-gray-400 hover:text-brian-blue hover:bg-apple-gray-100 dark:hover:bg-apple-gray-800 transition-colors"
+          title="刷新"
+          @click="fetchMcpStats(true)"
+        >
+          <RefreshCw :size="14" :class="{ 'animate-spin': mcpLoading || mcpRefreshing }" />
+        </button>
+      </div>
+
+      <div v-if="mcpLoading" class="flex justify-center py-10">
+        <Loader2 :size="20" class="animate-spin text-brian-blue" />
+      </div>
+      <div v-else-if="mcpInstalled.length === 0" class="text-center py-6 text-apple-gray-400 text-sm">
+        暂无已安装的 MCP，无法统计调用数据
+      </div>
+      <div v-else class="space-y-4">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div class="p-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+            <p class="text-2xs text-apple-gray-400 mb-1">已安装 MCP</p>
+            <p class="text-xl font-bold text-apple-gray-900 dark:text-apple-gray-50">{{ mcpInstalled.length }}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+            <p class="text-2xs text-apple-gray-400 mb-1">启用的 MCP</p>
+            <p class="text-xl font-bold text-success-green">{{ mcpInstalled.filter(m => isMcpEnabled(m)).length }}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+            <p class="text-2xs text-apple-gray-400 mb-1">停用的 MCP</p>
+            <p class="text-xl font-bold text-warning-orange">{{ mcpInstalled.filter(m => !isMcpEnabled(m)).length }}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+            <p class="text-2xs text-apple-gray-400 mb-1">总调用次数</p>
+            <p class="text-xl font-bold text-brian-blue">{{ mcpUsageTotal }}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-apple-gray-50 dark:bg-apple-gray-900/50 border border-apple-gray-100 dark:border-apple-gray-700">
+            <p class="text-2xs text-apple-gray-400 mb-1">今日调用次数</p>
+            <p class="text-xl font-bold text-brian-blue">{{ mcpUsageToday }}</p>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-apple-gray-100 dark:border-apple-gray-700 overflow-hidden">
+          <div class="px-4 py-2.5 bg-apple-gray-50 dark:bg-apple-gray-900/60 border-b border-apple-gray-100 dark:border-apple-gray-700 flex items-center justify-between text-2xs text-apple-gray-400 font-medium">
+            <span>MCP 名称与协议</span>
+            <span>累计调用次数</span>
+          </div>
+          <div v-if="mcpUsageByMcp.length === 0" class="px-4 py-8 text-center text-sm text-apple-gray-400">
+            暂无调用记录
+          </div>
+          <div v-else class="divide-y divide-apple-gray-100 dark:divide-apple-gray-800/60 max-h-64 overflow-y-auto pr-1">
+            <div
+              v-for="u in mcpUsageByMcp"
+              :key="u.key"
+              class="px-4 py-3 flex items-center justify-between hover:bg-apple-gray-50/50 dark:hover:bg-apple-gray-800/40 transition-colors"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-brian-blue/10 text-brian-blue">
+                  <Plug :size="14" />
+                </div>
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <p class="text-sm font-medium text-apple-gray-900 dark:text-apple-gray-50 truncate" :title="u.title">{{ u.title }}</p>
+                    <span v-if="u.transport_type" class="text-4xs px-1.5 py-0.5 rounded bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-500 uppercase">{{ u.transport_type }}</span>
+                    <span
+                      class="text-4xs px-1.5 py-0.5 rounded"
+                      :class="u.enabled ? 'bg-success-green/10 text-success-green' : 'bg-apple-gray-100 dark:bg-apple-gray-800 text-apple-gray-400'"
+                    >
+                      {{ u.enabled ? '已启用' : '已停用' }}
+                    </span>
+                  </div>
+                  <p v-if="u.brief" class="text-2xs text-apple-gray-400 truncate mt-0.5">{{ u.brief }}</p>
+                </div>
+              </div>
+              <span class="text-sm font-semibold text-brian-blue flex-shrink-0 ml-4">{{ u.count }} 次</span>
             </div>
           </div>
         </div>

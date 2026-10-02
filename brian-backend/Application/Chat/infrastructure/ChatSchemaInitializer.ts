@@ -5,7 +5,7 @@ export class ChatSchemaInitializer {
 
   init(): void {
     this.relationDb.executeRaw(`
-      CREATE TABLE IF NOT EXISTS chat_session (
+      CREATE TABLE IF NOT EXISTS chat_session_record (
         id TEXT PRIMARY KEY NOT NULL,
         created INTEGER NOT NULL,
         updated INTEGER NOT NULL,
@@ -15,15 +15,15 @@ export class ChatSchemaInitializer {
     `);
 
     this.relationDb.executeRaw(
-      'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session(session_id)',
+      'CREATE INDEX IF NOT EXISTS idx_chat_session_session_id ON chat_session_record(session_id)',
     );
 
     this.relationDb.executeRaw(
-      'CREATE INDEX IF NOT EXISTS idx_chat_session_created ON chat_session(created)',
+      'CREATE INDEX IF NOT EXISTS idx_chat_session_created ON chat_session_record(created)',
     );
 
     this.relationDb.executeRaw(
-      'CREATE INDEX IF NOT EXISTS idx_chat_session_updated ON chat_session(updated)',
+      'CREATE INDEX IF NOT EXISTS idx_chat_session_updated ON chat_session_record(updated)',
     );
 
     this.relationDb.executeRaw(`

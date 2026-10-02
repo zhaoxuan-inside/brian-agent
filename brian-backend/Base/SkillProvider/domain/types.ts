@@ -11,20 +11,24 @@ export interface FileEntry {
 }
 
 export interface SkillData {
-  
+
   name: string;
-  
+
   skill_brief: string;
-  
+
 
   skill_md: string;
-  
+
   scripts?: FileEntry[];
-  
+
   references?: FileEntry[];
-  
+
   assets?: FileEntry[];
-  
+
+  positive_examples?: string[];
+
+  negative_examples?: string[];
+
   enable?: boolean;
 }
 
@@ -149,8 +153,8 @@ export class EnableSkillInput extends Input {
 
 export class EnableSkillOutput extends Output {}
 
-export const SKILL_TABLE = 'skill';
-
-export const SKILL_USAGE_TABLE = 'skill_usage';
-
-export const SKILL_CONFIG_TABLE = 'skill_config';
+export const SKILL_TABLE = 'skill_record';
+export const SKILL_EMBEDDING_TABLE = 'skill_embedding_record';
+export const SKILL_EXAMPLE_EMBEDDING_TABLE = 'skill_example_embedding_record';
+export const SKILL_USAGE_TABLE = 'skill_usage_org';
+export const SKILL_CONFIG_TABLE = 'skill_config_record';

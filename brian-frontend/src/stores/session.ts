@@ -57,16 +57,8 @@ export const useSessionStore = defineStore('session', () => {
     localStorage.setItem('chat-current-session-id', sessionId)
     const historyMsgs = await chatApi.history(sessionId, userId, lastN)
     messages.value = historyMsgs
-
-    const loadedBlocks: Block[] = []
-    for (const msg of historyMsgs) {
-      if (Array.isArray(msg.blocks) && msg.blocks.length > 0) {
-        for (const b of msg.blocks) {
-          loadedBlocks.push(b)
-        }
-      }
-    }
-    blocks.value = loadedBlocks
+    // ADR-013：历史思考过程不再随消息下发 blocks，改为按需经 /chat/observation 重放
+    blocks.value = []
     triggerRef(blocks)
   }
 
@@ -151,7 +143,7 @@ export const useSessionStore = defineStore('session', () => {
     focusInfoId.value = null
     centerInfoId.value = null
     followInfoId.value = null
-    useChatUiStore().resetWorkflowState()
+    useChatUiStore().resetObservation()
     localStorage.removeItem('chat-current-session-id')
   }
 
@@ -212,18 +204,6 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
     triggerRef(blocks)
-  }
-
-  function finalizeThinkingBlocks(msgId: string) {
-    let changed = false
-    for (let i = 0; i < blocks.value.length; i++) {
-      const b = blocks.value[i]
-      if (b.msgId === msgId && b.type === 'ThinkingChain' && b.meta?.status === 'streaming') {
-        blocks.value[i] = { ...b, meta: { ...b.meta, status: 'done' as const } } as Block
-        changed = true
-      }
-    }
-    if (changed) triggerRef(blocks)
   }
 
   function cleanupTransientTextBlocks(msgId: string) {
@@ -291,7 +271,7 @@ export const useSessionStore = defineStore('session', () => {
     focusInfoId, centerInfoId, followInfoId,
     setSplitRatio, loadChatList, ensureSession, loadChatHistory, loadDag,
     deleteSession, deleteSessions, clearMessages, addMessage, updateMessage, addBlock,
-    updateBlock, appendBlockContent, finalizeBlocks, finalizeThinkingBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
+    updateBlock, appendBlockContent, finalizeBlocks, cleanupTransientTextBlocks, toggleMsgSelection,
     toggleCitingMode, clearSelection, togglePin, triggerFocus, triggerCenter, setFollowInfoId,
     setStreaming, setCancelController, setCurrentRunId, cancelCurrentTask,
     currentRunId,

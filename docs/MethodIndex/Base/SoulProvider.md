@@ -8,6 +8,8 @@
 
 | 方法 | 签名 | 返回 | 说明 |
 |------|------|------|------|
+| `setEmbedFn` | `fn: (text: string, context?: any) => Promise<number[]>` | `void` | — |
+| `setSemanticsFn` | `fn: SemanticsTaskFn` | `void` | — |
 | `initialize` | `` | `Promise<void>` | — |
 | `addSoul` | `input: AddSoulInput, output: AddSoulOutput, context: SoulContext, metrics?: Metrics, re...` | `Promise<boolean>` | — |
 | `delSoul` | `input: DelSoulInput, output: DelSoulOutput, context: SoulContext, metrics?: Metrics, re...` | `Promise<boolean>` | — |

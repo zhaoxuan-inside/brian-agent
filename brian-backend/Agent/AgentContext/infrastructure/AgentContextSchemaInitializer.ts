@@ -17,6 +17,9 @@ export class AgentContextSchemaInitializer {
         enable_snapshot_persistence INTEGER NOT NULL DEFAULT ${DEFAULT_ENABLE_SNAPSHOT_PERSISTENCE}
       )`,
     );
+    try {
+      this.relationDb.executeRaw(`ALTER TABLE ${AGENT_CONTEXT_CONFIG_TABLE} ADD COLUMN max_context_items INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_CONTEXT_ITEMS}`);
+    } catch { /* 列已存在 */ }
     this.relationDb.executeRaw(
       `CREATE INDEX IF NOT EXISTS idx_${AGENT_CONTEXT_CONFIG_TABLE}_created ON ${AGENT_CONTEXT_CONFIG_TABLE}(created)`,
     );

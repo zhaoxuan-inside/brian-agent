@@ -1,25 +1,23 @@
-import { Metrics } from '../../shared/base/Metrics';
-import { Report } from '../../shared/base/Report';
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import type { Logger } from '../../shared/aop/AopProxy';
 import { StreamSchemaInitializer } from '../infrastructure/StreamSchemaInitializer';
 import { StreamService } from '../application/StreamService';
 import {
   StreamContext,
   RegisterStreamInput,
   RegisterStreamOutput,
-  PushStreamInput,
-  PushStreamOutput,
   CloseStreamInput,
   CloseStreamOutput,
   GetStreamStatsOutput,
   ConfigStreamInput,
   ConfigStreamOutput,
-  SSEMessageType,
-  PushEventToEndpointInput, PushEventToEndpointOutput,
-  ReplayEndpointEventsInput, ReplayEndpointEventsOutput,
 } from '../domain/types';
-import type { Logger } from '../../shared/aop/AopProxy';
+import type { TaskEvent } from '@brian-agent/shared';
 
+/**
+ * StreamAccess：SSE 传输门面（ADR-013 瘦身后）。
+ * 只负责 连接注册/心跳/写帧/关闭 —— 落库与状态归 Observability 总线。
+ */
 export class StreamAccess {
   private readonly service: StreamService;
 
@@ -31,26 +29,6 @@ export class StreamAccess {
   async registerStream(input: RegisterStreamInput, output: RegisterStreamOutput, _context: StreamContext, _metrics?: Metrics, _report?: Report,
   ): Promise<boolean> {
     return this.service.registerStream(input, output);
-  }
-
-  
-  async publishEvent(i: PushEventToEndpointInput, o: PushEventToEndpointOutput, _c: StreamContext, _metrics?: Metrics, _report?: Report,
-  ): Promise<boolean> {
-    return this.service.publishEvent(i, o);
-  }
-
-  
-  async replayEvents(i: ReplayEndpointEventsInput, o: ReplayEndpointEventsOutput, _c: StreamContext, _metrics?: Metrics, _report?: Report,
-  ): Promise<boolean> {
-    return this.service.replayEvents(i, o);
-  }
-
-  async pushStream<T = unknown>(
-    input: PushStreamInput<T>,
-    _context: StreamContext,
-    output: PushStreamOutput,
-  ): Promise<boolean> {
-    return this.service.pushStream(input, output);
   }
 
   async closeStream(input: CloseStreamInput, output: CloseStreamOutput, _context: StreamContext, _metrics?: Metrics, _report?: Report,
@@ -70,77 +48,11 @@ export class StreamAccess {
     return this.service.configStream(input, output);
   }
 
-  
-  
-  
-
-  
-
-  async pushText(
-    sessionId: string,
-    event: string,
-    text: string,
-    meta?: {
-      run_id?: string;
-      work_id?: string;
-      agent_id?: string;
-      agent_name?: string;
-      agent_type?: string;
-      node_id?: string;
-      task_id?: string;
-      chunk_delay_ms?: number;
-    },
-  ): Promise<boolean> {
-    const input = Object.assign(new PushStreamInput<string>(), {
-      session_id: sessionId,
-      event,
-      msg_type: 'TEXT' as SSEMessageType,
-      data: text,
-      run_id: meta?.run_id,
-      work_id: meta?.work_id,
-      agent_id: meta?.agent_id,
-      agent_name: meta?.agent_name,
-      agent_type: meta?.agent_type,
-      node_id: meta?.node_id,
-      task_id: meta?.task_id,
-      enable_chunking: true,
-      chunk_delay_ms: meta?.chunk_delay_ms,
-    });
-    const output = new PushStreamOutput();
-    return this.service.pushStream(input, output);
-  }
-
-  
-
-  async pushEvent<T = unknown>(
-    sessionId: string,
-    event: string,
-    msgType: SSEMessageType,
-    data: T,
-    meta?: {
-      run_id?: string;
-      work_id?: string;
-      agent_id?: string;
-      agent_name?: string;
-      agent_type?: string;
-      node_id?: string;
-      task_id?: string;
-    },
-  ): Promise<boolean> {
-    const input = Object.assign(new PushStreamInput<T>(), {
-      session_id: sessionId,
-      event,
-      msg_type: msgType,
-      data,
-      run_id: meta?.run_id,
-      work_id: meta?.work_id,
-      agent_id: meta?.agent_id,
-      agent_name: meta?.agent_name,
-      agent_type: meta?.agent_type,
-      node_id: meta?.node_id,
-      task_id: meta?.task_id,
-    });
-    const output = new PushStreamOutput();
-    return this.service.pushStream(input, output);
+  /** 观测总线传输通道：endpoint → 会话定位后直写 TaskEvent 帧（不落库） */
+  pushFrame(sessionId: string, endpointId: string, ev: TaskEvent): boolean {
+    return this.service.pushEventFrame(sessionId, endpointId, ev);
   }
 }
+
+import type { Metrics } from '../../shared/base/Metrics';
+import type { Report } from '../../shared/base/Report';

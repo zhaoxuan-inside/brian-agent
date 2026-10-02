@@ -68,6 +68,8 @@ export class MatchSoulOutput extends Output {
   soul: Record<string, unknown> | null = null;
   
   from_cache = false;
+  
+  detail = '';
 }
 
 export class OptSoulInput extends Input {
@@ -163,10 +165,9 @@ export class SoSoulContentOutput extends Output {
   content = '';
 }
 
-export const SOUL_CORE_CONFIG_TABLE = 'soul_core_config';
+export const SOUL_CORE_CONFIG_TABLE = 'soul_core_config_record';
 
-export const AGENT_SOUL_TABLE = 'agent_soul';
+export const AGENT_SOUL_TABLE = 'agent_soul_org';
 
-export const SOUL_OPT_RULE_TABLE = 'soul_opt_rule';
+export const SOUL_OPT_RULE_TABLE = 'soul_opt_rule_record';
 
-export const SOUL_CORE_USAGE_TABLE = 'soul_core_usage';
