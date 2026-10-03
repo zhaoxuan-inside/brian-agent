@@ -38,14 +38,13 @@ const OUT_PATH = argValue('--out', path.join(ROOT, 'dist-pack', 'system-seed.jso
 /** 本机地址（个人环境专属，不入目录） */
 const LOCAL_HOST_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i;
 
-/** 敏感字段清洗表：无论行级规则如何，命中的字段一律置空 */
-const SANITIZE_FIELDS = {
-  llm_provider: ['api_key'],
-};
+/** 敏感字段清洗表：无论行级规则如何，命中的字段一律置空
+ *  注：API Key 存于 llm_provider_key_record（个人数据），不在 SYSTEM_TABLES 内，天然不导出 */
+const SANITIZE_FIELDS = {};
 
 /** 行级过滤规则：返回 false 剔除该行 */
 const ROW_FILTERS = {
-  llm_provider: (row) => !LOCAL_HOST_RE.test(String(row.llm_provider_url || '')),
+  llm_provider_record: (row) => !LOCAL_HOST_RE.test(String(row.llm_provider_url || '')),
 };
 
 // ---------------------------------------------------------------------------
@@ -61,8 +60,9 @@ function main() {
 
   const db = new Database(DB_PATH, { readonly: true });
 
-  // 分类表清单：维护在此处即可扩展
-  const SYSTEM_TABLES = ['llm_provider', 'mcp_provider'];
+  // 分类表清单：维护在此处即可扩展（ADR-012 命名：*_record）
+  // 注意：llm_provider_key_record（API Key）属个人数据，绝不加入此清单
+  const SYSTEM_TABLES = ['llm_provider_record', 'mcp_provider_record'];
 
   const tables = [];
   for (const table of SYSTEM_TABLES) {

@@ -25,10 +25,32 @@ function getSea(): { isSea(): boolean; getRawAsset(key: string): ArrayBuffer } |
 }
 
 /**
+ * 捆绑的技能沙箱运行时：把 <runtimeRoot>/{bash,python} 注入 BRIAN_SANDBOX_*。
+ * SandboxRuntime.ts 将这两个变量视为最高优先级候选，因此打包版内 bash/Python
+ * 生来即用，无需宿主机安装 Git for Windows / Python。
+ * 用户显式设置的 BRIAN_SANDBOX_* 永远优先（此处仅在变量未设置时注入）。
+ */
+function injectSandboxRuntimeEnv(runtimeRoot: string): void {
+  const isWin = process.platform === 'win32';
+  const bashExe = isWin
+    ? path.join(runtimeRoot, 'bash', 'usr', 'bin', 'bash.exe')
+    : path.join(runtimeRoot, 'bash', 'bin', 'bash');
+  const pythonExe = isWin
+    ? path.join(runtimeRoot, 'python', 'python.exe')
+    : path.join(runtimeRoot, 'python', 'bin', 'python3');
+  if (!process.env.BRIAN_SANDBOX_BASH && fs.existsSync(bashExe)) {
+    process.env.BRIAN_SANDBOX_BASH = bashExe;
+  }
+  if (!process.env.BRIAN_SANDBOX_PYTHON && fs.existsSync(pythonExe)) {
+    process.env.BRIAN_SANDBOX_PYTHON = pythonExe;
+  }
+}
+
+/**
  * 便携目录包模式：定位包根并配置运行时资源。
  * 包根 = server/brian-server.cjs 的上上级目录；布局：
  *   <root>/{brian.sh|brian.cmd, bin/node, server/{brian-server.cjs, native/<plat>-<arch>/*.node},
- *           web/**, chrome/chrome.zip, data/(首跑生成)}
+ *           web/**, chrome/chrome.zip, runtime/{bash,python}, data/(首跑生成)}
  */
 function setupPortable(): boolean {
   if (process.env.BRIAN_PORTABLE !== '1') return false;
@@ -42,6 +64,7 @@ function setupPortable(): boolean {
   if (!process.env.BRIAN_NATIVE_DIR) {
     process.env.BRIAN_NATIVE_DIR = path.join(root, 'server', 'native');
   }
+  injectSandboxRuntimeEnv(path.join(root, 'runtime'));
   // 系统数据种子（通用目录数据：模型提供商列表 / MCP 提供商列表）
   const seedPath = path.join(root, 'server', 'seed', 'system-seed.json');
   if (fs.existsSync(seedPath)) {
@@ -70,9 +93,11 @@ function setupPortable(): boolean {
 function setupSea(): void {
   const sea = getSea();
   if (!sea || typeof sea.isSea !== 'function' || !sea.isSea()) return;
+  const exeDir = path.dirname(process.execPath);
   if (!process.env.BRIAN_DATA_DIR) {
-    process.env.BRIAN_DATA_DIR = path.join(path.dirname(process.execPath), 'data');
+    process.env.BRIAN_DATA_DIR = path.join(exeDir, 'data');
   }
+  injectSandboxRuntimeEnv(path.join(exeDir, 'runtime'));
   try {
     const buf = sea.getRawAsset('frontend.json');
     const files = JSON.parse(Buffer.from(buf).toString('utf8')) as Record<string, string>;

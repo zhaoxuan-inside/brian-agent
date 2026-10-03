@@ -33,6 +33,7 @@ export class AgentLibrarySchemaInitializer {
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN prompt_template_id TEXT NOT NULL DEFAULT ''`);
     } catch {  }
+    try { this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN brief TEXT DEFAULT ''`); } catch {  }
 
     try {
       this.relationDb.executeRaw(`ALTER TABLE ${AGENT_TABLE} ADD COLUMN created_by TEXT NOT NULL DEFAULT 'user'`);
@@ -136,6 +137,26 @@ export class AgentLibrarySchemaInitializer {
       `);
       this.relationDb.executeRaw(`DROP TABLE IF EXISTS "agent_llm"`);
     } catch {  }
+
+    // 存量库 llm_id 可能是 NOT NULL 无 DEFAULT(旧版结构):INSERT 省略该列时约束失败。
+    // SQLite 无法原地修改列定义——备份原值后整表重建,再以 DEFAULT '' 补回。
+    try {
+      const col = (this.relationDb.queryRaw<{ name: string; notnull: number; dflt_value: string | null }>(`PRAGMA table_info("${AGENT_TABLE}")`, []) ?? [])
+        .find((c) => c.name === 'llm_id');
+      if (col && col.notnull === 1 && col.dflt_value === null) {
+        this.relationDb.executeRaw(`CREATE TABLE "${AGENT_TABLE}__llm_bak" AS SELECT "id", "llm_id" FROM "${AGENT_TABLE}"`);
+        if (this.relationDb.rebuildTableWithoutColumn(AGENT_TABLE, 'llm_id')) {
+          this.relationDb.executeRaw(`ALTER TABLE "${AGENT_TABLE}" ADD COLUMN "llm_id" TEXT NOT NULL DEFAULT ''`);
+          this.relationDb.executeRaw(`
+            UPDATE "${AGENT_TABLE}" SET "llm_id" = (
+              SELECT "llm_id" FROM "${AGENT_TABLE}__llm_bak" WHERE "${AGENT_TABLE}__llm_bak"."id" = "${AGENT_TABLE}"."id"
+            )
+            WHERE EXISTS (SELECT 1 FROM "${AGENT_TABLE}__llm_bak" WHERE "${AGENT_TABLE}__llm_bak"."id" = "${AGENT_TABLE}"."id")
+          `);
+        }
+        this.relationDb.executeRaw(`DROP TABLE IF EXISTS "${AGENT_TABLE}__llm_bak"`);
+      }
+    } catch { /* 已合规或重建失败(保留旧表,写入方以显式值兜底) */ }
   }
 
   private async insertDefaultConfig(): Promise<void> {

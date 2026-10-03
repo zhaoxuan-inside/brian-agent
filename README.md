@@ -123,6 +123,7 @@ sudo dpkg -i dist-pack/brian-agent-linux-x64.deb                       # Linux .
 |------|------|
 | 操作系统 | Linux x64 · macOS（Intel / Apple Silicon）· Windows x64 |
 | Node.js | 仅 npm 安装方式需要 18+；其余方式无需 Node（运行时已内置） |
+| Git / Python | 无需安装（技能沙箱的 bash 与 Python 运行时已内置；`--skip-runtime` 打包的除外） |
 | 磁盘 | 1GB 以上（内置 Chrome for Testing 时更大） |
 
 ### 常驻服务与开发模式

@@ -900,6 +900,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
           error_code: fetchOutput.error_code,
         });
 
+      } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/api-key$/.test(pathname)) {
+        // 按需取回已保存的 API Key（编辑弹窗「查看密钥」用；列表接口永不返回明文）
+        const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
+        const { LLM_PROVIDER_KEY_TABLE } = await import('./Base/LLMProvider/domain/types');
+        const keyRow = await ctx.relationDb.selectOne(LLM_PROVIDER_KEY_TABLE, [{ field: 'llm_provider_id', operator: 'EQ' as any, value: id }]) as Record<string, unknown> | null;
+        sendJson(res, 200, { api_key: String(keyRow?.api_key ?? '') });
+
       } else if (method === 'GET' && /\/api\/config\/provider\/[^/]+\/models$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
         const rows = ctx.relationDb.queryRaw<{ llm_title: string; llm_brief: string | null; features: string | null; llm_param: string | null }>(
@@ -958,11 +965,13 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
 
       } else if (method === 'POST' && /\/api\/config\/provider\/[^/]+\/chat-test$/.test(pathname)) {
         const id = pathname.split('/').filter(Boolean).slice(-2, -1)[0] || '';
-        const row = await ctx.relationDb.selectOne('llm_provider', [{ field: 'id', operator: 'EQ' as any, value: id }]) as Record<string, unknown> | null;
+        const { LLM_PROVIDER_TABLE, LLM_PROVIDER_KEY_TABLE } = await import('./Base/LLMProvider/domain/types');
+        const row = await ctx.relationDb.selectOne(LLM_PROVIDER_TABLE, [{ field: 'id', operator: 'EQ' as any, value: id }]) as Record<string, unknown> | null;
         if (!row) { sendJson(res, 404, { error: 'Provider not found' }); return; }
         const baseUrl = String(row.llm_provider_url || '');
         const chatPath = String(row.chat_path || 'chat/completions');
-        const apiKey = String(row.api_key || '');
+        const keyRow = await ctx.relationDb.selectOne(LLM_PROVIDER_KEY_TABLE, [{ field: 'llm_provider_id', operator: 'EQ' as any, value: id }]) as Record<string, unknown> | null;
+        const apiKey = String(keyRow?.api_key || '');
         const model = (body as Record<string, unknown>).model as string || 'gpt-3.5-turbo';
         const url = baseUrl.replace(/\/+$/, '') + '/' + chatPath.replace(/^\/+/, '');
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -3532,11 +3541,11 @@ function createServer(ctx: Awaited<ReturnType<typeof buildContext>>): http.Serve
         }
 
         try {
-          const { VisualizedLLMInput, VisualizedLLMOutput } = await import('./Base/LLMProvider/domain/types');
+          const { VisualizedLLMInput, VisualizedLLMOutput, LLM_PROVIDER_TABLE } = await import('./Base/LLMProvider/domain/types');
           const o = new VisualizedLLMOutput();
           await ctx.llmAccess.visualizedLLM(Object.assign(new VisualizedLLMInput(), { scope: 'health' }), o, new LLMContext());
           const d = o.data || {};
-          const enabledProviderCount = await ctx.relationDb.count('llm_provider', [
+          const enabledProviderCount = await ctx.relationDb.count(LLM_PROVIDER_TABLE, [
             { field: 'enable', operator: Operator.EQ, value: 1 },
           ]);
           components.push({

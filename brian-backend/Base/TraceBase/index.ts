@@ -14,6 +14,7 @@ export {
   MCP_USAGE_ORG_TABLE,
   PROMPT_USAGE_ORG_TABLE,
   LLM_USAGE_ORG_TABLE,
+  LLM_PROVIDER_USAGE_ORG_TABLE,
   USAGE_ENTITY_TABLES,
 } from './domain/types';
 export type {

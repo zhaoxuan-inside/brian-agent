@@ -11,6 +11,7 @@ Brian-Agent 自动化打包脚本。
     python3 packaging/pack.py                          # 全部 4 目标 + .deb
     python3 packaging/pack.py --targets linux-x64      # 指定目标（逗号分隔）
     python3 packaging/pack.py --skip-chromium          # 不内置 Chromium（-150MB/目标）
+    python3 packaging/pack.py --skip-runtime           # 不内置 bash/Python 沙箱运行时
     python3 packaging/pack.py --skip-frontend-build    # 复用已有 brian-frontend/dist
     python3 packaging/pack.py --skip-deb               # 不产 .deb
     python3 packaging/pack.py --no-install             # 跳过 npm install 检查
@@ -131,7 +132,7 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def verify_artifacts(targets: list, include_deb: bool) -> list:
+def verify_artifacts(targets: list, include_deb: bool, skip_runtime: bool = False) -> list:
     info("校验产物...")
     artifacts = []
     for target in targets:
@@ -156,6 +157,10 @@ def verify_artifacts(targets: list, include_deb: bool) -> list:
             "brian-agent-linux-x64/server/native/linux-x64/better_sqlite3.node",
             "brian-agent-linux-x64/web/index.html",
         ]
+        if not skip_runtime:
+            required += [
+                "brian-agent-linux-x64/runtime/python/bin/python3",
+            ]
         listing = subprocess.run(
             ["tar", "-tzf", str(linux_tgz)], capture_output=True, text=True, check=True
         ).stdout.splitlines()
@@ -163,7 +168,29 @@ def verify_artifacts(targets: list, include_deb: bool) -> list:
         missing = [m for m in required if m not in listed]
         if missing:
             die(f"linux 包缺少关键文件: {missing}")
-        ok("linux 包结构校验通过（node / bundle / 原生件 / 前端）")
+        ok("linux 包结构校验通过（node / bundle / 原生件 / 前端 / 沙箱运行时）")
+
+    # win32 包抽查：捆绑 bash 与 Python 解释器
+    win_zip = DIST / "brian-agent-win32-x64.zip"
+    if win_zip.exists() and "win32-x64" in targets:
+        try:
+            import zipfile
+            with zipfile.ZipFile(win_zip) as zf:
+                names = set(zf.namelist())
+        except zipfile.BadZipFile as e:
+            die(f"win32 包损坏: {e}")
+        required = [
+            "brian-agent-win32-x64/bin/node.exe",
+            "brian-agent-win32-x64/server/brian-server.cjs",
+            "brian-agent-win32-x64/runtime/bash/usr/bin/bash.exe",
+            "brian-agent-win32-x64/runtime/python/python.exe",
+        ]
+        if skip_runtime:
+            required = [m for m in required if not m.startswith("brian-agent-win32-x64/runtime/")]
+        missing = [m for m in required if m not in names]
+        if missing:
+            die(f"win32 包缺少关键文件: {missing}")
+        ok("win32 包结构校验通过（node / bundle / bash / python）")
     return artifacts
 
 
@@ -206,6 +233,8 @@ def main() -> None:
                         help=f"目标平台，逗号分隔（默认全部: {','.join(ALL_TARGETS)}）")
     parser.add_argument("--skip-chromium", action="store_true",
                         help="不内置 Chromium（每个目标体积约 -150MB，CDT 回退系统 Chrome）")
+    parser.add_argument("--skip-runtime", action="store_true",
+                        help="不内置 bash/Python 沙箱运行时（沙箱回退宿主机解释器）")
     parser.add_argument("--skip-frontend-build", action="store_true",
                         help="复用已有 brian-frontend/dist，不重新构建前端")
     parser.add_argument("--skip-deb", action="store_true", help="不构建 .deb")
@@ -244,6 +273,8 @@ def main() -> None:
     pack_cmd = ["node", "packaging/pack.mjs", "--skip-frontend-build"]
     if args.skip_chromium:
         pack_cmd.append("--skip-chromium")
+    if args.skip_runtime:
+        pack_cmd.append("--skip-runtime")
     if args.no_system_data:
         pack_cmd.append("--no-system-data")
     if args.no_npm:
@@ -259,7 +290,7 @@ def main() -> None:
     #    pack.mjs 仅在"全目标且未指定 --only"时产 .deb，此时才纳入校验，
     #    避免把历史残留的旧 deb 误当作本次产物
     include_deb = set(targets) == set(ALL_TARGETS) and not args.skip_deb
-    artifacts = verify_artifacts(targets, include_deb)
+    artifacts = verify_artifacts(targets, include_deb, skip_runtime=args.skip_runtime)
     if not include_deb and (DIST / "brian-agent_1.0.0_amd64.deb").exists():
         info("本次未构建 .deb（历史产物不纳入校验和）")
     sums = write_checksums(artifacts)

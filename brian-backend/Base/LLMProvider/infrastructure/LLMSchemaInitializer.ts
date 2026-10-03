@@ -1,12 +1,18 @@
 import type { RelationDBAccess } from '../../RelationDBProvider/access/RelationDBAccess';
+import { IdGenerator } from '../../ToolProvider/IdGenerator';
 import {
   LLM_PROVIDER_TABLE,
+  LLM_PROVIDER_KEY_TABLE,
   LLM_CACHE_TABLE,
   LLM_AVAILABLE_TABLE,
   LLM_CALL_RECORD_TABLE,
   LLM_CALL_DETAIL_TABLE,
   LLM_CONFIG_TABLE,
 } from '../domain/types';
+import { PROVIDER_CATALOG, PROVIDER_CATALOG_VERSION, toProviderRecord } from '../domain/providerCatalog';
+
+/** 内置提供商目录的版本标记键（llm_config_record） */
+const PROVIDER_CATALOG_VERSION_KEY = 'provider_catalog_version';
 
 type TolerantDdl = { sql: string; ignoreReason: string };
 
@@ -39,7 +45,17 @@ export class LLMSchemaInitializer {
     `CREATE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_TABLE}_created" ON "${LLM_PROVIDER_TABLE}" ("created")`,
     `CREATE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_TABLE}_updated" ON "${LLM_PROVIDER_TABLE}" ("updated")`,
     `CREATE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_TABLE}_llm_provider_title" ON "${LLM_PROVIDER_TABLE}" ("llm_provider_title")`,
-    { sql: `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "api_key" TEXT`, ignoreReason: 'column already exists' },
+
+    `
+      CREATE TABLE IF NOT EXISTS "${LLM_PROVIDER_KEY_TABLE}" (
+        "id"              TEXT    NOT NULL PRIMARY KEY,
+        "created"         INTEGER NOT NULL,
+        "updated"         INTEGER NOT NULL,
+        "llm_provider_id" TEXT    NOT NULL,
+        "api_key"         TEXT    NOT NULL DEFAULT ''
+      )
+    `,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "idx_${LLM_PROVIDER_KEY_TABLE}_provider" ON "${LLM_PROVIDER_KEY_TABLE}" ("llm_provider_id")`,
 
     { sql: `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "quota_tokens_per_day" INTEGER DEFAULT 0`, ignoreReason: 'column already exists' },
     { sql: `ALTER TABLE "${LLM_PROVIDER_TABLE}" ADD COLUMN "quota_tokens_per_week" INTEGER DEFAULT 0`, ignoreReason: 'column already exists' },
@@ -166,5 +182,60 @@ export class LLMSchemaInitializer {
         this.relationDb.executeRaw(ddl.sql);
       } catch {  }
     }
+    this.migrateProviderApiKeyColumn();
+    this.importProviderCatalog();
+  }
+
+  /**
+   * API Key 与提供商配置拆分：存量库 llm_provider_record.api_key → llm_provider_key_record，
+   * 迁移后删除原列（幂等：列不存在即跳过）。
+   */
+  private migrateProviderApiKeyColumn(): void {
+    try {
+      const cols = this.relationDb.queryRaw<{ name: string }>(`PRAGMA table_info("${LLM_PROVIDER_TABLE}")`, []);
+      if (!(cols ?? []).some((c) => c.name === 'api_key')) return;
+      const rows = this.relationDb.queryRaw<{ id: string; api_key: string | null }>(
+        `SELECT "id", "api_key" FROM "${LLM_PROVIDER_TABLE}" WHERE COALESCE("api_key", '') != ''`, [],
+      );
+      const now = IdGenerator.now();
+      for (const row of rows ?? []) {
+        try {
+          this.relationDb.insert(LLM_PROVIDER_KEY_TABLE, [
+            { field: 'id', value: IdGenerator.generate() },
+            { field: 'created', value: now },
+            { field: 'updated', value: now },
+            { field: 'llm_provider_id', value: row.id },
+            { field: 'api_key', value: String(row.api_key ?? '') },
+          ]);
+        } catch { /* 唯一冲突或写入失败：key 表已有该提供商记录，跳过 */ }
+      }
+      try {
+        this.relationDb.executeRaw(`ALTER TABLE "${LLM_PROVIDER_TABLE}" DROP COLUMN "api_key"`);
+      } catch { /* DROP 失败（旧 SQLite 等）：保留列但 key 以独立表为准 */ }
+    } catch { /* 表未就绪等异常：跳过迁移，下次启动重试 */ }
+  }
+
+  /** 内置提供商目录预置：版本变化时导入标题不存在的目录行（enable=0），用户删除的行同版本内不复活 */
+  private importProviderCatalog(): void {
+    try {
+      const flagRows = this.relationDb.queryRaw<{ config_value: string }>(
+        `SELECT "config_value" FROM "${LLM_CONFIG_TABLE}" WHERE "config_key" = ?`, [PROVIDER_CATALOG_VERSION_KEY],
+      );
+      if ((flagRows ?? []).length > 0 && String(flagRows![0].config_value) === PROVIDER_CATALOG_VERSION) return;
+
+      const now = IdGenerator.now();
+      for (const entry of PROVIDER_CATALOG) {
+        const existing = this.relationDb.queryRaw<{ id: string }>(
+          `SELECT "id" FROM "${LLM_PROVIDER_TABLE}" WHERE "llm_provider_title" = ? LIMIT 1`, [entry.llm_provider_title],
+        );
+        if ((existing ?? []).length > 0) continue;
+        this.relationDb.insert(LLM_PROVIDER_TABLE, Object.entries(toProviderRecord(entry, IdGenerator.generate(), now))
+          .map(([field, value]) => ({ field, value })));
+      }
+      this.relationDb.executeRaw(
+        `INSERT OR REPLACE INTO "${LLM_CONFIG_TABLE}" ("config_key", "config_value", "value_type", "description", "updated")
+         VALUES ('${PROVIDER_CATALOG_VERSION_KEY}', '${PROVIDER_CATALOG_VERSION}', 'string', '内置提供商目录导入版本', ${now})`,
+      );
+    } catch { /* 目录导入失败不阻塞启动 */ }
   }
 }

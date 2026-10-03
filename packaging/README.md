@@ -1,8 +1,8 @@
 # Brian-Agent 打包与分发
 
 产出自包含、零依赖的发行包：内置 Node.js 运行时、平台原生模块、前端静态
-资源与 Chrome for Testing（浏览器自动化用），解压即可运行，无需在目标
-机器安装任何依赖。
+资源、Chrome for Testing（浏览器自动化用）与技能沙箱运行时（bash + Python），
+解压即可运行，无需在目标机器安装任何依赖。
 
 ## 两种打包形态
 
@@ -22,7 +22,8 @@
 - **Node 22（ABI 127）**：仓库内置的预编译原生模块为 `node127`，其他版本会拒绝构建
 - Python 3.8+（仅 pack.py 需要）
 - 网络可访问 `nodejs.org`、`registry.npmjs.org`、`storage.googleapis.com`
-  （Chromium；`--skip-chromium` 可跳过）
+  （Chromium；`--skip-chromium` 可跳过）、`github.com`
+  （MinGit 与 python-build-standalone 沙箱运行时；`--skip-runtime` 可跳过）
 - Linux 构建机需要 `tar`（macOS 同样有）；`.deb` 需要本机有 `dpkg-deb`
 
 ### 用法
@@ -68,6 +69,9 @@ brian-agent-<plat>-<arch>/
 │   └── native/<plat>-<arch>/   # better_sqlite3 / isolated_vm / jieba / lancedb
 ├── web/                        # 前端 dist（由后端同端口服务，SPA fallback）
 ├── chrome/chrome.zip           # Chrome for Testing（首次运行解压到系统临时目录）
+├── runtime/                    # 技能沙箱运行时（entry.ts 注入 BRIAN_SANDBOX_*）
+│   ├── bash/                   # PortableGit 的 usr/ + etc/（仅 win32 包；bash + coreutils）
+│   └── python/                 # python-build-standalone install 目录（全平台）
 ├── systemd/brian-agent.service # systemd 单元（可选安装）
 └── data/                       # 运行数据（首跑生成；删除即重置）
 ```
@@ -96,6 +100,17 @@ Windows：`brian.cmd start|stop|status|serve|open`。
 3. **Chromium**（`setup-chromium.ts`）：便携包从 `<包根>/chrome/chrome.zip`
    解压到系统临时目录（带缓存）并设置 `BRIAN_CHROME_PATH`；未内置时 CDT
    回退系统 Chrome。
+4. **技能沙箱运行时**（`entry.ts injectSandboxRuntimeEnv`）：`runtime/`
+   内存在捆绑 bash/Python 时注入 `BRIAN_SANDBOX_BASH` / `BRIAN_SANDBOX_PYTHON`
+   （用户已显式设置时不覆盖）。优先级：用户 env > 捆绑运行时 > 宿主机发现。
+   `--skip-runtime` 构建的包不含 `runtime/`，自动回退宿主机解释器。
+
+### 沙箱运行时版本与许可
+
+| 运行时 | 来源 | 钉定版本（pack.mjs 常量/环境变量） | 许可 |
+|--------|------|----------------------------------|------|
+| PortableGit（Windows bash + coreutils） | `github.com/git-for-windows/git/releases`，资产 `PortableGit-<ver>-64-bit.7z.exe`（自解压 7z；POSIX 构建机需 7z） | `MINGIT_VERSION=2.47.1`、`MINGIT_BUILD=1` | GPL-2.0（未修改官方制品再分发，源码同上游公开） |
+| Python 3（全平台） | `github.com/astral-sh/python-build-standalone/releases`，资产 `cpython-<ver>+<tag>-<triple>-install_only.tar.gz` | `PYTHON_STANDALONE_CPYTHON=3.12.7`、`PYTHON_STANDALONE_TAG=20241016` | PSF / MIT（python-build-standalone 打包） |
 
 ## 全局安装器与 npm 分发
 

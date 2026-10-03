@@ -788,6 +788,7 @@ export class SkillCoreService {
       'scripts: only when executable logic helps.',
       'For pure computation use JavaScript ("main.js", sandboxed, no IO, entry function executed against params).',
       'For system-level tasks (hardware / disk / memory / network / environment inspection) use Python ("main.py", stdlib only) or Bash ("main.sh"): read the local machine and print exactly ONE JSON object to stdout (keep stderr silent).',
+      'Bash scripts MUST be POSIX sh compatible (use /bin/sh-compatible syntax; NO bash-only extensions like arrays, [[ ]], or ${var^^}) so they run on every platform.',
       'references: optional supporting documents. Keep each file under 20000 chars, at most 3 files per directory.',
       '',
       `agent_id: ${agentId}`,

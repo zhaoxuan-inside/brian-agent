@@ -550,6 +550,9 @@ export class SoModelTokenStatsOutput extends Output {
 
 export const LLM_PROVIDER_TABLE = 'llm_provider_record';
 
+/** 提供商 API Key 独立存储（与提供商配置拆分；1 提供商 1 key，UNIQUE 约束） */
+export const LLM_PROVIDER_KEY_TABLE = 'llm_provider_key_record';
+
 export const LLM_CACHE_TABLE = 'llm_cache_record';
 
 export const LLM_AVAILABLE_TABLE = 'llm_available_record';

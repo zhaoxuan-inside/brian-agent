@@ -1431,7 +1431,8 @@ interface BackendProvider {
   llm_provider_title?: string
   llm_provider_url?: string
   llm_provider_brief?: string
-  api_key?: string
+  /** API Key 不回传明文：仅标记是否已配置 */
+  has_key?: boolean
   enable?: boolean | number
   quota_tokens_per_day?: number
   quota_tokens_per_week?: number
@@ -1454,6 +1455,8 @@ const providerForm = ref({ name: '', url: '', apiKey: '', modelsPath: '', chatPa
   quotaCallsPerDay: 0, quotaCallsPerWeek: 0, quotaCallsPerMonth: 0,
 })
 const providerSubmitting = ref(false)
+/** API Key 输入脏标记：未动过不携带该字段提交（后端语义：未传=不变，''=清除） */
+const apiKeyDirty = ref(false)
 const showApiKey = ref(false)
 const fetchingModels = ref(false)
 // 获取模型列表的请求序号：弹窗切换时自增，使进行中的旧请求结果失效，避免跨提供商串状态
@@ -1553,7 +1556,7 @@ async function loadProviders() {
       llm_provider_title: (r.llm_provider_title || r.providerName || '') as string,
       llm_provider_url: (r.llm_provider_url || r.baseURL || '') as string,
       llm_provider_brief: r.llm_provider_brief as string | undefined,
-      api_key: r.api_key as string | undefined,
+      has_key: Boolean(r.has_key),
       enable: (r.enable ?? r.enabled) as boolean | number | undefined,
       _displayName: (r.llm_provider_title || r.providerName || r.id || '') as string,
       _displayUrl: (r.llm_provider_url || r.baseURL || '') as string,
@@ -1573,16 +1576,32 @@ async function loadProviders() {
   }
 }
 
+/** 眼睛按钮：默认隐藏；输入为空且已保存过密钥时，先取回密钥再显示（实现「能看到密钥」） */
+async function handleApiKeyEyeClick() {
+  if (!showApiKey.value && editingProvider.value?.has_key && providerForm.value.apiKey === '') {
+    try {
+      const r = await fetchApi<{ api_key: string }>(`/config/provider/${editingProvider.value.id}/api-key`)
+      if (r.api_key) {
+        providerForm.value.apiKey = r.api_key
+        apiKeyDirty.value = true
+      }
+    } catch { /* 取回失败：仅切换显示状态 */ }
+  }
+  showApiKey.value = !showApiKey.value
+}
+
 function openProviderModal(provider?: BackendProvider) {
   // 切换弹窗时使进行中的旧请求失效，并重置加载状态，避免跨提供商串状态
   fetchModelSeq++
   fetchingModels.value = false
+  apiKeyDirty.value = false
   if (provider) {
     editingProvider.value = provider
+    // API Key 不回传明文：留空=保持不变（脏标记控制是否提交该字段）
     providerForm.value = {
       name: provider.llm_provider_title || provider._displayName || '',
       url: provider.llm_provider_url || provider._displayUrl || '',
-      apiKey: (provider.api_key as string) || '',
+      apiKey: '',
       modelsPath: provider.models_path || '',
       chatPath: provider.chat_path || '',
       quotaTokensPerDay: provider.quota_tokens_per_day || 0,
@@ -1615,6 +1634,7 @@ function closeProviderModal() {
   providerModalVisible.value = false
   editingProvider.value = null
   showApiKey.value = false
+  apiKeyDirty.value = false
   fetchedModels.value = []
   cachedModels.value = []
   modelSearchQuery.value = ''
@@ -1624,11 +1644,13 @@ function closeProviderModal() {
 async function submitProviderForm() {
   providerSubmitting.value = true
   try {
+    // API Key：脏标记才携带（''=清除已存 key；非空=设置）；未动过=保持不变
+    const apiKeyField = apiKeyDirty.value ? { api_key: providerForm.value.apiKey } : {}
     const payload = { data: {
       llm_provider_title: providerForm.value.name,
       llm_provider_url: providerForm.value.url,
       llm_provider_brief: '',
-      api_key: providerForm.value.apiKey || null,
+      ...apiKeyField,
       models_path: providerForm.value.modelsPath || null,
       chat_path: providerForm.value.chatPath || null,
       quota_tokens_per_day: providerForm.value.quotaTokensPerDay || 0,
@@ -4735,7 +4757,7 @@ watch(activeSubSection, async (val) => {
                     <h3 class="font-semibold text-apple-gray-900 dark:text-apple-gray-50 truncate">{{ p._displayName || p.id }}</h3>
                     <p class="text-2xs text-apple-gray-400 truncate">{{ p._displayUrl || '' }}</p>
                   </div>
-                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="(p.api_key as string) ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="(p.api_key as string) ? '已配置密钥' : '未配置密钥'" />
+                  <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :class="p.has_key ? 'bg-brian-blue' : 'bg-apple-gray-300 dark:bg-apple-gray-600'" :title="p.has_key ? '已配置密钥' : '未配置密钥'" />
                 </div>
                 <p class="text-2xs text-apple-gray-400 line-clamp-2" :title="p.llm_provider_brief || ''">
                   {{ p.llm_provider_brief || '暂无描述' }}
@@ -5966,15 +5988,28 @@ watch(activeSubSection, async (val) => {
             <div>
               <label class="block text-xs font-medium text-apple-gray-600 dark:text-apple-gray-300 mb-1.5">API Key</label>
               <div class="relative">
-                <input v-model="providerForm.apiKey" :type="showApiKey ? 'text' : 'password'" :class="inputClass + ' pr-10'" placeholder="sk-..." />
+                <input
+                  v-model="providerForm.apiKey"
+                  :type="showApiKey ? 'text' : 'password'"
+                  :class="inputClass + ' pr-10'"
+                  :placeholder="editingProvider?.has_key ? '已配置密钥——留空保持不变' : 'sk-...'"
+                  @input="apiKeyDirty = true"
+                />
                 <button
                   type="button"
                   class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-apple-gray-400 hover:text-apple-gray-600 dark:hover:text-apple-gray-200 transition-colors"
-                  @click="showApiKey = !showApiKey"
+                  @click="handleApiKeyEyeClick"
                 >
                   <EyeOff v-if="showApiKey" :size="15" />
                   <Eye v-else :size="15" />
                 </button>
+              </div>
+              <div v-if="editingProvider?.has_key" class="mt-1">
+                <button
+                  type="button"
+                  class="text-2xs text-warning-orange hover:underline"
+                  @click="providerForm.apiKey = ''; apiKeyDirty = true"
+                >清除已保存的密钥</button>
               </div>
             </div>
             <fieldset class="border border-apple-gray-200 dark:border-apple-gray-700 rounded-lg p-3">

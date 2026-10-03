@@ -15,7 +15,8 @@
     "@brian-agent/agent": "file:../Agent",
     "@brian-agent/base": "file:../Base",
     "@brian-agent/core": "file:../Core",
-    "@brian-agent/runtime": "file:../Runtime"
+    "@brian-agent/runtime": "file:../Runtime",
+    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

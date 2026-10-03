@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BACKEND_DIR = path.join(ROOT, 'brian-backend')
@@ -187,10 +187,13 @@ function spawnDetached(cmd, args, cwd, logFile, extraEnv = {}) {
   const out = openLogFile(logFile)
   const child = spawn(cmd, args, {
     cwd,
-    detached: true,
+    // Windows 上 detached 会强制为新进程分配可见控制台(与 windowsHide 冲突)——弹窗根源;
+    // 故仅 POSIX 使用 detached,Windows 依靠 windowsHide(CREATE_NO_WINDOW)实现无窗后台。
+    detached: !IS_WIN,
     stdio: ['ignore', out, out],
     env: { ...process.env, BRIAN_CDT_AUTO: process.env.BRIAN_CDT_AUTO || '0', ...extraEnv },
     shell: IS_WIN,
+    windowsHide: true,
   })
   fs.closeSync(out)
   child.unref()
@@ -297,7 +300,7 @@ function openBrowser() {
   const [cmd, args] = IS_WIN ? ['cmd', ['/c', 'start', '', url]]
     : process.platform === 'darwin' ? ['open', [url]]
       : ['xdg-open', [url]]
-  try { spawn(cmd, args, { detached: true, stdio: 'ignore', shell: IS_WIN }).unref(); ok(`浏览器打开 ${url}`) }
+  try { spawn(cmd, args, { stdio: 'ignore', shell: IS_WIN, windowsHide: true }).unref(); ok(`浏览器打开 ${url}`) }
   catch { warn(`请手动打开 ${url}`) }
 }
 
@@ -342,6 +345,23 @@ async function doctor() {
   if (betterSqlite3Loads()) ok(`better-sqlite3 绑定已就位且可加载（ABI ${process.versions.modules}）`)
   else if (hasAbi) { warn('prebuilt 含当前 ABI 但绑定未拷贝 → 运行 npm install（postinstall 自动拷贝）'); problems++ }
   else { fail(`better-sqlite3 缺少 ABI ${process.versions.modules} 的预编译件（平台目录: ${platformDir}）→ 切换 Node ${expected} 后 npm install`); problems++ }
+
+  console.log('')
+  console.log('  \x1b[1m技能沙箱解释器\x1b[0m')
+  try {
+    const { resolveSandboxRuntime } = await import(pathToFileURL(path.join(ROOT, 'brian-backend', 'Base', 'dist', 'SkillProvider', 'infrastructure', 'sandbox', 'SandboxRuntime.js')))
+    const rt = resolveSandboxRuntime()
+    const bundled = p => p && (p.includes(`runtime${path.sep}bash`) || p.includes(`runtime${path.sep}python`) || p.includes('runtime/bash') || p.includes('runtime/python'))
+    const source = p => bundled(p) ? '（捆绑）'
+      : (p === process.env.BRIAN_SANDBOX_BASH || p === process.env.BRIAN_SANDBOX_PYTHON) ? '（环境变量指定）'
+      : '（宿主机）'
+    ok(`python: ${rt.python} — ${rt.pythonVersion.split('\n')[0]} ${source(rt.python)}`)
+    ok(`bash:   ${rt.bash} — ${rt.bashVersion.split('\n')[0]} ${source(rt.bash)}`)
+  } catch (e) {
+    mark(false, `技能沙箱解释器不可用: ${String(e.message || e).slice(0, 160)}`)
+    console.log(`       ${C.dim('→ AI 生成技能的执行依赖 bash/Python；Windows 上安装 Git for Windows 可提供 bash')}`)
+    problems++
+  }
 
   console.log('')
   if (problems > 0) warn('环境未就绪，按上方提示处理后重试')

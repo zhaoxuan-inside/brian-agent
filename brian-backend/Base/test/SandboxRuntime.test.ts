@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pythonCandidates,
   bashCandidates,
+  deriveBashCandidatesFromGitPaths,
   isWslBashShim,
   resolveSandboxRuntime,
   SandboxRuntimeError,
@@ -33,6 +34,28 @@ describe('SandboxRuntime 候选定位序列', () => {
     expect(withEnv).toEqual(['D:\\tools\\bash.exe']);
   });
 
+  it('win32 Bash 动态候选：extra 插在固定安装点与 PATH 兜底之间', () => {
+    const seq = bashCandidates('win32', {}, [{ prefix: '"D:\\dev\\Git\\Git\\bin\\bash.exe"' }]).map((c) => c.prefix);
+    expect(seq).toEqual([
+      '"C:\\Program Files\\Git\\bin\\bash.exe"',
+      '"C:\\Program Files (x86)\\Git\\bin\\bash.exe"',
+      '"D:\\dev\\Git\\Git\\bin\\bash.exe"',
+      'bash',
+    ]);
+  });
+
+  it('deriveBashCandidatesFromGitPaths：cmd/mingw64/usr 三种布局均能推导出 bash', () => {
+    expect(deriveBashCandidatesFromGitPaths(['D:\\dev\\Git\\Git\\cmd\\git.exe']))
+      .toContain('D:\\dev\\Git\\Git\\bin\\bash.exe');
+    expect(deriveBashCandidatesFromGitPaths(['D:\\dev\\Git\\Git\\cmd\\git.exe']))
+      .toContain('D:\\dev\\Git\\Git\\usr\\bin\\bash.exe');
+    expect(deriveBashCandidatesFromGitPaths(['D:\\dev\\Git\\Git\\mingw64\\bin\\git.exe']))
+      .toContain('D:\\dev\\Git\\Git\\bin\\bash.exe');
+    expect(deriveBashCandidatesFromGitPaths(['D:\\dev\\Git\\Git\\usr\\bin\\git.exe']))
+      .toContain('D:\\dev\\Git\\Git\\usr\\bin\\bash.exe');
+    expect(deriveBashCandidatesFromGitPaths(['C:\\not-git\\tools\\foo.exe'])).toEqual([]);
+  });
+
   it('WSL bash shim 必须被拒绝（cwd/env 语义与沙箱契约不兼容）', () => {
     expect(isWslBashShim('C:\\Windows\\System32\\bash.exe')).toBe(true);
     expect(isWslBashShim('/mnt/c/Windows/System32/bash.exe')).toBe(true);
@@ -61,9 +84,11 @@ describe('resolveSandboxRuntime（启动期契约）', () => {
   });
 
   it('win32 平台的 Bash 缺失指引应指向 Git Bash 部署前置', () => {
-    
+    // 前置:套件本身要求存在可用 Python(见 LocalSandbox 用例),复用已解析前缀构造 Python 可通过的覆盖,
+    // 使断言聚焦于 Bash 缺失时的报错指引,不依赖机器上具体的 Python 命令名。
+    const python = resolveSandboxRuntime().python;
     try {
-      resolveSandboxRuntime('win32', { BRIAN_SANDBOX_PYTHON: 'python3', BRIAN_SANDBOX_BASH: 'C:\\nonexistent\\bash.exe' });
+      resolveSandboxRuntime('win32', { BRIAN_SANDBOX_PYTHON: python, BRIAN_SANDBOX_BASH: 'C:\\nonexistent\\bash.exe' });
       throw new Error('should not reach');
     } catch (e) {
       expect(e).toBeInstanceOf(SandboxRuntimeError);

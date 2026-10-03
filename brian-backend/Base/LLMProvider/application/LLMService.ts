@@ -24,11 +24,11 @@ import { Operator, Direction } from '../../shared/query';
 import type { Condition, DataObject } from '../../shared/query';
 import type { LLMMessage } from '../../shared/llm/LLMEvent';
 import { LLMEventsRunner, DEFAULT_IDLE_WATCHDOG_MS, type LLMEventsRunResult } from './llmevents/LLMEventsRunner';
-import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, SoModelTokenStatsInput, SoModelTokenStatsOutput, LLM_PROVIDER_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_CALL_RECORD_TABLE, LLM_CALL_DETAIL_TABLE, LLM_RECORD_TEXT_MAX_CHARS, LLM_CONFIG_TABLE } from '../domain/types';
+import { LLMContext, LLMProviderRecord, LLMCacheRecord, LLMAvailableRecord, AddLLMProviderInput, AddLLMProviderOutput, UpdateLLMProviderInput, UpdateLLMProviderOutput, DelLLMProviderInput, DelLLMProviderOutput, SoLLMProviderInput, SoLLMProviderOutput, TestLLMProviderInput, TestLLMProviderOutput, ListLLMInput, ListLLMOutput, AddLLMInput, AddLLMOutput, DelLLMInput, DelLLMOutput, UpdateLLMInput, UpdateLLMOutput, SoLLMInput, SoLLMOutput, ExecLLMInput, ExecLLMOutput, ExecLLMEventsInput, ExecLLMEventsOutput, EmbedLLMInput, EmbedLLMOutput, GenLLMAttrInput, GenLLMAttrOutput, VisualizedLLMInput, VisualizedLLMOutput, EnableLLMInput, EnableLLMOutput, SoTokenUsageInput, SoTokenUsageOutput, SoModelTokenStatsInput, SoModelTokenStatsOutput, LLM_PROVIDER_TABLE, LLM_PROVIDER_KEY_TABLE, LLM_CACHE_TABLE, LLM_AVAILABLE_TABLE, LLM_CALL_RECORD_TABLE, LLM_CALL_DETAIL_TABLE, LLM_RECORD_TEXT_MAX_CHARS, LLM_CONFIG_TABLE } from '../domain/types';
 import { LLMStrategyFactory } from './strategies';
 import type { ILLMProviderStrategy, HttpRequestOptions } from './strategies';
 import { newRecord } from '../../shared/query';
-import { TraceService, RecordUsageInput, RecordUsageOutput, TraceContext, LLM_USAGE_ORG_TABLE } from '../../TraceBase';
+import { TraceService, RecordUsageInput, RecordUsageOutput, TraceContext, LLM_USAGE_ORG_TABLE, LLM_PROVIDER_USAGE_ORG_TABLE } from '../../TraceBase';
 import {
   isModelsCacheFresh,
   extractRemoteErrorDetail,
@@ -290,7 +290,6 @@ export class LLMService {
       { field: 'llm_provider_title', value: data.llm_provider_title },
       { field: 'llm_provider_brief', value: data.llm_provider_brief ?? null },
       { field: 'enable', value: data.enable === true ? 1 : 0 },
-      { field: 'api_key', value: data.api_key ?? null },
       { field: 'models_path', value: data.models_path ?? null },
       { field: 'chat_path', value: data.chat_path ?? null },
       { field: 'quota_tokens_per_day', value: data.quota_tokens_per_day ?? dTokensDay },
@@ -301,8 +300,55 @@ export class LLMService {
       { field: 'quota_calls_per_month', value: data.quota_calls_per_month ?? dCallsMonth },
     ];
     await this.relationDb.insert(LLM_PROVIDER_TABLE, dataObjects);
+    if (data.api_key) {
+      await this.upsertProviderKey(id, String(data.api_key));
+    }
     output.id = id;
     return true;
+  }
+
+  /** 提供商 API Key 独立存储（llm_provider_key_record）：1 提供商 1 key */
+  private async upsertProviderKey(providerId: string, apiKey: string): Promise<void> {
+    const now = IdGenerator.now();
+    const existing = await this.relationDb.selectOne(LLM_PROVIDER_KEY_TABLE, [
+      { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+    ]);
+    if (existing) {
+      await this.relationDb.update(LLM_PROVIDER_KEY_TABLE, [
+        { field: 'updated', value: now },
+        { field: 'api_key', value: apiKey },
+      ], [{ field: 'llm_provider_id', operator: Operator.EQ, value: providerId }]);
+      return;
+    }
+    await this.relationDb.insert(LLM_PROVIDER_KEY_TABLE, [
+      { field: 'id', value: IdGenerator.generate() },
+      { field: 'created', value: now },
+      { field: 'updated', value: now },
+      { field: 'llm_provider_id', value: providerId },
+      { field: 'api_key', value: apiKey },
+    ]);
+  }
+
+  /** 读取提供商行并把独立存储的 API Key 合并进内存对象（策略层 buildHeaders 依旧读 provider.api_key，零改动） */
+  private async attachApiKey(provider: LLMProviderRecord): Promise<LLMProviderRecord> {
+    try {
+      const keyRow = await this.relationDb.selectOne(LLM_PROVIDER_KEY_TABLE, [
+        { field: 'llm_provider_id', operator: Operator.EQ, value: provider.id },
+      ]);
+      (provider as unknown as Record<string, unknown>).api_key = keyRow
+        ? String((keyRow as unknown as Record<string, unknown>).api_key ?? '')
+        : '';
+    } catch { /* key 表未就绪等：以无 key 继续（调用方自会收到上游 401） */ }
+    return provider;
+  }
+
+  /** 按 id 读取提供商行（含 key 合并），不存在返回 null */
+  private async soProviderWithKey(providerId: string): Promise<LLMProviderRecord | null> {
+    const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
+      { field: 'id', operator: Operator.EQ, value: providerId },
+    ]);
+    if (!row) return null;
+    return this.attachApiKey(row as unknown as LLMProviderRecord);
   }
 
   async updateLLMProvider(input: UpdateLLMProviderInput, output: UpdateLLMProviderOutput, _context: LLMContext, _metrics?: Metrics, _report?: Report,
@@ -336,9 +382,6 @@ export class LLMService {
     if (patch.enable !== undefined) {
       data.push({ field: 'enable', value: patch.enable ? 1 : 0 });
     }
-    if (patch.api_key !== undefined) {
-      data.push({ field: 'api_key', value: patch.api_key });
-    }
     if (patch.models_path !== undefined) {
       data.push({ field: 'models_path', value: patch.models_path });
     }
@@ -360,6 +403,24 @@ export class LLMService {
       data,
       conditions,
     );
+
+    // API Key 独立存储：未传=不变；''=清除；非空=设置（前端编辑弹窗以脏标记决定是否携带）
+    if (patch.api_key !== undefined) {
+      const idRows = await this.relationDb.select(LLM_PROVIDER_TABLE, {
+        conditions,
+        fields: ['id'],
+      });
+      for (const idRow of idRows) {
+        const providerId = String(idRow.id);
+        if (String(patch.api_key) === '') {
+          await this.relationDb.delete(LLM_PROVIDER_KEY_TABLE, [
+            { field: 'llm_provider_id', operator: Operator.EQ, value: providerId },
+          ]);
+        } else {
+          await this.upsertProviderKey(providerId, String(patch.api_key));
+        }
+      }
+    }
     return true;
   }
 
@@ -395,6 +456,10 @@ export class LLMService {
       await this.relationDb.delete(LLM_CACHE_TABLE, [
         { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
       ]);
+      // 级联删除独立存储的 API Key（配置与密钥拆分）
+      await this.relationDb.delete(LLM_PROVIDER_KEY_TABLE, [
+        { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
+      ]);
       const availableRows = await this.relationDb.select(LLM_AVAILABLE_TABLE, {
         conditions: [
           { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
@@ -410,6 +475,16 @@ export class LLMService {
       await this.relationDb.delete(LLM_AVAILABLE_TABLE, [
         { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
       ]);
+      // 提供商级用量日聚合（TraceBase）与配额记录（LLMCoreProvider）随实体删除
+      await this.relationDb.delete(LLM_PROVIDER_USAGE_ORG_TABLE, [
+        { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
+      ]);
+      try {
+        // 表常量在 Core 层（LLMCoreSchemaInitializer），Base 不可反向依赖，故用字面量表名
+        await this.relationDb.delete('llm_provider_quota_record', [
+          { field: 'llm_provider_id', operator: Operator.IN, value: providerIds },
+        ]);
+      } catch { /* 表不存在（未启用 LLMCore）时容忍 */ }
     }
 
     return true;
@@ -441,7 +516,27 @@ export class LLMService {
       conditions.length > 0 ? conditions : undefined,
     );
 
-    output.list = rows as unknown as LLMProviderRecord[];
+    // 响应永不携带明文 key：剥离 api_key，仅返回 has_key 供前端展示「已配置密钥」
+    const providerIds = rows.map((r) => String(r.id));
+    const keySet = new Set<string>();
+    if (providerIds.length > 0) {
+      try {
+        const keyRows = await this.relationDb.select(LLM_PROVIDER_KEY_TABLE, {
+          conditions: [{ field: 'llm_provider_id', operator: Operator.IN, value: providerIds }],
+          fields: ['llm_provider_id', 'api_key'],
+        });
+        for (const keyRow of keyRows) {
+          if (String((keyRow as unknown as Record<string, unknown>).api_key ?? '') !== '') {
+            keySet.add(String((keyRow as unknown as Record<string, unknown>).llm_provider_id));
+          }
+        }
+      } catch { /* key 表未就绪：全部按未配置展示 */ }
+    }
+    output.list = rows.map((r) => {
+      const { api_key: _ignored, ...rest } = r as unknown as Record<string, unknown>;
+      void _ignored;
+      return { ...rest, has_key: keySet.has(String(r.id)) } as unknown as LLMProviderRecord;
+    });
     output.total = total;
     return true;
   }
@@ -453,13 +548,11 @@ export class LLMService {
       throw new ValidationError('id 不能为空');
     }
 
-    const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: input.id },
-    ]);
+    const row = await this.soProviderWithKey(input.id);
     if (!row) {
       throw new NotFoundError('LLMProvider', input.id);
     }
-    const provider = row as unknown as LLMProviderRecord;
+    const provider = row;
 
     const start = Date.now();
     const strategy = LLMStrategyFactory.soStrategyById(provider);
@@ -514,13 +607,11 @@ export class LLMService {
   }
 
   private async soProviderRow(providerId: string): Promise<LLMProviderRecord> {
-    const row = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: providerId },
-    ]);
-    if (!row) {
+    const provider = await this.soProviderWithKey(providerId);
+    if (!provider) {
       throw new NotFoundError('LLMProvider', providerId);
     }
-    return row as unknown as LLMProviderRecord;
+    return provider;
   }
 
   private async soCachedModels(providerId: string, output: ListLLMOutput): Promise<void> {
@@ -552,7 +643,7 @@ export class LLMService {
       const res = httpOutput.response;
       if (!res.ok) {
         const errDetail = extractRemoteErrorDetail(res.status, res.bodyText);
-        output.error = `获取模型列表失败: ${errDetail}`;
+        output.error = `获取模型列表失败: ${errDetail}（请求: ${req.url}）`;
         output.error_code = 'REMOTE_ERROR';
         return null;
       }
@@ -1203,10 +1294,7 @@ export class LLMService {
     if (!llm.enable || (llm.llm_type ?? 'text') === 'embedding') {
       throw new ValidationError(`LLM ${llmId} 已禁用或是 ${llm.llm_type ?? '未知'} 模型`);
     }
-    const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
-    ]);
-    const provider = providerRow as unknown as LLMProviderRecord | null;
+    const provider = await this.soProviderWithKey(llm.llm_provider_id);
     if (!provider) {
       throw new NotFoundError('LLMProvider', llm.llm_provider_id);
     }
@@ -1352,15 +1440,12 @@ export class LLMService {
   }
 
   private async soValidatedLLMProvider(llm: LLMAvailableRecord, output: ExecLLMOutput): Promise<LLMProviderRecord | null> {
-    const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: llm.llm_provider_id },
-    ]);
-    if (!providerRow) {
+    const provider = await this.soProviderWithKey(llm.llm_provider_id);
+    if (!provider) {
       output.error = `LLMProvider ${llm.llm_provider_id} 不存在`;
       output.error_code = 'NOT_FOUND';
       return null;
     }
-    const provider = providerRow as unknown as LLMProviderRecord;
     if (!provider.enable) {
       output.error = `LLMProvider ${provider.id} 已禁用`;
       output.error_code = 'VALIDATION_ERROR';
@@ -1583,13 +1668,10 @@ export class LLMService {
   }
 
   private async soEnabledEmbedProvider(llmProviderId: string): Promise<LLMProviderRecord> {
-    const providerRow = await this.relationDb.selectOne(LLM_PROVIDER_TABLE, [
-      { field: 'id', operator: Operator.EQ, value: llmProviderId },
-    ]);
-    if (!providerRow) {
+    const provider = await this.soProviderWithKey(llmProviderId);
+    if (!provider) {
       throw new NotFoundError('LLMProvider', llmProviderId);
     }
-    const provider = providerRow as unknown as LLMProviderRecord;
     if (!provider.enable) {
       throw new ValidationError(`LLMProvider ${provider.id} 已禁用`);
     }

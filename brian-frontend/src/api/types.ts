@@ -680,7 +680,8 @@ export interface ModelProvider {
   id: string
   providerName: string
   baseURL: string
-  apiKey: string
+  /** API Key 不回传明文：仅标记是否已配置 */
+  hasApiKey: boolean
   models: ModelInfo[]
   enabled: boolean
 }

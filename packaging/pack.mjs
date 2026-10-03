@@ -16,6 +16,7 @@
  *   node packaging/pack.mjs                  # 全部 4 个目标 + linux .deb
  *   node packaging/pack.mjs linux-x64        # 仅指定目标
  *   node packaging/pack.mjs --skip-chromium  # 不内置 Chromium（体积 -150MB/目标）
+ *   node packaging/pack.mjs --skip-runtime   # 不内置 bash/Python 沙箱运行时（沙箱回退宿主机）
  *   node packaging/pack.mjs --skip-frontend-build  # 复用已有前端 dist
  *
  * 已知限制：
@@ -52,6 +53,21 @@ const PREBUILT_ABI = 'node127';
 
 const CHROME_VERSION = process.env.CHROME_VERSION || '140.0.7339.80';
 
+// 技能沙箱运行时（bash 仅 Windows 目标；Python 全平台）——让打包版零宿主机依赖
+// PortableGit: Git for Windows 官方便携版（GPLv2），含 bash + 完整 coreutils。
+// 注意不用 MinGit：MinGit 是"仅 git 命令"精简版，不含 bash。
+const MINGIT_VERSION = process.env.MINGIT_VERSION || '2.47.1';
+const MINGIT_BUILD = process.env.MINGIT_BUILD || '1';
+// python-build-standalone（PSF）：install_only 制品，解压即用的独立 Python
+const PYTHON_STANDALONE_TAG = process.env.PYTHON_STANDALONE_TAG || '20241016';
+const PYTHON_VERSION = process.env.PYTHON_STANDALONE_CPYTHON || '3.12.7';
+const PYTHON_STANDALONE_TRIPLES = {
+  'win32-x64': 'x86_64-pc-windows-msvc',
+  'linux-x64': 'x86_64-unknown-linux-gnu',
+  'darwin-x64': 'x86_64-apple-darwin',
+  'darwin-arm64': 'aarch64-apple-darwin',
+};
+
 /** 从 origin remote 推断 owner/repo（默认 zhaoxuan-inside/brian-agent） */
 function detectRepo() {
   try {
@@ -78,6 +94,7 @@ const TARGETS = {
 // ---------------------------------------------------------------------------
 const args = process.argv.slice(2);
 const SKIP_CHROMIUM = args.includes('--skip-chromium');
+const SKIP_RUNTIME = args.includes('--skip-runtime');
 const SKIP_FRONTEND_BUILD = args.includes('--skip-frontend-build');
 const NO_SYSTEM_DATA = args.includes('--no-system-data');
 const NO_NPM = args.includes('--no-npm');
@@ -98,25 +115,49 @@ function run(cmd, opts = {}) {
   execSync(cmd, { cwd: ROOT, stdio: 'inherit', ...opts });
 }
 
-async function downloadTo(url, dest) {
+async function downloadTo(url, dest, attempts = 3) {
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
     log(`缓存命中: ${path.basename(dest)}`);
     return dest;
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  log(`下载: ${url}`);
-  const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(dest, buf);
-  log(`完成: ${(buf.length / 1024 / 1024).toFixed(1)} MB → ${path.basename(dest)}`);
-  return dest;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      log(`下载: ${url}${i > 1 ? `（第 ${i} 次尝试）` : ''}`);
+      const res = await fetch(url, { redirect: 'follow' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length === 0) throw new Error('空响应');
+      fs.writeFileSync(dest, buf);
+      log(`完成: ${(buf.length / 1024 / 1024).toFixed(1)} MB → ${path.basename(dest)}`);
+      return dest;
+    } catch (e) {
+      if (i === attempts) {
+        // fetch(undici) 对不稳定网络的连接超时较敏感，curl 兜底一次
+        log(`fetch 重试耗尽，curl 兜底: ${url}`);
+        const r = spawnSync('curl', ['-fSL', '--retry', '3', '--connect-timeout', '30', '-o', dest, url], { timeout: 30 * 60 * 1000, stdio: 'inherit' });
+        if (r.status === 0 && fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+          log(`完成(curl): ${(fs.statSync(dest).size / 1024 / 1024).toFixed(1)} MB → ${path.basename(dest)}`);
+          return dest;
+        }
+        throw e;
+      }
+      warn(`下载失败（${e.message}），重试 ${i}/${attempts - 1}...`);
+      await new Promise((r) => setTimeout(r, 3000 * i));
+    }
+  }
+  throw new Error(`下载失败（重试耗尽）: ${url}`);
 }
 
-/** 解压 tar.gz 中单个文件到指定输出（流式单文件抽取） */
+/** 解压 tar.gz 中单个文件到指定输出（流式单文件抽取）。
+ *  以 tarball 所在目录为 cwd、仅传文件名：Windows 绝对路径的盘符冒号
+ *  会被 GNU tar 解析为远程主机（"Cannot connect to E:"）。 */
 function extractTarSingle(tarball, member, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const r = spawnSync('tar', ['-xzf', tarball, '-O', member], { maxBuffer: 1024 * 1024 * 128 });
+  const r = spawnSync('tar', ['-xzf', path.basename(tarball), '-O', member], {
+    cwd: path.dirname(tarball),
+    maxBuffer: 1024 * 1024 * 128,
+  });
   if (r.status !== 0 || !r.stdout || r.stdout.length === 0) {
     throw new Error(`tar 抽取失败: ${member} @ ${tarball}: ${r.stderr?.toString()}`);
   }
@@ -305,6 +346,155 @@ async function fetchChromium(targetKey) {
 }
 
 // ---------------------------------------------------------------------------
+// 技能沙箱运行时（MinGit bash / python-build-standalone）
+// ---------------------------------------------------------------------------
+const MINGIT_URL = process.env.MINGIT_URL
+  || `https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}.windows.${MINGIT_BUILD}/PortableGit-${MINGIT_VERSION}-64-bit.7z.exe`;
+
+/** PortableGit（7z SFX）→ 解压到缓存目录（bash.exe 位于 usr/bin/bash.exe；msys-2.0.dll 与 coreutils 同目录）。
+ *  Windows 构建机：SFX 自解压（-o 目录 -y）；POSIX 构建机：依赖 7z，缺失则告警跳过（该包回退宿主机 bash）。 */
+async function fetchMinGit(targetKey) {
+  if (SKIP_RUNTIME) return null;
+  const t = TARGETS[targetKey];
+  if (t.os !== 'win32') return null;
+  const staging = path.join(CACHE, `portablegit-${MINGIT_VERSION}-${MINGIT_BUILD}`);
+  const bashExe = path.join(staging, 'usr', 'bin', 'bash.exe');
+  if (!fs.existsSync(bashExe)) {
+    const sfxPath = await downloadTo(MINGIT_URL, path.join(CACHE, `PortableGit-${MINGIT_VERSION}-64-bit.7z.exe`));
+    log('解压 PortableGit（约 300MB，耐心等待）...');
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.mkdirSync(staging, { recursive: true });
+    const r = process.platform === 'win32'
+      ? spawnSync(sfxPath, ['-o' + staging, '-y'], { timeout: 10 * 60 * 1000 })
+      : spawnSync('7z', ['x', '-y', '-o' + staging, sfxPath], { timeout: 10 * 60 * 1000 });
+    if (r.status !== 0) {
+      if (process.platform !== 'win32') {
+        warn(`PortableGit 解压失败（${targetKey}）: ${r.error?.message || r.stderr || `exit ${r.status}`}，需要 7z；该包沙箱将回退宿主机 bash`);
+        return null;
+      }
+      die(`PortableGit 解压失败: ${r.error?.message || r.stderr || `exit ${r.status}`}`);
+    }
+    if (!fs.existsSync(bashExe)) die(`PortableGit 中未找到 usr/bin/bash.exe，资产不可用: ${MINGIT_URL}`);
+  }
+  return staging;
+}
+
+/** python-build-standalone install_only → 解压到缓存目录（install dir = <staging>/python） */
+async function fetchPythonStandalone(targetKey) {
+  if (SKIP_RUNTIME) return null;
+  const t = TARGETS[targetKey];
+  const triple = PYTHON_STANDALONE_TRIPLES[targetKey];
+  if (!triple) return null;
+  const asset = `cpython-${PYTHON_VERSION}+${PYTHON_STANDALONE_TAG}-${triple}-install_only.tar.gz`;
+  const staging = path.join(CACHE, `python-standalone-${PYTHON_VERSION}-${PYTHON_STANDALONE_TAG}-${triple}`);
+  const exeRel = t.os === 'win32' ? 'python/python.exe' : 'python/bin/python3';
+  if (!fs.existsSync(path.join(staging, exeRel))) {
+    const tgz = await downloadTo(
+      `https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_STANDALONE_TAG}/${encodeURIComponent(asset).replace('%2B', '+')}`,
+      path.join(CACHE, asset),
+    );
+    log('解压 python-build-standalone...');
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.mkdirSync(staging, { recursive: true });
+    // cwd=staging + ../ 相对路径引用 tarball：Windows 绝对路径的盘符冒号
+    // 会被 GNU tar 解析为远程主机（对 -C 同样生效），相对路径彻底规避。
+    // Windows 构建机无法创建 POSIX 符号链接（bin/2to3 等）：单条失败 tar 会
+    // 继续抽其余文件，仅告警；随后用实体文件修补运行时必需的解释器入口。
+    const r = spawnSync('tar', ['-xzf', `..${path.sep}${path.basename(tgz)}`], { cwd: staging });
+    if (r.status !== 0) {
+      warn(`python tarball 含符号链接，当前构建机无法全部还原（不影响运行）：${String(r.stderr || '').split('\n')[0]}`);
+    }
+    if (t.os !== 'win32') {
+      // bin/python3 在 POSIX tarball 中是指向 python3.12 的符号链接；
+      // Windows 构建机上链接缺失时用实体二进制复制补齐（内容等价）
+      const binDir = path.join(staging, 'python', 'bin');
+      const entry = path.join(binDir, 'python3');
+      if (!fs.existsSync(entry)) {
+        const real = ['python3.12', 'python3.13', 'python3.11']
+          .map((v) => path.join(binDir, v))
+          .find((p) => fs.existsSync(p));
+        if (!real) die(`解压结果缺少解释器（${exeRel} 且无版本化实体二进制），资产不可用: ${asset}`);
+        fs.copyFileSync(real, entry);
+        fs.chmodSync(entry, 0o755);
+        log('Windows 构建机交叉打包：bin/python3 已由版本化二进制复制补齐');
+      }
+    }
+    if (!fs.existsSync(path.join(staging, exeRel))) die(`解压结果缺少解释器 ${exeRel}，资产不可用: ${asset}`);
+  }
+  return staging;
+}
+
+/** 装配 <pkg>/runtime/（bash 仅 Windows；Python 全平台），返回是否有 bash 供校验 */
+async function stageSandboxRuntimes(targetKey, pkg) {
+  if (SKIP_RUNTIME) return { bash: false, python: false };
+  const t = TARGETS[targetKey];
+  const runtimeDir = path.join(pkg, 'runtime');
+  const result = { bash: false, python: false };
+
+  if (t.os === 'win32') {
+    const portableGit = await fetchMinGit(targetKey);
+    if (portableGit) {
+      // usr/：bash.exe + msys-2.0.dll + coreutils；etc/：msys 运行期配置。mingw64/cmd（git 本体）不带
+      for (const sub of ['usr', 'etc']) {
+        const src = path.join(portableGit, sub);
+        if (fs.existsSync(src)) fs.cpSync(src, path.join(runtimeDir, 'bash', sub), { recursive: true });
+      }
+      if (fs.existsSync(path.join(runtimeDir, 'bash', 'usr', 'bin', 'bash.exe'))) {
+        result.bash = true;
+      } else {
+        warn(`${targetKey}: MinGit 装配后未找到 bash.exe，该包沙箱将回退宿主机 bash`);
+      }
+    }
+  }
+
+  const pyStaging = await fetchPythonStandalone(targetKey);
+  if (pyStaging) {
+    fs.cpSync(path.join(pyStaging, 'python'), path.join(runtimeDir, 'python'), { recursive: true });
+    if (t.os !== 'win32') {
+      // 保险起见恢复可执行位（tar 保留属主位，cpSync 透传；此处防御性补齐）
+      for (const exe of ['bin/python3', 'bin/python3.12', 'bin/python3.13']) {
+        const p = path.join(runtimeDir, 'python', exe);
+        if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+      }
+    }
+    result.python = fs.existsSync(path.join(runtimeDir, 'python', t.os === 'win32' ? 'python.exe' : 'bin/python3'));
+    if (!result.python) warn(`${targetKey}: Python 运行时装配后未找到解释器，该包沙箱将回退宿主机 python3`);
+  }
+  return result;
+}
+
+/** 打包期自校验：捆绑解释器可执行且 --version 输出符合沙箱契约。
+ *  交叉打包时目标二进制无法在本机构造机上执行（如 Windows 上打 linux 包），
+ *  此时降级为存在性/非空检查，--version 执行校验仅对本机平台目标启用。 */
+function verifyBundledRuntime(targetKey, pkg, staged) {
+  if (SKIP_RUNTIME) return;
+  const t = TARGETS[targetKey];
+  const isNativeTarget = `${t.os}-${t.arch}` === `${process.platform}-${process.arch}`;
+  const pythonBin = t.os === 'win32'
+    ? path.join(pkg, 'runtime', 'python', 'python.exe')
+    : path.join(pkg, 'runtime', 'python', 'bin', 'python3');
+  const bashBin = path.join(pkg, 'runtime', 'bash', 'usr', 'bin', 'bash.exe');
+  const checks = [];
+  if (staged.python) checks.push(['python', pythonBin, /^Python 3\.\d+/]);
+  if (staged.bash) checks.push(['bash', bashBin, /bash/i]);
+  for (const [kind, exe, expect] of checks) {
+    if (!fs.existsSync(exe) || fs.statSync(exe).size === 0) {
+      die(`${targetKey}: 捆绑 ${kind} 装配异常（不存在或为空）: ${exe}`);
+    }
+    if (!isNativeTarget) {
+      log(`${targetKey}: 捆绑 ${kind} ✓（交叉打包，仅存在性校验）`);
+      continue;
+    }
+    const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+    const out = `${r.stdout || ''}${r.stderr || ''}`.trim();
+    if (r.status !== 0 || !expect.test(out)) {
+      die(`${targetKey}: 捆绑 ${kind} 自校验失败（${exe}）: ${out || r.error?.message || `exit ${r.status}`}`);
+    }
+    log(`${targetKey}: 捆绑 ${kind} ✓ ${out.split('\n')[0]}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 启动脚本与 README
 // ---------------------------------------------------------------------------
 function brianShTemplate() {
@@ -488,6 +678,9 @@ function readmeTemplate(targetKey) {
     '  server/     后端服务（brian-server.cjs）与平台原生模块（native/）',
     '  web/        前端页面（由后端同端口服务）',
     '  chrome/     Chrome for Testing（浏览器自动化 CDT 用，首次运行解压）',
+    win
+      ? '  runtime\\    技能沙箱运行时：bash（PortableGit）与 Python 3，AI 技能执行用'
+      : '  runtime/    技能沙箱运行时：Python 3（AI 技能执行用；bash 使用系统自带）',
     '  (数据)      运行数据默认 ~/.brian-agent（Windows %APPDATA%\\brian-agent），BRIAN_DATA_DIR 可指到任意位置（如 $PWD/data 便携用）',
     '',
     '配置（环境变量）:',
@@ -607,6 +800,10 @@ async function packTarget(targetKey, bundlePath, seedPath) {
     fs.copyFileSync(chromeZip, path.join(pkg, 'chrome', 'chrome.zip'));
   }
 
+  // 6.5) 技能沙箱运行时（bash 仅 Windows；Python 全平台）
+  const staged = await stageSandboxRuntimes(targetKey, pkg);
+  verifyBundledRuntime(targetKey, pkg, staged);
+
   // 7) systemd 单元（非 Windows）
   if (t.os !== 'win32') {
     fs.mkdirSync(path.join(pkg, 'systemd'), { recursive: true });
@@ -622,11 +819,12 @@ async function packTarget(targetKey, bundlePath, seedPath) {
   }
   fs.writeFileSync(path.join(pkg, 'README.txt'), readmeTemplate(targetKey));
 
-  // 9) 归档
+  // 9) 归档（cwd + 相对路径：Windows 盘符冒号会被 GNU tar 解析为远程主机）
   fs.mkdirSync(OUT, { recursive: true });
   if (t.archive === 'tar.gz') {
     const out = path.join(OUT, `${name}.tar.gz`);
-    run(`tar -czf "${out}" -C "${OUT}" "${name}"`);
+    const r = spawnSync('tar', ['-czf', `${name}.tar.gz`, name], { cwd: OUT, stdio: 'inherit' });
+    if (r.status !== 0) die(`tar 归档失败: ${out}`);
     log(`归档: ${out} (${(fs.statSync(out).size / 1024 / 1024).toFixed(1)} MB)`);
   } else {
     const out = path.join(OUT, `${name}.zip`);
