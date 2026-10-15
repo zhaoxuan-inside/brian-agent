@@ -13,7 +13,6 @@
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 
 <details>
-<summary>📷 产品预览（点击展开）</summary>
 
 <img width="1093" height="699" alt="image" src="https://github.com/user-attachments/assets/09682ba2-e61d-45cd-b410-8eaa307def29" />
 
