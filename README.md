@@ -17,9 +17,10 @@
 
 <img width="1093" height="699" alt="image" src="https://github.com/user-attachments/assets/09682ba2-e61d-45cd-b410-8eaa307def29" />
 
-![记忆地图：勾选引用 + Pin + 跳回原文](README/shots/memory.png)
+<img width="1104" height="775" alt="image" src="https://github.com/user-attachments/assets/3f75b385-cfdf-41d6-837b-c31b111e01ac" />
 
-![涌现图与关键词图](README/shots/grow.png)
+<img width="1089" height="773" alt="image" src="https://github.com/user-attachments/assets/7ca69867-613d-473d-bc27-54135e8eef20" />
+
 
 </details>
 
