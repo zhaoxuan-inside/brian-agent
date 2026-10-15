@@ -12,7 +12,7 @@
 ![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?logo=vue.js&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 
-<details>
+> 产品展示
 
 <img width="1093" height="699" alt="image" src="https://github.com/user-attachments/assets/09682ba2-e61d-45cd-b410-8eaa307def29" />
 
@@ -20,8 +20,6 @@
 
 <img width="1089" height="773" alt="image" src="https://github.com/user-attachments/assets/7ca69867-613d-473d-bc27-54135e8eef20" />
 
-
-</details>
 
 ## 核心特性
 
