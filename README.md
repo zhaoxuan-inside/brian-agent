@@ -93,11 +93,10 @@ brian start           # → http://127.0.0.1:8000
 | 方式 | 平台 | 前置条件 | 状态 |
 |------|------|---------|------|
 | [A · 一键脚本](#a--一键脚本linux--macos) | Linux / macOS | 无需 Node | 需先发布对应 Release 产物 |
-| [B · npm 全局包](#b--npm-全局包) | 全平台 | Node 18+ | 需先发布 npm 包及 Release 产物 |
-| [C · 离线安装](#c--离线安装当前推荐) | 全平台 | 构建机 Node 22 | ✅ 当前推荐 |
-| [D · 便携模式](#d--便携模式解压即用) | 全平台 | 无 | ✅ 可用 |
+| [B · 离线安装](#c--离线安装当前推荐) | 全平台 | 构建机 Node 22 | ✅ 当前推荐 |
+| [C · 便携模式](#d--便携模式解压即用) | 全平台 | 无 | ✅ 可用 |
 
-> A / B 依赖维护者发布 GitHub Releases 平台产物与 npm 包；仓库内的安装脚本不代表在线产物已就绪。发布流程见 [packaging/npm/README.md](packaging/npm/README.md)。
+> A 依赖维护者发布 GitHub Releases 平台产物与 npm 包；仓库内的安装脚本不代表在线产物已就绪。发布流程见 [packaging/npm/README.md](packaging/npm/README.md)。
 
 ### A · 一键脚本（Linux / macOS）
 
@@ -109,13 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/pa
 iwr https://raw.githubusercontent.com/zhaoxuan-inside/brian-agent/main/packaging/install.ps1 -OutFile install.ps1; .\install.ps1
 ```
 
-### B · npm 全局包
-
-```bash
-npm i -g brian-agent      # postinstall 自动下载平台运行时；失败可 npm rebuild -g 重试
-```
-
-### C · 离线安装（当前推荐）
+### B · 离线安装（当前推荐）
 
 在有网的构建机上打包，拷贝到目标机安装。不依赖任何外部发布，支持交叉打包全部平台：
 
@@ -130,7 +123,7 @@ bash packaging/install.sh --from dist-pack/brian-agent-linux-x64.tar.gz   # Linu
 sudo dpkg -i dist-pack/brian-agent-linux-x64.deb                       # Linux .deb（含 /usr/bin/brian）
 ```
 
-### D · 便携模式（解压即用）
+### C · 便携模式（解压即用）
 
 发行包解压后可直接运行，默认仍使用用户数据目录（见下方）。Linux / macOS 若需让数据跟包走，可在包根目录执行 `BRIAN_DATA_DIR="$PWD/data" ./brian.sh start`。
 
