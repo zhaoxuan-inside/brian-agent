@@ -15,7 +15,7 @@
 <details>
 <summary>📷 产品预览（点击展开）</summary>
 
-![对话页：左侧 ChatMap 记忆地图，右侧对话](README/shots/hero.png)
+<img width="1093" height="699" alt="image" src="https://github.com/user-attachments/assets/09682ba2-e61d-45cd-b410-8eaa307def29" />
 
 ![记忆地图：勾选引用 + Pin + 跳回原文](README/shots/memory.png)
 
