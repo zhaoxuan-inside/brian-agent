@@ -83,7 +83,7 @@ function portPid(port) {
 
 function portAlive(port) {
   return new Promise((resolve) => {
-    const sock = net.connect({ port: Number(port), host: '127.0.0.1' })
+    const sock = net.connect({ port: Number(port), host: '0.0.0.0' })
     sock.once('connect', () => { sock.destroy(); resolve(true) })
     sock.once('error', () => resolve(false))
   })
